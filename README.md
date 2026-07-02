@@ -65,10 +65,10 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 
 | Command | What it does |
 |---|---|
-| `init` | Write a starter `.waffle.yaml` (won't overwrite an existing one). |
+| `init` | Write a starter `.waffle.yaml` (won't overwrite an existing one). Add `--gitignore` to also append `.waffle.local.yaml` to `.gitignore`. |
 | `setup` | Print the agent-driven install playbook + generated toolkit inventory (see above). |
 | `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.waffle.lock.json`. |
-| `install [ref…]` | With refs: add them to `.waffle.yaml` (bundle name → `bundles:`, item → `include:`), pull in their dependencies, then render. Refs are a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` (qualify when a name is in two bundles). Bare `install` = `render`. |
+| `install [ref…]` | With refs: add them to `.waffle.yaml` (bundle name → `bundles:`, item → `include:`), pull in their dependencies, then render. Refs are a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` (qualify when a name is in two bundles). Bare `install` = `render`. Add `--gitignore` to append the recommended ignore entries (`.waffle.local.yaml`, plus the configured `git.worktreesDir` when an enabled bundle declares one) — idempotent, existing content preserved. Also on `render`. |
 | `upgrade` | Move an existing install across toolkit versions: compare the lock's `toolkitVersion` to the invoked toolkit, print the `CHANGELOG.md` entries in between, run any registered migrations in order, then re-render and run `doctor`. A missing lock or version degrades to a plain render + doctor with a clear note. See [Rules of the road](#rules-of-the-road). |
 | `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational. |
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
@@ -82,7 +82,9 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 2. **Account-specific values** (bot identities, board IDs) go in `.waffle.local.yaml`,
    which is gitignored and merged over the committed config. Config values may reference
    other keys with `{{...}}` (nested substitution) — so a committed value can point at a
-   key kept in the local overlay.
+   key kept in the local overlay. wafflestack never edits your `.gitignore` *unasked*, but
+   `wafflestack install --gitignore` (or the setup agent, on your approval) appends the
+   entries for you — the local overlay always, plus the configured worktrees directory.
 3. **Updates are re-renders — until they aren't.** For patch/minor tags,
    `npx github:dustinkeeton/wafflestack#<newtag> render` regenerates everything and your
    config and extensions survive untouched. For a **breaking** tag (a renamed/removed item,
@@ -166,8 +168,9 @@ The first such migration is **0.6.0**, which shortens the consumer dotfiles
 (`.wafflestack.yaml` → `.waffle.yaml`, plus the local overlay, lock, and
 `.wafflestack/extensions/` → `.waffle/extensions/`). You don't have to rename anything by
 hand: any `render` or `upgrade` moves the legacy files in place and reminds you to update
-the matching `.gitignore` entries (the CLI never edits `.gitignore` itself). Until you
-re-render, the old `.wafflestack.*` names keep working with a deprecation note.
+the matching `.gitignore` entries (the auto-rename never edits `.gitignore` — swap them
+yourself, or run `wafflestack install --gitignore` to re-add the `.waffle.*` names). Until
+you re-render, the old `.wafflestack.*` names keep working with a deprecation note.
 
 Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guidelines:
 [assets/](assets/).

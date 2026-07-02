@@ -9,6 +9,13 @@ import { eject, init, installRefs } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { upgrade } from './lib/upgrade.mjs';
+import { loadToolkit } from './lib/toolkit.mjs';
+import {
+  loadProjectConfig,
+  ensureGitignoreEntries,
+  recommendedGitignoreEntries,
+  LOCAL_CONFIG_FILE,
+} from './lib/project.mjs';
 
 const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(toolkitRoot, 'package.json'), 'utf8'));
@@ -20,17 +27,21 @@ try {
   switch (command) {
     case 'render': {
       const force = extractFlag(args, '--force');
+      const gitignore = extractFlag(args, '--gitignore');
       if (args.length) {
         fail('render takes no refs — use `wafflestack install <ref…>` to add a bundle or item (it persists the choice, then re-renders); bare `render` re-renders the current selection');
       }
       runRender(force);
+      if (gitignore) offerGitignore();
       break;
     }
     case 'install': {
       const force = extractFlag(args, '--force');
+      const gitignore = extractFlag(args, '--gitignore');
       // Bare `install` is an alias for `render`; with refs it persists them first.
       if (args.length) installRefs({ toolkitRoot, cwd, refs: args, log: console.log });
       runRender(force);
+      if (gitignore) offerGitignore();
       break;
     }
     case 'doctor': {
@@ -76,9 +87,13 @@ try {
       break;
     }
     case 'init': {
+      const gitignore = extractFlag(args, '--gitignore');
       const file = init({ cwd });
       console.log(`wrote ${file} — pick bundles and config values, then run \`wafflestack render\``);
       console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
+      // Only `.waffle.local.yaml` is knowable at init (no bundles chosen yet); `install
+      // --gitignore` later adds the worktrees dir once a bundle that declares it is enabled.
+      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE]));
       break;
     }
     case 'setup': {
@@ -117,6 +132,23 @@ function runRender(force = false) {
   }
   console.log(`rendered ${result.written.length} files into ${cwd}`);
   if (result.removed.length) console.log(`removed stale: ${result.removed.join(', ')}`);
+}
+
+// `--gitignore` on a successful render/install: append the recommended entries the consumer
+// asked for (the explicit flag is their consent). Reached only after runRender succeeds — a
+// failed render exits first, so this never runs against an unrendered tree.
+function offerGitignore() {
+  const toolkit = loadToolkit(toolkitRoot);
+  const project = loadProjectConfig(cwd);
+  reportGitignore(ensureGitignoreEntries(cwd, recommendedGitignoreEntries(toolkit, project)));
+}
+
+function reportGitignore(added) {
+  console.log(
+    added.length
+      ? `.gitignore: added ${added.join(', ')}`
+      : '.gitignore: already lists the recommended entries — left unchanged',
+  );
 }
 
 function extractCwd(argv) {
