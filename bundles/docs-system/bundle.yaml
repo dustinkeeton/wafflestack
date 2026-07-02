@@ -1,8 +1,142 @@
 name: docs-system
-description: Two-audience documentation system — machine-readable AGENTS.md docs and human decision/status/architecture docs.
+description: Two-audience documentation system — machine-readable agent docs and human docs. The doc-set shapes (which files, which sections) are project config; the defaults describe a src/-based application (root + per-feature AGENTS.md; DECISIONS/STATUS/ARCHITECTURE.md).
 agents: [docs-agent, docs-human]
 skills: [docs-agent, docs-human]
 config:
   project.longName:
     required: true
     description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+  docs.machineDocSet:
+    required: false
+    default: a root `AGENTS.md` plus per-feature `src/<feature>/AGENTS.md` files
+    description: >-
+      One-line phrase naming the machine-doc file set, used wherever prose refers
+      to "the machine docs" (agent responsibilities, orchestrator prompts).
+  docs.machineDocSpec:
+    required: false
+    description: >-
+      Verbatim body of the docs-agent skill's "Documentation Files" + "Format
+      Rules" sections — which machine-doc files exist and the format each must
+      follow. Override for projects whose machine docs aren't shaped like a
+      src/-based application (e.g. a single root registry).
+    default: |-
+      ## Documentation Files
+
+      ### `AGENTS.md` (root)
+
+      Primary entry point for agents. Contains:
+
+      - Project purpose (1-2 sentences)
+      - Module registry: table of modules with path, purpose, public API summary
+      - Dependency graph (text-based DAG)
+      - Settings/configuration schema summary with types and defaults
+      - Command registry: table of commands / entry points with descriptions
+      - Build/test commands
+
+      ### `src/<feature>/AGENTS.md`
+
+      Per-feature docs:
+
+      - Feature purpose (1 sentence)
+      - Public API: exported functions/classes with full type signatures
+      - Internal architecture: file-by-file descriptions
+      - Data flow: input → processing → output
+      - Configuration: relevant settings keys with types
+      - Error states and handling
+
+      ## Format Rules
+
+      1. Use language-tagged fenced code blocks (e.g. ` ```ts `) for all type signatures and examples
+      2. Use tables for registries and enumerations
+      3. Use `file.ts:42` format for source references (line number after the colon — harnesses render it as a clickable link)
+      4. No markdown emphasis (bold/italic) in structured sections
+      5. Frontmatter with `last-updated` timestamp (YYYY-MM-DD)
+      6. Keep each file under 300 lines — split if larger
+
+      ## Type-signature conventions
+
+      - Show exports as full signatures in the source language, not pseudocode.
+      - Treat the module's re-export surface (e.g. `index.ts`) as the public API — anything not re-exported is internal and belongs under "Internal architecture", not "Public API".
+  docs.humanDocSet:
+    required: false
+    default: "`DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root"
+    description: >-
+      One-line phrase naming the human-doc file set, used wherever prose refers
+      to "the human docs" (agent responsibilities, orchestrator prompts).
+  docs.humanDocSpec:
+    required: false
+    description: >-
+      Verbatim body of the docs-human skill's "Documentation Files" + "Format
+      Rules" sections — which human-doc files exist and what each contains.
+      Override for projects with a different human-doc shape (e.g. a single
+      overview map).
+    default: |-
+      Prioritize:
+
+      - **Decision log** — what was decided, why, and what alternatives were considered
+      - **Status visibility** — what's done, what's in progress, what's blocked
+      - **Change history** — what changed and why, in reverse chronological order (newest on top)
+      - **Plain language** — avoid jargon where possible, explain technical terms
+
+      ## Documentation Files
+
+      ### `DECISIONS.md` (root)
+
+      Decision log in reverse chronological order:
+
+      ```markdown
+      ## YYYY-MM-DD: Decision Title
+
+      **Context**: What situation prompted this decision
+      **Decision**: What was decided
+      **Alternatives considered**: What else was evaluated
+      **Rationale**: Why this option was chosen
+      **Impact**: What this affects
+      ```
+
+      ### `STATUS.md` (root)
+
+      Current project status:
+
+      - Feature completion matrix (feature × status)
+      - Current sprint/focus area
+      - Known issues and blockers
+      - Dependency status (external tools, APIs)
+
+      ### `ARCHITECTURE.md` (root)
+
+      High-level architecture overview for humans:
+
+      - System diagram (ASCII or Mermaid)
+      - Feature descriptions in plain language
+      - How features interact
+      - Configuration overview
+      - Getting started for new contributors
+
+      ## Format Rules
+
+      1. Use headings liberally for scannability
+      2. Lead with the most important information
+      3. Use bullet points over paragraphs
+      4. Include dates on all log entries
+      5. Keep STATUS.md under 100 lines — it's a snapshot, not a history
+  docs.voiceGuardrailSection:
+    required: false
+    default: ""
+    description: >-
+      Optional verbatim guardrail block (own heading included) naming owner-voiced
+      docs the doc writers must never rewrite — drift in them is flagged in the
+      report instead. Empty (default) renders nothing.
+  docs.privacySection:
+    required: false
+    default: ""
+    description: >-
+      Optional verbatim guardrail block (own heading included) for repos where
+      committed docs must not reproduce gitignored/personal data (e.g. a public
+      repo holding private artifacts). Empty (default) renders nothing.
+  docs.architectureSkill:
+    required: false
+    default: codebase-architecture
+    description: >-
+      Name of the skill that defines the project's architecture conventions —
+      cited by the doc writers as the standard they document against.

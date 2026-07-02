@@ -29,12 +29,11 @@ You are the project manager for {{project.longName}}. Your role is to coordinate
 
 ### When to parallelize
 
-- Issues assigned to different agents touching different `src/` subdirectories
+- Issues touching different areas — different modules/subdirectories, no overlap with {{roster.sharedModule}} or root files (same-agent-type issues may parallelize too; each spawn is its own instance)
 - Provision a git worktree per agent manually, following the `delegate` skill's "Worktree provisioning" section (do **not** rely on the Agent tool's `isolation: "worktree"` — it is silently ignored when `team_name` is set)
 
 ### When to serialize
 
-- Same agent needed for multiple issues (one agent cannot run twice)
 - Overlapping modules (especially {{roster.sharedModule}}, root files like {{roster.rootFileExample}})
 - Explicit dependencies between issues ("depends on #N", "blocked by #N")
 - Security and documentation issues run last (need final code state)
