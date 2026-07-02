@@ -32,8 +32,16 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
   }
 
   const notes = [];
+  // Always report which toolkit version the tree was rendered from, so a drift report
+  // says what a repo is sitting on — not just when it happens to skew from the CLI.
+  const rendered = lock.toolkitVersion ?? 'unknown (pre-versioned lock)';
+  notes.push(
+    toolkitVersion
+      ? `rendered by toolkit ${rendered}; installed CLI is ${toolkitVersion}`
+      : `rendered by toolkit ${rendered}`,
+  );
   if (toolkitVersion && lock.toolkitVersion && toolkitVersion !== lock.toolkitVersion) {
-    notes.push(`lock was rendered by toolkit ${lock.toolkitVersion}, installed CLI is ${toolkitVersion} — re-render to update`);
+    notes.push(`version skew — run \`wafflestack upgrade\` to apply migrations and re-render`);
   }
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .wafflestack/extensions/ or config, then re-render');

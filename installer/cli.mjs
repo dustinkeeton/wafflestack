@@ -8,6 +8,7 @@ import { doctor } from './lib/doctor.mjs';
 import { eject, init, installRefs } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
+import { upgrade } from './lib/upgrade.mjs';
 
 const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(toolkitRoot, 'package.json'), 'utf8'));
@@ -46,6 +47,24 @@ try {
       process.exit(result.ok ? 0 : 1);
       break;
     }
+    case 'upgrade': {
+      if (args.length) fail('upgrade takes no refs — it re-renders the current selection, moving it across toolkit versions');
+      // upgrade() logs its narrative (version move, changelog, migrations, render) via `log`.
+      const result = upgrade({ toolkitRoot, cwd, toolkitVersion: pkg.version, log: console.log });
+      for (const w of result.render.warnings) console.warn(`warning: ${w}`);
+      if (!result.render.ok) {
+        for (const e of result.render.errors) console.error(`error: ${e}`);
+        process.exit(1);
+      }
+      for (const dnote of result.doctor?.notes ?? []) console.log(dnote);
+      console.log(
+        result.ok
+          ? `upgrade complete — now on toolkit ${result.toVersion}`
+          : 'upgrade rendered but doctor reports drift — see above',
+      );
+      process.exit(result.ok ? 0 : 1);
+      break;
+    }
     case 'eject': {
       if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH>');
       const { ref, released } = eject({ cwd, item: args[0] });
@@ -79,7 +98,7 @@ try {
           '┣━╋━╋━┫  one batter, every repo',
           '┗━┻━┻━┛',
           '',
-          'usage: wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] [--cwd DIR]',
+          'usage: wafflestack <init|setup|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]',
         ].join('\n'),
       );
   }
