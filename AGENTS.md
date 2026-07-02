@@ -60,11 +60,13 @@ bundle-qualified ref (`code-quality/skills/security-audit`).
 | `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting. |
 | `installer/lib/toolkit.mjs` | Load `toolkit.yaml` + every bundle manifest (agents, skills, `requires`, config, env, setup); scoped required-key check. |
 | `installer/lib/project.mjs` | Load consuming-project config (+ local overlay), valid targets, `harness.*` built-ins, per-target resolver. |
-| `installer/lib/util.mjs` | Shared helpers: sha256, YAML read, deep-merge, dotted lookup, frontmatter parse/stringify, fs writes. |
-| `installer/lib/doctor.mjs` | Diff managed files against the lock; report modified/missing + version-skew note. |
+| `installer/lib/util.mjs` | Shared helpers: sha256, YAML read, deep-merge, dotted lookup, frontmatter parse/stringify, fs writes, semver parse/compare. |
+| `installer/lib/doctor.mjs` | Diff managed files against the lock; always report the rendered `toolkitVersion` + a skew note pointing at `upgrade`. |
 | `installer/lib/eject.mjs` | `eject` (release an item, self-cleaning its `include:`), `installRefs` (persist bundle/item refs to config), `init` (starter config). |
 | `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity. |
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
+| `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships empty. |
+| `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
 
 ```js
 // render.mjs
@@ -109,9 +111,20 @@ export function deepMerge(a, b)                         // → merged (b wins; a
 export function lookupPath(obj, dotted)                // → value | undefined
 export function parseFrontmatter(text)                 // → { data, body }
 export function stringifyFrontmatter(data, body)       // → string
+export function parseVersion(v)                        // → [major, minor, patch] | null  (ignores pre-release suffix)
+export function compareVersions(a, b)                  // → -1 | 0 | 1  (unparseable sorts low)
 
 // doctor.mjs
-export function doctor({ cwd, toolkitVersion })        // → { ok, modified, missing, notes }
+export function doctor({ cwd, toolkitVersion, allowMissing }) // → { ok, modified, missing, notes, allowMissing }  (notes always name the rendered toolkitVersion)
+
+// migrations.mjs
+export const MIGRATIONS                                // → [] of { version, description, run(cwd) }  (ordered, idempotent; ships empty)
+export function applicableMigrations(fromVersion, toVersion, migrations = MIGRATIONS) // → steps in (from, to], ascending
+export function runMigrations({ cwd, fromVersion, toVersion, migrations, log }) // → steps that ran; runs each step.run(cwd) in order
+
+// upgrade.mjs
+export function upgrade({ toolkitRoot, cwd, toolkitVersion, migrations, changelog, log }) // → { ok, status, fromVersion, toVersion, changelogDelta, migrationsRun, render, doctor, notes }
+export function changelogBetween(text, fromVersion, toVersion) // → markdown of `## [X.Y.Z]` sections in (from, to], newest first | null
 
 // eject.mjs
 export function eject({ cwd, item })                   // → { ref, released }  (also strips a matching include: entry)
@@ -129,12 +142,14 @@ export function toolkitInventory(toolkit, version)      // → string
 Import graph (`util.mjs` and `refs.mjs` are pure leaves; `template.mjs` depends only on `yaml`):
 
 ```
-cli.mjs      → render, doctor, eject, validate, setup   (command dispatch)
+cli.mjs      → render, doctor, eject, validate, setup, upgrade   (command dispatch)
 render.mjs   → refs, template, toolkit, project, util
 doctor.mjs   → render, project, util
 eject.mjs    → render, toolkit, refs, project, util
 validate.mjs → toolkit, template, refs, util
 setup.mjs    → toolkit
+upgrade.mjs  → render, doctor, migrations, project, util
+migrations.mjs → util
 toolkit.mjs  → util
 project.mjs  → util
 template.mjs → (yaml)
@@ -146,7 +161,7 @@ util.mjs     → (none)
 
 Bin `wafflestack` → `installer/cli.mjs`. Global flag `--cwd DIR` targets a project dir
 (spliced out before ref parsing; default: process cwd; `cli.mjs:16`, `extractCwd` `cli.mjs:94`).
-Usage: `wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] [--cwd DIR]`.
+Usage: `wafflestack <init|setup|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]`.
 
 | Command | Behavior |
 |---------|----------|
@@ -154,7 +169,8 @@ Usage: `wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] 
 | `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit. `setup.mjs:11` |
 | `install [ref…]` | Persist each ref to config (bundle → `bundles:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `eject.mjs:74` |
 | `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Exit 1 on error. `render.mjs:24` |
-| `doctor` | Diff managed files vs lock; report modified/missing + version-skew note. Exit 1 on drift. `doctor.mjs:11` |
+| `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:23` |
+| `doctor` | Diff managed files vs lock; always report the rendered `toolkitVersion` + a skew note. Exit 1 on drift (`--allow-missing`: only modified files fail). `doctor.mjs:17` |
 | `eject <skills/NAME\|agents/NAME>` | Add to `eject:`, strip any matching `include:` entry, drop the item's files from the lock; files stay in place, now project-owned. `eject.mjs:17` |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter complete, placeholder↔declaration sync, agent-skill/`requires:` refs resolve. Exit 1 on problems. `validate.mjs:9` |
 
