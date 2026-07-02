@@ -1,0 +1,8 @@
+name: docs-system
+description: Two-audience documentation system — machine-readable AGENTS.md docs and human decision/status/architecture docs.
+agents: [docs-agent, docs-human]
+skills: [docs-agent, docs-human]
+config:
+  project.name:
+    required: true
+    description: Project name as used in prose, e.g. "the Synapse Obsidian plugin".

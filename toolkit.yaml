@@ -1,0 +1,9 @@
+name: agent-toolkit
+description: Canonical agent/skill definitions rendered into harness-native files.
+bundles:
+  - docs-system
+  - github-workflow
+  - code-quality
+  - design
+  - obsidian-dev
+  - orchestration
