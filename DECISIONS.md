@@ -9,6 +9,56 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-02: Rename the shipped doctor workflow `wafflestack-doctor.yml` → `waffle-doctor.yml` (#28)
+
+**Context**: v0.6.0 shortened every consumer-facing dot-path to `.waffle.*` but
+deliberately kept three `wafflestack`-named artifacts — the package/CLI name, the npx
+specs, and the shipped `.github/workflows/wafflestack-doctor.yml` workflow (see the 0.6.0
+decision below). The CLI/package name genuinely should stay, but the workflow filename is a
+**consumer-visible rendered artifact** — the one remaining piece that lands in a consuming
+repo still carrying the long prefix — so keeping it left the naming alignment half-done.
+
+**Decision**: Rename the shipped workflow to `.github/workflows/waffle-doctor.yml` and align
+its internal identity (`name: waffle-doctor`, `concurrency.group: waffle-doctor-…`) with the
+filename, **reversing** the 0.6.0 choice to keep the old name. The `wafflestack`
+package/CLI name and the `wafflestack doctor` command the workflow invokes stay — only the
+rendered artifact moves, mirroring how 0.6.0 moved only the consumer's dotfiles. Ship **no
+migration step**: lock-managed consumers get the rename automatically from the frozen-image
+render contract (the prune deletes the old locked path and writes the new one), and the two
+edge cases where an old copy lingers — an **ejected** workflow, or a **pre-lock / untracked**
+render — are files the toolkit does not manage. A one-line manual cleanup (`git rm …
+wafflestack-doctor.yml`) is documented in the changelog for those instead.
+
+**Alternatives considered**:
+
+- **Keep `wafflestack-doctor.yml`** (the 0.6.0 status quo). Rejected — it is the last
+  consumer-visible artifact off the `.waffle` convention; finishing that alignment is the
+  whole point of this change.
+- **Add a `MIGRATIONS` entry that deletes the old file** (modeled on 0.6.0's
+  `migrateLegacyDotfiles`). Rejected — that helper is safe only because it *renames*
+  toolkit-owned files under an `exists(from) && !exists(to)` guard. A workflow cleanup would
+  have to `rm` a path that, in the only cases where it survives a re-render, is
+  **unmanaged**: an ejected copy the consumer now owns (and may have customized) or an
+  untracked pre-lock render. Blindly deleting it would be data loss and directly contradict
+  the just-adopted #25 "refuse to clobber unmanaged files" contract. There is also no stable
+  byte signature to recognize "our old render" (it carried a `{{doctor.toolkitRef}}`
+  substitution). For lock-managed repos a migration is redundant anyway — `upgrade`
+  re-renders and the prune already handles it.
+
+**Rationale**: The rename finishes the v0.6.0 ergonomics work on the one artifact that
+reaches consumers. Leaning on the frozen-image prune instead of a migration keeps the common
+path automatic while honoring #25 — the toolkit never deletes a file it does not own; it
+documents the manual step for the consumer who does.
+
+**Impact**: Breaking for consumers that pin the old filename or `name:` (e.g. a
+branch-protection required check) — called out in the changelog and landing in a minor
+release. Lock-managed repos re-render clean with no action. Ejected / pre-lock repos keep a
+stale `wafflestack-doctor.yml` until they `git rm` it. Touches the shipped workflow, the
+github-workflow `bundle.yaml` manifest + prose (including the `eject:` ref),
+`schema/SETUP.md`, the payload test, and this repo's own `.gitignore`.
+
+---
+
 ## 2026-07-02: Refuse to clobber pre-existing unmanaged files on render (#25)
 
 **Context**: Every render output was written through `writeFileEnsuringDir` — an

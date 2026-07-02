@@ -12,7 +12,7 @@ node_modules/
 # committing it would add always-failing CI to this repo (the lock is gitignored, so doctor
 # would exit 1 on a missing lock) and pushing it needs the `workflow` credential scope.
 # CI for this repo itself is a separate, deferred issue.
-.github/workflows/wafflestack-doctor.yml
+.github/workflows/waffle-doctor.yml
 .waffle.lock.json
 .waffle.local.yaml
 

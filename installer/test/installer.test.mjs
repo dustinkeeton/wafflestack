@@ -664,9 +664,9 @@ describe('files/ payload', () => {
 
 // The real github-workflow bundle ships a doctor CI workflow as a files/ payload (#14).
 // These render THAT actual payload (not a fixture) to prove the shipped artifact is correct.
-describe('github-workflow: wafflestack-doctor CI payload (#14)', () => {
+describe('github-workflow: waffle-doctor CI payload (#14)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
-  const REL = '.github/workflows/wafflestack-doctor.yml';
+  const REL = '.github/workflows/waffle-doctor.yml';
   const REF = `files/${REL}`;
   let cwd;
 
@@ -696,7 +696,7 @@ describe('github-workflow: wafflestack-doctor CI payload (#14)', () => {
     assert.doesNotMatch(wf, /\{\{\s*doctor\.toolkitRef\s*\}\}/);
 
     // (c) GitHub Actions ${{ }} expressions pass through the renderer verbatim
-    assert.match(wf, /group: wafflestack-doctor-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}/);
+    assert.match(wf, /group: waffle-doctor-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}/);
     assert.match(wf, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
 
     // security posture ships intact: 40-char SHA-pinned actions (with a # vX.Y.Z comment),
