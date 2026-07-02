@@ -691,9 +691,12 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
     const wf = read(cwd, REL);
 
-    // (b, default) {{doctor.toolkitRef}} → bundle default; no leftover wafflestack placeholder
+    // (b, default) {{doctor.toolkitRef}} → bundle default; {{doctor.flags}} → empty (its
+    // default), so the invocation is behaviorally unchanged from today. No leftover placeholders.
     assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack doctor/);
     assert.doesNotMatch(wf, /\{\{\s*doctor\.toolkitRef\s*\}\}/);
+    assert.doesNotMatch(wf, /\{\{\s*doctor\.flags\s*\}\}/);
+    assert.doesNotMatch(wf, /doctor --/); // empty flags default adds no flag
 
     // (c) GitHub Actions ${{ }} expressions pass through the renderer verbatim
     assert.match(wf, /group: waffle-doctor-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}/);
@@ -725,6 +728,29 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack#v0\.5\.0 doctor/);
     // ${{ }} expressions remain untouched regardless of the override
     assert.match(wf, /\$\{\{ github\.workflow \}\}/);
+  });
+
+  test('doctor.flags override appends to the doctor invocation and stays managed (--allow-missing)', () => {
+    // Acceptance case for #30: a repo that gitignores some renders sets doctor.flags rather
+    // than ejecting the workflow — the file stays lock-tracked and doctor-clean.
+    writeConfig(
+      `targets: [claude]\ninclude: [${REF}]\n` +
+        'config:\n  doctor:\n    flags: --allow-missing\n',
+    );
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const wf = read(cwd, REL);
+
+    // the flag lands after the doctor subcommand, alongside the default toolkitRef
+    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack doctor --allow-missing/);
+    assert.doesNotMatch(wf, /\{\{\s*doctor\.flags\s*\}\}/);
+    // ${{ }} expressions still pass through untouched
+    assert.match(wf, /\$\{\{ github\.workflow \}\}/);
+
+    // managed: byte-tracked in the lock and doctor round-trips clean (no drift, no eject)
+    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    assert.equal(lock.files[REL], sha256(wf));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
   });
 
   test('rendered workflow is valid YAML with the required GitHub Actions keys', () => {
