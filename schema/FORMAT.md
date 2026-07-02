@@ -152,6 +152,9 @@ but relevant if you ever render from CI.
 - `.wafflestack.lock.json` (generated) — manifest of every rendered file with its hash.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
+  `wafflestack doctor --allow-missing` treats absent managed files as informational (only
+  *modified* files fail) — for use as a CI drift gate in repos that deliberately gitignore
+  some renders; a missing lock still fails, since that means the repo was never rendered.
 
 ## Selecting what renders
 

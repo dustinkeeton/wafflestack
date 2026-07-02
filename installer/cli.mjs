@@ -31,11 +31,18 @@ try {
       break;
     }
     case 'doctor': {
-      const result = doctor({ cwd, toolkitVersion: pkg.version });
+      const allowMissing = extractFlag(args, '--allow-missing');
+      const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing });
       for (const f of result.modified) console.log(`modified: ${f}`);
-      for (const f of result.missing) console.log(`missing:  ${f}`);
+      for (const f of result.missing) console.log(allowMissing ? `missing (tolerated): ${f}` : `missing:  ${f}`);
       for (const n of result.notes) console.log(n);
-      if (result.ok) console.log('all managed files match the lock manifest');
+      if (result.ok) {
+        console.log(
+          result.missing.length
+            ? `all present managed files match the lock manifest (${result.missing.length} absent, tolerated)`
+            : 'all managed files match the lock manifest',
+        );
+      }
       process.exit(result.ok ? 0 : 1);
       break;
     }
@@ -98,6 +105,13 @@ function extractCwd(argv) {
   if (!dir) fail('--cwd requires a directory');
   argv.splice(i, 2);
   return path.resolve(dir);
+}
+
+function extractFlag(argv, name) {
+  const i = argv.indexOf(name);
+  if (i === -1) return false;
+  argv.splice(i, 1);
+  return true;
 }
 
 function fail(msg) {

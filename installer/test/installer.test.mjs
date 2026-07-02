@@ -1,5 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -539,6 +540,94 @@ describe('files/ payload', () => {
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.project\.name/);
+  });
+});
+
+describe('doctor --allow-missing (CI drift gate)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-am-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-am-'));
+    makeFixtureToolkit(toolkitRoot);
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), [
+      'targets: [claude]',
+      'bundles: [demo]',
+      'config:',
+      '  git:',
+      '    botEmail: bot@example.com',
+      '',
+    ].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const SKILL = '.claude/skills/demo-skill/SKILL.md';
+  const AGENT = '.claude/agents/helper.md';
+
+  test('missing managed file: fails without the flag, tolerated (exit ok) with it', () => {
+    assert.equal(render().ok, true);
+    fs.rmSync(path.join(cwd, SKILL));
+
+    const strict = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(strict.ok, false);
+    assert.deepEqual(strict.modified, []);
+    assert.ok(strict.missing.includes(SKILL), JSON.stringify(strict.missing));
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, true, JSON.stringify(lenient));
+    assert.deepEqual(lenient.modified, []);
+    // absent file is still surfaced, informationally — never silently swallowed
+    assert.ok(lenient.missing.includes(SKILL), JSON.stringify(lenient.missing));
+    assert.ok(lenient.notes.some((n) => /tolerated/.test(n)), JSON.stringify(lenient.notes));
+  });
+
+  test('a modified file still fails with --allow-missing', () => {
+    assert.equal(render().ok, true);
+    fs.appendFileSync(path.join(cwd, SKILL), 'local drift\n');
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, false);
+    assert.deepEqual(lenient.modified, [SKILL]);
+  });
+
+  test('modified dominates: a modified file fails even when another is missing', () => {
+    assert.equal(render().ok, true);
+    fs.appendFileSync(path.join(cwd, AGENT), 'drift\n');
+    fs.rmSync(path.join(cwd, SKILL));
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, false);
+    assert.deepEqual(lenient.modified, [AGENT]);
+    assert.ok(lenient.missing.includes(SKILL), JSON.stringify(lenient.missing));
+  });
+
+  test('a missing lock is still an error with --allow-missing (repo never rendered)', () => {
+    // no render → no lock file; the flag must not mask this
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, false);
+    assert.ok(lenient.notes.some((n) => /not found/.test(n)), JSON.stringify(lenient.notes));
+  });
+
+  test('CLI: --allow-missing flips the exit code on an absent render', () => {
+    assert.equal(render().ok, true);
+    fs.rmSync(path.join(cwd, SKILL));
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = (extra) => spawnSync(process.execPath, [cli, 'doctor', ...extra, '--cwd', cwd], { encoding: 'utf8' });
+
+    const strict = run([]);
+    assert.equal(strict.status, 1, strict.stdout + strict.stderr);
+    assert.match(strict.stdout, /missing:.*demo-skill\/SKILL\.md/);
+
+    const lenient = run(['--allow-missing']);
+    assert.equal(lenient.status, 0, lenient.stdout + lenient.stderr);
+    assert.match(lenient.stdout, /missing \(tolerated\):.*demo-skill\/SKILL\.md/);
+    assert.match(lenient.stdout, /tolerated/);
   });
 });
 
