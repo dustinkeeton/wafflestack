@@ -407,6 +407,121 @@ describe('output conflicts and skillsDir', () => {
   });
 });
 
+describe('unmanaged collision guard (#25)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-col-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-col-'));
+    makeFixtureToolkit(toolkitRoot);
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+      'targets: [claude]',
+      'bundles: [demo]',
+      'config:',
+      '  git:',
+      '    botEmail: bot@example.com',
+      '',
+    ].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = (opts = {}) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', ...opts });
+  const SKILL = '.claude/skills/demo-skill/SKILL.md';
+  const AGENT = '.claude/agents/helper.md';
+  const seed = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, rel), content);
+  };
+
+  test('refuses to clobber a pre-existing unmanaged file, leaving the tree untouched', () => {
+    // A hand-written consumer file at a path the render targets, on a repo that never
+    // rendered (no lock) — the exact silent-overwrite case #25 is about.
+    const handwritten = '---\nname: demo-skill\ndescription: mine\n---\n\nMy own content.\n';
+    seed(SKILL, handwritten);
+
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((e) => e.includes(SKILL) && /refusing to overwrite/.test(e) && /--force/.test(e)),
+      JSON.stringify(result.errors),
+    );
+    // the offending file is byte-for-byte untouched...
+    assert.equal(fs.readFileSync(path.join(cwd, SKILL), 'utf8'), handwritten);
+    // ...and nothing else was written: no partial render, no lock stamped.
+    assert.equal(fs.existsSync(path.join(cwd, AGENT)), false, 'no partial render');
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle.lock.json')), false, 'no lock on refusal');
+  });
+
+  test('--force overwrites the unmanaged file and records it in the lock', () => {
+    const handwritten = 'mine\n';
+    seed(SKILL, handwritten);
+
+    const result = render({ force: true });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.notEqual(fs.readFileSync(path.join(cwd, SKILL), 'utf8'), handwritten, 'overwritten by the render');
+    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    assert.ok(SKILL in lock.files, JSON.stringify(lock.files));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('a content-identical pre-existing file is adopted silently, no --force needed', () => {
+    // Learn the exact bytes the toolkit produces, then simulate a fresh (lock-less) repo
+    // that already holds that identical file.
+    assert.equal(render().ok, true);
+    fs.rmSync(path.join(cwd, '.waffle.lock.json')); // drop the lock → files now "unmanaged"
+
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    assert.ok(SKILL in lock.files, 'identical file taken under lock management');
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('a managed file (in the lock) re-renders normally — never a collision', () => {
+    assert.equal(render().ok, true); // establishes the lock
+    // Local edit to a MANAGED file: the frozen-image contract restores it; the collision
+    // guard must not mistake it for an unmanaged pre-existing file.
+    fs.appendFileSync(path.join(cwd, SKILL), 'local drift\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.doesNotMatch(fs.readFileSync(path.join(cwd, SKILL), 'utf8'), /local drift/);
+  });
+
+  test('names every colliding path; --force renders them all', () => {
+    seed(SKILL, 'mine skill\n');
+    seed(AGENT, 'mine agent\n');
+    const refused = render();
+    assert.equal(refused.ok, false);
+    assert.equal(refused.errors.length, 2, JSON.stringify(refused.errors));
+    assert.ok(refused.errors.some((e) => e.includes(SKILL)) && refused.errors.some((e) => e.includes(AGENT)));
+
+    const forced = render({ force: true });
+    assert.equal(forced.ok, true, JSON.stringify(forced.errors));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('CLI: --force is a recognized render/install flag, not mistaken for a ref', () => {
+    // The real CLI resolves the real toolkit, so drive it with an empty selection — it
+    // renders against any toolkit with zero config (same trick the #14/upgrade CLI tests
+    // use). This exercises the real arg parsing: `--force` must be consumed before the
+    // "render takes no refs" guard, and dispatch must exit cleanly.
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+
+    const render = spawnSync(process.execPath, [cli, 'render', '--force', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(render.status, 0, render.stdout + render.stderr);
+    assert.doesNotMatch(render.stderr, /takes no refs/);
+
+    const install = spawnSync(process.execPath, [cli, 'install', '--force', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(install.status, 0, install.stdout + install.stderr);
+  });
+});
+
 describe('files/ payload', () => {
   let toolkitRoot;
   let cwd;

@@ -152,6 +152,9 @@ but relevant if you ever render from CI.
 - `.waffle.lock.json` (generated) — manifest of every rendered file with its hash.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
+  It is also what tells *your* managed files apart from a hand-written file at the same
+  path: `render` refuses to overwrite a pre-existing file that the lock does not track
+  (see *Pre-existing (unmanaged) file collisions* below), unless you pass `--force`.
   `wafflestack doctor --allow-missing` treats absent managed files as informational (only
   *modified* files fail) — for use as a CI drift gate in repos that deliberately gitignore
   some renders; a missing lock still fails, since that means the repo was never rendered.
@@ -215,6 +218,25 @@ Two bundles may define items with the same name — alternative implementations 
 skill interface (e.g. the desktop-plugin vs. browser-app `security-audit`). Enabling both
 in one project is an error: the renderer refuses to render the same output path from two
 bundles instead of silently letting the last one win. Pick one, or `eject` one.
+
+### Pre-existing (unmanaged) file collisions
+
+`render` will not overwrite a file it did not write. A path a render would produce that
+already exists on disk but is **not** tracked by `.waffle.lock.json` — a hand-written
+consumer file, not a prior render of ours — is an **unmanaged collision**: the render fails
+loudly, naming every offending path, and writes nothing. The check runs before any prune or
+write, so a refused render leaves the whole tree untouched. Two escape hatches:
+
+- a **byte-identical** existing file is **adopted silently** — the render is a no-op for it
+  and the next lock simply records it under management, no flag needed;
+- **`--force`** (on `render` or `install`) overwrites a differing file and takes it under
+  management — its previous contents are lost.
+
+Already-managed files (present in the lock) are never collisions: the frozen-image contract
+restores them verbatim on every render, so a locked path is only ever *your* prior render.
+To resolve a refusal, move the named file aside (or fold its content into a
+`.waffle/extensions/` file where the target is an agent/skill) and re-render, or pass
+`--force` once you've decided the toolkit's version should own that path.
 
 ### The `harness.*` namespace
 

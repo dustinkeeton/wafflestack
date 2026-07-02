@@ -94,6 +94,14 @@ Run `wafflestack render`. On error it lists the missing config values — fill t
 re-run until it exits cleanly, then read the warnings it printed (env prerequisites,
 skipped items).
 
+If the render **refuses to overwrite** a pre-existing file, that path already exists in the
+repo and was not written by wafflestack (a hand-written file whose path a bundle also
+produces). Nothing is written on a refusal. Inspect each named file: if you want to keep
+it, move it aside — or, for an agent/skill target, fold its additions into a
+`.waffle/extensions/{agents,skills}/<name>.md` file — then re-render; if the toolkit's
+version should win, re-run with `--force` (`wafflestack render --force`). A file whose
+content is already byte-identical to the render is adopted silently, no flag needed.
+
 ## 6. Version control
 
 - **Commit**: `.waffle.yaml`, the rendered output (`.claude/`, `.codex/`,

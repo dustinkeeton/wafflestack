@@ -25,7 +25,7 @@ import {
  * Frozen-image contract: outputs are regenerated verbatim; managed files from the
  * previous lock that are no longer rendered get deleted; a fresh lock is written.
  */
-export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {} }) {
+export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false, log = () => {} }) {
   const warnings = [];
   // Carry a legacy `.wafflestack.*` repo forward before reading anything: rename the
   // consumer dot-paths to `.waffle.*` so config load and the frozen-image lock below see
@@ -101,10 +101,40 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
   // one error per target — collapse to a distinct set.
   if (errors.length) return { ok: false, errors: [...new Set(errors)], warnings };
 
-  // Frozen image: remove previously managed files that this render no longer produces.
+  // Frozen image: reconcile against the previous lock before touching the tree.
   const oldLock = readLock(cwd);
+  const managed = oldLock?.files ?? {};
+
+  // Refuse to clobber a pre-existing UNMANAGED file: a path this render would produce that
+  // already exists on disk but was not tracked by the previous lock — i.e. the consumer's
+  // own hand-written file, not a prior render of ours. A byte-identical file is adopted
+  // silently (the write is a no-op and the new lock records it either way); only a genuine
+  // content difference is a collision. `--force` overwrites. Checked before any write or
+  // prune, so a refusal leaves the whole tree untouched — same fail-loud spirit as the
+  // cross-bundle `emit()` conflict above.
+  if (!force) {
+    const collisions = [];
+    for (const [rel, content] of outputs) {
+      if (rel in managed) continue; // already ours — re-render/restore is expected
+      const abs = path.join(cwd, rel);
+      if (!exists(abs)) continue; // fresh path — nothing to clobber
+      if (sha256(fs.readFileSync(abs)) === sha256(content)) continue; // identical — silent adopt
+      collisions.push(rel);
+    }
+    if (collisions.length) {
+      const errs = collisions
+        .sort((a, b) => a.localeCompare(b))
+        .map(
+          (rel) =>
+            `refusing to overwrite ${rel}: a pre-existing file not tracked by ${LOCK_FILE} — back it up or remove it and re-render, or pass \`--force\` to overwrite it`,
+        );
+      return { ok: false, errors: errs, warnings };
+    }
+  }
+
+  // Remove previously managed files that this render no longer produces.
   const removed = [];
-  for (const rel of Object.keys(oldLock?.files ?? {})) {
+  for (const rel of Object.keys(managed)) {
     if (!outputs.has(rel) && exists(path.join(cwd, rel))) {
       fs.rmSync(path.join(cwd, rel));
       removed.push(rel);

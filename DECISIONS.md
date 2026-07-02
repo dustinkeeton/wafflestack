@@ -9,6 +9,54 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-02: Refuse to clobber pre-existing unmanaged files on render (#25)
+
+**Context**: Every render output was written through `writeFileEnsuringDir` — an
+unconditional `writeFileSync` with no existence check. Two collision classes were already
+guarded: two enabled bundles emitting the same rel path fail loudly (`emit()`), and files
+tracked in `.waffle.lock.json` are drift-checked by `doctor`. Neither protected a
+**pre-existing, unmanaged** consumer file: a repo with a hand-written
+`.claude/skills/issue/SKILL.md` running its first render with a bundle that produces that
+same path had the file silently overwritten. Render targets are namespaced only by
+kind-dir + item name, so such name collisions are entirely plausible.
+
+**Decision**: Detect the untracked-collision case at the render chokepoint and **fail loud
+by default**. A target path is an unmanaged collision when it (1) is in the new render
+outputs, (2) exists on disk, and (3) is absent from the previous lock's `files` (so it is
+the consumer's own file, not a prior render of ours). On detection, render returns
+non-zero naming every offending path — in the style of the `emit()` conflict message — and
+**writes nothing**: the check runs before any prune or write, so the tree is left
+untouched. Two overrides: a **byte-identical** file (hash match) is **adopted silently**
+(the write is a no-op and the new lock records it either way), and a `--force` flag on
+`render`/`install` overwrites the differing file and takes it under management.
+
+**Alternatives considered**:
+
+- **Per-toolkit namespacing** of output paths (the alternative from the original report;
+  see [gstack](https://github.com/garrytan/gstack) for prior art). Rejected as the primary
+  fix: harnesses dictate the agent/skill layout (`.claude/skills/<name>/`), so a
+  per-toolkit prefix cannot apply to agents or skills — it is viable only for `files/`
+  payloads, leaving the most likely collisions (skills) unprotected. Fail-loud covers all
+  three payload types uniformly.
+- **Silent last-write-wins** (status quo). Rejected — it is exactly the data-loss bug.
+- **An interactive prompt.** Rejected — the CLI is non-interactive and agent-driven; a
+  flag plus a clear error fits the existing `doctor --allow-missing` / `emit()` idiom.
+
+**Rationale**: A consumer's own file is theirs; overwriting it without consent is data
+loss. Fail-loud + `--force` mirrors the existing conflict-handling style and is uniform
+across agents, skills, and files. Silent adopt for identical content keeps the common
+"already rendered, lost the lock" case frictionless.
+
+**Impact**: A first render against a repo with a conflicting unmanaged file now exits
+non-zero and leaves the file untouched; `--force` (on `render` or `install`) overwrites and
+records it in the lock; a content-identical file is adopted with no flag. Managed-file
+re-render (the frozen-image restore) is unchanged — locked paths are never treated as
+collisions. `upgrade` re-renders without `--force`, so it inherits the same guard (safe by
+default for the rare newly-colliding path). Lives in `renderProject`
+(`installer/lib/render.mjs`); the flag is parsed in `installer/cli.mjs`.
+
+---
+
 ## 2026-07-02: Shorten consumer dotfiles `.wafflestack.*` → `.waffle.*` (v0.6.0)
 
 **Context**: Every consumer-facing dot-path carried the full project name —
