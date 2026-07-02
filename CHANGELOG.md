@@ -29,7 +29,7 @@ below that fall in between, runs any registered migrations in order, then re-ren
 runs `doctor`. A plain re-render (`… render`) still works for patch/minor moves; `upgrade`
 is what you reach for across a breaking one.
 
-## [Unreleased]
+## [0.6.0] - 2026-07-02
 
 ### Consumer impact
 - **Breaking, but automatic — consumer dotfiles renamed `.wafflestack.*` → `.waffle.*`.**
@@ -37,7 +37,8 @@ is what you reach for across a breaking one.
   on the next `render`/`upgrade`; the legacy `.wafflestack.*` names keep working (with a
   deprecation note) until then. Update your `.gitignore` entries afterwards
   (`.wafflestack.local.yaml` → `.waffle.local.yaml`) — the CLI does not edit `.gitignore`.
-  The new `upgrade` command and this changelog are otherwise additive.
+  Everything else in this release (upgrade command, per-item install, `files/` payloads,
+  doctor CI workflow) is additive.
 
 ### Added
 - `wafflestack upgrade`: compares the lock's `toolkitVersion` to the invoked toolkit,
@@ -52,6 +53,23 @@ is what you reach for across a breaking one.
   `.wafflestack.*` file with a deprecation note when the `.waffle.*` name is absent.
 - `CHANGELOG.md` (this file), wired into `upgrade` and the `files` allow-list so it ships
   in the package.
+- Per-item install: `wafflestack install <ref…>` adds a single skill/agent (or a whole
+  bundle) by ref — `skills/<name>`, `agents/<name>`, or bundle-qualified
+  `<bundle>/skills/<name>` — with dependencies resolved transitively (agent `skills:`
+  frontmatter plus bundle `requires:`) and the selection persisted in config so later
+  renders stay deterministic.
+- `files/` bundle payload: bundles can ship arbitrary repo-relative files (CI workflows,
+  scripts, config) authored under `bundles/<bundle>/files/…`, rendered verbatim with the
+  same `{{key}}` substitution, lock tracking, doctor drift detection, and eject support as
+  agents and skills. GitHub Actions `${{ … }}` expressions pass through untouched.
+- `doctor --allow-missing`: absent managed files are reported informationally instead of
+  failing, so CI checkouts that deliberately gitignore some renders can still gate on
+  drift. Modified files still fail, as does a missing lock.
+- Installable `wafflestack-doctor` CI workflow (github-workflow bundle):
+  `.github/workflows/wafflestack-doctor.yml` renders into a consuming repo and runs
+  `wafflestack doctor` on push/PR; `doctor.toolkitRef` config pins the toolkit release it
+  runs.
+- Apache 2.0 license.
 
 ### Changed
 - Consumer dot-paths are now `.waffle.yaml`, `.waffle.local.yaml`, `.waffle.lock.json`, and
