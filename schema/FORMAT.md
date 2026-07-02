@@ -53,9 +53,16 @@ setup: |-                            # optional, agent-facing install notes
 Only keys **declared** in `config:` are substituted in this bundle's content — any other
 `{{...}}`-looking text (bash, GraphQL, JS templates) passes through untouched.
 
+A key may also declare an optional **`pattern:`** — a regex the fully-resolved value
+(after nested substitution) must fully match at render, or the render fails like a missing
+required key. Use it for values spliced into a structured context — a workflow `if:`
+expression, a YAML scalar, a shell word — where an unescaped quote, newline, or `${{ }}`
+would corrupt or subvert the output: textual substitution can't escape for a context it
+doesn't know, so the pattern makes a bad value loud at render instead of silently wrong.
+
 `requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
 skill telling the reader to "see the `github-project-management` skill"). Each key is an
-item ref (`skills/<name>` / `agents/<name>`) defined in this bundle; each value is a list
+item ref (`skills/<name>` / `agents/<name>` / `files/<repo-relative-path>`) defined in this bundle; each value is a list
 of item refs it depends on, resolved against the **whole toolkit** (prefer this bundle,
 then a unique toolkit-wide match; qualify as `<bundle>/skills/<name>` when the name is
 ambiguous). When that item is installed individually, its `requires:` closure is pulled in

@@ -88,7 +88,9 @@ Walk the config schema of every enabled bundle (from the inventory):
 - **Services**: the inventory's per-bundle *setup notes* describe service-side
   prerequisites (CLI auth, labels, boards, webhooks). Verify each one. Anything that
   creates or modifies shared external state — labels on a shared repo, a project board —
-  needs the user's explicit go-ahead first.
+  needs the user's explicit go-ahead first. This includes repository **secrets** some
+  workflows need (e.g. `ANTHROPIC_API_KEY` for the github-workflow label hook) — set them
+  only with the user's explicit go-ahead (`gh secret set …`).
 
 ## 5. Render
 

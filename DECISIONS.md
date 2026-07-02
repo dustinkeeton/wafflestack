@@ -9,6 +9,85 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-02: Ship the label-event hook as a github-workflow prefab (workflow + skill) (#27)
+
+**Context**: Consumers want a GitHub label applied to an issue to immediately trigger an
+automated harness action — the concrete driver is obsidian-synapse#379, which wants an
+`on: labeled` workflow that dispatches the Claude harness with the issue context. Every
+consumer had to hand-roll that workflow *and* all of its security gating. WaffleStack shipped
+nothing label-reactive: the only prefab workflow was the doctor CI, and "labels" appeared only
+as issue taxonomy in the `issue` skill.
+
+**Decision**: Extend `github-workflow` with one `files/` payload
+(`.github/workflows/waffle-label-hook.yml`), one skill (`label-hook`), three `labelHook.*`
+config keys, and a `requires:` block. Two label→action mappings ship in v1 — **enrich** and
+**implement** — as separate GHA jobs with per-job least-privilege permissions. Trigger is
+`issues: [labeled]` only. The dispatched harness receives a **constant action token + numeric
+issue id**; the raw label string never reaches a shell, a prompt, or an env var — the label
+appears only in each job's exact-match `if:` gate. The action is SHA-pinned
+(`anthropics/claude-code-action@6c0083bb… # v1.0.162`). Because the action's *agent mode*
+(direct `prompt:`) does **not** expand slash commands — that path is reserved for @mention/tag
+mode's multi-block SDK message — the dispatch prompt names the skill in natural language
+(`Execute the label-hook skill …: action "enrich", issue #N`) rather than `/label-hook …`,
+preserving the constant-token contract without depending on slash expansion.
+
+An adversarial review then flagged a second plane: the trigger-label and `claudeArgs` config
+values are spliced into structured contexts (the workflow `if:` gate and a double-quoted YAML
+scalar), where a quote, newline, or `${{ }}` in the value could break YAML, inject a sibling
+`with:` key, subvert the allowlist gate, or exfiltrate a secret via GHA expansion — all with
+no render-time error. Fix chosen: a general, opt-in **render-time `pattern:`** on config keys
+(the resolved value must fully match, enforced at every substitution site), applied to the
+three `labelHook.*` keys. Validation, not escaping: textual substitution can't know its target
+context (YAML scalar vs. `if:` expression vs. shell word), so context-correct escaping is
+impossible in general — a pattern instead makes a bad value fail the render loudly rather than
+silently corrupt the gate. As defense in depth the core prompt-injection guardrails are also
+inlined into the dispatch prompt (a floor even if a consumer forgets to commit the skill).
+
+**Alternatives considered**:
+
+- **A standalone/sibling bundle.** Rejected — the hook is git/GitHub-native and reuses the
+  `issue` + `git-workflow` skills; a sibling bundle would duplicate the gh-auth/setup surface.
+  Extending github-workflow keeps those deps one `requires:` edge away.
+- **Default `labelHook.enrichLabel` to `issue.inferenceLabel`** (couple the hook to the
+  lifecycle label). Rejected as the default — applying the enrich label spends API budget
+  immediately, while the lifecycle label merely queues; silently coupling them would make
+  tagging an issue "Needs Inference" cost money. Documented as an opt-in (set both equal).
+- **`pull_request: [labeled]` in v1.** Deferred — labeled fork PRs raise the
+  fork-code-with-secrets question, and the primitive that would carry it (`pull_request_target`)
+  is banned by our security posture. `issues: [labeled]` runs the default-branch workflow with
+  no fork-code risk; PR support can arrive later, explicitly scoped.
+- **A collaborator-permission API gate** (verify the sender's write/triage before dispatch).
+  Rejected as redundant — GitHub already restricts label application to users with triage+
+  permission, and the `sender.type != 'Bot'` check adds loop defense on top; an API round-trip
+  would re-check what the label ACL already enforced.
+- **A configurable action ref/version config key.** Rejected — the SHA pin *is* the security
+  posture; a version knob invites drift to an unvetted ref. Bumps go through a reviewed toolkit
+  update or `eject`, like any other pinned action.
+- **A dedicated agent payload.** Deferred — the skill delegates to existing skills; a bespoke
+  agent adds a roster surface without new v1 capability.
+
+**Rationale**: A vetted, bolt-on primitive beats every consumer reinventing the workflow and
+its gating. The parts that are easy to get wrong by hand — label allowlist, human-sender check,
+per-job least privilege, SHA pins, audit comment, no event-controlled string in shell/prompt,
+and prompt-injection guardrails in the skill — are exactly the parts that belong in the shipped
+artifact.
+
+**Impact**: The toolkit's **first `requires:` entry keyed by a `files/` payload** — a per-item
+install of just the workflow (`include: [files/.github/workflows/waffle-label-hook.yml]`) pulls
+the `label-hook` → `issue` + `git-workflow` skill closure. Introduces a new consumer-prerequisite
+class: a **repo secret** (`ANTHROPIC_API_KEY`); the hook is inert until the trigger labels and
+the secret exist, and **each dispatch spends real API budget**. Adds three optional `labelHook.*`
+keys and the `label-hook` skill (17th skill), with per-job permissions the workflow documents
+(`issues: write` on both jobs; `contents: write` + `pull-requests: write` on implement). Touches
+the github-workflow `bundle.yaml`, the new workflow + skill, the payload tests, and this repo's
+`.gitignore` (self-render stays gitignored). The security hardening also adds a general,
+reusable capability — optional `pattern:` value validation on any bundle config key (threaded
+through `template.mjs`/`render.mjs`, linted by `validate.mjs`, documented in `schema/FORMAT.md`)
+— which any future bundle can adopt for values that reach a structured context. Additive and
+minor — no migration.
+
+---
+
 ## 2026-07-02: Offer opt-in `.gitignore` entries during setup/install (#29)
 
 **Context**: The CLI deliberately never edited `.gitignore` — a consumer owns it — and

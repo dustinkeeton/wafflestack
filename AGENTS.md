@@ -36,11 +36,11 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 | Bundle | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
 | `docs-system` | `bundles/docs-system/` | docs-agent, docs-human | docs-agent, docs-human | Two-audience doc system; doc-set shapes (`docs.machineDocSet/Spec`, `docs.humanDocSet/Spec`) are config. |
-| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, clean-up | Git / GitHub issue / Projects v2 workflow. Only bundle with a `setup:` block (gh auth, labels, board, git identity). |
+| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, clean-up, label-hook | Git / GitHub issue / Projects v2 workflow. Ships two prefab CI workflows as `files/` payloads (`waffle-doctor`; `waffle-label-hook` — the label→harness hook wired to `label-hook` via the toolkit's only `files/`-keyed `requires:`). Only bundle with a `setup:` block (gh auth, labels, board, git identity). |
 | `code-quality` | `bundles/code-quality/` | architect, security | tdd, security-audit, codebase-architecture | Code-quality specialists (desktop-plugin `security-audit`). Pairs with `obsidian-dev`. |
 | `design` | `bundles/design/` | designer | (none) | Brand SVG/icon/banner asset production with a render-verify loop. |
 | `obsidian-dev` | `bundles/obsidian-dev/` | plugin-architect | obsidian-plugin-dev | Obsidian plugin development (API, manifest, esbuild). |
-| `orchestration` | `bundles/orchestration/` | project-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config. Only bundle with `requires:` (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |
+| `orchestration` | `bundles/orchestration/` | project-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config. Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |
 | `engineering-team` | `bundles/engineering-team/` | lead-developer, data-engineer, qa-engineer, devops-engineer, product-manager, ux-designer, security-engineer | security-audit | Product-eng roster (browser-app `security-audit`). Slots into `orchestration`'s roster. |
 | `expo-dev` | `bundles/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS). |
 
@@ -57,13 +57,13 @@ bundle-qualified ref (`code-quality/skills/security-audit`).
 |--------|---------|
 | `installer/lib/render.mjs` | Render pipeline: compute selection, regenerate all outputs verbatim, delete stale managed files, write lock. Output-conflict + scoped required-config + env-prereq checks. |
 | `installer/lib/refs.mjs` | Ref grammar, toolkit-wide resolution, and transitive cross-bundle dependency closure + render-selection computation. Pure leaf (no local imports). Shared by install / render / validate. |
-| `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting. |
+| `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting, optional per-key `pattern:` value validation. |
 | `installer/lib/toolkit.mjs` | Load `toolkit.yaml` + every bundle manifest (agents, skills, `requires`, config, env, setup); scoped required-key check. |
 | `installer/lib/project.mjs` | Load consuming-project config (+ local overlay), valid targets, `harness.*` built-ins, per-target resolver; legacy-name read fallback + in-place `.wafflestack.*`→`.waffle.*` dotfile migration. |
 | `installer/lib/util.mjs` | Shared helpers: sha256, YAML read, deep-merge, dotted lookup, frontmatter parse/stringify, fs writes, semver parse/compare. |
 | `installer/lib/doctor.mjs` | Diff managed files against the lock; always report the rendered `toolkitVersion` + a skew note pointing at `upgrade`. |
 | `installer/lib/eject.mjs` | `eject` (release an item, self-cleaning its `include:`), `installRefs` (persist bundle/item refs to config), `init` (starter config). |
-| `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity. |
+| `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity, config `pattern:` compilability + default-match. |
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` dotfile rename. |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
@@ -87,9 +87,10 @@ export function includeRefMatches(includeRef, kind, name) // → boolean
 export function computeSelection(toolkit, project)  // → { items:[{bundleName,bundle,kind,item}], closures, errors }
 
 // template.mjs   (PLACEHOLDER = /\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g; MAX_SUBSTITUTION_DEPTH = 4)
-export function substitute(text, resolve, declared, errors, context) // → string
+export function substitute(text, resolve, declared, errors, context, patterns) // → string (patterns: Map<key,RegExp> render-time value validation)
 export function formatValue(v)                         // → string (string[] join ", "; else YAML block)
 export function placeholderKeys(text)                  // → Set<string>
+export function compilePattern(pattern)                // → RegExp (full-match ^(?:…)$; compiles a config key's pattern:)
 
 // toolkit.mjs
 export function loadToolkit(rootDir)                   // → { name, description, bundles: Map<name, bundle> }  (bundle gains .requires)
@@ -228,6 +229,10 @@ rendered = union(items of enabled bundles:) ∪ closure(each include: item) − 
   (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:11`; `expandNested`, `template.mjs:44`): a committed
   value can reference a key kept in the gitignored local overlay. Canonical text surviving the
   first pass is never re-scanned; unresolvable nested placeholders pass through.
+- Value patterns — a config key may declare `pattern:` (a regex); the fully-resolved value must
+  fully match at render or the render fails, like a missing required key (`compilePattern`
+  `template.mjs`, enforced in `substitute`, linted by `validate`). For values spliced into
+  structured contexts (a workflow `if:`, a YAML scalar) where context-correct escaping is impossible.
 - Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered
   item inside `<!-- BEGIN project extension: … -->` / `<!-- END project extension -->` markers
   (`appendExtension`, `render.mjs:191`). Agents: appended to body; skills: appended to

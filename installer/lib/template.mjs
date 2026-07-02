@@ -33,7 +33,7 @@ const MAX_SUBSTITUTION_DEPTH = 4;
  * placeholders pass through silently: only the canonical source text is policed for
  * missing values, values are trusted as authored.
  */
-export function substitute(text, resolve, declared, errors, context) {
+export function substitute(text, resolve, declared, errors, context, patterns) {
   return text.replace(PLACEHOLDER, (match, key) => {
     if (!declared.has(key) && !key.startsWith('harness.')) return match;
     const v = resolve(key);
@@ -41,7 +41,18 @@ export function substitute(text, resolve, declared, errors, context) {
       errors.push(`${context}: missing config value for {{${key}}}`);
       return match;
     }
-    return expandNested(formatValue(v), resolve, 1);
+    const value = expandNested(formatValue(v), resolve, 1);
+    // Optional render-time value validation: a declared `pattern:` must fully match the
+    // fully-expanded value that actually lands in the output. Textual substitution cannot
+    // know its target context (a YAML scalar, a workflow `if:` expression, a shell word),
+    // so escaping is impossible in general — a pattern makes an unsafe value fail loudly at
+    // render instead of silently corrupting the output. `patterns` is a Map<key, RegExp>.
+    const re = patterns?.get(key);
+    if (re && !re.test(value)) {
+      errors.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
+      return match;
+    }
+    return value;
   });
 }
 
@@ -64,4 +75,14 @@ export function placeholderKeys(text) {
   const keys = new Set();
   for (const m of text.matchAll(PLACEHOLDER)) keys.add(m[1]);
   return keys;
+}
+
+/**
+ * Compile a config key's `pattern:` into a full-match RegExp. Wrapping in `^(?:…)$`
+ * makes "the value must fully match" hold regardless of whether the author anchored the
+ * pattern, and neutralizes top-level alternation (`a|b` → `^(?:a|b)$`, not `^a` OR `b$`).
+ * Throws on an invalid regex — callers (validate, render) decide how to surface that.
+ */
+export function compilePattern(pattern) {
+  return new RegExp(`^(?:${pattern})$`);
 }

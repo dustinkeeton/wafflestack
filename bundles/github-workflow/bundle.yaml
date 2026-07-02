@@ -1,8 +1,19 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
-skills: [git-workflow, issue, github-project-management, clean-up]
+skills: [git-workflow, issue, github-project-management, clean-up, label-hook]
 files:
   - .github/workflows/waffle-doctor.yml
+  - .github/workflows/waffle-label-hook.yml
+# Per-item dependency edges: installing a keyed item pulls its listed refs into the
+# render closure. The label-hook workflow needs its companion skill, which in turn
+# needs the issue + git-workflow skills it delegates to — so a per-item install of
+# just the workflow renders the whole chain.
+requires:
+  skills/label-hook:
+    - skills/issue
+    - skills/git-workflow
+  files/.github/workflows/waffle-label-hook.yml:
+    - skills/label-hook
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
@@ -20,6 +31,33 @@ setup: |-
   Pushing this file needs the `workflow` credential
   scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
+
+  **Label hook workflow.** This bundle also ships `.github/workflows/waffle-label-hook.yml`:
+  applying the label in `labelHook.enrichLabel` (default `waffle:enrich`) to an issue
+  dispatches the Claude Code GitHub Action to enrich it in place; the label in
+  `labelHook.implementLabel` (default `waffle:implement`) dispatches an implement run that
+  ends in a PR. Every dispatch calls the Anthropic API — **it spends real money** — so the
+  hook stays inert until you complete the opt-ins: (1) create the trigger labels, e.g.
+    gh label create "waffle:enrich"    --color 5319E7 --description "Dispatch the CI harness to enrich this issue"
+    gh label create "waffle:implement" --color 1D76DB --description "Dispatch the CI harness to implement this issue and open a PR"
+  (2) set the API key secret with the user's go-ahead: `gh secret set ANTHROPIC_API_KEY`;
+  (3) commit the rendered `.claude/skills/` (the dispatched harness reads the committed
+  `label-hook` skill — the hook needs the `claude` target and does not work in repos that
+  gitignore their render); (4) for implement runs, enable "Allow GitHub Actions to create
+  and approve pull requests" in the repo's Actions settings. Only humans with triage
+  permission can trigger it (bot-applied labels are ignored) — **never auto-apply the
+  trigger labels from issue templates/forms**, which would let any issue author dispatch a
+  run: a template-applied label is attributed to the human author and passes the bot gate.
+  That is the single most important operational control. Also enable branch protection on
+  the default branch — the implement job holds `contents: write`, so protection is the
+  backstop that stops a prompt-injected run from pushing straight to a protected branch.
+  Mind the spend: it scales with labeling volume — concurrency is per-issue with no
+  repo-wide cap, and a re-label queues behind the active run rather than cancelling it, so
+  every re-label is another paid dispatch. Note that PRs opened by the implement action with
+  the default `GITHUB_TOKEN` do not trigger the repo's own `pull_request` CI (a GitHub
+  limitation — close/reopen the PR, or use an app token). Pushing the workflow file needs the
+  `workflow` credential scope. `eject: [files/.github/workflows/waffle-label-hook.yml]` opts
+  a repo out.
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
@@ -137,3 +175,43 @@ config:
       `--allow-missing` so a repo that deliberately gitignores a subset of its renders keeps
       the workflow managed instead of ejecting it: only modified files fail the check, absent
       ones are tolerated (a missing lock still fails). Empty by default.
+  labelHook.enrichLabel:
+    required: false
+    default: "waffle:enrich"
+    pattern: '^(?!.*\$\{\{)[^''"\r\n]*$'
+    description: >-
+      Trigger label that makes the label-hook CI workflow
+      (.github/workflows/waffle-label-hook.yml) dispatch the harness to enrich the
+      labeled issue in place (the issue skill's enrich mode). Rendered verbatim into the
+      workflow's job gate, so it must not contain quotes, newlines, or `${{` — enforced at
+      render by the pattern above, so a bad value fails the render loudly instead of
+      silently bricking or subverting the gate. GitHub evaluates the gate with `==`, which
+      is case-insensitive; an empty value leaves the enrich job inert (the gate can never
+      match — fail-closed). Deliberately distinct from issue.inferenceLabel: applying THIS
+      label spends API budget immediately, while the lifecycle label just queues. Set both
+      to the same value only if you want every queued issue auto-enriched on labeling.
+  labelHook.implementLabel:
+    required: false
+    default: "waffle:implement"
+    pattern: '^(?!.*\$\{\{)[^''"\r\n]*$'
+    description: >-
+      Trigger label that makes the label-hook CI workflow dispatch the harness to
+      implement the labeled issue end-to-end — branch, commit, and PR per the
+      git-workflow skill. Rendered verbatim into the workflow's job gate, so it must not
+      contain quotes, newlines, or `${{` (enforced at render by the pattern above). GitHub
+      evaluates the gate with `==`, which is case-insensitive; an empty value leaves the
+      implement job inert (fail-closed).
+  labelHook.claudeArgs:
+    required: false
+    default: ""
+    pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
+    description: >-
+      Extra CLI arguments passed to the dispatched harness via the Claude Code
+      action's claude_args input in .github/workflows/waffle-label-hook.yml — e.g.
+      "--max-turns 30" or "--model claude-sonnet-4-5" for cost control. Empty by
+      default. Rendered into a double-quoted YAML scalar, so it must not contain double
+      quotes, backslashes, newlines, or `${{` (enforced at render by the pattern above;
+      single quotes are allowed). In that scalar every backslash starts an escape, so one
+      would either silently corrupt an argument or break the YAML. Security-sensitive: this
+      is an unvalidated passthrough to the harness CLI — flags here can widen the harness's
+      authority, so set only what you understand and trust.

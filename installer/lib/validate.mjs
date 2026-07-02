@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
-import { placeholderKeys } from './template.mjs';
+import { placeholderKeys, compilePattern } from './template.mjs';
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 
@@ -57,6 +57,23 @@ export function validateToolkit(rootDir) {
         }
       }
     }
+    // Optional per-key `pattern:` (render-time value validation). The regex must compile,
+    // and a static string default must satisfy its own pattern (nested/non-string defaults
+    // resolve at render, so skip them here).
+    for (const [key, spec] of Object.entries(bundle.config)) {
+      if (typeof spec?.pattern !== 'string') continue;
+      let re;
+      try {
+        re = compilePattern(spec.pattern);
+      } catch (err) {
+        problems.push(`${ctx}: config key ${key} has an invalid pattern: ${err.message}`);
+        continue;
+      }
+      if (typeof spec.default === 'string' && !spec.default.includes('{{') && !re.test(spec.default)) {
+        problems.push(`${ctx}: config key ${key} default "${spec.default}" does not match its declared pattern`);
+      }
+    }
+
     for (const skill of bundle.skills) {
       const raw = fs.readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf8');
       const { data } = parseFrontmatter(raw);

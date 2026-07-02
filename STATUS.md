@@ -3,9 +3,9 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.5.0 (pre-1.0 — the file contract can still change between minor releases)
+- **Version**: v0.6.0 (pre-1.0 — the file contract can still change between minor releases)
 - **Last updated**: 2026-07-02
-- **Health**: 🟢 tests 53/53 · `validate` clean · `doctor` clean (no render drift)
+- **Health**: 🟢 tests 114/114 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Bundles
@@ -15,7 +15,7 @@ All 8 bundles are shipped and stable. Pick the ones a project needs.
 | Bundle | Status | What you get |
 |--------|--------|--------------|
 | `docs-system` | ✅ Shipped | Two-audience docs: machine (`AGENTS.md`) + human (these files) |
-| `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow (only bundle with a `setup:` step) |
+| `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow + label→harness hook (only bundle with a `setup:` step) |
 | `orchestration` | ✅ Shipped | Multi-agent orchestration: delegate, audit, docs |
 | `code-quality` | ✅ Shipped | Architect + security specialists; TDD, security-audit, architecture skills |
 | `engineering-team` | ✅ Shipped | 7-agent product-engineering roster |
@@ -23,7 +23,7 @@ All 8 bundles are shipped and stable. Pick the ones a project needs.
 | `obsidian-dev` | ✅ Shipped | Obsidian plugin development |
 | `expo-dev` | ✅ Shipped | Expo / React Native app development |
 
-Totals: 16 agents and 16 skills across the 8 bundles.
+Totals: 16 agents and 17 skills across the 8 bundles.
 
 ## Installer & CLI
 
@@ -74,7 +74,7 @@ refs just renders.
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (53 tests)
+npm test                          # installer test suite (114 tests)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock
