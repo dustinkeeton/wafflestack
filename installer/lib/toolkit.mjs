@@ -48,6 +48,7 @@ function loadBundle(name, dir) {
     config,
     declared,
     env: manifest.env ?? {},
+    setup: typeof manifest.setup === 'string' ? manifest.setup : '',
   };
 }
 

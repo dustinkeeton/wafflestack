@@ -7,6 +7,21 @@ Supported harnesses: Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Co
 
 ## Install into a project
 
+**Guided (recommended)** — let your coding agent (Claude Code, Codex, …) do the whole
+setup. Tell it *"set up wafflestack in this repo"* and have it start from:
+
+```bash
+npx github:dustinkeeton/wafflestack setup
+```
+
+`setup` prints an agent playbook plus an inventory of every bundle, config key, env
+prerequisite, and service-side setup note — generated from the installed toolkit
+version. The agent then detects targets and project commands, asks you which bundles
+to enable, fills `.wafflestack.yaml`, verifies externals (e.g. `gh` auth and labels),
+renders, runs `doctor`, and reports what it did.
+
+**Manual:**
+
 ```bash
 cd your-project
 npx github:dustinkeeton/wafflestack init     # writes a starter .wafflestack.yaml
@@ -21,6 +36,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | Command | What it does |
 |---|---|
 | `init` | Write a starter `.wafflestack.yaml` (won't overwrite an existing one). |
+| `setup` | Print the agent-driven install playbook + generated toolkit inventory (see above). |
 | `render` (alias `install`) | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.wafflestack.lock.json`. |
 | `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. |
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`): its rendered files stay put and become project-owned. |
