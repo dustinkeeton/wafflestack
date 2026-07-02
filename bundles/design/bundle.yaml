@@ -1,0 +1,18 @@
+name: design
+description: Brand-consistent visual asset production — hand-written SVG logos, icons, banners, and diagrams with a local render-verification loop.
+agents: [designer]
+config:
+  project.name:
+    required: true
+    description: Bare project name, e.g. "Synapse".
+  project.longName:
+    required: true
+    description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+  brand.assetsDir:
+    required: false
+    default: assets/brand/
+    description: Repo-relative directory holding canonical brand SVG assets.
+  brand.background:
+    required: false
+    default: "#1e1e1e"
+    description: Dark background color that brand marks must remain legible on.

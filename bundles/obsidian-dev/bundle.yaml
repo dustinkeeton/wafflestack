@@ -1,0 +1,20 @@
+name: obsidian-dev
+description: Obsidian plugin development — architecture agent plus a reference skill covering API patterns, manifest configuration, settings, and the esbuild pipeline.
+agents: [plugin-architect]
+skills: [obsidian-plugin-dev]
+config:
+  plugin.id:
+    required: true
+    description: Plugin id as it appears in manifest.json (lowercase, no spaces).
+  plugin.name:
+    required: true
+    description: Human-readable plugin display name.
+  plugin.description:
+    required: true
+    description: One-line plugin description for manifest.json.
+  plugin.author:
+    required: true
+    description: Plugin author name for manifest.json.
+  plugin.classPrefix:
+    required: true
+    description: PascalCase class-name prefix, e.g. Synapse for SynapsePlugin / SynapseSettingTab.
