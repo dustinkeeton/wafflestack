@@ -65,7 +65,16 @@ try {
       break;
     }
     default:
-      fail(`usage: wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] [--cwd DIR]  (v${pkg.version})`);
+      fail(
+        [
+          '┏━┳━┳━┓',
+          `┣━╋━╋━┫  wafflestack v${pkg.version}`,
+          '┣━╋━╋━┫  one batter, every repo',
+          '┗━┻━┻━┛',
+          '',
+          'usage: wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] [--cwd DIR]',
+        ].join('\n'),
+      );
   }
 } catch (err) {
   fail(err.message);

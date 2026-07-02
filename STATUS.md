@@ -38,6 +38,11 @@ refs just renders.
 
 ## Current focus
 
+- **Brand identity (new).** WaffleStack now carries the WaffleWorks-family brand:
+  marks, palette, type, and usage rules live in [`assets/`](assets/README.md)
+  (from the Claude Design project "WaffleWorks brand extension"). Applied to the
+  README, the CLI usage splash, and the GitHub repo (description, topics, social
+  preview card).
 - **Per-item install (new, unreleased).** `wafflestack install <ref…>` can now add
   a single skill or agent — not just a whole bundle — with dependencies resolved
   automatically. Implemented; the next tagged release will be the first to ship it

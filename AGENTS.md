@@ -25,6 +25,7 @@ installer/lib/*.mjs        render pipeline (ES modules)
 installer/test/*.test.mjs  node:test suite
 schema/FORMAT.md           format reference (owner-voiced)
 schema/SETUP.md            agent install playbook (owner-voiced)
+assets/                    brand assets (marks, favicons, social card) + brand guide (assets/README.md)
 ```
 
 ## Bundle registry
@@ -144,7 +145,7 @@ util.mjs     → (none)
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Global flag `--cwd DIR` targets a project dir
-(spliced out before ref parsing; default: process cwd; `cli.mjs:16`, `extractCwd` `cli.mjs:85`).
+(spliced out before ref parsing; default: process cwd; `cli.mjs:16`, `extractCwd` `cli.mjs:94`).
 Usage: `wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] [--cwd DIR]`.
 
 | Command | Behavior |

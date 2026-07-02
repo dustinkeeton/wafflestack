@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WaffleStack social preview — 1280×640</title>
+<!--
+  Source for assets/wafflestack-social.png (GitHub repo social preview).
+  Open in a browser; it draws the card on a canvas and enables the download
+  button (or call window.dl() / read window.chunk(i, size) from a console).
+  Palette + type per assets/README.md.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Outfit:wght@500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #F2ECDE; font-family: system-ui, sans-serif; padding: 24px; }
+  canvas { width: 640px; height: 320px; border: 1px solid rgba(91,43,14,.2); border-radius: 8px; display: block; }
+  button { margin-top: 12px; font: 600 13px 'Outfit', system-ui; padding: 8px 16px; border-radius: 999px; border: none; background: #F08A1D; color: #3A2410; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1280" height="640"></canvas>
+<button id="save" disabled onclick="dl()">download PNG</button>
+<script>
+const INK = '#5B2B0E', GOLDEN = '#F5C752', POCKET = '#DE8127', SYRUP = '#F08A1D',
+      CREAM = '#FFF3DC', COCOA = '#241204', DEEP = '#1A0D03',
+      GOLD_MID = '#E4A93D', GOLD_LOW = '#D0902B', ACCENT = '#E8891C', MUTED = '#C9A87C';
+
+const ctx = document.getElementById('c').getContext('2d');
+
+// The hero mark from assets/wafflestack-hero.svg, redrawn 1:1 in canvas
+// (96-unit viewBox) so the card renders without loading external images.
+function drawHeroMark(x, y, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(size / 96, size / 96);
+  const waffle = (wx, wy, fill, lw) => {
+    ctx.beginPath();
+    ctx.roundRect(wx, wy, 70, 70, 18);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (lw) { ctx.strokeStyle = INK; ctx.lineWidth = lw; ctx.stroke(); }
+  };
+  waffle(22, 22, GOLD_LOW, 6);
+  waffle(14.5, 14.5, GOLD_MID, 6);
+  waffle(7, 11, INK, 0);
+  waffle(7, 7, GOLDEN, 6.5);
+  ctx.fillStyle = POCKET;
+  for (const px of [16.75, 35.5, 54.25]) for (const py of [16.75, 35.5, 54.25]) {
+    ctx.beginPath();
+    ctx.roundRect(px, py, 13, 13, 4.5);
+    ctx.fill();
+  }
+  ctx.translate(-2.21, -2.21);
+  ctx.scale(0.9211, 0.9211);
+  const pour = new Path2D('M34 8 H62 Q72 8 72 16 Q72 24 62 24 H60 V33 Q60 38 55.5 38 Q51 38 51 33 V24 H43 V41 Q43 46 38.5 46 Q34 46 34 41 V24 Q24 24 24 16 Q24 8 34 8 Z');
+  ctx.fillStyle = SYRUP;
+  ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
+  ctx.fill(pour);
+  ctx.lineWidth = 5;
+  ctx.stroke(pour);
+  ctx.beginPath();
+  ctx.arc(38.5, 54, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.restore();
+}
+
+async function draw() {
+  await Promise.all([
+    document.fonts.load('800 90px "Baloo 2"'),
+    document.fonts.load('500 28px "Outfit"'),
+    document.fonts.load('700 22px "JetBrains Mono"'),
+    document.fonts.load('500 23px "JetBrains Mono"'),
+  ]);
+
+  ctx.fillStyle = DEEP;
+  ctx.fillRect(0, 0, 1280, 640);
+
+  const L = 96;
+
+  ctx.letterSpacing = '3px';
+  ctx.font = '700 22px "JetBrains Mono"';
+  ctx.fillStyle = ACCENT;
+  ctx.fillText('AGENTIC DEV TOOLKIT', L, 172);
+  ctx.letterSpacing = '0px';
+
+  ctx.font = '800 90px "Baloo 2"';
+  ctx.fillStyle = CREAM;
+  ctx.fillText('One batter,', L, 270);
+  ctx.fillText('every repo.', L, 364);
+
+  ctx.font = '500 28px "Outfit"';
+  ctx.fillStyle = MUTED;
+  ctx.fillText('Reusable agent & skill definitions, baked into', L, 428);
+  ctx.fillText('.claude/, .codex/ and .agents/ — update-safe.', L, 466);
+
+  const cmd = ' npx github:dustinkeeton/wafflestack setup';
+  ctx.font = '500 23px "JetBrains Mono"';
+  const dollarW = ctx.measureText('$').width;
+  const cmdW = ctx.measureText(cmd).width;
+  const chipW = dollarW + cmdW + 52, chipH = 58, chipY = 500;
+  ctx.beginPath();
+  ctx.roundRect(L, chipY, chipW, chipH, 12);
+  ctx.fillStyle = COCOA;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,243,220,.14)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = ACCENT;
+  ctx.fillText('$', L + 26, chipY + 37);
+  ctx.fillStyle = GOLDEN;
+  ctx.fillText(cmd, L + 26 + dollarW, chipY + 37);
+
+  drawHeroMark(806, 116, 408);
+
+  window.pngDataUrl = document.getElementById('c').toDataURL('image/png');
+  window.pngLen = window.pngDataUrl.length;
+  window.status = 'done';
+  document.getElementById('save').disabled = false;
+
+  // Hook for headless rendering (chrome/brave --headless=new --dump-dom
+  // --virtual-time-budget=20000): grep the base64 out of #png-b64.
+  const dump = document.createElement('pre');
+  dump.id = 'png-b64';
+  dump.hidden = true;
+  dump.textContent = window.pngDataUrl;
+  document.body.appendChild(dump);
+}
+
+window.status = 'drawing';
+window.chunk = (i, size) => window.pngDataUrl.slice(i * size, (i + 1) * size);
+window.dl = () => {
+  const a = document.createElement('a');
+  a.href = window.pngDataUrl;
+  a.download = 'wafflestack-social.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  return 'download triggered';
+};
+draw();
+</script>
+</body>
+</html>
