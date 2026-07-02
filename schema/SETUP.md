@@ -94,8 +94,11 @@ skipped items).
 
 - **Commit**: `.wafflestack.yaml`, the rendered output (`.claude/`, `.codex/`,
   `.agents/`), and `.wafflestack.lock.json`. Teammates then get working agent files
-  without running the installer, and `wafflestack doctor` can catch drift in CI (use
-  `doctor --allow-missing` if the repo gitignores some renders — only modified files fail).
+  without running the installer, and `wafflestack doctor` can catch drift in CI — the
+  `github-workflow` bundle ships an installable `.github/workflows/wafflestack-doctor.yml`
+  that runs it on every push and pull request, so committing the render + lock is what makes
+  that gate meaningful (use `doctor --allow-missing` if the repo gitignores some renders —
+  only modified files fail).
 - **Gitignore**: `.wafflestack.local.yaml`, always. Also the configured worktrees
   directory if a bundle declares one.
 - **Exception — the toolkit repo itself**: when the project *is* the wafflestack source
