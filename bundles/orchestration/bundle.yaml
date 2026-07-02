@@ -2,6 +2,14 @@ name: orchestration
 description: Multi-agent orchestration — a project-manager coordinator and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow bundle (git-workflow, issue, and github-project-management skills are referenced throughout).
 agents: [project-manager, task-planner]
 skills: [delegate, audit, docs]
+# Cross-bundle skill dependencies pulled in when an item is installed on its own.
+requires:
+  skills/delegate:
+    - skills/git-workflow
+    - skills/github-project-management
+  skills/docs:
+    - skills/docs-agent
+    - skills/docs-human
 config:
   project.name:
     required: true

@@ -27,6 +27,7 @@ export function loadProjectConfig(cwd) {
   return {
     targets,
     bundles: cfg.bundles ?? [],
+    include: cfg.include ?? [],
     values: cfg.config ?? {},
     eject: cfg.eject ?? [],
   };

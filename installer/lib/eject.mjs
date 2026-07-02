@@ -2,13 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { exists } from './util.mjs';
-import { readLock, normalizeItemRef } from './render.mjs';
+import { readLock } from './render.mjs';
+import { loadToolkit } from './toolkit.mjs';
+import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches } from './refs.mjs';
 import { CONFIG_FILE, LOCK_FILE } from './project.mjs';
 
 /**
  * Stop managing an item: add it to the config's `eject:` list (comment-preserving
  * YAML edit) and drop its rendered files from the lock so they become project-owned.
- * The files themselves are left in place.
+ * The files themselves are left in place. An item installed via `include:` is also
+ * removed from that list — otherwise the eject filter would leave a dead entry that
+ * silently does nothing.
  */
 export function eject({ cwd, item }) {
   const ref = normalizeItemRef(item);
@@ -19,12 +23,25 @@ export function eject({ cwd, item }) {
 
   const configFile = path.join(cwd, CONFIG_FILE);
   const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
+  let dirty = false;
   const current = doc.get('eject');
   const list = current ? current.toJSON() : [];
   if (!list.includes(ref)) {
     doc.set('eject', [...list, ref]);
-    fs.writeFileSync(configFile, doc.toString());
+    dirty = true;
   }
+  // Drop any matching include entry (qualified or not) so it is not left orphaned.
+  const includeNode = doc.get('include');
+  if (includeNode) {
+    const includeList = includeNode.toJSON();
+    const kept = includeList.filter((r) => !includeRefMatches(r, kind, name));
+    if (kept.length !== includeList.length) {
+      if (kept.length) doc.set('include', kept);
+      else doc.delete('include');
+      dirty = true;
+    }
+  }
+  if (dirty) fs.writeFileSync(configFile, doc.toString());
 
   const lock = readLock(cwd);
   const released = [];
@@ -44,6 +61,71 @@ export function eject({ cwd, item }) {
   return { ref, released };
 }
 
+/**
+ * Additive per-item/bundle install — the mirror of `eject`. Resolves each ref against
+ * the toolkit, then does a comment-preserving YAML edit of `.wafflestack.yaml`: bundle
+ * refs append to `bundles:`, item refs (canonicalized, bundle-qualified only when the
+ * name is ambiguous) append to `include:`. Persistence is required, not cosmetic — the
+ * frozen-image contract would otherwise delete an ad-hoc install on the next render.
+ * Dependency closure is NOT persisted; it is recomputed each render, so this only
+ * records the user's chosen refs. Returns { added, closures } for reporting; the caller
+ * runs a normal full render afterwards.
+ */
+export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
+  const configFile = path.join(cwd, CONFIG_FILE);
+  if (!exists(configFile)) {
+    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack init\` first`);
+  }
+  const toolkit = loadToolkit(toolkitRoot);
+
+  // Resolve everything up front so an unknown/ambiguous ref fails before we persist.
+  const resolved = [];
+  const errors = [];
+  for (const ref of refs) {
+    try {
+      resolved.push(resolveRef(toolkit, ref));
+    } catch (err) {
+      errors.push(err.message);
+    }
+  }
+  if (errors.length) throw new Error(errors.join('\n'));
+
+  const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
+  const bundles = doc.get('bundles') ? doc.get('bundles').toJSON() : [];
+  const include = doc.get('include') ? doc.get('include').toJSON() : [];
+  const added = [];
+  const closures = [];
+  let touchedBundles = false;
+  let touchedInclude = false;
+
+  for (const target of resolved) {
+    if (target.type === 'bundle') {
+      if (!bundles.includes(target.name)) {
+        bundles.push(target.name);
+        added.push(target.name);
+        touchedBundles = true;
+      }
+      log(`installing ${target.name} (bundle)`);
+      continue;
+    }
+    const canonical = target.canonicalRef;
+    if (!include.includes(canonical)) {
+      include.push(canonical);
+      added.push(canonical);
+      touchedInclude = true;
+    }
+    const deps = closureDeps(toolkit, target);
+    closures.push({ ref: canonical, deps });
+    log(`installing ${canonical}${deps.length ? ` (+${deps.length} dep${deps.length === 1 ? '' : 's'}: ${deps.join(', ')})` : ''}`);
+  }
+
+  if (touchedBundles) doc.set('bundles', bundles);
+  if (touchedInclude) doc.set('include', include);
+  if (touchedBundles || touchedInclude) fs.writeFileSync(configFile, doc.toString());
+
+  return { added, closures };
+}
+
 const STARTER_CONFIG = `# wafflestack project config — see the toolkit repo's schema/FORMAT.md
 # Version pin is the npx ref you install with, e.g. npx github:OWNER/wafflestack#v0.1.0
 targets: [claude, codex, agents-dir]
@@ -54,6 +136,11 @@ bundles: []
 #  - design
 #  - obsidian-dev
 #  - orchestration
+# Individual items (dependencies pulled in automatically). Prefer whole bundles;
+# use this for one-off skills/agents. \`wafflestack install skills/issue\` edits it for you.
+include: []
+#  - skills/issue
+#  - agents/project-manager
 config: {}
 #  git:
 #    botEmail: bot@example.com

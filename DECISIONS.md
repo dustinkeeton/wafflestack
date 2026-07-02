@@ -9,6 +9,81 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-02: Install (and depend on) individual skills and agents
+
+**Context**: You could only enable whole bundles. Wanting a single skill — say
+`skills/issue` — meant adopting its bundle's entire roster. And cross-bundle
+dependencies (the `/delegate` skill needs the git-workflow and
+github-project-management skills; the `/docs` skill needs both documentation
+skills) lived in prose only, so a partial install could silently miss them.
+
+**Decision**: Add per-item install. `wafflestack install <ref…>` now accepts:
+
+- a **bundle** name — `github-workflow`
+- a single **item** — `skills/issue`, `agents/project-manager`
+- a **bundle-qualified item** — `code-quality/skills/security-audit` (needed only
+  when a name exists in two bundles)
+
+It resolves each ref, pulls in dependencies automatically (transitively, across
+bundles), persists the choice — bundles into `bundles:`, items into a new
+top-level `include:` list in `.wafflestack.yaml` — and then runs a full render.
+Dependencies come from an agent's frontmatter `skills:` list plus a new optional
+`requires:` map in `bundle.yaml`.
+
+**Alternatives considered**:
+
+- Keep bundle-only install (status quo).
+- Have `install` render *only* the named item (a scoped render). Deferred — the
+  first cut keeps it simple: `install` persists the choice, then re-renders the
+  whole current selection. Scoped render can come later.
+- Persist the resolved dependency list too. Rejected — the closure is recomputed
+  every render, so it can never go stale; only your chosen refs are stored.
+
+**Rationale**: Projects want à-la-carte pieces without swallowing a whole bundle,
+and automatic dependency resolution means a partial install still works.
+Recomputing the closure each render keeps `.wafflestack.yaml` small and honest.
+
+**Impact**:
+
+- New `include:` list in `.wafflestack.yaml`. Rendered set =
+  `union(bundles:) ∪ closure(include:) − eject:`.
+- `eject:` wins over `include:` and now self-cleans a matching entry, so no dead
+  refs are left behind.
+- Required config is scoped to the placeholders the selected items actually use —
+  a one-item install no longer demands config only its unselected siblings need.
+- New module `installer/lib/refs.mjs` (ref grammar + resolution + dependency
+  closure); `validate` now checks agent-skill and `requires:` references.
+
+---
+
+## 2026-07-02: Lenient agent-skill deps, strict `requires:` deps
+
+**Context**: Dependency resolution pulls skills from two sources with different
+guarantees. An agent's frontmatter `skills:` list is a harness *grant-pointer*
+that can name skills living outside this toolkit — for example the `designer`
+agent lists `brand-guidelines`, which the toolkit does not ship. A bundle's
+`requires:` map, by contrast, is authored by the toolkit and should always point
+at a real item.
+
+**Decision**: Resolve the two differently. Names in an agent's `skills:` list
+resolve **leniently** — an unknown or ambiguous name is skipped, not an error.
+Entries in `requires:` resolve **strictly** — a dangling or ambiguous ref fails
+and is treated as a toolkit bug (caught by `validate`).
+
+**Alternatives considered**: Treat both the same — either both strict (installing
+`agents/designer` would then error on the external `brand-guidelines`) or both
+lenient (a typo in a `requires:` entry would silently do nothing).
+
+**Rationale**: The two lists mean different things. An agent's skill grants may
+legitimately reference skills from outside the toolkit; an authored dependency is
+a promise the toolkit must keep.
+
+**Impact**: Installing `agents/designer` pulls its in-toolkit skills
+(`git-workflow`, `issue`) and quietly skips `brand-guidelines`. A broken
+`requires:` entry is a hard `validate` failure.
+
+---
+
 ## 2026-07-01: Dogfood the docs-system and orchestration bundles
 
 **Context**: The repo already rendered the `github-workflow` bundle into itself.

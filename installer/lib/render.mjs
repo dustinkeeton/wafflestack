@@ -6,8 +6,9 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute } from './template.mjs';
+import { substitute, placeholderKeys } from './template.mjs';
 import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
+import { computeSelection } from './refs.mjs';
 import {
   loadProjectConfig,
   makeResolver,
@@ -41,20 +42,28 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
     outputs.set(rel, content);
   };
 
-  const ejected = new Set(project.eject.map(normalizeItemRef));
+  // Selection = union(items of enabled bundles) ∪ closure(include items) − eject.
+  const selection = computeSelection(toolkit, project);
+  errors.push(...selection.errors);
 
-  for (const bundleName of project.bundles) {
-    const bundle = toolkit.bundles.get(bundleName);
-    if (!bundle) {
-      errors.push(`bundle "${bundleName}" not found in toolkit (have: ${[...toolkit.bundles.keys()].join(', ')})`);
-      continue;
-    }
+  // Group by owning bundle so config/env checks run per bundle, but only over the
+  // items actually selected (an included item does not drag in its bundle's siblings).
+  const groups = new Map();
+  for (const { bundleName, bundle, kind, item } of selection.items) {
+    if (!groups.has(bundleName)) groups.set(bundleName, { bundle, items: [] });
+    groups.get(bundleName).items.push({ kind, item });
+  }
+
+  for (const [bundleName, { bundle, items }] of groups) {
     // One resolver per enabled target — the reserved `harness.*` keys resolve
     // differently per output target (Claude vs. Codex attribution, etc.).
     const resolvers = {};
     for (const target of project.targets) resolvers[target] = makeResolver(bundle, project.values, target);
     const missingResolver = makeResolver(bundle, project.values, project.targets[0] ?? 'claude');
-    const missing = missingRequiredKeys(bundle, project.values, (values, key) => missingResolver(key));
+    // Scope required-config to keys the *selected* items actually reference — installing
+    // one skill from a bundle must not demand config only its siblings use.
+    const usedKeys = collectUsedKeys(items);
+    const missing = missingRequiredKeys(bundle, project.values, (values, key) => missingResolver(key), usedKeys);
     if (missing.length) {
       errors.push(
         `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to .wafflestack.yaml (or the .local overlay)`,
@@ -62,14 +71,11 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
       continue;
     }
 
-    for (const agent of bundle.agents) {
-      if (ejected.has(`agents/${agent.name}`)) continue;
-      renderAgent({ agent, bundle, resolvers, project, cwd, emit, errors });
+    for (const { kind, item } of items) {
+      if (kind === 'agents') renderAgent({ agent: item, bundle, resolvers, project, cwd, emit, errors });
+      else renderSkill({ skill: item, bundle, resolvers, project, cwd, emit, errors });
     }
-    for (const skill of bundle.skills) {
-      if (ejected.has(`skills/${skill.name}`)) continue;
-      renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors });
-    }
+    // Env prerequisites still warn when any item from this bundle renders.
     checkEnvPrerequisites({ bundle, project, cwd, warnings });
   }
 
@@ -97,6 +103,7 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
     toolkitVersion,
     targets: project.targets,
     bundles: project.bundles,
+    include: project.include,
     files: lockFiles,
   };
   writeFileEnsuringDir(path.join(cwd, LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`);
@@ -223,6 +230,19 @@ export function readLock(cwd) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-export function normalizeItemRef(ref) {
-  return ref.replace(/^(agent|skill)s?[:/]/, (m) => (m.startsWith('agent') ? 'agents/' : 'skills/'));
+/** Placeholder keys referenced by a set of selected items' source content. */
+function collectUsedKeys(items) {
+  const keys = new Set();
+  for (const { kind, item } of items) {
+    if (kind === 'agents') {
+      for (const k of placeholderKeys(item.body)) keys.add(k);
+      for (const k of placeholderKeys(item.data.description ?? '')) keys.add(k);
+    } else {
+      for (const rel of item.files) {
+        if (!rel.endsWith('.md')) continue;
+        for (const k of placeholderKeys(fs.readFileSync(path.join(item.dir, rel), 'utf8'))) keys.add(k);
+      }
+    }
+  }
+  return keys;
 }

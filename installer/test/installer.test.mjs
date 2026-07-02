@@ -8,10 +8,11 @@ import { substitute, formatValue } from '../lib/template.mjs';
 import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath } from '../lib/util.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
-import { eject } from '../lib/eject.mjs';
+import { eject, installRefs } from '../lib/eject.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
+import { resolveRef, closureDeps, computeSelection } from '../lib/refs.mjs';
 
 describe('template', () => {
   const declared = new Set(['git.botEmail', 'project.testCmd']);
@@ -413,14 +414,282 @@ describe('setup guide', () => {
       );
       const inventory = toolkitInventory(loadToolkit(root), '9.9.9');
       assert.match(inventory, /## bundle: demo/);
-      assert.match(inventory, /- skills: demo-skill/);
-      assert.match(inventory, /- agents: helper/);
+      assert.match(inventory, /- skills: skills\/demo-skill/);
+      assert.match(inventory, /- agents: agents\/helper/);
       assert.match(inventory, /- env prerequisites: DEMO_FLAG=1/);
       assert.match(inventory, /- `git\.botEmail` \(required\) — bot email/);
       assert.match(inventory, /### setup notes\n\nCreate the demo webhook first\./);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('refs: resolution and dependency closure', () => {
+  let root;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-refs-')); makeRefFixture(root); });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  test('the ref fixture is itself a valid toolkit', () => {
+    assert.deepEqual(validateToolkit(root), []);
+  });
+
+  test('resolves a bundle name', () => {
+    assert.deepEqual(resolveRef(loadToolkit(root), 'orch'), { type: 'bundle', name: 'orch' });
+  });
+
+  test('resolves an unambiguous item to its bundle, canonical unqualified', () => {
+    const r = resolveRef(loadToolkit(root), 'skills/git');
+    assert.equal(r.type, 'item');
+    assert.equal(r.bundle, 'base');
+    assert.equal(r.canonicalRef, 'skills/git');
+  });
+
+  test('normalizes item-ref prefixes (skill:/agent/)', () => {
+    const toolkit = loadToolkit(root);
+    assert.equal(resolveRef(toolkit, 'skill:git').canonicalRef, 'skills/git');
+    assert.equal(resolveRef(toolkit, 'agent/pm').canonicalRef, 'agents/pm');
+  });
+
+  test('ambiguous item errors, listing bundle-qualified candidates', () => {
+    assert.throws(
+      () => resolveRef(loadToolkit(root), 'skills/dupe'),
+      /ambiguous.*alt\/skills\/dupe.*alt2\/skills\/dupe/s,
+    );
+  });
+
+  test('bundle-qualified form disambiguates; canonical stays qualified', () => {
+    const r = resolveRef(loadToolkit(root), 'alt2/skills/dupe');
+    assert.equal(r.bundle, 'alt2');
+    assert.equal(r.canonicalRef, 'alt2/skills/dupe');
+  });
+
+  test('unknown bundle / item error and list what exists', () => {
+    const toolkit = loadToolkit(root);
+    assert.throws(() => resolveRef(toolkit, 'nope'), /no such bundle/);
+    assert.throws(() => resolveRef(toolkit, 'skills/nope'), /no skill "nope".*Available/s);
+  });
+
+  test('agent closure: frontmatter skills + transitive requires, external skill skipped', () => {
+    const toolkit = loadToolkit(root);
+    // pm frontmatter: [deleg, git, ghost]; deleg requires gpm; ghost is external → dropped.
+    assert.deepEqual(closureDeps(toolkit, resolveRef(toolkit, 'agents/pm')), [
+      'skills/deleg', 'skills/git', 'skills/gpm',
+    ]);
+  });
+
+  test('skill closure follows requires across bundles', () => {
+    const toolkit = loadToolkit(root);
+    assert.deepEqual(closureDeps(toolkit, resolveRef(toolkit, 'skills/deleg')), ['skills/gpm']);
+  });
+});
+
+describe('render selection: include, closure, scoping, eject', () => {
+  let root;
+  let cwd;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-sel-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-sel-'));
+    makeRefFixture(root);
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const writeConfig = (lines) => fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), `${lines.join('\n')}\n`);
+  const render = () => renderProject({ toolkitRoot: root, cwd, toolkitVersion: '0.0.test' });
+  const has = (rel) => fs.existsSync(path.join(cwd, rel));
+
+  test('include renders an item and its full closure from non-enabled bundles', () => {
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(has('.claude/agents/pm.md'));
+    assert.ok(has('.claude/skills/deleg/SKILL.md'));
+    assert.ok(has('.claude/skills/git/SKILL.md'));
+    assert.ok(has('.claude/skills/gpm/SKILL.md'), 'transitive requires dep rendered');
+    // env prerequisite for orch still fires because orch items rendered
+    assert.ok(result.warnings.some((w) => /ORCH_FLAG/.test(w)), JSON.stringify(result.warnings));
+  });
+
+  test('required config is scoped: installing skills/git demands nothing', () => {
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/git]', 'config: {}']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(has('.claude/skills/git/SKILL.md'));
+    assert.ok(!has('.claude/skills/issue/SKILL.md'));
+  });
+
+  test('include does not demand a non-selected sibling item\'s required key', () => {
+    // pm pulls base git+gpm (no config) but not base issue → base.botEmail not required.
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  });
+
+  test('a scoped required key that IS used still fails helpfully', () => {
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/issue]', 'config: {}']);
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors[0], /config\.base\.botEmail/);
+  });
+
+  test('bundle-qualified include resolves the ambiguous item', () => {
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [alt2/skills/dupe]', 'config: {}']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, '.claude/skills/dupe/SKILL.md'), /variant alt2/);
+  });
+
+  test('an unqualified ambiguous include entry is a render error', () => {
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/dupe]', 'config: {}']);
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => /ambiguous/.test(e)), JSON.stringify(result.errors));
+  });
+
+  test('eject wins over include (item filtered from the selection)', () => {
+    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!has('.claude/skills/git/SKILL.md'));
+    assert.deepEqual(computeSelection(loadToolkit(root), {
+      targets: ['claude'], bundles: [], include: ['skills/git'], eject: ['skills/git'], values: {},
+    }).items, []);
+  });
+});
+
+describe('install: persistence and eject include-cleanup', () => {
+  let root;
+  let cwd;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-ins-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-ins-'));
+    makeRefFixture(root);
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), [
+      '# fixture config comment',
+      'targets: [claude]',
+      'bundles: [base]',
+      'config: {}',
+      '',
+    ].join('\n'));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const install = (refs, log) => installRefs({ toolkitRoot: root, cwd, refs, log });
+
+  test('bundle refs append to bundles:, item refs to include:, comments preserved', () => {
+    install(['orch', 'alt/skills/dupe']);
+    const cfg = read(cwd, '.wafflestack.yaml');
+    assert.match(cfg, /# fixture config comment/);
+    assert.match(cfg, /- base/);
+    assert.match(cfg, /- orch/);
+    // ambiguous item persisted in bundle-qualified canonical form
+    assert.match(cfg, /include:/);
+    assert.match(cfg, /- alt\/skills\/dupe/);
+  });
+
+  test('unambiguous item persists unqualified', () => {
+    install(['skills/issue']);
+    assert.match(read(cwd, '.wafflestack.yaml'), /include:\n\s*- skills\/issue/);
+  });
+
+  test('reports the dependency closure', () => {
+    const logs = [];
+    install(['agents/pm'], (m) => logs.push(m));
+    assert.ok(
+      logs.some((l) => /installing agents\/pm \(\+3 deps: skills\/deleg, skills\/git, skills\/gpm\)/.test(l)),
+      logs.join('\n'),
+    );
+  });
+
+  test('unknown ref throws and persists nothing', () => {
+    const before = read(cwd, '.wafflestack.yaml');
+    assert.throws(() => install(['skills/nope']), /unknown ref/);
+    assert.equal(read(cwd, '.wafflestack.yaml'), before);
+  });
+
+  test('already-selected refs are idempotent (config untouched)', () => {
+    const before = read(cwd, '.wafflestack.yaml');
+    install(['base']);
+    assert.equal(read(cwd, '.wafflestack.yaml'), before);
+  });
+
+  test('eject removes a matching include entry, qualified or not', () => {
+    install(['alt/skills/dupe']);
+    assert.match(read(cwd, '.wafflestack.yaml'), /alt\/skills\/dupe/);
+    eject({ cwd, item: 'skills/dupe' });
+    const cfg = read(cwd, '.wafflestack.yaml');
+    assert.doesNotMatch(cfg, /alt\/skills\/dupe/);
+    assert.match(cfg, /eject:/);
+  });
+
+  test('install requires an existing config file', () => {
+    fs.rmSync(path.join(cwd, '.wafflestack.yaml'));
+    assert.throws(() => install(['base']), /run `wafflestack init`/);
+  });
+});
+
+describe('validate: agent skills and requires refs', () => {
+  const withToolkit = (files, fn) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-val-'));
+    try {
+      for (const [rel, content] of Object.entries(files)) write(root, rel, content);
+      fn(root);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  test('flags an unresolvable requires dependency', () => {
+    withToolkit({
+      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [b]\n',
+      'bundles/b/bundle.yaml': ['name: b', 'description: B.', 'skills: [x]', 'requires:', '  skills/x:', '    - skills/missing', ''].join('\n'),
+      'bundles/b/skills/x/SKILL.md': '---\nname: x\ndescription: X.\n---\n\nbody\n',
+    }, (root) => {
+      const problems = validateToolkit(root);
+      assert.ok(problems.some((p) => /requires\[skills\/x\].*cannot resolve.*skills\/missing/.test(p)), JSON.stringify(problems));
+    });
+  });
+
+  test('flags a requires key that is not an item in the bundle', () => {
+    withToolkit({
+      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [b]\n',
+      'bundles/b/bundle.yaml': ['name: b', 'description: B.', 'skills: [x]', 'requires:', '  skills/ghost:', '    - skills/x', ''].join('\n'),
+      'bundles/b/skills/x/SKILL.md': '---\nname: x\ndescription: X.\n---\n\nbody\n',
+    }, (root) => {
+      const problems = validateToolkit(root);
+      assert.ok(problems.some((p) => /requires key "skills\/ghost" does not match/.test(p)), JSON.stringify(problems));
+    });
+  });
+
+  test('flags an ambiguous agent skill (name in multiple bundles)', () => {
+    withToolkit({
+      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [a1, a2, agt]\n',
+      'bundles/a1/bundle.yaml': 'name: a1\ndescription: A1.\nskills: [dupe]\n',
+      'bundles/a1/skills/dupe/SKILL.md': '---\nname: dupe\ndescription: D1.\n---\n\nx\n',
+      'bundles/a2/bundle.yaml': 'name: a2\ndescription: A2.\nskills: [dupe]\n',
+      'bundles/a2/skills/dupe/SKILL.md': '---\nname: dupe\ndescription: D2.\n---\n\nx\n',
+      'bundles/agt/bundle.yaml': 'name: agt\ndescription: Agt.\nagents: [u]\n',
+      'bundles/agt/agents/u.md': '---\nname: u\ndescription: U.\nskills:\n  - dupe\n---\n\nbody\n',
+    }, (root) => {
+      const problems = validateToolkit(root);
+      assert.ok(problems.some((p) => /agent u skill "dupe" is ambiguous/.test(p)), JSON.stringify(problems));
+    });
+  });
+
+  test('allows an agent skill that is absent from the toolkit (external pointer)', () => {
+    withToolkit({
+      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [b]\n',
+      'bundles/b/bundle.yaml': 'name: b\ndescription: B.\nagents: [u]\n',
+      'bundles/b/agents/u.md': '---\nname: u\ndescription: U.\nskills:\n  - external-only\n---\n\nbody\n',
+    }, (root) => {
+      assert.ok(!validateToolkit(root).some((p) => /external-only/.test(p)), 'external agent skill must not be flagged');
+    });
   });
 });
 
@@ -468,6 +737,69 @@ function makeFixtureToolkit(root) {
     '',
   ].join('\n'));
   write(root, 'bundles/demo/skills/demo-skill/ref/data.json', '{"n": 1}\n');
+}
+
+/**
+ * A multi-bundle fixture exercising per-item install:
+ *   base — git, gpm (no config); issue uses base.botEmail (required)
+ *   orch — pm agent (skills: deleg, git, ghost[external]); deleg requires gpm; env ORCH_FLAG
+ *   alt / alt2 — both define skill `dupe` (ambiguous unless bundle-qualified)
+ */
+function makeRefFixture(root) {
+  write(root, 'toolkit.yaml', 'name: reffix\ndescription: ref fixture\nbundles: [base, orch, alt, alt2]\n');
+
+  write(root, 'bundles/base/bundle.yaml', [
+    'name: base',
+    'description: Base skills.',
+    'skills: [git, gpm, issue]',
+    'config:',
+    '  base.botEmail:',
+    '    required: true',
+    '    description: bot email',
+    '',
+  ].join('\n'));
+  write(root, 'bundles/base/skills/git/SKILL.md', '---\nname: git\ndescription: Git skill.\n---\n\nBranch and commit.\n');
+  write(root, 'bundles/base/skills/gpm/SKILL.md', '---\nname: gpm\ndescription: Project mgmt.\n---\n\nGraphQL catalog.\n');
+  write(root, 'bundles/base/skills/issue/SKILL.md', '---\nname: issue\ndescription: Issue skill.\n---\n\nFile as {{base.botEmail}}.\n');
+
+  write(root, 'bundles/orch/bundle.yaml', [
+    'name: orch',
+    'description: Orchestration.',
+    'agents: [pm]',
+    'skills: [deleg]',
+    'requires:',
+    '  skills/deleg:',
+    '    - skills/gpm',
+    'config:',
+    '  orch.who:',
+    '    required: true',
+    '    description: who',
+    '  orch.roster:',
+    '    required: true',
+    '    description: roster',
+    'env:',
+    '  ORCH_FLAG: "1"',
+    '',
+  ].join('\n'));
+  write(root, 'bundles/orch/agents/pm.md', [
+    '---',
+    'name: pm',
+    'description: PM agent.',
+    'skills:',
+    '  - deleg',
+    '  - git',
+    '  - ghost',
+    '---',
+    '',
+    'You are PM for {{orch.who}}.',
+    '',
+  ].join('\n'));
+  write(root, 'bundles/orch/skills/deleg/SKILL.md', '---\nname: deleg\ndescription: Delegate.\n---\n\nRoster: {{orch.roster}}. See the gpm skill.\n');
+
+  for (const b of ['alt', 'alt2']) {
+    write(root, `bundles/${b}/bundle.yaml`, `name: ${b}\ndescription: Bundle ${b}.\nskills: [dupe]\n`);
+    write(root, `bundles/${b}/skills/dupe/SKILL.md`, `---\nname: dupe\ndescription: Dupe from ${b}.\n---\n\nvariant ${b}\n`);
+  }
 }
 
 function write(root, rel, content) {

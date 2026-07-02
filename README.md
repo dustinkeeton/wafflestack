@@ -37,10 +37,11 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 |---|---|
 | `init` | Write a starter `.wafflestack.yaml` (won't overwrite an existing one). |
 | `setup` | Print the agent-driven install playbook + generated toolkit inventory (see above). |
-| `render` (alias `install`) | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.wafflestack.lock.json`. |
+| `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.wafflestack.lock.json`. |
+| `install [ref…]` | With refs: add them to `.wafflestack.yaml` (bundle name → `bundles:`, item → `include:`), pull in their dependencies, then render. Refs are a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` (qualify when a name is in two bundles). Bare `install` = `render`. |
 | `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. |
-| `eject <item>` | Stop managing an item (e.g. `skills/issue`): its rendered files stay put and become project-owned. |
-| `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared. |
+| `eject <item>` | Stop managing an item (e.g. `skills/issue`): its rendered files stay put and become project-owned; also drops it from `include:`. |
+| `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
 
 ## Rules of the road
 

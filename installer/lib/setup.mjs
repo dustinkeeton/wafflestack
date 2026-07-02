@@ -22,12 +22,18 @@ export function toolkitInventory(toolkit, version) {
     '',
     'Generated from the installed toolkit; authoritative for this version.',
     '',
+    'Install a whole bundle by name (adds it to `bundles:`), or a single item by ref —',
+    '`skills/<name>` or `agents/<name>` (adds it to `include:`). Bundle-qualify an item as',
+    '`<bundle>/skills/<name>` when the same name appears in more than one bundle. Installing',
+    "an item pulls its dependency closure automatically (an agent's `skills:` and any declared",
+    '`requires:`), so required config is scoped to what the selected items actually reference.',
+    '',
   ];
   for (const bundle of toolkit.bundles.values()) {
     lines.push(`## bundle: ${bundle.name}`, '');
     if (bundle.description) lines.push(bundle.description, '');
-    lines.push(`- skills: ${bundle.skills.map((s) => s.name).join(', ') || '(none)'}`);
-    lines.push(`- agents: ${bundle.agents.map((a) => a.name).join(', ') || '(none)'}`);
+    lines.push(`- skills: ${bundle.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
+    lines.push(`- agents: ${bundle.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);
     const env = Object.entries(bundle.env);
     if (env.length) {
       lines.push(`- env prerequisites: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`);
