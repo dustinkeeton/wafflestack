@@ -43,7 +43,7 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
     const missing = missingRequiredKeys(bundle, project.values, (values, key) => missingResolver(key));
     if (missing.length) {
       errors.push(
-        `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to .agent-toolkit.yaml (or the .local overlay)`,
+        `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to .wafflestack.yaml (or the .local overlay)`,
       );
       continue;
     }

@@ -38,7 +38,7 @@ try {
       break;
     }
     case 'eject': {
-      if (!args[0]) fail('usage: agent-toolkit eject <skills/NAME | agents/NAME>');
+      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME>');
       const { ref, released } = eject({ cwd, item: args[0] });
       console.log(`ejected ${ref}; ${released.length} files released from management:`);
       for (const f of released) console.log(`  ${f}`);
@@ -47,7 +47,7 @@ try {
     }
     case 'init': {
       const file = init({ cwd });
-      console.log(`wrote ${file} — pick bundles and config values, then run \`agent-toolkit render\``);
+      console.log(`wrote ${file} — pick bundles and config values, then run \`wafflestack render\``);
       break;
     }
     case 'validate': {
@@ -58,7 +58,7 @@ try {
       break;
     }
     default:
-      fail(`usage: agent-toolkit <init|render|doctor|eject|validate> [--cwd DIR]  (v${pkg.version})`);
+      fail(`usage: wafflestack <init|render|doctor|eject|validate> [--cwd DIR]  (v${pkg.version})`);
   }
 } catch (err) {
   fail(err.message);

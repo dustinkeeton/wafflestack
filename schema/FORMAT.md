@@ -13,7 +13,7 @@ bundles/<bundle>/
   bundle.yaml                bundle manifest (see below)
   agents/<name>.md           neutral agent definitions
   skills/<name>/SKILL.md     neutral skill definitions (+ supporting files)
-installer/                   the render CLI (`agent-toolkit`)
+installer/                   the render CLI (`wafflestack`)
 schema/                      this document
 ```
 
@@ -79,16 +79,16 @@ Renders to:
 
 ## Consuming project contract
 
-- `.agent-toolkit.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
+- `.wafflestack.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
   `agents-dir`), `bundles:`, `config:` values, optional `eject:` list.
-- `.agent-toolkit.local.yaml` (gitignored) — deep-merged over the committed config, wins
+- `.wafflestack.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
-- `.agent-toolkit/extensions/agents/<name>.md`, `.agent-toolkit/extensions/skills/<name>.md`
+- `.wafflestack/extensions/agents/<name>.md`, `.wafflestack/extensions/skills/<name>.md`
   (committed, optional) — appended to the rendered item inside marked
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
   project-specific guidance to a toolkit item.
-- `.agent-toolkit.lock.json` (generated) — manifest of every rendered file with its hash.
-  `agent-toolkit doctor` diffs reality against it; `agent-toolkit render` regenerates
+- `.wafflestack.lock.json` (generated) — manifest of every rendered file with its hash.
+  `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
 
 ## Template values

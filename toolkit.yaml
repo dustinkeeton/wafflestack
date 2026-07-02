@@ -1,4 +1,4 @@
-name: agent-toolkit
+name: wafflestack
 description: Canonical agent/skill definitions rendered into harness-native files.
 bundles:
   - docs-system

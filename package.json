@@ -1,11 +1,11 @@
 {
-  "name": "agent-toolkit",
+  "name": "wafflestack",
   "version": "0.1.0",
   "private": true,
   "description": "Canonical agent/skill definitions rendered into harness-native files (.claude/, .codex/, .agents/) for any consuming project",
   "type": "module",
   "bin": {
-    "agent-toolkit": "installer/cli.mjs"
+    "wafflestack": "installer/cli.mjs"
   },
   "files": [
     "installer",

@@ -1,18 +1,18 @@
 import path from 'node:path';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 
-export const CONFIG_FILE = '.agent-toolkit.yaml';
-export const LOCAL_CONFIG_FILE = '.agent-toolkit.local.yaml';
-export const LOCK_FILE = '.agent-toolkit.lock.json';
-export const EXTENSIONS_DIR = path.join('.agent-toolkit', 'extensions');
+export const CONFIG_FILE = '.wafflestack.yaml';
+export const LOCAL_CONFIG_FILE = '.wafflestack.local.yaml';
+export const LOCK_FILE = '.wafflestack.lock.json';
+export const EXTENSIONS_DIR = path.join('.wafflestack', 'extensions');
 
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'];
 
-/** Load .agent-toolkit.yaml with the gitignored local overlay merged over it. */
+/** Load .wafflestack.yaml with the gitignored local overlay merged over it. */
 export function loadProjectConfig(cwd) {
   const file = path.join(cwd, CONFIG_FILE);
   if (!exists(file)) {
-    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`agent-toolkit init\` first`);
+    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack init\` first`);
   }
   let cfg = readYaml(file) ?? {};
   const localFile = path.join(cwd, LOCAL_CONFIG_FILE);

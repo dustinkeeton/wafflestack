@@ -72,7 +72,7 @@ describe('end to end', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-'));
     makeFixtureToolkit(toolkitRoot);
-    fs.writeFileSync(path.join(cwd, '.agent-toolkit.yaml'), [
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), [
       '# project config comment',
       'targets: [claude, codex, agents-dir]',
       'bundles: [demo]',
@@ -127,7 +127,7 @@ describe('end to end', () => {
     assert.equal(fs.readFileSync(file, 'utf8'), original);
 
     // drop the bundle -> all its files are cleaned up
-    fs.writeFileSync(path.join(cwd, '.agent-toolkit.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.equal(fs.existsSync(file), false);
@@ -135,24 +135,24 @@ describe('end to end', () => {
   });
 
   test('missing required config fails with actionable error', () => {
-    fs.writeFileSync(path.join(cwd, '.agent-toolkit.yaml'), 'bundles: [demo]\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'bundles: [demo]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.git\.botEmail/);
   });
 
   test('local overlay wins over committed config', () => {
-    fs.writeFileSync(path.join(cwd, '.agent-toolkit.local.yaml'), 'config:\n  git:\n    botEmail: local@example.com\n');
+    fs.writeFileSync(path.join(cwd, '.wafflestack.local.yaml'), 'config:\n  git:\n    botEmail: local@example.com\n');
     render();
     assert.match(read(cwd, '.claude/agents/helper.md'), /local@example\.com/);
   });
 
   test('extensions are appended with markers', () => {
-    fs.mkdirSync(path.join(cwd, '.agent-toolkit/extensions/skills'), { recursive: true });
-    fs.writeFileSync(path.join(cwd, '.agent-toolkit/extensions/skills/demo-skill.md'), 'Project-specific addendum.\n');
+    fs.mkdirSync(path.join(cwd, '.wafflestack/extensions/skills'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.wafflestack/extensions/skills/demo-skill.md'), 'Project-specific addendum.\n');
     render();
     const skill = read(cwd, '.claude/skills/demo-skill/SKILL.md');
-    assert.match(skill, /BEGIN project extension: \.agent-toolkit\/extensions\/skills\/demo-skill\.md/);
+    assert.match(skill, /BEGIN project extension: \.wafflestack\/extensions\/skills\/demo-skill\.md/);
     assert.match(skill, /Project-specific addendum\./);
     assert.match(skill, /END project extension/);
     // extension applies to both skill targets
@@ -163,7 +163,7 @@ describe('end to end', () => {
     render();
     const { released } = eject({ cwd, item: 'skills/demo-skill' });
     assert.ok(released.includes(path.join('.claude', 'skills', 'demo-skill', 'SKILL.md')));
-    const cfgText = read(cwd, '.agent-toolkit.yaml');
+    const cfgText = read(cwd, '.wafflestack.yaml');
     assert.match(cfgText, /# project config comment/);
     assert.match(cfgText, /eject:/);
 
@@ -230,7 +230,7 @@ describe('harness.* namespace', () => {
   });
 
   const writeConfig = (configLines = ['config: {}']) => {
-    fs.writeFileSync(path.join(cwd, '.agent-toolkit.yaml'), [
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), [
       'targets: [claude, codex, agents-dir]',
       'bundles: [hz]',
       ...configLines,

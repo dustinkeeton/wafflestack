@@ -11,7 +11,7 @@ import { LOCK_FILE } from './project.mjs';
 export function doctor({ cwd, toolkitVersion }) {
   const lock = readLock(cwd);
   if (!lock) {
-    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`agent-toolkit render\` first`] };
+    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`] };
   }
 
   const modified = [];
@@ -30,7 +30,7 @@ export function doctor({ cwd, toolkitVersion }) {
     notes.push(`lock was rendered by toolkit ${lock.toolkitVersion}, installed CLI is ${toolkitVersion} — re-render to update`);
   }
   if (modified.length) {
-    notes.push('managed files have local edits; move changes into .agent-toolkit/extensions/ or config, then re-render');
+    notes.push('managed files have local edits; move changes into .wafflestack/extensions/ or config, then re-render');
   }
 
   return { ok: modified.length === 0 && missing.length === 0, modified, missing, notes };

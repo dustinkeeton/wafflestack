@@ -44,8 +44,8 @@ export function eject({ cwd, item }) {
   return { ref, released };
 }
 
-const STARTER_CONFIG = `# agent-toolkit project config — see the toolkit repo's schema/FORMAT.md
-# Version pin is the npx ref you install with, e.g. npx github:OWNER/agent-toolkit#v0.1.0
+const STARTER_CONFIG = `# wafflestack project config — see the toolkit repo's schema/FORMAT.md
+# Version pin is the npx ref you install with, e.g. npx github:OWNER/wafflestack#v0.1.0
 targets: [claude, codex, agents-dir]
 bundles: []
 #  - docs-system
@@ -57,7 +57,7 @@ bundles: []
 config: {}
 #  git:
 #    botEmail: bot@example.com
-# Account-specific values belong in .agent-toolkit.local.yaml (gitignore it).
+# Account-specific values belong in .wafflestack.local.yaml (gitignore it).
 `;
 
 export function init({ cwd }) {
