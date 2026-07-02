@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { substitute, formatValue, placeholderKeys } from '../lib/template.mjs';
-import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath, sha256 } from '../lib/util.mjs';
+import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath, sha256, parseVersion, compareVersions } from '../lib/util.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject, installRefs } from '../lib/eject.mjs';
@@ -15,6 +15,8 @@ import { validateToolkit } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection } from '../lib/refs.mjs';
+import { applicableMigrations, runMigrations } from '../lib/migrations.mjs';
+import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 
 describe('template', () => {
   const declared = new Set(['git.botEmail', 'project.testCmd']);
@@ -1012,6 +1014,198 @@ describe('validate: agent skills and requires refs', () => {
     }, (root) => {
       assert.ok(!validateToolkit(root).some((p) => /external-only/.test(p)), 'external agent skill must not be flagged');
     });
+  });
+});
+
+describe('semver helpers', () => {
+  test('parseVersion extracts the X.Y.Z core, tolerating v-prefix and pre-release', () => {
+    assert.deepEqual(parseVersion('0.5.0'), [0, 5, 0]);
+    assert.deepEqual(parseVersion('v1.2.3'), [1, 2, 3]);
+    assert.deepEqual(parseVersion('0.6.0-rc.1'), [0, 6, 0]);
+    assert.equal(parseVersion('nope'), null);
+    assert.equal(parseVersion(undefined), null);
+  });
+
+  test('compareVersions is numeric (not lexical); unparseable sorts low', () => {
+    assert.equal(compareVersions('0.5.0', '0.6.0'), -1);
+    assert.equal(compareVersions('0.10.0', '0.9.0'), 1); // 10 > 9 numerically
+    assert.equal(compareVersions('1.0.0', '1.0.0'), 0);
+    assert.equal(compareVersions(null, '0.1.0'), -1);
+    assert.equal(compareVersions('0.1.0', null), 1);
+    assert.equal(compareVersions(undefined, null), 0);
+  });
+});
+
+describe('migrations: applicability, ordering, idempotency', () => {
+  const steps = [
+    { version: '0.6.0', description: 'six', run() {} },
+    { version: '0.7.0', description: 'seven', run() {} },
+    { version: '0.8.0', description: 'eight', run() {} },
+  ];
+
+  test('applicable window is (from, to], ascending; endpoints handled', () => {
+    assert.deepEqual(applicableMigrations('0.5.0', '0.7.0', steps).map((s) => s.version), ['0.6.0', '0.7.0']);
+    // from is exclusive, to is inclusive
+    assert.deepEqual(applicableMigrations('0.6.0', '0.8.0', steps).map((s) => s.version), ['0.7.0', '0.8.0']);
+    assert.deepEqual(applicableMigrations('0.8.0', '0.8.0', steps).map((s) => s.version), []);
+    assert.deepEqual(applicableMigrations('0.9.0', '0.10.0', steps).map((s) => s.version), []);
+  });
+
+  test('runMigrations runs ascending regardless of input order and reports what ran', () => {
+    const order = [];
+    const unsorted = [
+      { version: '0.7.0', description: 'b', run: () => order.push('b') },
+      { version: '0.6.0', description: 'a', run: () => order.push('a') },
+    ];
+    const ran = runMigrations({ cwd: '/x', fromVersion: '0.5.0', toVersion: '0.7.0', migrations: unsorted });
+    assert.deepEqual(order, ['a', 'b']);
+    assert.deepEqual(ran.map((r) => r.version), ['0.6.0', '0.7.0']);
+  });
+});
+
+describe('changelogBetween', () => {
+  const text = [
+    '# Changelog', '',
+    '## [Unreleased]', '- wip', '',
+    '## [0.7.0] - 2026-08-01', '### Consumer impact', '- rename', '',
+    '## [0.6.0] - 2026-07-15', '### Added', '- thing', '',
+    '## [0.5.0] - 2026-07-01', '### Added', '- setup', '',
+  ].join('\n');
+
+  test('extracts (from, to] sections, newest first, skipping Unreleased and the from version', () => {
+    const delta = changelogBetween(text, '0.5.0', '0.7.0');
+    assert.match(delta, /## \[0\.7\.0\]/);
+    assert.match(delta, /## \[0\.6\.0\]/);
+    assert.doesNotMatch(delta, /## \[0\.5\.0\]/); // from is exclusive
+    assert.doesNotMatch(delta, /Unreleased/); // non-semver heading skipped
+    assert.ok(delta.indexOf('0.7.0') < delta.indexOf('0.6.0'), 'newest first');
+  });
+
+  test('returns null when nothing falls in range', () => {
+    assert.equal(changelogBetween(text, '0.7.0', '0.7.0'), null);
+  });
+});
+
+describe('upgrade: end-to-end across a synthetic breaking change', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-up-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-up-'));
+    makeFixtureToolkit(toolkitRoot);
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), [
+      'targets: [claude]',
+      'bundles: [demo]',
+      'config:',
+      '  git:',
+      '    botEmail: bot@example.com',
+      '',
+    ].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const LOCK = '.wafflestack.lock.json';
+  const legacy = () => path.join(cwd, 'LEGACY_MARKER');
+  // Stands in for a real breaking change (#17's dotfile rename is the first): drop a legacy
+  // artifact the old toolkit left behind. Idempotent — a missing marker is a no-op.
+  const migrations = [
+    {
+      version: '0.6.0',
+      description: 'remove the legacy marker file',
+      run: (dir) => {
+        const f = path.join(dir, 'LEGACY_MARKER');
+        if (fs.existsSync(f)) fs.rmSync(f);
+      },
+    },
+  ];
+  const lockVersion = () => JSON.parse(read(cwd, LOCK)).toolkitVersion;
+
+  test('runs the migration, prints the delta, re-renders, re-stamps, doctor clean', () => {
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.5.0' }).ok, true);
+    fs.writeFileSync(legacy(), 'stale\n');
+    assert.equal(lockVersion(), '0.5.0');
+
+    const changelog = '# Changelog\n\n## [0.6.0] - 2026-08-01\n### Consumer impact\n- drop legacy marker\n';
+    const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.6.0', migrations, changelog });
+
+    assert.equal(result.ok, true, JSON.stringify(result.notes));
+    assert.equal(result.status, 'upgrade');
+    assert.equal(result.fromVersion, '0.5.0');
+    assert.equal(result.toVersion, '0.6.0');
+    assert.deepEqual(result.migrationsRun.map((m) => m.version), ['0.6.0']);
+    assert.match(result.changelogDelta, /drop legacy marker/);
+    assert.equal(fs.existsSync(legacy()), false, 'migration side effect applied');
+    assert.equal(lockVersion(), '0.6.0', 'lock re-stamped to the target version');
+    assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor));
+    assert.ok(
+      result.doctor.notes.some((n) => /rendered by toolkit 0\.6\.0/.test(n)),
+      JSON.stringify(result.doctor.notes),
+    );
+  });
+
+  test('idempotent: re-running at the same version applies no migrations (status current)', () => {
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.6.0' }).ok, true);
+    const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.6.0', migrations });
+    assert.equal(result.status, 'current');
+    assert.deepEqual(result.migrationsRun, []);
+    assert.equal(result.ok, true);
+  });
+
+  test('downgrade: lock newer than CLI runs no migrations but still renders + doctors', () => {
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.7.0' }).ok, true);
+    const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.6.0', migrations });
+    assert.equal(result.status, 'downgrade');
+    assert.deepEqual(result.migrationsRun, []);
+    assert.equal(lockVersion(), '0.6.0');
+    assert.ok(result.notes.some((n) => /newer than this CLI/.test(n)), JSON.stringify(result.notes));
+  });
+
+  test('missing lock: degrades to render + doctor with a clear note, no migrations', () => {
+    const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.6.0', migrations });
+    assert.equal(result.status, 'no-lock');
+    assert.deepEqual(result.migrationsRun, []);
+    assert.equal(result.ok, true);
+    assert.ok(result.notes.some((n) => /nothing to upgrade from/.test(n)), JSON.stringify(result.notes));
+    assert.equal(lockVersion(), '0.6.0'); // fresh render created + stamped the lock
+  });
+
+  test('lock without toolkitVersion: skips migrations, notes it, re-stamps on render', () => {
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.5.0' }).ok, true);
+    const lockPath = path.join(cwd, LOCK);
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    delete lock.toolkitVersion;
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+    fs.writeFileSync(legacy(), 'stale\n');
+
+    const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.6.0', migrations });
+    assert.equal(result.status, 'no-version');
+    assert.deepEqual(result.migrationsRun, []);
+    assert.equal(fs.existsSync(legacy()), true, 'migrations skipped when baseline unknown');
+    assert.equal(lockVersion(), '0.6.0');
+    assert.ok(result.notes.some((n) => /no toolkitVersion/i.test(n)), JSON.stringify(result.notes));
+  });
+
+  test('CLI: upgrade on a current, freshly-rendered repo exits 0; rejects positional refs', () => {
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    // Empty selection renders against any toolkit (incl. the real one the CLI resolves),
+    // so this exercises the real dispatch + pkg.version without needing bundle config.
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    const render = spawnSync(process.execPath, [cli, 'render', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(render.status, 0, render.stdout + render.stderr);
+
+    const up = spawnSync(process.execPath, [cli, 'upgrade', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(up.status, 0, up.stdout + up.stderr);
+    assert.match(up.stdout, /already on toolkit/);
+    assert.match(up.stdout, /upgrade complete/);
+
+    const bad = spawnSync(process.execPath, [cli, 'upgrade', 'skills/foo', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /takes no refs/);
   });
 });
 
