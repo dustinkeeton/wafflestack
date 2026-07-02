@@ -59,13 +59,13 @@ bundle-qualified ref (`code-quality/skills/security-audit`).
 | `installer/lib/refs.mjs` | Ref grammar, toolkit-wide resolution, and transitive cross-bundle dependency closure + render-selection computation. Pure leaf (no local imports). Shared by install / render / validate. |
 | `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting. |
 | `installer/lib/toolkit.mjs` | Load `toolkit.yaml` + every bundle manifest (agents, skills, `requires`, config, env, setup); scoped required-key check. |
-| `installer/lib/project.mjs` | Load consuming-project config (+ local overlay), valid targets, `harness.*` built-ins, per-target resolver. |
+| `installer/lib/project.mjs` | Load consuming-project config (+ local overlay), valid targets, `harness.*` built-ins, per-target resolver; legacy-name read fallback + in-place `.wafflestack.*`→`.waffle.*` dotfile migration. |
 | `installer/lib/util.mjs` | Shared helpers: sha256, YAML read, deep-merge, dotted lookup, frontmatter parse/stringify, fs writes, semver parse/compare. |
 | `installer/lib/doctor.mjs` | Diff managed files against the lock; always report the rendered `toolkitVersion` + a skew note pointing at `upgrade`. |
 | `installer/lib/eject.mjs` | `eject` (release an item, self-cleaning its `include:`), `installRefs` (persist bundle/item refs to config), `init` (starter config). |
 | `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity. |
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
-| `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships empty. |
+| `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` dotfile rename. |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
 
 ```js
@@ -96,10 +96,16 @@ export function loadToolkit(rootDir)                   // → { name, descriptio
 export function missingRequiredKeys(bundle, values, lookup, usedKeys = null) // → string[]  (usedKeys Set scopes to referenced keys)
 
 // project.mjs
-export const CONFIG_FILE, LOCAL_CONFIG_FILE, LOCK_FILE, EXTENSIONS_DIR
+export const CONFIG_FILE, LOCAL_CONFIG_FILE, LOCK_FILE, EXTENSIONS_DIR   // .waffle.* consumer dot-paths
+export const LEGACY_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE, LEGACY_LOCK_FILE, LEGACY_EXTENSIONS_DIR // pre-0.6.0 .wafflestack.* names
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir']
 export const HARNESS_BUILTINS                          // { assistantName, attributionPath, skillsDir } per target
-export function loadProjectConfig(cwd)                 // → { targets, bundles, include, values, eject }
+export function loadProjectConfig(cwd, notes = [])     // → { targets, bundles, include, values, eject }; pushes legacy-read deprecation notes
+export function resolveConfigFile(cwd)                 // → { file, legacy, note } (prefers .waffle.yaml, else legacy .wafflestack.yaml)
+export function resolveLocalConfigFile(cwd)            // → { file, legacy, note }
+export function resolveLockFile(cwd)                   // → { file, legacy, note }
+export function migrateLegacyDotfiles(cwd)             // rename .wafflestack.* → .waffle.* in place; → [{ from, to }] (idempotent)
+export function staleGitignoreEntries(cwd)             // → legacy .wafflestack.* lines still in .gitignore (self-clearing reminder)
 export function makeResolver(bundle, values, target)   // → (key: string) => value | undefined
 
 // util.mjs
@@ -118,7 +124,7 @@ export function compareVersions(a, b)                  // → -1 | 0 | 1  (unpar
 export function doctor({ cwd, toolkitVersion, allowMissing }) // → { ok, modified, missing, notes, allowMissing }  (notes always name the rendered toolkitVersion)
 
 // migrations.mjs
-export const MIGRATIONS                                // → [] of { version, description, run(cwd) }  (ordered, idempotent; ships empty)
+export const MIGRATIONS                                // → [{ version, description, run(cwd) }]  (ordered, idempotent; carries the 0.6.0 dotfile rename)
 export function applicableMigrations(fromVersion, toVersion, migrations = MIGRATIONS) // → steps in (from, to], ascending
 export function runMigrations({ cwd, fromVersion, toVersion, migrations, log }) // → steps that ran; runs each step.run(cwd) in order
 
@@ -165,7 +171,7 @@ Usage: `wafflestack <init|setup|install|render|upgrade|doctor|eject|validate> [r
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.wafflestack.yaml` (targets / bundles / include / config / eject scaffold); errors if one exists. `eject.mjs:150` |
+| `init` | Write starter `.waffle.yaml` (targets / bundles / include / config / eject scaffold); errors if one exists. `eject.mjs:150` |
 | `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit. `setup.mjs:11` |
 | `install [ref…]` | Persist each ref to config (bundle → `bundles:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `eject.mjs:74` |
 | `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Exit 1 on error. `render.mjs:24` |
@@ -219,7 +225,7 @@ rendered = union(items of enabled bundles:) ∪ closure(each include: item) − 
   (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:11`; `expandNested`, `template.mjs:44`): a committed
   value can reference a key kept in the gitignored local overlay. Canonical text surviving the
   first pass is never re-scanned; unresolvable nested placeholders pass through.
-- Extensions — `.wafflestack/extensions/{agents,skills}/<name>.md` appended to the rendered
+- Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered
   item inside `<!-- BEGIN project extension: … -->` / `<!-- END project extension -->` markers
   (`appendExtension`, `render.mjs:191`). Agents: appended to body; skills: appended to
   `SKILL.md` only.
@@ -246,10 +252,10 @@ files are copied verbatim.
 
 | File | Tracked | Role |
 |------|---------|------|
-| `.wafflestack.yaml` | committed | version, `targets`, `bundles`, `include`, `config`, `eject` (`loadProjectConfig`, `project.mjs:12`). `install`/`eject` edit it comment-preservingly. |
-| `.wafflestack.local.yaml` | gitignored | deep-merged over committed config, wins on conflict — account-specific values |
-| `.wafflestack/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
-| `.wafflestack.lock.json` | generated | manifest of rendered file → sha256 (+ toolkitVersion, targets, bundles, include); `doctor` diffs against it, `render` rewrites it |
+| `.waffle.yaml` | committed | version, `targets`, `bundles`, `include`, `config`, `eject` (`loadProjectConfig`, `project.mjs:12`). `install`/`eject` edit it comment-preservingly. |
+| `.waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict — account-specific values |
+| `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
+| `.waffle.lock.json` | generated | manifest of rendered file → sha256 (+ toolkitVersion, targets, bundles, include); `doctor` diffs against it, `render` rewrites it |
 
 ## Build / test / verify
 
@@ -266,8 +272,8 @@ Node >= 18. Single runtime dependency: `yaml`.
 ## Dogfood state
 
 This repo renders 3 bundles into itself — `github-workflow`, `docs-system`, `orchestration`
-(`targets: [claude]`, no `include:`; see `.wafflestack.yaml`). Rendered output
-(`.claude/agents/`, `.claude/skills/`) and `.wafflestack.lock.json` are gitignored here;
+(`targets: [claude]`, no `include:`; see `.waffle.yaml`). Rendered output
+(`.claude/agents/`, `.claude/skills/`) and `.waffle.lock.json` are gitignored here;
 regenerate with `node installer/cli.mjs render`. Only `.claude/settings.json` is tracked under
 `.claude/` (project-owned; holds the agent-teams env var).
 

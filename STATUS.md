@@ -33,7 +33,7 @@ tested. All 7 commands work:
 `init` · `setup` · `install` · `render` · `doctor` · `eject` · `validate`
 
 `install <ref…>` is the newest: it records a bundle or a single item in
-`.wafflestack.yaml` (resolving dependencies), then renders. Bare `install` with no
+`.waffle.yaml` (resolving dependencies), then renders. Bare `install` with no
 refs just renders.
 
 ## Current focus

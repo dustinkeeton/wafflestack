@@ -9,6 +9,45 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-02: Shorten consumer dotfiles `.wafflestack.*` → `.waffle.*` (v0.6.0)
+
+**Context**: Every consumer-facing dot-path carried the full project name —
+`.wafflestack.yaml`, `.wafflestack.local.yaml`, `.wafflestack.lock.json`,
+`.wafflestack/extensions/`. The shorter `.waffle` prefix is friendlier and quicker
+to type, and just as unambiguous inside a consuming repo. Unlike the v0.2.0
+rebrand, consuming projects now exist — so this is a genuine breaking change and
+needs a migration, not just a constant swap.
+
+**Decision**: Rename the four consumer dot-paths to `.waffle.*`. The `wafflestack`
+package/CLI name, npx specs, and the `wafflestack-doctor.yml` workflow filename all
+stay — only the consumer's own dotfiles move. Ship three compatibility layers so no
+consumer breaks: (1) every read falls back to the legacy `.wafflestack.*` name with a
+deprecation note when the `.waffle.*` name is absent; (2) a plain `render`/`upgrade`
+renames the legacy config, local overlay, lock, and extensions dir in place (and
+reminds the consumer to update their `.gitignore` — the CLI never edits it); (3) the
+first real migration-registry entry, keyed to **0.6.0**, runs that same rename so
+`wafflestack upgrade` applies it across the version bump.
+
+**Alternatives considered**:
+
+- Bare constant rename with no migration. Rejected — it would silently orphan every
+  existing consumer's config on the next render.
+- Have the CLI rewrite `.gitignore` automatically. Rejected — a consumer owns their
+  `.gitignore`; we surface a reminder instead of editing it behind their back.
+
+**Rationale**: The rename is cheap ergonomics; the compatibility story is what makes
+it safe. Because the migration is version-keyed to 0.6.0, it fires exactly once, on a
+real upgrade, while the read-fallback and render-time auto-rename protect repos in the
+meantime.
+
+**Impact**: Breaking for existing consumers, but automatic. First `render`/`upgrade`
+after adopting ≥0.6.0 renames the dotfiles and prints a `.gitignore` reminder; the
+legacy names keep working (with a deprecation note) until then. Shared rename lives in
+`installer/lib/project.mjs` (`migrateLegacyDotfiles`), reused by `render` and the 0.6.0
+migration step.
+
+---
+
 ## 2026-07-02: Install (and depend on) individual skills and agents
 
 **Context**: You could only enable whole bundles. Wanting a single skill — say
@@ -26,7 +65,7 @@ skills) lived in prose only, so a partial install could silently miss them.
 
 It resolves each ref, pulls in dependencies automatically (transitively, across
 bundles), persists the choice — bundles into `bundles:`, items into a new
-top-level `include:` list in `.wafflestack.yaml` — and then runs a full render.
+top-level `include:` list in `.waffle.yaml` — and then runs a full render.
 Dependencies come from an agent's frontmatter `skills:` list plus a new optional
 `requires:` map in `bundle.yaml`.
 
@@ -41,11 +80,11 @@ Dependencies come from an agent's frontmatter `skills:` list plus a new optional
 
 **Rationale**: Projects want à-la-carte pieces without swallowing a whole bundle,
 and automatic dependency resolution means a partial install still works.
-Recomputing the closure each render keeps `.wafflestack.yaml` small and honest.
+Recomputing the closure each render keeps `.waffle.yaml` small and honest.
 
 **Impact**:
 
-- New `include:` list in `.wafflestack.yaml`. Rendered set =
+- New `include:` list in `.waffle.yaml`. Rendered set =
   `union(bundles:) ∪ closure(include:) − eject:`.
 - `eject:` wins over `include:` and now self-cleans a matching entry, so no dead
   refs are left behind.
@@ -90,7 +129,7 @@ a promise the toolkit must keep.
 The documentation, project-manager, and task-planner agents (plus the
 `/delegate`, `/audit`, and `/docs` skills) would also help develop the toolkit.
 
-**Decision**: Enable `docs-system` and `orchestration` in `.wafflestack.yaml`
+**Decision**: Enable `docs-system` and `orchestration` in `.waffle.yaml`
 with repo-shaped config — a single root `AGENTS.md` registry instead of the
 default per-feature layout, `schema/FORMAT.md` as the architecture reference, a
 general-purpose specialist roster, an "all-open" delegate scope (this repo has no
@@ -266,5 +305,5 @@ the files while staying in sync with upstream, and config and extensions survive
 every re-render.
 
 **Impact**: The core contract everything else is built on. Never edit rendered
-files — put additions in `.wafflestack.yaml` (config) or
-`.wafflestack/extensions/` (appended content).
+files — put additions in `.waffle.yaml` (config) or
+`.waffle/extensions/` (appended content).

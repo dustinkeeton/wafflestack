@@ -32,18 +32,32 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
-- No migration required. New `upgrade` command and this changelog are additive.
+- **Breaking, but automatic — consumer dotfiles renamed `.wafflestack.*` → `.waffle.*`.**
+  The 0.6.0 migration renames your config, local overlay, lock, and extensions dir in place
+  on the next `render`/`upgrade`; the legacy `.wafflestack.*` names keep working (with a
+  deprecation note) until then. Update your `.gitignore` entries afterwards
+  (`.wafflestack.local.yaml` → `.waffle.local.yaml`) — the CLI does not edit `.gitignore`.
+  The new `upgrade` command and this changelog are otherwise additive.
 
 ### Added
 - `wafflestack upgrade`: compares the lock's `toolkitVersion` to the invoked toolkit,
   prints the changelog delta, runs registered migrations in `(lockVersion, toolkitVersion]`
   order, then re-renders and runs `doctor`.
 - Migration registry + runner (`installer/lib/migrations.mjs`): ordered, idempotent,
-  version-keyed steps (`{ version, description, run(cwd) }`). Ships empty.
+  version-keyed steps (`{ version, description, run(cwd) }`).
+- First migration step (**0.6.0**): renames the legacy `.wafflestack.*` consumer dotfiles
+  to `.waffle.*` (config, local overlay, lock, extensions dir). Shares one idempotent
+  `migrateLegacyDotfiles` helper with `render`, so `upgrade` and a plain re-render converge.
+- Legacy-name read fallback: `render`, `doctor`, `eject`, and `install` read a legacy
+  `.wafflestack.*` file with a deprecation note when the `.waffle.*` name is absent.
 - `CHANGELOG.md` (this file), wired into `upgrade` and the `files` allow-list so it ships
   in the package.
 
 ### Changed
+- Consumer dot-paths are now `.waffle.yaml`, `.waffle.local.yaml`, `.waffle.lock.json`, and
+  `.waffle/extensions/` (were `.wafflestack.*`). A plain `render` migrates a legacy repo and
+  warns when `.gitignore` still lists the old names. The `wafflestack` package/CLI name, npx
+  specs, and the `wafflestack-doctor.yml` workflow filename are unchanged.
 - `doctor` now reports the rendered `toolkitVersion` unconditionally (not only on skew),
   and points at `wafflestack upgrade` when the lock and CLI versions differ.
 

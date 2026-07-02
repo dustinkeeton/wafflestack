@@ -124,7 +124,7 @@ no per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/c
 - **Binaries** are byte-copied untouched — a `{{...}}`-looking byte run inside one is never
   substituted.
 
-Same frozen-image contract as everything else: tracked in `.wafflestack.lock.json`, restored
+Same frozen-image contract as everything else: tracked in `.waffle.lock.json`, restored
 verbatim by `render`, drift-flagged by `doctor`, and releasable with
 `wafflestack eject files/<repo-relative-path>` (the file stays in place and becomes
 project-owned). Two enabled bundles that emit the **same** repo path is a hard render error —
@@ -140,16 +140,16 @@ but relevant if you ever render from CI.
 
 ## Consuming project contract
 
-- `.wafflestack.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
+- `.waffle.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
   `agents-dir`), `bundles:`, optional `include:` (individual items), `config:` values,
   optional `eject:` list.
-- `.wafflestack.local.yaml` (gitignored) — deep-merged over the committed config, wins
+- `.waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
-- `.wafflestack/extensions/agents/<name>.md`, `.wafflestack/extensions/skills/<name>.md`
+- `.waffle/extensions/agents/<name>.md`, `.waffle/extensions/skills/<name>.md`
   (committed, optional) — appended to the rendered item inside marked
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
   project-specific guidance to a toolkit item.
-- `.wafflestack.lock.json` (generated) — manifest of every rendered file with its hash.
+- `.waffle.lock.json` (generated) — manifest of every rendered file with its hash.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
   `wafflestack doctor --allow-missing` treats absent managed files as informational (only
@@ -205,7 +205,7 @@ git:
   cmd: git -c user.email={{git.botEmail}} -c user.name={{git.botName}}
 ```
 
-can reference keys kept in the gitignored `.wafflestack.local.yaml`. Unresolvable nested
+can reference keys kept in the gitignored `.waffle.local.yaml`. Unresolvable nested
 placeholders pass through verbatim. Avoid config key names that collide with literal
 template syntax you embed in values (e.g. don't declare a `secrets.*` namespace).
 
