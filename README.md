@@ -21,12 +21,26 @@ substitution, lock tracking, and drift detection.
 
 ## Install into a project
 
-**Guided (recommended)** — let your coding agent (Claude Code, Codex, …) do the whole
-setup. Tell it *"set up wafflestack in this repo"* and have it start from:
+**Guided (recommended)** — let your coding agent (Claude Code, Codex, …) drive the whole
+setup. Kick it off one of two ways:
 
-```bash
-npx github:dustinkeeton/wafflestack setup
+**Agent prompt** — paste to your coding agent:
+
+```text
+Set up wafflestack in this repo: run `npx github:dustinkeeton/wafflestack setup` and
+follow the playbook it prints. Ask me which bundles to enable before you render.
 ```
+
+**Inline shell (Claude Code / Codex)** — type in the prompt:
+
+```text
+! npx --yes github:dustinkeeton/wafflestack setup
+```
+
+> The `!` prefix runs a shell command in-session and feeds its output back to the model —
+> supported in both Claude Code and OpenAI Codex; `--yes` keeps `npx` non-interactive.
+> Running `setup` yourself just prints the playbook + inventory for an agent to act on, so
+> there's no standalone "run it yourself" flavor for it.
 
 `setup` prints an agent playbook plus an inventory of every bundle, config key, env
 prerequisite, and service-side setup note — generated from the installed toolkit
@@ -34,7 +48,9 @@ version. The agent then detects targets and project commands, asks you which bun
 to enable, fills `.waffle.yaml`, verifies externals (e.g. `gh` auth and labels),
 renders, runs `doctor`, and reports what it did.
 
-**Manual:**
+**Manual** — no agent, just you and a shell (or delegate it with the guided prompt above):
+
+**Run it yourself:**
 
 ```bash
 cd your-project
@@ -82,6 +98,28 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    absent files are then reported informationally and only *modified* files fail the gate. A
    missing lock still fails — that means the repo was never rendered, which the flag won't mask.
 
+**Run the drift gate** — the `doctor` command from rule 4, in three copyable forms:
+
+**Agent prompt** — paste to your coding agent:
+
+```text
+Check this repo for wafflestack drift: run `npx github:dustinkeeton/wafflestack doctor`
+(add `--allow-missing` if we gitignore some renders) and summarize any modified or
+missing managed files.
+```
+
+**Inline shell (Claude Code / Codex)** — type in the prompt:
+
+```text
+! npx --yes github:dustinkeeton/wafflestack doctor
+```
+
+**Run it yourself:**
+
+```bash
+npx github:dustinkeeton/wafflestack doctor   # add --allow-missing in CI when some renders are gitignored
+```
+
 ## Versioning and upgrades
 
 WaffleStack ships as git tags (`vX.Y.Z`), and the version is semver **read from a
@@ -93,7 +131,24 @@ consumer's point of view**:
 | minor | `0.5.0 → 0.6.0` | new bundles/items, additive config | `… render` |
 | major / breaking | renamed or removed item, new **required** config key, changed file layout | needs a migration | `… upgrade` |
 
-**Canonical upgrade command:**
+**Canonical upgrade command** — three copyable forms:
+
+**Agent prompt** — paste to your coding agent:
+
+```text
+Upgrade wafflestack in this repo to <newtag>: run
+`npx github:dustinkeeton/wafflestack#<newtag> upgrade`, review the CHANGELOG entries it
+prints, let it run migrations and re-render, then run `doctor` and tell me what changed
+and anything I still owe (e.g. `.gitignore` updates).
+```
+
+**Inline shell (Claude Code / Codex)** — type in the prompt:
+
+```text
+! npx --yes github:dustinkeeton/wafflestack#<newtag> upgrade
+```
+
+**Run it yourself:**
 
 ```bash
 npx github:dustinkeeton/wafflestack#<newtag> upgrade
