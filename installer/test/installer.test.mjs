@@ -294,6 +294,99 @@ describe('harness.* namespace', () => {
   });
 });
 
+describe('nested substitution', () => {
+  const declared = new Set(['git.coAuthorTrailer', 'git.cmd', 'a.b']);
+  const values = {
+    'git.coAuthorTrailer': 'Co-Authored-By: {{harness.assistantName}} <bot@example.com>',
+    'git.cmd': 'git -c user.email={{git.localOnly}}',
+    'git.localOnly': 'secret@example.com', // present in config but NOT declared (local-overlay pattern)
+    'harness.assistantName': 'Claude',
+    'a.b': 'loop {{a.b}}',
+    'secrets.X': 'should-never-appear',
+  };
+  const resolve = (key) => values[key];
+
+  test('placeholders inside values expand, including undeclared config-present keys', () => {
+    const errors = [];
+    const out = substitute('{{git.coAuthorTrailer}} via {{git.cmd}}', resolve, declared, errors, 't');
+    assert.equal(out, 'Co-Authored-By: Claude <bot@example.com> via git -c user.email=secret@example.com');
+    assert.equal(errors.length, 0);
+  });
+
+  test('canonical undeclared braces stay verbatim even when the key would resolve', () => {
+    const errors = [];
+    const text = 'uses ${{ secrets.X }} in CI';
+    assert.equal(substitute(text, resolve, declared, errors, 't'), text);
+  });
+
+  test('self-referential value is depth-capped, does not hang', () => {
+    const errors = [];
+    const out = substitute('{{a.b}}', resolve, declared, errors, 't');
+    assert.match(out, /^(loop )+\{\{a\.b\}\}$/);
+  });
+
+  test('unresolvable nested placeholder passes through silently', () => {
+    const errors = [];
+    const vals = { 'git.cmd': 'echo {{not.real}}' };
+    const out = substitute('{{git.cmd}}', (k) => vals[k], new Set(['git.cmd']), errors, 't');
+    assert.equal(out, 'echo {{not.real}}');
+    assert.equal(errors.length, 0);
+  });
+});
+
+describe('output conflicts and skillsDir', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-x-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-x-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: x\nbundles: [one, two]\n');
+    for (const b of ['one', 'two']) {
+      write(toolkitRoot, `bundles/${b}/bundle.yaml`, [
+        `name: ${b}`,
+        `description: Bundle ${b}.`,
+        'skills: [dup-skill]',
+        '',
+      ].join('\n'));
+      write(toolkitRoot, `bundles/${b}/skills/dup-skill/SKILL.md`, [
+        '---',
+        'name: dup-skill',
+        `description: Variant ${b}.`,
+        '---',
+        '',
+        `Variant ${b}. Read {{harness.skillsDir}}/dup-skill/SKILL.md.`,
+        '',
+      ].join('\n'));
+    }
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('same item from two bundles is a render error', () => {
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nbundles: [one, two]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((e) => /output conflict:.*dup-skill/.test(e) && /one\/skills\/dup-skill/.test(e) && /two\/skills\/dup-skill/.test(e)),
+      JSON.stringify(result.errors),
+    );
+  });
+
+  test('harness.skillsDir resolves per target', () => {
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude, agents-dir]\nbundles: [one]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, '.claude/skills/dup-skill/SKILL.md'), /Read \.claude\/skills\/dup-skill\/SKILL\.md\./);
+    assert.match(read(cwd, '.agents/skills/dup-skill/SKILL.md'), /Read \.agents\/skills\/dup-skill\/SKILL\.md\./);
+  });
+});
+
 function read(cwd, rel) {
   return fs.readFileSync(path.join(cwd, rel), 'utf8');
 }

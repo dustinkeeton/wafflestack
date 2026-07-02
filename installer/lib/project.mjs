@@ -40,6 +40,9 @@ export function loadProjectConfig(cwd) {
 export const HARNESS_BUILTINS = {
   assistantName: { claude: 'Claude', codex: 'Codex', 'agents-dir': 'Codex' },
   attributionPath: { claude: 'claude-code', codex: 'Codex', 'agents-dir': 'Codex' },
+  // Where rendered skills live from that target's point of view, for content that
+  // references skill files by path ("read {{harness.skillsDir}}/x/SKILL.md").
+  skillsDir: { claude: '.claude/skills', codex: '.agents/skills', 'agents-dir': '.agents/skills' },
 };
 
 /**
