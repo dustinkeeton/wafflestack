@@ -32,6 +32,15 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- No migration required, additive: the github-workflow bundle now ships a second workflow,
+  `.github/workflows/waffle-label-hook.yml`, plus a `label-hook` skill. It renders on your
+  next `render`/`upgrade` but is **inert until you opt in**: it dispatches the Claude harness
+  only when one of the configured trigger labels (`labelHook.enrichLabel`, default
+  `waffle:enrich`; `labelHook.implementLabel`, default `waffle:implement`) is applied to an
+  issue by a human, and it needs an `ANTHROPIC_API_KEY` repo secret — **each dispatch spends
+  real API budget**. Repos without the labels/secret only accrue skipped runs on labeled
+  events. Opt out entirely with `eject: [files/.github/workflows/waffle-label-hook.yml]`.
+  Pushing the new file needs the `workflow` credential scope (same as the doctor workflow). (#27)
 - No migration required, and the default is safer: `render` now **refuses to overwrite a
   pre-existing file it does not manage** instead of silently clobbering it. If a render
   stops on a `refusing to overwrite …` error, the named path already exists in your repo
@@ -62,6 +71,17 @@ is what you reach for across a breaking one.
   your approval. (#29)
 
 ### Added
+- Label-event hook primitive (github-workflow bundle): a prefab
+  `.github/workflows/waffle-label-hook.yml` that dispatches the Claude Code GitHub Action
+  when an allowlisted trigger label is applied to an issue, paired with a `label-hook` skill
+  defining the label→action map — `waffle:enrich` runs the issue skill's enrich-in-place
+  mode, `waffle:implement` implements the issue and opens a PR per git-workflow. Security
+  posture built in: exact-match label gates (the label string is never interpolated into
+  shell or prompt), human-sender check, per-job least-privilege permissions, SHA-pinned
+  actions, an audit comment per dispatch, and prompt-injection guardrails in the skill. New
+  optional config: `labelHook.enrichLabel`, `labelHook.implementLabel`, `labelHook.claudeArgs`.
+  First `requires:` entry keyed by a `files/` payload, so a per-item install of the workflow
+  pulls the skill closure. (#27)
 - Opt-in `.gitignore` offer (#29): a `--gitignore` flag on `init`/`render`/`install` appends
   the recommended ignore entries through a new idempotent `ensureGitignoreEntries(cwd, entries)`
   helper — `.waffle.local.yaml` always, plus the resolved `git.worktreesDir` when an enabled

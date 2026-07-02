@@ -55,7 +55,7 @@ Only keys **declared** in `config:` are substituted in this bundle's content —
 
 `requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
 skill telling the reader to "see the `github-project-management` skill"). Each key is an
-item ref (`skills/<name>` / `agents/<name>`) defined in this bundle; each value is a list
+item ref (`skills/<name>` / `agents/<name>` / `files/<repo-relative-path>`) defined in this bundle; each value is a list
 of item refs it depends on, resolved against the **whole toolkit** (prefer this bundle,
 then a unique toolkit-wide match; qualify as `<bundle>/skills/<name>` when the name is
 ambiguous). When that item is installed individually, its `requires:` closure is pulled in
