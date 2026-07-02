@@ -17,4 +17,4 @@ config:
     description: Plugin author name for manifest.json.
   plugin.classPrefix:
     required: true
-    description: PascalCase class-name prefix, e.g. Synapse for SynapsePlugin / SynapseSettingTab.
+    description: PascalCase class-name prefix, e.g. Acme → AcmePlugin / AcmeSettingTab.
