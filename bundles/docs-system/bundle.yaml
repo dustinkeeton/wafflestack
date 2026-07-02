@@ -3,6 +3,6 @@ description: Two-audience documentation system — machine-readable AGENTS.md do
 agents: [docs-agent, docs-human]
 skills: [docs-agent, docs-human]
 config:
-  project.name:
+  project.longName:
     required: true
-    description: Project name as used in prose, e.g. "the Synapse Obsidian plugin".
+    description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".

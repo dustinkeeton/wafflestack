@@ -1,0 +1,31 @@
+name: github-workflow
+description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, and project-board automation.
+skills: [git-workflow, issue, github-project-management]
+config:
+  git.botEmail:
+    required: true
+    description: Committer email used for all automated git operations and Co-Authored-By trailers.
+  git.botName:
+    required: true
+    description: Committer name (git user.name) used for all automated git operations.
+  project.name:
+    required: true
+    description: Project name as used in prose and as the project-board title matcher, e.g. "Synapse".
+  project.slug:
+    required: true
+    description: Short project slug used in example worktree directory paths, e.g. "synapse".
+  project.buildCmd:
+    required: false
+    default: npm run build
+    description: Production build command run in the pre-flight checklist and PR test plan.
+  project.testCmd:
+    required: false
+    default: npm test
+    description: Test command run in the pre-flight checklist and PR test plan.
+  project.typecheckCmd:
+    required: true
+    description: Type-check command run in the pre-flight checklist and PR test plan, e.g. "npx tsc --noEmit --skipLibCheck".
+  issue.inferenceLabel:
+    required: false
+    default: Needs Inference
+    description: Lifecycle label marking an issue as awaiting AI enrichment; removed once enriched.

@@ -55,7 +55,9 @@ claude:            # passthrough keys emitted only in the Claude render
 ```
 
 The body is the agent's instructions. It may reference declared config keys as
-`{{dotted.key}}`.
+`{{dotted.key}}`. The frontmatter `description` is also substituted (per target, like the
+body) — it is the one frontmatter field that carries prose; all other frontmatter passes
+through verbatim.
 
 Renders to:
 - **claude** → `.claude/agents/<name>.md` — frontmatter `name`, `description`, `skills`,
@@ -94,3 +96,29 @@ Renders to:
 `{{key}}` looks up `key` as a dotted path in the merged `config:` maps. Strings substitute
 verbatim; arrays of strings join with `, `; other structures render as a YAML block.
 Missing **required** keys fail the render with a list of what to add.
+
+### The `harness.*` namespace
+
+`harness.*` is a reserved, **always-available** namespace (never declared in a bundle's
+`config:`). It resolves **per output target**, so one source can carry the small
+per-harness differences — chiefly authorship attribution — without duplicating files:
+
+| Key | claude | codex | agents-dir |
+|---|---|---|---|
+| `harness.assistantName` | `Claude` | `Codex` | `Codex` |
+| `harness.attributionPath` | `claude-code` | `Codex` | `Codex` |
+
+A project can override any sub-key under `config.harness.<sub>` — either a scalar (applied
+to every target) or a per-target map, e.g.:
+
+```yaml
+config:
+  harness:
+    assistantName: Aider            # scalar → all targets
+    attributionPath:                # per-target map (missing targets fall back to the built-in)
+      claude: my-tool
+      agents-dir: my-tool
+```
+
+Because substitution runs once per target, the same `{{harness.*}}` placeholder can render
+differently in `.claude/…` vs `.codex/…` / `.agents/…` from a single canonical source.

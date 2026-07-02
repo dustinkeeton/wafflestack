@@ -24,7 +24,9 @@ export function validateToolkit(rootDir) {
       if (agent.data.name && agent.data.name !== agent.name) {
         problems.push(`${ctx}: agent ${agent.name} frontmatter name "${agent.data.name}" mismatches filename`);
       }
+      // Both the body and the frontmatter description are substituted at render time.
       for (const k of placeholderKeys(agent.body)) usedKeys.add(k);
+      for (const k of placeholderKeys(agent.data.description ?? '')) usedKeys.add(k);
     }
     for (const skill of bundle.skills) {
       const raw = fs.readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf8');
@@ -37,7 +39,9 @@ export function validateToolkit(rootDir) {
     }
 
     for (const key of usedKeys) {
-      if (!bundle.declared.has(key) && looksLikeConfigKey(key)) {
+      // `harness.*` is a reserved, always-available namespace (resolved per target) —
+      // it is never declared in bundle config.
+      if (!bundle.declared.has(key) && !key.startsWith('harness.') && looksLikeConfigKey(key)) {
         problems.push(`${ctx}: placeholder {{${key}}} is not declared in bundle.yaml config`);
       }
     }

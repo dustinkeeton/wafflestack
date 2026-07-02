@@ -32,11 +32,40 @@ export function loadProjectConfig(cwd) {
   };
 }
 
-/** Resolver for a bundle: project config value, else the bundle-declared default. */
-export function makeResolver(bundle, values) {
+/**
+ * Reserved `harness.*` template values, resolved per output target. Not declared in
+ * any bundle — always available. A project may override any sub-key via
+ * `config.harness.<sub>` (a scalar applied to every target, or a per-target map).
+ */
+export const HARNESS_BUILTINS = {
+  assistantName: { claude: 'Claude', codex: 'Codex', 'agents-dir': 'Codex' },
+  attributionPath: { claude: 'claude-code', codex: 'Codex', 'agents-dir': 'Codex' },
+};
+
+/**
+ * Resolver for a bundle rendering to `target`:
+ * - `harness.<sub>` — project override (scalar for all targets, or per-target map),
+ *   falling back to the built-in for `target`.
+ * - anything else — project config value, else the bundle-declared default.
+ */
+export function makeResolver(bundle, values, target) {
   return (key) => {
+    if (key.startsWith('harness.')) {
+      const sub = key.slice('harness.'.length);
+      const override = lookupPath(values, key);
+      let v;
+      if (override !== undefined) {
+        v = isPlainObject(override) ? override[target] : override;
+      }
+      if (v === undefined) v = HARNESS_BUILTINS[sub]?.[target];
+      return v;
+    }
     const v = lookupPath(values, key);
     if (v !== undefined) return v;
     return bundle.config[key]?.default;
   };
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
 }

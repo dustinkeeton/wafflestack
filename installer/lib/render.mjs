@@ -35,8 +35,12 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
       errors.push(`bundle "${bundleName}" not found in toolkit (have: ${[...toolkit.bundles.keys()].join(', ')})`);
       continue;
     }
-    const resolve = makeResolver(bundle, project.values);
-    const missing = missingRequiredKeys(bundle, project.values, (values, key) => resolve(key));
+    // One resolver per enabled target — the reserved `harness.*` keys resolve
+    // differently per output target (Claude vs. Codex attribution, etc.).
+    const resolvers = {};
+    for (const target of project.targets) resolvers[target] = makeResolver(bundle, project.values, target);
+    const missingResolver = makeResolver(bundle, project.values, project.targets[0] ?? 'claude');
+    const missing = missingRequiredKeys(bundle, project.values, (values, key) => missingResolver(key));
     if (missing.length) {
       errors.push(
         `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to .agent-toolkit.yaml (or the .local overlay)`,
@@ -46,16 +50,18 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
 
     for (const agent of bundle.agents) {
       if (ejected.has(`agents/${agent.name}`)) continue;
-      renderAgent({ agent, bundle, resolve, project, cwd, outputs, errors });
+      renderAgent({ agent, bundle, resolvers, project, cwd, outputs, errors });
     }
     for (const skill of bundle.skills) {
       if (ejected.has(`skills/${skill.name}`)) continue;
-      renderSkill({ skill, bundle, resolve, project, cwd, outputs, errors });
+      renderSkill({ skill, bundle, resolvers, project, cwd, outputs, errors });
     }
     checkEnvPrerequisites({ bundle, project, cwd, warnings });
   }
 
-  if (errors.length) return { ok: false, errors, warnings };
+  // The same placeholder is substituted once per target, so a missing value yields
+  // one error per target — collapse to a distinct set.
+  if (errors.length) return { ok: false, errors: [...new Set(errors)], warnings };
 
   // Frozen image: remove previously managed files that this render no longer produces.
   const oldLock = readLock(cwd);
@@ -85,28 +91,35 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
   return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed };
 }
 
-function renderAgent({ agent, bundle, resolve, project, cwd, outputs, errors }) {
+function renderAgent({ agent, bundle, resolvers, project, cwd, outputs, errors }) {
   const context = `${bundle.name}/agents/${agent.name}`;
-  let body = substitute(agent.body, resolve, bundle.declared, errors, context);
-  body = appendExtension(body, cwd, path.join(EXTENSIONS_DIR, 'agents', `${agent.name}.md`));
+  const extPath = path.join(EXTENSIONS_DIR, 'agents', `${agent.name}.md`);
+  // Body and description are substituted per target so `harness.*` resolves to that
+  // target's identity (description is the one frontmatter field carrying prose).
+  const bodyFor = (target) =>
+    appendExtension(substitute(agent.body, resolvers[target], bundle.declared, errors, context), cwd, extPath);
+  const descriptionFor = (target) =>
+    substitute(agent.data.description ?? '', resolvers[target], bundle.declared, errors, context);
 
   if (project.targets.includes('claude')) {
-    const fm = { name: agent.data.name ?? agent.name, description: agent.data.description };
+    const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('claude') };
     if (agent.data.skills) fm.skills = agent.data.skills;
     Object.assign(fm, agent.data.claude ?? {});
     outputs.set(
       path.join('.claude', 'agents', `${agent.name}.md`),
-      stringifyFrontmatter(fm, body),
+      stringifyFrontmatter(fm, bodyFor('claude')),
     );
   }
   if (project.targets.includes('codex')) {
-    outputs.set(path.join('.codex', 'agents', `${agent.name}.toml`), agentToml(agent, body));
+    outputs.set(
+      path.join('.codex', 'agents', `${agent.name}.toml`),
+      agentToml(agent, bodyFor('codex'), descriptionFor('codex')),
+    );
   }
 }
 
-function agentToml(agent, body) {
+function agentToml(agent, body, description = agent.data.description ?? '') {
   const name = agent.data.name ?? agent.name;
-  const description = agent.data.description ?? '';
   return [
     `name = ${tomlBasicString(name)}`,
     `description = ${tomlBasicString(description)}`,
@@ -125,25 +138,29 @@ function tomlMultilineString(s) {
   return `"""\n${escaped}"""`;
 }
 
-function renderSkill({ skill, bundle, resolve, project, cwd, outputs, errors }) {
-  const targets = [];
-  if (project.targets.includes('claude')) targets.push(path.join('.claude', 'skills', skill.name));
-  if (project.targets.includes('agents-dir')) targets.push(path.join('.agents', 'skills', skill.name));
-  if (!targets.length) return;
+function renderSkill({ skill, bundle, resolvers, project, cwd, outputs, errors }) {
+  const targetDirs = [];
+  if (project.targets.includes('claude')) targetDirs.push({ target: 'claude', dir: path.join('.claude', 'skills', skill.name) });
+  if (project.targets.includes('agents-dir')) targetDirs.push({ target: 'agents-dir', dir: path.join('.agents', 'skills', skill.name) });
+  if (!targetDirs.length) return;
 
+  const extPath = path.join(EXTENSIONS_DIR, 'skills', `${skill.name}.md`);
   for (const rel of skill.files) {
     const abs = path.join(skill.dir, rel);
-    let content;
     if (rel.endsWith('.md')) {
       const context = `${bundle.name}/skills/${skill.name}/${rel}`;
-      content = substitute(fs.readFileSync(abs, 'utf8'), resolve, bundle.declared, errors, context);
-      if (rel === 'SKILL.md') {
-        content = appendExtension(content, cwd, path.join(EXTENSIONS_DIR, 'skills', `${skill.name}.md`));
+      const raw = fs.readFileSync(abs, 'utf8');
+      // Substitute per target: `.claude/skills` uses the claude identity, `.agents/skills`
+      // the agents-dir (Codex) identity — they diverge only where `harness.*` is used.
+      for (const { target, dir } of targetDirs) {
+        let content = substitute(raw, resolvers[target], bundle.declared, errors, context);
+        if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
+        outputs.set(path.join(dir, rel), content);
       }
     } else {
-      content = fs.readFileSync(abs);
+      const content = fs.readFileSync(abs);
+      for (const { dir } of targetDirs) outputs.set(path.join(dir, rel), content);
     }
-    for (const target of targets) outputs.set(path.join(target, rel), content);
   }
 }
 

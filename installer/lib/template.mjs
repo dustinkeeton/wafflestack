@@ -4,14 +4,17 @@ const PLACEHOLDER = /\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g;
 
 /**
  * Substitute {{dotted.key}} placeholders in `text`.
- * Only keys present in `declared` (Set of dotted keys) are touched; anything else —
- * bash `${...}`, GraphQL, JS templates, undeclared braces — passes through verbatim.
- * `resolve(key)` returns the value (already defaulted) or undefined; missing values
- * push a message into `errors` and leave the placeholder in place.
+ * Keys present in `declared` (Set of dotted keys) are substituted; so is the reserved
+ * `harness.*` namespace, which is always available and resolved per output target
+ * (e.g. `{{harness.assistantName}}` → "Claude" in the claude render, "Codex" in the
+ * codex / agents-dir renders). Anything else — bash `${...}`, GraphQL, JS templates,
+ * undeclared braces — passes through verbatim.
+ * `resolve(key)` returns the value (already defaulted / target-resolved) or undefined;
+ * missing values push a message into `errors` and leave the placeholder in place.
  */
 export function substitute(text, resolve, declared, errors, context) {
   return text.replace(PLACEHOLDER, (match, key) => {
-    if (!declared.has(key)) return match;
+    if (!declared.has(key) && !key.startsWith('harness.')) return match;
     const v = resolve(key);
     if (v === undefined) {
       errors.push(`${context}: missing config value for {{${key}}}`);

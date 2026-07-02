@@ -182,6 +182,118 @@ describe('end to end', () => {
   });
 });
 
+describe('harness.* namespace', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-hz-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-hz-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: hz\nbundles: [hz]\n');
+    write(toolkitRoot, 'bundles/hz/bundle.yaml', [
+      'name: hz',
+      'description: Harness fixture.',
+      'agents: [attr]',
+      'skills: [attr-skill]',
+      'config:',
+      '  project.name:',
+      '    required: false',
+      '    default: Fixtureproj',
+      '    description: bare project name',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'bundles/hz/agents/attr.md', [
+      '---',
+      'name: attr',
+      'description: Attr agent for {{project.name}}, signed by {{harness.assistantName}}.',
+      'claude:',
+      '  allowed-tools: Read',
+      '---',
+      '',
+      'Attributed to {{harness.assistantName}} via {{harness.attributionPath}}.',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'bundles/hz/skills/attr-skill/SKILL.md', [
+      '---',
+      'name: attr-skill',
+      'description: Attr skill.',
+      '---',
+      '',
+      'Signed by {{harness.assistantName}}.',
+      '',
+    ].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const writeConfig = (configLines = ['config: {}']) => {
+    fs.writeFileSync(path.join(cwd, '.agent-toolkit.yaml'), [
+      'targets: [claude, codex, agents-dir]',
+      'bundles: [hz]',
+      ...configLines,
+      '',
+    ].join('\n'));
+  };
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('built-ins resolve per target: Claude in .claude, Codex in .codex/.agents', () => {
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    assert.match(read(cwd, '.claude/agents/attr.md'), /Attributed to Claude via claude-code\./);
+    assert.match(read(cwd, '.codex/agents/attr.toml'), /Attributed to Codex via Codex\./);
+    assert.match(read(cwd, '.claude/skills/attr-skill/SKILL.md'), /Signed by Claude\./);
+    assert.match(read(cwd, '.agents/skills/attr-skill/SKILL.md'), /Signed by Codex\./);
+  });
+
+  test('agent frontmatter description is substituted per target', () => {
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    assert.match(
+      read(cwd, '.claude/agents/attr.md'),
+      /^---\nname: attr\ndescription: Attr agent for Fixtureproj, signed by Claude\.\n/,
+    );
+    assert.match(
+      read(cwd, '.codex/agents/attr.toml'),
+      /\ndescription = "Attr agent for Fixtureproj, signed by Codex\."\n/,
+    );
+  });
+
+  test('scalar override applies to every target', () => {
+    writeConfig(['config:', '  harness:', '    assistantName: Aider']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    assert.match(read(cwd, '.claude/skills/attr-skill/SKILL.md'), /Signed by Aider\./);
+    assert.match(read(cwd, '.agents/skills/attr-skill/SKILL.md'), /Signed by Aider\./);
+    assert.match(read(cwd, '.codex/agents/attr.toml'), /Attributed to Aider via Codex\./);
+    // unoverridden sub-key still uses the per-target built-in
+    assert.match(read(cwd, '.claude/agents/attr.md'), /Attributed to Aider via claude-code\./);
+  });
+
+  test('per-target map override, missing target falls back to built-in', () => {
+    writeConfig([
+      'config:',
+      '  harness:',
+      '    attributionPath:',
+      '      claude: my-tool',
+      '      agents-dir: my-tool',
+    ]);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    assert.match(read(cwd, '.claude/agents/attr.md'), /Attributed to Claude via my-tool\./);
+    // codex not in the map -> built-in "Codex"
+    assert.match(read(cwd, '.codex/agents/attr.toml'), /Attributed to Codex via Codex\./);
+  });
+});
+
 function read(cwd, rel) {
   return fs.readFileSync(path.join(cwd, rel), 'utf8');
 }
