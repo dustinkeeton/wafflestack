@@ -1,9 +1,18 @@
-# wafflestack
+<p align="center">
+  <img src="assets/wafflestack-hero.svg" width="150" alt="WaffleStack — a stack of golden waffles with a syrup pour">
+</p>
 
-Reusable AI agent and skill definitions, distributed shadcn-style but **update-safe**: one
-canonical source repo, rendered into harness-native files inside each consuming project.
-Supported harnesses: Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Codex
-(`.codex/agents/*.toml`), and the cross-tool agents dir (`.agents/skills`).
+<h1 align="center">WaffleStack</h1>
+
+<p align="center"><strong>One batter, every repo.</strong><br>
+Reusable AI agent and skill definitions, distributed shadcn-style but <strong>update-safe</strong>.</p>
+
+---
+
+One canonical source repo, rendered into harness-native files inside each consuming
+project — the same batter, baked fresh wherever you need it. Supported harnesses:
+Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Codex (`.codex/agents/*.toml`),
+and the cross-tool agents dir (`.agents/skills`).
 
 ## Install into a project
 
@@ -56,4 +65,12 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    regenerates everything; your config and extensions survive untouched.
 4. `doctor` tells you when local edits have crept into managed files.
 
-Format details: [schema/FORMAT.md](schema/FORMAT.md).
+Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guidelines:
+[assets/](assets/).
+
+---
+
+<p align="center">
+  <img src="assets/wafflestack-flat.svg" width="24" alt=""><br>
+  A <strong>WaffleWorks</strong> project — controlled fun, one waffle at a time.
+</p>
