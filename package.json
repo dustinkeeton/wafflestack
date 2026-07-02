@@ -1,6 +1,6 @@
 {
   "name": "wafflestack",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Canonical agent/skill definitions rendered into harness-native files (.claude/, .codex/, .agents/) for any consuming project",
   "type": "module",
