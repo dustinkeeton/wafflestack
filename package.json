@@ -12,7 +12,8 @@
     "installer",
     "bundles",
     "schema",
-    "toolkit.yaml"
+    "toolkit.yaml",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --test installer/test/*.test.mjs",

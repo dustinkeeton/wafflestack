@@ -45,6 +45,34 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+/**
+ * Parse a semver-ish version ("0.5.0", "v0.5.0", "0.6.0-rc.1") into [major, minor, patch].
+ * Any pre-release / build suffix is ignored — the toolkit tags plain `vX.Y.Z`, and the
+ * upgrade window is coarse enough that pre-release ordering does not matter. Returns null
+ * when the string has no `X.Y.Z` core (e.g. a lock predating `toolkitVersion`).
+ */
+export function parseVersion(v) {
+  const m = /^\s*v?(\d+)\.(\d+)\.(\d+)/.exec(String(v ?? ''));
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * Compare two semver-ish versions numerically. Returns -1 / 0 / 1 (a<b / a==b / a>b).
+ * An unparseable version sorts below any parseable one (two unparseable compare equal),
+ * so a version-less lock is treated as "older than everything" by callers that opt into it.
+ */
+export function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa && !pb) return 0;
+  if (!pa) return -1;
+  if (!pb) return 1;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
+}
+
 /** Look up a dotted path ("git.botEmail") in a nested object. */
 export function lookupPath(obj, dotted) {
   let cur = obj;
