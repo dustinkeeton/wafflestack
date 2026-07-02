@@ -5,8 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import YAML from 'yaml';
 import { substitute, formatValue, placeholderKeys } from '../lib/template.mjs';
-import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath } from '../lib/util.mjs';
+import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath, sha256 } from '../lib/util.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject, installRefs } from '../lib/eject.mjs';
@@ -540,6 +541,87 @@ describe('files/ payload', () => {
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.project\.name/);
+  });
+});
+
+// The real github-workflow bundle ships a doctor CI workflow as a files/ payload (#14).
+// These render THAT actual payload (not a fixture) to prove the shipped artifact is correct.
+describe('github-workflow: wafflestack-doctor CI payload (#14)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/wafflestack-doctor.yml';
+  const REF = `files/${REL}`;
+  let cwd;
+
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-doctor-ci-'));
+  });
+  afterEach(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const writeConfig = (yaml) => fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), yaml);
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('per-item install renders the workflow — default toolkitRef, ${{ }} passthrough, SHA-pinned, lock-tracked', () => {
+    // The payload references only the optional (defaulted) doctor.toolkitRef plus GitHub
+    // Actions ${{ }} expressions, so a bare per-item install needs zero config.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig: {}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // (a) lands at the repo-relative workflow path
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
+    const wf = read(cwd, REL);
+
+    // (b, default) {{doctor.toolkitRef}} → bundle default; no leftover wafflestack placeholder
+    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack doctor/);
+    assert.doesNotMatch(wf, /\{\{\s*doctor\.toolkitRef\s*\}\}/);
+
+    // (c) GitHub Actions ${{ }} expressions pass through the renderer verbatim
+    assert.match(wf, /group: wafflestack-doctor-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}/);
+    assert.match(wf, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+
+    // security posture ships intact: 40-char SHA-pinned actions (with a # vX.Y.Z comment),
+    // least-privilege token, Node 20 — dogfoods the security-audit CI guidance.
+    assert.match(wf, /uses: actions\/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+    assert.match(wf, /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+    assert.match(wf, /permissions:\n {2}contents: read/);
+    assert.match(wf, /node-version: 20/);
+
+    // (d) byte-tracked in the lock at its repo-relative path (hash === sha256 of the bytes),
+    // and doctor round-trips clean against that lock.
+    const lock = JSON.parse(read(cwd, '.wafflestack.lock.json'));
+    assert.ok(REL in lock.files, JSON.stringify(lock.files));
+    assert.equal(lock.files[REL], sha256(wf));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('doctor.toolkitRef override flows into the npx invocation (pin a release tag)', () => {
+    writeConfig(
+      `targets: [claude]\ninclude: [${REF}]\n` +
+        "config:\n  doctor:\n    toolkitRef: github:dustinkeeton/wafflestack#v0.5.0\n",
+    );
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const wf = read(cwd, REL);
+    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack#v0\.5\.0 doctor/);
+    // ${{ }} expressions remain untouched regardless of the override
+    assert.match(wf, /\$\{\{ github\.workflow \}\}/);
+  });
+
+  test('rendered workflow is valid YAML with the required GitHub Actions keys', () => {
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig: {}\n`);
+    assert.equal(render().ok, true);
+    const parsed = YAML.parse(read(cwd, REL)); // throws on invalid YAML
+
+    assert.ok(parsed.on, 'workflow declares on: triggers');
+    assert.deepEqual(parsed.on.push.branches, ['main']);
+    assert.ok('pull_request' in parsed.on && 'workflow_dispatch' in parsed.on);
+    assert.equal(parsed.permissions.contents, 'read');
+    assert.equal(parsed.jobs.doctor['runs-on'], 'ubuntu-latest');
+    assert.ok(Array.isArray(parsed.jobs.doctor.steps) && parsed.jobs.doctor.steps.length >= 3);
+    // the doctor step actually invokes the toolkit
+    assert.ok(parsed.jobs.doctor.steps.some((s) => /\bdoctor\b/.test(s.run ?? '')));
   });
 });
 

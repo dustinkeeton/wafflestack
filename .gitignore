@@ -8,6 +8,11 @@ node_modules/
 .claude/worktrees/
 .codex/
 .agents/
+# The github-workflow bundle self-renders a doctor CI workflow here; keep it untracked —
+# committing it would add always-failing CI to this repo (the lock is gitignored, so doctor
+# would exit 1 on a missing lock) and pushing it needs the `workflow` credential scope.
+# CI for this repo itself is a separate, deferred issue.
+.github/workflows/wafflestack-doctor.yml
 .wafflestack.lock.json
 .wafflestack.local.yaml
 

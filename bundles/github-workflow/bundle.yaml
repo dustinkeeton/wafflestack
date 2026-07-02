@@ -1,9 +1,24 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
 skills: [git-workflow, issue, github-project-management, clean-up]
+files:
+  - .github/workflows/wafflestack-doctor.yml
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
+
+  **Doctor CI workflow.** This bundle ships `.github/workflows/wafflestack-doctor.yml`,
+  a GitHub Actions job that runs `wafflestack doctor` on push/PR to fail the build when a
+  managed file drifts from `.wafflestack.lock.json`. It only works when the consuming repo
+  commits BOTH the rendered output AND `.wafflestack.lock.json` (the step-6 version-control
+  flow in schema/SETUP.md) — a repo that gitignores its render or lock will see doctor exit
+  1 with everything reported `missing:`, or fail on the missing lock. Point `doctor.toolkitRef`
+  at a release tag (e.g. `github:dustinkeeton/wafflestack#v0.5.0`) to pin the toolkit version
+  and silence doctor's version-skew note. Repos that deliberately gitignore a subset of
+  renders can change the job's command to `wafflestack doctor --allow-missing` (only modified
+  files fail; a missing lock still fails). Pushing this file needs the `workflow` credential
+  scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/wafflestack-doctor.yml]`
+  opts a repo out.
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
@@ -105,3 +120,10 @@ config:
     description: >-
       Verbatim markdown block (table + default rule) mapping issue signals to the
       repo's priority labels. Override to match the repo's taxonomy (e.g. priority/p0..p2).
+  doctor.toolkitRef:
+    required: false
+    default: github:dustinkeeton/wafflestack
+    description: >-
+      npx spec the doctor CI workflow (.github/workflows/wafflestack-doctor.yml) invokes
+      as `npx --yes <ref> doctor`. Pin to a release tag to freeze the toolkit version and
+      silence doctor's version-skew note, e.g. "github:dustinkeeton/wafflestack#v0.5.0".
