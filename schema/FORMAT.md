@@ -97,6 +97,31 @@ Renders to:
 verbatim; arrays of strings join with `, `; other structures render as a YAML block.
 Missing **required** keys fail the render with a list of what to add.
 
+### Nested substitution
+
+A substituted **value** (project config or bundle default) may itself contain
+`{{placeholders}}`, expanded recursively (depth-capped). Nested expansion only descends
+into values — canonical text that survives the first pass (GitHub Actions `${{ ... }}`,
+mustache examples) is never touched. Inside a value, anything resolvable is expanded:
+declared keys, `harness.*`, and any dotted path present in the project config **even if
+undeclared** — so a committed value like
+
+```yaml
+git:
+  cmd: git -c user.email={{git.botEmail}} -c user.name={{git.botName}}
+```
+
+can reference keys kept in the gitignored `.wafflestack.local.yaml`. Unresolvable nested
+placeholders pass through verbatim. Avoid config key names that collide with literal
+template syntax you embed in values (e.g. don't declare a `secrets.*` namespace).
+
+### Item-name collisions
+
+Two bundles may define items with the same name — alternative implementations of the same
+skill interface (e.g. the desktop-plugin vs. browser-app `security-audit`). Enabling both
+in one project is an error: the renderer refuses to render the same output path from two
+bundles instead of silently letting the last one win. Pick one, or `eject` one.
+
 ### The `harness.*` namespace
 
 `harness.*` is a reserved, **always-available** namespace (never declared in a bundle's
@@ -107,6 +132,7 @@ per-harness differences — chiefly authorship attribution — without duplicati
 |---|---|---|---|
 | `harness.assistantName` | `Claude` | `Codex` | `Codex` |
 | `harness.attributionPath` | `claude-code` | `Codex` | `Codex` |
+| `harness.skillsDir` | `.claude/skills` | `.agents/skills` | `.agents/skills` |
 
 A project can override any sub-key under `config.harness.<sub>` — either a scalar (applied
 to every target) or a per-target map, e.g.:

@@ -181,10 +181,35 @@ task_B = TaskCreate(
 ### Branch naming
 
 Each agent gets a branch named per git-workflow conventions:
+
 - Bug fix: `fix/issue-{N}-{short-desc}`
 - Enhancement: `feat/issue-{N}-{short-desc}`
 - Refactor: `refactor/issue-{N}-{short-desc}`
 - Chore/docs: `chore/issue-{N}-{short-desc}`
+
+### Worktree provisioning (parallel groups only)
+
+**KNOWN BUG:** the Agent tool's `isolation: "worktree"` parameter is silently ignored when `team_name` is also passed (see [anthropics/claude-code#33045](https://github.com/anthropics/claude-code/issues/33045)). Team-spawned agents end up sharing the main checkout and stomp on each other's branches. Always use the manual-worktree pattern below for parallel groups.
+
+For each issue in a parallel group, before spawning its agent:
+
+```bash
+# Run from the main checkout
+WORKTREE_PATH="{{git.worktreesDir}}/issue-{N}"
+git fetch origin main
+git worktree add "$WORKTREE_PATH" -b feat/issue-{N}-{short-desc} origin/main
+```
+
+Notes:
+
+- Pick the branch prefix (`feat/`, `fix/`, etc.) per the Branch naming table.
+- If the branch already exists from a prior aborted run, use `git worktree add "$WORKTREE_PATH" feat/issue-{N}-{short-desc}` (no `-b`).
+- Use `origin/main` as the base, not local `main`, so all worktrees start from the same fetched tip.
+- Keep `{{git.worktreesDir}}/` gitignored.
+
+Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt.
+
+For **serial groups** (including the single-issue fast path), no worktree is needed — the agent runs in the main checkout and switches branches there.
 
 ### Set In Progress
 
@@ -234,40 +259,53 @@ Errors in any step → log a warning and continue. Board updates must never bloc
 
 ### Spawning agents
 
-**Parallel groups** — spawn all agents in the group simultaneously using `isolation: "worktree"`. When a team exists (multi-issue), include `team_name` and `name` for coordination:
+**Parallel groups** — each agent gets a pre-provisioned worktree. **Do NOT pass `isolation: "worktree"`** — it is silently ignored when `team_name` is set (see the known bug above). Inject the worktree path into the prompt; the agent will `cd` into it as its first action.
 
 ```
 Agent(
-  subagent_type: "plugin-architect",
-  isolation: "worktree",
+  subagent_type: "{agent-type}",
   team_name: "delegate-{timestamp}",
-  name: "issue-3-plugin-architect",
-  prompt: <agent prompt>,
+  name: "issue-3-{agent-type}",
+  run_in_background: true,
+  prompt: <agent prompt with WORKTREE_PATH baked in>,
   description: "Issue #3: Fix UI hang"
 )
 ```
 
-The `isolation: "worktree"` parameter automatically creates and cleans up a git worktree for the agent. No manual worktree management needed.
+Spawn all agents of the group in the same response (multiple `Agent` tool calls in one message) so they run truly concurrently.
 
-**Single-issue fast path** — skip team creation entirely. Spawn a single agent without `team_name` or `name`:
+**Single-issue fast path** — skip team creation entirely. Run in the main checkout, no worktree needed:
 
 ```
 Agent(
-  subagent_type: "plugin-architect",
-  isolation: "worktree",
+  subagent_type: "{agent-type}",
   prompt: <agent prompt>,
   description: "Issue #3: Fix UI hang"
 )
 ```
 
-**Serial groups** — spawn agents one at a time in the main working directory. Wait for each to complete before spawning the next.
+**Serial groups** — spawn agents one at a time in the main checkout. Wait for each to complete before spawning the next.
+
+**Silent specialists** — a specialist agent only has the tools its definition grants. Agents without `SendMessage`/`TaskUpdate` finish silently: never wait on a report-back from them. After each agent completes, verify its work directly (branch pushed? PR opened? `gh pr list --head {branch-name}`) and do the task/board bookkeeping yourself.
 
 ### Agent prompt template
 
-Each spawned agent receives this prompt:
+Each spawned agent receives this prompt. For **parallel groups**, fill in `{worktree_path}` with the absolute path of the worktree provisioned for this issue. For **serial groups / single-issue fast path**, omit the "Working directory" section — the agent works in the main checkout and creates its branch there per the git-workflow skill.
 
 ```
 You are assigned to GitHub issue #{number}: {title}
+
+## Working directory
+
+YOUR WORKTREE: {worktree_path}
+
+FIRST COMMAND — run before anything else:
+
+    cd {worktree_path} && git status
+
+Every subsequent shell command in your session MUST run from this directory. Bash sessions persist `cwd`, so a single `cd` at the start is enough — but never run `cd` to a different directory afterward, and never operate on the parent checkout.
+
+The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT run `git checkout main` or `git pull` — that would corrupt sibling agents' worktrees. Just start committing.
 
 ## Issue body
 
@@ -275,19 +313,18 @@ You are assigned to GitHub issue #{number}: {title}
 
 ## Instructions
 
-1. Read the relevant source files identified in the issue
-2. Implement the fix/feature following the project's conventions
-3. Follow the git-workflow skill for all git operations:
-   - Branch from main: git checkout main && git pull && git -c user.email={{git.botEmail}} -c user.name={{git.botName}} checkout -b {branch-name}
-   - Commit with bot identity and Co-Authored-By footer
-   - Push: git -c user.email={{git.botEmail}} -c user.name={{git.botName}} push -u origin {branch-name}
+1. Read the relevant source files identified in the issue.
+2. Implement the fix/feature following the project's conventions.
+3. Follow the git-workflow skill for commits and push:
+   - End every commit message with `{{git.coAuthorTrailer}}`
+   - Push: {{git.cmd}} push -u origin {branch-name}
 4. Run the pre-flight checklist before pushing:
-   - npx tsc --noEmit --skipLibCheck
-   - npm test
+   - {{project.lintCmd}}
+   - {{project.typecheckCmd}}
+   - {{project.testCmd}}
    - {{project.buildCmd}}
-5. Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main
-6. Mark your task as completed: TaskUpdate(id: <task_id>, status: "completed")
-7. Report back to the team lead: SendMessage(to: "team-lead", content: <summary with PR URL>)
+5. Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main.
+6. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL>). If you lack these tools, just ensure the PR exists; the orchestrator verifies your work directly.
 
 Branch name: {branch-name}
 ```
@@ -297,7 +334,7 @@ Branch name: {branch-name}
 After each agent completes, verify the build still passes in the main working directory:
 
 ```bash
-npx tsc --noEmit --skipLibCheck && npm test
+{{project.typecheckCmd}} && {{project.testCmd}}
 ```
 
 If verification fails after a parallel agent's worktree merge, stop and report the conflict.
@@ -342,13 +379,25 @@ gh api graphql -f query='
 
 Include any failures or skipped issues with reasons.
 
+After the PRs merge, verify the issues actually closed — GitHub's closing keywords apply per reference (`Closes #1, #2` only closes #1), and epics never auto-close from their sub-issues. Close stragglers explicitly.
+
+### Worktree cleanup (parallel groups only)
+
+Once each agent's PR is merged, remove its worktree:
+
+```bash
+git worktree remove {{git.worktreesDir}}/issue-{N}
+```
+
+Do **not** remove worktrees while their PRs are still open — the user may want to push follow-up commits from there. If `git worktree remove` complains about a dirty tree, leave it for the user to inspect and report it in the delegation summary.
+
 ### Team Cleanup (multi-issue only)
 
 After reporting, shut down the team:
 
 ```
 # For each agent:
-SendMessage(type: "shutdown_request", to: "issue-{N}-{agent-type}")
+SendMessage(to: "issue-{N}-{agent-type}", type: "shutdown_request", content: "Delegation complete")
 
 TeamDelete(team_name: "delegate-{timestamp}")
 ```

@@ -6,7 +6,7 @@ skills:
   - git-workflow
   - issue
 claude:
-  allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent
+  tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
 
 You are the security specialist for {{project.longName}}. Your responsibilities:

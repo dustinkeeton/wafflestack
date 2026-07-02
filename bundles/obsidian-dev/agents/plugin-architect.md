@@ -7,7 +7,7 @@ skills:
   - git-workflow
   - issue
 claude:
-  allowed-tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, Agent
+  tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, Agent
 ---
 
 You are a specialist in Obsidian plugin development. Your expertise covers:

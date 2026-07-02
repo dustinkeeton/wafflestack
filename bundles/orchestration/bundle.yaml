@@ -1,6 +1,6 @@
 name: orchestration
-description: Multi-agent orchestration — a project-manager coordinator plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config.
-agents: [project-manager]
+description: Multi-agent orchestration — a project-manager coordinator and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow bundle (git-workflow, issue, and github-project-management skills are referenced throughout).
+agents: [project-manager, task-planner]
 skills: [delegate, audit, docs]
 config:
   project.name:
@@ -13,13 +13,42 @@ config:
     required: false
     default: npm run build
     description: Production build command run in the delegation pre-flight checklist.
-  git.botEmail:
-    required: true
-    description: Committer email used for automated commits and branch pushes.
-  git.botName:
+  project.testCmd:
     required: false
-    default: bot
-    description: Committer name used for automated commits and branch pushes.
+    default: npm test
+    description: Test command run in delegation pre-flight and post-agent verification.
+  project.typecheckCmd:
+    required: false
+    default: npx tsc --noEmit --skipLibCheck
+    description: Type-check command run in delegation pre-flight, post-agent verification, and audit build checks.
+  project.lintCmd:
+    required: false
+    default: npm run lint --if-present
+    description: Lint/format check command run in the delegation pre-flight checklist.
+  git.cmd:
+    required: false
+    default: git
+    description: The git invocation used in spawned-agent instructions (override for bot identities, same as the github-workflow bundle key).
+  git.coAuthorTrailer:
+    required: false
+    default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
+    description: Attribution trailer spawned agents must end commits with (same as the github-workflow bundle key).
+  git.worktreesDir:
+    required: false
+    default: .claude/worktrees
+    description: Repo-relative directory where per-issue git worktrees are provisioned (keep it gitignored).
+  planner.productDocsDir:
+    required: false
+    default: docs/product/
+    description: Directory the task-planner reads product briefs / user stories from.
+  roster.architectAgent:
+    required: false
+    default: architect
+    description: Name of the architecture-audit agent spawned by the audit chain and the docs pipeline.
+  roster.securityAgent:
+    required: false
+    default: security
+    description: Name of the security-audit agent spawned by the audit chain.
   roster.specialistTable:
     required: true
     description: >-
@@ -52,6 +81,13 @@ config:
     required: false
     default: "`main.ts`"
     description: Illustrative root file name used in the serialization guidance.
+  audit.complianceAgentType:
+    required: false
+    default: plugin-architect
+    description: >-
+      Agent (subagent_type) spawned for the project-specific compliance step in
+      the audit chain. The default preserves the original Obsidian-toolkit
+      behavior; set it to whichever specialist runs your compliance pass.
   audit.complianceLabel:
     required: true
     description: Short label for the project-specific compliance step in the audit chain (chain order + summary table).

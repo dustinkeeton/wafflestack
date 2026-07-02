@@ -1,19 +1,39 @@
 name: github-workflow
-description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, and project-board automation.
-skills: [git-workflow, issue, github-project-management]
+description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
+skills: [git-workflow, issue, github-project-management, clean-up]
 config:
-  git.botEmail:
-    required: true
-    description: Committer email used for all automated git operations and Co-Authored-By trailers.
-  git.botName:
-    required: true
-    description: Committer name (git user.name) used for all automated git operations.
+  git.identitySection:
+    required: false
+    default: |-
+      Use the project's standard git config — do not override `user.name` / `user.email` unless the project explicitly defines a bot identity. What makes agent commits traceable is the attribution trailer, which every agent-made commit must end with:
+
+      ```
+      {{git.coAuthorTrailer}}
+      ```
+    description: >-
+      Verbatim body of the git-workflow "Identity" section. Override for projects
+      that commit under a dedicated bot identity (describe the bot config there);
+      the default uses the developer's own git config plus the attribution trailer.
+  git.cmd:
+    required: false
+    default: git
+    description: >-
+      The git invocation used in command examples. Projects with a bot identity
+      set it to e.g. "git -c user.email={{git.botEmail}} -c user.name={{git.botName}}"
+      (nested keys may live in the gitignored .wafflestack.local.yaml).
+  git.coAuthorTrailer:
+    required: false
+    default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
+    description: >-
+      Attribution trailer appended to agent-made commits and PR bodies. Override
+      for bot identities, e.g. "Co-Authored-By: {{harness.assistantName}} <bot@example.com>".
+  git.worktreesDir:
+    required: false
+    default: .claude/worktrees
+    description: Repo-relative directory where parallel-work git worktrees are created (keep it gitignored).
   project.name:
     required: true
     description: Project name as used in prose and as the project-board title matcher, e.g. "Synapse".
-  project.slug:
-    required: true
-    description: Short project slug used in example worktree directory paths, e.g. "synapse".
   project.buildCmd:
     required: false
     default: npm run build
@@ -23,9 +43,40 @@ config:
     default: npm test
     description: Test command run in the pre-flight checklist and PR test plan.
   project.typecheckCmd:
-    required: true
-    description: Type-check command run in the pre-flight checklist and PR test plan, e.g. "npx tsc --noEmit --skipLibCheck".
+    required: false
+    default: npx tsc --noEmit --skipLibCheck
+    description: Type-check command run in the pre-flight checklist and PR test plan.
+  project.lintCmd:
+    required: false
+    default: npm run lint --if-present
+    description: Lint/format check command run in the pre-flight checklist and PR test plan.
   issue.inferenceLabel:
     required: false
     default: Needs Inference
     description: Lifecycle label marking an issue as awaiting AI enrichment; removed once enriched.
+  issue.typeLabels:
+    required: false
+    default: |-
+      | Intent | Label |
+      |--------|-------|
+      | Something is broken | `bug` |
+      | New capability | `enhancement` |
+      | Questions or discussion | `question` |
+      | Docs improvements | `documentation` |
+    description: >-
+      Verbatim markdown table mapping issue intent to the repo's type labels.
+      Override to match the repo's label taxonomy (e.g. type/bug, type/feature).
+  issue.priorityLabels:
+    required: false
+    default: |-
+      | Signal in issue content | Label |
+      |------------------------|-------|
+      | crash, data loss, security, blocks all users | `priority: critical` |
+      | broken workflow, regression, significant UX issue | `priority: high` |
+      | new feature, improvement, moderate bug, unclear | `priority: medium` |
+      | cosmetic, nice-to-have, minor, tech debt | `priority: low` |
+
+      Default to `priority: medium` when signals are ambiguous. Labels use a space after the colon (e.g., `priority: medium`, not `priority:medium`).
+    description: >-
+      Verbatim markdown block (table + default rule) mapping issue signals to the
+      repo's priority labels. Override to match the repo's taxonomy (e.g. priority/p0..p2).

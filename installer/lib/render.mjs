@@ -26,6 +26,20 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
   const errors = [];
   const warnings = [];
   const outputs = new Map(); // relative path -> content (string | Buffer)
+  const producedBy = new Map(); // relative path -> "bundle/kind/name" that emitted it
+  // Two enabled bundles may define same-named items (alternative implementations of
+  // the same skill, say) — fine in the toolkit, but rendering both would silently
+  // last-write-wins. Fail loudly instead.
+  const emit = (rel, content, context) => {
+    if (producedBy.has(rel) && producedBy.get(rel) !== context) {
+      errors.push(
+        `output conflict: ${rel} is produced by both ${producedBy.get(rel)} and ${context} — enable only one, or eject one of them`,
+      );
+      return;
+    }
+    producedBy.set(rel, context);
+    outputs.set(rel, content);
+  };
 
   const ejected = new Set(project.eject.map(normalizeItemRef));
 
@@ -50,11 +64,11 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
 
     for (const agent of bundle.agents) {
       if (ejected.has(`agents/${agent.name}`)) continue;
-      renderAgent({ agent, bundle, resolvers, project, cwd, outputs, errors });
+      renderAgent({ agent, bundle, resolvers, project, cwd, emit, errors });
     }
     for (const skill of bundle.skills) {
       if (ejected.has(`skills/${skill.name}`)) continue;
-      renderSkill({ skill, bundle, resolvers, project, cwd, outputs, errors });
+      renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors });
     }
     checkEnvPrerequisites({ bundle, project, cwd, warnings });
   }
@@ -91,7 +105,7 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
   return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed };
 }
 
-function renderAgent({ agent, bundle, resolvers, project, cwd, outputs, errors }) {
+function renderAgent({ agent, bundle, resolvers, project, cwd, emit, errors }) {
   const context = `${bundle.name}/agents/${agent.name}`;
   const extPath = path.join(EXTENSIONS_DIR, 'agents', `${agent.name}.md`);
   // Body and description are substituted per target so `harness.*` resolves to that
@@ -105,15 +119,17 @@ function renderAgent({ agent, bundle, resolvers, project, cwd, outputs, errors }
     const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('claude') };
     if (agent.data.skills) fm.skills = agent.data.skills;
     Object.assign(fm, agent.data.claude ?? {});
-    outputs.set(
+    emit(
       path.join('.claude', 'agents', `${agent.name}.md`),
       stringifyFrontmatter(fm, bodyFor('claude')),
+      context,
     );
   }
   if (project.targets.includes('codex')) {
-    outputs.set(
+    emit(
       path.join('.codex', 'agents', `${agent.name}.toml`),
       agentToml(agent, bodyFor('codex'), descriptionFor('codex')),
+      context,
     );
   }
 }
@@ -138,28 +154,29 @@ function tomlMultilineString(s) {
   return `"""\n${escaped}"""`;
 }
 
-function renderSkill({ skill, bundle, resolvers, project, cwd, outputs, errors }) {
+function renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors }) {
   const targetDirs = [];
   if (project.targets.includes('claude')) targetDirs.push({ target: 'claude', dir: path.join('.claude', 'skills', skill.name) });
   if (project.targets.includes('agents-dir')) targetDirs.push({ target: 'agents-dir', dir: path.join('.agents', 'skills', skill.name) });
   if (!targetDirs.length) return;
 
+  const itemContext = `${bundle.name}/skills/${skill.name}`;
   const extPath = path.join(EXTENSIONS_DIR, 'skills', `${skill.name}.md`);
   for (const rel of skill.files) {
     const abs = path.join(skill.dir, rel);
     if (rel.endsWith('.md')) {
-      const context = `${bundle.name}/skills/${skill.name}/${rel}`;
+      const context = `${itemContext}/${rel}`;
       const raw = fs.readFileSync(abs, 'utf8');
       // Substitute per target: `.claude/skills` uses the claude identity, `.agents/skills`
       // the agents-dir (Codex) identity — they diverge only where `harness.*` is used.
       for (const { target, dir } of targetDirs) {
         let content = substitute(raw, resolvers[target], bundle.declared, errors, context);
         if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
-        outputs.set(path.join(dir, rel), content);
+        emit(path.join(dir, rel), content, itemContext);
       }
     } else {
       const content = fs.readFileSync(abs);
-      for (const { dir } of targetDirs) outputs.set(path.join(dir, rel), content);
+      for (const { dir } of targetDirs) emit(path.join(dir, rel), content, itemContext);
     }
   }
 }

@@ -6,7 +6,7 @@ skills:
   - git-workflow
   - issue
 claude:
-  allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent
+  tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
 
 You are the visual designer for {{project.longName}}. Your responsibilities:
