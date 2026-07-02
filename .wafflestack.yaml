@@ -1,6 +1,6 @@
-# wafflestack dogfoods itself: the github-workflow bundle is rendered into this repo
-# so /issue, /git-workflow, /github-project-management, and /clean-up are available
-# when developing the toolkit with an agent.
+# wafflestack dogfoods itself: github-workflow, docs-system, and orchestration are
+# rendered into this repo so /issue, /git-workflow, /clean-up, /delegate, /audit,
+# /docs and the docs/PM/planner agents are available when developing the toolkit.
 #
 # Unlike consuming projects, the rendered output and lock are GITIGNORED here — a
 # committed second copy of every skill would pollute searches and invite edits to
@@ -9,9 +9,110 @@
 targets: [claude]
 bundles:
   - github-workflow
+  - docs-system
+  - orchestration
 config:
   project:
     name: wafflestack
+    longName: the wafflestack agent/skill toolkit
     testCmd: npm test
     typecheckCmd: npm run validate
     buildCmd: npm pack --dry-run
+  docs:
+    # This repo's "modules" are bundles + installer libs, not src/ features — one
+    # root registry replaces the default per-feature machine-doc shape.
+    machineDocSet: a single root `AGENTS.md` registry
+    machineDocSpec: |-
+      ## Documentation Files
+
+      ### `AGENTS.md` (root)
+
+      Single machine-doc registry for the toolkit. Contains:
+
+      - Project purpose (1-2 sentences)
+      - Bundle registry: table of bundles with path, description, skills, agents
+      - Installer module registry: table of `installer/lib/*.mjs` files with exported
+        functions (full signatures) and purpose
+      - CLI command registry: table of `wafflestack <cmd>` commands with behavior
+      - Template semantics summary: placeholder syntax, `harness.*` namespace,
+        nested substitution, extension points
+      - Consuming-project contract: config / local overlay / lock / extensions files
+      - Build/test commands
+
+      ## Format Rules
+
+      1. Use language-tagged fenced code blocks (e.g. ```js) for exported signatures and examples
+      2. Use tables for registries and enumerations
+      3. Use `file.mjs:42` format for source references (line number after the colon)
+      4. No markdown emphasis (bold/italic) in structured sections
+      5. Frontmatter with `last-updated` timestamp (YYYY-MM-DD)
+      6. Keep the file under 300 lines — the bundle registry summarizes; per-bundle
+         detail stays in each `bundle.yaml`
+    voiceGuardrailSection: |-
+      ## Owner-voiced docs — do not rewrite
+
+      `README.md`, `schema/FORMAT.md`, and `schema/SETUP.md` are owner-voiced
+      canonical documents (the schema files ship to consumers via npx). Never
+      rewrite them in a docs pass — if they have drifted from reality, flag the
+      drift in your report instead.
+    # No architecture skill is rendered here; the toolkit's conventions live in
+    # this file, which the docs agents read in its place.
+    architectureSkill: schema/FORMAT.md
+    auditChecklist: |-
+      - New or removed bundles, skills, agents, config keys, or CLI commands
+      - Changed installer exports or template semantics (`installer/lib/*.mjs`)
+      - `bundle.yaml` config declarations out of sync with placeholder usage
+      - Rendered-output drift: `node installer/cli.mjs doctor` clean; `.gitignore`
+        still covers every rendered path
+  roster:
+    # No specialist agent bundle is enabled — general-purpose executes the audit
+    # prompts, which carry the full instructions.
+    architectAgent: general-purpose
+    securityAgent: general-purpose
+    specialistTable: |-
+      | Agent | Responsibility |
+      |-------|----------------|
+      | general-purpose | Installer/CLI work (`installer/**`: JS + tests) and bundle/skill authoring (`bundles/**`, `schema/**`: markdown + YAML) |
+      | docs-agent | Machine docs (root `AGENTS.md` registry) |
+      | docs-human | Human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) |
+    classificationTable: |-
+      | Signal (keywords / paths) | Agent |
+      |---------------------------|-------|
+      | installer, CLI, render, doctor, eject, template, `installer/**` | general-purpose |
+      | bundle, skill, agent definition, config key, `bundles/**`, `schema/**` | general-purpose |
+      | docs, AGENTS.md, architecture/status docs | docs-agent (machine) / docs-human (human) |
+    labelFallback: |-
+      | Label | Agent |
+      |-------|-------|
+      | bug | general-purpose |
+      | enhancement | general-purpose |
+      | documentation | docs-agent |
+      | question | general-purpose |
+    rootFiles: toolkit.yaml, package.json, installer/cli.mjs, schema/FORMAT.md, README.md
+    sharedModule: installer/lib/ (render pipeline — every CLI command and test imports it)
+    moduleDependencies: bundle content depends on installer template semantics — `installer/lib` changes merge before dependent `bundles/**` changes.
+    rootFileExample: "`toolkit.yaml`"
+  delegate:
+    # This repo does not plan with milestones (none exist).
+    defaultScope: all-open
+    extraPreflight: |-
+      - `npm run validate` passes after any bundle/manifest edit
+      - If `bundles/**` changed: re-run `node installer/cli.mjs render` — never hand-edit rendered `.claude/` output
+  audit:
+    complianceAgentType: general-purpose
+    complianceLabel: Toolkit integrity
+    complianceFrontmatterLabel: toolkit integrity
+    complianceTaskLabel: Toolkit integrity check
+    complianceAgentName: toolkit-integrity
+    complianceDescription: Validates manifests, placeholders, tests, and render/lock integrity (validate + test + render + doctor).
+    compliancePrompt: |-
+      ### Toolkit integrity (Task 3)
+
+      Run the toolkit's own checks in order and report violations:
+
+      1. `npm run validate` — manifests parse, frontmatter is complete, every placeholder is declared
+      2. `npm test` — installer suite passes
+      3. `node installer/cli.mjs render && node installer/cli.mjs doctor` — rendered output matches the lock (no hand-edits to generated `.claude/` files)
+      4. Spot-check changed bundles: every placeholder used in content is declared in that `bundle.yaml`; `setup:` notes contain no placeholders
+
+      Fix what your role permits (source side only, then re-render); otherwise report each failure with the command output quoted.
