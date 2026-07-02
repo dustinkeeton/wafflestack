@@ -1053,6 +1053,8 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     rejects(renderWith(`    claudeArgs: '--append-system-prompt "x"'`), 'labelHook.claudeArgs');
     // a newline in claudeArgs could inject a sibling with: key
     rejects(renderWith('    claudeArgs: "--a\\n--b"'), 'labelHook.claudeArgs');
+    // a backslash starts an escape in the double-quoted scalar → corrupt arg or broken YAML
+    rejects(renderWith(`    claudeArgs: '--flag=a\\b'`), 'labelHook.claudeArgs');
 
     // empty enrichLabel is ALLOWED: the gate simply never matches (fail-closed), not an error
     const ok = renderWith(`    enrichLabel: ""`);

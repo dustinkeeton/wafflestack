@@ -204,13 +204,14 @@ config:
   labelHook.claudeArgs:
     required: false
     default: ""
-    pattern: '^(?!.*\$\{\{)[^"\r\n]*$'
+    pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
     description: >-
       Extra CLI arguments passed to the dispatched harness via the Claude Code
       action's claude_args input in .github/workflows/waffle-label-hook.yml — e.g.
       "--max-turns 30" or "--model claude-sonnet-4-5" for cost control. Empty by
       default. Rendered into a double-quoted YAML scalar, so it must not contain double
-      quotes, newlines, or `${{` (enforced at render by the pattern above; single quotes
-      are allowed). Security-sensitive: this is an unvalidated passthrough to the harness
-      CLI — flags here can widen the harness's authority, so set only what you understand
-      and trust.
+      quotes, backslashes, newlines, or `${{` (enforced at render by the pattern above;
+      single quotes are allowed). In that scalar every backslash starts an escape, so one
+      would either silently corrupt an argument or break the YAML. Security-sensitive: this
+      is an unvalidated passthrough to the harness CLI — flags here can widen the harness's
+      authority, so set only what you understand and trust.
