@@ -28,13 +28,13 @@ compiler — neutral source in, harness-native files out.
     bundle.yaml        ├──────────────────────►    .claude/skills/*/
     agents/*.md        │   (fill placeholders,     .codex/agents/*.toml
     skills/*/SKILL.md  │    resolve per target,    .agents/skills/*/
-  schema/FORMAT.md     ┘    append extensions)     .wafflestack.lock.json
+  schema/FORMAT.md     ┘    append extensions)     .waffle.lock.json
 
               ▲                                            │
               │            your settings                   │
-              └──── .wafflestack.yaml  ◄───────────────────┘
-                    .wafflestack.local.yaml   (config + secrets)
-                    .wafflestack/extensions/  (your additions)
+              └──── .waffle.yaml  ◄───────────────────┘
+                    .waffle.local.yaml   (config + secrets)
+                    .waffle/extensions/  (your additions)
 ```
 
 Source goes in; the installer fills in your project's values and writes
@@ -61,7 +61,7 @@ one of three forms:
 | item | `skills/issue`, `agents/project-manager` | one skill or agent (the name must be unique across the toolkit) |
 | qualified item | `code-quality/skills/security-audit` | one item in a named bundle — use this when the same name exists in two bundles |
 
-`wafflestack install <ref…>` records your choice in `.wafflestack.yaml` (bundles
+`wafflestack install <ref…>` records your choice in `.waffle.yaml` (bundles
 in the `bundles:` list, single items in an `include:` list) and then renders.
 
 **Dependencies resolve automatically** — installing an item pulls in whatever it
@@ -127,7 +127,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 
 | Command | What it does |
 |---------|--------------|
-| `init` | Write a starter `.wafflestack.yaml`. |
+| `init` | Write a starter `.waffle.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. |
 | `install <ref…>` | Add a bundle or single item to your config (pulling in dependencies), then render. Bare `install` just renders. |
 | `render` | Regenerate every managed file, delete stale ones, write the lock. |
@@ -144,14 +144,14 @@ full function-level registry is in the root `AGENTS.md`.
 A render is a straight-line flow:
 
 1. **Load** `toolkit.yaml` and each enabled bundle's manifest.
-2. **Load** your project config (`.wafflestack.yaml`, plus the gitignored
-   `.wafflestack.local.yaml` merged on top).
+2. **Load** your project config (`.waffle.yaml`, plus the gitignored
+   `.waffle.local.yaml` merged on top).
 3. **Select** what to render: every item in your `bundles:`, plus each `include:`
    item and its dependency closure, minus anything in `eject:`.
 4. For every selected item and every target, **substitute** placeholders and
    **append** any project extension.
 5. **Write** the harness-native files and record each file's hash in
-   `.wafflestack.lock.json`.
+   `.waffle.lock.json`.
 6. **Prune** any previously-managed file that is no longer rendered.
 
 Later, `doctor` re-hashes the files and compares them to the lock — that is how it
@@ -163,17 +163,17 @@ Everything a consuming project owns:
 
 | File | Tracked in git? | Purpose |
 |------|-----------------|---------|
-| `.wafflestack.yaml` | ✅ committed | Version pin, targets, enabled bundles, individual items (`include`), config values, `eject` list |
-| `.wafflestack.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins |
-| `.wafflestack/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments |
-| `.wafflestack.lock.json` | generated | Map of each rendered file to its hash; `doctor` reads it, `render` rewrites it |
+| `.waffle.yaml` | ✅ committed | Version pin, targets, enabled bundles, individual items (`include`), config values, `eject` list |
+| `.waffle.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins |
+| `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments |
+| `.waffle.lock.json` | generated | Map of each rendered file to its hash; `doctor` reads it, `render` rewrites it |
 
 **Rule of thumb:** never edit files under `.claude/` (etc.) — a re-render will
 overwrite them. Change source, config, or an extension instead.
 
 ## How this repo uses itself
 
-wafflestack **dogfoods** its own bundles: `.wafflestack.yaml` here renders
+wafflestack **dogfoods** its own bundles: `.waffle.yaml` here renders
 `github-workflow`, `docs-system`, and `orchestration` into this repo, so the
 toolkit's own agents and skills are available while developing it. Unlike a normal
 consuming project, the rendered output and lock are **gitignored** here — a

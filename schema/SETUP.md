@@ -19,9 +19,13 @@ so the whole install uses one toolkit version.
 
 - Work from the project root (where `.git` lives) — the renderer writes files relative
   to the cwd. Node >= 18 is required.
-- If `.wafflestack.yaml` already exists, this is an **update**, not a first install:
+- If `.waffle.yaml` already exists, this is an **update**, not a first install:
   read it, skip step 1, and revisit only the steps the change calls for (new bundle →
   steps 2–7; config change → steps 3, 5, 7).
+- If instead a legacy `.wafflestack.yaml` exists (a repo set up before 0.6.0), it is still
+  read with a deprecation note; the next `render`/`upgrade` renames it and the other
+  dotfiles to `.waffle.*` in place. Afterwards, update the repo's `.gitignore` entries
+  (`.wafflestack.local.yaml` → `.waffle.local.yaml`) — the CLI does not touch `.gitignore`.
 - Detect which harnesses the project uses and propose the `targets` list:
   - `claude` — a `.claude/` directory or `CLAUDE.md` exists, or you are Claude Code.
   - `codex` — a `.codex/` directory exists, or you are Codex.
@@ -32,7 +36,7 @@ so the whole install uses one toolkit version.
 ## 1. Init
 
 Run `wafflestack init` (via the pinned invocation). It writes a starter
-`.wafflestack.yaml` and refuses to overwrite an existing one.
+`.waffle.yaml` and refuses to overwrite an existing one.
 
 ## 2. Choose bundles (or individual items)
 
@@ -49,7 +53,7 @@ select it individually — the inventory lists items in installable ref form
 - Run `wafflestack install <ref…>` — it resolves each ref, appends bundle refs to
   `bundles:` and item refs to a top-level `include:` list, then renders. It reports the
   dependency closure it pulled in.
-- Or edit `.wafflestack.yaml` directly: bundle names under `bundles:`, item refs under
+- Or edit `.waffle.yaml` directly: bundle names under `bundles:`, item refs under
   `include:`, then run `render`.
 
 Refs: a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` when a
@@ -68,9 +72,9 @@ Walk the config schema of every enabled bundle (from the inventory):
   commands from `package.json` scripts, `Makefile`, `pyproject.toml`, or CI workflows,
   and confirm with the user when ambiguous. Multi-line defaults (label tables, prose
   sections) encode conventions — override them when the project's own taxonomy differs.
-- **Layering**: shared values go in the committed `.wafflestack.yaml` under `config:`;
+- **Layering**: shared values go in the committed `.waffle.yaml` under `config:`;
   account-specific values (bot emails, board IDs, tokens' owners) go in
-  `.wafflestack.local.yaml`, which must be gitignored. A committed value may reference
+  `.waffle.local.yaml`, which must be gitignored. A committed value may reference
   a local-overlay key with `{{...}}` nested substitution.
 - Only keys declared in a bundle's config schema are substituted — do not invent keys.
 
@@ -92,20 +96,20 @@ skipped items).
 
 ## 6. Version control
 
-- **Commit**: `.wafflestack.yaml`, the rendered output (`.claude/`, `.codex/`,
-  `.agents/`), and `.wafflestack.lock.json`. Teammates then get working agent files
+- **Commit**: `.waffle.yaml`, the rendered output (`.claude/`, `.codex/`,
+  `.agents/`), and `.waffle.lock.json`. Teammates then get working agent files
   without running the installer, and `wafflestack doctor` can catch drift in CI — the
   `github-workflow` bundle ships an installable `.github/workflows/wafflestack-doctor.yml`
   that runs it on every push and pull request, so committing the render + lock is what makes
   that gate meaningful (use `doctor --allow-missing` if the repo gitignores some renders —
   only modified files fail).
-- **Gitignore**: `.wafflestack.local.yaml`, always. Also the configured worktrees
+- **Gitignore**: `.waffle.local.yaml`, always. Also the configured worktrees
   directory if a bundle declares one.
 - **Exception — the toolkit repo itself**: when the project *is* the wafflestack source
   repo (self-hosting), gitignore the rendered output and the lock instead; committed
   copies would duplicate every skill in the tree.
 - Tell the user the standing rule: never hand-edit rendered files — `render` overwrites
-  them. Project-specific additions go in `.wafflestack/extensions/{agents,skills}/<name>.md`
+  them. Project-specific additions go in `.waffle/extensions/{agents,skills}/<name>.md`
   (committed) and take effect on the next render.
 
 ## 7. Verify and report
