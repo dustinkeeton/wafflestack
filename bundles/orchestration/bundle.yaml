@@ -1,0 +1,74 @@
+name: orchestration
+description: Multi-agent orchestration — a project-manager coordinator plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config.
+agents: [project-manager]
+skills: [delegate, audit, docs]
+config:
+  project.name:
+    required: true
+    description: Bare project name, e.g. "Synapse".
+  project.longName:
+    required: true
+    description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+  project.buildCmd:
+    required: false
+    default: npm run build
+    description: Production build command run in the delegation pre-flight checklist.
+  git.botEmail:
+    required: true
+    description: Committer email used for automated commits and branch pushes.
+  git.botName:
+    required: false
+    default: bot
+    description: Committer name used for automated commits and branch pushes.
+  roster.specialistTable:
+    required: true
+    description: >-
+      Markdown table (header + rows) mapping specialist agent names to their
+      areas of responsibility. This is the project agent roster.
+  roster.classificationTable:
+    required: true
+    description: >-
+      Markdown table (header + rows) mapping issue keywords / source paths to
+      specialist agents. This is the roster's issue-to-agent module map.
+  roster.labelFallback:
+    required: true
+    description: >-
+      Markdown table (header + rows) mapping GitHub issue labels to specialist
+      agents, used when no keyword/path matches.
+  roster.rootFiles:
+    required: true
+    description: >-
+      Root/shared files whose edits force serialization (module map), rendered
+      as an inline comma-separated list.
+  roster.sharedModule:
+    required: true
+    description: The shared-code module that acts as a serialization bottleneck (module map).
+  roster.moduleDependencies:
+    required: true
+    description: >-
+      Ordered inter-module dependency rule that forces serial execution
+      (module map), rendered as a single serialization bullet.
+  roster.rootFileExample:
+    required: false
+    default: "`main.ts`"
+    description: Illustrative root file name used in the serialization guidance.
+  audit.complianceLabel:
+    required: true
+    description: Short label for the project-specific compliance step in the audit chain (chain order + summary table).
+  audit.complianceFrontmatterLabel:
+    required: true
+    description: Compliance-step label as it appears in the skill's frontmatter description.
+  audit.complianceTaskLabel:
+    required: true
+    description: Task/agent-prompt label for the compliance step (also used in the agent-prompt placeholder).
+  audit.complianceAgentName:
+    required: true
+    description: Team-member name used for the compliance-step agent instance (spawn + shutdown).
+  audit.complianceDescription:
+    required: true
+    description: One-line description of what the compliance step verifies (chain-order summary).
+  audit.compliancePrompt:
+    required: true
+    description: Full detailed prompt for the project-specific compliance step, including its "### … (Task 3)" heading.
+env:
+  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
