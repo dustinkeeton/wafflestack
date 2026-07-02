@@ -4,19 +4,21 @@
  *
  * A ref names something installable:
  *   - a bundle:                 `github-workflow`
- *   - an item:                  `skills/issue`, `agents/project-manager`
+ *   - an item:                  `skills/issue`, `agents/project-manager`, `files/.github/workflows/ci.yml`
  *   - a bundle-qualified item:  `engineering-team/skills/security-audit`
  * The qualified form disambiguates names defined in more than one bundle.
  */
 
-/** Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`. */
+/** Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… → `files/`. */
 export function normalizeItemRef(ref) {
-  return ref.replace(/^(agent|skill)s?[:/]/, (m) => (m.startsWith('agent') ? 'agents/' : 'skills/'));
+  return ref.replace(/^(agent|skill|file)s?[:/]/, (_m, kind) => `${kind}s/`);
 }
 
-/** The agents or skills array of a bundle, selected by kind ("agents" | "skills"). */
+/** The agents, skills, or files array of a bundle, selected by kind. */
 export function itemsOfKind(bundle, kind) {
-  return kind === 'agents' ? bundle.agents : bundle.skills;
+  if (kind === 'agents') return bundle.agents;
+  if (kind === 'files') return bundle.files;
+  return bundle.skills;
 }
 
 /** Every (bundleName, item) pair of `kind` across the toolkit that is named `name`. */
@@ -37,9 +39,9 @@ export function findItems(toolkit, kind, name) {
  */
 export function parseRef(raw) {
   const ref = String(raw).trim();
-  const qualified = /^([^/]+)\/(agents|skills)\/(.+)$/.exec(ref);
+  const qualified = /^([^/]+)\/(agents|skills|files)\/(.+)$/.exec(ref);
   if (qualified) return { form: 'qualified', bundle: qualified[1], kind: qualified[2], name: qualified[3] };
-  const item = /^(agents|skills)\/(.+)$/.exec(normalizeItemRef(ref));
+  const item = /^(agents|skills|files)\/(.+)$/.exec(normalizeItemRef(ref));
   if (item) return { form: 'item', kind: item[1], name: item[2] };
   return { form: 'bundle', name: ref };
 }
@@ -49,6 +51,7 @@ function availableItemRefs(toolkit) {
   for (const bundle of toolkit.bundles.values()) {
     for (const a of bundle.agents) refs.add(`agents/${a.name}`);
     for (const s of bundle.skills) refs.add(`skills/${s.name}`);
+    for (const f of bundle.files) refs.add(`files/${f.name}`);
   }
   return [...refs].sort();
 }
@@ -230,6 +233,7 @@ export function computeSelection(toolkit, project) {
     const bundle = toolkit.bundles.get(bundleName);
     for (const a of bundle.agents) addItem(bundleName, 'agents', a);
     for (const s of bundle.skills) addItem(bundleName, 'skills', s);
+    for (const f of bundle.files) addItem(bundleName, 'files', f);
   };
 
   for (const bundleName of project.bundles) {
@@ -275,5 +279,7 @@ export function computeSelection(toolkit, project) {
 }
 
 function singular(kind) {
-  return kind === 'agents' ? 'agent' : 'skill';
+  if (kind === 'agents') return 'agent';
+  if (kind === 'files') return 'file';
+  return 'skill';
 }

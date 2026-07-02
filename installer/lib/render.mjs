@@ -57,13 +57,16 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
   for (const [bundleName, { bundle, items }] of groups) {
     // One resolver per enabled target — the reserved `harness.*` keys resolve
     // differently per output target (Claude vs. Codex attribution, etc.).
+    const primaryTarget = project.targets[0] ?? 'claude';
     const resolvers = {};
     for (const target of project.targets) resolvers[target] = makeResolver(bundle, project.values, target);
-    const missingResolver = makeResolver(bundle, project.values, project.targets[0] ?? 'claude');
+    // Files render once (harness-independent) and the missing-required-key probe needs a
+    // single resolver — both use the primary target's identity for any `harness.*` refs.
+    const primaryResolver = resolvers[primaryTarget] ?? makeResolver(bundle, project.values, primaryTarget);
     // Scope required-config to keys the *selected* items actually reference — installing
     // one skill from a bundle must not demand config only its siblings use.
     const usedKeys = collectUsedKeys(items);
-    const missing = missingRequiredKeys(bundle, project.values, (values, key) => missingResolver(key), usedKeys);
+    const missing = missingRequiredKeys(bundle, project.values, (values, key) => primaryResolver(key), usedKeys);
     if (missing.length) {
       errors.push(
         `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to .wafflestack.yaml (or the .local overlay)`,
@@ -73,7 +76,8 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
 
     for (const { kind, item } of items) {
       if (kind === 'agents') renderAgent({ agent: item, bundle, resolvers, project, cwd, emit, errors });
-      else renderSkill({ skill: item, bundle, resolvers, project, cwd, emit, errors });
+      else if (kind === 'skills') renderSkill({ skill: item, bundle, resolvers, project, cwd, emit, errors });
+      else renderFiles({ file: item, bundle, resolve: primaryResolver, emit, errors });
     }
     // Env prerequisites still warn when any item from this bundle renders.
     checkEnvPrerequisites({ bundle, project, cwd, warnings });
@@ -188,6 +192,23 @@ function renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors }) {
   }
 }
 
+/**
+ * Emit a generic `files/` payload to its repo-relative path — independent of `targets:`,
+ * since a file has no per-harness variant and renders once. Text is template-substituted
+ * (declared keys + `harness.*` resolved against the primary target); binaries are copied
+ * byte-for-byte. The rel path doubles as the cross-bundle conflict key, so two enabled
+ * bundles emitting the same path fail loudly, exactly like same-named skills.
+ */
+function renderFiles({ file, bundle, resolve, emit, errors }) {
+  const context = `${bundle.name}/files/${file.name}`;
+  if (file.binary) {
+    emit(file.name, fs.readFileSync(file.path), context);
+    return;
+  }
+  const raw = fs.readFileSync(file.path, 'utf8');
+  emit(file.name, substitute(raw, resolve, bundle.declared, errors, context), context);
+}
+
 function appendExtension(body, cwd, relPath) {
   const extensionFile = path.join(cwd, relPath);
   if (!exists(extensionFile)) return body;
@@ -237,11 +258,13 @@ function collectUsedKeys(items) {
     if (kind === 'agents') {
       for (const k of placeholderKeys(item.body)) keys.add(k);
       for (const k of placeholderKeys(item.data.description ?? '')) keys.add(k);
-    } else {
+    } else if (kind === 'skills') {
       for (const rel of item.files) {
         if (!rel.endsWith('.md')) continue;
         for (const k of placeholderKeys(fs.readFileSync(path.join(item.dir, rel), 'utf8'))) keys.add(k);
       }
+    } else if (!item.binary) {
+      for (const k of placeholderKeys(fs.readFileSync(item.path, 'utf8'))) keys.add(k);
     }
   }
   return keys;

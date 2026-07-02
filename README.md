@@ -14,6 +14,11 @@ project — the same batter, baked fresh wherever you need it. Supported harness
 Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Codex (`.codex/agents/*.toml`),
 and the cross-tool agents dir (`.agents/skills`).
 
+Bundles carry three payload types: **agents** and **skills** (rendered into those harness
+dirs) and generic **files** — CI workflows, scripts, or config rendered verbatim to any
+repo-relative path (`.github/workflows/…`, `scripts/…`), with the same `{{key}}`
+substitution, lock tracking, and drift detection.
+
 ## Install into a project
 
 **Guided (recommended)** — let your coding agent (Claude Code, Codex, …) do the whole
@@ -49,7 +54,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.wafflestack.lock.json`. |
 | `install [ref…]` | With refs: add them to `.wafflestack.yaml` (bundle name → `bundles:`, item → `include:`), pull in their dependencies, then render. Refs are a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` (qualify when a name is in two bundles). Bare `install` = `render`. |
 | `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. |
-| `eject <item>` | Stop managing an item (e.g. `skills/issue`): its rendered files stay put and become project-owned; also drops it from `include:`. |
+| `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
 
 ## Rules of the road

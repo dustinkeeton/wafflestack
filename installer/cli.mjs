@@ -40,7 +40,7 @@ try {
       break;
     }
     case 'eject': {
-      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME>');
+      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH>');
       const { ref, released } = eject({ cwd, item: args[0] });
       console.log(`ejected ${ref}; ${released.length} files released from management:`);
       for (const f of released) console.log(`  ${f}`);

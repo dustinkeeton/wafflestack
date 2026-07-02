@@ -67,6 +67,14 @@ export function validateToolkit(rootDir) {
       }
     }
 
+    // Text `files/` payloads are templated just like skills — every {{key}} they use must
+    // be declared (GitHub Actions `${{ ... }}` is excluded by the placeholder grammar, so
+    // workflow expressions don't register as config keys). Binaries are byte-copied, skip.
+    for (const file of bundle.files) {
+      if (file.binary) continue;
+      for (const k of placeholderKeys(fs.readFileSync(file.path, 'utf8'))) usedKeys.add(k);
+    }
+
     for (const key of usedKeys) {
       // `harness.*` is a reserved, always-available namespace (resolved per target) —
       // it is never declared in bundle config.

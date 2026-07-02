@@ -16,10 +16,10 @@ import { CONFIG_FILE, LOCK_FILE } from './project.mjs';
  */
 export function eject({ cwd, item }) {
   const ref = normalizeItemRef(item);
-  if (!/^(agents|skills)\//.test(ref)) {
-    throw new Error(`eject target must look like skills/<name> or agents/<name>, got "${item}"`);
+  if (!/^(agents|skills|files)\//.test(ref)) {
+    throw new Error(`eject target must look like skills/<name>, agents/<name>, or files/<path>, got "${item}"`);
   }
-  const [, kind, name] = /^(agents|skills)\/(.+)$/.exec(ref);
+  const [, kind, name] = /^(agents|skills|files)\/(.+)$/.exec(ref);
 
   const configFile = path.join(cwd, CONFIG_FILE);
   const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
@@ -46,11 +46,20 @@ export function eject({ cwd, item }) {
   const lock = readLock(cwd);
   const released = [];
   if (lock) {
-    const patterns = kind === 'agents'
-      ? [path.join('.claude', 'agents', `${name}.md`), path.join('.codex', 'agents', `${name}.toml`)]
-      : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
+    // A `files/` item is a single output at its repo-relative path — match it exactly
+    // (no prefix match, so `scripts/build` never sweeps up `scripts/build.mjs`). Agents
+    // and skills expand to their per-target render dirs.
+    let matches;
+    if (kind === 'files') {
+      matches = (rel) => rel === name;
+    } else {
+      const patterns = kind === 'agents'
+        ? [path.join('.claude', 'agents', `${name}.md`), path.join('.codex', 'agents', `${name}.toml`)]
+        : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
+      matches = (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
+    }
     for (const rel of Object.keys(lock.files)) {
-      if (patterns.some((p) => rel === p || rel.startsWith(p))) {
+      if (matches(rel)) {
         delete lock.files[rel];
         released.push(rel);
       }
