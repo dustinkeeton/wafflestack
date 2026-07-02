@@ -53,7 +53,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | `setup` | Print the agent-driven install playbook + generated toolkit inventory (see above). |
 | `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.wafflestack.lock.json`. |
 | `install [ref…]` | With refs: add them to `.wafflestack.yaml` (bundle name → `bundles:`, item → `include:`), pull in their dependencies, then render. Refs are a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` (qualify when a name is in two bundles). Bare `install` = `render`. |
-| `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. |
+| `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational. |
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
 
@@ -68,7 +68,12 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    key kept in the local overlay.
 3. **Updates are re-renders.** `npx github:dustinkeeton/wafflestack#<newtag> render`
    regenerates everything; your config and extensions survive untouched.
-4. `doctor` tells you when local edits have crept into managed files.
+4. `doctor` tells you when local edits have crept into managed files, and doubles as a
+   **CI drift gate** — run `npx github:dustinkeeton/wafflestack doctor` on PRs to fail the
+   build if any managed file was hand-edited. When a repo deliberately gitignores some
+   renders (so they're legitimately absent in a fresh CI checkout), add `--allow-missing`:
+   absent files are then reported informationally and only *modified* files fail the gate. A
+   missing lock still fails — that means the repo was never rendered, which the flag won't mask.
 
 Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guidelines:
 [assets/](assets/).
