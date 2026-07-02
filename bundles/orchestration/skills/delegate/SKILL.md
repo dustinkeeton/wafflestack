@@ -2,7 +2,7 @@
 name: delegate
 description: Fetch open GitHub issues, assign each to the best specialist agent, and orchestrate execution with parallel worktree isolation and serial dependency chains
 user-invocable: true
-argument-hint: "[issue number, label filter, or keyword — omit to delegate the whole current milestone]"
+argument-hint: "[#N, label, keyword, or `milestone:<name>` — omit for the project's default scope]"
 ---
 
 # Issue Delegation
@@ -13,10 +13,15 @@ Fetch open GitHub issues, assign each to the right specialist agent, and orchest
 
 **Argument handling** — the fetch path depends on whether `$ARGUMENTS` is provided:
 
-- **No `$ARGUMENTS` (default)** → delegate **every open issue in the current milestone, and only that milestone**. Resolve the current milestone first (see below), then fetch its issues. This is the bulk-delegation path and must **never** silently widen to all open issues.
+- **No `$ARGUMENTS` (default)** → delegate the project's configured default scope, which for this project is **{{delegate.defaultScope}}**:
+  - `current-milestone` → delegate **every open issue in the current milestone, and only that milestone**. Resolve the current milestone first (see below), then fetch its issues. This path must **never** silently widen to all open issues.
+  - `all-open` → fetch **every open issue** in the repo: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`. This is the bulk path for repos that don't plan with milestones; the Phase 3 confirmation gate guards it — always present the full plan before spawning anything.
 - `#N` or a bare number → fetch that single issue: `gh issue view N --json number,title,labels,body,milestone`
+- `milestone:<title-or-number>` → delegate that milestone explicitly: resolve a number directly, or match the title against `gh api "repos/$OWNER/$REPO/milestones?state=open"`, then fetch its open issues exactly as in the current-milestone path.
 - A known label (`bug`, `enhancement`, `documentation`, `question`) → filter: `gh issue list --state open --label "$ARGUMENTS" --json number,title,labels,body,milestone`
 - Any other text → fetch all open issues and filter client-side by keyword match against title and body: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`
+
+**Zero matching issues** (any path) → report that there is nothing to delegate and stop.
 
 ### Determining the current milestone (no-args path)
 
@@ -58,17 +63,18 @@ For each issue, determine the best specialist agent using content-based matching
 
 {{roster.labelFallback}}
 
-After classification, determine the affected `src/` subdirectory for each issue (used for parallelization).
+After classification, determine the **area** each issue touches — which module or subdirectory, and whether it includes root files ({{roster.rootFiles}}) or {{roster.sharedModule}}. This drives parallelization.
 
 ## Phase 3: Plan & Confirm
 
 Build an assignment plan table and determine parallel grouping.
 
 **Parallelization rules** — two issues can run in parallel when ALL of these hold:
-- Assigned to **different** agents
-- Affect **different** `src/` subdirectories (no module overlap)
+- They touch **different areas** (no module/subdirectory overlap)
 - Neither touches root files ({{roster.rootFiles}}) or {{roster.sharedModule}}
 - No dependency language in the issue body ("depends on #N", "blocked by #N", "after #N")
+
+Worktree isolation makes it safe for two agents of the **same type** to run at once — issues sharing an agent type **may** still parallelize as long as their areas are disjoint (each spawn is a separate instance with its own worktree and a unique `name`).
 
 **Serialization rules** (override parallel):
 - {{roster.sharedModule}} is a bottleneck — any two issues touching it must serialize
@@ -76,7 +82,7 @@ Build an assignment plan table and determine parallel grouping.
 - Security issues serialize **last**
 - Documentation issues serialize **last** (need final code state)
 
-Present the plan to the user. On the no-args path, **lead with the milestone scope** (title, number, open-issue count) so the user confirms which milestone is being delegated:
+Present the plan to the user. On the no-args path, **lead with the resolved scope** — the milestone (title, number, open-issue count) or `all open issues (N)` — so the user confirms exactly what is being delegated:
 
 ```
 ## Delegation Plan
@@ -89,7 +95,7 @@ Present the plan to the user. On the no-args path, **lead with the milestone sco
 | 5 | Fix folder picker... | architect | shared | B (serial) |
 
 **Parallel:** Group A runs simultaneously with worktree isolation
-**Serial:** Group B runs after A completes (touches shared/)
+**Serial:** Group B runs after A completes (touches the shared module)
 
 Proceed?
 ```
@@ -110,9 +116,9 @@ Before execution begins, discover the project board metadata for kanban sync. Th
    REPO=$(gh repo view --json name -q .name)
    ```
 
-2. Discover `PROJECT_ID` via the `user.projectsV2` GraphQL query:
+2. Discover `PROJECT_ID` — select the board by **title match** against the project name (an account may own several projects, so never assume the first result):
    ```bash
-   gh api graphql -f query='
+   PROJECT_ID=$(gh api graphql -f query='
      query($owner: String!) {
        user(login: $owner) {
          projectsV2(first: 20) {
@@ -120,7 +126,7 @@ Before execution begins, discover the project board metadata for kanban sync. Th
          }
        }
      }
-   ' -f owner="$OWNER"
+   ' -f owner="$OWNER" --jq 'first(.data.user.projectsV2.nodes[] | select(.title | test("{{project.name}}"; "i")) | .id) // empty')
    ```
 
 3. Get `STATUS_FIELD_ID` and status option IDs (`IN_PROGRESS_OPTION_ID`, `IN_REVIEW_OPTION_ID`) from the project fields:
@@ -142,9 +148,9 @@ Before execution begins, discover the project board metadata for kanban sync. Th
      }
    ' -f projectId="$PROJECT_ID"
    ```
-   Look for the "Status" field and extract option IDs for "In Progress" and "In Review".
+   Look for the "Status" field and extract `IN_PROGRESS_OPTION_ID`. If the board also has an "In Review" option, capture `IN_REVIEW_OPTION_ID`; otherwise leave it unset (many boards are just Todo / In Progress / Done).
 
-4. If any of the above fail → set `BOARD_SYNC_ENABLED=false`, log a warning, and skip all board updates in subsequent phases.
+4. If `PROJECT_ID` is empty or any of the above fail → set `BOARD_SYNC_ENABLED=false`, log a warning, and skip all board updates in subsequent phases.
 
 See the `github-project-management` skill for the full GraphQL query catalog.
 
@@ -323,6 +329,7 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - {{project.typecheckCmd}}
    - {{project.testCmd}}
    - {{project.buildCmd}}
+   {{delegate.extraPreflight}}
 5. Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main.
 6. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL>). If you lack these tools, just ensure the PR exists; the orchestrator verifies your work directly.
 
@@ -354,11 +361,15 @@ After all agents complete, present a summary:
 Build: passing
 ```
 
-### Update to In Review
+### Board status after work
 
 For each issue where the agent **succeeded AND created a PR**, update the board status:
 
+- If the board has an "In Review" option (`IN_REVIEW_OPTION_ID` captured in Board Setup), set the item to it with the mutation below.
+- Otherwise leave the item as "In Progress" — a human moves it to "Done" when merging the PR.
+
 ```bash
+# Only if IN_REVIEW_OPTION_ID was captured in Board Setup:
 gh api graphql -f query='
   mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
     updateProjectV2ItemFieldValue(input: {

@@ -81,6 +81,44 @@ config:
     required: false
     default: "`main.ts`"
     description: Illustrative root file name used in the serialization guidance.
+  delegate.defaultScope:
+    required: false
+    default: current-milestone
+    description: >-
+      What `/delegate` with no arguments delegates: `current-milestone` (the
+      earliest-due open milestone, for repos that plan with milestones) or
+      `all-open` (every open issue, guarded by the confirmation gate — for
+      repos that don't use milestones).
+  delegate.extraPreflight:
+    required: false
+    default: ""
+    description: >-
+      Optional extra pre-flight gates appended to the spawned-agent prompt's
+      checklist step, formatted as additional "- " bullets (e.g. privacy checks,
+      "don't hand-edit generated docs" rules). Empty (default) renders nothing.
+  docs.auditChecklist:
+    required: false
+    description: >-
+      Bullet list (verbatim) of what the Step-1 architecture audit in the docs
+      pipeline must cover. Override for projects whose "modules" aren't
+      application code (e.g. an agent harness auditing skills/agents/config).
+    default: |-
+      - New or removed modules, files, commands, settings
+      - Changed public APIs or type signatures
+      - Dependency changes between modules
+      - Any architectural violations or inconsistencies
+  docs.machineDocSet:
+    required: false
+    default: a root `AGENTS.md` plus per-feature `src/<feature>/AGENTS.md` files
+    description: >-
+      One-line phrase naming the machine-doc file set (same key as the
+      docs-system bundle) — used in the docs and audit orchestrator prompts.
+  docs.humanDocSet:
+    required: false
+    default: "`DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root"
+    description: >-
+      One-line phrase naming the human-doc file set (same key as the
+      docs-system bundle) — used in the docs and audit orchestrator prompts.
   audit.complianceAgentType:
     required: false
     default: plugin-architect
