@@ -34,13 +34,29 @@ so the whole install uses one toolkit version.
 Run `wafflestack init` (via the pinned invocation). It writes a starter
 `.wafflestack.yaml` and refuses to overwrite an existing one.
 
-## 2. Choose bundles
+## 2. Choose bundles (or individual items)
 
 Recommend bundles from the inventory based on repository signals — a GitHub remote
 suggests the GitHub-workflow bundle, an Expo app the Expo bundle, and so on. Present
 the recommendation with one line per bundle on what it adds, and let the user pick.
 Two bundles that define a same-named item cannot both be enabled (the renderer refuses);
 the inventory shows each bundle's item names.
+
+You do not have to adopt a whole bundle. When a project wants just one skill or agent,
+select it individually — the inventory lists items in installable ref form
+(`skills/<name>`, `agents/<name>`). Two ways to record the choice:
+
+- Run `wafflestack install <ref…>` — it resolves each ref, appends bundle refs to
+  `bundles:` and item refs to a top-level `include:` list, then renders. It reports the
+  dependency closure it pulled in.
+- Or edit `.wafflestack.yaml` directly: bundle names under `bundles:`, item refs under
+  `include:`, then run `render`.
+
+Refs: a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` when a
+name appears in more than one bundle (an unqualified ambiguous ref fails with the
+candidates listed). Installing an item automatically pulls its dependency closure — an
+agent's frontmatter `skills:` and any declared `requires:` — transitively and across
+bundles, and required config is scoped to what the selected items actually use.
 
 ## 3. Fill config values
 

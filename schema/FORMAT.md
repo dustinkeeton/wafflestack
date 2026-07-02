@@ -24,6 +24,9 @@ name: github-workflow
 description: One-line description of the bundle.
 agents: [architect, security]        # files under agents/, without .md
 skills: [git-workflow, issue]        # directories under skills/
+requires:                            # optional per-item dependency declarations
+  skills/issue:                      # keyed by item ref (skills/<name> | agents/<name>)
+    - skills/git-workflow            # refs pulled in when this item is installed alone
 config:                              # template keys this bundle may reference
   git.botEmail:
     required: true
@@ -40,6 +43,15 @@ setup: |-                            # optional, agent-facing install notes
 
 Only keys **declared** in `config:` are substituted in this bundle's content — any other
 `{{...}}`-looking text (bash, GraphQL, JS templates) passes through untouched.
+
+`requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
+skill telling the reader to "see the `github-project-management` skill"). Each key is an
+item ref (`skills/<name>` / `agents/<name>`) defined in this bundle; each value is a list
+of item refs it depends on, resolved against the **whole toolkit** (prefer this bundle,
+then a unique toolkit-wide match; qualify as `<bundle>/skills/<name>` when the name is
+ambiguous). When that item is installed individually, its `requires:` closure is pulled in
+transitively. Agent → skill dependencies need no `requires:` — they come from the agent's
+frontmatter `skills:` list. `validate` checks every `requires:` ref resolves.
 
 `setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
 playbook, `schema/SETUP.md`, followed by a generated inventory of every bundle's items,
@@ -87,7 +99,8 @@ Renders to:
 ## Consuming project contract
 
 - `.wafflestack.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
-  `agents-dir`), `bundles:`, `config:` values, optional `eject:` list.
+  `agents-dir`), `bundles:`, optional `include:` (individual items), `config:` values,
+  optional `eject:` list.
 - `.wafflestack.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
 - `.wafflestack/extensions/agents/<name>.md`, `.wafflestack/extensions/skills/<name>.md`
@@ -97,6 +110,33 @@ Renders to:
 - `.wafflestack.lock.json` (generated) — manifest of every rendered file with its hash.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
+
+## Selecting what renders
+
+The rendered set is `union(items of bundles:) ∪ include: − eject:`.
+
+- `bundles:` — whole bundles; every agent and skill in them renders.
+- `include:` — individual items you want without adopting their whole bundle. Each entry
+  is a **ref**:
+  - a bundle name — `github-workflow` (equivalent to listing it in `bundles:`);
+  - an item — `skills/<name>` or `agents/<name>`;
+  - a bundle-qualified item — `<bundle>/skills/<name>`, needed only when the same item
+    name is defined in more than one bundle (e.g. `security-audit`).
+  Installing an item pulls its **dependency closure** — an agent's frontmatter `skills:`
+  and any `requires:` — transitively and across bundles. Required config is then scoped to
+  the placeholders the selected items actually use, so a partial install never demands
+  config that only unselected siblings need. Bundle `env:` prerequisites still warn when
+  any item from that bundle renders.
+- `eject:` — items to stop managing; wins over both `bundles:` and `include:`.
+
+`wafflestack install <ref…>` performs this edit for you: it resolves each ref (failing on
+unknown or ambiguous names, listing the qualified candidates), appends bundle refs to
+`bundles:` and item refs to `include:` (comment-preserving, bundle-qualified only when
+ambiguous), then runs a full render. Persisting the choice is required, not cosmetic — the
+frozen-image contract deletes any locked file the next render doesn't reproduce, so an
+un-persisted ad-hoc install would be silently removed. Dependency closure is recomputed
+each render (not persisted), so it tracks upstream changes. `wafflestack eject skills/<name>`
+also drops any matching `include:` entry so it isn't left orphaned.
 
 ## Template values
 

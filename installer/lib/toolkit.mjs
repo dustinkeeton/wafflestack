@@ -48,15 +48,23 @@ function loadBundle(name, dir) {
     config,
     declared,
     env: manifest.env ?? {},
+    // Optional per-item dependency declarations: `skills/<name>`/`agents/<name>` →
+    // list of `skills/<name>`/`agents/<name>` refs. Formalizes prose-only skill deps.
+    requires: manifest.requires ?? {},
     setup: typeof manifest.setup === 'string' ? manifest.setup : '',
   };
 }
 
-/** Config keys whose `required: true` and which have no default. */
-export function missingRequiredKeys(bundle, values, lookup) {
+/**
+ * Config keys that are `required` and unresolved. When `usedKeys` is supplied, only
+ * keys actually referenced by the selected items are considered — so a partial install
+ * (one item from a bundle) does not demand config only the bundle's other items use.
+ */
+export function missingRequiredKeys(bundle, values, lookup, usedKeys = null) {
   const missing = [];
   for (const [key, spec] of Object.entries(bundle.config)) {
     if (!spec?.required) continue;
+    if (usedKeys && !usedKeys.has(key)) continue;
     if (lookup(values, key) === undefined) missing.push(key);
   }
   return missing;

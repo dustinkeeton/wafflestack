@@ -5,7 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
-import { eject, init } from './lib/eject.mjs';
+import { eject, init, installRefs } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 
@@ -17,16 +17,17 @@ const cwd = extractCwd(args) ?? process.cwd();
 
 try {
   switch (command) {
-    case 'render':
-    case 'install': {
-      const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, log: console.log });
-      for (const w of result.warnings) console.warn(`warning: ${w}`);
-      if (!result.ok) {
-        for (const e of result.errors) console.error(`error: ${e}`);
-        process.exit(1);
+    case 'render': {
+      if (args.length) {
+        fail('render takes no refs — use `wafflestack install <ref…>` to add a bundle or item (it persists the choice, then re-renders); bare `render` re-renders the current selection');
       }
-      console.log(`rendered ${result.written.length} files into ${cwd}`);
-      if (result.removed.length) console.log(`removed stale: ${result.removed.join(', ')}`);
+      runRender();
+      break;
+    }
+    case 'install': {
+      // Bare `install` is an alias for `render`; with refs it persists them first.
+      if (args.length) installRefs({ toolkitRoot, cwd, refs: args, log: console.log });
+      runRender();
       break;
     }
     case 'doctor': {
@@ -64,10 +65,21 @@ try {
       break;
     }
     default:
-      fail(`usage: wafflestack <init|setup|render|doctor|eject|validate> [--cwd DIR]  (v${pkg.version})`);
+      fail(`usage: wafflestack <init|setup|install|render|doctor|eject|validate> [refs…] [--cwd DIR]  (v${pkg.version})`);
   }
 } catch (err) {
   fail(err.message);
+}
+
+function runRender() {
+  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, log: console.log });
+  for (const w of result.warnings) console.warn(`warning: ${w}`);
+  if (!result.ok) {
+    for (const e of result.errors) console.error(`error: ${e}`);
+    process.exit(1);
+  }
+  console.log(`rendered ${result.written.length} files into ${cwd}`);
+  if (result.removed.length) console.log(`removed stale: ${result.removed.join(', ')}`);
 }
 
 function extractCwd(argv) {
