@@ -31,6 +31,18 @@ mode's multi-block SDK message — the dispatch prompt names the skill in natura
 (`Execute the label-hook skill …: action "enrich", issue #N`) rather than `/label-hook …`,
 preserving the constant-token contract without depending on slash expansion.
 
+An adversarial review then flagged a second plane: the trigger-label and `claudeArgs` config
+values are spliced into structured contexts (the workflow `if:` gate and a double-quoted YAML
+scalar), where a quote, newline, or `${{ }}` in the value could break YAML, inject a sibling
+`with:` key, subvert the allowlist gate, or exfiltrate a secret via GHA expansion — all with
+no render-time error. Fix chosen: a general, opt-in **render-time `pattern:`** on config keys
+(the resolved value must fully match, enforced at every substitution site), applied to the
+three `labelHook.*` keys. Validation, not escaping: textual substitution can't know its target
+context (YAML scalar vs. `if:` expression vs. shell word), so context-correct escaping is
+impossible in general — a pattern instead makes a bad value fail the render loudly rather than
+silently corrupt the gate. As defense in depth the core prompt-injection guardrails are also
+inlined into the dispatch prompt (a floor even if a consumer forgets to commit the skill).
+
 **Alternatives considered**:
 
 - **A standalone/sibling bundle.** Rejected — the hook is git/GitHub-native and reuses the
@@ -68,7 +80,11 @@ the secret exist, and **each dispatch spends real API budget**. Adds three optio
 keys and the `label-hook` skill (17th skill), with per-job permissions the workflow documents
 (`issues: write` on both jobs; `contents: write` + `pull-requests: write` on implement). Touches
 the github-workflow `bundle.yaml`, the new workflow + skill, the payload tests, and this repo's
-`.gitignore` (self-render stays gitignored). Additive and minor — no migration.
+`.gitignore` (self-render stays gitignored). The security hardening also adds a general,
+reusable capability — optional `pattern:` value validation on any bundle config key (threaded
+through `template.mjs`/`render.mjs`, linted by `validate.mjs`, documented in `schema/FORMAT.md`)
+— which any future bundle can adopt for values that reach a structured context. Additive and
+minor — no migration.
 
 ---
 

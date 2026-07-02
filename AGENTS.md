@@ -57,13 +57,13 @@ bundle-qualified ref (`code-quality/skills/security-audit`).
 |--------|---------|
 | `installer/lib/render.mjs` | Render pipeline: compute selection, regenerate all outputs verbatim, delete stale managed files, write lock. Output-conflict + scoped required-config + env-prereq checks. |
 | `installer/lib/refs.mjs` | Ref grammar, toolkit-wide resolution, and transitive cross-bundle dependency closure + render-selection computation. Pure leaf (no local imports). Shared by install / render / validate. |
-| `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting. |
+| `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting, optional per-key `pattern:` value validation. |
 | `installer/lib/toolkit.mjs` | Load `toolkit.yaml` + every bundle manifest (agents, skills, `requires`, config, env, setup); scoped required-key check. |
 | `installer/lib/project.mjs` | Load consuming-project config (+ local overlay), valid targets, `harness.*` built-ins, per-target resolver; legacy-name read fallback + in-place `.wafflestack.*`→`.waffle.*` dotfile migration. |
 | `installer/lib/util.mjs` | Shared helpers: sha256, YAML read, deep-merge, dotted lookup, frontmatter parse/stringify, fs writes, semver parse/compare. |
 | `installer/lib/doctor.mjs` | Diff managed files against the lock; always report the rendered `toolkitVersion` + a skew note pointing at `upgrade`. |
 | `installer/lib/eject.mjs` | `eject` (release an item, self-cleaning its `include:`), `installRefs` (persist bundle/item refs to config), `init` (starter config). |
-| `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity. |
+| `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity, config `pattern:` compilability + default-match. |
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` dotfile rename. |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
@@ -87,9 +87,10 @@ export function includeRefMatches(includeRef, kind, name) // → boolean
 export function computeSelection(toolkit, project)  // → { items:[{bundleName,bundle,kind,item}], closures, errors }
 
 // template.mjs   (PLACEHOLDER = /\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g; MAX_SUBSTITUTION_DEPTH = 4)
-export function substitute(text, resolve, declared, errors, context) // → string
+export function substitute(text, resolve, declared, errors, context, patterns) // → string (patterns: Map<key,RegExp> render-time value validation)
 export function formatValue(v)                         // → string (string[] join ", "; else YAML block)
 export function placeholderKeys(text)                  // → Set<string>
+export function compilePattern(pattern)                // → RegExp (full-match ^(?:…)$; compiles a config key's pattern:)
 
 // toolkit.mjs
 export function loadToolkit(rootDir)                   // → { name, description, bundles: Map<name, bundle> }  (bundle gains .requires)
@@ -228,6 +229,10 @@ rendered = union(items of enabled bundles:) ∪ closure(each include: item) − 
   (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:11`; `expandNested`, `template.mjs:44`): a committed
   value can reference a key kept in the gitignored local overlay. Canonical text surviving the
   first pass is never re-scanned; unresolvable nested placeholders pass through.
+- Value patterns — a config key may declare `pattern:` (a regex); the fully-resolved value must
+  fully match at render or the render fails, like a missing required key (`compilePattern`
+  `template.mjs`, enforced in `substitute`, linted by `validate`). For values spliced into
+  structured contexts (a workflow `if:`, a YAML scalar) where context-correct escaping is impossible.
 - Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered
   item inside `<!-- BEGIN project extension: … -->` / `<!-- END project extension -->` markers
   (`appendExtension`, `render.mjs:191`). Agents: appended to body; skills: appended to

@@ -5,7 +5,7 @@
 
 - **Version**: v0.6.0 (pre-1.0 — the file contract can still change between minor releases)
 - **Last updated**: 2026-07-02
-- **Health**: 🟢 tests 110/110 · `validate` clean · `doctor` clean (no render drift)
+- **Health**: 🟢 tests 114/114 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Bundles
@@ -74,7 +74,7 @@ refs just renders.
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (110 tests)
+npm test                          # installer test suite (114 tests)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock

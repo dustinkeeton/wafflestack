@@ -6,7 +6,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys } from './template.mjs';
+import { substitute, placeholderKeys, compilePattern } from './template.mjs';
 import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
 import { computeSelection } from './refs.mjs';
 import {
@@ -88,10 +88,14 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
       continue;
     }
 
+    // Compile any `pattern:` guards this bundle declares once, then enforce them at every
+    // substitution site below (render-time value validation for config values).
+    const patterns = compilePatterns(bundle, errors);
+
     for (const { kind, item } of items) {
-      if (kind === 'agents') renderAgent({ agent: item, bundle, resolvers, project, cwd, emit, errors });
-      else if (kind === 'skills') renderSkill({ skill: item, bundle, resolvers, project, cwd, emit, errors });
-      else renderFiles({ file: item, bundle, resolve: primaryResolver, emit, errors });
+      if (kind === 'agents') renderAgent({ agent: item, bundle, resolvers, project, cwd, emit, errors, patterns });
+      else if (kind === 'skills') renderSkill({ skill: item, bundle, resolvers, project, cwd, emit, errors, patterns });
+      else renderFiles({ file: item, bundle, resolve: primaryResolver, emit, errors, patterns });
     }
     // Env prerequisites still warn when any item from this bundle renders.
     checkEnvPrerequisites({ bundle, project, cwd, warnings });
@@ -160,15 +164,15 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
   return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed };
 }
 
-function renderAgent({ agent, bundle, resolvers, project, cwd, emit, errors }) {
+function renderAgent({ agent, bundle, resolvers, project, cwd, emit, errors, patterns }) {
   const context = `${bundle.name}/agents/${agent.name}`;
   const extPath = path.join(EXTENSIONS_DIR, 'agents', `${agent.name}.md`);
   // Body and description are substituted per target so `harness.*` resolves to that
   // target's identity (description is the one frontmatter field carrying prose).
   const bodyFor = (target) =>
-    appendExtension(substitute(agent.body, resolvers[target], bundle.declared, errors, context), cwd, extPath);
+    appendExtension(substitute(agent.body, resolvers[target], bundle.declared, errors, context, patterns), cwd, extPath);
   const descriptionFor = (target) =>
-    substitute(agent.data.description ?? '', resolvers[target], bundle.declared, errors, context);
+    substitute(agent.data.description ?? '', resolvers[target], bundle.declared, errors, context, patterns);
 
   if (project.targets.includes('claude')) {
     const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('claude') };
@@ -209,7 +213,7 @@ function tomlMultilineString(s) {
   return `"""\n${escaped}"""`;
 }
 
-function renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors }) {
+function renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors, patterns }) {
   const targetDirs = [];
   if (project.targets.includes('claude')) targetDirs.push({ target: 'claude', dir: path.join('.claude', 'skills', skill.name) });
   if (project.targets.includes('agents-dir')) targetDirs.push({ target: 'agents-dir', dir: path.join('.agents', 'skills', skill.name) });
@@ -225,7 +229,7 @@ function renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors }) {
       // Substitute per target: `.claude/skills` uses the claude identity, `.agents/skills`
       // the agents-dir (Codex) identity — they diverge only where `harness.*` is used.
       for (const { target, dir } of targetDirs) {
-        let content = substitute(raw, resolvers[target], bundle.declared, errors, context);
+        let content = substitute(raw, resolvers[target], bundle.declared, errors, context, patterns);
         if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
         emit(path.join(dir, rel), content, itemContext);
       }
@@ -243,14 +247,14 @@ function renderSkill({ skill, bundle, resolvers, project, cwd, emit, errors }) {
  * byte-for-byte. The rel path doubles as the cross-bundle conflict key, so two enabled
  * bundles emitting the same path fail loudly, exactly like same-named skills.
  */
-function renderFiles({ file, bundle, resolve, emit, errors }) {
+function renderFiles({ file, bundle, resolve, emit, errors, patterns }) {
   const context = `${bundle.name}/files/${file.name}`;
   if (file.binary) {
     emit(file.name, fs.readFileSync(file.path), context);
     return;
   }
   const raw = fs.readFileSync(file.path, 'utf8');
-  emit(file.name, substitute(raw, resolve, bundle.declared, errors, context), context);
+  emit(file.name, substitute(raw, resolve, bundle.declared, errors, context, patterns), context);
 }
 
 function appendExtension(body, cwd, relPath) {
@@ -293,6 +297,25 @@ export function readLock(cwd) {
   const { file } = resolveLockFile(cwd);
   if (!exists(file)) return null;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/**
+ * Compile every `pattern:` a bundle's config declares into a Map<key, RegExp> for
+ * render-time value validation. A pattern that fails to compile is a toolkit-authoring
+ * bug (validate reports it precisely) — here we fail the render loudly rather than
+ * silently skip the check, so a broken guard can never ship unenforced.
+ */
+function compilePatterns(bundle, errors) {
+  const map = new Map();
+  for (const [key, spec] of Object.entries(bundle.config)) {
+    if (typeof spec?.pattern !== 'string') continue;
+    try {
+      map.set(key, compilePattern(spec.pattern));
+    } catch (err) {
+      errors.push(`bundle "${bundle.name}" config key ${key} has an invalid pattern: ${err.message}`);
+    }
+  }
+  return map;
 }
 
 /** Placeholder keys referenced by a set of selected items' source content. */

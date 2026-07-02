@@ -81,7 +81,11 @@ is what you reach for across a breaking one.
   actions, an audit comment per dispatch, and prompt-injection guardrails in the skill. New
   optional config: `labelHook.enrichLabel`, `labelHook.implementLabel`, `labelHook.claudeArgs`.
   First `requires:` entry keyed by a `files/` payload, so a per-item install of the workflow
-  pulls the skill closure. (#27)
+  pulls the skill closure. Adds a general, opt-in **render-time `pattern:` validation** for
+  config keys (a regex the resolved value must match, enforced at every substitution site):
+  the three `labelHook.*` keys use it so a hostile or malformed value — a quote, newline, or
+  `${{ }}` that would corrupt or subvert the workflow's `if:` gate or `claude_args` scalar —
+  fails the render loudly instead of silently. (#27)
 - Opt-in `.gitignore` offer (#29): a `--gitignore` flag on `init`/`render`/`install` appends
   the recommended ignore entries through a new idempotent `ensureGitignoreEntries(cwd, entries)`
   helper — `.waffle.local.yaml` always, plus the resolved `git.worktreesDir` when an enabled
