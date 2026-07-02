@@ -15,8 +15,9 @@ setup: |-
   1 with everything reported `missing:`, or fail on the missing lock. Point `doctor.toolkitRef`
   at a release tag (e.g. `github:dustinkeeton/wafflestack#v0.5.0`) to pin the toolkit version
   and silence doctor's version-skew note. Repos that deliberately gitignore a subset of
-  renders can change the job's command to `wafflestack doctor --allow-missing` (only modified
-  files fail; a missing lock still fails). Pushing this file needs the `workflow` credential
+  renders can set `doctor.flags: --allow-missing` to keep the workflow managed (only modified
+  files fail; a missing lock still fails) — no hand-editing the run line, no eject.
+  Pushing this file needs the `workflow` credential
   scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
 
@@ -125,5 +126,14 @@ config:
     default: github:dustinkeeton/wafflestack
     description: >-
       npx spec the doctor CI workflow (.github/workflows/waffle-doctor.yml) invokes
-      as `npx --yes <ref> doctor`. Pin to a release tag to freeze the toolkit version and
-      silence doctor's version-skew note, e.g. "github:dustinkeeton/wafflestack#v0.5.0".
+      as `npx --yes <ref> doctor <flags>`. Pin to a release tag to freeze the toolkit version
+      and silence doctor's version-skew note, e.g. "github:dustinkeeton/wafflestack#v0.5.0".
+  doctor.flags:
+    required: false
+    default: ""
+    description: >-
+      Flags appended to the doctor CI workflow's command
+      (.github/workflows/waffle-doctor.yml runs `npx --yes <ref> doctor <flags>`). Set to
+      `--allow-missing` so a repo that deliberately gitignores a subset of its renders keeps
+      the workflow managed instead of ejecting it: only modified files fail the check, absent
+      ones are tolerated (a missing lock still fails). Empty by default.

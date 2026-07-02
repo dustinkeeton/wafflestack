@@ -49,8 +49,18 @@ is what you reach for across a breaking one.
   workflow as a branch-protection required check or reference its filename / `name:`
   anywhere, retarget those to `waffle-doctor`, and update your `.gitignore` if it listed the
   old path.
+- No migration required: a new optional `doctor.flags` config key (github-workflow bundle,
+  empty default) lets the shipped doctor CI workflow run extra flags. Set
+  `doctor.flags: --allow-missing` to keep the workflow managed on a repo that gitignores a
+  subset of its renders, instead of ejecting it. Default renders are behaviorally unchanged.
 
 ### Added
+- `doctor.flags` config key (github-workflow bundle): appends flags to the doctor CI
+  workflow's `npx --yes <ref> doctor` command. A repo that deliberately gitignores a subset
+  of its renders can set `doctor.flags: --allow-missing` and keep
+  `.github/workflows/waffle-doctor.yml` managed — lock-tracked and doctor-clean — instead of
+  ejecting the file and losing managed updates. Empty by default, so existing renders are
+  behaviorally unchanged. (#30)
 - Unmanaged-collision guard on `render`/`install`: a rendered path that already exists on
   disk but is absent from `.waffle.lock.json` fails the render loudly — naming every
   offending path and writing nothing, so the tree is left untouched — instead of
