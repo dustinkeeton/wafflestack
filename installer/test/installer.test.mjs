@@ -17,7 +17,13 @@ import { loadToolkit } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection } from '../lib/refs.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
-import { loadProjectConfig, migrateLegacyDotfiles, staleGitignoreEntries } from '../lib/project.mjs';
+import {
+  loadProjectConfig,
+  migrateLegacyDotfiles,
+  staleGitignoreEntries,
+  ensureGitignoreEntries,
+  recommendedGitignoreEntries,
+} from '../lib/project.mjs';
 
 describe('template', () => {
   const declared = new Set(['git.botEmail', 'project.testCmd']);
@@ -519,6 +525,80 @@ describe('unmanaged collision guard (#25)', () => {
 
     const install = spawnSync(process.execPath, [cli, 'install', '--force', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(install.status, 0, install.stdout + install.stderr);
+  });
+});
+
+describe('gitignore offer (#29)', () => {
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-gi-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const gi = () => read(cwd, '.gitignore');
+
+  test('ensureGitignoreEntries creates .gitignore under a marker when absent; returns what it added', () => {
+    const added = ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.claude/worktrees/']);
+    assert.deepEqual(added, ['.waffle.local.yaml', '.claude/worktrees/']);
+    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n.claude/worktrees/\n');
+  });
+
+  test('appends only the missing entries and preserves unrelated content verbatim', () => {
+    const original = 'node_modules/\n.env\n.waffle.local.yaml\n';
+    fs.writeFileSync(path.join(cwd, '.gitignore'), original);
+    const added = ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.claude/worktrees/']);
+    assert.deepEqual(added, ['.claude/worktrees/'], 'the already-present entry is skipped');
+    assert.ok(gi().startsWith(original), 'existing content is left byte-for-byte intact');
+    assert.match(gi(), /\.claude\/worktrees\/\n$/);
+  });
+
+  test('no-ops when every entry is already present — returns [], file byte-for-byte unchanged', () => {
+    fs.writeFileSync(path.join(cwd, '.gitignore'), '.waffle.local.yaml\n.claude/worktrees/\n');
+    const before = gi();
+    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.claude/worktrees/']), []);
+    assert.equal(gi(), before);
+  });
+
+  test('adds a trailing newline first, so an appended entry never glues onto the last line', () => {
+    fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.env'); // no trailing newline
+    ensureGitignoreEntries(cwd, ['.waffle.local.yaml']);
+    assert.equal(gi(), 'node_modules/\n.env\n\n# wafflestack\n.waffle.local.yaml\n');
+  });
+
+  test('idempotent across calls and dedupes repeats within one call', () => {
+    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.waffle.local.yaml']), ['.waffle.local.yaml']);
+    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle.local.yaml']), []);
+    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n');
+  });
+
+  test('recommendedGitignoreEntries: local overlay always; worktrees dir when an enabled bundle declares it', () => {
+    const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+    const toolkit = loadToolkit(repoRoot);
+    assert.deepEqual(
+      recommendedGitignoreEntries(toolkit, { bundles: [], values: {}, targets: ['claude'] }),
+      ['.waffle.local.yaml'],
+    );
+    assert.deepEqual(
+      recommendedGitignoreEntries(toolkit, { bundles: ['github-workflow'], values: {}, targets: ['claude'] }),
+      ['.waffle.local.yaml', '.claude/worktrees/'],
+    );
+    // a project override of git.worktreesDir wins over the bundle default (and is slash-normalized)
+    assert.deepEqual(
+      recommendedGitignoreEntries(toolkit, { bundles: ['github-workflow'], values: { git: { worktreesDir: '.wt' } }, targets: ['claude'] }),
+      ['.waffle.local.yaml', '.wt/'],
+    );
+  });
+
+  test('CLI: init --gitignore seeds .waffle.local.yaml; the flag is not mistaken for a ref', () => {
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const initRun = spawnSync(process.execPath, [cli, 'init', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(initRun.status, 0, initRun.stdout + initRun.stderr);
+    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n');
+
+    // install --gitignore on an empty selection re-applies the offer idempotently (renders, no ref error)
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    const installRun = spawnSync(process.execPath, [cli, 'install', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(installRun.status, 0, installRun.stdout + installRun.stderr);
+    assert.doesNotMatch(installRun.stderr, /takes no refs/);
+    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n', 'already-present entry not duplicated');
   });
 });
 

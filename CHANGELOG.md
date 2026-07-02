@@ -53,8 +53,22 @@ is what you reach for across a breaking one.
   empty default) lets the shipped doctor CI workflow run extra flags. Set
   `doctor.flags: --allow-missing` to keep the workflow managed on a repo that gitignores a
   subset of its renders, instead of ejecting it. Default renders are behaviorally unchanged.
+- No migration required, additive: `init`, `render`, and `install` gain an opt-in
+  `--gitignore` flag that appends the entries wafflestack recommends — `.waffle.local.yaml`
+  always, plus the configured `git.worktreesDir` when an enabled bundle declares one.
+  Appending is idempotent (lines already present are skipped) and preserves existing content,
+  under a `# wafflestack` marker. Without the flag nothing changes — the CLI still never edits
+  your `.gitignore` unasked; the guided `setup` playbook now also offers these entries for
+  your approval. (#29)
 
 ### Added
+- Opt-in `.gitignore` offer (#29): a `--gitignore` flag on `init`/`render`/`install` appends
+  the recommended ignore entries through a new idempotent `ensureGitignoreEntries(cwd, entries)`
+  helper — `.waffle.local.yaml` always, plus the resolved `git.worktreesDir` when an enabled
+  bundle declares it (`recommendedGitignoreEntries`). `schema/SETUP.md` step 6 now instructs
+  the setup agent to propose the entries and apply them on approval, and the "CLI never edits
+  `.gitignore`" doc stance is refined to "never edits it *unasked*." No behavior change without
+  the flag.
 - `doctor.flags` config key (github-workflow bundle): appends flags to the doctor CI
   workflow's `npx --yes <ref> doctor` command. A repo that deliberately gitignores a subset
   of its renders can set `doctor.flags: --allow-missing` and keep

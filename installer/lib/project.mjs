@@ -79,14 +79,81 @@ export function migrateLegacyDotfiles(cwd) {
 
 /**
  * Which legacy `.wafflestack.*` paths a repo's `.gitignore` still lists. The CLI never edits
- * `.gitignore` (a consumer owns it), so after the dotfile rename we remind them to update the
- * entries themselves. Self-clearing: returns [] once the stale lines are gone.
+ * `.gitignore` unasked (a consumer owns it), so after the dotfile rename we remind them to
+ * update the entries themselves. Self-clearing: returns [] once the stale lines are gone.
  */
 export function staleGitignoreEntries(cwd) {
   const gi = path.join(cwd, '.gitignore');
   if (!exists(gi)) return [];
   const text = fs.readFileSync(gi, 'utf8');
   return [LEGACY_LOCAL_CONFIG_FILE, LEGACY_LOCK_FILE].filter((name) => text.includes(name));
+}
+
+// Marker prefixing wafflestack's own appended block, so a human scanning `.gitignore` can see
+// where the offered entries came from. Written once; a later run appends more lines below it.
+export const GITIGNORE_MARKER = '# wafflestack';
+
+/**
+ * Idempotently append `.gitignore` entries the consumer has approved — via the `--gitignore`
+ * flag on `init`/`render`/`install`, or an agent acting on the setup playbook's offer. This is
+ * the one place the CLI writes `.gitignore`, refining the "never edits it" stance to "never
+ * edits it *unasked*". Append-only and non-destructive: an entry already present (exact,
+ * whitespace-trimmed line match) is skipped, existing content is preserved verbatim (a missing
+ * trailing newline is added so the first appended entry can't glue onto the last existing
+ * line), and the `# wafflestack` marker is written once. Creates `.gitignore` when absent.
+ * Returns the entries actually added (for reporting) — [] when everything was already present.
+ */
+export function ensureGitignoreEntries(cwd, entries) {
+  const gi = path.join(cwd, '.gitignore');
+  const existing = exists(gi) ? fs.readFileSync(gi, 'utf8') : '';
+  const present = new Set(existing.split(/\r?\n/).map((line) => line.trim()));
+  const toAdd = [];
+  for (const raw of entries) {
+    const entry = String(raw).trim();
+    if (entry && !present.has(entry)) {
+      present.add(entry); // also dedupes repeats within `entries`
+      toAdd.push(entry);
+    }
+  }
+  if (!toAdd.length) return [];
+
+  const block = toAdd.map((e) => `${e}\n`).join('');
+  let out;
+  if (!existing) {
+    out = `${GITIGNORE_MARKER}\n${block}`;
+  } else {
+    const base = existing.endsWith('\n') ? existing : `${existing}\n`;
+    // Blank line + marker before the first wafflestack block; later runs append under it.
+    const header = existing.includes(GITIGNORE_MARKER) ? '' : `\n${GITIGNORE_MARKER}\n`;
+    out = `${base}${header}${block}`;
+  }
+  fs.writeFileSync(gi, out);
+  return toAdd;
+}
+
+/**
+ * The `.gitignore` entries wafflestack recommends for a loaded `project` — the baseline offer
+ * behind the `--gitignore` flag and the setup playbook. Always the local overlay
+ * (`.waffle.local.yaml`, account-specific config that must never be committed), plus the
+ * resolved `git.worktreesDir` (throwaway working state) when an enabled bundle declares that
+ * key. Dev-only / self-hosting mode — also gitignoring the renders + `.waffle.lock.json`,
+ * paired with `doctor --allow-missing` — is a separate opt-in the agent proposes case by case,
+ * not part of this baseline.
+ */
+export function recommendedGitignoreEntries(toolkit, project) {
+  const entries = [LOCAL_CONFIG_FILE];
+  for (const name of project.bundles ?? []) {
+    const bundle = toolkit.bundles.get(name);
+    if (!bundle || !('git.worktreesDir' in bundle.config)) continue;
+    const resolve = makeResolver(bundle, project.values ?? {}, project.targets?.[0] ?? 'claude');
+    const dir = resolve('git.worktreesDir');
+    if (dir) {
+      const normalized = `${String(dir).replace(/\/+$/, '')}/`; // dir-only match, no double slash
+      if (!entries.includes(normalized)) entries.push(normalized);
+    }
+    break; // bundles share the one key; a single worktrees dir is enough
+  }
+  return entries;
 }
 
 /**

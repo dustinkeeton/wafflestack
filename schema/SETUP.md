@@ -25,7 +25,9 @@ so the whole install uses one toolkit version.
 - If instead a legacy `.wafflestack.yaml` exists (a repo set up before 0.6.0), it is still
   read with a deprecation note; the next `render`/`upgrade` renames it and the other
   dotfiles to `.waffle.*` in place. Afterwards, update the repo's `.gitignore` entries
-  (`.wafflestack.local.yaml` → `.waffle.local.yaml`) — the CLI does not touch `.gitignore`.
+  (`.wafflestack.local.yaml` → `.waffle.local.yaml`) — the auto-rename never touches
+  `.gitignore`; swap them yourself, or run `wafflestack install --gitignore` to re-add the
+  `.waffle.*` names.
 - Detect which harnesses the project uses and propose the `targets` list:
   - `claude` — a `.claude/` directory or `CLAUDE.md` exists, or you are Claude Code.
   - `codex` — a `.codex/` directory exists, or you are Codex.
@@ -111,11 +113,21 @@ content is already byte-identical to the render is adopted silently, no flag nee
   that runs it on every push and pull request, so committing the render + lock is what makes
   that gate meaningful (set `doctor.flags: --allow-missing` if the repo gitignores some
   renders — only modified files fail).
-- **Gitignore**: `.waffle.local.yaml`, always. Also the configured worktrees
-  directory if a bundle declares one.
-- **Exception — the toolkit repo itself**: when the project *is* the wafflestack source
-  repo (self-hosting), gitignore the rendered output and the lock instead; committed
-  copies would duplicate every skill in the tree.
+- **Gitignore** — wafflestack never edits `.gitignore` *unasked*, so **offer** the entries
+  and apply them on the user's approval. Propose the concrete lines, then either run
+  `wafflestack install --gitignore` (it idempotently appends only the missing ones under a
+  `# wafflestack` marker, preserving existing content) or hand-edit the file. Baseline:
+  - `.waffle.local.yaml` — **always** (account-specific config must never be committed).
+  - the configured `git.worktreesDir` when an enabled bundle declares one (throwaway
+    working state). `init --gitignore` seeds only the local overlay, since no bundle is
+    chosen yet; `install --gitignore` adds the worktrees dir once one is enabled.
+- **Dev-only or self-hosting waffle**: when the render should *not* be committed — a
+  consumer who wants the waffle only in their own working environment, or the wafflestack
+  source repo itself (where committed copies would duplicate every skill in the tree) —
+  also gitignore the rendered output (`.claude/`, `.codex/`, `.agents/`) and
+  `.waffle.lock.json`, and set `doctor.flags: --allow-missing` (github-workflow bundle) so
+  the CI drift gate tolerates the deliberately-absent renders: only modified files fail, a
+  missing lock still fails.
 - Tell the user the standing rule: never hand-edit rendered files — `render` overwrites
   them. Project-specific additions go in `.waffle/extensions/{agents,skills}/<name>.md`
   (committed) and take effect on the next render.

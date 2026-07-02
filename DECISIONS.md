@@ -9,6 +9,63 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-02: Offer opt-in `.gitignore` entries during setup/install (#29)
+
+**Context**: The CLI deliberately never edited `.gitignore` — a consumer owns it — and
+gitignore guidance was prose-only (`schema/SETUP.md` step 6, the README rules), while render
+merely *warned* about stale legacy entries (`staleGitignoreEntries`). Sound as a default, but
+it left two footguns: forgetting to ignore `.waffle.local.yaml` commits account-specific
+config, and the "dev-only waffle" case (a consumer who wants a render only in their working
+environment, not committed) had to hand-maintain the ignores — a pattern documented only as
+the toolkit repo's own self-hosting exception.
+
+**Decision**: Keep the never-edit-*silently* stance; add an opt-in **offer**, refining the
+doc stance from "never edits `.gitignore`" to "never edits it **unasked**." Implement **both**
+UX surfaces the issue proposed, because they cover different drivers:
+
+- **Playbook step** — `schema/SETUP.md` step 6 now tells the driving agent to *propose* the
+  concrete entries and apply them on the user's approval (the agent is the interactive layer
+  the non-interactive CLI lacks).
+- **Explicit CLI flag** — `--gitignore` on `init`/`render`/`install` (mirroring how #25 wired
+  `--force`). The explicit flag *is* the consumer's consent, so writing `.gitignore` behind it
+  doesn't violate the stance.
+
+Two new pure helpers in `installer/lib/project.mjs`: `ensureGitignoreEntries(cwd, entries)`
+appends idempotently (exact-line dedupe, existing content preserved, a missing trailing
+newline added, one `# wafflestack` marker) and returns what it added;
+`recommendedGitignoreEntries(toolkit, project)` computes the baseline offer —
+`.waffle.local.yaml` always, plus the resolved `git.worktreesDir` when an enabled bundle
+declares that key. `init --gitignore` seeds only the local overlay (no bundle chosen yet).
+Dev-only / self-hosting mode (also gitignoring the renders + `.waffle.lock.json`, paired with
+`doctor.flags: --allow-missing` as the CI companion) stays a separate, agent-proposed choice,
+not part of the flag's automatic baseline.
+
+**Alternatives considered**:
+
+- **Playbook step only** (no flag). Rejected — leaves a manual, error-prone hand-edit as the
+  only mechanized path; the flag makes the common case one idempotent command.
+- **Flag only** (no playbook change). Rejected — the guided setup is the primary install path;
+  an agent needs the instruction to *offer* before it will act.
+- **Edit `.gitignore` automatically on every render** (no opt-in). Rejected for the same
+  reason 0.6.0 rejected auto-rewriting it — a consumer owns their `.gitignore`; silent edits
+  violate the frozen-image spirit and the #25 no-clobber contract. The offer is opt-in only.
+- **A dedicated `gitignore` subcommand.** Rejected — heavier than warranted; a flag on the
+  commands that already run at setup time (`init`/`install`) fits the existing idiom.
+
+**Rationale**: The two footguns are real and the fix is cheap, but consent must stay explicit.
+An agent offer plus an explicit flag are two consent channels for the same append-only,
+idempotent helper — neither writes `.gitignore` without being asked, so the original stance
+holds, just refined.
+
+**Impact**: New `--gitignore` flag on `init`/`render`/`install`; default behavior unchanged
+(no flag → `.gitignore` untouched, same as before). New exports `ensureGitignoreEntries` /
+`recommendedGitignoreEntries` / `GITIGNORE_MARKER` in `installer/lib/project.mjs`, wired
+through `cli.mjs` (`offerGitignore`). Docs refined in `schema/SETUP.md` (step 6 + the legacy
+rename note) and `README.md` (command table, rule 2, the 0.6.0 rename note) from "never edits
+`.gitignore`" to "never edits it unasked." No migration; additive and minor.
+
+---
+
 ## 2026-07-02: Rename the shipped doctor workflow `wafflestack-doctor.yml` → `waffle-doctor.yml` (#28)
 
 **Context**: v0.6.0 shortened every consumer-facing dot-path to `.waffle.*` but

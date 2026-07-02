@@ -106,6 +106,9 @@ export function resolveLocalConfigFile(cwd)            // → { file, legacy, no
 export function resolveLockFile(cwd)                   // → { file, legacy, note }
 export function migrateLegacyDotfiles(cwd)             // rename .wafflestack.* → .waffle.* in place; → [{ from, to }] (idempotent)
 export function staleGitignoreEntries(cwd)             // → legacy .wafflestack.* lines still in .gitignore (self-clearing reminder)
+export const GITIGNORE_MARKER = '# wafflestack'        // comment prefixing wafflestack's appended .gitignore block
+export function ensureGitignoreEntries(cwd, entries)   // idempotent append of approved .gitignore lines (--gitignore/setup); → entries added (skips present, preserves content)
+export function recommendedGitignoreEntries(toolkit, project) // → baseline offer: [.waffle.local.yaml, + resolved git.worktreesDir when an enabled bundle declares it]
 export function makeResolver(bundle, values, target)   // → (key: string) => value | undefined
 
 // util.mjs
@@ -171,10 +174,10 @@ Usage: `wafflestack <init|setup|install|render|upgrade|doctor|eject|validate> [r
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.waffle.yaml` (targets / bundles / include / config / eject scaffold); errors if one exists. `eject.mjs:150` |
+| `init` | Write starter `.waffle.yaml` (targets / bundles / include / config / eject scaffold); errors if one exists. `--gitignore` also appends `.waffle.local.yaml` (only that — no bundle chosen yet). `eject.mjs:150` |
 | `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit. `setup.mjs:11` |
-| `install [ref…]` | Persist each ref to config (bundle → `bundles:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `eject.mjs:74` |
-| `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Exit 1 on error. `render.mjs:24` |
+| `install [ref…]` | Persist each ref to config (bundle → `bundles:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `--gitignore` appends recommended entries after a clean render. `eject.mjs:74` |
+| `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Exit 1 on error. `--gitignore` appends recommended entries after a clean render (`ensureGitignoreEntries` + `recommendedGitignoreEntries`, `offerGitignore` in `cli.mjs`). `render.mjs:24` |
 | `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:23` |
 | `doctor` | Diff managed files vs lock; always report the rendered `toolkitVersion` + a skew note. Exit 1 on drift (`--allow-missing`: only modified files fail). `doctor.mjs:17` |
 | `eject <skills/NAME\|agents/NAME>` | Add to `eject:`, strip any matching `include:` entry, drop the item's files from the lock; files stay in place, now project-owned. `eject.mjs:17` |
