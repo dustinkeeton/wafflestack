@@ -9,8 +9,8 @@ setup: |-
 
   **Doctor CI workflow.** This bundle ships `.github/workflows/wafflestack-doctor.yml`,
   a GitHub Actions job that runs `wafflestack doctor` on push/PR to fail the build when a
-  managed file drifts from `.wafflestack.lock.json`. It only works when the consuming repo
-  commits BOTH the rendered output AND `.wafflestack.lock.json` (the step-6 version-control
+  managed file drifts from `.waffle.lock.json`. It only works when the consuming repo
+  commits BOTH the rendered output AND `.waffle.lock.json` (the step-6 version-control
   flow in schema/SETUP.md) — a repo that gitignores its render or lock will see doctor exit
   1 with everything reported `missing:`, or fail on the missing lock. Point `doctor.toolkitRef`
   at a release tag (e.g. `github:dustinkeeton/wafflestack#v0.5.0`) to pin the toolkit version
@@ -40,7 +40,7 @@ setup: |-
 
   **Git.** Make sure the configured `git.worktreesDir` is gitignored. If the project
   commits under a bot identity, set `git.identitySection` / `git.cmd` /
-  `git.coAuthorTrailer`, keeping account-specific values in .wafflestack.local.yaml.
+  `git.coAuthorTrailer`, keeping account-specific values in .waffle.local.yaml.
 config:
   git.identitySection:
     required: false
@@ -60,7 +60,7 @@ config:
     description: >-
       The git invocation used in command examples. Projects with a bot identity
       set it to e.g. "git -c user.email={{git.botEmail}} -c user.name={{git.botName}}"
-      (nested keys may live in the gitignored .wafflestack.local.yaml).
+      (nested keys may live in the gitignored .waffle.local.yaml).
   git.coAuthorTrailer:
     required: false
     default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
