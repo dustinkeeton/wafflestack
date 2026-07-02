@@ -29,6 +29,23 @@ below that fall in between, runs any registered migrations in order, then re-ren
 runs `doctor`. A plain re-render (`… render`) still works for patch/minor moves; `upgrade`
 is what you reach for across a breaking one.
 
+## [Unreleased]
+
+### Consumer impact
+- No migration required, and the default is safer: `render` now **refuses to overwrite a
+  pre-existing file it does not manage** instead of silently clobbering it. If a render
+  stops on a `refusing to overwrite …` error, the named path already exists in your repo
+  and is not tracked by `.waffle.lock.json` — move the file aside (or fold it into a
+  `.waffle/extensions/` file) and re-render, or pass `--force` to let the toolkit's version
+  win. A byte-identical file is adopted silently.
+
+### Added
+- Unmanaged-collision guard on `render`/`install`: a rendered path that already exists on
+  disk but is absent from `.waffle.lock.json` fails the render loudly — naming every
+  offending path and writing nothing, so the tree is left untouched — instead of
+  overwriting a hand-written consumer file. A content-identical file is adopted silently;
+  `--force` overwrites a differing file and takes it under lock management. (#25)
+
 ## [0.6.0] - 2026-07-02
 
 ### Consumer impact

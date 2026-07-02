@@ -19,16 +19,18 @@ const cwd = extractCwd(args) ?? process.cwd();
 try {
   switch (command) {
     case 'render': {
+      const force = extractFlag(args, '--force');
       if (args.length) {
         fail('render takes no refs — use `wafflestack install <ref…>` to add a bundle or item (it persists the choice, then re-renders); bare `render` re-renders the current selection');
       }
-      runRender();
+      runRender(force);
       break;
     }
     case 'install': {
+      const force = extractFlag(args, '--force');
       // Bare `install` is an alias for `render`; with refs it persists them first.
       if (args.length) installRefs({ toolkitRoot, cwd, refs: args, log: console.log });
-      runRender();
+      runRender(force);
       break;
     }
     case 'doctor': {
@@ -106,8 +108,8 @@ try {
   fail(err.message);
 }
 
-function runRender() {
-  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, log: console.log });
+function runRender(force = false) {
+  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, force, log: console.log });
   for (const w of result.warnings) console.warn(`warning: ${w}`);
   if (!result.ok) {
     for (const e of result.errors) console.error(`error: ${e}`);
