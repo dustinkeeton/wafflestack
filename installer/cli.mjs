@@ -67,7 +67,7 @@ try {
     }
     case 'eject': {
       if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH>');
-      const { ref, released } = eject({ cwd, item: args[0] });
+      const { ref, released } = eject({ cwd, item: args[0], log: console.log });
       console.log(`ejected ${ref}; ${released.length} files released from management:`);
       for (const f of released) console.log(`  ${f}`);
       console.log('the files remain in place and are now project-owned');

@@ -5,7 +5,7 @@ import { exists } from './util.mjs';
 import { readLock } from './render.mjs';
 import { loadToolkit } from './toolkit.mjs';
 import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches } from './refs.mjs';
-import { CONFIG_FILE, LOCK_FILE } from './project.mjs';
+import { CONFIG_FILE, LEGACY_CONFIG_FILE, LOCK_FILE, resolveConfigFile } from './project.mjs';
 
 /**
  * Stop managing an item: add it to the config's `eject:` list (comment-preserving
@@ -14,14 +14,15 @@ import { CONFIG_FILE, LOCK_FILE } from './project.mjs';
  * removed from that list — otherwise the eject filter would leave a dead entry that
  * silently does nothing.
  */
-export function eject({ cwd, item }) {
+export function eject({ cwd, item, log = () => {} }) {
   const ref = normalizeItemRef(item);
   if (!/^(agents|skills|files)\//.test(ref)) {
     throw new Error(`eject target must look like skills/<name>, agents/<name>, or files/<path>, got "${item}"`);
   }
   const [, kind, name] = /^(agents|skills|files)\/(.+)$/.exec(ref);
 
-  const configFile = path.join(cwd, CONFIG_FILE);
+  const { file: configFile, legacy, note } = resolveConfigFile(cwd);
+  if (legacy) log(note);
   const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
   let dirty = false;
   const current = doc.get('eject');
@@ -72,7 +73,7 @@ export function eject({ cwd, item }) {
 
 /**
  * Additive per-item/bundle install — the mirror of `eject`. Resolves each ref against
- * the toolkit, then does a comment-preserving YAML edit of `.wafflestack.yaml`: bundle
+ * the toolkit, then does a comment-preserving YAML edit of `.waffle.yaml`: bundle
  * refs append to `bundles:`, item refs (canonicalized, bundle-qualified only when the
  * name is ambiguous) append to `include:`. Persistence is required, not cosmetic — the
  * frozen-image contract would otherwise delete an ad-hoc install on the next render.
@@ -81,10 +82,11 @@ export function eject({ cwd, item }) {
  * runs a normal full render afterwards.
  */
 export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
-  const configFile = path.join(cwd, CONFIG_FILE);
+  const { file: configFile, legacy, note } = resolveConfigFile(cwd);
   if (!exists(configFile)) {
     throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack init\` first`);
   }
+  if (legacy) log(note);
   const toolkit = loadToolkit(toolkitRoot);
 
   // Resolve everything up front so an unknown/ambiguous ref fails before we persist.
@@ -153,12 +155,16 @@ include: []
 config: {}
 #  git:
 #    botEmail: bot@example.com
-# Account-specific values belong in .wafflestack.local.yaml (gitignore it).
+# Account-specific values belong in .waffle.local.yaml (gitignore it).
 `;
 
 export function init({ cwd }) {
   const configFile = path.join(cwd, CONFIG_FILE);
   if (exists(configFile)) throw new Error(`${CONFIG_FILE} already exists`);
+  const legacyFile = path.join(cwd, LEGACY_CONFIG_FILE);
+  if (exists(legacyFile)) {
+    throw new Error(`${LEGACY_CONFIG_FILE} already exists — run \`wafflestack render\` to rename it to ${CONFIG_FILE}`);
+  }
   fs.writeFileSync(configFile, STARTER_CONFIG);
   return configFile;
 }

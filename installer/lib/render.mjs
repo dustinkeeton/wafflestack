@@ -12,6 +12,10 @@ import { computeSelection } from './refs.mjs';
 import {
   loadProjectConfig,
   makeResolver,
+  migrateLegacyDotfiles,
+  staleGitignoreEntries,
+  resolveLockFile,
+  CONFIG_FILE,
   LOCK_FILE,
   EXTENSIONS_DIR,
 } from './project.mjs';
@@ -22,10 +26,20 @@ import {
  * previous lock that are no longer rendered get deleted; a fresh lock is written.
  */
 export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {} }) {
-  const project = loadProjectConfig(cwd);
+  const warnings = [];
+  // Carry a legacy `.wafflestack.*` repo forward before reading anything: rename the
+  // consumer dot-paths to `.waffle.*` so config load and the frozen-image lock below see
+  // the current layout. A no-op on an already-migrated or fresh repo.
+  for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
+  const stale = staleGitignoreEntries(cwd);
+  if (stale.length) {
+    warnings.push(
+      `.gitignore still lists ${stale.join(', ')} — update to the .waffle.* names (the CLI does not edit .gitignore)`,
+    );
+  }
+  const project = loadProjectConfig(cwd, warnings);
   const toolkit = loadToolkit(toolkitRoot);
   const errors = [];
-  const warnings = [];
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "bundle/kind/name" that emitted it
   // Two enabled bundles may define same-named items (alternative implementations of
@@ -69,7 +83,7 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, log = () => {}
     const missing = missingRequiredKeys(bundle, project.values, (values, key) => primaryResolver(key), usedKeys);
     if (missing.length) {
       errors.push(
-        `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to .wafflestack.yaml (or the .local overlay)`,
+        `bundle "${bundleName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to ${CONFIG_FILE} (or the .local overlay)`,
       );
       continue;
     }
@@ -246,7 +260,7 @@ function checkEnvPrerequisites({ bundle, project, cwd, warnings }) {
 }
 
 export function readLock(cwd) {
-  const file = path.join(cwd, LOCK_FILE);
+  const { file } = resolveLockFile(cwd);
   if (!exists(file)) return null;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }

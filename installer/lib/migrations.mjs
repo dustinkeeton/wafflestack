@@ -1,4 +1,5 @@
 import { compareVersions } from './util.mjs';
+import { migrateLegacyDotfiles } from './project.mjs';
 
 /**
  * Ordered, idempotent, version-keyed migration steps.
@@ -23,9 +24,19 @@ import { compareVersions } from './util.mjs';
  * - Keep steps small and independent; the runner applies them in ascending version order,
  *   so a later step may assume every earlier step has run.
  *
- * This array ships empty; #17 registers the first entry.
+ * #17 registered the first entry (the `.wafflestack.*` → `.waffle.*` dotfile rename).
  */
-export const MIGRATIONS = [];
+export const MIGRATIONS = [
+  {
+    version: '0.6.0',
+    description: 'rename consumer dotfiles .wafflestack.* → .waffle.* (config, local overlay, lock, extensions dir)',
+    run(cwd) {
+      // Delegates to the same in-place rename `render` runs, so upgrade and a plain
+      // re-render converge; idempotent on already-migrated or fresh repos.
+      migrateLegacyDotfiles(cwd);
+    },
+  },
+];
 
 /**
  * The steps that apply when moving `fromVersion` → `toVersion`, in ascending version order.

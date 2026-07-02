@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sha256, exists } from './util.mjs';
 import { readLock } from './render.mjs';
-import { LOCK_FILE } from './project.mjs';
+import { LOCK_FILE, resolveLockFile } from './project.mjs';
 
 /**
  * Compare managed files against the lock manifest.
@@ -32,6 +32,9 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
   }
 
   const notes = [];
+  // A repo still on the legacy lock name reads fine (readLock falls back) but should migrate.
+  const lockPath = resolveLockFile(cwd);
+  if (lockPath.legacy) notes.push(lockPath.note);
   // Always report which toolkit version the tree was rendered from, so a drift report
   // says what a repo is sitting on — not just when it happens to skew from the CLI.
   const rendered = lock.toolkitVersion ?? 'unknown (pre-versioned lock)';
@@ -44,7 +47,7 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
     notes.push(`version skew — run \`wafflestack upgrade\` to apply migrations and re-render`);
   }
   if (modified.length) {
-    notes.push('managed files have local edits; move changes into .wafflestack/extensions/ or config, then re-render');
+    notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
   }
   if (allowMissing && missing.length) {
     notes.push(`${missing.length} managed file(s) absent but tolerated (--allow-missing) — expected when a repo gitignores some renders (partial/CI checkout)`);
