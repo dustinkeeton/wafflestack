@@ -34,6 +34,9 @@ export function toolkitInventory(toolkit, version) {
     if (bundle.description) lines.push(bundle.description, '');
     lines.push(`- skills: ${bundle.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
     lines.push(`- agents: ${bundle.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);
+    if (bundle.files.length) {
+      lines.push(`- files: ${bundle.files.map((f) => `files/${f.name}`).join(', ')}`);
+    }
     const env = Object.entries(bundle.env);
     if (env.length) {
       lines.push(`- env prerequisites: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`);

@@ -7,6 +7,17 @@ export function sha256(content) {
   return createHash('sha256').update(content).digest('hex');
 }
 
+/**
+ * Heuristic binary sniff for `files/` payloads: a NUL byte in the head means binary
+ * (byte-copied), otherwise text (template-substituted). Same rule git uses to decide
+ * whether to diff a blob — good enough to tell a `.yml`/`.mjs` from a `.png`/`.ico`.
+ */
+export function isBinary(buffer) {
+  const n = Math.min(buffer.length, 8000);
+  for (let i = 0; i < n; i++) if (buffer[i] === 0) return true;
+  return false;
+}
+
 export function readYaml(file) {
   return YAML.parse(fs.readFileSync(file, 'utf8'));
 }

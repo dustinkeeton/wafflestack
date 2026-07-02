@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { substitute, formatValue } from '../lib/template.mjs';
+import { substitute, formatValue, placeholderKeys } from '../lib/template.mjs';
 import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath } from '../lib/util.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
@@ -42,6 +42,17 @@ describe('template', () => {
   test('formatValue joins string arrays, yamls objects', () => {
     assert.equal(formatValue(['a', 'b']), 'a, b');
     assert.match(formatValue({ x: 1 }), /x: 1/);
+  });
+
+  test('GitHub Actions ${{ ... }} is never substituted, even for a declared key', () => {
+    const errors = [];
+    const out = substitute('token ${{ git.botEmail }}, commit {{git.botEmail}}', resolve, declared, errors, 't');
+    assert.equal(out, 'token ${{ git.botEmail }}, commit bot@example.com');
+    assert.equal(errors.length, 0);
+  });
+
+  test('placeholderKeys ignores ${{ ... }} so validate does not police workflow expressions', () => {
+    assert.deepEqual([...placeholderKeys('deploy {{project.name}} at ${{ github.sha }}')], ['project.name']);
   });
 });
 
@@ -388,6 +399,146 @@ describe('output conflicts and skillsDir', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, '.claude/skills/dup-skill/SKILL.md'), /Read \.claude\/skills\/dup-skill\/SKILL\.md\./);
     assert.match(read(cwd, '.agents/skills/dup-skill/SKILL.md'), /Read \.agents\/skills\/dup-skill\/SKILL\.md\./);
+  });
+});
+
+describe('files/ payload', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-files-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-files-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: files\nbundles: [fb]\n');
+    write(toolkitRoot, 'bundles/fb/bundle.yaml', [
+      'name: fb',
+      'description: Files fixture.',
+      'files:',
+      '  - .github/workflows/ci.yml',
+      '  - scripts/logo.png',
+      'config:',
+      '  project.name:',
+      '    required: true',
+      '    description: project name',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'bundles/fb/files/.github/workflows/ci.yml', [
+      'name: CI for {{project.name}}',
+      'on: [push]',
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: echo "sha ${{ github.sha }}"',
+      '      - run: echo "token ${{ secrets.GITHUB_TOKEN }}"',
+      '',
+    ].join('\n'));
+    // Binary payload: PNG signature + a NUL byte (so isBinary sniffs it as binary) plus a
+    // `{{x}}`-looking byte run, to prove binaries are copied byte-for-byte, never templated.
+    fs.mkdirSync(path.join(toolkitRoot, 'bundles/fb/files/scripts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(toolkitRoot, 'bundles/fb/files/scripts/logo.png'),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x7b, 0x7b, 0x78, 0x7d, 0x7d]),
+    );
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), [
+      '# files fixture comment',
+      'targets: [claude, codex, agents-dir]',
+      'bundles: [fb]',
+      'config:',
+      '  project:',
+      '    name: Waffle',
+      '',
+    ].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('the files fixture is a valid toolkit (GitHub Actions ${{ }} is not flagged)', () => {
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('setup inventory lists the bundle files', () => {
+    const inv = toolkitInventory(loadToolkit(toolkitRoot), '0.0.test');
+    assert.match(inv, /- files: files\/\.github\/workflows\/ci\.yml, files\/scripts\/logo\.png/);
+  });
+
+  test('renders text with substitution, preserves ${{ }}, byte-copies binary, doctor round-trips', () => {
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const wf = read(cwd, '.github/workflows/ci.yml');
+    assert.match(wf, /name: CI for Waffle/); // {{project.name}} substituted
+    assert.match(wf, /sha \$\{\{ github\.sha \}\}/); // GHA expression preserved verbatim
+    assert.match(wf, /token \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+
+    // binary copied byte-for-byte (the embedded {{x}} bytes are untouched)
+    const src = fs.readFileSync(path.join(toolkitRoot, 'bundles/fb/files/scripts/logo.png'));
+    assert.deepEqual(fs.readFileSync(path.join(cwd, 'scripts/logo.png')), src);
+
+    // both outputs tracked in the lock at their repo-relative paths
+    const lock = JSON.parse(read(cwd, '.wafflestack.lock.json'));
+    assert.ok('.github/workflows/ci.yml' in lock.files, JSON.stringify(lock.files));
+    assert.ok('scripts/logo.png' in lock.files, JSON.stringify(lock.files));
+
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('frozen image: local edit to a files output flagged by doctor, restored, pruned on removal', () => {
+    render();
+    const wf = path.join(cwd, '.github/workflows/ci.yml');
+    const original = fs.readFileSync(wf, 'utf8');
+    fs.appendFileSync(wf, '\n# tampered\n');
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(dr.ok, false);
+    assert.deepEqual(dr.modified, ['.github/workflows/ci.yml']);
+
+    render();
+    assert.equal(fs.readFileSync(wf, 'utf8'), original);
+
+    // dropping the bundle cleans up every files output it produced
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.equal(fs.existsSync(wf), false);
+    assert.equal(fs.existsSync(path.join(cwd, 'scripts/logo.png')), false);
+  });
+
+  test('eject files/<path> releases it, preserves config comments, render leaves it project-owned', () => {
+    render();
+    const { released } = eject({ cwd, item: 'files/.github/workflows/ci.yml' });
+    assert.deepEqual(released, ['.github/workflows/ci.yml']);
+    const cfg = read(cwd, '.wafflestack.yaml');
+    assert.match(cfg, /# files fixture comment/);
+    assert.match(cfg, /eject:/);
+    assert.match(cfg, /files\/\.github\/workflows\/ci\.yml/);
+
+    // now project-owned: a hand edit survives re-render and doctor stays clean, while the
+    // non-ejected binary remains managed
+    fs.appendFileSync(path.join(cwd, '.github/workflows/ci.yml'), '\n# project-owned\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, '.github/workflows/ci.yml'), /# project-owned/);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'scripts/logo.png')), 'non-ejected binary still managed');
+  });
+
+  test('validate flags an undeclared {{key}} in a text files payload', () => {
+    const wf = path.join(toolkitRoot, 'bundles/fb/files/.github/workflows/ci.yml');
+    fs.appendFileSync(wf, '\n# uses {{made.up.key}}\n');
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /made\.up\.key/.test(p)), JSON.stringify(problems));
+  });
+
+  test('a required key used only in a files payload is demanded when missing', () => {
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nbundles: [fb]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors[0], /config\.project\.name/);
   });
 });
 

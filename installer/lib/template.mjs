@@ -1,6 +1,10 @@
 import YAML from 'yaml';
 
-const PLACEHOLDER = /\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g;
+// A `$`-prefixed `${{ ... }}` is GitHub Actions / shell-template syntax, never a
+// wafflestack placeholder — the negative lookbehind excludes it from matching entirely,
+// so such expressions pass through verbatim in every payload (agents, skills, and the
+// generic `files/` payloads that carry workflow files) and are not policed by validate.
+const PLACEHOLDER = /(?<!\$)\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g;
 
 /**
  * A substituted value may itself contain placeholders (a config default like

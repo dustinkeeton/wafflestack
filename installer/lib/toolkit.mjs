@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readYaml, parseFrontmatter, exists } from './util.mjs';
+import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 
 /** Load the toolkit registry and every bundle it lists. */
 export function loadToolkit(rootDir) {
@@ -39,12 +39,27 @@ function loadBundle(name, dir) {
     return { kind: 'skill', name: skillName, dir: skillDir, files };
   });
 
+  // Generic payloads: a file authored under `files/<repo-relative-path>` renders verbatim
+  // to that same path in the consuming project (CI workflows, scripts, config). Text files
+  // are template-substituted, binaries byte-copied — text/binary is sniffed by content, so
+  // any text type works, not just `.md`.
+  const files = (manifest.files ?? []).map((entry) => {
+    const rel = String(entry);
+    if (path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === '..')) {
+      throw new Error(`bundle ${name}: files entry "${rel}" must be a repo-relative path that stays inside the project`);
+    }
+    const file = path.join(dir, 'files', rel);
+    if (!exists(file)) throw new Error(`bundle ${name}: files entry "${rel}" not found under files/`);
+    return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)) };
+  });
+
   return {
     name,
     dir,
     description: manifest.description ?? '',
     agents,
     skills,
+    files,
     config,
     declared,
     env: manifest.env ?? {},

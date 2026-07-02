@@ -13,9 +13,15 @@ bundles/<bundle>/
   bundle.yaml                bundle manifest (see below)
   agents/<name>.md           neutral agent definitions
   skills/<name>/SKILL.md     neutral skill definitions (+ supporting files)
+  files/<repo-rel-path>      generic project files (CI workflows, scripts, config)
 installer/                   the render CLI (`wafflestack`)
 schema/                      this document
 ```
+
+Three payload types share the same render machinery — **agents** and **skills** target
+harness dirs (`.claude/`, `.codex/`, `.agents/`), while **files** render to an arbitrary
+repo-relative path. All three get `{{key}}` substitution, lock tracking, `doctor` drift
+detection, and `eject`.
 
 ## bundle.yaml
 
@@ -24,6 +30,9 @@ name: github-workflow
 description: One-line description of the bundle.
 agents: [architect, security]        # files under agents/, without .md
 skills: [git-workflow, issue]        # directories under skills/
+files:                               # generic files under files/, by repo-relative path
+  - .github/workflows/release.yml
+  - scripts/check-format.mjs
 requires:                            # optional per-item dependency declarations
   skills/issue:                      # keyed by item ref (skills/<name> | agents/<name>)
     - skills/git-workflow            # refs pulled in when this item is installed alone
@@ -96,6 +105,39 @@ Renders to:
 - **claude** → `.claude/skills/<name>/`
 - **agents-dir** → `.agents/skills/<name>/` (identical content; cross-tool convention)
 
+## Files definition (`files/<repo-relative-path>`)
+
+For reusable project scaffolding that lives at an arbitrary repo path rather than in a
+harness dir — CI workflows, helper scripts, shared config. Each entry in the manifest's
+`files:` list is a **repo-relative path** under the bundle's `files/` directory; it renders
+**verbatim to that same path** in the consuming project.
+
+Files are **harness-independent**: they render **once** regardless of `targets:` (a file has
+no per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/check.mjs`.
+
+- **Text vs. binary is sniffed by content** (a NUL byte in the head marks binary), not by
+  extension — so any text type (`.yml`, `.mjs`, `.sh`, `.json`, …) is templated, and true
+  binaries (`.png`, `.ico`) are copied byte-for-byte.
+- **Text files** get the same `{{dotted.key}}` substitution as skills — declared config keys
+  plus the `harness.*` namespace, resolved against the **first configured target** (files
+  render once, so there is a single identity to attribute to).
+- **Binaries** are byte-copied untouched — a `{{...}}`-looking byte run inside one is never
+  substituted.
+
+Same frozen-image contract as everything else: tracked in `.wafflestack.lock.json`, restored
+verbatim by `render`, drift-flagged by `doctor`, and releasable with
+`wafflestack eject files/<repo-relative-path>` (the file stays in place and becomes
+project-owned). Two enabled bundles that emit the **same** repo path is a hard render error —
+the same cross-bundle conflict rule as same-named skills; enable one or `eject` one.
+
+**GitHub Actions caveat.** A `${{ ... }}` expression (leading `$`) is **not** a wafflestack
+placeholder — only `{{ ... }}` without a `$` is. Workflow expressions like
+`${{ secrets.GITHUB_TOKEN }}` and `${{ github.sha }}` therefore pass through untouched and are
+not policed by `validate`; use a plain `{{key}}` where you want the toolkit to substitute.
+Note also that files under `.github/workflows/` cannot be written by GitHub Actions' default
+`GITHUB_TOKEN` (that needs the `workflow` scope) — a non-issue for the local `render` flow,
+but relevant if you ever render from CI.
+
 ## Consuming project contract
 
 - `.wafflestack.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
@@ -119,7 +161,7 @@ The rendered set is `union(items of bundles:) ∪ include: − eject:`.
 - `include:` — individual items you want without adopting their whole bundle. Each entry
   is a **ref**:
   - a bundle name — `github-workflow` (equivalent to listing it in `bundles:`);
-  - an item — `skills/<name>` or `agents/<name>`;
+  - an item — `skills/<name>`, `agents/<name>`, or `files/<repo-relative-path>`;
   - a bundle-qualified item — `<bundle>/skills/<name>`, needed only when the same item
     name is defined in more than one bundle (e.g. `security-audit`).
   Installing an item pulls its **dependency closure** — an agent's frontmatter `skills:`
@@ -142,7 +184,9 @@ also drops any matching `include:` entry so it isn't left orphaned.
 
 `{{key}}` looks up `key` as a dotted path in the merged `config:` maps. Strings substitute
 verbatim; arrays of strings join with `, `; other structures render as a YAML block.
-Missing **required** keys fail the render with a list of what to add.
+Missing **required** keys fail the render with a list of what to add. A `$`-prefixed
+`${{ ... }}` (GitHub Actions / shell-template syntax) is **not** a placeholder — it is left
+untouched everywhere, so workflow expressions survive rendering and `validate`.
 
 ### Nested substitution
 
