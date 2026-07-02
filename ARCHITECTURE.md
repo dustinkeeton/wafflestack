@@ -50,6 +50,39 @@ example `github-workflow` or `docs-system`). `toolkit.yaml` lists every bundle;
 each bundle's `bundle.yaml` manifest declares its agents, skills, config keys, and
 any environment or service prerequisites. There are **8 bundles** today.
 
+### Picking what to install
+
+You don't have to take a whole bundle. A **ref** names something installable, in
+one of three forms:
+
+| Ref | Example | Means |
+|-----|---------|-------|
+| bundle | `github-workflow` | the whole bundle |
+| item | `skills/issue`, `agents/project-manager` | one skill or agent (the name must be unique across the toolkit) |
+| qualified item | `code-quality/skills/security-audit` | one item in a named bundle — use this when the same name exists in two bundles |
+
+`wafflestack install <ref…>` records your choice in `.wafflestack.yaml` (bundles
+in the `bundles:` list, single items in an `include:` list) and then renders.
+
+**Dependencies resolve automatically** — installing an item pulls in whatever it
+needs, transitively and across bundles:
+
+- an **agent** pulls the skills in its frontmatter `skills:` list (names the
+  toolkit doesn't ship — like the designer's external `brand-guidelines` — are
+  skipped);
+- a bundle's optional **`requires:`** map pulls declared dependencies (e.g. the
+  `/delegate` skill pulls in `git-workflow` and `github-project-management`).
+
+The final rendered set is:
+
+```
+union(items of bundles:)  ∪  closure(each include: item)  −  eject:
+```
+
+`eject:` wins over both lists, and required config is scoped to only the
+placeholders your selected items actually use — so a one-item install doesn't
+demand config that its unselected siblings need.
+
 ### Agents and skills
 
 - **Agent** — a specialist persona with instructions (e.g. a documentation
@@ -96,12 +129,13 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 |---------|--------------|
 | `init` | Write a starter `.wafflestack.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. |
+| `install <ref…>` | Add a bundle or single item to your config (pulling in dependencies), then render. Bare `install` just renders. |
 | `render` | Regenerate every managed file, delete stale ones, write the lock. |
 | `doctor` | Compare rendered files to the lock; report drift or missing files. |
 | `eject` | Stop managing an item — its files stay and become project-owned. |
-| `validate` | Toolkit-author lint: manifests parse, placeholders are declared. |
+| `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 
-Under the hood, `installer/lib/` holds 9 small modules (load the toolkit, load
+Under the hood, `installer/lib/` holds 10 small modules (load the toolkit, load
 project config, substitute templates, render, diff against the lock, etc.). The
 full function-level registry is in the root `AGENTS.md`.
 
@@ -112,11 +146,13 @@ A render is a straight-line flow:
 1. **Load** `toolkit.yaml` and each enabled bundle's manifest.
 2. **Load** your project config (`.wafflestack.yaml`, plus the gitignored
    `.wafflestack.local.yaml` merged on top).
-3. For every enabled item and every target, **substitute** placeholders and
+3. **Select** what to render: every item in your `bundles:`, plus each `include:`
+   item and its dependency closure, minus anything in `eject:`.
+4. For every selected item and every target, **substitute** placeholders and
    **append** any project extension.
-4. **Write** the harness-native files and record each file's hash in
+5. **Write** the harness-native files and record each file's hash in
    `.wafflestack.lock.json`.
-5. **Prune** any previously-managed file that is no longer rendered.
+6. **Prune** any previously-managed file that is no longer rendered.
 
 Later, `doctor` re-hashes the files and compares them to the lock — that is how it
 knows if someone hand-edited a generated file or an update changed the output.
@@ -127,7 +163,7 @@ Everything a consuming project owns:
 
 | File | Tracked in git? | Purpose |
 |------|-----------------|---------|
-| `.wafflestack.yaml` | ✅ committed | Version pin, targets, enabled bundles, config values, `eject` list |
+| `.wafflestack.yaml` | ✅ committed | Version pin, targets, enabled bundles, individual items (`include`), config values, `eject` list |
 | `.wafflestack.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins |
 | `.wafflestack/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments |
 | `.wafflestack.lock.json` | generated | Map of each rendered file to its hash; `doctor` reads it, `render` rewrites it |
