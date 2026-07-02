@@ -1,2 +1,12 @@
 node_modules/
 .DS_Store
+
+# self-render output (`node installer/cli.mjs render`) — consuming projects commit
+# these; in the toolkit repo they are generated-only. See .wafflestack.yaml.
+.claude/agents/
+.claude/skills/
+.claude/worktrees/
+.codex/
+.agents/
+.wafflestack.lock.json
+.wafflestack.local.yaml

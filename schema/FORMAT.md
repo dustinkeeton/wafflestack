@@ -34,10 +34,17 @@ config:                              # template keys this bundle may reference
     description: Production build command run in preflight checks.
 env:                                 # env vars the bundle's content depends on
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+setup: |-                            # optional, agent-facing install notes
+  Service-side prerequisites and how to verify/create them (CLI auth, labels, boards).
 ```
 
 Only keys **declared** in `config:` are substituted in this bundle's content — any other
 `{{...}}`-looking text (bash, GraphQL, JS templates) passes through untouched.
+
+`setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
+playbook, `schema/SETUP.md`, followed by a generated inventory of every bundle's items,
+config schema, env, and these notes). It is printed **before** any project config exists,
+so it must not use `{{placeholders}}` — refer to config keys by name instead.
 
 ## Agent definition (`agents/<name>.md`)
 

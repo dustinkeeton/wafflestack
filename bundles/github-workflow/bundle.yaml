@@ -1,6 +1,31 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
 skills: [git-workflow, issue, github-project-management, clean-up]
+setup: |-
+  Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
+  succeeds and the repo has a GitHub remote before rendering.
+
+  **Labels.** The issue skill applies the type labels and priority labels from the
+  `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
+  `issue.inferenceLabel` lifecycle label. Applying a label that doesn't exist makes
+  `gh issue edit --add-label` fail, so compare those tables against `gh label list`.
+  Either override the config to match the repo's existing taxonomy, or (with the
+  user's go-ahead) create the missing labels, e.g. for the defaults:
+    gh label create "priority: critical" --color B60205 --description "Crash, data loss, security, blocks all users"
+    gh label create "priority: high"     --color D93F0B --description "Broken workflow, regression, significant UX issue"
+    gh label create "priority: medium"   --color FBCA04 --description "New feature, improvement, moderate bug"
+    gh label create "priority: low"      --color 0E8A16 --description "Cosmetic, nice-to-have, minor, tech debt"
+    gh label create "Needs Inference"    --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
+
+  **Projects v2.** The issue and github-project-management skills look up a Projects v2
+  board whose title matches `project.name` and skip board steps with a warning when
+  none exists. If the user wants board automation, confirm the board exists and that
+  gh has the project scope (`gh auth refresh -s project`). Milestones are optional —
+  the issue skill skips them when none match.
+
+  **Git.** Make sure the configured `git.worktreesDir` is gitignored. If the project
+  commits under a bot identity, set `git.identitySection` / `git.cmd` /
+  `git.coAuthorTrailer`, keeping account-specific values in .wafflestack.local.yaml.
 config:
   git.identitySection:
     required: false

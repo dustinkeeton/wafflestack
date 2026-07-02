@@ -7,6 +7,7 @@ import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { eject, init } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
+import { setupGuide } from './lib/setup.mjs';
 
 const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(toolkitRoot, 'package.json'), 'utf8'));
@@ -48,6 +49,11 @@ try {
     case 'init': {
       const file = init({ cwd });
       console.log(`wrote ${file} — pick bundles and config values, then run \`wafflestack render\``);
+      console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
+      break;
+    }
+    case 'setup': {
+      process.stdout.write(setupGuide(toolkitRoot, pkg.version));
       break;
     }
     case 'validate': {
@@ -58,7 +64,7 @@ try {
       break;
     }
     default:
-      fail(`usage: wafflestack <init|render|doctor|eject|validate> [--cwd DIR]  (v${pkg.version})`);
+      fail(`usage: wafflestack <init|setup|render|doctor|eject|validate> [--cwd DIR]  (v${pkg.version})`);
   }
 } catch (err) {
   fail(err.message);

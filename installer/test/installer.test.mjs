@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { substitute, formatValue } from '../lib/template.mjs';
 import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath } from '../lib/util.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject } from '../lib/eject.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
+import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
+import { loadToolkit } from '../lib/toolkit.mjs';
 
 describe('template', () => {
   const declared = new Set(['git.botEmail', 'project.testCmd']);
@@ -384,6 +387,40 @@ describe('output conflicts and skillsDir', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, '.claude/skills/dup-skill/SKILL.md'), /Read \.claude\/skills\/dup-skill\/SKILL\.md\./);
     assert.match(read(cwd, '.agents/skills/dup-skill/SKILL.md'), /Read \.agents\/skills\/dup-skill\/SKILL\.md\./);
+  });
+});
+
+describe('setup guide', () => {
+  test('real toolkit: playbook + generated inventory assemble', () => {
+    const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+    const guide = setupGuide(repoRoot, '0.0.test');
+    assert.match(guide, /# wafflestack setup — agent playbook/);
+    assert.match(guide, /# Toolkit inventory — wafflestack v0\.0\.test/);
+    assert.match(guide, /## bundle: github-workflow/);
+    assert.match(guide, /- `project\.name` \(required\)/);
+    // multi-line defaults are shown in a 4-backtick fence (they may contain ``` themselves)
+    assert.match(guide, /````\n {2}\| Intent \| Label \|/);
+    assert.match(guide, /### setup notes/);
+  });
+
+  test('fixture inventory: env prerequisites and setup notes surface', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup-'));
+    try {
+      makeFixtureToolkit(root);
+      fs.appendFileSync(
+        path.join(root, 'bundles/demo/bundle.yaml'),
+        'setup: |-\n  Create the demo webhook first.\n',
+      );
+      const inventory = toolkitInventory(loadToolkit(root), '9.9.9');
+      assert.match(inventory, /## bundle: demo/);
+      assert.match(inventory, /- skills: demo-skill/);
+      assert.match(inventory, /- agents: helper/);
+      assert.match(inventory, /- env prerequisites: DEMO_FLAG=1/);
+      assert.match(inventory, /- `git\.botEmail` \(required\) — bot email/);
+      assert.match(inventory, /### setup notes\n\nCreate the demo webhook first\./);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

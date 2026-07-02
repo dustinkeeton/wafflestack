@@ -1,0 +1,17 @@
+# wafflestack dogfoods itself: the github-workflow bundle is rendered into this repo
+# so /issue, /git-workflow, /github-project-management, and /clean-up are available
+# when developing the toolkit with an agent.
+#
+# Unlike consuming projects, the rendered output and lock are GITIGNORED here — a
+# committed second copy of every skill would pollute searches and invite edits to
+# generated files. After changing a bundle, re-render from the working tree:
+#   node installer/cli.mjs render
+targets: [claude]
+bundles:
+  - github-workflow
+config:
+  project:
+    name: wafflestack
+    testCmd: npm test
+    typecheckCmd: npm run validate
+    buildCmd: npm pack --dry-run
