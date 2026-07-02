@@ -68,6 +68,10 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guidelines:
 [assets/](assets/).
 
+## License
+
+© 2026 Dustin Keeton. Licensed under the [Apache License, Version 2.0](LICENSE).
+
 ---
 
 <p align="center">
