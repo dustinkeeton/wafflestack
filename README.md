@@ -32,7 +32,9 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    `.wafflestack/extensions/{agents,skills}/<name>.md` (appended to the rendered item)
    and project parameters in `.wafflestack.yaml`.
 2. **Account-specific values** (bot identities, board IDs) go in `.wafflestack.local.yaml`,
-   which is gitignored and merged over the committed config.
+   which is gitignored and merged over the committed config. Config values may reference
+   other keys with `{{...}}` (nested substitution) — so a committed value can point at a
+   key kept in the local overlay.
 3. **Updates are re-renders.** `npx github:dustinkeeton/wafflestack#<newtag> render`
    regenerates everything; your config and extensions survive untouched.
 4. `doctor` tells you when local edits have crept into managed files.
