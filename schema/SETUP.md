@@ -107,7 +107,7 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - **Commit**: `.waffle.yaml`, the rendered output (`.claude/`, `.codex/`,
   `.agents/`), and `.waffle.lock.json`. Teammates then get working agent files
   without running the installer, and `wafflestack doctor` can catch drift in CI — the
-  `github-workflow` bundle ships an installable `.github/workflows/wafflestack-doctor.yml`
+  `github-workflow` bundle ships an installable `.github/workflows/waffle-doctor.yml`
   that runs it on every push and pull request, so committing the render + lock is what makes
   that gate meaningful (use `doctor --allow-missing` if the repo gitignores some renders —
   only modified files fail).

@@ -38,6 +38,17 @@ is what you reach for across a breaking one.
   and is not tracked by `.waffle.lock.json` — move the file aside (or fold it into a
   `.waffle/extensions/` file) and re-render, or pass `--force` to let the toolkit's version
   win. A byte-identical file is adopted silently.
+- **Breaking, but automatic for lock-managed repos — the shipped doctor CI workflow is
+  renamed `.github/workflows/wafflestack-doctor.yml` → `.github/workflows/waffle-doctor.yml`.**
+  On the next `render`/`upgrade` the frozen-image contract deletes the old locked path and
+  writes the new one, so a repo that commits its render **and** `.waffle.lock.json` gets the
+  rename for free. Two edge cases need a one-line manual cleanup, because there the old file
+  is not lock-managed: if you **ejected** the workflow, or **rendered before the lock
+  existed** (or gitignore your lock), the stale `wafflestack-doctor.yml` is left in place —
+  delete it yourself with `git rm .github/workflows/wafflestack-doctor.yml`. If you pin the
+  workflow as a branch-protection required check or reference its filename / `name:`
+  anywhere, retarget those to `waffle-doctor`, and update your `.gitignore` if it listed the
+  old path.
 
 ### Added
 - Unmanaged-collision guard on `render`/`install`: a rendered path that already exists on
@@ -45,6 +56,18 @@ is what you reach for across a breaking one.
   offending path and writing nothing, so the tree is left untouched — instead of
   overwriting a hand-written consumer file. A content-identical file is adopted silently;
   `--force` overwrites a differing file and takes it under lock management. (#25)
+
+### Changed
+- Renamed the github-workflow bundle's shipped doctor CI workflow
+  `.github/workflows/wafflestack-doctor.yml` → `.github/workflows/waffle-doctor.yml`,
+  completing the v0.6.0 `.wafflestack.*` → `.waffle.*` consumer-facing naming alignment
+  (this reverses the 0.6.0 decision to keep the old filename). Its internal `name:` and
+  `concurrency.group` move from `wafflestack-doctor` to `waffle-doctor` to match; the
+  `wafflestack` CLI/package name and the `wafflestack doctor` command the workflow runs are
+  unchanged. No migration step ships — lock-managed repos get the rename via the
+  frozen-image prune, while ejected or pre-lock copies are unmanaged files the toolkit must
+  not delete (per the #25 no-clobber contract), so their cleanup is documented under
+  Consumer impact instead. (#28)
 
 ## [0.6.0] - 2026-07-02
 

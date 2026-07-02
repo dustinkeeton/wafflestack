@@ -2,12 +2,12 @@ name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
 skills: [git-workflow, issue, github-project-management, clean-up]
 files:
-  - .github/workflows/wafflestack-doctor.yml
+  - .github/workflows/waffle-doctor.yml
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
 
-  **Doctor CI workflow.** This bundle ships `.github/workflows/wafflestack-doctor.yml`,
+  **Doctor CI workflow.** This bundle ships `.github/workflows/waffle-doctor.yml`,
   a GitHub Actions job that runs `wafflestack doctor` on push/PR to fail the build when a
   managed file drifts from `.waffle.lock.json`. It only works when the consuming repo
   commits BOTH the rendered output AND `.waffle.lock.json` (the step-6 version-control
@@ -17,7 +17,7 @@ setup: |-
   and silence doctor's version-skew note. Repos that deliberately gitignore a subset of
   renders can change the job's command to `wafflestack doctor --allow-missing` (only modified
   files fail; a missing lock still fails). Pushing this file needs the `workflow` credential
-  scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/wafflestack-doctor.yml]`
+  scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
 
   **Labels.** The issue skill applies the type labels and priority labels from the
@@ -124,6 +124,6 @@ config:
     required: false
     default: github:dustinkeeton/wafflestack
     description: >-
-      npx spec the doctor CI workflow (.github/workflows/wafflestack-doctor.yml) invokes
+      npx spec the doctor CI workflow (.github/workflows/waffle-doctor.yml) invokes
       as `npx --yes <ref> doctor`. Pin to a release tag to freeze the toolkit version and
       silence doctor's version-skew note, e.g. "github:dustinkeeton/wafflestack#v0.5.0".
