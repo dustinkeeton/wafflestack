@@ -2,9 +2,13 @@
 # rendered into this repo so /issue, /git-workflow, /clean-up, /delegate, /audit,
 # /docs and the docs/PM/planner agents are available when developing the toolkit.
 #
-# Unlike consuming projects, the rendered output and lock are GITIGNORED here — a
-# committed second copy of every skill would pollute searches and invite edits to
-# generated files. After changing a bundle, re-render from the working tree:
+# The rendered .claude/ output, the lock, and the doctor CI workflow are COMMITTED
+# (like a consuming project) — the CI-dispatched hygiene harness reads the committed
+# skills, and the doctor drift gate (required check on main) is what protects the
+# generated files from hand-edits. Deliberately still gitignored: the label-hook
+# workflow (committing it would arm a live label→harness dispatch) and the generated
+# .waffle/ overview docs — hence doctor runs with --allow-missing. After changing a
+# bundle, re-render from the working tree and commit the updated render + lock:
 #   node installer/cli.mjs render
 targets: [claude]
 bundles:
@@ -18,14 +22,13 @@ bundles:
 include:
   # Dogfood the scheduled repo-hygiene hook (#46). It is syrup, so the bundle alone won't
   # render it — install the ref so the rendered .github/workflows/waffle-hygiene.yml is
-  # produced and committed (unlike the other rendered workflows, it is NOT gitignored, so the
-  # schedule can fire once this lands on main). See the .gitignore note and the bundle setup
-  # block: a live run additionally needs the ANTHROPIC_API_KEY secret and the committed
-  # rendered skills, which this repo gitignores — hence live verification is deferred.
+  # produced and committed. Fully armed 2026-07-03: ANTHROPIC_API_KEY + WAFFLE_HYGIENE_TOKEN
+  # secrets set, auto-merge enabled, rendered .claude/skills committed, and the doctor
+  # check required on main so the daily PR can auto-merge.
   - files/.github/workflows/waffle-hygiene.yml
   # The release-hook workflow is syrup too (#39) — dogfooded so a labeled bump PR gets
   # auto-tagged on merge; its rendered workflow is likewise committed (see .gitignore). The
-  # read-only doctor and the Claude-dispatched label-hook workflows stay gitignored/uninstalled.
+  # Claude-dispatched label-hook workflow stays gitignored/uninstalled.
   - files/.github/workflows/waffle-release-hook.yml
 config:
   project:
@@ -38,6 +41,11 @@ config:
     # The `release` skill syncs the version line in these files (beyond package.json +
     # lockfile) on a bump. STATUS.md carries a "**Version**: vX.Y.Z" header.
     versionFiles: [STATUS.md]
+  doctor:
+    # The CI drift gate (required check on main) tolerates the deliberately-untracked
+    # renders (label-hook workflow, .waffle/ overview docs): only modified files fail;
+    # a missing lock still fails.
+    flags: --allow-missing
   pm:
     # product-manager (orchestration bundle, #38 round 2) — product evolution for
     # the toolkit itself: bundle shapes, config-key surface, consumer ergonomics.
@@ -97,8 +105,10 @@ config:
       - New or removed bundles, skills, agents, config keys, or CLI commands
       - Changed installer exports or template semantics (`installer/lib/*.mjs`)
       - `bundle.yaml` config declarations out of sync with placeholder usage
-      - Rendered-output drift: `node installer/cli.mjs doctor` clean; `.gitignore`
-        still covers every rendered path
+      - Rendered-output drift: `node installer/cli.mjs doctor --allow-missing` clean
+        (committed render + lock in sync — re-render and commit after bundle edits);
+        `.gitignore` still covers the deliberately-untracked renders (label-hook
+        workflow, worktrees, `.waffle/` overview docs)
   roster:
     # No specialist agent bundle is enabled — general-purpose executes the audit
     # prompts, which carry the full instructions.
@@ -132,7 +142,7 @@ config:
     defaultScope: all-open
     extraPreflight: |-
       - `npm run validate` passes after any bundle/manifest edit
-      - If `bundles/**` changed: re-run `node installer/cli.mjs render` — never hand-edit rendered `.claude/` output
+      - If `bundles/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
   audit:
     complianceAgentType: general-purpose
     complianceLabel: Toolkit integrity

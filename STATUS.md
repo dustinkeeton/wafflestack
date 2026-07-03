@@ -5,7 +5,7 @@
 
 - **Version**: v0.8.0 (pre-1.0 — the file contract can still change between minor releases)
 - **Last updated**: 2026-07-03
-- **Health**: 🟢 tests 124/124 · `validate` clean · `doctor` clean (no render drift)
+- **Health**: 🟢 tests 158/158 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Bundles
@@ -48,16 +48,20 @@ refs just renders.
   inside `.waffle/` (`waffle.yaml`, `waffle.local.yaml`, `waffle.lock.json`) next to
   `extensions/` — one wafflestack entry at the repo root, with an automatic in-place
   migration on `render`/`upgrade` (#43).
-- **Dogfooding.** The repo renders 3 of its own bundles into itself —
-  `github-workflow`, `docs-system`, and `orchestration` — so the toolkit's own
-  agents and skills are available when developing it.
+- **Dogfooding.** The repo renders 4 of its own bundles into itself —
+  `github-workflow`, `docs-system`, `orchestration`, and `harness-architect` — so
+  the toolkit's own agents and skills are available when developing it. As of
+  2026-07-03 the automation loop is live: the daily hygiene run and the
+  release-tag hook operate on this repo, gated by the required `doctor` check.
 
 ## Known issues & things to watch
 
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
-- **Rendered output is gitignored in this repo** (unlike consuming projects).
-  Always re-run `node installer/cli.mjs render` after editing anything under
-  `bundles/**`, `schema/**`, or `installer/**`.
+- **The self-render is committed** (since 2026-07-03; the label-hook workflow and
+  `.waffle/` overview docs stay gitignored). After editing anything under
+  `bundles/**`, `schema/**`, or `installer/**`, re-run
+  `node installer/cli.mjs render` and commit the updated files + lock — the
+  `waffle-doctor` required check fails PRs on drift.
 - ~~Obsidian-plugin phrasing leaks / `security-audit` name collision~~ —
   resolved in #38: the variants are renamed (`electron-security-audit`, now in
   `obsidian-dev`; `webapp-security-audit`), and the `code-quality` skills plus
@@ -76,7 +80,7 @@ refs just renders.
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (124 tests)
+npm test                          # installer test suite (158 tests)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock

@@ -9,6 +9,37 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-03: Commit the self-render and arm the hygiene/doctor automation loop
+
+**Context**: Activating the dogfooded hygiene hook (#46) required its CI-dispatched
+harness to read the committed `.claude/skills/` — but this repo gitignored its whole
+render (2026-07-01 decision below). Auto-merge on the daily hygiene PR also could not
+arm: the repo had no CI at all, so no required status check existed to wait on.
+
+**Decision**: Partially reverse the 2026-07-01 decision. Commit the rendered
+`.claude/` output, `.waffle/waffle.lock.json`, and the `waffle-doctor` CI workflow
+(running with `--allow-missing`); keep the label-hook workflow and the generated
+`.waffle/` overview docs untracked. Protect `main` with the `doctor` job as a
+required status check. With the `ANTHROPIC_API_KEY` + `WAFFLE_HYGIENE_TOKEN` secrets
+set and auto-merge enabled, the daily hygiene PR merges itself once doctor passes.
+
+**Alternatives considered**: Committing only the skills/agents without the CI gate —
+hygiene PRs would open but auto-merge could never arm, leaving a manual merge every
+day. A plain `npm test` workflow as the required check — doctor is the bundle-shipped
+gate and additionally protects the now-committed generated files from hand-edits.
+
+**Rationale**: The 2026-07-01 rationale ("a committed copy invites edits to generated
+files") inverts once the lock is committed: the doctor gate *enforces* that generated
+files match the render, which gitignoring never could. Search pollution from the
+committed copies is the accepted cost of a live automation loop.
+
+**Impact**: Contributors must commit the re-rendered output + lock with any
+`bundles/**` change, or the required check fails their PR. The hygiene schedule
+spends API budget daily. `main` gains its first branch protection (required `doctor`
+check; admin bypass stays available).
+
+---
+
 ## 2026-07-02: Ship the label-event hook as a github-workflow prefab (workflow + skill) (#27)
 
 **Context**: Consumers want a GitHub label applied to an issue to immediately trigger an
