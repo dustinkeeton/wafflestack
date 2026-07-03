@@ -1098,6 +1098,43 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     assert.equal(ok.ok, true, JSON.stringify(ok.errors));
     assert.match(read(cwd, REL), /if: github\.event\.label\.name == '' &&/);
   });
+
+  test('T7 surfaces harness output and fails on denials in BOTH jobs; no hygiene heuristic (#73)', () => {
+    // The #73 change applies to both dispatch jobs: preserve the execution log as an artifact and
+    // fail the job when the harness reported permission denials (an under-scoped allowlist otherwise
+    // reports success with nothing done). The no-PR/no-drift heuristic is hygiene-specific — enrich
+    // and implement get the denial check only.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const raw = read(cwd, REL);
+    const parsed = YAML.parse(raw);
+    // upload-artifact SHA-pinned with a version comment, like the other actions in the file
+    assert.match(raw, /uses: actions\/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+
+    for (const job of ['enrich', 'implement']) {
+      const steps = parsed.jobs[job].steps;
+      const dispatch = steps.find((s) => s.uses && s.uses.includes('claude-code-action'));
+      assert.equal(dispatch.id, 'harness', `${job} dispatch step has id: harness`);
+
+      const upload = steps.find((s) => s.uses && s.uses.includes('upload-artifact'));
+      assert.ok(upload, `${job} uploads the execution log`);
+      assert.equal(upload.if, 'always()', `${job} artifact uploads even on failure`);
+      assert.equal(upload.with.path, '${{ runner.temp }}/claude-execution-output.json');
+      assert.equal(upload.with['retention-days'], 7);
+      assert.equal(upload.with.name, `claude-execution-log-${job}`, `${job} artifact has a per-job name`);
+
+      const guard = steps.find((s) => s.name === 'Check harness result');
+      assert.ok(guard, `${job} has a guard step`);
+      assert.equal(guard.if, 'always()', `${job} guard runs even on failure`);
+      assert.equal(guard.env.EXECUTION_FILE, '${{ steps.harness.outputs.execution_file }}');
+      assert.match(guard.run, /permission_denials/, `${job} guard checks denials`);
+      assert.match(guard.run, /\bjq\b/, `${job} guard reads the log as data via jq`);
+      assert.match(guard.run, /exit 1/, `${job} guard can fail the job`);
+      // the no-PR/no-drift heuristic is hygiene-specific — these jobs get the denial check only
+      assert.doesNotMatch(guard.run, /no drift/, `${job} guard omits the hygiene no-op heuristic`);
+      assert.doesNotMatch(JSON.stringify(guard), /github\.event/, `${job} guard has no untrusted event data`);
+    }
+  });
 });
 
 // #51: the label-hook workflow is SYRUP — sensitive, opt-in. Enabling the bundle no longer
@@ -1518,6 +1555,45 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
       inv,
       /- files \(syrup — sensitive, do NOT install by default\):[^\n]*waffle-hygiene\.yml/,
     );
+  });
+
+  test('H5 surfaces harness output and fails the job on permission denials (#73)', () => {
+    // The #73 change: the dispatched harness used to run with its output hidden and denials that
+    // did not fail the job, so a run blocked from every write (the #71 defect) looked identical to
+    // a clean one. The workflow now uploads the execution log as an artifact and guards the result.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const raw = read(cwd, REL);
+    const parsed = YAML.parse(raw);
+    const steps = parsed.jobs.hygiene.steps;
+
+    // the dispatch step carries an id so the follow-ups can read its execution_file output
+    const dispatch = steps.find((s) => s.uses && s.uses.includes('claude-code-action'));
+    assert.equal(dispatch.id, 'harness', 'dispatch step has id: harness');
+
+    // execution log preserved as an artifact — SHA-pinned like the other actions, always() so a
+    // FAILED dispatch still uploads it, bounded retention (surfaced instead of discarded).
+    const upload = steps.find((s) => s.uses && s.uses.includes('upload-artifact'));
+    assert.ok(upload, 'has an upload-artifact step');
+    assert.equal(upload.if, 'always()', 'artifact uploads even when the dispatch failed');
+    assert.match(raw, /uses: actions\/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+    assert.equal(upload.with.path, '${{ runner.temp }}/claude-execution-output.json');
+    assert.equal(upload.with['retention-days'], 7);
+
+    // guard step: always(), reads the action's execution_file output via env (never splices file
+    // content into the shell), parses the log with jq as DATA, and can fail the job.
+    const guard = steps.find((s) => s.name === 'Check harness result');
+    assert.ok(guard, 'has a Check harness result guard step');
+    assert.equal(guard.if, 'always()', 'guard runs even if the dispatch failed');
+    assert.equal(guard.env.EXECUTION_FILE, '${{ steps.harness.outputs.execution_file }}');
+    assert.match(guard.run, /permission_denials/, 'guard checks permission denials');
+    assert.match(guard.run, /\bjq\b/, 'guard reads the log as data via jq');
+    assert.match(guard.run, /exit 1/, 'guard can fail the job');
+    // hygiene-only no-op heuristic keys on the skill's Report vocabulary (PR URL / no drift / skipped)
+    assert.match(guard.run, /no drift|skipped/, 'hygiene guard has the no-op heuristic');
+    assert.match(guard.run, /pull\//, 'hygiene guard recognizes a PR URL');
+    // the guard must never reference attacker-controllable event data
+    assert.doesNotMatch(JSON.stringify(guard), /github\.event/);
   });
 });
 

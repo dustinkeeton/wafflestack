@@ -35,6 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Dispatch harness (hygiene)
+        id: harness
         uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -57,3 +58,64 @@ jobs:
           claude_args: >-
             --allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(npm run lint --if-present:*),Bash(npm run validate:*),Bash(npm test:*),Bash(npm pack --dry-run:*)'
             
+      # Preserve the harness's own execution log (every message + the final result JSON) as a
+      # workflow artifact so a silent run can be debugged after the fact. The action hides this
+      # output from the run log by default because it can carry tool-result content; an artifact
+      # is scoped to those who can already read this repo and self-expires, a safer default than
+      # `show_full_output: true` streaming raw content into the (for public repos, world-readable)
+      # Actions log. always() so even a FAILED dispatch still uploads its log for debugging.
+      - name: Upload harness execution log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: claude-execution-log
+          # The action always writes its log to $RUNNER_TEMP/claude-execution-output.json
+          # (also exposed as steps.harness.outputs.execution_file).
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: warn
+          retention-days: 7
+      # Fail the job when the paid harness was denied the tools it needed (permission_denials),
+      # and warn when a hygiene run ends without opening a PR or reporting an explicit no-op.
+      # Without this, a run blocked from every write looks identical to a clean one — green check,
+      # nothing landed (the first scheduled run logged 28 denials and still "succeeded"). Reads
+      # the execution log strictly as DATA via jq (never eval'd); always() so it still fires when
+      # the dispatch step failed.
+      - name: Check harness result
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.harness.outputs.execution_file }}
+        run: |
+          set -o pipefail
+          file="${EXECUTION_FILE:-}"
+          if [ -z "$file" ] || [ ! -f "$file" ]; then
+            file="${RUNNER_TEMP}/claude-execution-output.json"
+          fi
+          if [ ! -f "$file" ]; then
+            echo "::warning title=waffle-hygiene::No Claude execution log at ${file} — cannot check for permission denials (the harness may have failed before writing it). See the dispatch step above or rerun in debug mode."
+            exit 0
+          fi
+          # The log is a JSON array of raw SDK messages; the final result message holds the
+          # outcome. Parse it with jq — never eval or splice file content into the shell.
+          result="$(jq -c 'map(select(.type == "result")) | last' "$file" 2>/dev/null || true)"
+          if [ -z "$result" ] || [ "$result" = "null" ]; then
+            echo "::warning title=waffle-hygiene::Claude execution log has no result message (the harness may have crashed mid-run). See the dispatch step above or rerun in debug mode."
+            exit 0
+          fi
+          # permission_denials is the raw array in the log; the action's console summary reports
+          # it as permission_denials_count. Accept whichever is present (count first, then length).
+          denials="$(printf '%s' "$result" | jq -r '.permission_denials_count // (.permission_denials | length) // 0' 2>/dev/null || echo 0)"
+          case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+          if [ "$denials" -gt 0 ]; then
+            echo "::error title=waffle-hygiene::Harness was denied ${denials} tool call(s) (permission_denials) — it was blocked from tools it needed and almost certainly changed nothing. Widen claude_args --allowedTools (see the bundle setup note) and rerun."
+            exit 1
+          fi
+          # Hygiene no-op heuristic: a healthy run ends by reporting a PR URL, an explicit
+          # "no drift", or a "skipped" task (the hygiene skill's Report contract). The final text
+          # is free-form, so this WARNS rather than fails — the denial check above is the hard
+          # gate; this is a best-effort catch for a run that silently produced nothing.
+          final="$(printf '%s' "$result" | jq -r '.result // ""' 2>/dev/null || true)"
+          if printf '%s' "$final" | grep -qiE 'https://github\.com/[^[:space:]]+/pull/[0-9]+|no drift|skipped'; then
+            : # opened a PR, or reported no drift / a skipped task — expected
+          else
+            echo "::warning title=waffle-hygiene::Run reported neither a PR URL nor an explicit \"no drift\"/\"skipped\" outcome; it may have silently no-op'd. Review the run log or rerun in debug mode (heuristic — the harness's final text is free-form)."
+          fi

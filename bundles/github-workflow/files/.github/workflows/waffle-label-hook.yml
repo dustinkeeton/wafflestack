@@ -41,6 +41,7 @@ jobs:
         run: gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$BODY"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Dispatch harness (enrich)
+        id: harness
         uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -57,6 +58,49 @@ jobs:
           claude_args: >-
             --allowedTools 'Bash(gh issue:*),Bash(gh api:*)'
             {{labelHook.claudeArgs}}
+      # Preserve the harness's execution log as an artifact (to debug a silent run) and fail the
+      # job when the paid harness was denied the tools it needed — a dispatch blocked from every
+      # write otherwise reports success with nothing done. Same rationale as the hygiene template
+      # (artifact vs. show_full_output, reading the log as DATA via jq); see the bundle setup note.
+      - name: Upload harness execution log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: claude-execution-log-enrich
+          # The action always writes its log to $RUNNER_TEMP/claude-execution-output.json
+          # (also exposed as steps.harness.outputs.execution_file).
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Check harness result
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.harness.outputs.execution_file }}
+        run: |
+          set -o pipefail
+          file="${EXECUTION_FILE:-}"
+          if [ -z "$file" ] || [ ! -f "$file" ]; then
+            file="${RUNNER_TEMP}/claude-execution-output.json"
+          fi
+          if [ ! -f "$file" ]; then
+            echo "::warning title=waffle-label-hook (enrich)::No Claude execution log at ${file} — cannot check for permission denials (the harness may have failed before writing it). See the dispatch step above or rerun in debug mode."
+            exit 0
+          fi
+          # The log is a JSON array of raw SDK messages; the final result message holds the
+          # outcome. Parse it with jq — never eval or splice file content into the shell.
+          result="$(jq -c 'map(select(.type == "result")) | last' "$file" 2>/dev/null || true)"
+          if [ -z "$result" ] || [ "$result" = "null" ]; then
+            echo "::warning title=waffle-label-hook (enrich)::Claude execution log has no result message (the harness may have crashed mid-run). See the dispatch step above or rerun in debug mode."
+            exit 0
+          fi
+          # permission_denials is the raw array in the log; the action's console summary reports
+          # it as permission_denials_count. Accept whichever is present (count first, then length).
+          denials="$(printf '%s' "$result" | jq -r '.permission_denials_count // (.permission_denials | length) // 0' 2>/dev/null || echo 0)"
+          case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+          if [ "$denials" -gt 0 ]; then
+            echo "::error title=waffle-label-hook (enrich)::Harness was denied ${denials} tool call(s) (permission_denials) — it was blocked from tools it needed and almost certainly changed nothing. Widen claude_args --allowedTools (see the bundle setup note) and rerun."
+            exit 1
+          fi
 
   implement:
     if: github.event.label.name == '{{labelHook.implementLabel}}' && github.event.sender.type != 'Bot'
@@ -80,6 +124,7 @@ jobs:
         run: gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$BODY"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Dispatch harness (implement)
+        id: harness
         uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -97,3 +142,46 @@ jobs:
           claude_args: >-
             --allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh issue:*),Bash({{project.lintCmd}}:*),Bash({{project.typecheckCmd}}:*),Bash({{project.testCmd}}:*),Bash({{project.buildCmd}}:*)'
             {{labelHook.claudeArgs}}
+      # Preserve the harness's execution log as an artifact (to debug a silent run) and fail the
+      # job when the paid harness was denied the tools it needed — a dispatch blocked from every
+      # write otherwise reports success with nothing done. Same rationale as the hygiene template
+      # (artifact vs. show_full_output, reading the log as DATA via jq); see the bundle setup note.
+      - name: Upload harness execution log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: claude-execution-log-implement
+          # The action always writes its log to $RUNNER_TEMP/claude-execution-output.json
+          # (also exposed as steps.harness.outputs.execution_file).
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Check harness result
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.harness.outputs.execution_file }}
+        run: |
+          set -o pipefail
+          file="${EXECUTION_FILE:-}"
+          if [ -z "$file" ] || [ ! -f "$file" ]; then
+            file="${RUNNER_TEMP}/claude-execution-output.json"
+          fi
+          if [ ! -f "$file" ]; then
+            echo "::warning title=waffle-label-hook (implement)::No Claude execution log at ${file} — cannot check for permission denials (the harness may have failed before writing it). See the dispatch step above or rerun in debug mode."
+            exit 0
+          fi
+          # The log is a JSON array of raw SDK messages; the final result message holds the
+          # outcome. Parse it with jq — never eval or splice file content into the shell.
+          result="$(jq -c 'map(select(.type == "result")) | last' "$file" 2>/dev/null || true)"
+          if [ -z "$result" ] || [ "$result" = "null" ]; then
+            echo "::warning title=waffle-label-hook (implement)::Claude execution log has no result message (the harness may have crashed mid-run). See the dispatch step above or rerun in debug mode."
+            exit 0
+          fi
+          # permission_denials is the raw array in the log; the action's console summary reports
+          # it as permission_denials_count. Accept whichever is present (count first, then length).
+          denials="$(printf '%s' "$result" | jq -r '.permission_denials_count // (.permission_denials | length) // 0' 2>/dev/null || echo 0)"
+          case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+          if [ "$denials" -gt 0 ]; then
+            echo "::error title=waffle-label-hook (implement)::Harness was denied ${denials} tool call(s) (permission_denials) — it was blocked from tools it needed and almost certainly changed nothing. Widen claude_args --allowedTools (see the bundle setup note) and rerun."
+            exit 1
+          fi

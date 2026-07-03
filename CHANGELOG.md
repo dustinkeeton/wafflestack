@@ -51,6 +51,35 @@ is what you reach for across a breaking one.
   pre-flight), with `labelHook.claudeArgs` folded on the end for your extras. **Re-render to pick
   it up** — no config key changes and no migration; a repo that never installed the syrup hook is
   unaffected. (#72)
+- **Enhancement, content-only — dispatched-harness failures are now visible in CI, not silent
+  (`github-workflow`).** The `waffle-hygiene` and `waffle-label-hook` workflows dispatched the paid
+  harness with its output hidden and with denials that did not fail the job, so a run blocked from
+  every write (the #71/#72 defect) showed a green check with nothing landed — the very failure this
+  would have caught on day one. Each dispatch job now (a) uploads its execution log as a
+  `claude-execution-log*` workflow artifact (`if: always()`, 7-day retention) and (b) gains a
+  `Check harness result` guard that **fails the job on `permission_denials`** (all jobs) and, for
+  hygiene, warns on a no-op that reports neither a PR URL nor `no drift`/`skipped`. The action's
+  `show_full_output` stays OFF (it streams tool output — possibly secrets — into the
+  public-repo-readable run log); the repo-scoped, self-expiring artifact is the safer default.
+  **Re-render to pick it up** — no config keys change and no migration; a repo that never installed
+  either syrup hook is unaffected. (#73)
+
+### Added
+- **CI observability for the dispatched harness — surface output + fail on denials** (#73,
+  `github-workflow`). Both harness-dispatching workflows (`waffle-hygiene.yml`,
+  `waffle-label-hook.yml`) gain, per dispatch job: an `id: harness` on the dispatch step; an
+  `actions/upload-artifact` step (SHA-pinned `# v4.6.2`, `if: always()`, 7-day retention) that
+  preserves the execution log — previously written to `$RUNNER_TEMP/claude-execution-output.json`
+  and then discarded — as the `claude-execution-log*` artifact; and a `Check harness result` guard
+  (`if: always()`) that parses the log **as data via `jq`** (never eval'd) and `exit 1`s when the
+  final result message carries any denials (read as `permission_denials_count`, falling back to the
+  raw `permission_denials` array length). The hygiene job additionally emits a `::warning::` when its
+  run reports neither a PR URL nor an explicit `no drift`/`skipped` (the hygiene skill's Report
+  contract) — a conservative heuristic over free-form text, so it warns rather than fails; a missing
+  or unparsable log warns without crash-looping. The surfacing choice (execution-log artifact over
+  `show_full_output: true`) and the debug flow are documented in the bundle setup notes for both
+  hooks. Grounded in `anthropics/claude-code-action` v1.0.162: the `execution_file` output, the
+  `show_full_output` input's secret-exposure warning, and the log's raw-message-array shape. (#73)
 
 ### Fixed
 - **`waffle-hygiene.yml` denied every write, so the daily hook was a paid no-op** (#71,

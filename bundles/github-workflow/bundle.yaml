@@ -93,6 +93,21 @@ setup: |-
   so keep it in step with what the skills actually do. Keep any `Bash()` you add narrow: the
   implement job holds `contents`/`issues`/`pull-requests` write, and branch protection (below) —
   not allowlist granularity — is the real backstop against a prompt-injected push.
+  **Debugging a silent run.** Each job makes a dispatched-harness failure *visible* instead of
+  green-and-silent. A **`Check harness result`** step (runs on `always()`, so it still fires when
+  the dispatch step failed) reads the harness's execution log and **fails the job** when the run
+  reported any `permission_denials` — the exact footprint of an under-scoped allowlist (above),
+  which otherwise looks identical to a clean run (green check, nothing done). The full execution
+  log (every message plus the final result JSON) is uploaded as the **`claude-execution-log-<job>`**
+  workflow artifact (`always()`, 7-day retention) — the output the action hides from the run log by
+  default. We deliberately do **not** set the action's `show_full_output: true`: it streams *all*
+  tool results into the Actions run log, which on a public repo is world-readable and can echo
+  secrets (the action's own input description warns as much), whereas an artifact is scoped to those
+  who can already read the repo and self-expires — the safer default. To debug: open the failed run,
+  read the `Check harness result` annotation, download the `claude-execution-log-<job>` artifact for
+  detail (it also lives at `$RUNNER_TEMP/claude-execution-output.json` on the runner, the action's
+  `execution_file` output), and — if you accept the log exposure — rerun with `show_full_output: true`
+  or in Actions debug mode for the full transcript.
   Every dispatch calls the Anthropic API — **it spends real money** — so the
   hook stays inert until you complete the opt-ins: (1) create the trigger labels, e.g.
     gh label create "waffle:enrich"    --color 5319E7 --description "Dispatch the CI harness to enrich this issue"
@@ -146,6 +161,21 @@ setup: |-
   any `Bash()` you add narrow: the job holds `contents`/`pull-requests` write, and branch
   protection (below) — not allowlist granularity — is the real backstop against a
   prompt-injected push.
+  **Debugging a silent run.** The workflow makes a dispatched-harness failure *visible* rather than
+  green-and-silent — the failure mode that let the first scheduled run bill for 28 denied writes
+  under a passing check. A **`Check harness result`** step (runs on `always()`) reads the harness's
+  execution log and **fails the job** when the run reported any `permission_denials` (the footprint
+  of an under-scoped allowlist, above), and **warns** when a run ends without opening a PR or
+  reporting an explicit `no drift`/`skipped` — a best-effort catch for a silent no-op (the harness's
+  final text is free-form, so this one is a heuristic, not a hard gate). The full execution log is
+  uploaded as the **`claude-execution-log`** workflow artifact (`always()`, 7-day retention) — the
+  output the action hides from the run log by default. We deliberately do **not** set
+  `show_full_output: true`: it streams *all* tool results into the (public-repo: world-readable)
+  Actions log and can echo secrets, whereas an artifact is repo-access-scoped and self-expiring —
+  the safer default. To debug a run: read the `Check harness result` annotation, download the
+  `claude-execution-log` artifact (it also lives at `$RUNNER_TEMP/claude-execution-output.json` on
+  the runner, the action's `execution_file` output), and — accepting the exposure — rerun with
+  `show_full_output: true` or in Actions debug mode for the full transcript.
   **Cost — a scheduled trigger spends real money on a timer.** Every fire calls the Anthropic
   API whether or not there is drift to fix; unlike the label hook (paid per human label) this
   bills itself **daily** with no human in the loop. Rein it in with `hygiene.claudeArgs`
