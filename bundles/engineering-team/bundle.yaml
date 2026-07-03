@@ -48,6 +48,10 @@ config:
     required: false
     default: docs/product/
     description: Directory where user stories / product briefs live (read by qa-engineer).
+  lead.adrDir:
+    required: false
+    default: docs/adr/
+    description: Directory where the lead engineer files architecture decision records (ADRs).
   lead.stack:
     required: true
     description: Verbatim body of the lead-engineer "Stack (locked)" section — the project's approved technology list.

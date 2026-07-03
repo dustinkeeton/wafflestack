@@ -31,6 +31,20 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Consumer impact
+- No migration required, additive: the lead-engineer's ADR (architecture decision record)
+  location is now the optional `lead.adrDir` config key (engineering-team bundle), default
+  `docs/adr/`. The default preserves current output, so this is a content-only re-render for
+  existing repos. Consumers with a different convention set e.g. `lead.adrDir: docs/decisions/`
+  in `.waffle/waffle.yaml` and re-render instead of hand-editing the rendered agent (which
+  would trip the `doctor` drift gate). (#48)
+
+### Added
+- `lead.adrDir` config key (engineering-team bundle, `required: false`, default `docs/adr/`):
+  the directory where the lead-engineer agent files architecture decision records. Replaces the
+  two hardcoded `docs/adr/` literals in `agents/lead-engineer.md` with `{{lead.adrDir}}`,
+  following the `planner.productDocsDir` precedent. (#48)
+
 ### Fixed
 - The `product-manager` agent template (orchestration bundle) no longer hardcodes the
   hand-off name "lead-engineer"; it renders `{{roster.architectAgent}}` instead, so
