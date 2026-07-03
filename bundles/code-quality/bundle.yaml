@@ -1,16 +1,18 @@
 name: code-quality
 description: >-
   Cross-cutting code-quality practice skills — TDD (red-green-refactor
-  discipline, test priority tiers) and codebase-architecture (module
-  boundaries, coding conventions). NOTE — both skills were authored in an
-  Obsidian-plugin repo and still carry that stack's phrasing (Vitest,
-  Obsidian mocks, Plugin lifecycle); de-genericizing them is tracked as
-  follow-up work to #38.
+  discipline, test priority tiers, boundary mocking) and codebase-architecture
+  (module boundaries, coding conventions). Stack-agnostic: the test command,
+  tier tables, module map, and settings type are project config.
 skills: [tdd, codebase-architecture]
 config:
   project.longName:
     required: true
     description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+  project.testCmd:
+    required: false
+    default: npm test
+    description: Test command that runs the project's full suite (referenced throughout the TDD skill).
   tdd.priorityTiers:
     required: true
     description: Verbatim body of the TDD "Test Priority Tiers" section — the project's module/test-coverage map (tier tables plus the "Do NOT unit test" list).
