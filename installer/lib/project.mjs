@@ -2,14 +2,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 
-export const CONFIG_FILE = '.waffle.yaml';
-export const LOCAL_CONFIG_FILE = '.waffle.local.yaml';
-export const LOCK_FILE = '.waffle.lock.json';
+// Canonical consumer paths — everything wafflestack keeps in a consumer repo lives inside
+// the one `.waffle/` directory (config, local overlay, lock, extensions) as of 0.8.0 (#43).
+export const CONFIG_FILE = '.waffle/waffle.yaml';
+export const LOCAL_CONFIG_FILE = '.waffle/waffle.local.yaml';
+export const LOCK_FILE = '.waffle/waffle.lock.json';
 export const EXTENSIONS_DIR = path.join('.waffle', 'extensions');
 
-// Legacy (pre-0.6.0) consumer dot-paths. Still read as a fallback so a repo that has not
-// re-rendered under >=0.6.0 keeps working, and renamed to the names above by a plain
-// `render`/`upgrade` (via `migrateLegacyDotfiles`) or the 0.6.0 migration step (#17).
+// Legacy (0.6.0 – 0.7.x) repo-root dot-paths, introduced by the #17 rename and moved into
+// `.waffle/` by the 0.8.0 migration (#43). Still read as a fallback, and moved to the names
+// above by a plain `render`/`upgrade` (via `migrateLegacyDotfiles`) or the 0.8.0 step.
+export const LEGACY_ROOT_CONFIG_FILE = '.waffle.yaml';
+export const LEGACY_ROOT_LOCAL_CONFIG_FILE = '.waffle.local.yaml';
+export const LEGACY_ROOT_LOCK_FILE = '.waffle.lock.json';
+
+// Legacy (pre-0.6.0) consumer dot-paths. Still read as a (last) fallback so a repo that has
+// not re-rendered since keeps working; `migrateLegacyDotfiles` chains them through the
+// 0.6.0 rename (#17) all the way into `.waffle/` in one pass.
 export const LEGACY_CONFIG_FILE = '.wafflestack.yaml';
 export const LEGACY_LOCAL_CONFIG_FILE = '.wafflestack.local.yaml';
 export const LEGACY_LOCK_FILE = '.wafflestack.lock.json';
@@ -18,45 +27,59 @@ export const LEGACY_EXTENSIONS_DIR = path.join('.wafflestack', 'extensions');
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'];
 
 /**
- * Resolve a consumer dot-path under `cwd`, preferring the current `.waffle.*` name but
- * falling back to the legacy `.wafflestack.*` name when only the legacy file is present.
- * Returns `{ file, legacy, note }` — `file` is the absolute path to read (the current name
- * when neither exists, so "not found" errors name the current file), `legacy` flags a
- * fallback, and `note` is a one-line deprecation message the caller can surface.
+ * Resolve a consumer dot-path under `cwd`, preferring the current `.waffle/` name but
+ * falling back through `legacyNames` (ordered newest generation first) when only an older
+ * layout is present. Returns `{ file, legacy, note }` — `file` is the absolute path to read
+ * (the current name when nothing exists, so "not found" errors name the current file),
+ * `legacy` flags a fallback, and `note` is a one-line deprecation message the caller can
+ * surface, naming the legacy path found and how to migrate it.
  */
-function resolveDotPath(cwd, currentName, legacyName) {
+function resolveDotPath(cwd, currentName, legacyNames) {
   const current = path.join(cwd, currentName);
   if (exists(current)) return { file: current, legacy: false, note: null };
-  const legacy = path.join(cwd, legacyName);
-  if (exists(legacy)) {
-    return {
-      file: legacy,
-      legacy: true,
-      note: `legacy ${legacyName} is deprecated — run \`wafflestack render\` (or \`upgrade\`) to rename it to ${currentName}`,
-    };
+  for (const legacyName of legacyNames) {
+    const legacy = path.join(cwd, legacyName);
+    if (exists(legacy)) {
+      return {
+        file: legacy,
+        legacy: true,
+        note: `legacy ${legacyName} is deprecated — run \`wafflestack render\` (or \`upgrade\`) to move it to ${currentName}`,
+      };
+    }
   }
   return { file: current, legacy: false, note: null };
 }
 
-export const resolveConfigFile = (cwd) => resolveDotPath(cwd, CONFIG_FILE, LEGACY_CONFIG_FILE);
-export const resolveLocalConfigFile = (cwd) => resolveDotPath(cwd, LOCAL_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE);
-export const resolveLockFile = (cwd) => resolveDotPath(cwd, LOCK_FILE, LEGACY_LOCK_FILE);
+export const resolveConfigFile = (cwd) =>
+  resolveDotPath(cwd, CONFIG_FILE, [LEGACY_ROOT_CONFIG_FILE, LEGACY_CONFIG_FILE]);
+export const resolveLocalConfigFile = (cwd) =>
+  resolveDotPath(cwd, LOCAL_CONFIG_FILE, [LEGACY_ROOT_LOCAL_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE]);
+export const resolveLockFile = (cwd) =>
+  resolveDotPath(cwd, LOCK_FILE, [LEGACY_ROOT_LOCK_FILE, LEGACY_LOCK_FILE]);
 
 /**
- * Rename any legacy `.wafflestack.*` consumer dot-paths under `cwd` to their `.waffle.*`
- * equivalents, in place. Idempotent: a path moves only when the legacy name exists and the
- * current name does not, so re-running on an already-migrated or fresh repo is a harmless
- * no-op. Returns the `{ from, to }` renames performed (for reporting). This is the body of
- * the 0.6.0 migration and also runs at the top of every `render`, so a plain re-render
- * carries a legacy repo across too.
+ * Move any legacy consumer dot-paths under `cwd` to their current `.waffle/` locations, in
+ * place. Idempotent: a path moves only when the older name exists and the newer one does
+ * not, so re-running on an already-migrated or fresh repo is a harmless no-op. The pairs
+ * are ordered oldest generation first so a pre-0.6.0 repo chains `.wafflestack.*` →
+ * `.waffle.*` → `.waffle/waffle.*` in a single pass. Returns the `{ from, to }` renames
+ * performed (for reporting). This is the shared body of the 0.6.0 and 0.8.0 migrations and
+ * also runs at the top of every `render`, so a plain re-render carries a legacy repo
+ * across too.
  */
 export function migrateLegacyDotfiles(cwd) {
   const renamed = [];
   const pairs = [
-    [LEGACY_CONFIG_FILE, CONFIG_FILE],
-    [LEGACY_LOCAL_CONFIG_FILE, LOCAL_CONFIG_FILE],
-    [LEGACY_LOCK_FILE, LOCK_FILE],
+    // pre-0.6.0 `.wafflestack.*` → 0.6.0-era root `.waffle.*` (#17) …
+    [LEGACY_CONFIG_FILE, LEGACY_ROOT_CONFIG_FILE],
+    [LEGACY_LOCAL_CONFIG_FILE, LEGACY_ROOT_LOCAL_CONFIG_FILE],
+    [LEGACY_LOCK_FILE, LEGACY_ROOT_LOCK_FILE],
     [LEGACY_EXTENSIONS_DIR, EXTENSIONS_DIR],
+    // … then root `.waffle.*` → inside the `.waffle/` directory (#43). Creating `.waffle/`
+    // coexists with a pre-existing `.waffle/extensions/` (mkdir is recursive-safe).
+    [LEGACY_ROOT_CONFIG_FILE, CONFIG_FILE],
+    [LEGACY_ROOT_LOCAL_CONFIG_FILE, LOCAL_CONFIG_FILE],
+    [LEGACY_ROOT_LOCK_FILE, LOCK_FILE],
   ];
   for (const [from, to] of pairs) {
     const fromPath = path.join(cwd, from);
@@ -78,15 +101,23 @@ export function migrateLegacyDotfiles(cwd) {
 }
 
 /**
- * Which legacy `.wafflestack.*` paths a repo's `.gitignore` still lists. The CLI never edits
- * `.gitignore` unasked (a consumer owns it), so after the dotfile rename we remind them to
- * update the entries themselves. Self-clearing: returns [] once the stale lines are gone.
+ * Which legacy paths a repo's `.gitignore` still lists — the now-stale root
+ * `.waffle.local.yaml` / `.waffle.lock.json` lines as well as the pre-0.6.0
+ * `.wafflestack.*` ones. The CLI never edits `.gitignore` unasked (a consumer owns it), so
+ * after a dotfile move we remind them to update the entries themselves. Self-clearing:
+ * returns [] once the stale lines are gone. (A current `.waffle/waffle.*` line never
+ * matches a legacy name — the `/` breaks the substring — so migrated repos stay quiet.)
  */
 export function staleGitignoreEntries(cwd) {
   const gi = path.join(cwd, '.gitignore');
   if (!exists(gi)) return [];
   const text = fs.readFileSync(gi, 'utf8');
-  return [LEGACY_LOCAL_CONFIG_FILE, LEGACY_LOCK_FILE].filter((name) => text.includes(name));
+  return [
+    LEGACY_ROOT_LOCAL_CONFIG_FILE,
+    LEGACY_ROOT_LOCK_FILE,
+    LEGACY_LOCAL_CONFIG_FILE,
+    LEGACY_LOCK_FILE,
+  ].filter((name) => text.includes(name));
 }
 
 // Marker prefixing wafflestack's own appended block, so a human scanning `.gitignore` can see
@@ -134,11 +165,11 @@ export function ensureGitignoreEntries(cwd, entries) {
 /**
  * The `.gitignore` entries wafflestack recommends for a loaded `project` — the baseline offer
  * behind the `--gitignore` flag and the setup playbook. Always the local overlay
- * (`.waffle.local.yaml`, account-specific config that must never be committed), plus the
- * resolved `git.worktreesDir` (throwaway working state) when an enabled bundle declares that
- * key. Dev-only / self-hosting mode — also gitignoring the renders + `.waffle.lock.json`,
- * paired with `doctor --allow-missing` — is a separate opt-in the agent proposes case by case,
- * not part of this baseline.
+ * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed), plus
+ * the resolved `git.worktreesDir` (throwaway working state) when an enabled bundle declares
+ * that key. Dev-only / self-hosting mode — also gitignoring the renders +
+ * `.waffle/waffle.lock.json`, paired with `doctor --allow-missing` — is a separate opt-in the
+ * agent proposes case by case, not part of this baseline.
  */
 export function recommendedGitignoreEntries(toolkit, project) {
   const entries = [LOCAL_CONFIG_FILE];
@@ -157,9 +188,10 @@ export function recommendedGitignoreEntries(toolkit, project) {
 }
 
 /**
- * Load `.waffle.yaml` with the gitignored local overlay merged over it, falling back to the
- * legacy `.wafflestack.*` names when the current ones are absent. Deprecation notes for any
- * legacy read are pushed onto `notes` (when provided) for the caller to surface.
+ * Load `.waffle/waffle.yaml` with the gitignored local overlay merged over it, falling back
+ * to the legacy root `.waffle.*` — and then pre-0.6.0 `.wafflestack.*` — names when the
+ * current ones are absent. Deprecation notes for any legacy read are pushed onto `notes`
+ * (when provided) for the caller to surface.
  */
 export function loadProjectConfig(cwd, notes = []) {
   const cfgPath = resolveConfigFile(cwd);

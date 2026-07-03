@@ -1,5 +1,5 @@
 # Managed by wafflestack (github-workflow bundle) — do not edit by hand; re-render instead.
-# Fails CI when a managed file drifts from .waffle.lock.json: either a rendered file
+# Fails CI when a managed file drifts from .waffle/waffle.lock.json: either a rendered file
 # was hand-edited, or the repo never committed its render + lock. See the bundle setup note.
 name: waffle-doctor
 
