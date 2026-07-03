@@ -1,10 +1,8 @@
+<h1 align="center">WaffleStack</h1>
 <p align="center">
   <img src="assets/wafflestack-social-animated.svg" width="100%" alt="WaffleStack — a stack of golden waffles with an animated syrup pour">
 </p>
-
-<h1 align="center">WaffleStack</h1>
-
-Reusable AI agent and skill definitions, distributed shadcn-style but <strong>update-safe</strong>.</p>
+<h3 align="center">Reusable AI agent and skill definitions, distributed shadcn-style but <strong>update-safe</strong>.</h3>
 
 ---
 
