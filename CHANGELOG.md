@@ -32,6 +32,14 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- **New, automatic — every `render` now writes four overview docs into `.waffle/`.** After a
+  render/upgrade your repo gains `.waffle/CHEATSHEET.md` + `.waffle/cheatsheet.svg` (a cheat
+  sheet of the installed user-invocable skills) and `.waffle/TEAM.md` + `.waffle/team.svg` (an
+  introduction to the installed agents), assembled from the exact items you have installed.
+  They are lock-tracked, drift-checked by `doctor`, refreshed on every render, and pruned if a
+  later selection stops producing them (a repo with no agents gets no `TEAM.*`, etc.) — so they
+  are generated output: **commit them, don't hand-edit them** (edit the item frontmatter, or
+  gitignore them as this repo does). Nothing else changes; no config or new keys required. (#58)
 - **Behavior change, mostly automatic — the `github-workflow` label-hook workflow is now
   opt-in (“syrup”).** `.github/workflows/waffle-label-hook.yml` — whose jobs need repo
   `issues`/`contents`/`pull-requests` write permissions — no longer renders just because the
@@ -45,6 +53,20 @@ is what you reach for across a breaking one.
   default. (#51)
 
 ### Added
+- **Generated `.waffle/` overview docs — cheat sheet + team intro** (#58): a new
+  `installer/lib/waffledocs.mjs` assembles two default documents from the computed render
+  selection and emits them through render's `emit()` choke point (so they are lock-tracked,
+  `doctor`-drift-checked, pruned when stale, and refreshed every render). `CHEATSHEET.md`
+  lists every installed user-invocable skill as `/name` + argument-hint + a one-line
+  when-to-use; `TEAM.md` introduces each installed agent with its role, when-to-use, and
+  granted skills (hand-offs). Each ships a branded, fully self-contained SVG one-pager
+  (`cheatsheet.svg`, `team.svg`) sized to the item count — GitHub-renderable, Golden/Syrup/
+  Cocoa palette per `assets/README.md`, waffle chrome in the header only, plain scannable body.
+  The installer now parses skill frontmatter (`user-invocable`, `argument-hint`, `description`)
+  — a skill is a slash command unless it sets `user-invocable: false` (so a `disable-model-
+  invocation`-only skill like `audit` still lists). Descriptions are substituted with the same
+  resolver render uses, so `{{project.name}}` reads identically to the rendered item.
+  Documented in `schema/FORMAT.md` and `AGENTS.md`. (#58)
 - **Syrup — an opt-in tier for sensitive bundle items** (#51): a new `syrup:` list in
   `bundle.yaml` names `files/` items (by ref) that must be poured only on request. Enabling a
   bundle no longer renders its syrup items; each renders only when installed explicitly
