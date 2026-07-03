@@ -1,0 +1,47 @@
+{
+  "toolkitVersion": "0.8.0",
+  "targets": [
+    "claude"
+  ],
+  "bundles": [
+    "github-workflow",
+    "docs-system",
+    "orchestration",
+    "harness-architect"
+  ],
+  "include": [
+    "files/.github/workflows/waffle-hygiene.yml",
+    "files/.github/workflows/waffle-release-hook.yml"
+  ],
+  "files": {
+    ".claude/agents/docs-agent.md": "97f222634193b8db702f0e3e223e53bb592cc0bd56a15152bb12aeae0b526705",
+    ".claude/agents/docs-human.md": "565532437480737197588bddd15608c4399cd90b428e5d9e9510f2acb11b9585",
+    ".claude/agents/harness-architect.md": "7cc0f9071595f3ca573e92ab82b032e85b487aad0fb1fa4e9f97b65173b27026",
+    ".claude/agents/product-manager.md": "ae2e7f6af1551ff33648938549732bf9c75036ba767cd758b5ffeda54ae3188d",
+    ".claude/agents/project-manager.md": "24086aa24fa6378f5a53c7b2b7972007160b738a391a7a8ab6c2b3614af6075c",
+    ".claude/agents/task-planner.md": "d3eef1631c6a4227f6bf9528220006ea682fa53b12849cd0428e9cb5c8e72a63",
+    ".claude/skills/audit/SKILL.md": "eb491e4a30e5d7cb89396c76f726709b6104bdaabd7243a297af46e342730d3b",
+    ".claude/skills/clean-up/scripts/clean_up.sh": "adcc47ee9942a86933520bb3c4b4e98a7a568265e3e687a3952d4edd0e200a0f",
+    ".claude/skills/clean-up/SKILL.md": "443c318ff29caabdc83b16c560e4cc716851c2da8ce422b5f4dfd8bd15609976",
+    ".claude/skills/delegate/SKILL.md": "fc7663fea681ba45d86fc857362edb9155b22059a67b3a5330e5141600347407",
+    ".claude/skills/docs-agent/SKILL.md": "a268b111eacbe6fb97fb04df85e4d9e3dbb6bcd89705e9afb51a077008d5939b",
+    ".claude/skills/docs-human/SKILL.md": "c9e1b64cf48de3629799a573179eaa0b7f2251386ef0b0f63874cde177531009",
+    ".claude/skills/docs/SKILL.md": "f1999d1b5132f62b035370ead317a4fd3bdafa4a244f33f3089ac76b1e3bea29",
+    ".claude/skills/git-workflow/SKILL.md": "e3e6e4865d9a3c468087dd1afd26020523711531d7a458fc257b0db78782b7f7",
+    ".claude/skills/github-project-board/SKILL.md": "08dba414a75b9d412472a9c35b144fff69bbedb6f9c7b40fbb4ebd4eb69b1c45",
+    ".claude/skills/github-project-management/SKILL.md": "c4640099a2855b104f2636aa179e5ad20bff4346bd692c9022f81cbacfedc3d1",
+    ".claude/skills/hygiene/SKILL.md": "73aa6d756b59d96904269601914d4ce8b166f62995705ca71e4c1294d722d77e",
+    ".claude/skills/issue/SKILL.md": "26095c7c69150a33269bf9158d034b61ce8bdee2f9ea37584540e3b9e56bcb7f",
+    ".claude/skills/label-hook/SKILL.md": "02b29a4caf5b918178bb5ea5bee57a3b876c0d055eb9c2614ae44edf1d322a41",
+    ".claude/skills/release/SKILL.md": "f2253d5b8ec0ddec89011afb36079b8733d8cd34379976c68ec6bfb2b755be51",
+    ".claude/skills/standup/SKILL.md": "23da70cc4898b311c1493d3ed74a3c2d529f45658513e9669807ed1342d99c78",
+    ".github/workflows/waffle-doctor.yml": "7332f36b3a4ac979ef987b80e250a97ee5aa69cb06b3cfc2de37430f7a3e92ef",
+    ".github/workflows/waffle-hygiene.yml": "bc868191c9adc81bf8a3c1d631547e7ae0a4356b42c6ff5e0c7db851d24d276b",
+    ".github/workflows/waffle-label-hook.yml": "39609030bf0acf7a908ed1021c53015c8cee99864d32b1c2dfb471f5d2bc4598",
+    ".github/workflows/waffle-release-hook.yml": "625fe8e4a724dd80213bf503c5bb89b7a7d5ad2e6eb3476efd48fc8f4b851479",
+    ".waffle/CHEATSHEET.md": "0c5d64da81f1a62e7c071a7243a41a29109baa69fd2139e429b717d9367a767d",
+    ".waffle/cheatsheet.svg": "6d546075d0e8c6c9c826a60ee879823057afda288bded6d6468412ce0ee2480d",
+    ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29",
+    ".waffle/team.svg": "d53821ace596debac335cbaf5ecdeec7190eb250072e96e5151779a800f129c7"
+  }
+}
