@@ -93,13 +93,30 @@ jobs:
             echo "::warning title=waffle-label-hook (enrich)::Claude execution log has no result message (the harness may have crashed mid-run). See the dispatch step above or rerun in debug mode."
             exit 0
           fi
-          # permission_denials is the raw array in the log; the action's console summary reports
-          # it as permission_denials_count. Accept whichever is present (count first, then length).
-          denials="$(printf '%s' "$result" | jq -r '.permission_denials_count // (.permission_denials | length) // 0' 2>/dev/null || echo 0)"
+          # permission_denials is the raw array of denied tool calls; the action's console summary
+          # also exposes a bare permission_denials_count. Prefer the array (so we can classify each
+          # call); fall back to the count when only it is present.
+          denials="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then (.permission_denials | length) else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
           case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
           if [ "$denials" -gt 0 ]; then
-            echo "::error title=waffle-label-hook (enrich)::Harness was denied ${denials} tool call(s) (permission_denials) — it was blocked from tools it needed and almost certainly changed nothing. Widen claude_args --allowedTools (see the bundle setup note) and rerun."
-            exit 1
+            # Fail ONLY on denials that blocked delivery or tried to escape the sandbox; warn on
+            # ad-hoc read-only shell that never blocks delivery (#82). HARD (fails the job): a
+            # sandbox-escape attempt (dangerouslyDisableSandbox:true — ALWAYS hard, NEVER downgraded),
+            # a blocked file edit (Edit/Write/MultiEdit/NotebookEdit), or a blocked delivery/destructive
+            # shell command — git/gh (the issue/board mutations enrich delivers) or a mutating/exfil
+            # program (rm/mv/cp/curl/…), matched ONLY at a command boundary so a program name inside a
+            # path or an echo string is never a false hit. SOFT (warn, does NOT fail): everything else —
+            # ad-hoc READ-ONLY shell (ls/cat/grep/find/sed/sort/loops/pipelines). A denied call never
+            # ran, so this changes only the red-vs-yellow signal, never what the harness could execute;
+            # the allowlist stays the real control. Only a bare count (no array) ⇒ every denial HARD.
+            hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(git|gh|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
+            case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
+            soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
+            if [ "$hard" -gt 0 ]; then
+              echo "::error title=waffle-label-hook (enrich)::Harness was denied ${hard} delivery/sandbox tool call(s) of ${denials} total — a blocked gh issue/board mutation or a dangerouslyDisableSandbox escape means the enrich run could not land. Widen claude_args --allowedTools (see the bundle setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-enrich artifact."
+              exit 1
+            fi
+            echo "::warning title=waffle-label-hook (enrich)::Harness was denied ${soft} read-only tool call(s) (ad-hoc shell exploration); none blocked delivery, so this does not fail the job. Review the claude-execution-log-enrich artifact if the result looks incomplete."
           fi
 
   implement:
@@ -123,6 +140,18 @@ jobs:
             Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$BODY"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Deterministic dependency bootstrap BEFORE the paid harness runs (implement only — enrich
+      # makes no file edits and runs no pre-flight). A fresh Actions checkout has no installed
+      # dependencies, so the git-workflow pre-flight (project.testCmd / typecheckCmd / buildCmd —
+      # all in the allowlist below) would fail for want of node_modules, and the harness would
+      # otherwise burn turns trying to `npm install` itself — which CI denies (no human to grant
+      # install permission), sandbox-escape retries included (correctly refused). Doing the install
+      # here as a plain workflow step keeps the harness allowlist free of any install/network
+      # permission. The command is project.installCmd (default `npm install`; override for a
+      # non-npm toolchain, or `true` to skip). See the bundle setup note.
+      - name: Install project dependencies
+        run: |
+          {{project.installCmd}}
       - name: Dispatch harness (implement)
         id: harness
         uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
@@ -177,11 +206,30 @@ jobs:
             echo "::warning title=waffle-label-hook (implement)::Claude execution log has no result message (the harness may have crashed mid-run). See the dispatch step above or rerun in debug mode."
             exit 0
           fi
-          # permission_denials is the raw array in the log; the action's console summary reports
-          # it as permission_denials_count. Accept whichever is present (count first, then length).
-          denials="$(printf '%s' "$result" | jq -r '.permission_denials_count // (.permission_denials | length) // 0' 2>/dev/null || echo 0)"
+          # permission_denials is the raw array of denied tool calls; the action's console summary
+          # also exposes a bare permission_denials_count. Prefer the array (so we can classify each
+          # call); fall back to the count when only it is present.
+          denials="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then (.permission_denials | length) else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
           case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
           if [ "$denials" -gt 0 ]; then
-            echo "::error title=waffle-label-hook (implement)::Harness was denied ${denials} tool call(s) (permission_denials) — it was blocked from tools it needed and almost certainly changed nothing. Widen claude_args --allowedTools (see the bundle setup note) and rerun."
-            exit 1
+            # Fail ONLY on denials that blocked delivery or tried to escape the sandbox; warn on
+            # ad-hoc read-only shell that never blocks delivery (#82). HARD (fails the job): a
+            # sandbox-escape attempt (dangerouslyDisableSandbox:true — ALWAYS hard, NEVER downgraded),
+            # a blocked file edit (Edit/Write/MultiEdit/NotebookEdit — implement's code changes), or a
+            # blocked delivery/destructive shell command — git/gh (branch·commit·push·PR·issue) or a
+            # mutating/exfil program (rm/mv/cp/curl/…), matched ONLY at a command boundary so a program
+            # name inside a path or an echo string is never a false hit. SOFT (warn, does NOT fail):
+            # everything else — ad-hoc READ-ONLY shell (ls/cat/grep/find/sed/sort/loops/pipelines) and
+            # redundant setup (a stray install or toolkit-CLI call already covered by the install step
+            # above and claude_args). A denied call never ran, so this changes only the red-vs-yellow
+            # signal, never what the harness could execute; the allowlist stays the real control and
+            # sandbox escapes stay a hard failure. Only a bare count (no array) ⇒ every denial HARD.
+            hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(git|gh|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
+            case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
+            soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
+            if [ "$hard" -gt 0 ]; then
+              echo "::error title=waffle-label-hook (implement)::Harness was denied ${hard} delivery/sandbox tool call(s) of ${denials} total — a blocked file edit, git/gh commit·push·PR, or a dangerouslyDisableSandbox escape means the run could not land its work. Widen claude_args --allowedTools (see the bundle setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-implement artifact."
+              exit 1
+            fi
+            echo "::warning title=waffle-label-hook (implement)::Harness was denied ${soft} read-only/redundant tool call(s) (ad-hoc shell exploration or already-covered setup); none blocked delivery, so this does not fail the job. Review the claude-execution-log-implement artifact if the result looks incomplete."
           fi
