@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-02
+
 ### Consumer impact
 - **Breaking, but automatic — the consumer config trio moves inside `.waffle/`:**
   `.waffle.yaml` → `.waffle/waffle.yaml`, `.waffle.local.yaml` → `.waffle/waffle.local.yaml`,
@@ -43,6 +45,47 @@ is what you reach for across a breaking one.
   `.waffle/waffle.local.yaml`, `.waffle.lock.json` → `.waffle/waffle.lock.json`) — the CLI
   never edits `.gitignore` unasked; `wafflestack install --gitignore` re-adds the new paths
   for you, and `render` warns while stale root entries remain. (#43)
+
+### Added
+- Migration step (**0.8.0**): moves the root `.waffle.*` config trio into `.waffle/`
+  (`waffle.yaml`, `waffle.local.yaml`, `waffle.lock.json`) via the same idempotent
+  `migrateLegacyDotfiles` chain that `render` runs at startup, ordered after the 0.6.0
+  rename so a pre-0.6.0 repo carries all the way forward in one pass. `resolveDotPath`
+  generalizes to an ordered multi-generation fallback (`.waffle/waffle.yaml` →
+  `.waffle.yaml` → `.wafflestack.yaml`, same for the local overlay and lock), and
+  `staleGitignoreEntries` now also flags now-stale root `.waffle.local.yaml` /
+  `.waffle.lock.json` lines. (#43)
+
+### Changed
+- Canonical consumer paths are now `.waffle/waffle.yaml`, `.waffle/waffle.local.yaml`, and
+  `.waffle/waffle.lock.json` (were repo-root `.waffle.*`); `init` writes the new layout
+  directly (creating `.waffle/`), and the recommended `.gitignore` entry becomes
+  `.waffle/waffle.local.yaml`. `.waffle/extensions/` is unchanged. (#43)
+
+## [0.7.0] - 2026-07-02
+
+### Consumer impact
+- **Breaking if your config references reorganized items — the bundle roster was
+  reorganized (#38).** The `design` bundle is dissolved (`ux-designer` lives in
+  `engineering-team`), the general-architect agent `lead-developer` is renamed
+  **`lead-engineer`**, and the two colliding `security-audit` skills are renamed
+  `electron-security-audit` (relocated into `obsidian-dev`) and `webapp-security-audit`
+  (engineering-team). Lock-managed repos pick the renames up on the next
+  `render`/`upgrade` via the frozen-image prune; update your `.waffle.yaml` where it
+  names old items (`bundles: [design]`, per-item `include:` refs, or an
+  `audit.complianceAgentType` override) — `validate`/`render` fails loudly on stale
+  refs. Final layout: 7 bundles, 13 agents, 17 skills.
+- **Breaking, but automatic for lock-managed repos — the shipped doctor CI workflow is
+  renamed `.github/workflows/wafflestack-doctor.yml` → `.github/workflows/waffle-doctor.yml`.**
+  On the next `render`/`upgrade` the frozen-image contract deletes the old locked path and
+  writes the new one, so a repo that commits its render **and** `.waffle.lock.json` gets the
+  rename for free. Two edge cases need a one-line manual cleanup, because there the old file
+  is not lock-managed: if you **ejected** the workflow, or **rendered before the lock
+  existed** (or gitignore your lock), the stale `wafflestack-doctor.yml` is left in place —
+  delete it yourself with `git rm .github/workflows/wafflestack-doctor.yml`. If you pin the
+  workflow as a branch-protection required check or reference its filename / `name:`
+  anywhere, retarget those to `waffle-doctor`, and update your `.gitignore` if it listed the
+  old path.
 - No migration required, additive: the github-workflow bundle now ships a second workflow,
   `.github/workflows/waffle-label-hook.yml`, plus a `label-hook` skill. It renders on your
   next `render`/`upgrade` but is **inert until you opt in**: it dispatches the Claude harness
@@ -58,17 +101,6 @@ is what you reach for across a breaking one.
   and is not tracked by `.waffle.lock.json` — move the file aside (or fold it into a
   `.waffle/extensions/` file) and re-render, or pass `--force` to let the toolkit's version
   win. A byte-identical file is adopted silently.
-- **Breaking, but automatic for lock-managed repos — the shipped doctor CI workflow is
-  renamed `.github/workflows/wafflestack-doctor.yml` → `.github/workflows/waffle-doctor.yml`.**
-  On the next `render`/`upgrade` the frozen-image contract deletes the old locked path and
-  writes the new one, so a repo that commits its render **and** `.waffle.lock.json` gets the
-  rename for free. Two edge cases need a one-line manual cleanup, because there the old file
-  is not lock-managed: if you **ejected** the workflow, or **rendered before the lock
-  existed** (or gitignore your lock), the stale `wafflestack-doctor.yml` is left in place —
-  delete it yourself with `git rm .github/workflows/wafflestack-doctor.yml`. If you pin the
-  workflow as a branch-protection required check or reference its filename / `name:`
-  anywhere, retarget those to `waffle-doctor`, and update your `.gitignore` if it listed the
-  old path.
 - No migration required: a new optional `doctor.flags` config key (github-workflow bundle,
   empty default) lets the shipped doctor CI workflow run extra flags. Set
   `doctor.flags: --allow-missing` to keep the workflow managed on a repo that gitignores a
@@ -82,14 +114,6 @@ is what you reach for across a breaking one.
   your approval. (#29)
 
 ### Added
-- Migration step (**0.8.0**): moves the root `.waffle.*` config trio into `.waffle/`
-  (`waffle.yaml`, `waffle.local.yaml`, `waffle.lock.json`) via the same idempotent
-  `migrateLegacyDotfiles` chain that `render` runs at startup, ordered after the 0.6.0
-  rename so a pre-0.6.0 repo carries all the way forward in one pass. `resolveDotPath`
-  generalizes to an ordered multi-generation fallback (`.waffle/waffle.yaml` →
-  `.waffle.yaml` → `.wafflestack.yaml`, same for the local overlay and lock), and
-  `staleGitignoreEntries` now also flags now-stale root `.waffle.local.yaml` /
-  `.waffle.lock.json` lines. (#43)
 - Label-event hook primitive (github-workflow bundle): a prefab
   `.github/workflows/waffle-label-hook.yml` that dispatches the Claude Code GitHub Action
   when an allowlisted trigger label is applied to an issue, paired with a `label-hook` skill
@@ -125,10 +149,15 @@ is what you reach for across a breaking one.
   `--force` overwrites a differing file and takes it under lock management. (#25)
 
 ### Changed
-- Canonical consumer paths are now `.waffle/waffle.yaml`, `.waffle/waffle.local.yaml`, and
-  `.waffle/waffle.lock.json` (were repo-root `.waffle.*`); `init` writes the new layout
-  directly (creating `.waffle/`), and the recommended `.gitignore` entry becomes
-  `.waffle/waffle.local.yaml`. `.waffle/extensions/` is unchanged. (#43)
+- Bundle reorganization (#38): bundles regrouped semantically; `design` dissolved
+  (`ux-designer` restored into `engineering-team`), `electron-security-audit` relocated
+  into `obsidian-dev`, the `code-quality` skills (`tdd`, `codebase-architecture`)
+  de-Obsidianified with the Obsidian-specific material moved into `obsidian-dev`'s
+  `obsidian-plugin-dev`, `security-engineer` phrasing generalized, and
+  `audit.complianceAgentType` now defaults to `lead-engineer` (the general architect;
+  override to a domain architect — e.g. `plugin-architect`, `mobile-architect` — where
+  one exists). New optional config key `project.testCmd` on `code-quality` (default
+  `npm test`).
 - Renamed the github-workflow bundle's shipped doctor CI workflow
   `.github/workflows/wafflestack-doctor.yml` → `.github/workflows/waffle-doctor.yml`,
   completing the v0.6.0 `.wafflestack.*` → `.waffle.*` consumer-facing naming alignment

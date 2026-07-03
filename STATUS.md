@@ -3,7 +3,7 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.7.0 (pre-1.0 — the file contract can still change between minor releases)
+- **Version**: v0.8.0 (pre-1.0 — the file contract can still change between minor releases)
 - **Last updated**: 2026-07-03
 - **Health**: 🟢 tests 124/124 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
@@ -44,10 +44,10 @@ refs just renders.
   (from the Claude Design project "WaffleWorks brand extension"). Applied to the
   README, the CLI usage splash, and the GitHub repo (description, topics, social
   preview card).
-- **Per-item install (new, unreleased).** `wafflestack install <ref…>` can now add
-  a single skill or agent — not just a whole bundle — with dependencies resolved
-  automatically. Implemented; the next tagged release will be the first to ship it
-  (still v0.5.0 for now).
+- **`.waffle/` config layout (new in 0.8.0).** The consumer config trio now lives
+  inside `.waffle/` (`waffle.yaml`, `waffle.local.yaml`, `waffle.lock.json`) next to
+  `extensions/` — one wafflestack entry at the repo root, with an automatic in-place
+  migration on `render`/`upgrade` (#43).
 - **Dogfooding.** The repo renders 3 of its own bundles into itself —
   `github-workflow`, `docs-system`, and `orchestration` — so the toolkit's own
   agents and skills are available when developing it.
