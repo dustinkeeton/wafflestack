@@ -32,6 +32,16 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- **New, additive — a `github-project-board` skill can provision and standardize your
+  Projects v2 board.** No migration: `render`/`upgrade` picks up the new skill (the
+  `github-workflow` bundle gains it, and the orchestration `project-manager` agent is granted
+  it), and existing config/extensions are untouched. Until now every board-touching skill only
+  *consumed* a board and degraded with a warning when none existed; this skill is the create
+  side — run `/github-project-board` (or let the project-manager use it) to create a board to
+  the canonical Kanban spec, or reconcile a partial one up to it. It **asks before it creates
+  or mutates** and never runs inline during delegation/issue creation, so enabling the bundle
+  changes no existing behavior. Board mutations need the `project` token scope
+  (`gh auth refresh -s project`). (#54)
 - **Behavior change, mostly automatic — the `github-workflow` label-hook workflow is now
   opt-in (“syrup”).** `.github/workflows/waffle-label-hook.yml` — whose jobs need repo
   `issues`/`contents`/`pull-requests` write permissions — no longer renders just because the
@@ -45,6 +55,22 @@ is what you reach for across a breaking one.
   default. (#51)
 
 ### Added
+- **`github-project-board` skill** (github-workflow bundle, #54): the toolkit's first
+  *create-side* board skill. Encodes the standard board spec — **Status** (Backlog / Todo /
+  In Progress / In Review / Done), **Priority** (Critical / High / Medium / Low), **Size**
+  (S / M / L), and **Start** / **Target** date fields, with Table / Kanban / Roadmap views —
+  and a GraphQL mutation catalog to realize it: `createProjectV2` + `linkProjectV2ToRepository`
+  for the no-board path, `createProjectV2Field` for missing fields/options, and
+  `updateProjectV2Field` for reconciling an existing single-select (documented as a full
+  replace, with the option-ID/assignment-loss and built-in-Status caveats called out). Honest
+  about API limits: Projects v2 **views are not creatable via the public API**, so it offers
+  `copyProjectV2` from a template board (clones fields *and* views) or prints guided manual
+  view steps; board discovery matches `project.name` case-insensitively (normalized, exact).
+  Wired like the delegate→github-project-management pattern: listed in the github-workflow
+  bundle `skills:`, granted in the `project-manager` agent frontmatter, and pulled into a
+  standalone `install skills/delegate` via a new orchestration `requires:` edge. The
+  github-workflow `setup:` note and the `delegate` / `issue` "no board" warnings now point at
+  it. (#54)
 - **Syrup — an opt-in tier for sensitive bundle items** (#51): a new `syrup:` list in
   `bundle.yaml` names `files/` items (by ref) that must be poured only on request. Enabling a
   bundle no longer renders its syrup items; each renders only when installed explicitly
