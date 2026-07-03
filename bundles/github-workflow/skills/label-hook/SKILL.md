@@ -73,6 +73,9 @@ label yourself.
   reviewed through the PR like everything else.
 - Never apply '{{labelHook.enrichLabel}}' or '{{labelHook.implementLabel}}' to any
   issue — a hook run must not be able to fan out new hook runs.
+- Never apply '{{labelHook.releaseLabel}}' to any PR you open — that label arms
+  `waffle-release-hook` to push a tag on merge, and a hook run must not be able to trigger a
+  release. Cutting a release is the `release` skill's job, run deliberately.
 
 ## Report
 

@@ -1141,6 +1141,190 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   });
 });
 
+// #39: the github-workflow bundle also ships the DETERMINISTIC release hook — a files/ payload
+// (waffle-release-hook.yml) plus the `release` skill, wired by a files/-keyed requires: edge.
+// Tag-on-merge is a plain contents:write Actions job: NO Claude dispatch, NO API spend. These
+// render THE ACTUAL shipped artifacts.
+describe('github-workflow: waffle-release-hook payload (#39)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-release-hook.yml';
+  const REF = `files/${REL}`;
+  const proj = 'ReleaseHookProj';
+  let cwd;
+
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-release-hook-'));
+  });
+  afterEach(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = (opts = {}) => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test', ...opts });
+
+  test('R1 per-item install pulls the release skill closure — defaults, SHA pins, ${{ }} passthrough, lock-tracked', () => {
+    // Installing ONLY the files/ payload must pull its requires: closure: the release skill,
+    // and through it the git-workflow skill it references.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // (a) workflow lands at its .github path
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
+    const wf = read(cwd, REL);
+
+    // (b) files → skill → skill closure: the workflow pulled the release skill AND the
+    // git-workflow skill it requires (proof the files/-keyed requires edge resolves transitively)
+    assert.ok(
+      fs.existsSync(path.join(cwd, '.claude/skills/release/SKILL.md')),
+      'release skill pulled by the workflow',
+    );
+    assert.ok(
+      fs.existsSync(path.join(cwd, '.claude/skills/git-workflow/SKILL.md')),
+      'git-workflow skill pulled transitively via release',
+    );
+
+    // (c) no leftover wafflestack placeholders; label + tag-format defaults substituted, and the
+    // single-brace {version} token survives (it is NOT a wafflestack placeholder)
+    assert.doesNotMatch(wf, /\{\{\s*labelHook\./);
+    assert.doesNotMatch(wf, /\{\{\s*release\./);
+    assert.match(wf, /contains\(github\.event\.pull_request\.labels\.\*\.name, 'waffle:release'\)/);
+    assert.match(wf, /TAG_FORMAT: 'v\{version\}'/);
+
+    // (d) GitHub Actions ${{ }} expressions pass through the renderer verbatim
+    assert.match(wf, /group: waffle-release-hook-\$\{\{ github\.event\.pull_request\.number \}\}/);
+    assert.match(wf, /ref: \$\{\{ github\.event\.pull_request\.merge_commit_sha \}\}/);
+
+    // (e) both actions SHA-pinned with a # vX.Y.Z comment — dogfoods the security-audit posture
+    assert.match(wf, /uses: actions\/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+    assert.match(wf, /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+
+    // (f) byte-tracked in the lock at its repo-relative path, and doctor round-trips clean
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.ok(REL in lock.files, JSON.stringify(lock.files));
+    assert.equal(lock.files[REL], sha256(wf));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('R2 releaseLabel + tagFormat overrides flow into the gate and the tag env', () => {
+    writeConfig(
+      `targets: [claude]\ninclude: [${REF}]\n` +
+        `config:\n  project:\n    name: ${proj}\n` +
+        `  labelHook:\n    releaseLabel: 'ship:it'\n  release:\n    tagFormat: 'rel-{version}'\n`,
+    );
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    assert.match(wf, /contains\(github\.event\.pull_request\.labels\.\*\.name, 'ship:it'\)/);
+    assert.doesNotMatch(wf, /waffle:release/);
+    assert.match(wf, /TAG_FORMAT: 'rel-\{version\}'/);
+    assert.doesNotMatch(wf, /'v\{version\}'/);
+  });
+
+  test('R3 rendered workflow parses to the exact GitHub Actions shape', () => {
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const parsed = YAML.parse(read(cwd, REL)); // throws on invalid YAML
+
+    // on: pull_request: [closed] ONLY — never pull_request_target, never push
+    assert.deepEqual(Object.keys(parsed.on), ['pull_request']);
+    assert.deepEqual(parsed.on.pull_request, { types: ['closed'] });
+
+    // exactly one job, least-privilege contents:write only, NO workflow-level permissions block
+    assert.deepEqual(Object.keys(parsed.jobs), ['tag']);
+    assert.deepEqual(parsed.jobs.tag.permissions, { contents: 'write' });
+    assert.ok(!('permissions' in parsed), 'no workflow-level permissions block');
+
+    // numeric timeout; concurrency never cancels an in-flight tag push
+    assert.equal(typeof parsed.jobs.tag['timeout-minutes'], 'number');
+    assert.equal(parsed.concurrency['cancel-in-progress'], false);
+
+    // gate: merged==true AND the label is present in the PR's label-name array (fail-closed)
+    assert.match(parsed.jobs.tag.if, /github\.event\.pull_request\.merged == true/);
+    assert.match(parsed.jobs.tag.if, /contains\(github\.event\.pull_request\.labels\.\*\.name, '[^']+'\)/);
+  });
+
+  test('R4 deterministic + injection-safe: no Claude dispatch, semver-guarded, event data only via env', () => {
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    const parsed = YAML.parse(wf);
+
+    // deterministic: NOTHING that spends API budget — no action dispatch, no api key/secret
+    assert.doesNotMatch(wf, /claude-code-action/);
+    assert.doesNotMatch(wf, /anthropic/i);
+    assert.doesNotMatch(wf, /ANTHROPIC_API_KEY/);
+
+    // never the dangerous fork-with-secrets trigger (the header comment explains WHY it is
+    // avoided, so assert on the parsed triggers rather than a raw string search)
+    assert.ok(!('pull_request_target' in parsed.on), 'must not trigger on pull_request_target');
+
+    const step = parsed.jobs.tag.steps.find((s) => s.name === 'Tag the merge commit');
+    assert.ok(step, 'has the tag step');
+    // event data reaches the shell ONLY through env — nothing ${{ }} / github.event in run:
+    assert.ok(!step.run.includes('github.event'), 'no event expressions spliced into the shell body');
+    assert.equal(step.env.SHA, '${{ github.event.pull_request.merge_commit_sha }}');
+    assert.equal(step.env.PR_NUMBER, '${{ github.event.pull_request.number }}');
+    // the label never reaches a step — it lives only in the job if: gate
+    for (const s of parsed.jobs.tag.steps) {
+      assert.ok(!JSON.stringify(s).includes('labels.*.name'), 'no step references the label array');
+    }
+    // a crafted package.json version can't smuggle metacharacters: strict-semver guard + refuse
+    assert.match(step.run, /grep -Eq/);
+    assert.ok(step.run.includes('is not valid semver'), 'guards the version against a semver regex');
+    assert.match(step.run, /Refusing to tag/);
+    // lightweight tag on the merge commit, pushed by refspec
+    assert.match(step.run, /git tag "\$TAG" "\$SHA"/);
+    assert.match(step.run, /git push origin "refs\/tags\/\$TAG"/);
+  });
+
+  test('R5 hostile config values are rejected at render; empty label is allowed (inert gate)', () => {
+    const renderWith = (lines) => {
+      writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n${lines}\n`);
+      return render();
+    };
+    const rejects = (r, key) => {
+      assert.equal(r.ok, false, 'render must fail on a hostile value');
+      assert.ok(
+        r.errors.some((e) => e.includes(key) && /does not match its declared pattern/.test(e)),
+        JSON.stringify(r.errors),
+      );
+    };
+
+    // an apostrophe / crafted value would break or subvert the contains() gate expression
+    rejects(renderWith(`  labelHook:\n    releaseLabel: "x') || github.actor == 'a' || contains('y"`), 'labelHook.releaseLabel');
+    // a ${{ }} in the label would be expanded by GitHub Actions
+    rejects(renderWith('  labelHook:\n    releaseLabel: "${{ secrets.X }}"'), 'labelHook.releaseLabel');
+    // tagFormat with a shell metachar / space / quote / ${{ } / missing {version} token — all rejected
+    rejects(renderWith(`  release:\n    tagFormat: "v{version}; rm -rf /"`), 'release.tagFormat');
+    rejects(renderWith(`  release:\n    tagFormat: "v {version}"`), 'release.tagFormat');
+    rejects(renderWith(`  release:\n    tagFormat: "\${{ secrets.X }}{version}"`), 'release.tagFormat');
+    rejects(renderWith(`  release:\n    tagFormat: "v0.0.0"`), 'release.tagFormat'); // no {version} token
+
+    // empty releaseLabel is ALLOWED: contains() can never match '' (fail-closed), not an error
+    const ok = renderWith(`  labelHook:\n    releaseLabel: ""`);
+    assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+    assert.match(read(cwd, REL), /contains\(github\.event\.pull_request\.labels\.\*\.name, ''\)/);
+  });
+
+  test('R6 syrup: fresh bundle render omits the release workflow; explicit include pours it', () => {
+    // bundles:[github-workflow] alone → NOT written (syrup); but the release SKILL still renders
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.equal(fs.existsSync(path.join(cwd, REL)), false, 'syrup release workflow must not render by default');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/release/SKILL.md')), 'release skill still renders');
+
+    // add the explicit include → the file is poured
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup release workflow');
+  });
+
+  test('R7 setup inventory flags the release workflow as syrup (default do-not-install)', () => {
+    const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
+    assert.match(inv, /- files \(syrup — sensitive, do NOT install by default\):[^\n]*waffle-release-hook\.yml/);
+  });
+});
+
 // #46: the github-workflow bundle also ships a SCHEDULED repo-hygiene hook — a files/ payload
 // (waffle-hygiene.yml) plus a hygiene skill, wired by a files/-keyed requires: edge. Like the
 // label hook it is syrup (opt-in): its job holds write scopes and every fire spends money daily.

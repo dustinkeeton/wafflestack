@@ -30,14 +30,14 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 
 ## Bundle registry
 
-`toolkit.yaml` lists 8 bundles (14 agents + 17 skills; reorganized in #38 — `design`
+`toolkit.yaml` lists 8 bundles (14 agents + 21 skills; reorganized in #38 — `design`
 dissolved, roles consolidated, `security-audit` variants renamed). Per-bundle config schema,
 env, and setup notes live in each `bundle.yaml` (authoritative — this table summarizes).
 
 | Bundle | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
 | `docs-system` | `bundles/docs-system/` | docs-agent, docs-human | docs-agent, docs-human | Two-audience doc system; doc-set shapes (`docs.machineDocSet/Spec`, `docs.humanDocSet/Spec`) are config. |
-| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene | Git / GitHub issue / Projects v2 workflow. `github-project-management` reads/updates board items; `github-project-board` (#54) provisions/standardizes the board itself to the canonical Kanban spec (Status/Priority/Size/Start/Target; Table/Kanban/Roadmap views) — the only create-side board skill. Ships three prefab CI workflows as `files/` payloads: `waffle-doctor` (read-only drift gate) plus two opt-in **syrup** harness hooks — `waffle-label-hook` (label→enrich/implement) and `waffle-hygiene` (daily scheduled `docs`→auto-merge PR) — each wired to its companion skill (`label-hook`, `hygiene`) via a `files/`-keyed `requires:` edge. Only bundle with a `setup:` block (gh auth, labels, board, git identity, hook opt-ins). |
+| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release | Git / GitHub issue / Projects v2 / release workflow. `github-project-management` reads/updates board items; `github-project-board` (#54) provisions/standardizes the board itself to the canonical Kanban spec (Status/Priority/Size/Start/Target; Table/Kanban/Roadmap views) — the only create-side board skill. Ships four prefab CI workflows as `files/` payloads: `waffle-doctor` (read-only drift gate) plus three opt-in **syrup** hooks — `waffle-label-hook` (label→enrich/implement Claude dispatch), `waffle-hygiene` (daily scheduled `docs`→auto-merge PR), and `waffle-release-hook` (deterministic tag-on-merge, `contents: write`, no Claude/API) — each wired to its companion skill (`label-hook`, `hygiene`, `release`) via a `files/`-keyed `requires:` edge. The `release` skill opens a labeled `chore/bump-X.Y.Z` PR; the hook pushes `release.tagFormat` on merge. Config: `labelHook.{enrich,implement,release}Label`, `hygiene.{cron,claudeArgs}`, `release.{tagFormat,versionFiles}`. Only bundle with a `setup:` block (gh auth, labels, board, git identity, hook opt-ins). |
 | `code-quality` | `bundles/code-quality/` | (none) | tdd, codebase-architecture | Cross-cutting, stack-agnostic practice skills (test command, tiers, module map, settings type are config). |
 | `obsidian-dev` | `bundles/obsidian-dev/` | plugin-architect | obsidian-plugin-dev, electron-security-audit | Obsidian plugin development (API, manifest, esbuild, testing patterns) + the desktop-app security-audit variant; plugin-architect is the domain architect. |
 | `orchestration` | `bundles/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs, standup | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). `standup` rounds up a per-agent status pulse — dynamic `.claude/agents/*.md` roster, one read-only parallel wave, collect-via-return-values, no side effects. |
@@ -292,8 +292,9 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 ## Dogfood state
 
-This repo renders 3 bundles into itself — `github-workflow`, `docs-system`, `orchestration`
-(`targets: [claude]`, no `include:`; see `.waffle/waffle.yaml`). Rendered output
+This repo renders 4 bundles into itself — `github-workflow`, `docs-system`, `orchestration`,
+`harness-architect` (`targets: [claude]`, plus `include:` refs for the two committed syrup
+workflows — hygiene and release-hook; see `.waffle/waffle.yaml`). Rendered output
 (`.claude/agents/`, `.claude/skills/`) and `.waffle/waffle.lock.json` are gitignored here;
 regenerate with `node installer/cli.mjs render`. Only `.claude/settings.json` is tracked under
 `.claude/` (project-owned; holds the agent-teams env var).

@@ -76,6 +76,15 @@ is what you reach for across a breaking one.
   `wafflestack install files/.github/workflows/waffle-label-hook.yml` (persists the ref to
   `include:`). The read-only `waffle-doctor.yml` workflow is unaffected — it still renders by
   default. (#51)
+- **Additive — release automation in `github-workflow`.** New `release` skill and a
+  `waffle-release-hook.yml` workflow, plus config keys `labelHook.releaseLabel` (default
+  `waffle:release`), `release.tagFormat` (default `v{version}`), and `release.versionFiles`
+  (default empty). All optional with back-compatible defaults, and the workflow is **syrup**
+  (opt-in) — so an existing repo sees only a plain content re-render and nothing new arms until
+  you install the hook and create the label. To adopt: `wafflestack install
+  files/.github/workflows/waffle-release-hook.yml`, `gh label create "waffle:release"`, and
+  confirm Actions may write `contents`. Point `release.versionFiles` at your own version files.
+  (#39)
 - **Additive — a new `/standup` skill renders for repos with the `orchestration` bundle.**
   `render`/`upgrade` picks up `.claude/skills/standup/` (and the `.agents/` mirror) on the next
   run; no new config keys and no migration. Invoke `/standup` for a one-look, per-agent status
@@ -149,6 +158,22 @@ is what you reach for across a breaking one.
   acknowledgement. Documented in `schema/FORMAT.md` and the `schema/SETUP.md` playbook. The
   `github-workflow` bundle marks `waffle-label-hook.yml` as syrup; its inert-by-default
   rendered form (fail-closed empty-label gates, no secret) is unchanged. (#51)
+- **Automated releases: `release` skill + tag-on-merge hook** (#39, `github-workflow` bundle).
+  The `release` skill (user- and agent-invocable) does the bump-PR half: pick the semver level
+  from changes since the last tag (or take an explicit version), `npm version
+  --no-git-tag-version`, sync the files in `release.versionFiles`, stamp `CHANGELOG.md`
+  (`[Unreleased]` → `[X.Y.Z]`), re-render if generated output tracks the version, run the
+  pre-flight, open a `chore/bump-X.Y.Z` PR carrying the consumer-impact notes, and apply the
+  release label. It never pushes the tag. The new syrup `waffle-release-hook.yml` does that:
+  when a PR carrying `labelHook.releaseLabel` is **merged**, a deterministic `contents: write`
+  job (NO Claude dispatch, NO API spend) pushes a lightweight tag from `release.tagFormat` on
+  the merge commit, reading the version from the merged `package.json` and refusing any
+  non-semver value. Config keys `labelHook.releaseLabel`, `release.tagFormat`, and
+  `release.versionFiles` are added with injection-safe patterns on the first two (fail-closed
+  empty label; `{version}`-token tag format). The release-flow spec is documented in the
+  `git-workflow` skill, and the `label-hook` skill's guardrails now forbid an implement run
+  from applying the release label. Dogfooded here: this repo installs the hook, commits the
+  rendered workflow (a `.gitignore` carve-out), and creates the `waffle:release` label. (#39)
 - **`wafflestack setup` is now config-aware on a re-run** (#50): when `.waffle/waffle.yaml`
   already exists, the guide injects a **"Current configuration — update mode"** section
   between the playbook and the inventory — the repo's live targets, enabled bundles,
