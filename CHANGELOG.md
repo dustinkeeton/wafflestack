@@ -51,6 +51,10 @@ is what you reach for across a breaking one.
   `wafflestack install files/.github/workflows/waffle-label-hook.yml` (persists the ref to
   `include:`). The read-only `waffle-doctor.yml` workflow is unaffected — it still renders by
   default. (#51)
+- **Additive — a new `/standup` skill renders for repos with the `orchestration` bundle.**
+  `render`/`upgrade` picks up `.claude/skills/standup/` (and the `.agents/` mirror) on the next
+  run; no new config keys and no migration. Invoke `/standup` for a one-look, per-agent status
+  pulse of the codebase. (#56)
 
 ### Added
 - **Generated `.waffle/` overview docs — cheat sheet + team intro** (#58): a new
@@ -94,6 +98,15 @@ is what you reach for across a breaking one.
   existing repos. Consumers with a different convention set e.g. `lead.adrDir: docs/decisions/`
   in `.waffle/waffle.yaml` and re-render instead of hand-editing the rendered agent (which
   would trip the `doctor` drift gate). (#48)
+- **User-invocable `/standup` skill** (orchestration bundle, #56): rounds up a one-look status
+  pulse from the *installed* team. It enumerates the roster dynamically by globbing the harness
+  agents dir (`.claude/agents/*.md`) and parsing frontmatter `name`/`description` — not a
+  hard-coded list — then fans out a single read-only parallel wave asking each agent for an
+  ≤3-line report strictly from its own role's seat. Replies are collected via subagent
+  **return values** (no reliance on `SendMessage`/`TaskUpdate`, sidestepping the
+  silent-specialist caveat), then printed as one compact digest in roster order with
+  truncation. Zero side effects — no team, no tasks, no board writes. Wired into
+  `bundles/orchestration/bundle.yaml`'s `skills:` list; no new config keys. (#56)
 
 ### Added
 - `lead.adrDir` config key (engineering-team bundle, `required: false`, default `docs/adr/`):
