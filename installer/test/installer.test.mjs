@@ -938,15 +938,48 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     assert.doesNotMatch(skill, /waffle:implement/);
   });
 
-  test('T3 claudeArgs: empty rendered form by default, override lands in both jobs', () => {
-    // default (empty) → the no-op rendered form, no leftover placeholder
+  test('T3 claudeArgs: per-job baked --allowedTools by default; extras fold onto the end of both jobs', () => {
+    // The #72 fix: the template used to render `claude_args: "{{labelHook.claudeArgs}}"` with a
+    // "" default, leaving the headless harness with NO --allowedTools — so in CI (no human to
+    // answer permission prompts) every gated Bash/Write/Edit call was auto-denied and the paid
+    // run was a guaranteed no-op. Each job now bakes a default allowlist, with the empty
+    // labelHook.claudeArgs folding to nothing after it and no leftover placeholder.
     writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     let wf = read(cwd, REL);
-    assert.match(wf, /claude_args: ""/);
     assert.doesNotMatch(wf, /\{\{\s*labelHook\.claudeArgs\s*\}\}/);
+    assert.doesNotMatch(wf, /\{\{\s*project\./);
 
-    // override appears exactly twice — once per job (enrich + implement)
+    const argsOf = (text, job) =>
+      YAML.parse(text).jobs[job].steps.find((s) => s.with && 'claude_args' in s.with).with.claude_args;
+
+    // enrich is read-mostly: gh issue mutations (title/body/label edits) + the gh api board and
+    // milestone calls — and NOTHING that writes files or touches git (it holds issues:write only).
+    const enrich = argsOf(wf, 'enrich');
+    assert.match(enrich, /^--allowedTools '/, `enrich opens with the baked allowlist: ${enrich}`);
+    for (const tool of ['Bash(gh issue:*)', 'Bash(gh api:*)']) {
+      assert.ok(enrich.includes(tool), `enrich allowlist covers ${tool}`);
+    }
+    for (const forbidden of ['Edit', 'Write', 'Bash(git:*)', 'Bash(gh pr:*)']) {
+      assert.ok(!enrich.includes(forbidden), `enrich stays narrow — must not grant ${forbidden}`);
+    }
+    assert.ok(enrich.endsWith("'"), `empty claudeArgs folds to nothing on enrich: ${enrich}`);
+
+    // implement runs the full delivery chain (mirrors the hygiene allowlist) PLUS gh issue for the
+    // PR-link comment; the four pre-flight patterns render from the project.* keys (defaults here),
+    // so the allowlist tracks exactly what the git-workflow pre-flight runs.
+    const implement = argsOf(wf, 'implement');
+    assert.match(implement, /^--allowedTools '/, `implement opens with the baked allowlist: ${implement}`);
+    for (const tool of ['Edit', 'Write', 'Bash(git:*)', 'Bash(gh pr:*)', 'Bash(gh issue:*)']) {
+      assert.ok(implement.includes(tool), `implement allowlist covers ${tool}`);
+    }
+    for (const cmd of ['npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm test', 'npm run build']) {
+      assert.ok(implement.includes(`Bash(${cmd}:*)`), `implement allowlist covers pre-flight: ${cmd}`);
+    }
+    assert.ok(implement.endsWith("'"), `empty claudeArgs folds to nothing on implement: ${implement}`);
+
+    // override: the SAME value folds onto the END of BOTH jobs' baked defaults (extends, not
+    // replaces) — the working allowlist survives and the extra flag lands after it.
     writeConfig(
       `targets: [claude]\ninclude: [${REF}]\n` +
         `config:\n  project:\n    name: ${proj}\n` +
@@ -954,8 +987,11 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     );
     assert.equal(render().ok, true, 'override re-render');
     wf = read(cwd, REL);
-    const hits = wf.match(/claude_args: "--max-turns 30"/g) ?? [];
-    assert.equal(hits.length, 2, `expected the override in both jobs, got ${hits.length}`);
+    for (const job of ['enrich', 'implement']) {
+      const a = argsOf(wf, job);
+      assert.match(a, /^--allowedTools '/, `${job} keeps its baked allowlist under override: ${a}`);
+      assert.ok(a.endsWith('--max-turns 30'), `${job} folds claudeArgs onto the end: ${a}`);
+    }
   });
 
   test('T4 rendered workflow parses to the exact GitHub Actions shape', () => {
