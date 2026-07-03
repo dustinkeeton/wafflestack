@@ -1,14 +1,10 @@
 name: expo-dev
-description: Expo / React Native app development — a mobile architecture agent plus reference skills covering the @expo/ui native component library (SDK 56+) and the Expo development loop (Expo Go vs development builds, prebuild/CNG, simulators and devices, EAS Build/Submit/Update).
-agents: [mobile-architect]
+description: Expo / React Native app development — reference skills covering the @expo/ui native component library (SDK 56+) and the Expo development loop (Expo Go vs development builds, prebuild/CNG, simulators and devices, EAS Build/Submit/Update).
 skills: [expo-ui, expo-app-dev]
 config:
   project.name:
     required: true
     description: Bare project name, e.g. "Synapse".
-  project.longName:
-    required: true
-    description: Full prose project descriptor, e.g. "the Synapse iOS/Android app".
   app.slug:
     required: true
     description: Expo project slug as it appears in app.json (lowercase, hyphenated).

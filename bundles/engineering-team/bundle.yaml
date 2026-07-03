@@ -1,26 +1,11 @@
 name: engineering-team
 description: >-
-  Product-engineering specialist roster — lead-developer, data-engineer,
-  qa-engineer, devops-engineer, product-manager, ux-designer, and a read-only
-  security-engineer, plus a browser-app security-audit skill. Agents are
-  stack-agnostic skeletons; the stack, structure, pyramid, and briefs are
-  project config. Pairs with the github-workflow bundle (git-workflow/issue/
-  github-project-management skills are referenced throughout) and slots into
-  the orchestration bundle's roster. NOTE — the security-audit skill here
-  targets browser-delivered apps and shares its name with code-quality's
-  desktop-plugin variant, so enable only one of the two bundles (the renderer
-  errors on the conflict).
-agents:
-  [
-    lead-developer,
-    data-engineer,
-    qa-engineer,
-    devops-engineer,
-    product-manager,
-    ux-designer,
-    security-engineer,
-  ]
-skills: [security-audit]
+  Delivery-specialist agent roster — data-engineer, qa-engineer, and
+  devops-engineer. Agents are stack-agnostic skeletons; the data brief, test
+  pyramid, and CI baseline are project config. Pairs with the github-workflow
+  bundle (git-workflow and github-project-management skills are referenced
+  throughout) and slots into the orchestration bundle's roster.
+agents: [data-engineer, qa-engineer, devops-engineer]
 config:
   project.name:
     required: true
@@ -40,27 +25,11 @@ config:
   project.buildCmd:
     required: false
     default: npm run build
-    description: Production build command (pre-flight guidance and bundle-output secret scan).
-  project.lockfile:
-    required: false
-    default: package-lock.json
-    description: Committed lockfile name (e.g. pnpm-lock.yaml) checked against package.json drift.
+    description: Production build command (pre-flight guidance).
   planner.productDocsDir:
     required: false
     default: docs/product/
-    description: Directory where user stories / product briefs live (written by product-manager, read by qa-engineer).
-  lead.stack:
-    required: true
-    description: Verbatim body of the lead-developer "Stack (locked)" section — the project's approved technology list.
-  lead.structure:
-    required: true
-    description: Verbatim body of the lead-developer "Structure" section — module layout and boundary rules.
-  lead.delegation:
-    required: true
-    description: >-
-      Verbatim sentence(s) completing the lead-developer "Delegate." principle —
-      which specialist gets which kind of work, e.g. "UX work to `ux-designer`,
-      tests to `qa-engineer`, …. Use the `Agent` tool to invoke them."
+    description: Directory where user stories / product briefs live (read by qa-engineer).
   data.brief:
     required: true
     description: >-
@@ -79,37 +48,3 @@ config:
   devops.dependencies:
     required: true
     description: Verbatim body of the devops-engineer "Dependencies" section — package manager, update automation, and major-version policy.
-  pm.brief:
-    required: true
-    description: >-
-      Verbatim opening paragraph of the product-manager agent: "You are the senior
-      product manager for <project>, <what it is>. The audience is <who> — so <tone rule>."
-  pm.principles:
-    required: true
-    description: Verbatim additional bullet(s) appended to the product-manager "Principles" list — the project's domain principles.
-  pm.handoffs:
-    required: true
-    description: Verbatim body of the product-manager "Hand-offs" section — arrow list routing question types to specialist agents.
-  ux.guidelines:
-    required: true
-    description: >-
-      Verbatim block dropped into the ux-designer agent: the project's design
-      system (palette, typography, density, motion) and any chart/component
-      standards. Markdown sections welcome.
-  sec.scope:
-    required: true
-    description: >-
-      Prose fragment completing "You are the security reviewer for <project>, …" —
-      e.g. "a client-side React SPA that fetches data from `example.com`".
-  sec.threatModelIntro:
-    required: true
-    description: >-
-      Verbatim intro paragraph of the security-audit skill describing the app's
-      actual threat surface (what exists, what doesn't — server, auth, PII).
-  sec.dataSource:
-    required: true
-    description: The untrusted external data source named in validation guidance, e.g. "calottery.com".
-  sec.auditCmd:
-    required: false
-    default: npm audit --omit=dev
-    description: Production-dependency audit command, e.g. "pnpm audit --prod".

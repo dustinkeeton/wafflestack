@@ -1,0 +1,13 @@
+# TRIAGE FRAGMENT — not a live manifest (nothing under triage/ is read by the
+# render/validate pipeline). Verbatim pieces removed from bundles/obsidian-dev/bundle.yaml
+# when plugin-architect was parked in round 1 of #38. To restore: `git mv` the agent
+# back, re-add the entry below to that bundle.yaml, then re-run
+# `npm run validate && node installer/cli.mjs render`.
+#
+# Removed manifest entries:
+#   agents: [plugin-architect]
+#
+# plugin-architect references no {{config}} placeholders, so no config declarations
+# moved — the live bundle's plugin.* keys all belong to the obsidian-plugin-dev skill.
+# Its frontmatter `skills:` closure (obsidian-plugin-dev, tdd, git-workflow, issue)
+# travels inside the agent file itself.

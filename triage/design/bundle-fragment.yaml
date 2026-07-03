@@ -1,3 +1,9 @@
+# TRIAGE FRAGMENT — not a live manifest (nothing under triage/ is read by the
+# render/validate pipeline). This is the complete former bundles/design/bundle.yaml,
+# parked whole because `designer` (its only item) is in triage and the bundle was
+# dissolved in round 1 of #38. To restore: `git mv` this file back to
+# bundles/design/bundle.yaml, drop this comment block, git mv the agent back to
+# bundles/design/agents/designer.md, and re-add `design` to toolkit.yaml.
 name: design
 description: Brand-consistent visual asset production — hand-written SVG logos, icons, banners, and diagrams with a local render-verification loop.
 agents: [designer]
