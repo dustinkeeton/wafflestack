@@ -36,7 +36,7 @@
     ".claude/skills/release/SKILL.md": "f2253d5b8ec0ddec89011afb36079b8733d8cd34379976c68ec6bfb2b755be51",
     ".claude/skills/standup/SKILL.md": "23da70cc4898b311c1493d3ed74a3c2d529f45658513e9669807ed1342d99c78",
     ".github/workflows/waffle-doctor.yml": "7332f36b3a4ac979ef987b80e250a97ee5aa69cb06b3cfc2de37430f7a3e92ef",
-    ".github/workflows/waffle-hygiene.yml": "bc868191c9adc81bf8a3c1d631547e7ae0a4356b42c6ff5e0c7db851d24d276b",
+    ".github/workflows/waffle-hygiene.yml": "e54f3ac76a718501563fb1a12bc49772ed9a87710b4b2cd1576c9472b5b3972f",
     ".github/workflows/waffle-label-hook.yml": "39609030bf0acf7a908ed1021c53015c8cee99864d32b1c2dfb471f5d2bc4598",
     ".github/workflows/waffle-release-hook.yml": "625fe8e4a724dd80213bf503c5bb89b7a7d5ad2e6eb3476efd48fc8f4b851479",
     ".waffle/CHEATSHEET.md": "0c5d64da81f1a62e7c071a7243a41a29109baa69fd2139e429b717d9367a767d",

@@ -31,6 +31,32 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Consumer impact
+- **Bug fix, content-only — the scheduled `waffle-hygiene` hook can finally succeed
+  (`github-workflow`).** As shipped it dispatched the CI harness with an empty `claude_args`, so
+  the headless run began with no `--allowedTools`; in CI there is no human to answer permission
+  prompts, so every gated `Write`/`Edit`/`Bash` call was auto-denied and the daily cron billed
+  ~$4–5 for a guaranteed no-op (no docs, no commit, no PR). The workflow now bakes a default
+  `--allowedTools` covering the full hygiene → docs → git-workflow chain, with
+  `hygiene.claudeArgs` folded on the end for your extras. **Re-render to pick it up** — no config
+  key changes and no migration; a repo that never installed the syrup hook is unaffected. (#71)
+
+### Fixed
+- **`waffle-hygiene.yml` denied every write, so the daily hook was a paid no-op** (#71,
+  `github-workflow`). The template rendered `claude_args: "{{hygiene.claudeArgs}}"` and the
+  config default is `""`, leaving the headless harness with no allowlist — which in CI
+  auto-denies all gated tool calls (the first scheduled run logged 28 permission denials and
+  produced nothing while still exiting "success"). `claude_args` is now a `>-` block scalar
+  carrying a baked default
+  `--allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(<pre-flight>:*)'` with
+  `{{hygiene.claudeArgs}}` folded onto the end (the Claude CLI unions repeated `--allowedTools`,
+  so consumer extras extend the default rather than replace it). The pre-flight patterns render
+  from `project.lintCmd` / `project.typecheckCmd` / `project.testCmd` / `project.buildCmd` — the
+  same keys the `git-workflow` pre-flight executes — so the allowlist tracks whatever the project
+  configured. The `hygiene.claudeArgs` description and the hygiene setup note now document the
+  default allowlist and how to extend it. The identical latent bug in `waffle-label-hook.yml` is
+  tracked separately in #72. (#71)
+
 ## [0.9.0] - 2026-07-03
 
 ### Consumer impact
