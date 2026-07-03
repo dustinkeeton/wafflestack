@@ -30,24 +30,25 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 
 ## Bundle registry
 
-`toolkit.yaml` lists 8 bundles. Per-bundle config schema, env, and setup notes live in each
-`bundle.yaml` (authoritative — this table summarizes).
+`toolkit.yaml` lists 7 bundles (13 agents + 17 skills; reorganized in #38 — `design`
+dissolved, roles consolidated, `security-audit` variants renamed). Per-bundle config schema,
+env, and setup notes live in each `bundle.yaml` (authoritative — this table summarizes).
 
 | Bundle | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
 | `docs-system` | `bundles/docs-system/` | docs-agent, docs-human | docs-agent, docs-human | Two-audience doc system; doc-set shapes (`docs.machineDocSet/Spec`, `docs.humanDocSet/Spec`) are config. |
 | `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, clean-up, label-hook | Git / GitHub issue / Projects v2 workflow. Ships two prefab CI workflows as `files/` payloads (`waffle-doctor`; `waffle-label-hook` — the label→harness hook wired to `label-hook` via the toolkit's only `files/`-keyed `requires:`). Only bundle with a `setup:` block (gh auth, labels, board, git identity). |
-| `code-quality` | `bundles/code-quality/` | architect, security | tdd, security-audit, codebase-architecture | Code-quality specialists (desktop-plugin `security-audit`). Pairs with `obsidian-dev`. |
-| `design` | `bundles/design/` | designer | (none) | Brand SVG/icon/banner asset production with a render-verify loop. |
-| `obsidian-dev` | `bundles/obsidian-dev/` | plugin-architect | obsidian-plugin-dev | Obsidian plugin development (API, manifest, esbuild). |
-| `orchestration` | `bundles/orchestration/` | project-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config. Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |
-| `engineering-team` | `bundles/engineering-team/` | lead-developer, data-engineer, qa-engineer, devops-engineer, product-manager, ux-designer, security-engineer | security-audit | Product-eng roster (browser-app `security-audit`). Slots into `orchestration`'s roster. |
-| `expo-dev` | `bundles/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS). |
+| `code-quality` | `bundles/code-quality/` | (none) | tdd, codebase-architecture, electron-security-audit | Cross-cutting practice skills (desktop-app security variant). Known Obsidian-phrasing leakage — #38 follow-ups. |
+| `obsidian-dev` | `bundles/obsidian-dev/` | plugin-architect | obsidian-plugin-dev | Obsidian plugin development (API, manifest, esbuild); plugin-architect is the domain architect. |
+| `orchestration` | `bundles/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (roster defaults: `lead-developer` architect, `security-engineer` security). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |
+| `engineering-team` | `bundles/engineering-team/` | lead-developer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-developer is the general architect. Slots into `orchestration`'s roster. |
+| `expo-dev` | `bundles/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS); mobile-architect is the domain architect. |
 
-Item-name collision (by design): `code-quality` and `engineering-team` both define a skill
-named `security-audit` (desktop-plugin vs browser-app variant). Enabling both whole bundles is
-a hard render error (output-conflict guard, `render.mjs:34`); to install just one, use a
-bundle-qualified ref (`code-quality/skills/security-audit`).
+Architect seniority rule (#38): `lead-developer` is the general architect; `plugin-architect`
+and `mobile-architect` take seniority for problems specific to their domains. The former
+`security-audit` name collision is resolved by the `electron-`/`webapp-` renames; the
+output-conflict guard (`render.mjs:34`) still errors if two enabled bundles ever emit the
+same path.
 
 ## Installer module registry
 
@@ -193,7 +194,7 @@ Grammar + resolution live in `refs.mjs` (`parseRef` `refs.mjs:38`, `resolveRef` 
 |------|---------|---------|
 | bundle | `github-workflow` | a whole bundle (unknown name → error) |
 | item | `skills/issue`, `agents/project-manager` | an item; unqualified, must be unique toolkit-wide |
-| qualified | `engineering-team/skills/security-audit` | an item in a named bundle (disambiguates cross-bundle name collisions) |
+| qualified | `engineering-team/skills/webapp-security-audit` | an item in a named bundle (disambiguates cross-bundle name collisions) |
 
 A bare item name resolves only when unique across the toolkit; otherwise it must be
 bundle-qualified. `canonicalRef` is the minimal re-resolvable form (qualified only when

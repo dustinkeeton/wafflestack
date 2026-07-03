@@ -10,20 +10,21 @@
 
 ## Bundles
 
-All 8 bundles are shipped and stable. Pick the ones a project needs.
+All 7 bundles are shipped and stable. Pick the ones a project needs.
+(Reorganized in #38: the `design` bundle was dissolved, near-duplicate roles
+were consolidated, and the colliding `security-audit` skills were renamed.)
 
 | Bundle | Status | What you get |
 |--------|--------|--------------|
 | `docs-system` | ✅ Shipped | Two-audience docs: machine (`AGENTS.md`) + human (these files) |
 | `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow + label→harness hook (only bundle with a `setup:` step) |
-| `orchestration` | ✅ Shipped | Multi-agent orchestration: delegate, audit, docs |
-| `code-quality` | ✅ Shipped | Architect + security specialists; TDD, security-audit, architecture skills |
-| `engineering-team` | ✅ Shipped | 7-agent product-engineering roster |
-| `design` | ✅ Shipped | Brand SVG / icon / banner asset production |
-| `obsidian-dev` | ✅ Shipped | Obsidian plugin development |
-| `expo-dev` | ✅ Shipped | Expo / React Native app development |
+| `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate, audit, docs |
+| `code-quality` | ✅ Shipped | Cross-cutting practice skills: TDD, codebase-architecture, electron-security-audit |
+| `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-developer is the general architect) + webapp-security-audit |
+| `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + reference skill) |
+| `expo-dev` | ✅ Shipped | Expo / React Native app development (mobile-architect + reference skills) |
 
-Totals: 16 agents and 17 skills across the 8 bundles.
+Totals: 13 agents and 17 skills across the 7 bundles.
 
 ## Installer & CLI
 
@@ -57,10 +58,12 @@ refs just renders.
 - **Rendered output is gitignored in this repo** (unlike consuming projects).
   Always re-run `node installer/cli.mjs render` after editing anything under
   `bundles/**`, `schema/**`, or `installer/**`.
-- **`code-quality` and `engineering-team` both define a `security-audit` skill.**
-  They are alternatives — enabling both whole bundles is a hard render error.
-  Enable one, install just one variant with a bundle-qualified ref
-  (`code-quality/skills/security-audit`), or `eject` one.
+- **Obsidian-plugin phrasing leaks in `code-quality`** (`tdd`,
+  `codebase-architecture`, `electron-security-audit` were authored in an
+  Obsidian repo) and in `engineering-team/agents/security-engineer` — content
+  fixes tracked as #38 follow-ups. (The former `security-audit` name collision
+  is resolved: the variants are now `electron-security-audit` and
+  `webapp-security-audit`.)
 
 ## Dependencies
 
