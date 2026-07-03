@@ -42,6 +42,19 @@ is what you reach for across a breaking one.
   or mutates** and never runs inline during delegation/issue creation, so enabling the bundle
   changes no existing behavior. Board mutations need the `project` token scope
   (`gh auth refresh -s project`). (#54)
+- **New bundle, fully additive — no migration.** The `harness-architect` bundle ships a
+  single domain agent for designing and building agent harnesses. Enable it by adding
+  `harness-architect` under `bundles:` (or `wafflestack install agents/harness-architect`);
+  its one config key `project.longName` is optional (defaults to a generic phrase), so no
+  new required config. Existing installs are unaffected until they opt in. (#60)
+- **New, automatic — every `render` now writes four overview docs into `.waffle/`.** After a
+  render/upgrade your repo gains `.waffle/CHEATSHEET.md` + `.waffle/cheatsheet.svg` (a cheat
+  sheet of the installed user-invocable skills) and `.waffle/TEAM.md` + `.waffle/team.svg` (an
+  introduction to the installed agents), assembled from the exact items you have installed.
+  They are lock-tracked, drift-checked by `doctor`, refreshed on every render, and pruned if a
+  later selection stops producing them (a repo with no agents gets no `TEAM.*`, etc.) — so they
+  are generated output: **commit them, don't hand-edit them** (edit the item frontmatter, or
+  gitignore them as this repo does). Nothing else changes; no config or new keys required. (#58)
 - **Behavior change, mostly automatic — the `github-workflow` label-hook workflow is now
   opt-in (“syrup”).** `.github/workflows/waffle-label-hook.yml` — whose jobs need repo
   `issues`/`contents`/`pull-requests` write permissions — no longer renders just because the
@@ -53,6 +66,10 @@ is what you reach for across a breaking one.
   `wafflestack install files/.github/workflows/waffle-label-hook.yml` (persists the ref to
   `include:`). The read-only `waffle-doctor.yml` workflow is unaffected — it still renders by
   default. (#51)
+- **Additive — a new `/standup` skill renders for repos with the `orchestration` bundle.**
+  `render`/`upgrade` picks up `.claude/skills/standup/` (and the `.agents/` mirror) on the next
+  run; no new config keys and no migration. Invoke `/standup` for a one-look, per-agent status
+  pulse of the codebase. (#56)
 
 ### Added
 - **`github-project-board` skill** (github-workflow bundle, #54): the toolkit's first
@@ -71,6 +88,32 @@ is what you reach for across a breaking one.
   standalone `install skills/delegate` via a new orchestration `requires:` edge. The
   github-workflow `setup:` note and the `delegate` / `issue` "no board" warnings now point at
   it. (#54)
+- **`harness-architect` bundle — an expert in building agent harnesses** (#60): a single
+  domain agent (`bundles/harness-architect/`) versed in agent/skill/tool decomposition,
+  subagent teams and orchestration, hooks, MCP servers, slash-command ergonomics, and
+  multi-harness portability (Claude Code / Codex / cross-tool `.agents`). Registered in
+  `toolkit.yaml`; one optional config key (`project.longName`). WaffleStack dogfoods it via a
+  project extension (`.waffle/extensions/agents/harness-architect.md`, appended at render by
+  `render.mjs`'s extension markers) that grounds the agent in the stack's own paradigms — the
+  `AGENTS.md` module/pipeline registry, the `schema/FORMAT.md` authoring contract, the
+  governing `DECISIONS.md` ADRs (one-canonical-source, the frozen-image render contract,
+  lenient agent→skill vs. strict `requires:` deps), and the `validate` / `test` / `render` +
+  `doctor` gates. This split dogfoods the extension mechanism: the generalized agent ships to
+  any consumer, while this repo's install carries the deep wafflestack knowledge. (#60)
+- **Generated `.waffle/` overview docs — cheat sheet + team intro** (#58): a new
+  `installer/lib/waffledocs.mjs` assembles two default documents from the computed render
+  selection and emits them through render's `emit()` choke point (so they are lock-tracked,
+  `doctor`-drift-checked, pruned when stale, and refreshed every render). `CHEATSHEET.md`
+  lists every installed user-invocable skill as `/name` + argument-hint + a one-line
+  when-to-use; `TEAM.md` introduces each installed agent with its role, when-to-use, and
+  granted skills (hand-offs). Each ships a branded, fully self-contained SVG one-pager
+  (`cheatsheet.svg`, `team.svg`) sized to the item count — GitHub-renderable, Golden/Syrup/
+  Cocoa palette per `assets/README.md`, waffle chrome in the header only, plain scannable body.
+  The installer now parses skill frontmatter (`user-invocable`, `argument-hint`, `description`)
+  — a skill is a slash command unless it sets `user-invocable: false` (so a `disable-model-
+  invocation`-only skill like `audit` still lists). Descriptions are substituted with the same
+  resolver render uses, so `{{project.name}}` reads identically to the rendered item.
+  Documented in `schema/FORMAT.md` and `AGENTS.md`. (#58)
 - **Syrup — an opt-in tier for sensitive bundle items** (#51): a new `syrup:` list in
   `bundle.yaml` names `files/` items (by ref) that must be poured only on request. Enabling a
   bundle no longer renders its syrup items; each renders only when installed explicitly
@@ -98,6 +141,15 @@ is what you reach for across a breaking one.
   existing repos. Consumers with a different convention set e.g. `lead.adrDir: docs/decisions/`
   in `.waffle/waffle.yaml` and re-render instead of hand-editing the rendered agent (which
   would trip the `doctor` drift gate). (#48)
+- **User-invocable `/standup` skill** (orchestration bundle, #56): rounds up a one-look status
+  pulse from the *installed* team. It enumerates the roster dynamically by globbing the harness
+  agents dir (`.claude/agents/*.md`) and parsing frontmatter `name`/`description` — not a
+  hard-coded list — then fans out a single read-only parallel wave asking each agent for an
+  ≤3-line report strictly from its own role's seat. Replies are collected via subagent
+  **return values** (no reliance on `SendMessage`/`TaskUpdate`, sidestepping the
+  silent-specialist caveat), then printed as one compact digest in roster order with
+  truncation. Zero side effects — no team, no tasks, no board writes. Wired into
+  `bundles/orchestration/bundle.yaml`'s `skills:` list; no new config keys. (#56)
 
 ### Added
 - `lead.adrDir` config key (engineering-team bundle, `required: false`, default `docs/adr/`):
