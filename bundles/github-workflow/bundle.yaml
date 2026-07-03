@@ -104,6 +104,25 @@ setup: |-
   Pacific) plus `workflow_dispatch` for manual runs, it dispatches the Claude Code action to
   work the hygiene task list in the `hygiene` skill: first entry runs the `docs` skill, then
   lands the result as a PR per the git-workflow skill with `gh pr merge --auto --squash`.
+  **What the harness may do (baked-in allowlist).** The workflow's `claude_args` ships a
+  default `--allowedTools` so the dispatched harness can actually complete that chain. In CI
+  there is no human to answer permission prompts, so a gated tool call outside the allowlist is
+  auto-denied — with no allowlist at all the harness writes nothing, opens no PR, and bills you
+  for a no-op. The default authorizes editing the doc set (`Edit`/`Write`), the
+  branch/stage/commit/push flow (`Bash(git:*)`), opening the PR and arming auto-merge
+  (`Bash(gh pr:*)`), and the `git-workflow` pre-flight. Those pre-flight commands are
+  project-specific, so the workflow renders your `project.lintCmd` / `project.typecheckCmd` /
+  `project.testCmd` / `project.buildCmd` straight into the allowlist — the very keys that skill
+  runs as its pre-flight — so change a pre-flight command, re-render, and the allowlist follows
+  (no separate allowlist edit). To authorize a tool the default does not cover — say a later
+  hygiene task that shells out to `make` — append your own `--allowedTools '<patterns>'` via
+  `hygiene.claudeArgs`; the Claude CLI unions repeated `--allowedTools`, so yours extends the
+  default rather than replacing it. If the allowlist is missing something the tasks need, the
+  harness quietly denies those calls (they surface as `permission_denials` in the run's result)
+  and the run half-finishes or no-ops — so keep it in step with what the tasks actually do. Keep
+  any `Bash()` you add narrow: the job holds `contents`/`pull-requests` write, and branch
+  protection (below) — not allowlist granularity — is the real backstop against a
+  prompt-injected push.
   **Cost — a scheduled trigger spends real money on a timer.** Every fire calls the Anthropic
   API whether or not there is drift to fix; unlike the label hook (paid per human label) this
   bills itself **daily** with no human in the loop. Rein it in with `hygiene.claudeArgs`
@@ -352,14 +371,20 @@ config:
     default: ""
     pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
     description: >-
-      Extra CLI arguments passed to the dispatched harness via the Claude Code action's
-      claude_args input in .github/workflows/waffle-hygiene.yml — e.g. "--max-turns 40" or
-      "--model claude-sonnet-4-5" for cost control on the daily run. Empty by default.
-      Handled exactly like labelHook.claudeArgs: rendered into a double-quoted YAML scalar,
-      so it must not contain double quotes, backslashes, newlines, or `${{` (enforced at
-      render by the pattern above; single quotes are allowed). Security-sensitive: this is an
-      unvalidated passthrough to the harness CLI — flags here can widen the harness's
-      authority, so set only what you understand and trust.
+      Extra CLI arguments APPENDED to the dispatched harness's claude_args in
+      .github/workflows/waffle-hygiene.yml — e.g. "--max-turns 40" or
+      "--model claude-sonnet-4-5" for cost control on the daily run. Empty by default. Unlike a
+      bare passthrough, these are folded onto the END of a baked-in default
+      `--allowedTools '…'` (which makes the headless run able to write docs, branch/commit/push,
+      open the PR, and run the pre-flight — see the setup note), so they EXTEND a working
+      allowlist rather than being the harness's only args. To widen the allowlist, append your
+      own `--allowedTools '<patterns>'` here: the Claude CLI takes `--allowedTools` as a
+      repeatable list and unions the occurrences, so yours adds to the default instead of
+      replacing it (`--max-turns`/`--model` are unaffected — the variadic stops at the next
+      flag). Rendered into a YAML block scalar, so it must not contain double quotes,
+      backslashes, newlines, or `${{` (enforced at render by the pattern above; single quotes
+      are allowed). Security-sensitive: an unvalidated passthrough to the harness CLI — flags
+      here can widen the harness's authority, so set only what you understand and trust.
   release.tagFormat:
     required: false
     default: "v{version}"

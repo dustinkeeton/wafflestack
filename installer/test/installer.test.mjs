@@ -1361,10 +1361,26 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/git-workflow/SKILL.md')), 'git-workflow skill pulled transitively');
     assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/issue/SKILL.md')), false, 'label-hook-only closure not pulled');
 
-    // (c) no leftover wafflestack placeholders; cron default substituted, claudeArgs empty
+    // (c) no leftover wafflestack placeholders; cron default substituted; claude_args carries
+    // the baked default --allowedTools that lets the headless harness actually write (the #71
+    // fix — an empty allowlist made CI auto-deny every gated Write/Edit/Bash call), with the
+    // empty hygiene.claudeArgs default folding to nothing after it.
     assert.doesNotMatch(wf, /\{\{\s*hygiene\./);
+    assert.doesNotMatch(wf, /\{\{\s*project\./);
     assert.match(wf, /- cron: '0 13 \* \* \*'/);
-    assert.match(wf, /claude_args: ""/);
+    const argsH1 = YAML.parse(wf).jobs.hygiene.steps.find((s) => s.with && 'claude_args' in s.with).with
+      .claude_args;
+    assert.match(argsH1, /^--allowedTools '/, `claude_args opens with the baked allowlist: ${argsH1}`);
+    for (const tool of ['Edit', 'Write', 'Bash(git:*)', 'Bash(gh pr:*)']) {
+      assert.ok(argsH1.includes(tool), `allowlist covers ${tool}`);
+    }
+    // pre-flight tools render from the project.* keys (defaults here), so the allowlist tracks
+    // exactly the commands the git-workflow pre-flight runs
+    for (const cmd of ['npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm test', 'npm run build']) {
+      assert.ok(argsH1.includes(`Bash(${cmd}:*)`), `allowlist covers pre-flight: ${cmd}`);
+    }
+    // empty hygiene.claudeArgs folds to nothing — the value ends at the allowlist's closing quote
+    assert.ok(argsH1.endsWith("'"), `no trailing junk when claudeArgs is empty: ${argsH1}`);
 
     // (d) GitHub Actions ${{ }} expressions pass through the renderer verbatim, including the
     // PAT-or-default token fallback that makes auto-merge able to fire.
@@ -1420,7 +1436,12 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     assert.equal(render().ok, true);
     const wf = read(cwd, REL);
     assert.match(wf, /- cron: '30 6 \* \* 1'/);
-    assert.match(wf, /claude_args: "--max-turns 40"/);
+    // claudeArgs is now APPENDED to the baked --allowedTools default (folded onto the end), not
+    // the sole args — so the override flows through AND the working allowlist survives.
+    const argsH3 = YAML.parse(wf).jobs.hygiene.steps.find((s) => s.with && 'claude_args' in s.with).with
+      .claude_args;
+    assert.match(argsH3, /^--allowedTools 'Edit,Write,Bash\(git:\*\)/, `baked allowlist still present: ${argsH3}`);
+    assert.ok(argsH3.endsWith('--max-turns 40'), `claudeArgs folded onto the end: ${argsH3}`);
 
     // hostile values fail the render, naming the offending key
     const rejects = (lines, key) => {
