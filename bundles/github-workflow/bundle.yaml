@@ -1,26 +1,36 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
-skills: [git-workflow, issue, github-project-management, clean-up, label-hook]
+skills: [git-workflow, issue, github-project-management, clean-up, label-hook, release]
 files:
   - .github/workflows/waffle-doctor.yml
   - .github/workflows/waffle-label-hook.yml
+  - .github/workflows/waffle-release-hook.yml
 # Syrup: sensitive files poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
-# setting, so it is opt-in — enabling this bundle does NOT render it. Install it explicitly
-# (`wafflestack install files/.github/workflows/waffle-label-hook.yml`) or keep an existing
+# setting; the release-hook workflow holds `contents: write` and pushes tags on merge. Both
+# have a footprint bigger than enabling the bundle should silently imply, so both are opt-in —
+# enabling this bundle does NOT render them. Install one explicitly
+# (`wafflestack install files/.github/workflows/waffle-release-hook.yml`) or keep an existing
 # install via its lock entry. The doctor workflow is read-only and stays a default render.
 syrup:
   - files/.github/workflows/waffle-label-hook.yml
+  - files/.github/workflows/waffle-release-hook.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
-# just the workflow renders the whole chain.
+# just the workflow renders the whole chain. The release-hook workflow is deterministic
+# (it does not invoke the skill), but installing it pulls the `release` skill so the full
+# label-a-bump-PR → tag-on-merge flow arrives together; the skill needs git-workflow.
 requires:
   skills/label-hook:
     - skills/issue
     - skills/git-workflow
   files/.github/workflows/waffle-label-hook.yml:
     - skills/label-hook
+  skills/release:
+    - skills/git-workflow
+  files/.github/workflows/waffle-release-hook.yml:
+    - skills/release
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
@@ -72,6 +82,31 @@ setup: |-
   `files/.github/workflows/waffle-label-hook.yml` entry from `include:` or
   `eject: [files/.github/workflows/waffle-label-hook.yml]` (the eject also releases the file
   as project-owned rather than deleting it).
+
+  **Release hook workflow (syrup — opt-in).** This bundle also carries
+  `.github/workflows/waffle-release-hook.yml`, also syrup: enabling the bundle does NOT render
+  it. It is the tag-on-merge half of the release flow and pairs with the `release` skill
+  (which opens a labeled `chore/bump-X.Y.Z` PR). When a PR carrying the label in
+  `labelHook.releaseLabel` (default `waffle:release`) is **merged**, the hook pushes the
+  lightweight tag from `release.tagFormat` (default `v{version}`, the `{version}` token
+  filled from the merged package.json) on the merge commit. Unlike the label hook it is
+  **deterministic — a plain `contents: write` Actions job, no Claude dispatch, no API spend**.
+  Pour it only on request: `wafflestack install files/.github/workflows/waffle-release-hook.yml`
+  renders and persists the ref; a repo already tracking the path keeps it on re-render. Once
+  installed, complete the opt-ins: (1) create the release label —
+    gh label create "waffle:release" --color 0E8A16 --description "Merging pushes the release tag (waffle-release-hook)"
+  (2) confirm Actions may write contents — Settings → Actions → General → Workflow permissions
+  must not be locked to read-only for pushing to succeed (the job requests `contents: write`
+  explicitly, which is honored unless the org/repo forbids it); check with
+  `gh api repos/{owner}/{repo}/actions/permissions/workflow`. Only humans with write access can
+  apply the label and merge, so unlike the Claude hook there is no bot-sender gate to worry
+  about — but keep branch protection on the default branch so releases still go through a PR.
+  Release PRs must originate from a branch in THIS repo: a fork PR runs with a read-only
+  `GITHUB_TOKEN`, so its tag push fails by design (the hook deliberately uses `pull_request`,
+  never the fork-with-secrets `pull_request_target`). Pushing the workflow file needs the
+  `workflow` credential scope. Eject/uninstall exactly like the label hook, swapping the
+  filename. Point `release.versionFiles` at any files (beyond package.json/lockfile) whose
+  version string the skill should sync.
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
@@ -215,6 +250,21 @@ config:
       contain quotes, newlines, or `${{` (enforced at render by the pattern above). GitHub
       evaluates the gate with `==`, which is case-insensitive; an empty value leaves the
       implement job inert (fail-closed).
+  labelHook.releaseLabel:
+    required: false
+    default: "waffle:release"
+    pattern: '^(?!.*\$\{\{)[^''"\r\n]*$'
+    description: >-
+      Trigger label for the deterministic release hook
+      (.github/workflows/waffle-release-hook.yml): a PR carrying this label that is **merged**
+      makes the hook push a lightweight tag `v<version>` on the merge commit, reading
+      <version> from the merged package.json. Rendered verbatim into the workflow's job gate
+      (inside a `contains(...)` over the PR's label names), so it must not contain quotes,
+      newlines, or `${{` — enforced at render by the pattern above. An empty value leaves the
+      job inert (`contains` never matches an empty string — fail-closed). Unlike the
+      enrich/implement labels this dispatches NO Claude harness and spends NO API budget; it is
+      a plain `contents: write` job. The `release` skill applies this label to the bump PR it
+      opens; the hook does the tag push on merge.
   labelHook.claudeArgs:
     required: false
     default: ""
@@ -229,3 +279,26 @@ config:
       would either silently corrupt an argument or break the YAML. Security-sensitive: this
       is an unvalidated passthrough to the harness CLI — flags here can widen the harness's
       authority, so set only what you understand and trust.
+  release.tagFormat:
+    required: false
+    default: "v{version}"
+    pattern: '^[A-Za-z0-9._/-]*\{version\}[A-Za-z0-9._/-]*$'
+    description: >-
+      Format for the release tag the `release` skill documents and the
+      .github/workflows/waffle-release-hook.yml job pushes. The literal token `{version}`
+      (single braces — NOT a wafflestack `{{...}}` placeholder) is replaced with the merged
+      package.json version at tag time, so the default `v{version}` yields `v0.8.0`. Rendered
+      into a single-quoted YAML env value and then used only via shell parameter expansion
+      (data, never eval'd), and the pattern restricts it to a tag-safe charset with exactly one
+      `{version}` token — no quotes, spaces, `$`, or shell metacharacters can reach the tag
+      name or push refspec.
+  release.versionFiles:
+    required: false
+    default: []
+    description: >-
+      Additional files whose embedded version string the `release` skill syncs on a bump,
+      beyond package.json + the lockfile (which `npm version` handles). A list of
+      repo-relative paths, e.g. a STATUS/README line that quotes the current version; point it
+      at your project's own version locations. Consumed by the skill (an agent edits each
+      file), not spliced into any workflow, so it needs no injection pattern. Empty by default:
+      no extra files to touch.

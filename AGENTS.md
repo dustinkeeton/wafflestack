@@ -30,14 +30,14 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 
 ## Bundle registry
 
-`toolkit.yaml` lists 7 bundles (13 agents + 17 skills; reorganized in #38 — `design`
+`toolkit.yaml` lists 7 bundles (13 agents + 18 skills; reorganized in #38 — `design`
 dissolved, roles consolidated, `security-audit` variants renamed). Per-bundle config schema,
 env, and setup notes live in each `bundle.yaml` (authoritative — this table summarizes).
 
 | Bundle | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
 | `docs-system` | `bundles/docs-system/` | docs-agent, docs-human | docs-agent, docs-human | Two-audience doc system; doc-set shapes (`docs.machineDocSet/Spec`, `docs.humanDocSet/Spec`) are config. |
-| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, clean-up, label-hook | Git / GitHub issue / Projects v2 workflow. Ships two prefab CI workflows as `files/` payloads (`waffle-doctor`; `waffle-label-hook` — the label→harness hook wired to `label-hook` via the toolkit's only `files/`-keyed `requires:`). Only bundle with a `setup:` block (gh auth, labels, board, git identity). |
+| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, clean-up, label-hook, release | Git / GitHub issue / Projects v2 / release workflow. Ships three prefab CI workflows as `files/` payloads: `waffle-doctor` (read-only, default render); `waffle-label-hook` (syrup — label→Claude-harness dispatch, wired to `label-hook`); `waffle-release-hook` (syrup — deterministic tag-on-merge, `contents: write`, no Claude/API, wired to `release`) — both hooks use `files/`-keyed `requires:`. The `release` skill opens a labeled `chore/bump-X.Y.Z` PR; the hook pushes `release.tagFormat` on merge. Config: `labelHook.{enrich,implement,release}Label`, `release.tagFormat`, `release.versionFiles`. Only bundle with a `setup:` block (gh auth, labels, board, git identity, release opt-ins). |
 | `code-quality` | `bundles/code-quality/` | (none) | tdd, codebase-architecture | Cross-cutting, stack-agnostic practice skills (test command, tiers, module map, settings type are config). |
 | `obsidian-dev` | `bundles/obsidian-dev/` | plugin-architect | obsidian-plugin-dev, electron-security-audit | Obsidian plugin development (API, manifest, esbuild, testing patterns) + the desktop-app security-audit variant; plugin-architect is the domain architect. |
 | `orchestration` | `bundles/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |

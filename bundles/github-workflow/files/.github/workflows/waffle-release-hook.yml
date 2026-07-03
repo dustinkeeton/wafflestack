@@ -1,0 +1,71 @@
+# Managed by wafflestack (github-workflow bundle) — do not edit by hand; re-render instead.
+# Release-label hook: when a pull request carrying the configured release label is MERGED,
+# push a lightweight tag `v<version>` on the merge commit, reading <version> from the merged
+# package.json. Deterministic — a plain Actions job with `contents: write`, NO Claude dispatch
+# and NO API spend (unlike the sibling waffle-label-hook). The label string never reaches a
+# shell or prompt; it lives only in the job gate, and render-time validation rejects
+# quotes/newlines/${{ in both the label and the tag-format config values.
+# Prerequisites (see the bundle setup note): the release label existing in the repo, Actions
+# allowed `contents: write`, and release PRs originating from a branch in THIS repo (a fork PR
+# gets a read-only token, so its tag push would fail — by design, not via pull_request_target).
+name: waffle-release-hook
+
+on:
+  pull_request:
+    types: [closed]
+
+# One run at a time per PR; never cancel an in-flight tag push.
+concurrency:
+  group: waffle-release-hook-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    # Fire only when the PR was actually MERGED (not merely closed) AND it carries the
+    # configured release label. `contains` over the label-name array never matches an empty
+    # string, so an empty labelHook.releaseLabel leaves this job inert (fail-closed).
+    if: >-
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, '{{labelHook.releaseLabel}}')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Least privilege: the only write this job performs is pushing a tag ref.
+    permissions:
+      contents: write
+    steps:
+      # Check out the actual post-merge commit on the base branch (NOT the ephemeral
+      # refs/pull/N/merge test-merge) so package.json reflects the merged state and the tag
+      # lands on the real merge commit.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+      - name: Tag the merge commit
+        env:
+          # Data, not code: every value reaches the shell only through the environment, and the
+          # render-time pattern already rejects quotes/newlines/${{. TAG_FORMAT's `{version}`
+          # token is replaced textually below; SHA is the merge commit to tag; all three
+          # (SHA, PR_NUMBER) are GitHub-generated, not attacker-controlled strings.
+          TAG_FORMAT: '{{release.tagFormat}}'
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          # Refuse anything that isn't strict semver — a crafted package.json version must not
+          # be able to smuggle a metacharacter into the tag name or push refspec.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)*$'; then
+            echo "::error::Refusing to tag: package.json version '$VERSION' is not valid semver"
+            exit 1
+          fi
+          TAG="${TAG_FORMAT//\{version\}/$VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin — nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Lightweight tag (no -a/-m) on the merge commit; no committer identity needed.
+          git tag "$TAG" "$SHA"
+          git push origin "refs/tags/$TAG"
+          echo "🧇 waffle-release-hook: pushed lightweight tag \`$TAG\` on merge commit \`$SHA\` (PR #$PR_NUMBER)." | tee -a "$GITHUB_STEP_SUMMARY"

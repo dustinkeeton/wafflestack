@@ -11,6 +11,11 @@ bundles:
   - github-workflow
   - docs-system
   - orchestration
+# The release-hook workflow is syrup (opt-in). We dogfood it here so a labeled bump PR gets
+# auto-tagged on merge — the one rendered CI workflow this repo commits (see .gitignore). The
+# read-only doctor and the Claude-dispatched label-hook workflows stay gitignored/uninstalled.
+include:
+  - files/.github/workflows/waffle-release-hook.yml
 config:
   project:
     name: wafflestack
@@ -18,6 +23,10 @@ config:
     testCmd: npm test
     typecheckCmd: npm run validate
     buildCmd: npm pack --dry-run
+  release:
+    # The `release` skill syncs the version line in these files (beyond package.json +
+    # lockfile) on a bump. STATUS.md carries a "**Version**: vX.Y.Z" header.
+    versionFiles: [STATUS.md]
   pm:
     # product-manager (orchestration bundle, #38 round 2) — product evolution for
     # the toolkit itself: bundle shapes, config-key surface, consumer ergonomics.

@@ -100,6 +100,32 @@ EOF
 - Push and PR without waiting for human approval — the user reviews in GitHub.
 - Closing keywords apply **per issue reference**: `Closes #1, #2` only closes #1. Write `Closes #1, closes #2` (one keyword per issue) — and after merge, verify the issues actually closed.
 
+## Releases
+
+A release is a **lightweight tag `vX.Y.Z` on the bump commit** — nothing more. The flow is
+PR-first, so it never violates *Main is protected*:
+
+1. **Bump via a PR.** On a `chore/bump-X.Y.Z` branch: `npm version X.Y.Z --no-git-tag-version`
+   (updates `package.json` + lockfile, no tag), sync any other documented version locations,
+   stamp `CHANGELOG.md` (`[Unreleased]` → `[X.Y.Z] - <date>`, leave a fresh empty
+   `[Unreleased]`), re-render if generated output tracks the version, run the pre-flight, then
+   open the PR — its body carries the consumer-impact notes.
+2. **Tag on merge.** The tag is pushed **after** the bump PR merges, as a lightweight tag on
+   the merge commit — so `vX.Y.Z` always points at the commit that actually carries that
+   version on `main`. Never tag the feature branch pre-merge, and never `git push origin main`
+   directly for a release.
+
+Two ways the tag gets pushed:
+
+- **Automated (preferred):** label the bump PR with the release label; the `waffle-release-hook`
+  workflow pushes `vX.Y.Z` on merge. The `release` skill does the whole bump-PR half (level
+  selection, bump, CHANGELOG stamp, pre-flight, PR, label) — use it rather than doing these
+  steps by hand.
+- **Manual fallback** (hook not installed): after the merge,
+  `git tag vX.Y.Z <merge-commit-sha> && git push origin vX.Y.Z`.
+
+Do **not** push a tag before the PR merges, and never as a substitute for the PR.
+
 ## Parallel Work (Worktrees + Teams)
 
 When multiple agents work in parallel on files that might conflict:

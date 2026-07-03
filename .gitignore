@@ -8,13 +8,18 @@ node_modules/
 .claude/worktrees/
 .codex/
 .agents/
-# The github-workflow bundle self-renders CI workflows here; keep them untracked —
+# The github-workflow bundle self-renders CI workflows here; keep most untracked —
 # committing the doctor workflow would add always-failing CI to this repo (the lock is
 # gitignored, so doctor would exit 1 on a missing lock), the label-hook workflow would
 # arm a live label→harness dispatch on this repo, and pushing either needs the `workflow`
 # credential scope. CI for this repo itself is a separate, deferred issue.
 .github/workflows/waffle-doctor.yml
 .github/workflows/waffle-label-hook.yml
+# Carve-out (#39): waffle-release-hook.yml is DELIBERATELY committed (NOT ignored) so a
+# labeled `chore/bump-X.Y.Z` PR gets its `vX.Y.Z` tag pushed on merge — dogfooding the
+# release automation. It is deterministic (`contents: write`, no lock/render dependency, no
+# Claude dispatch), so committing it adds no failing CI and no API spend; it stays inert until
+# a merged PR carries the `waffle:release` label.
 .waffle/waffle.lock.json
 .waffle/waffle.local.yaml
 
