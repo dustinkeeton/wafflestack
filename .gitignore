@@ -2,7 +2,7 @@ node_modules/
 .DS_Store
 
 # self-render output (`node installer/cli.mjs render`) — consuming projects commit
-# these; in the toolkit repo they are generated-only. See .waffle.yaml.
+# these; in the toolkit repo they are generated-only. See .waffle/waffle.yaml.
 .claude/agents/
 .claude/skills/
 .claude/worktrees/
@@ -15,8 +15,8 @@ node_modules/
 # credential scope. CI for this repo itself is a separate, deferred issue.
 .github/workflows/waffle-doctor.yml
 .github/workflows/waffle-label-hook.yml
-.waffle.lock.json
-.waffle.local.yaml
+.waffle/waffle.lock.json
+.waffle/waffle.local.yaml
 
 # Obsidian
 .obsidian/
