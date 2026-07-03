@@ -3,8 +3,8 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.6.0 (pre-1.0 — the file contract can still change between minor releases)
-- **Last updated**: 2026-07-02
+- **Version**: v0.7.0 (pre-1.0 — the file contract can still change between minor releases)
+- **Last updated**: 2026-07-03
 - **Health**: 🟢 tests 114/114 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
