@@ -19,9 +19,9 @@ were consolidated, and the colliding `security-audit` skills were renamed.)
 | `docs-system` | ✅ Shipped | Two-audience docs: machine (`AGENTS.md`) + human (these files) |
 | `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow + label→harness hook (only bundle with a `setup:` step) |
 | `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate, audit, docs |
-| `code-quality` | ✅ Shipped | Cross-cutting practice skills: TDD, codebase-architecture, electron-security-audit |
+| `code-quality` | ✅ Shipped | Cross-cutting, stack-agnostic practice skills: TDD, codebase-architecture |
 | `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-developer is the general architect) + webapp-security-audit |
-| `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + reference skill) |
+| `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + obsidian-plugin-dev + electron-security-audit) |
 | `expo-dev` | ✅ Shipped | Expo / React Native app development (mobile-architect + reference skills) |
 
 Totals: 13 agents and 17 skills across the 7 bundles.
@@ -58,12 +58,11 @@ refs just renders.
 - **Rendered output is gitignored in this repo** (unlike consuming projects).
   Always re-run `node installer/cli.mjs render` after editing anything under
   `bundles/**`, `schema/**`, or `installer/**`.
-- **Obsidian-plugin phrasing leaks in `code-quality`** (`tdd`,
-  `codebase-architecture`, `electron-security-audit` were authored in an
-  Obsidian repo) and in `engineering-team/agents/security-engineer` — content
-  fixes tracked as #38 follow-ups. (The former `security-audit` name collision
-  is resolved: the variants are now `electron-security-audit` and
-  `webapp-security-audit`.)
+- ~~Obsidian-plugin phrasing leaks / `security-audit` name collision~~ —
+  resolved in #38: the variants are renamed (`electron-security-audit`, now in
+  `obsidian-dev`; `webapp-security-audit`), and the `code-quality` skills plus
+  `security-engineer` were generalized (Obsidian-specific material relocated
+  into `obsidian-plugin-dev`).
 
 ## Dependencies
 

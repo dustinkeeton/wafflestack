@@ -140,11 +140,13 @@ config:
       docs-system bundle) — used in the docs and audit orchestrator prompts.
   audit.complianceAgentType:
     required: false
-    default: plugin-architect
+    default: lead-developer
     description: >-
       Agent (subagent_type) spawned for the project-specific compliance step in
-      the audit chain. The default preserves the original Obsidian-toolkit
-      behavior; set it to whichever specialist runs your compliance pass.
+      the audit chain. Defaults to the general architect (engineering-team's
+      lead-developer) for when no domain architect is available; projects with a
+      domain architect (e.g. plugin-architect, mobile-architect) should override
+      to it.
   audit.complianceLabel:
     required: true
     description: Short label for the project-specific compliance step in the audit chain (chain order + summary table).
