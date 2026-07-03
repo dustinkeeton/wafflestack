@@ -31,7 +31,7 @@ Report your findings (alongside the fixes you made) severity-ranked:
 
 If nothing is found in a category, omit it entirely. Do not pad.
 
-Be thorough but practical. Focus on real attack vectors relevant to an Obsidian plugin that:
+Be thorough but practical. Focus on real attack vectors relevant to {{project.longName}}, which:
 {{security.threatModel}}
 
 When the project renders a security-audit skill variant (`electron-security-audit` or `webapp-security-audit`), read it for the audit standards and checklist — it is not a hard requirement of this agent.
