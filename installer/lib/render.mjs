@@ -27,14 +27,15 @@ import {
  */
 export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false, log = () => {} }) {
   const warnings = [];
-  // Carry a legacy `.wafflestack.*` repo forward before reading anything: rename the
-  // consumer dot-paths to `.waffle.*` so config load and the frozen-image lock below see
-  // the current layout. A no-op on an already-migrated or fresh repo.
+  // Carry a legacy repo forward before reading anything: move the consumer dot-paths
+  // (root `.waffle.*`, or pre-0.6.0 `.wafflestack.*`) into `.waffle/` so config load and
+  // the frozen-image lock below see the current layout. A no-op on an already-migrated or
+  // fresh repo.
   for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
   const stale = staleGitignoreEntries(cwd);
   if (stale.length) {
     warnings.push(
-      `.gitignore still lists ${stale.join(', ')} — update to the .waffle.* names (the CLI does not edit .gitignore)`,
+      `.gitignore still lists ${stale.join(', ')} — update to the .waffle/ paths (the CLI does not edit .gitignore)`,
     );
   }
   const project = loadProjectConfig(cwd, warnings);

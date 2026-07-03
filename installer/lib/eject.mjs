@@ -1,11 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import { exists } from './util.mjs';
+import { exists, writeFileEnsuringDir } from './util.mjs';
 import { readLock } from './render.mjs';
 import { loadToolkit } from './toolkit.mjs';
 import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches } from './refs.mjs';
-import { CONFIG_FILE, LEGACY_CONFIG_FILE, LOCK_FILE, resolveConfigFile } from './project.mjs';
+import {
+  CONFIG_FILE,
+  LEGACY_ROOT_CONFIG_FILE,
+  LEGACY_CONFIG_FILE,
+  LOCK_FILE,
+  resolveConfigFile,
+} from './project.mjs';
 
 /**
  * Stop managing an item: add it to the config's `eject:` list (comment-preserving
@@ -65,7 +71,9 @@ export function eject({ cwd, item, log = () => {} }) {
         released.push(rel);
       }
     }
-    fs.writeFileSync(path.join(cwd, LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`);
+    // Always write to the current location (creating `.waffle/` when a legacy-layout repo
+    // has no dir yet) — a lock read via the legacy fallback migrates here as a side effect.
+    writeFileEnsuringDir(path.join(cwd, LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`);
   }
 
   return { ref, released };
@@ -73,7 +81,7 @@ export function eject({ cwd, item, log = () => {} }) {
 
 /**
  * Additive per-item/bundle install — the mirror of `eject`. Resolves each ref against
- * the toolkit, then does a comment-preserving YAML edit of `.waffle.yaml`: bundle
+ * the toolkit, then does a comment-preserving YAML edit of `.waffle/waffle.yaml`: bundle
  * refs append to `bundles:`, item refs (canonicalized, bundle-qualified only when the
  * name is ambiguous) append to `include:`. Persistence is required, not cosmetic — the
  * frozen-image contract would otherwise delete an ad-hoc install on the next render.
@@ -154,16 +162,19 @@ include: []
 config: {}
 #  git:
 #    botEmail: bot@example.com
-# Account-specific values belong in .waffle.local.yaml (gitignore it).
+# Account-specific values belong in .waffle/waffle.local.yaml (gitignore it).
 `;
 
 export function init({ cwd }) {
   const configFile = path.join(cwd, CONFIG_FILE);
   if (exists(configFile)) throw new Error(`${CONFIG_FILE} already exists`);
-  const legacyFile = path.join(cwd, LEGACY_CONFIG_FILE);
-  if (exists(legacyFile)) {
-    throw new Error(`${LEGACY_CONFIG_FILE} already exists — run \`wafflestack render\` to rename it to ${CONFIG_FILE}`);
+  // Refuse to scaffold a duplicate next to either legacy generation — a plain render
+  // moves those into place instead.
+  for (const legacyName of [LEGACY_ROOT_CONFIG_FILE, LEGACY_CONFIG_FILE]) {
+    if (exists(path.join(cwd, legacyName))) {
+      throw new Error(`${legacyName} already exists — run \`wafflestack render\` to move it to ${CONFIG_FILE}`);
+    }
   }
-  fs.writeFileSync(configFile, STARTER_CONFIG);
+  writeFileEnsuringDir(configFile, STARTER_CONFIG);
   return configFile;
 }

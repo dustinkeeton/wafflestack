@@ -36,6 +36,17 @@ export const MIGRATIONS = [
       migrateLegacyDotfiles(cwd);
     },
   },
+  {
+    version: '0.8.0',
+    description: 'move consumer config into .waffle/ (.waffle.yaml → .waffle/waffle.yaml, plus local overlay and lock)',
+    run(cwd) {
+      // Same shared helper as the 0.6.0 step and `render` — it chains every legacy
+      // generation forward in one pass (`.wafflestack.*` → `.waffle.*` → `.waffle/waffle.*`),
+      // so the 0.6.0 + 0.8.0 pair is idempotent in any combination and a pre-0.6.0 repo
+      // lands directly in the current layout.
+      migrateLegacyDotfiles(cwd);
+    },
+  },
 ];
 
 /**

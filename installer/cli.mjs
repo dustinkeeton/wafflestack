@@ -91,8 +91,9 @@ try {
       const file = init({ cwd });
       console.log(`wrote ${file} — pick bundles and config values, then run \`wafflestack render\``);
       console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
-      // Only `.waffle.local.yaml` is knowable at init (no bundles chosen yet); `install
-      // --gitignore` later adds the worktrees dir once a bundle that declares it is enabled.
+      // Only the local overlay (`.waffle/waffle.local.yaml`) is knowable at init (no bundles
+      // chosen yet); `install --gitignore` later adds the worktrees dir once a bundle that
+      // declares it is enabled.
       if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE]));
       break;
     }
