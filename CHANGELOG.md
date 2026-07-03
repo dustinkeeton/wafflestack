@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-03
+
 ### Consumer impact
 - **Additive, opt-in — a new scheduled repo-hygiene workflow (`github-workflow`).** A new
   syrup item `.github/workflows/waffle-hygiene.yml` (+ a `hygiene` skill) runs the `docs`
@@ -199,8 +201,6 @@ is what you reach for across a breaking one.
   silent-specialist caveat), then printed as one compact digest in roster order with
   truncation. Zero side effects — no team, no tasks, no board writes. Wired into
   `bundles/orchestration/bundle.yaml`'s `skills:` list; no new config keys. (#56)
-
-### Added
 - `lead.adrDir` config key (engineering-team bundle, `required: false`, default `docs/adr/`):
   the directory where the lead-engineer agent files architecture decision records. Replaces the
   two hardcoded `docs/adr/` literals in `agents/lead-engineer.md` with `{{lead.adrDir}}`,
