@@ -40,6 +40,17 @@ is what you reach for across a breaking one.
   `--allowedTools` covering the full hygiene → docs → git-workflow chain, with
   `hygiene.claudeArgs` folded on the end for your extras. **Re-render to pick it up** — no config
   key changes and no migration; a repo that never installed the syrup hook is unaffected. (#71)
+- **Bug fix, content-only — the opt-in `waffle-label-hook` jobs can finally do their work
+  (`github-workflow`).** Same defect as #71 in the label hook: both the `enrich` and `implement`
+  jobs dispatched the CI harness with an empty `claude_args`, so the headless run began with no
+  `--allowedTools` and CI auto-denied every gated `Write`/`Edit`/`Bash` call — enrich could not run
+  its `gh issue`/board mutations and implement could not branch, commit, push, or open a PR, so
+  every human-applied trigger label billed for a no-op. Each job now bakes a per-job default
+  `--allowedTools` (enrich: `gh issue` + `gh api` board calls only, no file edits or git;
+  implement: the full `Edit`/`Write` + git + `gh pr` + `gh issue` chain plus the git-workflow
+  pre-flight), with `labelHook.claudeArgs` folded on the end for your extras. **Re-render to pick
+  it up** — no config key changes and no migration; a repo that never installed the syrup hook is
+  unaffected. (#72)
 
 ### Fixed
 - **`waffle-hygiene.yml` denied every write, so the daily hook was a paid no-op** (#71,
@@ -56,6 +67,21 @@ is what you reach for across a breaking one.
   configured. The `hygiene.claudeArgs` description and the hygiene setup note now document the
   default allowlist and how to extend it. The identical latent bug in `waffle-label-hook.yml` is
   tracked separately in #72. (#71)
+- **`waffle-label-hook.yml` denied every write in both jobs, so each dispatch was a paid no-op**
+  (#72, `github-workflow`). The template rendered `claude_args: "{{labelHook.claudeArgs}}"` in the
+  `enrich` and `implement` jobs and the config default is `""`, leaving the headless harness with
+  no allowlist — which in CI auto-denies all gated tool calls (the sibling hygiene run logged 28
+  permission denials and produced nothing). Both jobs now render `claude_args` as a `>-` block
+  scalar carrying a per-job baked default `--allowedTools`, with `{{labelHook.claudeArgs}}` folded
+  onto the end (the Claude CLI unions repeated `--allowedTools`, so consumer extras extend the
+  default rather than replace it). The two jobs get distinct defaults matched to their least
+  privilege: `enrich` (holds `issues: write`) gets the narrow read-mostly set
+  `Bash(gh issue:*),Bash(gh api:*)` — no `Edit`/`Write`, no git; `implement` mirrors the hygiene
+  chain plus `Bash(gh issue:*)` for the PR-link comment, its pre-flight patterns rendering from
+  `project.lintCmd` / `project.typecheckCmd` / `project.testCmd` / `project.buildCmd` — the same
+  keys the `git-workflow` pre-flight executes. The `labelHook.claudeArgs` description and the
+  label-hook setup note now document the per-job defaults and how to extend them. Live hook
+  verification (labeling a test issue) is deferred to a follow-up, per the issue. (#72)
 
 ## [0.9.0] - 2026-07-03
 

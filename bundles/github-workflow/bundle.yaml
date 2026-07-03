@@ -70,7 +70,30 @@ setup: |-
   applying the label in `labelHook.enrichLabel` (default `waffle:enrich`) to an issue
   dispatches the Claude Code GitHub Action to enrich it in place; the label in
   `labelHook.implementLabel` (default `waffle:implement`) dispatches an implement run that
-  ends in a PR. Every dispatch calls the Anthropic API — **it spends real money** — so the
+  ends in a PR.
+  **What the harness may do (baked-in per-job allowlist).** Each job's `claude_args` ships a
+  default `--allowedTools` so the dispatched harness can actually complete its work. In CI there
+  is no human to answer permission prompts, so a gated tool call outside the allowlist is
+  auto-denied — with no allowlist at all the harness changes nothing, opens no PR, and bills you
+  for a no-op. The two jobs carry DIFFERENT defaults matched to their scope. **enrich** authorizes
+  only the issue and project-board calls it needs to re-draft the issue in place — `Bash(gh
+  issue:*)` for the title/body/label edits and `Bash(gh api:*)` for the GraphQL board plus
+  milestone calls — with no file edits and no git. **implement** additionally authorizes the full
+  delivery chain: edit the code (`Edit`/`Write`), branch/stage/commit/push (`Bash(git:*)`), open
+  the PR (`Bash(gh pr:*)`), comment the PR link on the issue (`Bash(gh issue:*)`), and the
+  `git-workflow` pre-flight. Those pre-flight commands are project-specific, so the workflow
+  renders your `project.lintCmd` / `project.typecheckCmd` / `project.testCmd` / `project.buildCmd`
+  straight into the implement allowlist — the very keys that skill runs as its pre-flight — so
+  change a pre-flight command, re-render, and the allowlist follows (no separate allowlist edit).
+  To authorize a tool a default does not cover, append your own `--allowedTools '<patterns>'` via
+  `labelHook.claudeArgs`; the Claude CLI unions repeated `--allowedTools`, so yours extends the
+  default rather than replacing it (the same value folds onto BOTH jobs, so scope it for the wider
+  one). If the allowlist is missing something a run needs, the harness quietly denies those calls
+  (they surface as `permission_denials` in the run's result) and the run half-finishes or no-ops —
+  so keep it in step with what the skills actually do. Keep any `Bash()` you add narrow: the
+  implement job holds `contents`/`issues`/`pull-requests` write, and branch protection (below) —
+  not allowlist granularity — is the real backstop against a prompt-injected push.
+  Every dispatch calls the Anthropic API — **it spends real money** — so the
   hook stays inert until you complete the opt-ins: (1) create the trigger labels, e.g.
     gh label create "waffle:enrich"    --color 5319E7 --description "Dispatch the CI harness to enrich this issue"
     gh label create "waffle:implement" --color 1D76DB --description "Dispatch the CI harness to implement this issue and open a PR"
@@ -342,15 +365,21 @@ config:
     default: ""
     pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
     description: >-
-      Extra CLI arguments passed to the dispatched harness via the Claude Code
-      action's claude_args input in .github/workflows/waffle-label-hook.yml — e.g.
-      "--max-turns 30" or "--model claude-sonnet-4-5" for cost control. Empty by
-      default. Rendered into a double-quoted YAML scalar, so it must not contain double
-      quotes, backslashes, newlines, or `${{` (enforced at render by the pattern above;
-      single quotes are allowed). In that scalar every backslash starts an escape, so one
-      would either silently corrupt an argument or break the YAML. Security-sensitive: this
-      is an unvalidated passthrough to the harness CLI — flags here can widen the harness's
-      authority, so set only what you understand and trust.
+      Extra CLI arguments APPENDED to the dispatched harness's claude_args in BOTH jobs of
+      .github/workflows/waffle-label-hook.yml — e.g. "--max-turns 30" or
+      "--model claude-sonnet-4-5" for cost control. Empty by default. Unlike a bare passthrough,
+      these are folded onto the END of each job's baked-in default `--allowedTools '…'` (enrich
+      and implement carry DIFFERENT defaults — enrich does gh issue/board calls only, implement
+      adds Edit/Write + git + gh pr; see the setup note), so they EXTEND a working allowlist
+      rather than being the harness's only args. The SAME value folds onto both jobs. To widen a
+      job's allowlist, append your own `--allowedTools '<patterns>'` here: the Claude CLI takes
+      `--allowedTools` as a repeatable list and unions the occurrences, so yours adds to the
+      default instead of replacing it (`--max-turns`/`--model` are unaffected — the variadic stops
+      at the next flag; note the value reaches both jobs). Rendered into a YAML block scalar, so it
+      must not contain double quotes, backslashes, newlines, or `${{` (enforced at render by the
+      pattern above; single quotes are allowed). Security-sensitive: an unvalidated passthrough to
+      the harness CLI — flags here can widen the harness's authority, so set only what you
+      understand and trust.
   hygiene.cron:
     required: false
     default: "0 13 * * *"
