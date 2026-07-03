@@ -1,15 +1,29 @@
 name: engineering-team
 description: >-
-  Delivery-specialist agent roster — data-engineer, qa-engineer, and
-  devops-engineer. Agents are stack-agnostic skeletons; the data brief, test
-  pyramid, and CI baseline are project config. Pairs with the github-workflow
-  bundle (git-workflow and github-project-management skills are referenced
-  throughout) and slots into the orchestration bundle's roster.
-agents: [data-engineer, qa-engineer, devops-engineer]
+  Product-engineering specialist roster — lead-developer (the general
+  architect / tech lead), data-engineer, qa-engineer, devops-engineer,
+  ux-designer, and a remediating security-engineer, plus a browser-app
+  webapp-security-audit skill. Agents are stack-agnostic skeletons; the stack,
+  structure, pyramid, and briefs are project config. Pairs with the
+  github-workflow bundle (git-workflow/issue/github-project-management skills
+  are referenced throughout) and slots into the orchestration bundle's roster.
+agents:
+  [
+    lead-developer,
+    data-engineer,
+    qa-engineer,
+    devops-engineer,
+    ux-designer,
+    security-engineer,
+  ]
+skills: [webapp-security-audit]
 config:
   project.name:
     required: true
     description: Bare project name, e.g. "Plotto".
+  project.longName:
+    required: true
+    description: Full prose project descriptor, e.g. "the Plotto lottery-analysis app".
   project.lintCmd:
     required: false
     default: npm run lint --if-present
@@ -25,11 +39,27 @@ config:
   project.buildCmd:
     required: false
     default: npm run build
-    description: Production build command (pre-flight guidance).
+    description: Production build command (pre-flight guidance and bundle-output secret scan).
+  project.lockfile:
+    required: false
+    default: package-lock.json
+    description: Committed lockfile name (e.g. pnpm-lock.yaml) checked against package.json drift.
   planner.productDocsDir:
     required: false
     default: docs/product/
     description: Directory where user stories / product briefs live (read by qa-engineer).
+  lead.stack:
+    required: true
+    description: Verbatim body of the lead-developer "Stack (locked)" section — the project's approved technology list.
+  lead.structure:
+    required: true
+    description: Verbatim body of the lead-developer "Structure" section — module layout and boundary rules.
+  lead.delegation:
+    required: true
+    description: >-
+      Verbatim sentence(s) completing the lead-developer "Delegate." principle —
+      which specialist gets which kind of work, e.g. "UX work to `ux-designer`,
+      tests to `qa-engineer`, …. Use the `Agent` tool to invoke them."
   data.brief:
     required: true
     description: >-
@@ -48,3 +78,27 @@ config:
   devops.dependencies:
     required: true
     description: Verbatim body of the devops-engineer "Dependencies" section — package manager, update automation, and major-version policy.
+  ux.guidelines:
+    required: true
+    description: >-
+      Verbatim block dropped into the ux-designer agent: the project's design
+      system (palette, typography, density, motion) and any chart/component
+      standards. Markdown sections welcome.
+  security.agentGitignore:
+    required: true
+    description: Plain (non-code-formatted) list of sensitive paths for the security-engineer's gitignore check, e.g. ".env, data.json, .synapse/, node_modules/".
+  security.threatModel:
+    required: true
+    description: Verbatim bullet list of the project's real attack surface (external APIs, external processes, file access, secret storage).
+  sec.threatModelIntro:
+    required: true
+    description: >-
+      Verbatim intro paragraph of the webapp-security-audit skill describing the
+      app's actual threat surface (what exists, what doesn't — server, auth, PII).
+  sec.dataSource:
+    required: true
+    description: The untrusted external data source named in validation guidance, e.g. "calottery.com".
+  sec.auditCmd:
+    required: false
+    default: npm audit --omit=dev
+    description: Production-dependency audit command, e.g. "pnpm audit --prod".

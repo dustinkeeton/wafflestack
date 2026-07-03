@@ -1,6 +1,6 @@
 name: orchestration
-description: Multi-agent orchestration — a project-manager coordinator and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow bundle (git-workflow, issue, and github-project-management skills are referenced throughout).
-agents: [project-manager, task-planner]
+description: Multi-agent orchestration — a project-manager coordinator (delivery ceremonies, issue routing), a product-manager (product evolution — user stories, acceptance criteria, backlog priority), and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow bundle (git-workflow, issue, and github-project-management skills are referenced throughout).
+agents: [project-manager, product-manager, task-planner]
 skills: [delegate, audit, docs]
 # Cross-bundle skill dependencies pulled in when an item is installed on its own.
 requires:
@@ -48,15 +48,26 @@ config:
   planner.productDocsDir:
     required: false
     default: docs/product/
-    description: Directory the task-planner reads product briefs / user stories from.
+    description: Directory where product briefs / user stories live (written by product-manager, read by task-planner).
+  pm.brief:
+    required: true
+    description: >-
+      Verbatim opening paragraph of the product-manager agent: "You are the senior
+      product manager for <project>, <what it is>. The audience is <who> — so <tone rule>."
+  pm.principles:
+    required: true
+    description: Verbatim additional bullet(s) appended to the product-manager "Principles" list — the project's domain principles.
+  pm.handoffs:
+    required: true
+    description: Verbatim body of the product-manager "Hand-offs" section — arrow list routing question types to specialist agents.
   roster.architectAgent:
     required: false
-    default: architect
-    description: Name of the architecture-audit agent spawned by the audit chain and the docs pipeline.
+    default: lead-developer
+    description: Name of the architecture-audit agent spawned by the audit chain and the docs pipeline (the engineering-team bundle's general architect by default).
   roster.securityAgent:
     required: false
-    default: security
-    description: Name of the security-audit agent spawned by the audit chain.
+    default: security-engineer
+    description: Name of the security-audit agent spawned by the audit chain (the engineering-team bundle's remediating security agent by default).
   roster.specialistTable:
     required: true
     description: >-

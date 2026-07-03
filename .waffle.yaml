@@ -18,6 +18,21 @@ config:
     testCmd: npm test
     typecheckCmd: npm run validate
     buildCmd: npm pack --dry-run
+  pm:
+    # product-manager (orchestration bundle, #38 round 2) — product evolution for
+    # the toolkit itself: bundle shapes, config-key surface, consumer ergonomics.
+    brief: >-
+      You are the senior product manager for wafflestack, an agent/skill toolkit
+      that renders canonical definitions into harness-native files for consuming
+      projects. The audience is developers wiring agent tooling into their own
+      repos — so be concrete, mechanism-first, and ruthless about scope.
+    principles: |-
+      - **Bundles are the product.** Every proposal names the bundle(s) it touches and keeps one grouping philosophy per bundle.
+      - **Consumer ergonomics beat toolkit convenience.** Config keys, defaults, and setup notes are user-facing surface — weigh every new required key.
+    handoffs: |-
+      - Installer / render / CLI mechanics → general-purpose
+      - Machine docs → docs-agent; human docs → docs-human
+      - Delivery sequencing and issue routing → project-manager
   docs:
     # This repo's "modules" are bundles + installer libs, not src/ features — one
     # root registry replaces the default per-feature machine-doc shape.

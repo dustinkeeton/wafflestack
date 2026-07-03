@@ -1,5 +1,6 @@
 name: obsidian-dev
-description: Obsidian plugin development — a reference skill covering API patterns, manifest configuration, settings, and the esbuild pipeline.
+description: Obsidian plugin development — a plugin-architect domain agent plus a reference skill covering API patterns, manifest configuration, settings, and the esbuild pipeline.
+agents: [plugin-architect]
 skills: [obsidian-plugin-dev]
 config:
   plugin.id:
