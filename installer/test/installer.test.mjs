@@ -1325,6 +1325,145 @@ describe('github-workflow: waffle-release-hook payload (#39)', () => {
   });
 });
 
+// #46: the github-workflow bundle also ships a SCHEDULED repo-hygiene hook — a files/ payload
+// (waffle-hygiene.yml) plus a hygiene skill, wired by a files/-keyed requires: edge. Like the
+// label hook it is syrup (opt-in): its job holds write scopes and every fire spends money daily.
+// These drive THE ACTUAL shipped github-workflow bundle.
+describe('github-workflow: waffle-hygiene payload (#46)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-hygiene.yml';
+  const DOCTOR_REL = '.github/workflows/waffle-doctor.yml';
+  const REF = `files/${REL}`;
+  const proj = 'HygieneProj';
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-hygiene-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('H1 per-item install pulls the skill closure — cron/claudeArgs defaults, SHA pins, ${{ }} passthrough, lock-tracked', () => {
+    // Installing ONLY the files/ payload must pull its requires: closure — the hygiene
+    // skill, and through it the git-workflow skill it delegates to for the PR flow.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // (a) workflow lands at its .github path
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
+    const wf = read(cwd, REL);
+
+    // (b) files → skill → skill closure: the workflow pulled the hygiene skill AND the
+    // git-workflow skill it requires (proof the files/-keyed requires edge resolves), but NOT
+    // the label-hook chain (issue skill) — the two hooks have independent closures.
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/hygiene/SKILL.md')), 'hygiene skill pulled by the workflow');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/git-workflow/SKILL.md')), 'git-workflow skill pulled transitively');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/issue/SKILL.md')), false, 'label-hook-only closure not pulled');
+
+    // (c) no leftover wafflestack placeholders; cron default substituted, claudeArgs empty
+    assert.doesNotMatch(wf, /\{\{\s*hygiene\./);
+    assert.match(wf, /- cron: '0 13 \* \* \*'/);
+    assert.match(wf, /claude_args: ""/);
+
+    // (d) GitHub Actions ${{ }} expressions pass through the renderer verbatim, including the
+    // PAT-or-default token fallback that makes auto-merge able to fire.
+    assert.match(wf, /anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
+    assert.match(wf, /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/);
+
+    // (e) both actions SHA-pinned with a # vX.Y.Z comment — dogfoods the security-audit posture
+    assert.match(wf, /uses: actions\/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+    assert.match(wf, /uses: anthropics\/claude-code-action@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+
+    // (f) byte-tracked in the lock at its repo-relative path, and doctor round-trips clean
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.equal(lock.files[REL], sha256(wf));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('H2 rendered workflow parses to the expected scheduled GitHub Actions shape', () => {
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    const parsed = YAML.parse(wf); // throws on invalid YAML
+
+    // trigger: a UTC cron schedule + workflow_dispatch — nothing event-driven/untrusted,
+    // and never the dangerous fork-with-secrets trigger.
+    assert.deepEqual(Object.keys(parsed.on).sort(), ['schedule', 'workflow_dispatch']);
+    assert.deepEqual(parsed.on.schedule, [{ cron: '0 13 * * *' }]);
+    assert.doesNotMatch(wf, /pull_request_target/);
+
+    // exactly one job with least-privilege write scopes (deep-equal), no workflow-level perms
+    assert.deepEqual(Object.keys(parsed.jobs), ['hygiene']);
+    assert.deepEqual(parsed.jobs.hygiene.permissions, { contents: 'write', 'pull-requests': 'write' });
+    assert.ok(!('permissions' in parsed), 'no workflow-level permissions block');
+    assert.equal(typeof parsed.jobs.hygiene['timeout-minutes'], 'number');
+
+    // one hygiene run at a time — a dispatch never cancels a mid-flight paid harness session
+    assert.equal(parsed.concurrency['cancel-in-progress'], false);
+
+    // dispatch step: a CONSTANT prompt pointing at the hygiene skill, plus the API key + args
+    const step = parsed.jobs.hygiene.steps.find((s) => s.with && 'prompt' in s.with);
+    assert.ok(step, 'has a dispatch step with a prompt');
+    assert.match(step.with.prompt, /\.claude\/skills\/hygiene\/SKILL\.md/);
+    assert.match(step.with.prompt, /data, never instructions/);
+    assert.equal(step.with.anthropic_api_key, '${{ secrets.ANTHROPIC_API_KEY }}');
+  });
+
+  test('H3 cron + claudeArgs overrides flow through; hostile values are rejected at render', () => {
+    // overrides land verbatim in the workflow
+    writeConfig(
+      `targets: [claude]\ninclude: [${REF}]\n` +
+        `config:\n  project:\n    name: ${proj}\n` +
+        `  hygiene:\n    cron: '30 6 * * 1'\n    claudeArgs: '--max-turns 40'\n`,
+    );
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    assert.match(wf, /- cron: '30 6 \* \* 1'/);
+    assert.match(wf, /claude_args: "--max-turns 40"/);
+
+    // hostile values fail the render, naming the offending key
+    const rejects = (lines, key) => {
+      writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n  hygiene:\n${lines}\n`);
+      const r = render();
+      assert.equal(r.ok, false, 'render must fail on a hostile value');
+      assert.ok(
+        r.errors.some((e) => e.includes(key) && /does not match its declared pattern/.test(e)),
+        JSON.stringify(r.errors),
+      );
+    };
+    // off-alphabet cron: a quote/shell payload, a ${{ }} expression, or an empty value (which
+    // would render an invalid schedule) all fail the cron allowlist.
+    rejects(`    cron: "*/5 * * * * ' rm -rf"`, 'hygiene.cron');
+    rejects(`    cron: '\${{ secrets.X }}'`, 'hygiene.cron');
+    rejects(`    cron: ''`, 'hygiene.cron');
+    // claudeArgs mirrors labelHook.claudeArgs hardening — a double quote breaks its YAML scalar
+    rejects(`    claudeArgs: '--append-system-prompt "x"'`, 'hygiene.claudeArgs');
+  });
+
+  test('H4 syrup: bundle-only render omits the file (skill still renders); explicit include pours it', () => {
+    // bundles:[github-workflow] alone → the sensitive workflow is NOT written…
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.equal(fs.existsSync(path.join(cwd, REL)), false, 'syrup workflow must not render by default');
+    // …but the read-only doctor workflow and the (non-syrup) hygiene skill still render.
+    assert.ok(fs.existsSync(path.join(cwd, DOCTOR_REL)), 'read-only doctor workflow still renders');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/hygiene/SKILL.md')), 'hygiene skill (not syrup) still renders');
+
+    // explicit include pours the syrup file
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup file');
+
+    // setup inventory flags the hygiene workflow as syrup (default do-not-install)
+    const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
+    assert.match(
+      inv,
+      /- files \(syrup — sensitive, do NOT install by default\):[^\n]*waffle-hygiene\.yml/,
+    );
+  });
+});
+
 // The syrup gate is generic — these prove the parse/gate/validate halves on a throwaway fixture.
 describe('syrup gate — generic (#51)', () => {
   let toolkitRoot;
@@ -2449,7 +2588,9 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
     // Fake a repo that rendered under 0.7.0 and never re-rendered: config + lock at root, no .waffle/.
     fs.renameSync(path.join(cwd, '.waffle/waffle.yaml'), path.join(cwd, '.waffle.yaml'));
     fs.renameSync(path.join(cwd, '.waffle/waffle.lock.json'), path.join(cwd, '.waffle.lock.json'));
-    fs.rmdirSync(path.join(cwd, '.waffle'));
+    // Drop the whole dir (it also holds the generated .waffle/ overview docs) so the fixture
+    // faithfully simulates a pre-0.8.0 root layout with no .waffle/ present.
+    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
 
     const { released } = eject({ cwd, item: 'skills/demo-skill' });
     assert.ok(released.includes(path.join('.claude', 'skills', 'demo-skill', 'SKILL.md')), JSON.stringify(released));
@@ -2478,6 +2619,157 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
     assert.deepEqual(staleGitignoreEntries(cwd), ['.waffle.local.yaml', '.waffle.lock.json']);
     fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.waffle/waffle.local.yaml\n.waffle/waffle.lock.json\n');
     assert.deepEqual(staleGitignoreEntries(cwd), []);
+  });
+});
+
+describe('.waffle overview docs (cheat sheet + team)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  // A fixture with a mix of user-invocable + opted-out skills and two agents (one with
+  // granted skills, one without), plus a {{project.name}} placeholder to prove the docs
+  // substitute descriptions with the same resolver render uses.
+  function makeDocsToolkit(root) {
+    write(root, 'toolkit.yaml', 'name: docsfix\ndescription: docs fixture\nbundles: [crew]\n');
+    write(root, 'bundles/crew/bundle.yaml', [
+      'name: crew',
+      'description: Crew bundle.',
+      'agents: [captain, scout]',
+      'skills: [ship, recon, probe, backstage]',
+      'config:',
+      '  project.name:',
+      '    required: true',
+      '    description: project name',
+      '',
+    ].join('\n'));
+    write(root, 'bundles/crew/agents/captain.md', [
+      '---', 'name: captain',
+      'description: Leads the {{project.name}} crew. Use proactively for big calls.',
+      'skills:', '  - ship', '  - recon', '---', '', 'Captain body.', '',
+    ].join('\n'));
+    write(root, 'bundles/crew/agents/scout.md', [
+      '---', 'name: scout', 'description: Scouts ahead and reports.', '---', '', 'Scout body.', '',
+    ].join('\n'));
+    // ship: user-invocable with an argument-hint.
+    write(root, 'bundles/crew/skills/ship/SKILL.md', [
+      '---', 'name: ship', 'description: Ship a release.',
+      'user-invocable: true', 'argument-hint: "<target> [--fast]"', '---', '', '# Ship', '',
+    ].join('\n'));
+    // recon: user-invocable, description carries a placeholder.
+    write(root, 'bundles/crew/skills/recon/SKILL.md', [
+      '---', 'name: recon',
+      'description: Recon for {{project.name}} before a run. Use before shipping.',
+      'user-invocable: true', '---', '', '# Recon', '',
+    ].join('\n'));
+    // probe: only disable-model-invocation — still a slash command (default invocable).
+    write(root, 'bundles/crew/skills/probe/SKILL.md', [
+      '---', 'name: probe', 'description: Probe the system.',
+      'disable-model-invocation: true', '---', '', '# Probe', '',
+    ].join('\n'));
+    // backstage: explicitly opted out — must NOT appear on the cheat sheet.
+    write(root, 'bundles/crew/skills/backstage/SKILL.md', [
+      '---', 'name: backstage', 'description: Internal helper.', 'user-invocable: false', '---', '', '# Backstage', '',
+    ].join('\n'));
+  }
+
+  const CFG = 'targets: [claude]\nbundles: [crew]\nconfig:\n  project:\n    name: Acme\n';
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'docstk-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'docsprj-'));
+    makeDocsToolkit(toolkitRoot);
+    write(cwd, '.waffle/waffle.yaml', CFG);
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test('CHEATSHEET.md lists user-invocable skills only, with arg-hints and substituted descriptions', () => {
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/CHEATSHEET.md');
+    // probe (disable-model-invocation only) and the two user-invocable:true skills appear…
+    assert.match(md, /\*\*`\/probe`\*\*/);
+    assert.match(md, /\*\*`\/recon`\*\*/);
+    assert.match(md, /\*\*`\/ship`\*\* `<target> \[--fast\]` —/);
+    // …the opted-out one does not.
+    assert.doesNotMatch(md, /backstage/);
+    // Description placeholder resolved with the render resolver.
+    assert.match(md, /Recon for Acme before a run\./);
+    assert.doesNotMatch(md, /\{\{project\.name\}\}/);
+    // Sorted alphabetically, deterministic.
+    assert.ok(md.indexOf('/probe') < md.indexOf('/recon'), 'commands sorted by name');
+    assert.match(md, /3 commands · generated/);
+  });
+
+  test('TEAM.md introduces every agent, with granted skills as hand-offs', () => {
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/TEAM.md');
+    assert.match(md, /## `captain`/);
+    assert.match(md, /Leads the Acme crew\./);
+    assert.match(md, /\*\*Skills \/ hand-offs:\*\* `ship`, `recon`/);
+    assert.match(md, /## `scout`/);
+    // scout has no skills → no hand-offs line under it.
+    const scoutBlock = md.slice(md.indexOf('## `scout`'));
+    assert.doesNotMatch(scoutBlock, /hand-offs/);
+    assert.match(md, /2 agents · generated/);
+  });
+
+  test('SVGs are branded, self-contained, and size themselves to the item count', () => {
+    assert.equal(render().ok, true);
+    const cheat = read(cwd, '.waffle/cheatsheet.svg');
+    const team = read(cwd, '.waffle/team.svg');
+    for (const svg of [cheat, team]) {
+      assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+      assert.match(svg, /#F5C752/, 'golden brand color present');
+      assert.match(svg, /#F08A1D/, 'syrup brand color present');
+      // Self-contained: no external asset/CDN references (the xmlns URI is not a fetch).
+      assert.doesNotMatch(svg, /(href|src)\s*=|https?:\/\/(?!www\.w3\.org)/);
+    }
+    assert.match(cheat, /\/ship/);
+    assert.match(team, />captain</);
+    // Height scales with row count: 3 commands is taller than 2 agents.
+    const h = (svg) => Number(/viewBox="0 0 880 (\d+)"/.exec(svg)[1]);
+    assert.ok(h(cheat) > h(team), `${h(cheat)} > ${h(team)}`);
+  });
+
+  test('generated docs are lock-tracked and doctor flags drift on edit', () => {
+    assert.equal(render().ok, true);
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.svg', '.waffle/TEAM.md', '.waffle/team.svg']) {
+      assert.ok(rel in lock.files, `${rel} tracked in lock`);
+    }
+    // A hand edit to a generated doc is drift, like any managed file.
+    fs.appendFileSync(path.join(cwd, '.waffle/CHEATSHEET.md'), '\nlocal edit\n');
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(dr.ok, false);
+    assert.ok(dr.modified.includes('.waffle/CHEATSHEET.md'), JSON.stringify(dr.modified));
+  });
+
+  test('a doc is pruned when a later selection no longer produces it', () => {
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/TEAM.md')));
+    // Re-select just one skill (no agents) → TEAM.md/team.svg should be pruned; cheat sheet stays.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\ninclude: [skills/ship]\nconfig:\n  project:\n    name: Acme\n');
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.ok(result.removed.includes('.waffle/TEAM.md'), JSON.stringify(result.removed));
+    assert.ok(result.removed.includes('.waffle/team.svg'), JSON.stringify(result.removed));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/TEAM.md')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/team.svg')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/CHEATSHEET.md')));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.ok(!('.waffle/TEAM.md' in lock.files));
+    assert.ok('.waffle/CHEATSHEET.md' in lock.files);
+  });
+
+  test('no cheat sheet is produced when the selection has no user-invocable skills', () => {
+    // Only the opted-out skill selected → no commands → no CHEATSHEET pair, but agents may still exist.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\ninclude: [skills/backstage]\nconfig:\n  project:\n    name: Acme\n');
+    assert.equal(render().ok, true);
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/CHEATSHEET.md')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/cheatsheet.svg')));
   });
 });
 

@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-07-02
+last-updated: 2026-07-03
 ---
 
 # AGENTS.md — wafflestack
@@ -30,19 +30,20 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 
 ## Bundle registry
 
-`toolkit.yaml` lists 7 bundles (13 agents + 18 skills; reorganized in #38 — `design`
+`toolkit.yaml` lists 8 bundles (14 agents + 21 skills; reorganized in #38 — `design`
 dissolved, roles consolidated, `security-audit` variants renamed). Per-bundle config schema,
 env, and setup notes live in each `bundle.yaml` (authoritative — this table summarizes).
 
 | Bundle | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
 | `docs-system` | `bundles/docs-system/` | docs-agent, docs-human | docs-agent, docs-human | Two-audience doc system; doc-set shapes (`docs.machineDocSet/Spec`, `docs.humanDocSet/Spec`) are config. |
-| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, clean-up, label-hook, release | Git / GitHub issue / Projects v2 / release workflow. Ships three prefab CI workflows as `files/` payloads: `waffle-doctor` (read-only, default render); `waffle-label-hook` (syrup — label→Claude-harness dispatch, wired to `label-hook`); `waffle-release-hook` (syrup — deterministic tag-on-merge, `contents: write`, no Claude/API, wired to `release`) — both hooks use `files/`-keyed `requires:`. The `release` skill opens a labeled `chore/bump-X.Y.Z` PR; the hook pushes `release.tagFormat` on merge. Config: `labelHook.{enrich,implement,release}Label`, `release.tagFormat`, `release.versionFiles`. Only bundle with a `setup:` block (gh auth, labels, board, git identity, release opt-ins). |
+| `github-workflow` | `bundles/github-workflow/` | (none) | git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release | Git / GitHub issue / Projects v2 / release workflow. `github-project-management` reads/updates board items; `github-project-board` (#54) provisions/standardizes the board itself to the canonical Kanban spec (Status/Priority/Size/Start/Target; Table/Kanban/Roadmap views) — the only create-side board skill. Ships four prefab CI workflows as `files/` payloads: `waffle-doctor` (read-only drift gate) plus three opt-in **syrup** hooks — `waffle-label-hook` (label→enrich/implement Claude dispatch), `waffle-hygiene` (daily scheduled `docs`→auto-merge PR), and `waffle-release-hook` (deterministic tag-on-merge, `contents: write`, no Claude/API) — each wired to its companion skill (`label-hook`, `hygiene`, `release`) via a `files/`-keyed `requires:` edge. The `release` skill opens a labeled `chore/bump-X.Y.Z` PR; the hook pushes `release.tagFormat` on merge. Config: `labelHook.{enrich,implement,release}Label`, `hygiene.{cron,claudeArgs}`, `release.{tagFormat,versionFiles}`. Only bundle with a `setup:` block (gh auth, labels, board, git identity, hook opt-ins). |
 | `code-quality` | `bundles/code-quality/` | (none) | tdd, codebase-architecture | Cross-cutting, stack-agnostic practice skills (test command, tiers, module map, settings type are config). |
 | `obsidian-dev` | `bundles/obsidian-dev/` | plugin-architect | obsidian-plugin-dev, electron-security-audit | Obsidian plugin development (API, manifest, esbuild, testing patterns) + the desktop-app security-audit variant; plugin-architect is the domain architect. |
-| `orchestration` | `bundles/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |
+| `orchestration` | `bundles/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs, standup | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). `standup` rounds up a per-agent status pulse — dynamic `.claude/agents/*.md` roster, one read-only parallel wave, collect-via-return-values, no side effects. |
 | `engineering-team` | `bundles/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `bundles/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS); mobile-architect is the domain architect. |
+| `harness-architect` | `bundles/harness-architect/` | harness-architect | (none) | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, slash-command UX, multi-harness portability). One optional config key (`project.longName`). This repo appends a project extension grounding it in the stack's own paradigms (AGENTS.md registry, schema/FORMAT.md contract, DECISIONS.md ADRs, validation gates). |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority for problems specific to their domains. The former
@@ -68,6 +69,7 @@ same path.
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` rename and the 0.8.0 root→`.waffle/` config move. |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
+| `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded self-contained SVG. Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
 
 ```js
 // render.mjs
@@ -149,13 +151,17 @@ export function validateToolkit(rootDir)               // → string[] (problems
 // setup.mjs
 export function setupGuide(toolkitRoot, toolkitVersion) // → string
 export function toolkitInventory(toolkit, version)      // → string
+
+// waffledocs.mjs
+export function generateWaffleDocs({ toolkit, project, selection, errors }) // → [{ rel, content }] for .waffle/{CHEATSHEET.md,cheatsheet.svg,TEAM.md,team.svg}; each pair omitted when its item set is empty
 ```
 
 Import graph (`util.mjs` and `refs.mjs` are pure leaves; `template.mjs` depends only on `yaml`):
 
 ```
 cli.mjs      → render, doctor, eject, validate, setup, upgrade   (command dispatch)
-render.mjs   → refs, template, toolkit, project, util
+render.mjs   → refs, template, toolkit, project, util, waffledocs
+waffledocs.mjs → template, project, util
 doctor.mjs   → render, project, util
 eject.mjs    → render, toolkit, refs, project, util
 validate.mjs → toolkit, template, refs, util
@@ -270,6 +276,7 @@ place by `render`/`upgrade`):
 | `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict — account-specific values |
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated | manifest of rendered file → sha256 (+ toolkitVersion, targets, bundles, include); `doctor` diffs against it, `render` rewrites it |
+| `.waffle/{CHEATSHEET,TEAM}.md` + `.waffle/{cheatsheet,team}.svg` | generated (committed by consumers) | overview of the installed selection — cheat sheet of user-invocable skills + team intro of agents, Markdown source of truth + branded SVG. Emitted via `emit()` (`waffledocs.mjs`), so lock-tracked, doctor-checked, and pruned like any managed file |
 
 ## Build / test / verify
 
@@ -277,7 +284,7 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 124 tests, 24 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 147 tests, 28 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render` |
@@ -285,8 +292,9 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 ## Dogfood state
 
-This repo renders 3 bundles into itself — `github-workflow`, `docs-system`, `orchestration`
-(`targets: [claude]`, no `include:`; see `.waffle/waffle.yaml`). Rendered output
+This repo renders 4 bundles into itself — `github-workflow`, `docs-system`, `orchestration`,
+`harness-architect` (`targets: [claude]`, plus `include:` refs for the two committed syrup
+workflows — hygiene and release-hook; see `.waffle/waffle.yaml`). Rendered output
 (`.claude/agents/`, `.claude/skills/`) and `.waffle/waffle.lock.json` are gitignored here;
 regenerate with `node installer/cli.mjs render`. Only `.claude/settings.json` is tracked under
 `.claude/` (project-owned; holds the agent-teams env var).

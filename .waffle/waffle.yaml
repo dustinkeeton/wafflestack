@@ -11,10 +11,21 @@ bundles:
   - github-workflow
   - docs-system
   - orchestration
-# The release-hook workflow is syrup (opt-in). We dogfood it here so a labeled bump PR gets
-# auto-tagged on merge — the one rendered CI workflow this repo commits (see .gitignore). The
-# read-only doctor and the Claude-dispatched label-hook workflows stay gitignored/uninstalled.
+  # harness-architect (#60) — dogfood the harness-building expert; its project
+  # extension (.waffle/extensions/agents/harness-architect.md) grounds it in this
+  # stack's own paradigms (AGENTS.md registry, schema/FORMAT.md, DECISIONS.md ADRs).
+  - harness-architect
 include:
+  # Dogfood the scheduled repo-hygiene hook (#46). It is syrup, so the bundle alone won't
+  # render it — install the ref so the rendered .github/workflows/waffle-hygiene.yml is
+  # produced and committed (unlike the other rendered workflows, it is NOT gitignored, so the
+  # schedule can fire once this lands on main). See the .gitignore note and the bundle setup
+  # block: a live run additionally needs the ANTHROPIC_API_KEY secret and the committed
+  # rendered skills, which this repo gitignores — hence live verification is deferred.
+  - files/.github/workflows/waffle-hygiene.yml
+  # The release-hook workflow is syrup too (#39) — dogfooded so a labeled bump PR gets
+  # auto-tagged on merge; its rendered workflow is likewise committed (see .gitignore). The
+  # read-only doctor and the Claude-dispatched label-hook workflows stay gitignored/uninstalled.
   - files/.github/workflows/waffle-release-hook.yml
 config:
   project:

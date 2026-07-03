@@ -13,6 +13,10 @@ node_modules/
 # gitignored, so doctor would exit 1 on a missing lock), the label-hook workflow would
 # arm a live label→harness dispatch on this repo, and pushing either needs the `workflow`
 # credential scope. CI for this repo itself is a separate, deferred issue.
+# Deliberate exception: waffle-hygiene.yml (#46) is NOT ignored — it is committed so its
+# daily schedule can fire once on main (dogfooding). It stays inert until the ANTHROPIC_API_KEY
+# secret is set; a fully-green run also needs the rendered .claude/skills committed (which the
+# lines above gitignore), so live verification is deferred. See the github-workflow setup note.
 .github/workflows/waffle-doctor.yml
 .github/workflows/waffle-label-hook.yml
 # Carve-out (#39): waffle-release-hook.yml is DELIBERATELY committed (NOT ignored) so a
@@ -22,6 +26,12 @@ node_modules/
 # a merged PR carries the `waffle:release` label.
 .waffle/waffle.lock.json
 .waffle/waffle.local.yaml
+# Generated .waffle/ overview docs (cheat sheet + team intro, Markdown + branded SVG).
+# Consumers commit these; here they are generated-only, like the rendered .claude/ output.
+.waffle/CHEATSHEET.md
+.waffle/TEAM.md
+.waffle/cheatsheet.svg
+.waffle/team.svg
 
 # Obsidian
 .obsidian/

@@ -150,9 +150,9 @@ Before execution begins, discover the project board metadata for kanban sync. Th
    ```
    Look for the "Status" field and extract `IN_PROGRESS_OPTION_ID`. If the board also has an "In Review" option, capture `IN_REVIEW_OPTION_ID`; otherwise leave it unset (many boards are just Todo / In Progress / Done).
 
-4. If `PROJECT_ID` is empty or any of the above fail → set `BOARD_SYNC_ENABLED=false`, log a warning, and skip all board updates in subsequent phases.
+4. If `PROJECT_ID` is empty or any of the above fail → set `BOARD_SYNC_ENABLED=false`, log a warning, and skip all board updates in subsequent phases. When the board is missing entirely (or lacks the standard Status options), note that the `github-project-board` skill can provision or standardize it — but don't run it inline; board provisioning is a deliberate, user-approved step, not something to trigger mid-delegation.
 
-See the `github-project-management` skill for the full GraphQL query catalog.
+See the `github-project-management` skill for the full GraphQL query catalog, and the `github-project-board` skill to create or standardize the board itself.
 
 ## Phase 4: Execute
 
