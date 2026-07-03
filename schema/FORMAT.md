@@ -131,8 +131,8 @@ no per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/c
 - **Binaries** are byte-copied untouched — a `{{...}}`-looking byte run inside one is never
   substituted.
 
-Same frozen-image contract as everything else: tracked in `.waffle.lock.json`, restored
-verbatim by `render`, drift-flagged by `doctor`, and releasable with
+Same frozen-image contract as everything else: tracked in `.waffle/waffle.lock.json`,
+restored verbatim by `render`, drift-flagged by `doctor`, and releasable with
 `wafflestack eject files/<repo-relative-path>` (the file stays in place and becomes
 project-owned). Two enabled bundles that emit the **same** repo path is a hard render error —
 the same cross-bundle conflict rule as same-named skills; enable one or `eject` one.
@@ -147,16 +147,18 @@ but relevant if you ever render from CI.
 
 ## Consuming project contract
 
-- `.waffle.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
+Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` directory:
+
+- `.waffle/waffle.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
   `agents-dir`), `bundles:`, optional `include:` (individual items), `config:` values,
   optional `eject:` list.
-- `.waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
+- `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
 - `.waffle/extensions/agents/<name>.md`, `.waffle/extensions/skills/<name>.md`
   (committed, optional) — appended to the rendered item inside marked
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
   project-specific guidance to a toolkit item.
-- `.waffle.lock.json` (generated) — manifest of every rendered file with its hash.
+- `.waffle/waffle.lock.json` (generated) — manifest of every rendered file with its hash.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
   It is also what tells *your* managed files apart from a hand-written file at the same
@@ -215,7 +217,7 @@ git:
   cmd: git -c user.email={{git.botEmail}} -c user.name={{git.botName}}
 ```
 
-can reference keys kept in the gitignored `.waffle.local.yaml`. Unresolvable nested
+can reference keys kept in the gitignored `.waffle/waffle.local.yaml`. Unresolvable nested
 placeholders pass through verbatim. Avoid config key names that collide with literal
 template syntax you embed in values (e.g. don't declare a `secrets.*` namespace).
 
@@ -229,7 +231,7 @@ bundles instead of silently letting the last one win. Pick one, or `eject` one.
 ### Pre-existing (unmanaged) file collisions
 
 `render` will not overwrite a file it did not write. A path a render would produce that
-already exists on disk but is **not** tracked by `.waffle.lock.json` — a hand-written
+already exists on disk but is **not** tracked by `.waffle/waffle.lock.json` — a hand-written
 consumer file, not a prior render of ours — is an **unmanaged collision**: the render fails
 loudly, naming every offending path, and writes nothing. The check runs before any prune or
 write, so a refused render leaves the whole tree untouched. Two escape hatches:

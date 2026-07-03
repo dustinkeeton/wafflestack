@@ -5,7 +5,7 @@
 
 - **Version**: v0.7.0 (pre-1.0 — the file contract can still change between minor releases)
 - **Last updated**: 2026-07-03
-- **Health**: 🟢 tests 114/114 · `validate` clean · `doctor` clean (no render drift)
+- **Health**: 🟢 tests 124/124 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Bundles
@@ -34,7 +34,7 @@ tested. All 7 commands work:
 `init` · `setup` · `install` · `render` · `doctor` · `eject` · `validate`
 
 `install <ref…>` is the newest: it records a bundle or a single item in
-`.waffle.yaml` (resolving dependencies), then renders. Bare `install` with no
+`.waffle/waffle.yaml` (resolving dependencies), then renders. Bare `install` with no
 refs just renders.
 
 ## Current focus
@@ -76,7 +76,7 @@ refs just renders.
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (114 tests)
+npm test                          # installer test suite (124 tests)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock

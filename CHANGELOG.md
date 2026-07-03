@@ -32,6 +32,17 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- **Breaking, but automatic — the consumer config trio moves inside `.waffle/`:**
+  `.waffle.yaml` → `.waffle/waffle.yaml`, `.waffle.local.yaml` → `.waffle/waffle.local.yaml`,
+  `.waffle.lock.json` → `.waffle/waffle.lock.json` (extensions already lived at
+  `.waffle/extensions/`), leaving a single wafflestack entry at the repo root. The **0.8.0**
+  migration moves the files in place on the next `render`/`upgrade` — chaining from the
+  pre-0.6.0 `.wafflestack.*` names too — and the old locations keep working (with a
+  deprecation note) until then. Afterwards: commit the moved config (and lock, if you track
+  it) and update your `.gitignore` entries (`.waffle.local.yaml` →
+  `.waffle/waffle.local.yaml`, `.waffle.lock.json` → `.waffle/waffle.lock.json`) — the CLI
+  never edits `.gitignore` unasked; `wafflestack install --gitignore` re-adds the new paths
+  for you, and `render` warns while stale root entries remain. (#43)
 - No migration required, additive: the github-workflow bundle now ships a second workflow,
   `.github/workflows/waffle-label-hook.yml`, plus a `label-hook` skill. It renders on your
   next `render`/`upgrade` but is **inert until you opt in**: it dispatches the Claude harness
@@ -71,6 +82,14 @@ is what you reach for across a breaking one.
   your approval. (#29)
 
 ### Added
+- Migration step (**0.8.0**): moves the root `.waffle.*` config trio into `.waffle/`
+  (`waffle.yaml`, `waffle.local.yaml`, `waffle.lock.json`) via the same idempotent
+  `migrateLegacyDotfiles` chain that `render` runs at startup, ordered after the 0.6.0
+  rename so a pre-0.6.0 repo carries all the way forward in one pass. `resolveDotPath`
+  generalizes to an ordered multi-generation fallback (`.waffle/waffle.yaml` →
+  `.waffle.yaml` → `.wafflestack.yaml`, same for the local overlay and lock), and
+  `staleGitignoreEntries` now also flags now-stale root `.waffle.local.yaml` /
+  `.waffle.lock.json` lines. (#43)
 - Label-event hook primitive (github-workflow bundle): a prefab
   `.github/workflows/waffle-label-hook.yml` that dispatches the Claude Code GitHub Action
   when an allowlisted trigger label is applied to an issue, paired with a `label-hook` skill
@@ -106,6 +125,10 @@ is what you reach for across a breaking one.
   `--force` overwrites a differing file and takes it under lock management. (#25)
 
 ### Changed
+- Canonical consumer paths are now `.waffle/waffle.yaml`, `.waffle/waffle.local.yaml`, and
+  `.waffle/waffle.lock.json` (were repo-root `.waffle.*`); `init` writes the new layout
+  directly (creating `.waffle/`), and the recommended `.gitignore` entry becomes
+  `.waffle/waffle.local.yaml`. `.waffle/extensions/` is unchanged. (#43)
 - Renamed the github-workflow bundle's shipped doctor CI workflow
   `.github/workflows/wafflestack-doctor.yml` → `.github/workflows/waffle-doctor.yml`,
   completing the v0.6.0 `.wafflestack.*` → `.waffle.*` consumer-facing naming alignment
