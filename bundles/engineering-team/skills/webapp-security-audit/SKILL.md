@@ -1,5 +1,5 @@
 ---
-name: security-audit
+name: webapp-security-audit
 description: Security auditing for {{project.name}}, a browser-delivered web app. Covers dependency hygiene, XSS prevention, secret leakage in client bundles, validation of third-party data, CORS / mixed content, browser-storage safety, and CI workflow safety. Use when reviewing code for security vulnerabilities or setting up security guardrails.
 user-invocable: false
 ---
