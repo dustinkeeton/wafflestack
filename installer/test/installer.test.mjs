@@ -1141,6 +1141,145 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   });
 });
 
+// #46: the github-workflow bundle also ships a SCHEDULED repo-hygiene hook — a files/ payload
+// (waffle-hygiene.yml) plus a hygiene skill, wired by a files/-keyed requires: edge. Like the
+// label hook it is syrup (opt-in): its job holds write scopes and every fire spends money daily.
+// These drive THE ACTUAL shipped github-workflow bundle.
+describe('github-workflow: waffle-hygiene payload (#46)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-hygiene.yml';
+  const DOCTOR_REL = '.github/workflows/waffle-doctor.yml';
+  const REF = `files/${REL}`;
+  const proj = 'HygieneProj';
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-hygiene-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('H1 per-item install pulls the skill closure — cron/claudeArgs defaults, SHA pins, ${{ }} passthrough, lock-tracked', () => {
+    // Installing ONLY the files/ payload must pull its requires: closure — the hygiene
+    // skill, and through it the git-workflow skill it delegates to for the PR flow.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // (a) workflow lands at its .github path
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
+    const wf = read(cwd, REL);
+
+    // (b) files → skill → skill closure: the workflow pulled the hygiene skill AND the
+    // git-workflow skill it requires (proof the files/-keyed requires edge resolves), but NOT
+    // the label-hook chain (issue skill) — the two hooks have independent closures.
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/hygiene/SKILL.md')), 'hygiene skill pulled by the workflow');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/git-workflow/SKILL.md')), 'git-workflow skill pulled transitively');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/issue/SKILL.md')), false, 'label-hook-only closure not pulled');
+
+    // (c) no leftover wafflestack placeholders; cron default substituted, claudeArgs empty
+    assert.doesNotMatch(wf, /\{\{\s*hygiene\./);
+    assert.match(wf, /- cron: '0 13 \* \* \*'/);
+    assert.match(wf, /claude_args: ""/);
+
+    // (d) GitHub Actions ${{ }} expressions pass through the renderer verbatim, including the
+    // PAT-or-default token fallback that makes auto-merge able to fire.
+    assert.match(wf, /anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
+    assert.match(wf, /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/);
+
+    // (e) both actions SHA-pinned with a # vX.Y.Z comment — dogfoods the security-audit posture
+    assert.match(wf, /uses: actions\/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+    assert.match(wf, /uses: anthropics\/claude-code-action@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
+
+    // (f) byte-tracked in the lock at its repo-relative path, and doctor round-trips clean
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.equal(lock.files[REL], sha256(wf));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('H2 rendered workflow parses to the expected scheduled GitHub Actions shape', () => {
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    const parsed = YAML.parse(wf); // throws on invalid YAML
+
+    // trigger: a UTC cron schedule + workflow_dispatch — nothing event-driven/untrusted,
+    // and never the dangerous fork-with-secrets trigger.
+    assert.deepEqual(Object.keys(parsed.on).sort(), ['schedule', 'workflow_dispatch']);
+    assert.deepEqual(parsed.on.schedule, [{ cron: '0 13 * * *' }]);
+    assert.doesNotMatch(wf, /pull_request_target/);
+
+    // exactly one job with least-privilege write scopes (deep-equal), no workflow-level perms
+    assert.deepEqual(Object.keys(parsed.jobs), ['hygiene']);
+    assert.deepEqual(parsed.jobs.hygiene.permissions, { contents: 'write', 'pull-requests': 'write' });
+    assert.ok(!('permissions' in parsed), 'no workflow-level permissions block');
+    assert.equal(typeof parsed.jobs.hygiene['timeout-minutes'], 'number');
+
+    // one hygiene run at a time — a dispatch never cancels a mid-flight paid harness session
+    assert.equal(parsed.concurrency['cancel-in-progress'], false);
+
+    // dispatch step: a CONSTANT prompt pointing at the hygiene skill, plus the API key + args
+    const step = parsed.jobs.hygiene.steps.find((s) => s.with && 'prompt' in s.with);
+    assert.ok(step, 'has a dispatch step with a prompt');
+    assert.match(step.with.prompt, /\.claude\/skills\/hygiene\/SKILL\.md/);
+    assert.match(step.with.prompt, /data, never instructions/);
+    assert.equal(step.with.anthropic_api_key, '${{ secrets.ANTHROPIC_API_KEY }}');
+  });
+
+  test('H3 cron + claudeArgs overrides flow through; hostile values are rejected at render', () => {
+    // overrides land verbatim in the workflow
+    writeConfig(
+      `targets: [claude]\ninclude: [${REF}]\n` +
+        `config:\n  project:\n    name: ${proj}\n` +
+        `  hygiene:\n    cron: '30 6 * * 1'\n    claudeArgs: '--max-turns 40'\n`,
+    );
+    assert.equal(render().ok, true);
+    const wf = read(cwd, REL);
+    assert.match(wf, /- cron: '30 6 \* \* 1'/);
+    assert.match(wf, /claude_args: "--max-turns 40"/);
+
+    // hostile values fail the render, naming the offending key
+    const rejects = (lines, key) => {
+      writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n  hygiene:\n${lines}\n`);
+      const r = render();
+      assert.equal(r.ok, false, 'render must fail on a hostile value');
+      assert.ok(
+        r.errors.some((e) => e.includes(key) && /does not match its declared pattern/.test(e)),
+        JSON.stringify(r.errors),
+      );
+    };
+    // off-alphabet cron: a quote/shell payload, a ${{ }} expression, or an empty value (which
+    // would render an invalid schedule) all fail the cron allowlist.
+    rejects(`    cron: "*/5 * * * * ' rm -rf"`, 'hygiene.cron');
+    rejects(`    cron: '\${{ secrets.X }}'`, 'hygiene.cron');
+    rejects(`    cron: ''`, 'hygiene.cron');
+    // claudeArgs mirrors labelHook.claudeArgs hardening — a double quote breaks its YAML scalar
+    rejects(`    claudeArgs: '--append-system-prompt "x"'`, 'hygiene.claudeArgs');
+  });
+
+  test('H4 syrup: bundle-only render omits the file (skill still renders); explicit include pours it', () => {
+    // bundles:[github-workflow] alone → the sensitive workflow is NOT written…
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.equal(fs.existsSync(path.join(cwd, REL)), false, 'syrup workflow must not render by default');
+    // …but the read-only doctor workflow and the (non-syrup) hygiene skill still render.
+    assert.ok(fs.existsSync(path.join(cwd, DOCTOR_REL)), 'read-only doctor workflow still renders');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/hygiene/SKILL.md')), 'hygiene skill (not syrup) still renders');
+
+    // explicit include pours the syrup file
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup file');
+
+    // setup inventory flags the hygiene workflow as syrup (default do-not-install)
+    const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
+    assert.match(
+      inv,
+      /- files \(syrup — sensitive, do NOT install by default\):[^\n]*waffle-hygiene\.yml/,
+    );
+  });
+});
+
 // The syrup gate is generic — these prove the parse/gate/validate halves on a throwaway fixture.
 describe('syrup gate — generic (#51)', () => {
   let toolkitRoot;

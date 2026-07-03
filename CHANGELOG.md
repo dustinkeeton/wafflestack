@@ -32,6 +32,16 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- **Additive, opt-in — a new scheduled repo-hygiene workflow (`github-workflow`).** A new
+  syrup item `.github/workflows/waffle-hygiene.yml` (+ a `hygiene` skill) runs the `docs`
+  skill on a daily cron and opens an auto-merge PR with the result. Like the label hook it is
+  **opt-in** — enabling the bundle does NOT render it; install it explicitly
+  (`wafflestack install files/.github/workflows/waffle-hygiene.yml`). New optional config keys
+  `hygiene.cron` (default `0 13 * * *` UTC ≈ 5am Pacific) and `hygiene.claudeArgs` are both
+  defaulted, so an existing render is unaffected until you adopt the workflow. **A scheduled
+  trigger spends Anthropic API money daily** — read the bundle setup note (API key secret,
+  committed render, "Allow auto-merge", and a PAT/App token in `WAFFLE_HYGIENE_TOKEN` so
+  auto-merge can actually fire) before pouring it. No migration required. (#46)
 - **Behavior change, mostly automatic — the `github-workflow` label-hook workflow is now
   opt-in (“syrup”).** `.github/workflows/waffle-label-hook.yml` — whose jobs need repo
   `issues`/`contents`/`pull-requests` write permissions — no longer renders just because the
@@ -45,6 +55,20 @@ is what you reach for across a breaking one.
   default. (#51)
 
 ### Added
+- **Scheduled repo-hygiene workflow — `waffle-hygiene.yml` + a `hygiene` skill** (#46): the
+  `github-workflow` bundle gains a daily (cron + `workflow_dispatch`) CI workflow that
+  dispatches the Claude Code action to work a **hygiene task list** — first entry runs the
+  `docs` skill, then lands the result as a PR per the `git-workflow` skill with
+  `gh pr merge --auto --squash`. Reuses the label hook's SHA-pinned dispatch and injection-safe
+  config-render hardening: `hygiene.cron` is validated against a cron allowlist (blocks quotes/
+  `${{`/newlines and rejects empty — fail-closed loud), and `hygiene.claudeArgs` mirrors
+  `labelHook.claudeArgs`. It is **syrup** (its job holds `contents`/`pull-requests` write and it
+  bills daily) — wired to its skill via a `files/`-keyed `requires:` edge, the skill to
+  `git-workflow`. Auto-merge needs a required check to wait on, but PRs opened with the default
+  `GITHUB_TOKEN` do not trigger the repo's own CI — so the workflow reads an optional
+  `WAFFLE_HYGIENE_TOKEN` (PAT/App token) secret and falls back to `GITHUB_TOKEN`; the token +
+  repo-settings recipe (incl. `allow_auto_merge`) is documented in the bundle `setup:` block
+  alongside the daily-cost warning. (#46)
 - **Syrup — an opt-in tier for sensitive bundle items** (#51): a new `syrup:` list in
   `bundle.yaml` names `files/` items (by ref) that must be poured only on request. Enabling a
   bundle no longer renders its syrup items; each renders only when installed explicitly

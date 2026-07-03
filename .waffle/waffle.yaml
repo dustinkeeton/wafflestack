@@ -11,6 +11,14 @@ bundles:
   - github-workflow
   - docs-system
   - orchestration
+include:
+  # Dogfood the scheduled repo-hygiene hook (#46). It is syrup, so the bundle alone won't
+  # render it — install the ref so the rendered .github/workflows/waffle-hygiene.yml is
+  # produced and committed (unlike the other rendered workflows, it is NOT gitignored, so the
+  # schedule can fire once this lands on main). See the .gitignore note and the bundle setup
+  # block: a live run additionally needs the ANTHROPIC_API_KEY secret and the committed
+  # rendered skills, which this repo gitignores — hence live verification is deferred.
+  - files/.github/workflows/waffle-hygiene.yml
 config:
   project:
     name: wafflestack
