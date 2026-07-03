@@ -1,6 +1,6 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
-skills: [git-workflow, issue, github-project-management, clean-up, label-hook, hygiene]
+skills: [git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene]
 files:
   - .github/workflows/waffle-doctor.yml
   - .github/workflows/waffle-label-hook.yml
@@ -136,10 +136,13 @@ setup: |-
     gh label create "Needs Inference"    --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
 
   **Projects v2.** The issue and github-project-management skills look up a Projects v2
-  board whose title matches `project.name` and skip board steps with a warning when
-  none exists. If the user wants board automation, confirm the board exists and that
-  gh has the project scope (`gh auth refresh -s project`). Milestones are optional —
-  the issue skill skips them when none match.
+  board whose title matches `project.name` (case-insensitively) and skip board steps with a
+  warning when none exists. If the user wants board automation, first make sure gh has the
+  project scope (`gh auth refresh -s project`), then run the `github-project-board` skill —
+  it provisions a board to the toolkit's standard Kanban config (Status/Priority/Size/Start/
+  Target fields; Table/Kanban/Roadmap views) when none exists, and reconciles a partial board
+  up to it, always asking before it creates or mutates. Milestones are optional — the issue
+  skill skips them when none match.
 
   **Git.** Make sure the configured `git.worktreesDir` is gitignored. If the project
   commits under a bot identity, set `git.identitySection` / `git.cmd` /

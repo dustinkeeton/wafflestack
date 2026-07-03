@@ -11,6 +11,10 @@ bundles:
   - github-workflow
   - docs-system
   - orchestration
+  # harness-architect (#60) — dogfood the harness-building expert; its project
+  # extension (.waffle/extensions/agents/harness-architect.md) grounds it in this
+  # stack's own paradigms (AGENTS.md registry, schema/FORMAT.md, DECISIONS.md ADRs).
+  - harness-architect
 include:
   # Dogfood the scheduled repo-hygiene hook (#46). It is syrup, so the bundle alone won't
   # render it — install the ref so the rendered .github/workflows/waffle-hygiene.yml is
