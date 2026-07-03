@@ -19,8 +19,12 @@ so the whole install uses one toolkit version.
 
 - Work from the project root (where `.git` lives) — the renderer writes files relative
   to the cwd. Node >= 18 is required.
-- If `.waffle/waffle.yaml` already exists, this is an **update**, not a first install:
-  read it, skip step 1, and revisit only the steps the change calls for (new bundle →
+- If `.waffle/waffle.yaml` already exists, this is an **update**, not a first install. The
+  CLI injects a **"Current configuration — update mode"** section between this playbook and
+  the inventory: your live targets, enabled bundles, individual includes, ejects, effective
+  config values (current vs. default), any unset required keys, and syrup items — read from
+  the repo, so you do not have to open the file yourself. Skip step 1 (`init` refuses to
+  overwrite an existing config) and revisit only the steps the change calls for (new bundle →
   steps 2–7; config change → steps 3, 5, 7).
 - If instead a legacy root `.waffle.yaml` (pre-0.8.0) or `.wafflestack.yaml` (pre-0.6.0)
   exists, it is still read with a deprecation note; the next `render`/`upgrade` moves it

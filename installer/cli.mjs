@@ -98,7 +98,7 @@ try {
       break;
     }
     case 'setup': {
-      process.stdout.write(setupGuide(toolkitRoot, pkg.version));
+      process.stdout.write(setupGuide(toolkitRoot, pkg.version, cwd));
       break;
     }
     case 'validate': {
