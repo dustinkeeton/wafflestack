@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
+import { normalizeItemRef } from './refs.mjs';
 
 /** Load the toolkit registry and every bundle it lists. */
 export function loadToolkit(rootDir) {
@@ -53,6 +54,13 @@ function loadBundle(name, dir) {
     return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)) };
   });
 
+  // Syrup: sensitive items (e.g. a workflow needing repo write permissions) that must be
+  // poured only on request. Each entry is an item ref (`files/<path>`) defined in this
+  // bundle; a syrup item is excluded from a bundle's default render unless the consumer
+  // explicitly installs it or already tracks its path in the lock. The gate lives in
+  // `computeSelection()`/`renderProject()`; `validate` checks each ref resolves.
+  const syrup = new Set((manifest.syrup ?? []).map((ref) => normalizeItemRef(String(ref))));
+
   return {
     name,
     dir,
@@ -60,6 +68,7 @@ function loadBundle(name, dir) {
     agents,
     skills,
     files,
+    syrup,
     config,
     declared,
     env: manifest.env ?? {},

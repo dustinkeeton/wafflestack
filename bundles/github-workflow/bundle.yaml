@@ -4,6 +4,13 @@ skills: [git-workflow, issue, github-project-management, clean-up, label-hook]
 files:
   - .github/workflows/waffle-doctor.yml
   - .github/workflows/waffle-label-hook.yml
+# Syrup: sensitive files poured only on request. The label-hook workflow's jobs need repo
+# write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
+# setting, so it is opt-in — enabling this bundle does NOT render it. Install it explicitly
+# (`wafflestack install files/.github/workflows/waffle-label-hook.yml`) or keep an existing
+# install via its lock entry. The doctor workflow is read-only and stays a default render.
+syrup:
+  - files/.github/workflows/waffle-label-hook.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
@@ -32,7 +39,12 @@ setup: |-
   scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
 
-  **Label hook workflow.** This bundle also ships `.github/workflows/waffle-label-hook.yml`:
+  **Label hook workflow (syrup — opt-in).** This bundle also carries
+  `.github/workflows/waffle-label-hook.yml`, but it is **syrup**: enabling the bundle does
+  NOT render it, because its jobs need repo write permissions. Pour it only on the user's
+  explicit request — `wafflestack install files/.github/workflows/waffle-label-hook.yml`
+  renders it and persists the ref; a repo that already tracks the path keeps it on
+  re-render. Once installed:
   applying the label in `labelHook.enrichLabel` (default `waffle:enrich`) to an issue
   dispatches the Claude Code GitHub Action to enrich it in place; the label in
   `labelHook.implementLabel` (default `waffle:implement`) dispatches an implement run that
@@ -56,8 +68,10 @@ setup: |-
   every re-label is another paid dispatch. Note that PRs opened by the implement action with
   the default `GITHUB_TOKEN` do not trigger the repo's own `pull_request` CI (a GitHub
   limitation — close/reopen the PR, or use an app token). Pushing the workflow file needs the
-  `workflow` credential scope. `eject: [files/.github/workflows/waffle-label-hook.yml]` opts
-  a repo out.
+  `workflow` credential scope. To stop managing it after installing, either drop the
+  `files/.github/workflows/waffle-label-hook.yml` entry from `include:` or
+  `eject: [files/.github/workflows/waffle-label-hook.yml]` (the eject also releases the file
+  as project-owned rather than deleting it).
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the

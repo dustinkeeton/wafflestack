@@ -217,12 +217,15 @@ export function includeRefMatches(includeRef, kind, name) {
 /**
  * The full set of items to render:
  *   union(items of enabled `bundles:`) ∪ closure(each `include:` item) − `eject:`
+ * `trackedFiles` is the set of repo-relative paths the previous lock managed (`oldLock.files`
+ * keys); it lets a **syrup** item a repo already renders keep updating even though a fresh
+ * bundle expansion would gate it out.
  * Returns:
  *   items:    [{ bundleName, bundle, kind, item }] deduped by bundle+kind+name, eject-filtered
  *   closures: [{ rootRef, deps: [kind/name…] }] for reporting pulled-in dependencies
  *   errors:   resolution errors (unknown bundle, unknown/ambiguous ref)
  */
-export function computeSelection(toolkit, project) {
+export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   const errors = [];
   const chosen = new Map();
   const addItem = (bundleName, kind, item) => {
@@ -233,7 +236,14 @@ export function computeSelection(toolkit, project) {
     const bundle = toolkit.bundles.get(bundleName);
     for (const a of bundle.agents) addItem(bundleName, 'agents', a);
     for (const s of bundle.skills) addItem(bundleName, 'skills', s);
-    for (const f of bundle.files) addItem(bundleName, 'files', f);
+    for (const f of bundle.files) {
+      // Syrup is opt-in: a bundle's default expansion skips a syrup file unless the repo
+      // already tracks its path in the lock (an existing install keeps getting updates).
+      // An explicit `include:` of the file ref bypasses this gate — it is added via the
+      // closure loop below, whose root is the file itself.
+      if (bundle.syrup.has(`files/${f.name}`) && !trackedFiles.has(f.name)) continue;
+      addItem(bundleName, 'files', f);
+    }
   };
 
   for (const bundleName of project.bundles) {

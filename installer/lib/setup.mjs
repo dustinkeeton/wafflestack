@@ -17,6 +17,7 @@ export function setupGuide(toolkitRoot, toolkitVersion) {
 }
 
 export function toolkitInventory(toolkit, version) {
+  const hasSyrup = [...toolkit.bundles.values()].some((b) => b.syrup.size);
   const lines = [
     `# Toolkit inventory — ${toolkit.name}${version ? ` v${version}` : ''}`,
     '',
@@ -29,13 +30,32 @@ export function toolkitInventory(toolkit, version) {
     '`requires:`), so required config is scoped to what the selected items actually reference.',
     '',
   ];
+  if (hasSyrup) {
+    lines.push(
+      'A **syrup** item (marked below) is a sensitive `files/` payload — e.g. a workflow that',
+      'needs write permissions on the repo. It is NOT part of a bundle default render: enabling',
+      'the bundle does **not** install it. It renders only when you install its ref explicitly',
+      "(`install files/<path>`) or the repo already tracks it in `.waffle/waffle.lock.json`. **Do",
+      'not install a syrup item unless the user explicitly asks for that specific file** —',
+      'default to leaving it out.',
+      '',
+    );
+  }
   for (const bundle of toolkit.bundles.values()) {
     lines.push(`## bundle: ${bundle.name}`, '');
     if (bundle.description) lines.push(bundle.description, '');
     lines.push(`- skills: ${bundle.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
     lines.push(`- agents: ${bundle.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);
-    if (bundle.files.length) {
-      lines.push(`- files: ${bundle.files.map((f) => `files/${f.name}`).join(', ')}`);
+    const isSyrup = (f) => bundle.syrup.has(`files/${f.name}`);
+    const plainFiles = bundle.files.filter((f) => !isSyrup(f));
+    const syrupFiles = bundle.files.filter(isSyrup);
+    if (plainFiles.length) {
+      lines.push(`- files: ${plainFiles.map((f) => `files/${f.name}`).join(', ')}`);
+    }
+    if (syrupFiles.length) {
+      lines.push(
+        `- files (syrup — sensitive, do NOT install by default): ${syrupFiles.map((f) => `files/${f.name}`).join(', ')}`,
+      );
     }
     const env = Object.entries(bundle.env);
     if (env.length) {

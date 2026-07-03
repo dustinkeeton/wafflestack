@@ -914,8 +914,9 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
   });
 
   test('T2 label overrides flow through BOTH the workflow gate and the skill action map', () => {
+    // The workflow is syrup, so the bundle alone won't render it — install the ref too.
     writeConfig(
-      `targets: [claude]\nbundles: [github-workflow]\n` +
+      `targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\n` +
         `config:\n  project:\n    name: ${proj}\n` +
         `  labelHook:\n    enrichLabel: 'ai:enrich'\n    implementLabel: 'ai:implement'\n`,
     );
@@ -1060,6 +1061,172 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     const ok = renderWith(`    enrichLabel: ""`);
     assert.equal(ok.ok, true, JSON.stringify(ok.errors));
     assert.match(read(cwd, REL), /if: github\.event\.label\.name == '' &&/);
+  });
+});
+
+// #51: the label-hook workflow is SYRUP — sensitive, opt-in. Enabling the bundle no longer
+// renders it; it lands only on an explicit install or when a prior lock tracks its path.
+// These drive the ACTUAL shipped github-workflow bundle.
+describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-label-hook.yml';
+  const DOCTOR_REL = '.github/workflows/waffle-doctor.yml';
+  const REF = `files/${REL}`;
+  const proj = 'SyrupProj';
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-syrup-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('fresh bundle render omits the syrup workflow but keeps the doctor workflow and label-hook skill', () => {
+    // Acceptance: bundles:[github-workflow], no include/lock entry → workflow NOT written.
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // the sensitive workflow is gated out — neither written nor locked
+    assert.equal(fs.existsSync(path.join(cwd, REL)), false, 'syrup workflow must not render by default');
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.ok(!(REL in lock.files), JSON.stringify(lock.files));
+
+    // the read-only doctor workflow (not syrup) still renders, and so does the label-hook
+    // SKILL — only the FILE is syrup, not its companion skill.
+    assert.ok(fs.existsSync(path.join(cwd, DOCTOR_REL)), 'doctor workflow still renders');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/label-hook/SKILL.md')), 'label-hook skill still renders');
+  });
+
+  test('explicit include renders the syrup workflow (bundle enabled + ref installed)', () => {
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup file');
+  });
+
+  test('a repo whose prior lock tracks the workflow keeps rendering it after the include is dropped', () => {
+    // First install pins the workflow in the lock…
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, REL)));
+
+    // …then the include is removed but the bundle stays: the tracked path keeps the file
+    // alive (the frozen-image prune must NOT delete it, and the gate must NOT re-exclude it).
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'tracked syrup file survives a later render');
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.ok(REL in lock.files, 'still lock-tracked');
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('install persists the ref to include: and the follow-up render pours it', () => {
+    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: []\nconfig:\n  project:\n    name: ${proj}\n`);
+    const { added } = installRefs({ toolkitRoot: repoRoot, cwd, refs: [REF] });
+    assert.ok(added.includes(REF), JSON.stringify(added));
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /include:[\s\S]*waffle-label-hook\.yml/);
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, REL)));
+  });
+
+  test('setup inventory flags the workflow as syrup (default do-not-install); doctor stays plain', () => {
+    const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
+    // header explains syrup is opt-in
+    assert.match(inv, /A \*\*syrup\*\* item/);
+    // plain files line lists the read-only doctor workflow but NOT the label hook
+    assert.match(inv, /- files: files\/\.github\/workflows\/waffle-doctor\.yml/);
+    // a separate syrup line calls out the label-hook workflow with a do-not-install marker
+    assert.match(inv, /- files \(syrup — sensitive, do NOT install by default\): files\/\.github\/workflows\/waffle-label-hook\.yml/);
+  });
+});
+
+// The syrup gate is generic — these prove the parse/gate/validate halves on a throwaway fixture.
+describe('syrup gate — generic (#51)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-syrup-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-syrup-g-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nbundles: [sb]\n');
+    write(toolkitRoot, 'bundles/sb/bundle.yaml', [
+      'name: sb',
+      'description: Syrup fixture.',
+      'files:',
+      '  - safe.txt',
+      '  - danger.yml',
+      'syrup:',
+      '  - files/danger.yml',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'bundles/sb/files/safe.txt', 'plain payload\n');
+    write(toolkitRoot, 'bundles/sb/files/danger.yml', 'sensitive: true\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('the fixture validates clean (a resolving syrup ref)', () => {
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('bundle render writes the plain file but gates out the syrup file', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'safe.txt')));
+    assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false, 'syrup file gated out of the default render');
+  });
+
+  test('explicit include renders the syrup file', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')));
+  });
+
+  test('a prior lock entry keeps the syrup file on a later bundle-only render', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'tracked syrup file survives the bundle-only render');
+  });
+
+  test('computeSelection gates syrup unless tracked, and honors an explicit include', () => {
+    const toolkit = loadToolkit(toolkitRoot);
+    const names = (sel) => sel.items.map((i) => `${i.kind}/${i.item.name}`).sort();
+    // bundle only, no tracked files → syrup omitted
+    assert.deepEqual(names(computeSelection(toolkit, { bundles: ['sb'], include: [], values: {} })), ['files/safe.txt']);
+    // tracked path → syrup included (existing installs keep updating)
+    assert.deepEqual(
+      names(computeSelection(toolkit, { bundles: ['sb'], include: [], values: {} }, new Set(['danger.yml']))),
+      ['files/danger.yml', 'files/safe.txt'],
+    );
+    // explicit include (no tracking) → syrup included via its closure
+    assert.deepEqual(
+      names(computeSelection(toolkit, { bundles: ['sb'], include: ['files/danger.yml'], values: {} })),
+      ['files/danger.yml', 'files/safe.txt'],
+    );
+  });
+
+  test('validate rejects a syrup entry that names no bundle item', () => {
+    write(toolkitRoot, 'bundles/sb/bundle.yaml', [
+      'name: sb',
+      'description: Syrup fixture.',
+      'files:',
+      '  - safe.txt',
+      'syrup:',
+      '  - files/nonexistent.yml',
+      '',
+    ].join('\n'));
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(
+      problems.some((p) => /syrup entry "files\/nonexistent\.yml" does not match/.test(p)),
+      JSON.stringify(problems),
+    );
   });
 });
 

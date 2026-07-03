@@ -65,6 +65,14 @@ candidates listed). Installing an item automatically pulls its dependency closur
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across
 bundles, and required config is scoped to what the selected items actually use.
 
+**Syrup items are opt-in — do not install them by default.** The inventory flags some
+`files/` payloads as *syrup*: sensitive files (e.g. a workflow that needs write permissions
+on the repo) that enabling their bundle does **not** render. Leave them out unless the user
+explicitly asks for that specific file — then install the ref directly
+(`wafflestack install files/<path>`), which renders it and persists it to `include:`. A repo
+that already tracks a syrup path keeps it on re-render, so an existing install is never
+dropped. This is exactly the github-workflow bundle's `waffle-label-hook.yml` (step 4).
+
 ## 3. Fill config values
 
 Walk the config schema of every enabled bundle (from the inventory):
@@ -91,7 +99,9 @@ Walk the config schema of every enabled bundle (from the inventory):
   creates or modifies shared external state — labels on a shared repo, a project board —
   needs the user's explicit go-ahead first. This includes repository **secrets** some
   workflows need (e.g. `ANTHROPIC_API_KEY` for the github-workflow label hook) — set them
-  only with the user's explicit go-ahead (`gh secret set …`).
+  only with the user's explicit go-ahead (`gh secret set …`). That label hook
+  (`waffle-label-hook.yml`) is a **syrup** file: it is not rendered by enabling the bundle,
+  so only walk its prerequisites once the user has asked to install it (step 2).
 
 ## 5. Render
 

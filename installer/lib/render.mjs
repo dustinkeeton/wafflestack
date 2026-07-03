@@ -57,8 +57,14 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
     outputs.set(rel, content);
   };
 
+  // Read the previous lock up front: its tracked file paths let the selection keep
+  // rendering a syrup item the repo already has (so existing installs keep getting
+  // updates) while gating syrup out of a fresh bundle expansion.
+  const oldLock = readLock(cwd);
+  const trackedFiles = new Set(Object.keys(oldLock?.files ?? {}));
+
   // Selection = union(items of enabled bundles) ∪ closure(include items) − eject.
-  const selection = computeSelection(toolkit, project);
+  const selection = computeSelection(toolkit, project, trackedFiles);
   errors.push(...selection.errors);
 
   // Group by owning bundle so config/env checks run per bundle, but only over the
@@ -106,8 +112,7 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
   // one error per target — collapse to a distinct set.
   if (errors.length) return { ok: false, errors: [...new Set(errors)], warnings };
 
-  // Frozen image: reconcile against the previous lock before touching the tree.
-  const oldLock = readLock(cwd);
+  // Frozen image: reconcile against the previous lock (read up front) before touching the tree.
   const managed = oldLock?.files ?? {};
 
   // Refuse to clobber a pre-existing UNMANAGED file: a path this render would produce that
