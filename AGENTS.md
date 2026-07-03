@@ -68,6 +68,7 @@ same path.
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` rename and the 0.8.0 root→`.waffle/` config move. |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
+| `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded self-contained SVG. Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
 
 ```js
 // render.mjs
@@ -149,13 +150,17 @@ export function validateToolkit(rootDir)               // → string[] (problems
 // setup.mjs
 export function setupGuide(toolkitRoot, toolkitVersion) // → string
 export function toolkitInventory(toolkit, version)      // → string
+
+// waffledocs.mjs
+export function generateWaffleDocs({ toolkit, project, selection, errors }) // → [{ rel, content }] for .waffle/{CHEATSHEET.md,cheatsheet.svg,TEAM.md,team.svg}; each pair omitted when its item set is empty
 ```
 
 Import graph (`util.mjs` and `refs.mjs` are pure leaves; `template.mjs` depends only on `yaml`):
 
 ```
 cli.mjs      → render, doctor, eject, validate, setup, upgrade   (command dispatch)
-render.mjs   → refs, template, toolkit, project, util
+render.mjs   → refs, template, toolkit, project, util, waffledocs
+waffledocs.mjs → template, project, util
 doctor.mjs   → render, project, util
 eject.mjs    → render, toolkit, refs, project, util
 validate.mjs → toolkit, template, refs, util
@@ -270,6 +275,7 @@ place by `render`/`upgrade`):
 | `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict — account-specific values |
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated | manifest of rendered file → sha256 (+ toolkitVersion, targets, bundles, include); `doctor` diffs against it, `render` rewrites it |
+| `.waffle/{CHEATSHEET,TEAM}.md` + `.waffle/{cheatsheet,team}.svg` | generated (committed by consumers) | overview of the installed selection — cheat sheet of user-invocable skills + team intro of agents, Markdown source of truth + branded SVG. Emitted via `emit()` (`waffledocs.mjs`), so lock-tracked, doctor-checked, and pruned like any managed file |
 
 ## Build / test / verify
 
@@ -277,7 +283,7 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 124 tests, 24 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 147 tests, 28 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render` |

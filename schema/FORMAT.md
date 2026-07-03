@@ -182,6 +182,38 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `wafflestack doctor --allow-missing` treats absent managed files as informational (only
   *modified* files fail) — for use as a CI drift gate in repos that deliberately gitignore
   some renders; a missing lock still fails, since that means the repo was never rendered.
+- `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.svg`, `.waffle/team.svg`
+  (generated) — overview docs describing the installed selection (see *Generated overview
+  docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
+  pruned by `render`. Commit them; never hand-edit them.
+
+## Generated overview docs
+
+Every `render` writes a small set of overview docs into `.waffle/`, assembled **only from the
+items actually installed** (the computed render selection) so they describe what a repo really
+has, not the whole toolkit:
+
+- **`.waffle/CHEATSHEET.md`** — one line per installed **user-invocable skill**: its `/name`
+  slash command, its `argument-hint`, and a one-line "when to use" taken from the skill
+  `description`. A skill counts as user-invocable unless its frontmatter sets
+  `user-invocable: false` (a skill that only sets `disable-model-invocation: true` still
+  appears — it remains a slash command, it just won't auto-trigger).
+- **`.waffle/TEAM.md`** — one entry per installed **agent**: its name, its role / when-to-use
+  (from the agent `description`), and the skills it is granted (its hand-off points, from the
+  agent frontmatter `skills:`).
+- **`.waffle/cheatsheet.svg`, `.waffle/team.svg`** — branded, fully self-contained SVG
+  one-pagers of the same content (no external fonts or images; GitHub-renderable), sized to
+  the item count. The Markdown is the agent-readable source of truth; the SVGs are the visual
+  summary — argument syntax and hand-offs live in the Markdown.
+
+The docs are assembled from item **frontmatter** (no extra manifest surface), and every
+`description` / `argument-hint` is substituted with the same resolver the rendered item uses,
+so a `{{project.name}}` reads identically to how it renders in the item itself. Each doc pair
+is omitted when its set is empty — a selection with no user-invocable skills produces no
+cheat sheet, one with no agents produces no team page — and the frozen-image prune then
+removes any previously-generated copy. Because they flow through the same render/lock
+pipeline as every other output, they are refreshed on every render and flagged by `doctor` if
+edited by hand; treat them as generated output.
 
 ## Selecting what renders
 

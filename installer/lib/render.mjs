@@ -9,6 +9,7 @@ import {
 import { substitute, placeholderKeys, compilePattern } from './template.mjs';
 import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
 import { computeSelection } from './refs.mjs';
+import { generateWaffleDocs } from './waffledocs.mjs';
 import {
   loadProjectConfig,
   makeResolver,
@@ -106,6 +107,17 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
     }
     // Env prerequisites still warn when any item from this bundle renders.
     checkEnvPrerequisites({ bundle, project, cwd, warnings });
+  }
+
+  // Generate the `.waffle/` overview docs (cheat sheet + team intro, Markdown + branded SVG)
+  // from the same computed selection, through the same `emit()` choke point — so they are
+  // lock-tracked, doctor-drift-checked, pruned when stale, and refreshed on every render.
+  // Only when the item loop was clean: a missing required key already failed the render, and
+  // re-substituting descriptions here would just repeat those errors.
+  if (!errors.length) {
+    for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors })) {
+      emit(rel, content, 'waffledocs');
+    }
   }
 
   // The same placeholder is substituted once per target, so a missing value yields
