@@ -30,7 +30,7 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 
 ## Bundle registry
 
-`toolkit.yaml` lists 7 bundles (13 agents + 17 skills; reorganized in #38 — `design`
+`toolkit.yaml` lists 8 bundles (14 agents + 17 skills; reorganized in #38 — `design`
 dissolved, roles consolidated, `security-audit` variants renamed). Per-bundle config schema,
 env, and setup notes live in each `bundle.yaml` (authoritative — this table summarizes).
 
@@ -43,6 +43,7 @@ env, and setup notes live in each `bundle.yaml` (authoritative — this table su
 | `orchestration` | `bundles/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). |
 | `engineering-team` | `bundles/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `bundles/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS); mobile-architect is the domain architect. |
+| `harness-architect` | `bundles/harness-architect/` | harness-architect | (none) | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, slash-command UX, multi-harness portability). One optional config key (`project.longName`). This repo appends a project extension grounding it in the stack's own paradigms (AGENTS.md registry, schema/FORMAT.md contract, DECISIONS.md ADRs, validation gates). |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority for problems specific to their domains. The former
