@@ -92,7 +92,7 @@ Present the plan to the user. On the no-args path, **lead with the resolved scop
 | # | Issue | Agent | Module(s) | Group |
 |---|-------|-------|-----------|-------|
 | 3 | Fix UI hang when... | plugin-architect | summarize | A |
-| 5 | Fix folder picker... | architect | shared | B (serial) |
+| 5 | Fix folder picker... | lead-engineer | shared | B (serial) |
 
 **Parallel:** Group A runs simultaneously with worktree isolation
 **Serial:** Group B runs after A completes (touches the shared module)
@@ -356,7 +356,7 @@ After all agents complete, present a summary:
 | # | Issue | Agent | Status | PR |
 |---|-------|-------|--------|----|
 | 3 | Fix UI hang... | plugin-architect | done | #6 |
-| 5 | Fix folder picker... | architect | done | #7 |
+| 5 | Fix folder picker... | lead-engineer | done | #7 |
 
 Build: passing
 ```

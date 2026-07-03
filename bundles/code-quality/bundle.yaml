@@ -1,14 +1,18 @@
 name: code-quality
-description: Code-quality specialists — TDD, security-audit, and codebase-architecture skills plus architect and security agents. Pairs with the obsidian-dev bundle (the architect agent references its obsidian-plugin-dev skill).
-agents: [architect, security]
-skills: [tdd, security-audit, codebase-architecture]
+description: >-
+  Cross-cutting code-quality practice skills — TDD (red-green-refactor
+  discipline, test priority tiers, boundary mocking) and codebase-architecture
+  (module boundaries, coding conventions). Stack-agnostic: the test command,
+  tier tables, module map, and settings type are project config.
+skills: [tdd, codebase-architecture]
 config:
-  project.name:
-    required: true
-    description: Bare project name, e.g. "Synapse". Used in "the <name> plugin" phrasing.
   project.longName:
     required: true
     description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+  project.testCmd:
+    required: false
+    default: npm test
+    description: Test command that runs the project's full suite (referenced throughout the TDD skill).
   tdd.priorityTiers:
     required: true
     description: Verbatim body of the TDD "Test Priority Tiers" section — the project's module/test-coverage map (tier tables plus the "Do NOT unit test" list).
@@ -24,21 +28,3 @@ config:
   arch.depExceptions:
     required: true
     description: Documented inter-module dependency exception(s) allowed by the architecture, e.g. "VideoModule → AudioModule (documented exception)".
-  security.skillGitignore:
-    required: true
-    description: Sensitive paths the project must gitignore, formatted as an inline-code list, e.g. "`.env`, `data.json`, `.synapse/`".
-  security.dataDir:
-    required: true
-    description: Project data/proposal directory that file paths must resolve within, formatted as inline code, e.g. "`.synapse/`".
-  security.externalTools:
-    required: true
-    description: External processes the project shells out to, e.g. "yt-dlp, ffmpeg".
-  security.mediaFetchTool:
-    required: true
-    description: Primary external tool that receives user-provided URLs, e.g. "yt-dlp".
-  security.agentGitignore:
-    required: true
-    description: Plain (non-code-formatted) list of sensitive paths for the security agent's gitignore check, e.g. ".env, data.json, .synapse/, node_modules/".
-  security.threatModel:
-    required: true
-    description: Verbatim bullet list of the project's real attack surface (external APIs, external processes, file access, secret storage).

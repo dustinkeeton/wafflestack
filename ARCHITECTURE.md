@@ -48,7 +48,7 @@ only inputs you own — everything under `.claude/` (etc.) is generated.
 A **bundle** is a themed group of agents and skills you enable together (for
 example `github-workflow` or `docs-system`). `toolkit.yaml` lists every bundle;
 each bundle's `bundle.yaml` manifest declares its agents, skills, config keys, and
-any environment or service prerequisites. There are **8 bundles** today.
+any environment or service prerequisites. There are **7 bundles** today.
 
 ### Picking what to install
 
@@ -59,7 +59,7 @@ one of three forms:
 |-----|---------|-------|
 | bundle | `github-workflow` | the whole bundle |
 | item | `skills/issue`, `agents/project-manager` | one skill or agent (the name must be unique across the toolkit) |
-| qualified item | `code-quality/skills/security-audit` | one item in a named bundle — use this when the same name exists in two bundles |
+| qualified item | `engineering-team/skills/webapp-security-audit` | one item in a named bundle — use this when the same name exists in two bundles |
 
 `wafflestack install <ref…>` records your choice in `.waffle.yaml` (bundles
 in the `bundles:` list, single items in an `include:` list) and then renders.
@@ -68,8 +68,7 @@ in the `bundles:` list, single items in an `include:` list) and then renders.
 needs, transitively and across bundles:
 
 - an **agent** pulls the skills in its frontmatter `skills:` list (names the
-  toolkit doesn't ship — like the designer's external `brand-guidelines` — are
-  skipped);
+  toolkit doesn't ship — for example a project-local skill — are skipped);
 - a bundle's optional **`requires:`** map pulls declared dependencies (e.g. the
   `/delegate` skill pulls in `git-workflow` and `github-project-management`).
 
@@ -93,7 +92,7 @@ demand config that its unselected siblings need.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **16 agents and 16 skills** in total.
+one source can render everywhere. There are **13 agents and 17 skills** in total.
 
 ### Targets (harnesses)
 

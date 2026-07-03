@@ -144,7 +144,6 @@ bundles: []
 #  - docs-system
 #  - github-workflow
 #  - code-quality
-#  - design
 #  - obsidian-dev
 #  - orchestration
 # Individual items (dependencies pulled in automatically). Prefer whole bundles;
