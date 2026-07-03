@@ -4,7 +4,6 @@
 
 <h1 align="center">WaffleStack</h1>
 
-<p align="center"><strong>One batter, every repo.</strong><br>
 Reusable AI agent and skill definitions, distributed shadcn-style but <strong>update-safe</strong>.</p>
 
 ---
