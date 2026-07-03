@@ -33,6 +33,8 @@ skills: [git-workflow, issue]        # directories under skills/
 files:                               # generic files under files/, by repo-relative path
   - .github/workflows/release.yml
   - scripts/check-format.mjs
+syrup:                               # optional: sensitive files that are opt-in, not default
+  - files/.github/workflows/release.yml
 requires:                            # optional per-item dependency declarations
   skills/issue:                      # keyed by item ref (skills/<name> | agents/<name>)
     - skills/git-workflow            # refs pulled in when this item is installed alone
@@ -68,6 +70,19 @@ then a unique toolkit-wide match; qualify as `<bundle>/skills/<name>` when the n
 ambiguous). When that item is installed individually, its `requires:` closure is pulled in
 transitively. Agent → skill dependencies need no `requires:` — they come from the agent's
 frontmatter `skills:` list. `validate` checks every `requires:` ref resolves.
+
+`syrup:` marks **sensitive files that must be poured only on request** — a `files/` payload
+whose footprint (a workflow demanding repo write permissions, say) is bigger than adopting
+the bundle should silently imply. Each entry is an item ref (`files/<repo-relative-path>`)
+defined in this bundle. A syrup item is **excluded from a bundle's default render**: enabling
+the bundle in `bundles:` (or via an `include:` bundle ref) does not render it. It renders only
+when it is **explicitly installed** — `wafflestack install files/<path>`, which persists the
+ref to `include:` — or when the consuming repo **already tracks its path** in
+`.waffle/waffle.lock.json`, so an existing install keeps receiving updates rather than
+vanishing on the next render. Everything else about a syrup file is unchanged: it is
+lock-tracked, drift-checked, and `eject`-able like any other item once installed. `validate`
+checks every `syrup:` entry resolves to a real item in the bundle, and `wafflestack setup`
+lists syrup items under a separate, default-do-not-install acknowledgement.
 
 `setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
 playbook, `schema/SETUP.md`, followed by a generated inventory of every bundle's items,
@@ -172,7 +187,9 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
 
 The rendered set is `union(items of bundles:) ∪ include: − eject:`.
 
-- `bundles:` — whole bundles; every agent and skill in them renders.
+- `bundles:` — whole bundles; every agent and skill in them renders, **except items marked
+  `syrup:`** in the manifest, which stay opt-in (install the ref explicitly, or keep an
+  existing install alive via its lock entry — see *`syrup:`* under bundle.yaml).
 - `include:` — individual items you want without adopting their whole bundle. Each entry
   is a **ref**:
   - a bundle name — `github-workflow` (equivalent to listing it in `bundles:`);

@@ -57,6 +57,14 @@ export function validateToolkit(rootDir) {
         }
       }
     }
+    // `syrup:` entries mark sensitive items as opt-in; each must name a real item in this
+    // bundle (like a `requires:` key), so a typo can't silently un-gate or mis-gate a file.
+    for (const ref of bundle.syrup) {
+      const parsed = parseRef(ref);
+      if (parsed.form === 'bundle' || !itemsOfKind(bundle, parsed.kind).some((i) => i.name === parsed.name)) {
+        problems.push(`${ctx}: syrup entry "${ref}" does not match a file/skill/agent in this bundle`);
+      }
+    }
     // Optional per-key `pattern:` (render-time value validation). The regex must compile,
     // and a static string default must satisfy its own pattern (nested/non-string defaults
     // resolve at render, so skip them here).

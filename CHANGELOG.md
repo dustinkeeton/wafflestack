@@ -31,6 +31,32 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Consumer impact
+- **Behavior change, mostly automatic — the `github-workflow` label-hook workflow is now
+  opt-in (“syrup”).** `.github/workflows/waffle-label-hook.yml` — whose jobs need repo
+  `issues`/`contents`/`pull-requests` write permissions — no longer renders just because the
+  `github-workflow` bundle is enabled. A repo that **already tracks the file** in
+  `.waffle/waffle.lock.json` keeps rendering and updating it (no action needed). A repo that
+  enables the bundle but never committed the workflow will simply stop rendering it on the
+  next `render`/`upgrade` (the frozen-image prune removes the now-unselected file if it was
+  lock-tracked, or leaves an untracked copy alone). To keep it, install it explicitly:
+  `wafflestack install files/.github/workflows/waffle-label-hook.yml` (persists the ref to
+  `include:`). The read-only `waffle-doctor.yml` workflow is unaffected — it still renders by
+  default. (#51)
+
+### Added
+- **Syrup — an opt-in tier for sensitive bundle items** (#51): a new `syrup:` list in
+  `bundle.yaml` names `files/` items (by ref) that must be poured only on request. Enabling a
+  bundle no longer renders its syrup items; each renders only when installed explicitly
+  (`install files/<path>`, persisted to `include:`) or when the consuming repo already tracks
+  its path in the lock (existing installs keep updating). `loadBundle()` parses the flag,
+  `validate` rejects a `syrup:` entry that doesn't resolve to a real item in the bundle,
+  `computeSelection()`/`renderProject()` gate the selection on include/prior-lock tracking,
+  and `wafflestack setup` lists syrup items under a separate default-do-not-install
+  acknowledgement. Documented in `schema/FORMAT.md` and the `schema/SETUP.md` playbook. The
+  `github-workflow` bundle marks `waffle-label-hook.yml` as syrup; its inert-by-default
+  rendered form (fail-closed empty-label gates, no secret) is unchanged. (#51)
+
 ## [0.8.0] - 2026-07-02
 
 ### Consumer impact
