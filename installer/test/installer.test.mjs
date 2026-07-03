@@ -1414,6 +1414,118 @@ describe('setup guide', () => {
   });
 });
 
+describe('setup guide — config-aware update mode (#50)', () => {
+  let root;
+  let cwd;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup50-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup50-'));
+    makeRefFixture(root);
+    write(root, 'schema/SETUP.md', '# fixture playbook\n\nFirst-install prose.\n');
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const guideAt = () => setupGuide(root, '0.0.test', cwd);
+
+  test('unconfigured repo: guide is byte-for-byte the no-cwd first-install output', () => {
+    // No .waffle/waffle.yaml → no current-config section is injected.
+    assert.equal(guideAt(), setupGuide(root, '0.0.test'));
+    assert.doesNotMatch(guideAt(), /^# Current configuration/m);
+  });
+
+  test('configured repo: injects targets, bundles, includes, and current-vs-default values', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude, codex]',
+      'bundles: [base]',
+      'include: [agents/pm]',
+      'config:',
+      '  base: {botEmail: bot@example.com}',
+      '  orch: {who: Ada, roster: R}',
+      '',
+    ].join('\n'));
+    const guide = guideAt();
+    assert.match(guide, /# Current configuration — update mode/);
+    assert.match(guide, /## Targets\n\nclaude, codex/);
+    assert.match(guide, /## Bundles enabled\n\n- base/);
+    assert.match(guide, /## Individual includes\n\n- agents\/pm/);
+    // A set value shows current; the closure-pulled orch keys resolve from config too.
+    assert.match(guide, /- `base\.botEmail` \[required\] — set: `bot@example\.com`/);
+    assert.match(guide, /- `orch\.who` \[required\] — set: `Ada`/);
+    // The injected section is interleaved before the inventory.
+    assert.ok(guide.indexOf('# Current configuration') < guide.indexOf('# Toolkit inventory'));
+    // Nothing unset → no render-blocker section.
+    assert.doesNotMatch(guide, /Required keys still unset/);
+  });
+
+  test('configured repo: an unset required key surfaces as default-marked and a render blocker', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [base]\nconfig: {}\n');
+    const guide = guideAt();
+    assert.match(guide, /- `base\.botEmail` \[required\] — unset \(no value, no default\) ⚠/);
+    assert.match(
+      guide,
+      /## Required keys still unset \(render blockers\)\n\n- ⚠ base: config\.base\.botEmail/,
+    );
+  });
+
+  test('configured repo: an ejected item is listed as project-owned', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'bundles: [base]',
+      'eject: [skills/git]',
+      'config:',
+      '  base: {botEmail: b@x}',
+      '',
+    ].join('\n'));
+    assert.match(guideAt(), /## Ejected \(project-owned, no longer managed\)\n\n- skills\/git/);
+  });
+
+  test('malformed config: surfaces the load error but still prints the inventory', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [nope]\nbundles: [base]\n');
+    const guide = guideAt();
+    assert.match(guide, /# Current configuration — update mode/);
+    assert.match(guide, /could not be read/);
+    assert.match(guide, /invalid targets/);
+    assert.match(guide, /# Toolkit inventory/);
+  });
+
+  test('syrup: an untracked syrup file reads opt-in; an installed one reads as rendering', () => {
+    const sroot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup50s-'));
+    const scwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup50s-'));
+    try {
+      write(sroot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nbundles: [sb]\n');
+      write(sroot, 'schema/SETUP.md', '# fixture playbook\n');
+      write(sroot, 'bundles/sb/bundle.yaml', [
+        'name: sb',
+        'description: Syrup fixture.',
+        'files:',
+        '  - safe.txt',
+        '  - danger.yml',
+        'syrup:',
+        '  - files/danger.yml',
+        '',
+      ].join('\n'));
+      write(sroot, 'bundles/sb/files/safe.txt', 'plain\n');
+      write(sroot, 'bundles/sb/files/danger.yml', 'x: 1\n');
+
+      // Bundle-only selection → the syrup file is gated out, shown as opt-in.
+      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\nconfig: {}\n');
+      let guide = setupGuide(sroot, '0.0.test', scwd);
+      assert.match(guide, /- `files\/danger\.yml` \(sb\) — not installed — opt-in only/);
+
+      // Explicit include → the syrup file is part of the selection, shown as installed.
+      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+      guide = setupGuide(sroot, '0.0.test', scwd);
+      assert.match(guide, /- `files\/danger\.yml` \(sb\) — installed — renders on this selection/);
+    } finally {
+      fs.rmSync(sroot, { recursive: true, force: true });
+      fs.rmSync(scwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('refs: resolution and dependency closure', () => {
   let root;
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-refs-')); makeRefFixture(root); });

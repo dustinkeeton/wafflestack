@@ -56,6 +56,16 @@ is what you reach for across a breaking one.
   acknowledgement. Documented in `schema/FORMAT.md` and the `schema/SETUP.md` playbook. The
   `github-workflow` bundle marks `waffle-label-hook.yml` as syrup; its inert-by-default
   rendered form (fail-closed empty-label gates, no secret) is unchanged. (#51)
+- **`wafflestack setup` is now config-aware on a re-run** (#50): when `.waffle/waffle.yaml`
+  already exists, the guide injects a **"Current configuration — update mode"** section
+  between the playbook and the inventory — the repo's live targets, enabled bundles,
+  individual includes, ejects, per-key current-vs-default config values, any unset required
+  keys (the render blockers), and syrup items (installed vs. opt-in) — read with the same
+  `loadProjectConfig`/`computeSelection`/`makeResolver` the renderer uses, so the agent
+  curates the update from real state instead of re-reading the file by hand. An unconfigured
+  repo is unchanged (byte-for-byte the first-install output); a malformed config surfaces its
+  load error rather than crashing the guide. `setupGuide()` now takes `cwd`, and
+  `schema/SETUP.md` step 0 points at the injected section. (#50)
 
 ## [0.8.0] - 2026-07-02
 
