@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/wafflestack-hero.svg" width="150" alt="WaffleStack — a stack of golden waffles with a syrup pour">
+  <img src="assets/wafflestack-flat-syrup-animated.svg" width="150" alt="WaffleStack — a stack of golden waffles with an animated syrup pour">
 </p>
 
 <h1 align="center">WaffleStack</h1>
