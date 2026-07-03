@@ -34,10 +34,10 @@ Output in this shape:
 - [x] / [ ] for each item above
 
 ## Notes
-Any trade-offs or follow-ups for the lead-developer to weigh.
+Any trade-offs or follow-ups for the lead-engineer to weigh.
 ```
 
-If you make code changes, only touch presentation-layer files (components, styles, theme config). Defer data and architecture to `data-engineer` / `lead-developer`.
+If you make code changes, only touch presentation-layer files (components, styles, theme config). Defer data and architecture to `data-engineer` / `lead-engineer`.
 
 ## Skills
 

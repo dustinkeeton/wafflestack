@@ -1,6 +1,6 @@
 name: engineering-team
 description: >-
-  Product-engineering specialist roster — lead-developer (the general
+  Product-engineering specialist roster — lead-engineer (the general
   architect / tech lead), data-engineer, qa-engineer, devops-engineer,
   ux-designer, and a remediating security-engineer, plus a browser-app
   webapp-security-audit skill. Agents are stack-agnostic skeletons; the stack,
@@ -9,7 +9,7 @@ description: >-
   are referenced throughout) and slots into the orchestration bundle's roster.
 agents:
   [
-    lead-developer,
+    lead-engineer,
     data-engineer,
     qa-engineer,
     devops-engineer,
@@ -50,14 +50,14 @@ config:
     description: Directory where user stories / product briefs live (read by qa-engineer).
   lead.stack:
     required: true
-    description: Verbatim body of the lead-developer "Stack (locked)" section — the project's approved technology list.
+    description: Verbatim body of the lead-engineer "Stack (locked)" section — the project's approved technology list.
   lead.structure:
     required: true
-    description: Verbatim body of the lead-developer "Structure" section — module layout and boundary rules.
+    description: Verbatim body of the lead-engineer "Structure" section — module layout and boundary rules.
   lead.delegation:
     required: true
     description: >-
-      Verbatim sentence(s) completing the lead-developer "Delegate." principle —
+      Verbatim sentence(s) completing the lead-engineer "Delegate." principle —
       which specialist gets which kind of work, e.g. "UX work to `ux-designer`,
       tests to `qa-engineer`, …. Use the `Agent` tool to invoke them."
   data.brief:

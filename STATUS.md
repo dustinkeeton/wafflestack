@@ -20,7 +20,7 @@ were consolidated, and the colliding `security-audit` skills were renamed.)
 | `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow + label→harness hook (only bundle with a `setup:` step) |
 | `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate, audit, docs |
 | `code-quality` | ✅ Shipped | Cross-cutting, stack-agnostic practice skills: TDD, codebase-architecture |
-| `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-developer is the general architect) + webapp-security-audit |
+| `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-engineer is the general architect) + webapp-security-audit |
 | `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + obsidian-plugin-dev + electron-security-audit) |
 | `expo-dev` | ✅ Shipped | Expo / React Native app development (mobile-architect + reference skills) |
 

@@ -12,7 +12,7 @@ You are the data engineer for **{{project.name}}**. You own everything from the 
 
 ## Validation
 
-Validate at the external-data boundary (schema library or hand-written narrowing — flag new dependencies to `lead-developer`). Reject malformed records rather than crashing downstream. No `any`, no `unknown` past the boundary.
+Validate at the external-data boundary (schema library or hand-written narrowing — flag new dependencies to `lead-engineer`). Reject malformed records rather than crashing downstream. No `any`, no `unknown` past the boundary.
 
 ## When invoked
 

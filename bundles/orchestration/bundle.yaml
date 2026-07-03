@@ -62,7 +62,7 @@ config:
     description: Verbatim body of the product-manager "Hand-offs" section — arrow list routing question types to specialist agents.
   roster.architectAgent:
     required: false
-    default: lead-developer
+    default: lead-engineer
     description: Name of the architecture-audit agent spawned by the audit chain and the docs pipeline (the engineering-team bundle's general architect by default).
   roster.securityAgent:
     required: false
@@ -140,11 +140,11 @@ config:
       docs-system bundle) — used in the docs and audit orchestrator prompts.
   audit.complianceAgentType:
     required: false
-    default: lead-developer
+    default: lead-engineer
     description: >-
       Agent (subagent_type) spawned for the project-specific compliance step in
       the audit chain. Defaults to the general architect (engineering-team's
-      lead-developer) for when no domain architect is available; projects with a
+      lead-engineer) for when no domain architect is available; projects with a
       domain architect (e.g. plugin-architect, mobile-architect) should override
       to it.
   audit.complianceLabel:
