@@ -32,6 +32,11 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- **New bundle, fully additive — no migration.** The `harness-architect` bundle ships a
+  single domain agent for designing and building agent harnesses. Enable it by adding
+  `harness-architect` under `bundles:` (or `wafflestack install agents/harness-architect`);
+  its one config key `project.longName` is optional (defaults to a generic phrase), so no
+  new required config. Existing installs are unaffected until they opt in. (#60)
 - **New, automatic — every `render` now writes four overview docs into `.waffle/`.** After a
   render/upgrade your repo gains `.waffle/CHEATSHEET.md` + `.waffle/cheatsheet.svg` (a cheat
   sheet of the installed user-invocable skills) and `.waffle/TEAM.md` + `.waffle/team.svg` (an
@@ -57,6 +62,18 @@ is what you reach for across a breaking one.
   pulse of the codebase. (#56)
 
 ### Added
+- **`harness-architect` bundle — an expert in building agent harnesses** (#60): a single
+  domain agent (`bundles/harness-architect/`) versed in agent/skill/tool decomposition,
+  subagent teams and orchestration, hooks, MCP servers, slash-command ergonomics, and
+  multi-harness portability (Claude Code / Codex / cross-tool `.agents`). Registered in
+  `toolkit.yaml`; one optional config key (`project.longName`). WaffleStack dogfoods it via a
+  project extension (`.waffle/extensions/agents/harness-architect.md`, appended at render by
+  `render.mjs`'s extension markers) that grounds the agent in the stack's own paradigms — the
+  `AGENTS.md` module/pipeline registry, the `schema/FORMAT.md` authoring contract, the
+  governing `DECISIONS.md` ADRs (one-canonical-source, the frozen-image render contract,
+  lenient agent→skill vs. strict `requires:` deps), and the `validate` / `test` / `render` +
+  `doctor` gates. This split dogfoods the extension mechanism: the generalized agent ships to
+  any consumer, while this repo's install carries the deep wafflestack knowledge. (#60)
 - **Generated `.waffle/` overview docs — cheat sheet + team intro** (#58): a new
   `installer/lib/waffledocs.mjs` assembles two default documents from the computed render
   selection and emits them through render's `emit()` choke point (so they are lock-tracked,

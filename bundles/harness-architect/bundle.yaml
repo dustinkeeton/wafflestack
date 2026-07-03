@@ -1,0 +1,16 @@
+name: harness-architect
+description: >-
+  A single domain agent — harness-architect — expert in designing and building
+  agent harnesses with contemporary paradigms: agent/skill/tool decomposition,
+  subagent teams and orchestration, hooks, MCP servers, slash-command
+  ergonomics, and multi-harness portability across Claude Code, OpenAI Codex,
+  and the cross-tool `.agents` convention.
+agents: [harness-architect]
+config:
+  project.longName:
+    required: false
+    default: this project
+    description: >-
+      Prose descriptor of the project whose harness the agent is shaping, e.g.
+      "the Synapse Obsidian plugin". Used in the agent's framing; defaults to a
+      generic phrase so the bundle is frictionless for any consumer.
