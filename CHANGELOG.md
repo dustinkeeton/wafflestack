@@ -31,6 +31,14 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Fixed
+- The `product-manager` agent template (orchestration bundle) no longer hardcodes the
+  hand-off name "lead-engineer"; it renders `{{roster.architectAgent}}` instead, so
+  orchestration-only consumers see their configured architect (this repo's
+  `general-purpose`) rather than an agent that doesn't exist in their roster.
+  `roster.architectAgent` still defaults to `lead-engineer`, so engineering-team consumers
+  render identically. Content-only — `render` regenerates it. (#49)
+
 ## [0.8.0] - 2026-07-02
 
 ### Consumer impact

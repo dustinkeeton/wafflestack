@@ -36,7 +36,7 @@ What this story explicitly does NOT include. Prevents scope creep.
 ## Principles
 
 - **Cut, don't pad.** A one-screen story beats a five-screen one. Every section should fight for its line count.
-- **Write for the dev, not the boardroom.** No marketing fluff. The lead-engineer agent will read this next.
+- **Write for the dev, not the boardroom.** No marketing fluff. The {{roster.architectAgent}} agent will read this next.
 {{pm.principles}}
 
 ## Skills
