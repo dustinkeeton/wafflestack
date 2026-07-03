@@ -34,6 +34,17 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Deterministic dependency bootstrap BEFORE the paid harness runs. A fresh Actions checkout
+      # has no installed dependencies, so the git-workflow pre-flight (project.testCmd /
+      # typecheckCmd / buildCmd — all in the allowlist below) would fail for want of node_modules,
+      # and the harness would otherwise burn turns trying to `npm install` itself — which CI denies
+      # (no human to grant install permission), including the sandbox-escape retries it then
+      # attempts (correctly refused). Doing the install here as a plain workflow step keeps the
+      # harness allowlist free of any install/network permission. The command is project.installCmd
+      # (default `npm install`; override for a non-npm toolchain, or `true` to skip). See setup note.
+      - name: Install project dependencies
+        run: |
+          {{project.installCmd}}
       - name: Dispatch harness (hygiene)
         id: harness
         uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
@@ -74,12 +85,13 @@ jobs:
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: warn
           retention-days: 7
-      # Fail the job when the paid harness was denied the tools it needed (permission_denials),
-      # and warn when a hygiene run ends without opening a PR or reporting an explicit no-op.
-      # Without this, a run blocked from every write looks identical to a clean one — green check,
-      # nothing landed (the first scheduled run logged 28 denials and still "succeeded"). Reads
-      # the execution log strictly as DATA via jq (never eval'd); always() so it still fires when
-      # the dispatch step failed.
+      # Classify the paid harness's permission_denials and fail ONLY on the ones that broke the run
+      # or tried to escape the sandbox — warn on ad-hoc read-only shell that never blocks delivery.
+      # Without any guard a run denied every write looks identical to a clean one (green check,
+      # nothing landed — the first scheduled run logged 28 denials and still "succeeded"); the #73
+      # guard's fail-on-ANY-denial then reddened a legitimate run that merely reached for a read-only
+      # `grep|sed|sort` (#82). Reads the execution log strictly as DATA via jq (never eval'd);
+      # always() so it still fires when the dispatch step failed.
       - name: Check harness result
         if: always()
         env:
@@ -101,13 +113,34 @@ jobs:
             echo "::warning title=waffle-hygiene::Claude execution log has no result message (the harness may have crashed mid-run). See the dispatch step above or rerun in debug mode."
             exit 0
           fi
-          # permission_denials is the raw array in the log; the action's console summary reports
-          # it as permission_denials_count. Accept whichever is present (count first, then length).
-          denials="$(printf '%s' "$result" | jq -r '.permission_denials_count // (.permission_denials | length) // 0' 2>/dev/null || echo 0)"
+          # permission_denials is the raw array of denied tool calls; the action's console summary
+          # also exposes a bare permission_denials_count. Prefer the array (so we can classify each
+          # call); fall back to the count when only it is present.
+          denials="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then (.permission_denials | length) else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
           case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
           if [ "$denials" -gt 0 ]; then
-            echo "::error title=waffle-hygiene::Harness was denied ${denials} tool call(s) (permission_denials) — it was blocked from tools it needed and almost certainly changed nothing. Widen claude_args --allowedTools (see the bundle setup note) and rerun."
-            exit 1
+            # A denial is HARD (fails the job) when it blocked delivery or tried to escape the sandbox:
+            #   - a sandbox-escape attempt (dangerouslyDisableSandbox:true) — ALWAYS hard, NEVER downgraded;
+            #   - a blocked file edit (Edit/Write/MultiEdit/NotebookEdit) — the run could not change files;
+            #   - a blocked delivery/destructive shell command — git/gh (branch·commit·push·PR) or a
+            #     mutating/exfil program (rm/mv/cp/curl/…), matched ONLY at a command boundary (start, or
+            #     after ; | & && || ( or a newline) so a program name inside a path or an echo string
+            #     (e.g. "~/.npm", "---npm cache---") is never a false hit.
+            # Everything else is SOFT (warn, does NOT fail): ad-hoc READ-ONLY shell (ls/cat/grep/find/
+            # sed/sort/for-loops/pipelines) and redundant setup (a stray install or toolkit-CLI call
+            # already covered by the install step above and this repo's claude_args). A denied call
+            # never ran, so downgrading read-only denials changes only the red-vs-yellow signal, never
+            # what the harness could execute — the allowlist stays the real control and sandbox escapes
+            # stay a hard failure. If only a bare count is available (no array to classify), every
+            # denial is treated as HARD (fail-closed).
+            hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(git|gh|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
+            case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
+            soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
+            if [ "$hard" -gt 0 ]; then
+              echo "::error title=waffle-hygiene::Harness was denied ${hard} delivery/sandbox tool call(s) of ${denials} total — a blocked file edit, git/gh commit·push·PR, or a dangerouslyDisableSandbox escape means the run could not land its work. Widen claude_args --allowedTools (see the bundle setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log artifact."
+              exit 1
+            fi
+            echo "::warning title=waffle-hygiene::Harness was denied ${soft} read-only/redundant tool call(s) (ad-hoc shell exploration or already-covered setup); none blocked delivery, so this does not fail the job. Review the claude-execution-log artifact if a task looks incomplete."
           fi
           # Hygiene no-op heuristic: a healthy run ends by reporting a PR URL, an explicit
           # "no drift", or a "skipped" task (the hygiene skill's Report contract). The final text

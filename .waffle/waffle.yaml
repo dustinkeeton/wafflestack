@@ -46,6 +46,16 @@ config:
     # renders (label-hook workflow, .waffle/ overview docs): only modified files fail;
     # a missing lock still fails.
     flags: --allow-missing
+  hygiene:
+    # #82: this repo dogfoods the scheduled hygiene hook, and its own skill prompts steer the
+    # dispatched harness to run the toolkit CLI DIRECTLY — `node installer/cli.mjs doctor
+    # --allow-missing` is the docs.auditChecklist drift item the docs skill runs in its audit
+    # pass (and audit/delegate run `render`/`validate` the same way). The baked allowlist covers
+    # the npm-run pre-flight wrappers but not those direct calls, so extend it through the
+    # documented claudeArgs consumer-extras hook: the Claude CLI unions repeated --allowedTools,
+    # so this ADDS `Bash(node installer/cli.mjs:*)` to the default rather than replacing it.
+    # (Single quotes only — the claudeArgs pattern rejects double quotes, backslashes, and ${{ }}.)
+    claudeArgs: "--allowedTools 'Bash(node installer/cli.mjs:*)'"
   pm:
     # product-manager (orchestration bundle, #38 round 2) — product evolution for
     # the toolkit itself: bundle shapes, config-key surface, consumer ergonomics.

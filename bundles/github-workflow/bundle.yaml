@@ -85,6 +85,15 @@ setup: |-
   renders your `project.lintCmd` / `project.typecheckCmd` / `project.testCmd` / `project.buildCmd`
   straight into the implement allowlist — the very keys that skill runs as its pre-flight — so
   change a pre-flight command, re-render, and the allowlist follows (no separate allowlist edit).
+  **Dependency bootstrap (implement only).** That pre-flight needs installed dependencies, and a
+  fresh Actions checkout has none — so before dispatching the harness, the implement job runs an
+  **`Install project dependencies`** step (`project.installCmd`, default `npm install`). Doing the
+  install as a deterministic workflow step — not a harness tool call — means the allowlist never
+  has to grant install/network permission, and the pre-flight actually runs instead of failing for
+  a missing `node_modules` (the daily hygiene run's own first live failure). Override
+  `project.installCmd` for a non-npm toolchain (`pip install -r requirements.txt`, `bundle
+  install`, …) or set it to `true` if the repo vendors its deps; the read-only `enrich` job makes
+  no edits and runs no pre-flight, so it gets no install step.
   To authorize a tool a default does not cover, append your own `--allowedTools '<patterns>'` via
   `labelHook.claudeArgs`; the Claude CLI unions repeated `--allowedTools`, so yours extends the
   default rather than replacing it (the same value folds onto BOTH jobs, so scope it for the wider
@@ -95,9 +104,16 @@ setup: |-
   not allowlist granularity — is the real backstop against a prompt-injected push.
   **Debugging a silent run.** Each job makes a dispatched-harness failure *visible* instead of
   green-and-silent. A **`Check harness result`** step (runs on `always()`, so it still fires when
-  the dispatch step failed) reads the harness's execution log and **fails the job** when the run
-  reported any `permission_denials` — the exact footprint of an under-scoped allowlist (above),
-  which otherwise looks identical to a clean run (green check, nothing done). The full execution
+  the dispatch step failed) reads the harness's execution log and **classifies** its
+  `permission_denials`, then **fails the job** only on the ones that broke delivery or tried to
+  escape the sandbox: a blocked file edit (`Edit`/`Write`), a blocked `git`/`gh`
+  branch·commit·push·PR, or a `dangerouslyDisableSandbox` attempt (the last is *always* a hard
+  failure — never widen the allowlist to permit it). A denial that is merely **read-only** shell
+  the harness reached for — an ad-hoc `grep|sed|sort`, a `find`, a `for` loop over `bundles/` — is
+  downgraded to a **warning**: the call never ran (so nothing was written), and it did not block
+  the issue/PR the job delivers, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial
+  behavior) was a false alarm. Widening the allowlist stays the fix for a *hard* denial; the
+  read-only warning is just an FYI that a task may have used a fallback path. The full execution
   log (every message plus the final result JSON) is uploaded as the **`claude-execution-log-<job>`**
   workflow artifact (`always()`, 7-day retention) — the output the action hides from the run log by
   default. We deliberately do **not** set the action's `show_full_output: true`: it streams *all*
@@ -152,8 +168,18 @@ setup: |-
   project-specific, so the workflow renders your `project.lintCmd` / `project.typecheckCmd` /
   `project.testCmd` / `project.buildCmd` straight into the allowlist — the very keys that skill
   runs as its pre-flight — so change a pre-flight command, re-render, and the allowlist follows
-  (no separate allowlist edit). To authorize a tool the default does not cover — say a later
-  hygiene task that shells out to `make` — append your own `--allowedTools '<patterns>'` via
+  (no separate allowlist edit). **Dependency bootstrap.** That pre-flight needs installed
+  dependencies, and a fresh Actions checkout has none — so before dispatching the harness the job
+  runs an **`Install project dependencies`** step (`project.installCmd`, default `npm install`).
+  Doing the install as a deterministic workflow step — not a harness tool call — keeps the allowlist
+  free of any install/network permission and lets the pre-flight actually run instead of failing for
+  a missing `node_modules` (the hook's own first live failure was exactly this — the harness could
+  not `npm install`, so `npm test` / `npm run validate` had nothing to run against). Override
+  `project.installCmd` for a non-npm toolchain (`pip install -r requirements.txt`, `bundle install`,
+  …) or set it to `true` if the repo vendors its deps. To authorize a tool the default does not
+  cover — say a later hygiene task that shells out to `make`, or (as this repo does) a direct
+  `node installer/cli.mjs` toolkit call its skill prompts run — append your own
+  `--allowedTools '<patterns>'` via
   `hygiene.claudeArgs`; the Claude CLI unions repeated `--allowedTools`, so yours extends the
   default rather than replacing it. If the allowlist is missing something the tasks need, the
   harness quietly denies those calls (they surface as `permission_denials` in the run's result)
@@ -164,10 +190,18 @@ setup: |-
   **Debugging a silent run.** The workflow makes a dispatched-harness failure *visible* rather than
   green-and-silent — the failure mode that let the first scheduled run bill for 28 denied writes
   under a passing check. A **`Check harness result`** step (runs on `always()`) reads the harness's
-  execution log and **fails the job** when the run reported any `permission_denials` (the footprint
-  of an under-scoped allowlist, above), and **warns** when a run ends without opening a PR or
-  reporting an explicit `no drift`/`skipped` — a best-effort catch for a silent no-op (the harness's
-  final text is free-form, so this one is a heuristic, not a hard gate). The full execution log is
+  execution log, **classifies** each `permission_denials` entry, and **fails the job** only on the
+  ones that broke delivery or tried to escape the sandbox: a blocked file edit (`Edit`/`Write`), a
+  blocked `git`/`gh` branch·commit·push·PR, or a `dangerouslyDisableSandbox` attempt (that one is
+  *always* a hard failure — never widen the allowlist to permit a sandbox escape). A denial that is
+  merely **read-only** shell the harness reached for — an ad-hoc `grep|sed|sort`, a `find`, a `for`
+  loop over `bundles/`, or a redundant install/toolkit-CLI call the bootstrap step already
+  handles — is downgraded to a **warning**: the call never ran (nothing was written) and it did not
+  block the PR, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial behavior, which
+  killed the first guarded live run over 16 setup/read denials) was a false alarm. The guard also
+  still **warns** when a run ends without opening a PR or reporting an explicit `no drift`/`skipped` —
+  a best-effort catch for a silent no-op (the harness's final text is free-form, so this one is a
+  heuristic, not a hard gate). The full execution log is
   uploaded as the **`claude-execution-log`** workflow artifact (`always()`, 7-day retention) — the
   output the action hides from the run log by default. We deliberately do **not** set
   `show_full_output: true`: it streams *all* tool results into the (public-repo: world-readable)
@@ -303,6 +337,25 @@ config:
     required: false
     default: npm run lint --if-present
     description: Lint/format check command run in the pre-flight checklist and PR test plan.
+  project.installCmd:
+    required: false
+    default: npm install
+    pattern: '^(?!.*\$\{\{)[^\r\n]*$'
+    description: >-
+      Dependency-install command run as a deterministic workflow step BEFORE the harness is
+      dispatched — in .github/workflows/waffle-hygiene.yml and the waffle-label-hook.yml
+      `implement` job — so a fresh Actions checkout has its dependencies (`node_modules`, a venv,
+      vendored gems…) in place and the git-workflow pre-flight ({{project.lintCmd}} /
+      {{project.typecheckCmd}} / {{project.testCmd}} / {{project.buildCmd}}) can actually run,
+      WITHOUT the headless harness ever needing install permission. Default `npm install`; override
+      for a non-npm toolchain (e.g. `pip install -r requirements.txt`, `bundle install`) or set to a
+      shell no-op like `true` if the repo vendors its dependencies. Rendered verbatim into the step's
+      `run:` shell (a literal block scalar), so — unlike the sibling project.* keys, which land only
+      inside the single-quoted allowlist string and PR prose — it is injection-guarded: the pattern
+      rejects a newline (which could inject a sibling step) and a `${{ }}` expression (which GitHub
+      would interpolate, e.g. leaking a secret into the run log). It is trusted, executed config on
+      the same footing as testCmd/buildCmd — set only a command you understand. Not used by the
+      read-only `enrich` job, which makes no file edits and runs no pre-flight.
   issue.inferenceLabel:
     required: false
     default: Needs Inference

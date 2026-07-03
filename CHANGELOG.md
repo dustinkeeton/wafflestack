@@ -63,6 +63,22 @@ is what you reach for across a breaking one.
   public-repo-readable run log); the repo-scoped, self-expiring artifact is the safer default.
   **Re-render to pick it up** — no config keys change and no migration; a repo that never installed
   either syrup hook is unaffected. (#73)
+- **Bug fix, mostly content-only — the guarded `waffle-hygiene` / `waffle-label-hook` harness can
+  finally complete a real run (`github-workflow`).** The first guarded live hygiene run still could
+  not finish: the baked allowlist (#71/#72) covered the write chain but not three command classes a
+  real CI session needs, and the #73 guard — which failed on *any* denial — then reddened the run
+  over all 16. Three fixes close the gap: (1) a deterministic **`Install project dependencies`** step
+  (`project.installCmd`, default `npm install`) runs BEFORE the paid dispatch in the hygiene job and
+  the label-hook `implement` job, so a fresh checkout has its `node_modules` and the pre-flight
+  actually runs — the harness never needs (and never gets) install permission; (2) the `Check harness
+  result` guard now **classifies** denials — a blocked file edit, a `git`/`gh` push·PR, or a
+  `dangerouslyDisableSandbox` escape still fails the job, but ad-hoc **read-only** shell
+  (`grep|sed|sort`, `find`, `for`-loops) is downgraded to a warning, so a legitimately-behaving run
+  is no longer reddened just for exploring; (3) a repo whose own skills call a project CLI directly
+  extends the allowlist through `hygiene.claudeArgs`/`labelHook.claudeArgs` (this repo adds
+  `Bash(node installer/cli.mjs:*)`). **Re-render to pick it up** — `project.installCmd` is a new
+  *optional* key (default `npm install`), so this is additive with no migration; a repo that never
+  installed either syrup hook is unaffected. (#82)
 
 ### Added
 - **CI observability for the dispatched harness — surface output + fail on denials** (#73,
@@ -111,6 +127,37 @@ is what you reach for across a breaking one.
   keys the `git-workflow` pre-flight executes. The `labelHook.claudeArgs` description and the
   label-hook setup note now document the per-job defaults and how to extend them. Live hook
   verification (labeling a test issue) is deferred to a follow-up, per the issue. (#72)
+- **The guarded `waffle-hygiene` live run was denied 16 setup/read calls and reddened** (#82,
+  `github-workflow`). Run 28681795718 proved the #73 guard's red path — but the run legitimately
+  needed three command classes the #71/#72 allowlist did not cover: a dependency bootstrap
+  (`npm install`, tried three ways), direct toolkit-CLI calls (`node installer/cli.mjs
+  validate`/`doctor --allow-missing`), and generic read-only shell (`grep|sed|sort`, `find`,
+  `for`-loops over `bundles/`); the guard then failed the job on all 16 (3 of them
+  `dangerouslyDisableSandbox` retries). Resolved per class:
+  (a) **bootstrap OUTSIDE the harness** — a new `Install project dependencies` step runs
+  `project.installCmd` (default `npm install`; override for a non-npm toolchain, or `true` to skip)
+  after checkout and before the dispatch, in the hygiene job and the label-hook `implement` job (the
+  read-only `enrich` job needs no deps); the install stays a plain workflow step so the harness
+  allowlist grows no install/network permission, and the pre-flight (`npm test` / `npm run validate`)
+  finally has a populated `node_modules` to run against.
+  (b) **toolkit-CLI** via the documented consumer-extras hook — this repo sets
+  `hygiene.claudeArgs: --allowedTools 'Bash(node installer/cli.mjs:*)'`, unioned onto the baked
+  default (the direct CLI calls come from this repo's own `docs.auditChecklist` / `audit` / `delegate`
+  config, so the fix is repo-side, not a template default every consumer inherits).
+  (c) **read-only shell vs. guard nuance** — the `Check harness result` guard no longer fails on every
+  denial; it classifies each (still jq-only, read strictly as data, no eval, `EXECUTION_FILE` via
+  env) and fails ONLY on delivery denials (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`, or a `git`/`gh`
+  and other mutating/exfil command matched at a command boundary) and sandbox escapes
+  (`dangerouslyDisableSandbox` — *never* downgraded), while WARNING on read-only exploration that
+  never blocked delivery. A denied call never ran, so the downgrade changes only the red-vs-yellow
+  signal, not what the harness could execute — the allowlist stays the real control. Adds an optional
+  `project.installCmd` config key (injection-guarded pattern: no `${{ }}`, no newline); updates both
+  workflow templates and the hygiene + label-hook setup notes; installer tests cover the install
+  step's presence (hygiene + implement) and absence (enrich), the key's override and hostile-value
+  rejection, and EXECUTE the rendered guard scripts against the real 16-denial shape (3 sandbox → red),
+  read-only-only (→ warn, green), a blocked Edit/git push (→ red), and a clean run (→ green). Live
+  re-verification (guard green, a hygiene PR lands) is deferred to after merge and a credit top-up,
+  per the issue. (#82)
 
 ## [0.9.0] - 2026-07-03
 

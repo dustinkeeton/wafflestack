@@ -1133,6 +1133,20 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
       // the no-PR/no-drift heuristic is hygiene-specific — these jobs get the denial check only
       assert.doesNotMatch(guard.run, /no drift/, `${job} guard omits the hygiene no-op heuristic`);
       assert.doesNotMatch(JSON.stringify(guard), /github\.event/, `${job} guard has no untrusted event data`);
+
+      // #82 bootstrap: implement needs node_modules for its pre-flight, so it installs deps BEFORE
+      // the paid dispatch; enrich is read-only (no edits, no pre-flight) so it gets NO install step.
+      const install = steps.find((s) => s.name === 'Install project dependencies');
+      if (job === 'implement') {
+        assert.ok(install, 'implement has an install step');
+        assert.ok(steps.indexOf(install) < steps.indexOf(dispatch), 'implement installs before dispatch');
+        assert.match(install.run, /^npm install\s*$/, `implement default installCmd: ${install.run}`);
+      } else {
+        assert.equal(install, undefined, 'enrich (read-only) has no install step');
+      }
+      // #82 guard nuance: read-only shell warns, delivery/sandbox fails hard (classified, not counted)
+      assert.match(guard.run, /dangerouslyDisableSandbox/, `${job} guard treats a sandbox escape specially`);
+      assert.match(guard.run, /read-only.*tool call/, `${job} guard warns on read-only denials`);
     }
   });
 });
@@ -1594,6 +1608,179 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     assert.match(guard.run, /pull\//, 'hygiene guard recognizes a PR URL');
     // the guard must never reference attacker-controllable event data
     assert.doesNotMatch(JSON.stringify(guard), /github\.event/);
+  });
+
+  test('H6 bootstraps deps before dispatch, and the guard classifies denials (#82)', () => {
+    // #82: a fresh Actions checkout has no node_modules, so the pre-flight (npm test / npm run
+    // validate — in the allowlist) could not run and the harness burned turns trying to install
+    // itself (denied). The job now installs deps as a deterministic step BEFORE the paid dispatch,
+    // and the guard fails only on delivery/sandbox denials while WARNING on read-only shell.
+    writeConfig(`targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    assert.equal(render().ok, true);
+    const steps = YAML.parse(read(cwd, REL)).jobs.hygiene.steps;
+
+    // (a) an Install step runs project.installCmd (default npm install) BEFORE the harness dispatch
+    const idxInstall = steps.findIndex((s) => s.name === 'Install project dependencies');
+    const idxDispatch = steps.findIndex((s) => s.uses && s.uses.includes('claude-code-action'));
+    assert.ok(idxInstall > -1, 'has an Install project dependencies step');
+    assert.ok(idxInstall < idxDispatch, 'install runs before the paid harness dispatch');
+    assert.match(steps[idxInstall].run, /^npm install\s*$/, `default installCmd is npm install: ${steps[idxInstall].run}`);
+    // the install command is not in the allowlist — the harness never gets install permission
+    const args = steps.find((s) => s.with && 'claude_args' in s.with).with.claude_args;
+    assert.doesNotMatch(args, /npm install/, 'install stays a workflow step, not a harness tool');
+
+    // (b) the guard CLASSIFIES: sandbox escape is special, Edit/Write/git/gh are hard, read-only warns
+    const guard = steps.find((s) => s.name === 'Check harness result');
+    assert.match(guard.run, /dangerouslyDisableSandbox/, 'a sandbox escape is handled specially');
+    assert.match(guard.run, /Edit\|Write\|MultiEdit\|NotebookEdit/, 'blocked file edits are hard');
+    assert.match(guard.run, /read-only\/redundant tool call/, 'read-only denials warn, not fail');
+    assert.match(guard.run, /\bhard\b/, 'guard separates hard from soft denials');
+    assert.match(guard.run, /\bjq\b/, 'still reads the log as data via jq');
+    assert.match(guard.run, /exit 1/, 'still hard-fails on delivery/sandbox denials');
+    assert.doesNotMatch(JSON.stringify(guard), /github\.event/, 'no untrusted event data');
+  });
+
+  test('H7 project.installCmd overrides flow through; hostile values are rejected at render (#82)', () => {
+    // a non-npm toolchain overrides the install command; it lands verbatim in the step run:
+    writeConfig(
+      `targets: [claude]\ninclude: [${REF}]\n` +
+        `config:\n  project:\n    name: ${proj}\n    installCmd: pip install -r requirements.txt\n`,
+    );
+    assert.equal(render().ok, true);
+    const steps = YAML.parse(read(cwd, REL)).jobs.hygiene.steps;
+    const install = steps.find((s) => s.name === 'Install project dependencies');
+    assert.match(install.run, /^pip install -r requirements\.txt\s*$/, `override lands in run: ${install.run}`);
+
+    // installCmd is executed shell — a ${{ }} expression (secret exfil) or a newline (sibling-step
+    // injection) must fail the render, naming the key, rather than shipping a subverted workflow.
+    const rejects = (val) => {
+      writeConfig(
+        `targets: [claude]\ninclude: [${REF}]\n` +
+          `config:\n  project:\n    name: ${proj}\n    installCmd: ${val}\n`,
+      );
+      const r = render();
+      assert.equal(r.ok, false, `render must fail on hostile installCmd: ${val}`);
+      assert.ok(
+        r.errors.some((e) => e.includes('project.installCmd') && /does not match its declared pattern/.test(e)),
+        JSON.stringify(r.errors),
+      );
+    };
+    rejects('"npm install ${{ secrets.NPM_TOKEN }}"'); // a GitHub expression GitHub would interpolate
+    rejects('"npm install\\n- run: echo pwned"'); // a newline could inject a sibling step
+  });
+});
+
+// #82: the Check harness result guard no longer fails on EVERY permission denial — it CLASSIFIES
+// them, failing only on delivery/sandbox denials and WARNING on ad-hoc read-only shell (the 16
+// setup/read denials that killed the first guarded live run, run 28681795718). These EXECUTE the
+// RENDERED guard scripts against sample execution logs to prove red/green/warn behavior end-to-end,
+// the same way the Actions runner would. jq drives the classification; skip if it is unavailable.
+describe('github-workflow: harness-result guard classifies denials (#82)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const hasShell = spawnSync('jq', ['--version']).status === 0 && spawnSync('bash', ['-c', 'true']).status === 0;
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-guard-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  // render both harness workflows and return each job's Check-harness-result run script
+  const renderGuards = () => {
+    write(cwd, '.waffle/waffle.yaml',
+      'targets: [claude]\n' +
+      'include: [files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-label-hook.yml]\n' +
+      'config:\n  project:\n    name: GuardProj\n');
+    const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    const guardOf = (rel, job) =>
+      YAML.parse(read(cwd, rel)).jobs[job].steps.find((s) => s.name === 'Check harness result').run;
+    return {
+      hygiene: guardOf('.github/workflows/waffle-hygiene.yml', 'hygiene'),
+      enrich: guardOf('.github/workflows/waffle-label-hook.yml', 'enrich'),
+      implement: guardOf('.github/workflows/waffle-label-hook.yml', 'implement'),
+    };
+  };
+
+  // execute a guard script against a log fixture; return { code, out }
+  const runGuard = (script, log) => {
+    const gf = path.join(cwd, 'guard.sh');
+    const lf = path.join(cwd, 'log.json');
+    fs.writeFileSync(gf, script);
+    fs.writeFileSync(lf, JSON.stringify(log));
+    const res = spawnSync('bash', [gf], {
+      encoding: 'utf8',
+      env: { ...process.env, EXECUTION_FILE: lf, RUNNER_TEMP: os.tmpdir() },
+    });
+    return { code: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
+  };
+
+  const B = (command, extra = {}) => ({ tool_name: 'Bash', tool_input: { command, ...extra } });
+  const RESULT = (denials, result = '') => [{ type: 'result', result, permission_denials: denials }];
+  const eachJob = (guards, fn) => { for (const job of ['hygiene', 'enrich', 'implement']) fn(job, guards[job]); };
+
+  test('a sandbox escape (dangerouslyDisableSandbox) is ALWAYS a hard failure, even for ls', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    eachJob(g, (job, script) => {
+      const { code, out } = runGuard(script, RESULT([B('ls -la', { dangerouslyDisableSandbox: true })], 'no drift'));
+      assert.equal(code, 1, `${job} must fail on a sandbox escape: ${out}`);
+      assert.match(out, /::error/, `${job} errors on a sandbox escape`);
+    });
+  });
+
+  test('a blocked file edit or git/gh push is a hard failure', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const log = RESULT([{ tool_name: 'Edit', tool_input: {} }, B('git push -u origin feat/x'), B('ls foo')]);
+    eachJob(g, (job, script) => {
+      const { code, out } = runGuard(script, log);
+      assert.equal(code, 1, `${job} must fail on a blocked Edit/git push: ${out}`);
+    });
+  });
+
+  test('read-only + redundant-setup denials WARN but do NOT fail the job (the #82 fix)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // the read-only/redundant classes from the real failing run (grep|sed|sort, a for-loop, a bare
+    // npm install, a direct toolkit-CLI call, and a yaml-hunt with "npm" inside a path/echo string)
+    const log = RESULT([
+      B("grep -rn '^export ' installer/lib/ | sed 's/{.*//' | sort"),
+      B('for f in bundles/*/; do echo "== $f =="; ls "$f"; done'),
+      B('npm install 2>&1 | tail -3'),
+      B('node installer/cli.mjs doctor --allow-missing 2>&1'),
+      B('ls node_modules/yaml 2>&1 | head; echo "---npm cache---"; ls ~/.npm/_cacache 2>&1 | head'),
+    ], 'Refreshed docs. https://github.com/o/r/pull/9');
+    eachJob(g, (job, script) => {
+      const { code, out } = runGuard(script, log);
+      assert.equal(code, 0, `${job} must NOT fail on read-only/redundant denials: ${out}`);
+      assert.match(out, /::warning/, `${job} warns on read-only denials: ${out}`);
+      assert.doesNotMatch(out, /::error/, `${job} must not error on read-only denials: ${out}`);
+    });
+  });
+
+  test('a clean run (zero denials) passes green', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    eachJob(g, (job, script) => {
+      const { code } = runGuard(script, RESULT([], 'Opened https://github.com/o/r/pull/9'));
+      assert.equal(code, 0, `${job} is green on a clean run`);
+    });
+  });
+
+  test('the real 16-denial shape reddens ONLY via its 3 sandbox escapes', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // mirrors run 28681795718: 13 read-only/redundant denials + 3 dangerouslyDisableSandbox retries
+    const log = RESULT([
+      B('for b in bundles/*/; do ls "$b"; done'),
+      B('node installer/cli.mjs validate 2>&1'),
+      B('npm install'),
+      B('npm install', { dangerouslyDisableSandbox: true }),
+      B('node installer/cli.mjs validate', { dangerouslyDisableSandbox: true }),
+      B('node installer/cli.mjs doctor --allow-missing', { dangerouslyDisableSandbox: true }),
+      B("grep -rn x installer/lib/ | sed 's///' | sort"),
+    ]);
+    const { code, out } = runGuard(g.hygiene, log);
+    assert.equal(code, 1, `the 3 sandbox escapes fail the run: ${out}`);
+    assert.match(out, /denied 3 delivery\/sandbox/, `reports exactly the 3 hard denials: ${out}`);
   });
 });
 
