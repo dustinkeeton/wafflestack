@@ -98,7 +98,7 @@ describe('end to end', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-'));
     makeFixtureToolkit(toolkitRoot);
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       '# project config comment',
       'targets: [claude, codex, agents-dir]',
       'bundles: [demo]',
@@ -153,7 +153,7 @@ describe('end to end', () => {
     assert.equal(fs.readFileSync(file, 'utf8'), original);
 
     // drop the bundle -> all its files are cleaned up
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.equal(fs.existsSync(file), false);
@@ -161,14 +161,14 @@ describe('end to end', () => {
   });
 
   test('missing required config fails with actionable error', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'bundles: [demo]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'bundles: [demo]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.git\.botEmail/);
   });
 
   test('local overlay wins over committed config', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.local.yaml'), 'config:\n  git:\n    botEmail: local@example.com\n');
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n');
     render();
     assert.match(read(cwd, '.claude/agents/helper.md'), /local@example\.com/);
   });
@@ -189,7 +189,7 @@ describe('end to end', () => {
     render();
     const { released } = eject({ cwd, item: 'skills/demo-skill' });
     assert.ok(released.includes(path.join('.claude', 'skills', 'demo-skill', 'SKILL.md')));
-    const cfgText = read(cwd, '.waffle.yaml');
+    const cfgText = read(cwd, '.waffle/waffle.yaml');
     assert.match(cfgText, /# project config comment/);
     assert.match(cfgText, /eject:/);
 
@@ -256,7 +256,7 @@ describe('harness.* namespace', () => {
   });
 
   const writeConfig = (configLines = ['config: {}']) => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude, codex, agents-dir]',
       'bundles: [hz]',
       ...configLines,
@@ -395,7 +395,7 @@ describe('output conflicts and skillsDir', () => {
   const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
 
   test('same item from two bundles is a render error', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: [one, two]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [one, two]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.ok(
@@ -405,7 +405,7 @@ describe('output conflicts and skillsDir', () => {
   });
 
   test('harness.skillsDir resolves per target', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude, agents-dir]\nbundles: [one]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude, agents-dir]\nbundles: [one]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, '.claude/skills/dup-skill/SKILL.md'), /Read \.claude\/skills\/dup-skill\/SKILL\.md\./);
@@ -421,7 +421,7 @@ describe('unmanaged collision guard (#25)', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-col-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-col-'));
     makeFixtureToolkit(toolkitRoot);
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
       'bundles: [demo]',
       'config:',
@@ -460,7 +460,7 @@ describe('unmanaged collision guard (#25)', () => {
     assert.equal(fs.readFileSync(path.join(cwd, SKILL), 'utf8'), handwritten);
     // ...and nothing else was written: no partial render, no lock stamped.
     assert.equal(fs.existsSync(path.join(cwd, AGENT)), false, 'no partial render');
-    assert.equal(fs.existsSync(path.join(cwd, '.waffle.lock.json')), false, 'no lock on refusal');
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'no lock on refusal');
   });
 
   test('--force overwrites the unmanaged file and records it in the lock', () => {
@@ -470,7 +470,7 @@ describe('unmanaged collision guard (#25)', () => {
     const result = render({ force: true });
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.notEqual(fs.readFileSync(path.join(cwd, SKILL), 'utf8'), handwritten, 'overwritten by the render');
-    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.ok(SKILL in lock.files, JSON.stringify(lock.files));
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
   });
@@ -479,11 +479,11 @@ describe('unmanaged collision guard (#25)', () => {
     // Learn the exact bytes the toolkit produces, then simulate a fresh (lock-less) repo
     // that already holds that identical file.
     assert.equal(render().ok, true);
-    fs.rmSync(path.join(cwd, '.waffle.lock.json')); // drop the lock → files now "unmanaged"
+    fs.rmSync(path.join(cwd, '.waffle/waffle.lock.json')); // drop the lock → files now "unmanaged"
 
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.ok(SKILL in lock.files, 'identical file taken under lock management');
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
   });
@@ -516,7 +516,7 @@ describe('unmanaged collision guard (#25)', () => {
     // renders against any toolkit with zero config (same trick the #14/upgrade CLI tests
     // use). This exercises the real arg parsing: `--force` must be consumed before the
     // "render takes no refs" guard, and dispatch must exit cleanly.
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
 
     const render = spawnSync(process.execPath, [cli, 'render', '--force', '--cwd', cwd], { encoding: 'utf8' });
@@ -536,37 +536,37 @@ describe('gitignore offer (#29)', () => {
   const gi = () => read(cwd, '.gitignore');
 
   test('ensureGitignoreEntries creates .gitignore under a marker when absent; returns what it added', () => {
-    const added = ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.claude/worktrees/']);
-    assert.deepEqual(added, ['.waffle.local.yaml', '.claude/worktrees/']);
-    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n.claude/worktrees/\n');
+    const added = ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml', '.claude/worktrees/']);
+    assert.deepEqual(added, ['.waffle/waffle.local.yaml', '.claude/worktrees/']);
+    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n.claude/worktrees/\n');
   });
 
   test('appends only the missing entries and preserves unrelated content verbatim', () => {
-    const original = 'node_modules/\n.env\n.waffle.local.yaml\n';
+    const original = 'node_modules/\n.env\n.waffle/waffle.local.yaml\n';
     fs.writeFileSync(path.join(cwd, '.gitignore'), original);
-    const added = ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.claude/worktrees/']);
+    const added = ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml', '.claude/worktrees/']);
     assert.deepEqual(added, ['.claude/worktrees/'], 'the already-present entry is skipped');
     assert.ok(gi().startsWith(original), 'existing content is left byte-for-byte intact');
     assert.match(gi(), /\.claude\/worktrees\/\n$/);
   });
 
   test('no-ops when every entry is already present — returns [], file byte-for-byte unchanged', () => {
-    fs.writeFileSync(path.join(cwd, '.gitignore'), '.waffle.local.yaml\n.claude/worktrees/\n');
+    fs.writeFileSync(path.join(cwd, '.gitignore'), '.waffle/waffle.local.yaml\n.claude/worktrees/\n');
     const before = gi();
-    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.claude/worktrees/']), []);
+    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml', '.claude/worktrees/']), []);
     assert.equal(gi(), before);
   });
 
   test('adds a trailing newline first, so an appended entry never glues onto the last line', () => {
     fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.env'); // no trailing newline
-    ensureGitignoreEntries(cwd, ['.waffle.local.yaml']);
-    assert.equal(gi(), 'node_modules/\n.env\n\n# wafflestack\n.waffle.local.yaml\n');
+    ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']);
+    assert.equal(gi(), 'node_modules/\n.env\n\n# wafflestack\n.waffle/waffle.local.yaml\n');
   });
 
   test('idempotent across calls and dedupes repeats within one call', () => {
-    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle.local.yaml', '.waffle.local.yaml']), ['.waffle.local.yaml']);
-    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle.local.yaml']), []);
-    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n');
+    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml', '.waffle/waffle.local.yaml']), ['.waffle/waffle.local.yaml']);
+    assert.deepEqual(ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']), []);
+    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
   });
 
   test('recommendedGitignoreEntries: local overlay always; worktrees dir when an enabled bundle declares it', () => {
@@ -574,31 +574,31 @@ describe('gitignore offer (#29)', () => {
     const toolkit = loadToolkit(repoRoot);
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { bundles: [], values: {}, targets: ['claude'] }),
-      ['.waffle.local.yaml'],
+      ['.waffle/waffle.local.yaml'],
     );
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { bundles: ['github-workflow'], values: {}, targets: ['claude'] }),
-      ['.waffle.local.yaml', '.claude/worktrees/'],
+      ['.waffle/waffle.local.yaml', '.claude/worktrees/'],
     );
     // a project override of git.worktreesDir wins over the bundle default (and is slash-normalized)
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { bundles: ['github-workflow'], values: { git: { worktreesDir: '.wt' } }, targets: ['claude'] }),
-      ['.waffle.local.yaml', '.wt/'],
+      ['.waffle/waffle.local.yaml', '.wt/'],
     );
   });
 
-  test('CLI: init --gitignore seeds .waffle.local.yaml; the flag is not mistaken for a ref', () => {
+  test('CLI: init --gitignore seeds .waffle/waffle.local.yaml; the flag is not mistaken for a ref', () => {
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
     const initRun = spawnSync(process.execPath, [cli, 'init', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(initRun.status, 0, initRun.stdout + initRun.stderr);
-    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n');
+    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
 
     // install --gitignore on an empty selection re-applies the offer idempotently (renders, no ref error)
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
     const installRun = spawnSync(process.execPath, [cli, 'install', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(installRun.status, 0, installRun.stdout + installRun.stderr);
     assert.doesNotMatch(installRun.stderr, /takes no refs/);
-    assert.equal(gi(), '# wafflestack\n.waffle.local.yaml\n', 'already-present entry not duplicated');
+    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n', 'already-present entry not duplicated');
   });
 });
 
@@ -640,7 +640,7 @@ describe('files/ payload', () => {
       path.join(toolkitRoot, 'bundles/fb/files/scripts/logo.png'),
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x7b, 0x7b, 0x78, 0x7d, 0x7d]),
     );
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       '# files fixture comment',
       'targets: [claude, codex, agents-dir]',
       'bundles: [fb]',
@@ -681,7 +681,7 @@ describe('files/ payload', () => {
     assert.deepEqual(fs.readFileSync(path.join(cwd, 'scripts/logo.png')), src);
 
     // both outputs tracked in the lock at their repo-relative paths
-    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.ok('.github/workflows/ci.yml' in lock.files, JSON.stringify(lock.files));
     assert.ok('scripts/logo.png' in lock.files, JSON.stringify(lock.files));
 
@@ -701,7 +701,7 @@ describe('files/ payload', () => {
     assert.equal(fs.readFileSync(wf, 'utf8'), original);
 
     // dropping the bundle cleans up every files output it produced
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.equal(fs.existsSync(wf), false);
@@ -712,7 +712,7 @@ describe('files/ payload', () => {
     render();
     const { released } = eject({ cwd, item: 'files/.github/workflows/ci.yml' });
     assert.deepEqual(released, ['.github/workflows/ci.yml']);
-    const cfg = read(cwd, '.waffle.yaml');
+    const cfg = read(cwd, '.waffle/waffle.yaml');
     assert.match(cfg, /# files fixture comment/);
     assert.match(cfg, /eject:/);
     assert.match(cfg, /files\/\.github\/workflows\/ci\.yml/);
@@ -735,7 +735,7 @@ describe('files/ payload', () => {
   });
 
   test('a required key used only in a files payload is demanded when missing', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: [fb]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [fb]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.project\.name/);
@@ -757,7 +757,7 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  const writeConfig = (yaml) => fs.writeFileSync(path.join(cwd, '.waffle.yaml'), yaml);
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
   const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
 
   test('per-item install renders the workflow — default toolkitRef, ${{ }} passthrough, SHA-pinned, lock-tracked', () => {
@@ -791,7 +791,7 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
 
     // (d) byte-tracked in the lock at its repo-relative path (hash === sha256 of the bytes),
     // and doctor round-trips clean against that lock.
-    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.ok(REL in lock.files, JSON.stringify(lock.files));
     assert.equal(lock.files[REL], sha256(wf));
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
@@ -828,7 +828,7 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     assert.match(wf, /\$\{\{ github\.workflow \}\}/);
 
     // managed: byte-tracked in the lock and doctor round-trips clean (no drift, no eject)
-    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.equal(lock.files[REL], sha256(wf));
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
   });
@@ -868,7 +868,7 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  const writeConfig = (yaml) => fs.writeFileSync(path.join(cwd, '.waffle.yaml'), yaml);
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
   const render = (opts = {}) => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test', ...opts });
 
   test('T1 per-item install pulls the skill closure — defaults, SHA pins, ${{ }} passthrough, lock-tracked', () => {
@@ -907,7 +907,7 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     assert.match(wf, /uses: anthropics\/claude-code-action@[0-9a-f]{40} # v\d+\.\d+\.\d+/);
 
     // (f) byte-tracked in the lock at its repo-relative path, and doctor round-trips clean
-    const lock = JSON.parse(read(cwd, '.waffle.lock.json'));
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.ok(REL in lock.files, JSON.stringify(lock.files));
     assert.equal(lock.files[REL], sha256(wf));
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
@@ -1109,13 +1109,10 @@ describe('config value pattern: render-time validation (#27 hardening)', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-pattern-'));
     try {
       // the matching default renders fine
-      fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: [pb]\nconfig: {}\n');
+      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [pb]\nconfig: {}\n');
       assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' }).ok, true);
       // a value violating the pattern fails the render, naming the key
-      fs.writeFileSync(
-        path.join(cwd, '.waffle.yaml'),
-        'targets: [claude]\nbundles: [pb]\nconfig:\n  x:\n    key: "NOPE 1"\n',
-      );
+      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [pb]\nconfig:\n  x:\n    key: "NOPE 1"\n');
       const r = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
       assert.equal(r.ok, false);
       assert.ok(
@@ -1136,7 +1133,7 @@ describe('doctor --allow-missing (CI drift gate)', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-am-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-am-'));
     makeFixtureToolkit(toolkitRoot);
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
       'bundles: [demo]',
       'config:',
@@ -1322,7 +1319,7 @@ describe('render selection: include, closure, scoping, eject', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  const writeConfig = (lines) => fs.writeFileSync(path.join(cwd, '.waffle.yaml'), `${lines.join('\n')}\n`);
+  const writeConfig = (lines) => write(cwd, '.waffle/waffle.yaml', `${lines.join('\n')}\n`);
   const render = () => renderProject({ toolkitRoot: root, cwd, toolkitVersion: '0.0.test' });
   const has = (rel) => fs.existsSync(path.join(cwd, rel));
 
@@ -1392,7 +1389,7 @@ describe('install: persistence and eject include-cleanup', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-ins-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-ins-'));
     makeRefFixture(root);
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       '# fixture config comment',
       'targets: [claude]',
       'bundles: [base]',
@@ -1409,7 +1406,7 @@ describe('install: persistence and eject include-cleanup', () => {
 
   test('bundle refs append to bundles:, item refs to include:, comments preserved', () => {
     install(['orch', 'alt/skills/dupe']);
-    const cfg = read(cwd, '.waffle.yaml');
+    const cfg = read(cwd, '.waffle/waffle.yaml');
     assert.match(cfg, /# fixture config comment/);
     assert.match(cfg, /- base/);
     assert.match(cfg, /- orch/);
@@ -1420,7 +1417,7 @@ describe('install: persistence and eject include-cleanup', () => {
 
   test('unambiguous item persists unqualified', () => {
     install(['skills/issue']);
-    assert.match(read(cwd, '.waffle.yaml'), /include:\n\s*- skills\/issue/);
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /include:\n\s*- skills\/issue/);
   });
 
   test('reports the dependency closure', () => {
@@ -1433,28 +1430,28 @@ describe('install: persistence and eject include-cleanup', () => {
   });
 
   test('unknown ref throws and persists nothing', () => {
-    const before = read(cwd, '.waffle.yaml');
+    const before = read(cwd, '.waffle/waffle.yaml');
     assert.throws(() => install(['skills/nope']), /unknown ref/);
-    assert.equal(read(cwd, '.waffle.yaml'), before);
+    assert.equal(read(cwd, '.waffle/waffle.yaml'), before);
   });
 
   test('already-selected refs are idempotent (config untouched)', () => {
-    const before = read(cwd, '.waffle.yaml');
+    const before = read(cwd, '.waffle/waffle.yaml');
     install(['base']);
-    assert.equal(read(cwd, '.waffle.yaml'), before);
+    assert.equal(read(cwd, '.waffle/waffle.yaml'), before);
   });
 
   test('eject removes a matching include entry, qualified or not', () => {
     install(['alt/skills/dupe']);
-    assert.match(read(cwd, '.waffle.yaml'), /alt\/skills\/dupe/);
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /alt\/skills\/dupe/);
     eject({ cwd, item: 'skills/dupe' });
-    const cfg = read(cwd, '.waffle.yaml');
+    const cfg = read(cwd, '.waffle/waffle.yaml');
     assert.doesNotMatch(cfg, /alt\/skills\/dupe/);
     assert.match(cfg, /eject:/);
   });
 
   test('install requires an existing config file', () => {
-    fs.rmSync(path.join(cwd, '.waffle.yaml'));
+    fs.rmSync(path.join(cwd, '.waffle/waffle.yaml'));
     assert.throws(() => install(['base']), /run `wafflestack init`/);
   });
 });
@@ -1595,7 +1592,7 @@ describe('upgrade: end-to-end across a synthetic breaking change', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-up-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-up-'));
     makeFixtureToolkit(toolkitRoot);
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), [
+    write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
       'bundles: [demo]',
       'config:',
@@ -1610,7 +1607,7 @@ describe('upgrade: end-to-end across a synthetic breaking change', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  const LOCK = '.waffle.lock.json';
+  const LOCK = '.waffle/waffle.lock.json';
   const legacy = () => path.join(cwd, 'LEGACY_MARKER');
   // Stands in for a real breaking change (#17's dotfile rename is the first): drop a legacy
   // artifact the old toolkit left behind. Idempotent — a missing marker is a no-op.
@@ -1695,7 +1692,7 @@ describe('upgrade: end-to-end across a synthetic breaking change', () => {
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
     // Empty selection renders against any toolkit (incl. the real one the CLI resolves),
     // so this exercises the real dispatch + pkg.version without needing bundle config.
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
     const render = spawnSync(process.execPath, [cli, 'render', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(render.status, 0, render.stdout + render.stderr);
 
@@ -1738,72 +1735,76 @@ describe('legacy .wafflestack.* → .waffle.* rename (#17)', () => {
     assert.ok(notes.some((n) => /legacy \.wafflestack\.local\.yaml is deprecated/.test(n)), JSON.stringify(notes));
   });
 
-  test('a fresh .waffle.yaml is read with no deprecation note', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: [demo]\nconfig: {}\n');
+  test('a fresh .waffle/waffle.yaml is read with no deprecation note', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [demo]\nconfig: {}\n');
     const notes = [];
     loadProjectConfig(cwd, notes);
     assert.deepEqual(notes, []);
   });
 
-  test('render migrates a legacy repo: renames dotfiles, moves extensions, warns about .gitignore, doctor clean', () => {
+  test('render chains a pre-0.6.0 repo into .waffle/: moves dotfiles + extensions, warns about .gitignore, doctor clean', () => {
     fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), LEGACY_CFG);
     fs.mkdirSync(path.join(cwd, '.wafflestack/extensions/skills'), { recursive: true });
     fs.writeFileSync(path.join(cwd, '.wafflestack/extensions/skills/demo-skill.md'), 'Legacy addendum.\n');
     fs.writeFileSync(path.join(cwd, '.gitignore'), '.wafflestack.local.yaml\n.wafflestack.lock.json\n');
 
     const logs = [];
-    const result = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.6.0', log: (m) => logs.push(m) });
+    const result = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.8.0', log: (m) => logs.push(m) });
     assert.equal(result.ok, true, JSON.stringify(result.errors));
 
-    // dotfiles renamed to the new names; legacy names gone
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.yaml')));
+    // dotfiles chained all the way into .waffle/ in one pass; no legacy or intermediate leftovers
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
     assert.ok(!fs.existsSync(path.join(cwd, '.wafflestack.yaml')));
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.lock.json')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.yaml')), 'no intermediate root file left behind');
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
     // extensions dir moved AND its content is applied to the render
     assert.ok(fs.existsSync(path.join(cwd, '.waffle/extensions/skills/demo-skill.md')));
     assert.ok(!fs.existsSync(path.join(cwd, '.wafflestack')), 'emptied legacy .wafflestack/ dir removed');
     assert.match(read(cwd, '.claude/skills/demo-skill/SKILL.md'), /Legacy addendum\./);
-    // rename logged; .gitignore reminder surfaced (CLI never edits .gitignore)
+    // both hops logged; .gitignore reminder surfaced (CLI never edits .gitignore)
     assert.ok(logs.some((l) => /renamed legacy \.wafflestack\.yaml → \.waffle\.yaml/.test(l)), logs.join('\n'));
+    assert.ok(logs.some((l) => /renamed legacy \.waffle\.yaml → \.waffle\/waffle\.yaml/.test(l)), logs.join('\n'));
     assert.ok(
-      result.warnings.some((w) => /\.gitignore still lists .*\.waffle\.\* names/.test(w)),
+      result.warnings.some((w) => /\.gitignore still lists .*\.wafflestack.* — update to the \.waffle\/ paths/.test(w)),
       JSON.stringify(result.warnings),
     );
-    assert.equal(doctor({ cwd, toolkitVersion: '0.6.0' }).ok, true);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.8.0' }).ok, true);
   });
 
-  test('the registered 0.6.0 migration renames legacy dotfiles and is idempotent', () => {
+  test('the registered 0.6.0 migration carries legacy dotfiles forward and is idempotent', () => {
     fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\n');
     fs.writeFileSync(path.join(cwd, '.wafflestack.lock.json'), '{"toolkitVersion":"0.5.0","files":{}}\n');
     const step = MIGRATIONS.find((m) => m.version === '0.6.0');
     assert.ok(step, 'a real 0.6.0 migration step is registered');
 
+    // The step delegates to the shared chain helper, so post-0.8.0 it lands files directly
+    // in .waffle/ — harmless overshoot, since the runner never applies it without 0.8.0.
     step.run(cwd);
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.yaml')));
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.lock.json')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
     assert.ok(!fs.existsSync(path.join(cwd, '.wafflestack.yaml')));
 
     // idempotent: a second run neither throws nor clobbers the migrated files
-    const migrated = read(cwd, '.waffle.yaml');
+    const migrated = read(cwd, '.waffle/waffle.yaml');
     step.run(cwd);
-    assert.equal(read(cwd, '.waffle.yaml'), migrated);
+    assert.equal(read(cwd, '.waffle/waffle.yaml'), migrated);
   });
 
   test('runMigrations applies the real 0.6.0 step across the 0.5.0 → 0.6.0 window, not at/below 0.6.0', () => {
     fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\n');
     const ran = runMigrations({ cwd, fromVersion: '0.5.0', toVersion: '0.6.0' }); // real MIGRATIONS default
     assert.deepEqual(ran.map((s) => s.version), ['0.6.0']);
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')), 'shared chain helper lands the current layout');
     // from is exclusive: a repo already on 0.6.0 does not re-run the step
     assert.deepEqual(applicableMigrations('0.6.0', '0.6.0').map((s) => s.version), []);
   });
 
   test('upgrade() carries a legacy 0.5.0-rendered repo across the rename via the real migration', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), LEGACY_CFG);
+    write(cwd, '.waffle/waffle.yaml', LEGACY_CFG);
     // Render at 0.5.0, then fake the pre-rename layout a 0.5.0 toolkit would have left on disk.
     assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.5.0' }).ok, true);
-    fs.renameSync(path.join(cwd, '.waffle.yaml'), path.join(cwd, '.wafflestack.yaml'));
-    fs.renameSync(path.join(cwd, '.waffle.lock.json'), path.join(cwd, '.wafflestack.lock.json'));
+    fs.renameSync(path.join(cwd, '.waffle/waffle.yaml'), path.join(cwd, '.wafflestack.yaml'));
+    fs.renameSync(path.join(cwd, '.waffle/waffle.lock.json'), path.join(cwd, '.wafflestack.lock.json'));
 
     const changelog = '# Changelog\n\n## [0.6.0] - 2026-07-02\n### Consumer impact\n- dotfile rename\n';
     const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.6.0', changelog });
@@ -1811,18 +1812,18 @@ describe('legacy .wafflestack.* → .waffle.* rename (#17)', () => {
     assert.equal(result.fromVersion, '0.5.0');
     assert.deepEqual(result.migrationsRun.map((m) => m.version), ['0.6.0']);
 
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.yaml')));
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle.lock.json')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
     assert.ok(!fs.existsSync(path.join(cwd, '.wafflestack.yaml')));
     assert.ok(!fs.existsSync(path.join(cwd, '.wafflestack.lock.json')));
-    assert.equal(JSON.parse(read(cwd, '.waffle.lock.json')).toolkitVersion, '0.6.0', 're-stamped to the target');
+    assert.equal(JSON.parse(read(cwd, '.waffle/waffle.lock.json')).toolkitVersion, '0.6.0', 're-stamped to the target');
     assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor));
   });
 
   test('doctor on a legacy lock reads it (fallback) and flags the deprecation', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), LEGACY_CFG);
+    write(cwd, '.waffle/waffle.yaml', LEGACY_CFG);
     assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.6.0' }).ok, true);
-    fs.renameSync(path.join(cwd, '.waffle.lock.json'), path.join(cwd, '.wafflestack.lock.json'));
+    fs.renameSync(path.join(cwd, '.waffle/waffle.lock.json'), path.join(cwd, '.wafflestack.lock.json'));
 
     const dr = doctor({ cwd, toolkitVersion: '0.6.0' });
     assert.equal(dr.ok, true, JSON.stringify(dr));
@@ -1832,13 +1833,187 @@ describe('legacy .wafflestack.* → .waffle.* rename (#17)', () => {
   test('init refuses to scaffold over a legacy .wafflestack.yaml', () => {
     fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\n');
     assert.throws(() => init({ cwd }), /\.wafflestack\.yaml already exists.*render/s);
-    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.yaml')), 'no duplicate config written');
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')), 'no duplicate config written');
   });
 
   test('staleGitignoreEntries reports legacy lines and self-clears once updated', () => {
     fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.wafflestack.local.yaml\n.wafflestack.lock.json\n');
     assert.deepEqual(staleGitignoreEntries(cwd), ['.wafflestack.local.yaml', '.wafflestack.lock.json']);
+    fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.waffle/waffle.local.yaml\n.waffle/waffle.lock.json\n');
+    assert.deepEqual(staleGitignoreEntries(cwd), []);
+  });
+});
+
+// The 0.8.0 layout consolidation (#43): the root `.waffle.*` config trio moves inside the
+// `.waffle/` directory (as `waffle.yaml` / `waffle.local.yaml` / `waffle.lock.json`),
+// mirroring the #17 rename above with one more fallback generation.
+describe('root .waffle.* → .waffle/ move (#43)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-r43-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-r43-'));
+    makeFixtureToolkit(toolkitRoot);
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const ROOT_CFG = 'targets: [claude]\nbundles: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n';
+
+  test('loadProjectConfig falls back to a root .waffle.yaml (+ .local) with notes naming the path and fix', () => {
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: [demo]\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.waffle.local.yaml'), 'config:\n  git:\n    botEmail: local@example.com\n');
+    const notes = [];
+    const cfg = loadProjectConfig(cwd, notes);
+    assert.deepEqual(cfg.bundles, ['demo']);
+    assert.equal(cfg.values.git.botEmail, 'local@example.com', 'root local overlay still merges and wins');
+    assert.ok(
+      notes.some((n) => /legacy \.waffle\.yaml is deprecated.*move it to \.waffle\/waffle\.yaml/.test(n)),
+      JSON.stringify(notes),
+    );
+    assert.ok(
+      notes.some((n) => /legacy \.waffle\.local\.yaml is deprecated.*move it to \.waffle\/waffle\.local\.yaml/.test(n)),
+      JSON.stringify(notes),
+    );
+  });
+
+  test('the current name wins when both generations exist — no note, no accidental legacy read', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [codex]\nbundles: [demo]\nconfig: {}\n');
+    const notes = [];
+    const cfg = loadProjectConfig(cwd, notes);
+    assert.deepEqual(cfg.targets, ['claude'], 'the .waffle/ file is authoritative');
+    assert.deepEqual(notes, []);
+  });
+
+  test('render migrates a root-layout repo into .waffle/, coexisting with an existing extensions dir', () => {
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), ROOT_CFG);
+    // 0.6.0-era repos already keep extensions inside .waffle/ — the config move must not disturb them.
+    write(cwd, '.waffle/extensions/skills/demo-skill.md', 'Root-era addendum.\n');
+    fs.writeFileSync(path.join(cwd, '.gitignore'), '.waffle.local.yaml\n.waffle.lock.json\n');
+
+    const logs = [];
+    const result = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.8.0', log: (m) => logs.push(m) });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.lock.json')));
+    // the pre-existing extensions dir is untouched and still applied to the render
+    assert.match(read(cwd, '.claude/skills/demo-skill/SKILL.md'), /Root-era addendum\./);
+    assert.ok(logs.some((l) => /renamed legacy \.waffle\.yaml → \.waffle\/waffle\.yaml/.test(l)), logs.join('\n'));
+    assert.ok(
+      result.warnings.some((w) =>
+        /\.gitignore still lists \.waffle\.local\.yaml, \.waffle\.lock\.json — update to the \.waffle\/ paths/.test(w)),
+      JSON.stringify(result.warnings),
+    );
+    assert.equal(doctor({ cwd, toolkitVersion: '0.8.0' }).ok, true);
+  });
+
+  test('the registered 0.8.0 migration moves the root trio into .waffle/ and is idempotent', () => {
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\n');
+    fs.writeFileSync(path.join(cwd, '.waffle.local.yaml'), 'config: {}\n');
+    fs.writeFileSync(path.join(cwd, '.waffle.lock.json'), '{"toolkitVersion":"0.7.0","files":{}}\n');
+    const step = MIGRATIONS.find((m) => m.version === '0.8.0');
+    assert.ok(step, 'a real 0.8.0 migration step is registered');
+
+    step.run(cwd);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.local.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.yaml')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.local.yaml')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.lock.json')));
+
+    // idempotent: a second run neither throws nor clobbers the migrated files
+    const migrated = read(cwd, '.waffle/waffle.yaml');
+    step.run(cwd);
+    assert.equal(read(cwd, '.waffle/waffle.yaml'), migrated);
+  });
+
+  test('migration windows: (0.7.0, 0.8.0] runs only 0.8.0; (0.5.0, 0.8.0] chains 0.6.0 then 0.8.0', () => {
+    assert.deepEqual(applicableMigrations('0.7.0', '0.8.0').map((s) => s.version), ['0.8.0']);
+    assert.deepEqual(applicableMigrations('0.5.0', '0.8.0').map((s) => s.version), ['0.6.0', '0.8.0']);
+    assert.deepEqual(applicableMigrations('0.8.0', '0.8.0').map((s) => s.version), []);
+
+    // running the full 0.5.0 → 0.8.0 window lands a pre-0.6.0 repo in the current layout
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\n');
+    const ran = runMigrations({ cwd, fromVersion: '0.5.0', toVersion: '0.8.0' }); // real MIGRATIONS default
+    assert.deepEqual(ran.map((s) => s.version), ['0.6.0', '0.8.0']);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.wafflestack.yaml')));
+  });
+
+  test('upgrade() carries a 0.7.0-rendered root-layout repo across the move via the real migration', () => {
+    write(cwd, '.waffle/waffle.yaml', ROOT_CFG);
+    // Render at 0.7.0, then fake the root layout a 0.7.0 toolkit would have left on disk.
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.7.0' }).ok, true);
+    fs.renameSync(path.join(cwd, '.waffle/waffle.yaml'), path.join(cwd, '.waffle.yaml'));
+    fs.renameSync(path.join(cwd, '.waffle/waffle.lock.json'), path.join(cwd, '.waffle.lock.json'));
+
+    const changelog = '# Changelog\n\n## [0.8.0] - 2026-07-02\n### Consumer impact\n- config moves into .waffle/\n';
+    const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.8.0', changelog });
+    assert.equal(result.ok, true, JSON.stringify(result.notes));
+    assert.equal(result.fromVersion, '0.7.0');
+    assert.deepEqual(result.migrationsRun.map((m) => m.version), ['0.8.0']);
+    assert.match(result.changelogDelta, /config moves into \.waffle\//);
+
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')));
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.yaml')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle.lock.json')));
+    assert.equal(JSON.parse(read(cwd, '.waffle/waffle.lock.json')).toolkitVersion, '0.8.0', 're-stamped to the target');
+    assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor));
+  });
+
+  test('doctor on a root legacy lock reads it (fallback) and flags the deprecation', () => {
+    write(cwd, '.waffle/waffle.yaml', ROOT_CFG);
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.8.0' }).ok, true);
+    fs.renameSync(path.join(cwd, '.waffle/waffle.lock.json'), path.join(cwd, '.waffle.lock.json'));
+
+    const dr = doctor({ cwd, toolkitVersion: '0.8.0' });
+    assert.equal(dr.ok, true, JSON.stringify(dr));
+    assert.ok(dr.notes.some((n) => /legacy \.waffle\.lock\.json is deprecated/.test(n)), JSON.stringify(dr.notes));
+  });
+
+  test('eject on an unmigrated root-layout repo reads the legacy files and creates .waffle/ for the lock', () => {
+    write(cwd, '.waffle/waffle.yaml', ROOT_CFG);
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.8.0' }).ok, true);
+    // Fake a repo that rendered under 0.7.0 and never re-rendered: config + lock at root, no .waffle/.
+    fs.renameSync(path.join(cwd, '.waffle/waffle.yaml'), path.join(cwd, '.waffle.yaml'));
+    fs.renameSync(path.join(cwd, '.waffle/waffle.lock.json'), path.join(cwd, '.waffle.lock.json'));
+    fs.rmdirSync(path.join(cwd, '.waffle'));
+
+    const { released } = eject({ cwd, item: 'skills/demo-skill' });
+    assert.ok(released.includes(path.join('.claude', 'skills', 'demo-skill', 'SKILL.md')), JSON.stringify(released));
+    // config is edited in place at its legacy location; the rewritten lock lands at the current one
+    assert.match(read(cwd, '.waffle.yaml'), /eject:/);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
+  });
+
+  test('init writes .waffle/waffle.yaml (creating the directory); refuses over a root .waffle.yaml', () => {
+    const file = init({ cwd });
+    assert.equal(file, path.join(cwd, '.waffle/waffle.yaml'));
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /bundles: \[\]/);
+
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'project-r43b-'));
+    try {
+      fs.writeFileSync(path.join(other, '.waffle.yaml'), 'targets: [claude]\n');
+      assert.throws(() => init({ cwd: other }), /\.waffle\.yaml already exists.*move it to \.waffle\/waffle\.yaml/s);
+      assert.ok(!fs.existsSync(path.join(other, '.waffle/waffle.yaml')), 'no duplicate config written');
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  test('staleGitignoreEntries flags root .waffle.* lines and stays quiet on .waffle/ paths', () => {
     fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.waffle.local.yaml\n.waffle.lock.json\n');
+    assert.deepEqual(staleGitignoreEntries(cwd), ['.waffle.local.yaml', '.waffle.lock.json']);
+    fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.waffle/waffle.local.yaml\n.waffle/waffle.lock.json\n');
     assert.deepEqual(staleGitignoreEntries(cwd), []);
   });
 });
