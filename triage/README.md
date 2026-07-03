@@ -71,6 +71,11 @@ at most one may come back under this name.
   — if both survive), and whether it follows its companion `agents/security`
   (#3). If kept, it needs de-Obsidianifying (follow-up issue at finalize).
 
+#### DECISON
+- rename to 'electron-security-audit'
+- 'agents/security' should be able to use it, but it is not a hard requirement and shouldn't be forced over.
+- Note: brings up the idea of a "electron" bundle.
+
 ### 2. `triage/engineering-team/skills/security-audit/`
 
 - **Origin:** `engineering-team` (imported from a browser-app repo).
@@ -83,6 +88,11 @@ at most one may come back under this name.
 - **Decision needed:** keep vs. #1 (or rename to e.g. `security-audit-webapp`
   if both survive), and whether it follows `security-engineer` (#4), whose
   audit checklist it implements.
+
+#### DECISION
+- rename to 'webapp-security-audit' if truly related only to webapps. if its generalized, keep the name.
+- 'agents/security' should be able to use it, but it is not a hard requirement and shouldn't be forced over if it's only for webapps. if it's generalized, this becomes a requirement for the security agent.
+- Note: brings up the idea of a "webapp" bundle
 
 ## Cluster B — security agents (items 3–4)
 
@@ -101,6 +111,10 @@ Near-duplicate roles with misaligned intentions: one fixes, one only reports.
   wins (remediating vs. read-only), and does the survivor pair with the
   surviving `security-audit` variant from cluster A?
 
+#### DECISION
+- keep one. remediating posture wins. move to engineering-team as 'security-engineer'
+- survivor pairs with security-audit variant.
+
 ### 4. `triage/engineering-team/agents/security-engineer.md`
 
 - **Origin:** `engineering-team`.
@@ -110,6 +124,10 @@ Near-duplicate roles with misaligned intentions: one fixes, one only reports.
 - **Config keys (in fragment):** `sec.scope`, `sec.dataSource`, `sec.auditCmd`.
 - **Decision needed:** same as #3 — pick a posture, or merge the guardrail
   content of #3 into this skeleton.
+
+#### DECISION
+- remove this one. remediating posture wins.
+- If there is any generalized wisdom here bring it to security.
 
 ## Cluster C — design agents (items 5–6)
 
@@ -129,6 +147,9 @@ Near-duplicate roles with misaligned intentions: one fixes, one only reports.
   to keep both? If kept: destination bundle (revive `design`, or fold into
   another bundle). If merged/dropped: confirm `design` stays dissolved.
 
+#### DECISION
+- remove
+
 ### 6. `triage/engineering-team/agents/ux-designer.md`
 
 - **Origin:** `engineering-team`.
@@ -138,6 +159,10 @@ Near-duplicate roles with misaligned intentions: one fixes, one only reports.
 - **Config keys (in fragment):** `ux.guidelines`.
 - **Decision needed:** keep alongside #5 (different jobs) or collapse to one
   design role; if kept, does it stay in `engineering-team`'s roster?
+
+#### DECISION
+- collapse to one design role.
+- suggests the desire for frontend vs backend rosters - but we are moving to the problem of having duplicates in many bundles.
 
 ## Cluster D — product/project management (item 7)
 
@@ -157,6 +182,10 @@ Near-duplicate roles with misaligned intentions: one fixes, one only reports.
 - **Decision needed:** keep both roles (clarify the split: product vs.
   project), restore this one to `engineering-team`, or drop/merge into
   `project-manager`.
+
+#### DECISION
+- keep. move to orchestration
+- product-manager is more focused on the evolution and needs of the product, rather than ceremonies and rituals.
 
 ## Cluster E — architect-class agents (items 8–11)
 
@@ -180,6 +209,9 @@ generic architecture lead + per-stack specialists, or per-stack only.
 - **Decision needed:** survive as the generic architecture agent (after
   de-Obsidianifying), or yield to #11 / the per-stack architects.
 
+#### DECISION
+- Remove. Generic "architect" is the job of the engineering-team/lead-developer unless a more specific role is involved.
+
 ### 9. `triage/expo-dev/agents/mobile-architect.md`
 
 - **Origin:** `expo-dev`.
@@ -191,6 +223,9 @@ generic architecture lead + per-stack specialists, or per-stack only.
 - **Decision needed:** keep as the domain architect of `expo-dev` (restore),
   or fold the architect role into a single generic agent parameterized per
   stack.
+
+#### DECISION
+- keep as domain architect. restore.
 
 ### 10. `triage/obsidian-dev/agents/plugin-architect.md`
 
@@ -206,6 +241,9 @@ generic architecture lead + per-stack specialists, or per-stack only.
 - **Decision needed:** same as #9 — restore as `obsidian-dev`'s domain
   architect or consolidate.
 
+#### DECISION
+- keep as domain architect. restore.
+
 ### 11. `triage/engineering-team/agents/lead-developer.md`
 
 - **Origin:** `engineering-team`.
@@ -218,3 +256,6 @@ generic architecture lead + per-stack specialists, or per-stack only.
 - **Decision needed:** is the lead role distinct from the architect role
   (keep both #8 and #11 with a seniority rule), or is one the other's
   replacement?
+
+  #### DECISION
+- 11 wins. lead-developer is general architect. domain architects are specialized and given seniority if problem is specific to their domain.
