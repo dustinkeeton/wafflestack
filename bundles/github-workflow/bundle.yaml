@@ -1,26 +1,37 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
-skills: [git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook]
+skills: [git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene]
 files:
   - .github/workflows/waffle-doctor.yml
   - .github/workflows/waffle-label-hook.yml
+  - .github/workflows/waffle-hygiene.yml
 # Syrup: sensitive files poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting, so it is opt-in — enabling this bundle does NOT render it. Install it explicitly
 # (`wafflestack install files/.github/workflows/waffle-label-hook.yml`) or keep an existing
 # install via its lock entry. The doctor workflow is read-only and stays a default render.
+# The hygiene workflow is syrup for the same reason and then some: its job holds
+# contents/pull-requests write AND every scheduled fire spends real API money — daily.
 syrup:
   - files/.github/workflows/waffle-label-hook.yml
+  - files/.github/workflows/waffle-hygiene.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
-# just the workflow renders the whole chain.
+# just the workflow renders the whole chain. The hygiene workflow needs its own
+# companion skill, which delegates to git-workflow for the PR flow. (Its first task runs
+# the `docs` skill, but that lives in another bundle and is optional — see the setup note —
+# so it is intentionally NOT a hard requires that would balloon a minimal hygiene install.)
 requires:
   skills/label-hook:
     - skills/issue
     - skills/git-workflow
   files/.github/workflows/waffle-label-hook.yml:
     - skills/label-hook
+  skills/hygiene:
+    - skills/git-workflow
+  files/.github/workflows/waffle-hygiene.yml:
+    - skills/hygiene
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
@@ -72,6 +83,45 @@ setup: |-
   `files/.github/workflows/waffle-label-hook.yml` entry from `include:` or
   `eject: [files/.github/workflows/waffle-label-hook.yml]` (the eject also releases the file
   as project-owned rather than deleting it).
+
+  **Hygiene workflow (syrup — opt-in).** This bundle also carries
+  `.github/workflows/waffle-hygiene.yml`, a **scheduled** repo-upkeep hook, and its companion
+  `hygiene` skill. Like the label hook it is **syrup**: enabling the bundle does NOT render it
+  (its job holds `contents`/`pull-requests` write). Pour it explicitly —
+  `wafflestack install files/.github/workflows/waffle-hygiene.yml` — or keep an existing
+  install via its lock entry. On a daily cron (`hygiene.cron`, default `0 13 * * *` UTC ≈ 5am
+  Pacific) plus `workflow_dispatch` for manual runs, it dispatches the Claude Code action to
+  work the hygiene task list in the `hygiene` skill: first entry runs the `docs` skill, then
+  lands the result as a PR per the git-workflow skill with `gh pr merge --auto --squash`.
+  **Cost — a scheduled trigger spends real money on a timer.** Every fire calls the Anthropic
+  API whether or not there is drift to fix; unlike the label hook (paid per human label) this
+  bills itself **daily** with no human in the loop. Rein it in with `hygiene.claudeArgs`
+  (e.g. `--max-turns 40`, a cheaper `--model`) and a sparser `hygiene.cron`. It stays inert
+  until you complete the opt-ins:
+  (1) set the API key secret with the user's go-ahead: `gh secret set ANTHROPIC_API_KEY`;
+  (2) commit the rendered `.claude/skills/` — the dispatched harness reads the committed
+  `hygiene` skill (the hook needs the `claude` target and does not work in repos that gitignore
+  their render). The first task runs the `docs` skill, which ships in the `orchestration` +
+  `docs-system` bundles — enable those so `docs` and its doc-writer agents render, or the docs
+  task is skipped with a note;
+  (3) enable auto-merge on the repo so `--auto` can arm — a repo setting, in scope to flip for
+  the user: `gh api repos/<owner>/<repo> -X PATCH -F allow_auto_merge=true`;
+  (4) auto-merge needs something to wait on. Two gotchas: a **required status check** must be
+  configured on the base branch (else `--auto` has no gate and cannot arm), AND PRs opened with
+  the default `GITHUB_TOKEN` **do not trigger the repo's own `pull_request` CI** (a GitHub
+  limitation — so `waffle-doctor` never runs on the hygiene PR and the required check never
+  reports). To make auto-merge actually fire, the workflow reads the `WAFFLE_HYGIENE_TOKEN`
+  secret and falls back to `GITHUB_TOKEN` when it is unset. Set it to a **PAT or GitHub App
+  token** whose PRs trigger CI — creating that token is a **user action** (this playbook does
+  not mint credentials): `gh secret set WAFFLE_HYGIENE_TOKEN`. Without it, the daily PR still
+  opens but auto-merge stays pending for a human.
+  Also enable **branch protection** on the default branch — the job holds `contents: write`,
+  so protection (plus the human-token requirement above) is the backstop against a
+  prompt-injected run pushing straight to a protected branch. Pushing the workflow file needs
+  the `workflow` credential scope. To stop managing it, drop the
+  `files/.github/workflows/waffle-hygiene.yml` entry from `include:` or
+  `eject: [files/.github/workflows/waffle-hygiene.yml]` (the eject releases the file as
+  project-owned rather than deleting it).
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
@@ -231,4 +281,32 @@ config:
       single quotes are allowed). In that scalar every backslash starts an escape, so one
       would either silently corrupt an argument or break the YAML. Security-sensitive: this
       is an unvalidated passthrough to the harness CLI — flags here can widen the harness's
+      authority, so set only what you understand and trust.
+  hygiene.cron:
+    required: false
+    default: "0 13 * * *"
+    pattern: '[-0-9*/, ]+'
+    description: >-
+      Schedule for the repo-hygiene CI workflow (.github/workflows/waffle-hygiene.yml),
+      as a GitHub Actions POSIX cron expression in UTC. Default "0 13 * * *" ≈ 05:00
+      America/Los_Angeles (PST; 06:00 during PDT). Rendered verbatim into the workflow's
+      `schedule:` block as a single-quoted YAML scalar, so it is restricted to the cron
+      alphabet (digits, spaces, and `* / , -`) by the pattern above — an allowlist that
+      both blocks injection (no quotes, `${{`, or newlines can break out of the scalar) and
+      rejects an empty value, which would render an invalid schedule. A bad value fails the
+      render loudly instead of shipping a broken or subverted workflow. GitHub validates the
+      cron fields themselves at workflow-parse time. Note the trigger also has
+      `workflow_dispatch` for manual runs independent of this schedule.
+  hygiene.claudeArgs:
+    required: false
+    default: ""
+    pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
+    description: >-
+      Extra CLI arguments passed to the dispatched harness via the Claude Code action's
+      claude_args input in .github/workflows/waffle-hygiene.yml — e.g. "--max-turns 40" or
+      "--model claude-sonnet-4-5" for cost control on the daily run. Empty by default.
+      Handled exactly like labelHook.claudeArgs: rendered into a double-quoted YAML scalar,
+      so it must not contain double quotes, backslashes, newlines, or `${{` (enforced at
+      render by the pattern above; single quotes are allowed). Security-sensitive: this is an
+      unvalidated passthrough to the harness CLI — flags here can widen the harness's
       authority, so set only what you understand and trust.
