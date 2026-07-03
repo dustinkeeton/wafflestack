@@ -46,10 +46,9 @@ env, and setup notes live in each `bundle.yaml` (authoritative — this table su
 | `harness-architect` | `bundles/harness-architect/` | harness-architect | (none) | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, slash-command UX, multi-harness portability). One optional config key (`project.longName`). This repo appends a project extension grounding it in the stack's own paradigms (AGENTS.md registry, schema/FORMAT.md contract, DECISIONS.md ADRs, validation gates). |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
-and `mobile-architect` take seniority for problems specific to their domains. The former
-`security-audit` name collision is resolved by the `electron-`/`webapp-` renames; the
-output-conflict guard (`render.mjs:34`) still errors if two enabled bundles ever emit the
-same path.
+and `mobile-architect` take seniority in their domains. The former `security-audit` name
+collision is resolved by the `electron-`/`webapp-` renames; the output-conflict guard
+(`render.mjs:51`) still errors if two enabled bundles ever emit the same path.
 
 ## Installer module registry
 
@@ -57,23 +56,23 @@ same path.
 
 | Module | Purpose |
 |--------|---------|
-| `installer/lib/render.mjs` | Render pipeline: compute selection, regenerate all outputs verbatim, delete stale managed files, write lock. Output-conflict + scoped required-config + env-prereq checks. |
+| `installer/lib/render.mjs` | Render pipeline: compute selection, regenerate all outputs verbatim, delete stale managed files, write lock. Output-conflict + scoped required-config + env-prereq checks + unmanaged-file overwrite guard (refuses to clobber a pre-existing untracked file unless `force`; `render.mjs:137`). Passes the prior lock's file paths to `computeSelection` as `trackedFiles` so already-installed syrup keeps rendering. |
 | `installer/lib/refs.mjs` | Ref grammar, toolkit-wide resolution, and transitive cross-bundle dependency closure + render-selection computation. Pure leaf (no local imports). Shared by install / render / validate. |
 | `installer/lib/template.mjs` | `{{placeholder}}` substitution: declared-key gate, per-target resolve, depth-capped nested expansion, value formatting, optional per-key `pattern:` value validation. |
-| `installer/lib/toolkit.mjs` | Load `toolkit.yaml` + every bundle manifest (agents, skills, `requires`, config, env, setup); scoped required-key check. |
+| `installer/lib/toolkit.mjs` | Load `toolkit.yaml` + every bundle manifest (agents, skills, `files` payloads with sniffed `binary` flag, `syrup` opt-in set, `requires`, config, env, setup); scoped required-key check. |
 | `installer/lib/project.mjs` | Load consuming-project config (+ local overlay), valid targets, `harness.*` built-ins, per-target resolver; multi-generation legacy-name read fallback + in-place dotfile migration chain (`.wafflestack.*` → `.waffle.*` → `.waffle/waffle.*`). |
 | `installer/lib/util.mjs` | Shared helpers: sha256, YAML read, deep-merge, dotted lookup, frontmatter parse/stringify, fs writes, semver parse/compare. |
 | `installer/lib/doctor.mjs` | Diff managed files against the lock; always report the rendered `toolkitVersion` + a skew note pointing at `upgrade`. |
 | `installer/lib/eject.mjs` | `eject` (release an item, self-cleaning its `include:`), `installRefs` (persist bundle/item refs to config), `init` (starter config). |
 | `installer/lib/validate.mjs` | Toolkit-developer lint: manifests, frontmatter, placeholder↔declaration sync, agent-skill + `requires:` ref integrity, config `pattern:` compilability + default-match. |
-| `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. |
+| `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. On an already-configured `cwd`, injects a "Current configuration — update mode" section (live targets/bundles/includes/ejects/effective config/unset required keys/syrup state) so a re-run curates an update pass. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` rename and the 0.8.0 root→`.waffle/` config move. |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
 | `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded self-contained SVG. Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
 
 ```js
 // render.mjs
-export function renderProject({ toolkitRoot, cwd, toolkitVersion, log }) // → { ok, errors, warnings, written, removed }
+export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false, log }) // → { ok, errors, warnings, written, removed }  (force overrides the unmanaged-file overwrite guard, render.mjs:137)
 export function readLock(cwd)                          // → lock object | null
 
 // refs.mjs  (pure leaf — no local imports; ref grammar + resolution + dependency closure)
@@ -87,16 +86,16 @@ export function resolveAgentSkill(toolkit, name, preferBundle)     // → { kind
 export function closureFor(toolkit, root)            // → [{ kind,name,bundle,item }] BFS closure, root first, deduped
 export function closureDeps(toolkit, root)           // → ["kind/name"…] non-root deps
 export function includeRefMatches(includeRef, kind, name) // → boolean
-export function computeSelection(toolkit, project)  // → { items:[{bundleName,bundle,kind,item}], closures, errors }
+export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items:[{bundleName,bundle,kind,item}], closures, errors }  (trackedFiles = prior lock's file paths; ungates already-installed syrup)
 
-// template.mjs   (PLACEHOLDER = /\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g; MAX_SUBSTITUTION_DEPTH = 4)
+// template.mjs   (PLACEHOLDER = /(?<!\$)\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g; MAX_SUBSTITUTION_DEPTH = 4)
 export function substitute(text, resolve, declared, errors, context, patterns) // → string (patterns: Map<key,RegExp> render-time value validation)
 export function formatValue(v)                         // → string (string[] join ", "; else YAML block)
 export function placeholderKeys(text)                  // → Set<string>
 export function compilePattern(pattern)                // → RegExp (full-match ^(?:…)$; compiles a config key's pattern:)
 
 // toolkit.mjs
-export function loadToolkit(rootDir)                   // → { name, description, bundles: Map<name, bundle> }  (bundle gains .requires)
+export function loadToolkit(rootDir)                   // → { name, description, bundles: Map<name, bundle> }  (bundle also gains .files [{name,path,binary}], .syrup Set<"files/…">, .requires)
 export function missingRequiredKeys(bundle, values, lookup, usedKeys = null) // → string[]  (usedKeys Set scopes to referenced keys)
 
 // project.mjs
@@ -118,6 +117,7 @@ export function makeResolver(bundle, values, target)   // → (key: string) => v
 
 // util.mjs
 export function sha256(content)                        // → hex string
+export function isBinary(buffer)                        // → boolean (NUL byte in first 8000 → binary; sets files item .binary)
 export function readYaml(file)                         // → parsed YAML
 export function exists(file)                           // → boolean
 export function writeFileEnsuringDir(file, content)    // mkdir -p + write
@@ -149,7 +149,7 @@ export function init({ cwd })                          // → configFile path
 export function validateToolkit(rootDir)               // → string[] (problems; [] = clean)
 
 // setup.mjs
-export function setupGuide(toolkitRoot, toolkitVersion) // → string
+export function setupGuide(toolkitRoot, toolkitVersion, cwd) // → string (playbook + [current-config update section when cwd is already configured] + inventory)
 export function toolkitInventory(toolkit, version)      // → string
 
 // waffledocs.mjs
@@ -168,7 +168,7 @@ validate.mjs → toolkit, template, refs, util
 setup.mjs    → toolkit
 upgrade.mjs  → render, doctor, migrations, project, util
 migrations.mjs → util
-toolkit.mjs  → util
+toolkit.mjs  → util, refs
 project.mjs  → util
 template.mjs → (yaml)
 refs.mjs     → (none)
@@ -178,41 +178,48 @@ util.mjs     → (none)
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Global flag `--cwd DIR` targets a project dir
-(spliced out before ref parsing; default: process cwd; `cli.mjs:16`, `extractCwd` `cli.mjs:94`).
+(spliced out before ref parsing; default: process cwd; `cli.mjs:24`, `extractCwd` `cli.mjs:155`).
+`render`/`install` also take `--force` (`extractFlag`, `cli.mjs:164`) to override the overwrite guard.
 Usage: `wafflestack <init|setup|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]`.
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.waffle/waffle.yaml` (targets / bundles / include / config / eject scaffold, creating `.waffle/`); errors if one exists at any generation. `--gitignore` also appends `.waffle/waffle.local.yaml` (only that — no bundle chosen yet). `eject.mjs:166` |
-| `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit. `setup.mjs:11` |
-| `install [ref…]` | Persist each ref to config (bundle → `bundles:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `--gitignore` appends recommended entries after a clean render. `eject.mjs:74` |
-| `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Exit 1 on error. `--gitignore` appends recommended entries after a clean render (`ensureGitignoreEntries` + `recommendedGitignoreEntries`, `offerGitignore` in `cli.mjs`). `render.mjs:24` |
-| `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:23` |
+| `init` | Write starter `.waffle/waffle.yaml` (targets / bundles / include / config / eject scaffold, creating `.waffle/`); errors if one exists at any generation. `--gitignore` also appends `.waffle/waffle.local.yaml` (only that — no bundle chosen yet). `eject.mjs:168` |
+| `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit; when `--cwd` (or the invoked repo) is already configured, also prints a live "Current configuration — update mode" section. `setup.mjs:19` |
+| `install [ref…]` | Persist each ref to config (bundle → `bundles:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `--force` overrides the overwrite guard; `--gitignore` appends recommended entries after a clean render. `eject.mjs:92` |
+| `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Refuses to overwrite a pre-existing file not tracked by the lock unless `--force` (guard `render.mjs:137`). Exit 1 on error. `--gitignore` appends recommended entries after a clean render (`ensureGitignoreEntries` + `recommendedGitignoreEntries`, `offerGitignore` in `cli.mjs`). `render.mjs:29` |
+| `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:28` |
 | `doctor` | Diff managed files vs lock; always report the rendered `toolkitVersion` + a skew note. Exit 1 on drift (`--allow-missing`: only modified files fail). `doctor.mjs:17` |
-| `eject <skills/NAME\|agents/NAME>` | Add to `eject:`, strip any matching `include:` entry, drop the item's files from the lock; files stay in place, now project-owned. `eject.mjs:17` |
+| `eject <skills/NAME\|agents/NAME\|files/PATH>` | Add to `eject:`, strip any matching `include:` entry, drop the item's files from the lock; files stay in place, now project-owned. `eject.mjs:23` |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter complete, placeholder↔declaration sync, agent-skill/`requires:` refs resolve. Exit 1 on problems. `validate.mjs:9` |
 
 ## Item refs and render selection
 
 A ref (used by `install`, `include:`, `eject`, and `requires:`) names something installable.
-Grammar + resolution live in `refs.mjs` (`parseRef` `refs.mjs:38`, `resolveRef` `refs.mjs:64`).
+Grammar + resolution live in `refs.mjs` (`parseRef` `refs.mjs:40`, `resolveRef` `refs.mjs:67`).
+The item kind is one of `agents`, `skills`, `files` (a `files/` payload — a workflow or script
+byte/text-copied to that repo-relative path).
 
 | Form | Example | Meaning |
 |------|---------|---------|
 | bundle | `github-workflow` | a whole bundle (unknown name → error) |
-| item | `skills/issue`, `agents/project-manager` | an item; unqualified, must be unique toolkit-wide |
+| item | `skills/issue`, `agents/project-manager`, `files/.github/workflows/waffle-hygiene.yml` | an item; unqualified, must be unique toolkit-wide |
 | qualified | `engineering-team/skills/webapp-security-audit` | an item in a named bundle (disambiguates cross-bundle name collisions) |
 
 A bare item name resolves only when unique across the toolkit; otherwise it must be
 bundle-qualified. `canonicalRef` is the minimal re-resolvable form (qualified only when
 ambiguous) — that is what `install` writes to `include:`.
 
-Render selection (`computeSelection`, `refs.mjs:222`):
+Render selection (`computeSelection`, `refs.mjs:228`):
 
 ```
 rendered = union(items of enabled bundles:) ∪ closure(each include: item) − eject:
 ```
 
+- Syrup opt-in gate — a bundle's `syrup:` `files/` items are excluded from default expansion
+  unless the path is already lock-tracked (`trackedFiles`, from the prior lock via
+  `renderProject`) or explicitly `include:`-ed (`refs.mjs:239-246`) — an existing install keeps
+  updating, a fresh enable never silently arms a sensitive workflow.
 - Dependency closure — installing an item pulls its transitive cross-bundle deps (BFS, deduped
   by bundle+kind+name). Direct deps of a node = agent frontmatter `skills:` (lenient — absent
   or ambiguous names skipped) + bundle `requires:[kind/name]` (strict — a dangling entry is a
@@ -225,28 +232,34 @@ rendered = union(items of enabled bundles:) ∪ closure(each include: item) − 
 
 ## Template semantics
 
-- Placeholders `{{dotted.key}}` (regex `template.mjs:3`) substitute only if the key is
-  declared in the bundle's `config:` or is `harness.*` (`template.mjs:34`). Any other braces
-  (bash `${...}`, GitHub Actions `${{ }}`, mustache) pass through verbatim.
-- Value formatting (`formatValue`, `template.mjs:52`): strings verbatim; string arrays join
+- Placeholders `{{dotted.key}}` (regex `/(?<!\$)\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g`,
+  `template.mjs:7`) substitute only if the key is declared in the bundle's `config:` or is
+  `harness.*` (`template.mjs:38`). Any other braces (bash `${...}`, mustache) pass through
+  verbatim; a `$`-prefixed `${{ }}` (GitHub Actions) is hard-excluded by the negative
+  lookbehind, so `files/` workflow payloads carry those expressions untouched and unpoliced.
+- Value formatting (`formatValue`, `template.mjs:67`): strings verbatim; string arrays join
   `, `; other structures render as a YAML block.
 - `harness.*` — reserved, always-available namespace (never declared), resolved per output
   target (`HARNESS_BUILTINS`, `project.mjs:229`). Override via `config.harness.<sub>` (scalar →
   all targets, or a per-target map).
 - Nested substitution — substituted values are re-expanded up to depth 4
-  (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:11`; `expandNested`, `template.mjs:44`): a committed
+  (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:15`; `expandNested`, `template.mjs:59`): a committed
   value can reference a key kept in the gitignored local overlay. Canonical text surviving the
   first pass is never re-scanned; unresolvable nested placeholders pass through.
 - Value patterns — a config key may declare `pattern:` (a regex); the fully-resolved value must
-  fully match at render or the render fails, like a missing required key (`compilePattern`
-  `template.mjs`, enforced in `substitute`, linted by `validate`). For values spliced into
-  structured contexts (a workflow `if:`, a YAML scalar) where context-correct escaping is impossible.
+  fully match at render or the render fails like a missing required key (`compilePattern`
+  `template.mjs`, enforced in `substitute`, linted by `validate`) — for values spliced into
+  structured contexts (a workflow `if:`, a YAML scalar) where escaping is impossible.
 - Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered
   item inside `<!-- BEGIN project extension: … -->` / `<!-- END project extension -->` markers
   (`appendExtension`, `render.mjs:191`). Agents: appended to body; skills: appended to
   `SKILL.md` only.
 - Output conflict — two enabled sources emitting the same output path is a hard render error
-  (`emit`, `render.mjs:34`), not last-write-wins.
+  (`emit`, `render.mjs:51`), not last-write-wins.
+- Unmanaged-file overwrite guard — a render that would produce a path already on disk but not
+  tracked by the previous lock (a consumer's hand-written file) is refused before any write or
+  prune, leaving the tree untouched (`render.mjs:137`); a byte-identical file is adopted
+  silently. `--force` overwrites.
 
 | `harness.*` key | claude | codex | agents-dir |
 |-----------------|--------|-------|------------|
@@ -284,7 +297,7 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 147 tests, 28 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 167 tests, 31 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render` |
@@ -293,11 +306,16 @@ Node >= 18. Single runtime dependency: `yaml`.
 ## Dogfood state
 
 This repo renders 4 bundles into itself — `github-workflow`, `docs-system`, `orchestration`,
-`harness-architect` (`targets: [claude]`, plus `include:` refs for the two committed syrup
-workflows — hygiene and release-hook; see `.waffle/waffle.yaml`). Rendered output
-(`.claude/agents/`, `.claude/skills/`) and `.waffle/waffle.lock.json` are gitignored here;
-regenerate with `node installer/cli.mjs render`. Only `.claude/settings.json` is tracked under
-`.claude/` (project-owned; holds the agent-teams env var).
+`harness-architect` (`targets: [claude]`, plus `include:` refs arming the two syrup workflows
+`files/.github/workflows/waffle-hygiene.yml` and `.../waffle-release-hook.yml`;
+`.waffle/waffle.yaml`). The render (`.claude/agents/`, `.claude/skills/`,
+`.claude/settings.json`) and `.waffle/waffle.lock.json` are COMMITTED — like a consuming
+project — because the CI hygiene harness reads the committed skills and the doctor drift gate
+(required check on main) needs render + lock in git. Re-render AND commit after editing
+`bundles/**`. Gitignored: `.claude/worktrees/` (throwaway), `.codex/`/`.agents/` (non-targets),
+`.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the
+generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, `cheatsheet.svg`, `team.svg`) —
+these deliberate absences are tolerated by doctor's `--allow-missing`.
 
 ## Owner-voiced docs — do not rewrite
 

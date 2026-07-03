@@ -40,6 +40,50 @@ check; admin bypass stays available).
 
 ---
 
+## 2026-07-03: "Syrup" — an opt-in tier for sensitive bundle items (#51)
+
+**Context**: The `github-workflow` bundle grew several `files/` workflow payloads —
+the label hook, the daily hygiene run, and the release hook — that hold repo write
+permissions and/or spend Anthropic API budget on every trigger. The render model
+was all-or-nothing: enabling a bundle rendered *every* item it declared. That meant
+turning on `github-workflow` for its issue/git skills would also drop a
+live, permission-holding workflow into a consumer's repo with no explicit consent.
+
+**Decision**: Add a `syrup:` list to `bundle.yaml` that names the `files/` items
+which must be poured only on request. Enabling a bundle no longer renders its syrup
+items. Each renders only when (a) the consumer installs the ref explicitly
+(`install files/<path>`, persisted to `include:`), or (b) the repo already tracks
+that path in its lock — so an existing install keeps updating, but a fresh enable
+never silently arms it. `validate` rejects a `syrup:` entry that doesn't resolve to
+a real item, and `setup` lists syrup items under a separate "do not install by
+default" acknowledgement.
+
+**Alternatives considered**:
+
+- **Leave the workflows out of the bundle entirely** (ship them as copy-paste
+  snippets). Rejected — they benefit from the same render pipeline (placeholder
+  substitution, lock tracking, drift checking, `requires:` closure) as any other
+  item; excluding them would forfeit all of that.
+- **A separate "dangerous" bundle.** Rejected — the hooks are git/GitHub-native and
+  reuse the same `issue`/`git-workflow` skills; splitting them off would duplicate
+  the gh-auth/setup surface for no gain.
+- **Render them but disabled/commented.** Rejected — a rendered-but-inert workflow
+  still lands a file the consumer didn't ask for and invites accidental enabling.
+
+**Rationale**: Sensitive automation should be an explicit, deliberate act, not a
+side effect of wanting a bundle's ordinary skills. Gating on "installed the ref, or
+already tracks it in the lock" keeps upgrades frictionless for adopters while making
+first-time arming a conscious choice.
+
+**Impact**: The `waffle-label-hook.yml` workflow became opt-in — a repo that enabled
+`github-workflow` but never committed the file simply stops rendering it. Adopters
+install the ref (or already track it) and are unaffected. Threaded through
+`loadBundle()`, `computeSelection()`/`renderProject()` (via the prior lock's tracked
+files), `validate`, and `setup`; documented in `schema/FORMAT.md` and `schema/SETUP.md`.
+Additive and minor — no migration.
+
+---
+
 ## 2026-07-02: Ship the label-event hook as a github-workflow prefab (workflow + skill) (#27)
 
 **Context**: Consumers want a GitHub label applied to an issue to immediately trigger an
