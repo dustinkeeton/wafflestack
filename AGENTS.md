@@ -30,7 +30,7 @@ assets/                    brand assets (marks, favicons, social card) + brand g
 
 ## Stack registry
 
-`toolkit.yaml` lists 8 stacks (14 agents + 21 skills; reorganized in #38 — `design`
+`toolkit.yaml` lists 9 stacks (14 agents + 29 skills; reorganized in #38 — `design`
 dissolved, roles consolidated, `security-audit` variants renamed). Per-stack config schema,
 env, and setup notes live in each `stack.yaml` (authoritative — this table summarizes).
 
@@ -44,6 +44,7 @@ env, and setup notes live in each `stack.yaml` (authoritative — this table sum
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS); mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, slash-command UX, multi-harness portability). One optional config key (`project.longName`). This repo appends a project extension grounding it in the stack's own paradigms (AGENTS.md registry, schema/FORMAT.md contract, DECISIONS.md ADRs, validation gates). |
+| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each a thin wrapper that shells out to `npx <waffle.toolkitRef> <sub>` and interprets the output with agent judgment (e.g. `/waffle-upgrade` reviews the render diff, `/waffle-eject` confirms before releasing a file). Dogfoods the toolkit's own delivery mechanism. One optional config key (`waffle.toolkitRef`, default `github:dustinkeeton/wafflestack` — pin to a tag or a local checkout). Not enabled in this repo's own render. |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The former `security-audit` name

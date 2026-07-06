@@ -3348,6 +3348,85 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
   });
 });
 
+// #70: the self-referential wafflestack stack ships one user-invocable /waffle-* skill per CLI
+// subcommand, each a thin `npx <waffle.toolkitRef> <sub>` wrapper. These drive THE ACTUAL
+// shipped stack (not a fixture): it loads, renders, substitutes the toolkitRef, and its skills
+// surface on the generated cheat sheet.
+describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const SKILLS = [
+    'waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render',
+    'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate',
+  ];
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-wafflestack-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('the stack loads with all eight wrapper skills, no agents, and one optional config key', () => {
+    const stack = loadToolkit(repoRoot).stacks.get('wafflestack');
+    assert.ok(stack, 'wafflestack stack registered in toolkit.yaml');
+    assert.deepEqual(stack.skills.map((s) => s.name).sort(), [...SKILLS].sort());
+    assert.equal(stack.agents.length, 0);
+    // waffle.toolkitRef is optional and defaults to the github ref (same knob as doctor.toolkitRef)
+    assert.equal(stack.config['waffle.toolkitRef'].required, false);
+    assert.match(stack.config['waffle.toolkitRef'].default, /^github:dustinkeeton\/wafflestack$/);
+  });
+
+  test('enabling the stack renders every /waffle-* skill for both skill targets; toolkitRef default substituted; doctor clean', () => {
+    writeConfig('targets: [claude, agents-dir]\nstacks: [wafflestack]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    for (const name of SKILLS) {
+      assert.ok(fs.existsSync(path.join(cwd, `.claude/skills/${name}/SKILL.md`)), `${name} → .claude`);
+      assert.ok(fs.existsSync(path.join(cwd, `.agents/skills/${name}/SKILL.md`)), `${name} → .agents`);
+    }
+    // the default toolkitRef flows into the npx invocation; no leftover wafflestack placeholder
+    const renderSkill = read(cwd, '.claude/skills/waffle-render/SKILL.md');
+    assert.match(renderSkill, /npx --yes github:dustinkeeton\/wafflestack render/);
+    assert.doesNotMatch(renderSkill, /\{\{\s*waffle\.toolkitRef\s*\}\}/);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('waffle.toolkitRef override flows into the npx invocation (pin a release tag)', () => {
+    writeConfig(
+      'targets: [claude]\nstacks: [wafflestack]\n' +
+        'config:\n  waffle:\n    toolkitRef: github:dustinkeeton/wafflestack#v0.10.0\n',
+    );
+    assert.equal(render().ok, true);
+    const doctorSkill = read(cwd, '.claude/skills/waffle-doctor/SKILL.md');
+    assert.match(doctorSkill, /npx --yes github:dustinkeeton\/wafflestack#v0\.10\.0 doctor/);
+    assert.doesNotMatch(doctorSkill, /\{\{\s*waffle\.toolkitRef\s*\}\}/);
+  });
+
+  test('all eight wrappers are user-invocable and surface on the generated cheat sheet, with arg-hints', () => {
+    writeConfig('targets: [claude]\nstacks: [wafflestack]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    const cheat = read(cwd, '.waffle/CHEATSHEET.md');
+    for (const name of SKILLS) {
+      assert.match(cheat, new RegExp(`\\*\\*\`/${name}\``), `${name} listed on the cheat sheet`);
+    }
+    // the ref-taking commands carry an argument-hint that reaches the cheat sheet
+    assert.match(cheat, /\*\*`\/waffle-eject`\*\* `<skills\/NAME/);
+    assert.match(cheat, /\*\*`\/waffle-install`\*\* `<ref…>/);
+    // and the branded SVG one-pager is produced too
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/cheatsheet.svg')));
+  });
+
+  test('a per-item install of one wrapper renders just it — no requires: fan-out to siblings', () => {
+    // waffle-doctor has no requires: edge, so installing it alone must not drag in the others.
+    writeConfig('targets: [claude]\ninclude: [skills/waffle-doctor]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/waffle-doctor/SKILL.md')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.claude/skills/waffle-render/SKILL.md')), 'no sibling pulled in');
+  });
+});
+
 function read(cwd, rel) {
   return fs.readFileSync(path.join(cwd, rel), 'utf8');
 }
