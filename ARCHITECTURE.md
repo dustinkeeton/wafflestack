@@ -48,17 +48,18 @@ only inputs you own — everything under `.claude/` (etc.) is generated.
 A **stack** is a themed group of agents and skills you enable together (for
 example `github-workflow` or `docs-system`). `toolkit.yaml` lists every stack;
 each stack's `stack.yaml` manifest declares its agents, skills, config keys, and
-any environment or service prerequisites. There are **7 stacks** today.
+any environment or service prerequisites. There are **8 stacks** today.
 
 ### Picking what to install
 
-You don't have to take a whole stack. A **ref** names something installable, in
-one of three forms:
+You don't have to take a whole stack. A **ref** names something installable. An
+item is one of three kinds — an `agents/` definition, a `skills/` definition, or a
+`files/` payload (a workflow or script copied to a repo-relative path):
 
 | Ref | Example | Means |
 |-----|---------|-------|
 | stack | `github-workflow` | the whole stack |
-| item | `skills/issue`, `agents/project-manager` | one skill or agent (the name must be unique across the toolkit) |
+| item | `skills/issue`, `agents/project-manager`, `files/.github/workflows/waffle-hygiene.yml` | one item (the name/path must be unique across the toolkit) |
 | qualified item | `engineering-team/skills/webapp-security-audit` | one item in a named stack — use this when the same name exists in two stacks |
 
 `wafflestack install <ref…>` records your choice in `.waffle/waffle.yaml`
@@ -82,6 +83,14 @@ union(items of stacks:)  ∪  closure(each include: item)  −  eject:
 placeholders your selected items actually use — so a one-item install doesn't
 demand config that its unselected siblings need.
 
+**Opt-in syrup — a gate for sensitive syrup.** The generic `files/` payload is called
+**syrup**; a stack can mark certain payloads (the label-hook, hygiene, and release
+workflows — the ones that hold repo write permissions or spend API budget) as **opt-in
+syrup** via the `optIn:` manifest key. Enabling the stack does *not* render them. They
+render only when you install the ref explicitly or when your repo already tracks the file
+in its lock. That way an existing install keeps getting updates, but a fresh enable never
+silently arms a workflow you didn't ask for.
+
 ### Agents and skills
 
 - **Agent** — a specialist persona with instructions (e.g. a documentation
@@ -92,7 +101,7 @@ demand config that its unselected siblings need.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **13 agents and 17 skills** in total.
+one source can render everywhere. There are **14 agents and 21 skills** in total.
 
 ### Targets (harnesses)
 
@@ -127,14 +136,15 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | Command | What it does |
 |---------|--------------|
 | `init` | Write a starter `.waffle/waffle.yaml`. |
-| `setup` | Print the agent-driven install playbook + a generated inventory. |
-| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Bare `install` just renders. |
-| `render` | Regenerate every managed file, delete stale ones, write the lock. |
+| `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
+| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
+| `render` | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. |
+| `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock; report drift or missing files. |
-| `eject` | Stop managing an item — its files stay and become project-owned. |
+| `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 
-Under the hood, `installer/lib/` holds 10 small modules (load the toolkit, load
+Under the hood, `installer/lib/` holds 13 small modules (load the toolkit, load
 project config, substitute templates, render, diff against the lock, etc.). The
 full function-level registry is in the root `AGENTS.md`.
 
@@ -152,6 +162,12 @@ A render is a straight-line flow:
 5. **Write** the harness-native files and record each file's hash in
    `.waffle/waffle.lock.json`.
 6. **Prune** any previously-managed file that is no longer rendered.
+
+Two safety checks guard the write step: two enabled sources emitting the *same*
+output path is a hard error (never last-write-wins), and a render that would
+overwrite a pre-existing file the lock doesn't track (a consumer's hand-written
+file) is refused before any write — a byte-identical file is adopted silently, and
+`--force` overrides the guard.
 
 Later, `doctor` re-hashes the files and compares them to the lock — that is how it
 knows if someone hand-edited a generated file or an update changed the output.
@@ -173,11 +189,27 @@ overwrite them. Change source, config, or an extension instead.
 ## How this repo uses itself
 
 wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders
-`github-workflow`, `docs-system`, and `orchestration` into this repo, so the
-toolkit's own agents and skills are available while developing it. Unlike a normal
-consuming project, the rendered output and lock are **gitignored** here — a
-committed second copy of every skill would pollute search and tempt edits to
-generated files. Regenerate with `node installer/cli.mjs render`.
+`github-workflow`, `docs-system`, `orchestration`, and `harness-architect` into
+this repo, so the toolkit's own agents and skills are available while developing
+it. It also arms two opt-in syrup workflows via `include:` — the hygiene and release
+hooks.
+
+The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)
+and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
+consuming project. Two reasons: the CI hygiene harness reads the committed skills,
+and the `waffle-doctor` drift gate (a required check on `main`) can only compare
+against a render + lock that live in git. So after any `stacks/**` change you must
+**re-render and commit** the updated files:
+
+```bash
+node installer/cli.mjs render
+```
+
+A few things stay deliberately untracked (and `doctor` runs with `--allow-missing`
+to tolerate them): `.claude/worktrees/` (throwaway working state), `.codex/` and
+`.agents/` (non-targets — this repo only renders `claude`), the
+`waffle-label-hook.yml` workflow (committing it would arm a live label→harness
+dispatch), and the generated `.waffle/` overview docs.
 
 ## Getting started (new contributors)
 
