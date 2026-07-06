@@ -166,25 +166,41 @@ export function ensureGitignoreEntries(cwd, entries) {
  * The `.gitignore` entries wafflestack recommends for a loaded `project` — the baseline offer
  * behind the `--gitignore` flag and the setup playbook. Always the local overlay
  * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed), plus
- * the resolved `git.worktreesDir` (throwaway working state) when an enabled bundle declares
+ * the resolved `git.worktreesDir` (throwaway working state) when an enabled stack declares
  * that key. Dev-only / self-hosting mode — also gitignoring the renders +
  * `.waffle/waffle.lock.json`, paired with `doctor --allow-missing` — is a separate opt-in the
  * agent proposes case by case, not part of this baseline.
  */
 export function recommendedGitignoreEntries(toolkit, project) {
   const entries = [LOCAL_CONFIG_FILE];
-  for (const name of project.bundles ?? []) {
-    const bundle = toolkit.bundles.get(name);
-    if (!bundle || !('git.worktreesDir' in bundle.config)) continue;
-    const resolve = makeResolver(bundle, project.values ?? {}, project.targets?.[0] ?? 'claude');
+  for (const name of project.stacks ?? []) {
+    const stack = toolkit.stacks.get(name);
+    if (!stack || !('git.worktreesDir' in stack.config)) continue;
+    const resolve = makeResolver(stack, project.values ?? {}, project.targets?.[0] ?? 'claude');
     const dir = resolve('git.worktreesDir');
     if (dir) {
       const normalized = `${String(dir).replace(/\/+$/, '')}/`; // dir-only match, no double slash
       if (!entries.includes(normalized)) entries.push(normalized);
     }
-    break; // bundles share the one key; a single worktrees dir is enough
+    break; // stacks share the one key; a single worktrees dir is enough
   }
   return entries;
+}
+
+/**
+ * In-place rename of a legacy `bundles:` key to `stacks:` on a parsed YAML Document (the
+ * 0.10.0 consumer-config key rename, #59). Mutating the key scalar's value preserves the
+ * value node and every attached comment — unlike delete+set, which would drop them. Shared
+ * by the 0.10.0 migration and `installRefs` so a plain install and an `upgrade` converge.
+ * Idempotent: a no-op returning false when `stacks:` already exists or no `bundles:` pair is
+ * present; returns true when it renamed the key.
+ */
+export function renameLegacyStacksKey(doc) {
+  if (doc.has('stacks') || !doc.has('bundles')) return false;
+  const pair = doc.contents?.items?.find((p) => (p.key?.value ?? String(p.key)) === 'bundles');
+  if (!pair) return false;
+  pair.key.value = 'stacks';
+  return true;
 }
 
 /**
@@ -212,9 +228,30 @@ export function loadProjectConfig(cwd, notes = []) {
     throw new Error(`invalid targets in ${CONFIG_FILE}: ${bad.join(', ')} (valid: ${VALID_TARGETS.join(', ')})`);
   }
 
+  // The consumer `bundles:` key was renamed to `stacks:` in 0.10.0 (#59). Read the legacy key
+  // as a fallback so a repo that has not re-rendered keeps working; `stacks:` wins when both
+  // are present. Either legacy read pushes a deprecation note onto `notes` (surfaced as a
+  // render warning), pointing at `wafflestack upgrade` which renames the key in place.
+  let stacks;
+  if (cfg.stacks !== undefined) {
+    stacks = cfg.stacks;
+    if (cfg.bundles !== undefined) {
+      notes.push(
+        `both \`stacks:\` and the legacy \`bundles:\` key are set in ${CONFIG_FILE} — using \`stacks:\`; the \`bundles:\` key is ignored (remove it)`,
+      );
+    }
+  } else if (cfg.bundles !== undefined) {
+    stacks = cfg.bundles;
+    notes.push(
+      `legacy \`bundles:\` key in ${CONFIG_FILE} is deprecated — run \`wafflestack upgrade\` to rename it to \`stacks:\``,
+    );
+  } else {
+    stacks = [];
+  }
+
   return {
     targets,
-    bundles: cfg.bundles ?? [],
+    stacks,
     include: cfg.include ?? [],
     values: cfg.config ?? {},
     eject: cfg.eject ?? [],
@@ -223,7 +260,7 @@ export function loadProjectConfig(cwd, notes = []) {
 
 /**
  * Reserved `harness.*` template values, resolved per output target. Not declared in
- * any bundle — always available. A project may override any sub-key via
+ * any stack — always available. A project may override any sub-key via
  * `config.harness.<sub>` (a scalar applied to every target, or a per-target map).
  */
 export const HARNESS_BUILTINS = {
@@ -235,12 +272,12 @@ export const HARNESS_BUILTINS = {
 };
 
 /**
- * Resolver for a bundle rendering to `target`:
+ * Resolver for a stack rendering to `target`:
  * - `harness.<sub>` — project override (scalar for all targets, or per-target map),
  *   falling back to the built-in for `target`.
- * - anything else — project config value, else the bundle-declared default.
+ * - anything else — project config value, else the stack-declared default.
  */
-export function makeResolver(bundle, values, target) {
+export function makeResolver(stack, values, target) {
   return (key) => {
     if (key.startsWith('harness.')) {
       const sub = key.slice('harness.'.length);
@@ -254,7 +291,7 @@ export function makeResolver(bundle, values, target) {
     }
     const v = lookupPath(values, key);
     if (v !== undefined) return v;
-    return bundle.config[key]?.default;
+    return stack.config[key]?.default;
   };
 }
 

@@ -3,20 +3,20 @@ import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 import { normalizeItemRef } from './refs.mjs';
 
-/** Load the toolkit registry and every bundle it lists. */
+/** Load the toolkit registry and every stack it lists. */
 export function loadToolkit(rootDir) {
   const registry = readYaml(path.join(rootDir, 'toolkit.yaml'));
-  const bundles = new Map();
-  for (const name of registry.bundles ?? []) {
-    const dir = path.join(rootDir, 'bundles', name);
-    if (!exists(path.join(dir, 'bundle.yaml'))) continue; // not yet authored
-    bundles.set(name, loadBundle(name, dir));
+  const stacks = new Map();
+  for (const name of registry.stacks ?? []) {
+    const dir = path.join(rootDir, 'stacks', name);
+    if (!exists(path.join(dir, 'stack.yaml'))) continue; // not yet authored
+    stacks.set(name, loadStack(name, dir));
   }
-  return { name: registry.name, description: registry.description, bundles };
+  return { name: registry.name, description: registry.description, stacks };
 }
 
-function loadBundle(name, dir) {
-  const manifest = readYaml(path.join(dir, 'bundle.yaml'));
+function loadStack(name, dir) {
+  const manifest = readYaml(path.join(dir, 'stack.yaml'));
   const config = manifest.config ?? {};
   const declared = new Set(Object.keys(config));
 
@@ -35,7 +35,7 @@ function loadBundle(name, dir) {
       .map((e) => path.relative(skillDir, path.join(e.parentPath ?? e.path, e.name)))
       .sort();
     if (!files.includes('SKILL.md')) {
-      throw new Error(`bundle ${name}: skill ${skillName} has no SKILL.md`);
+      throw new Error(`stack ${name}: skill ${skillName} has no SKILL.md`);
     }
     return { kind: 'skill', name: skillName, dir: skillDir, files };
   });
@@ -47,19 +47,26 @@ function loadBundle(name, dir) {
   const files = (manifest.files ?? []).map((entry) => {
     const rel = String(entry);
     if (path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === '..')) {
-      throw new Error(`bundle ${name}: files entry "${rel}" must be a repo-relative path that stays inside the project`);
+      throw new Error(`stack ${name}: files entry "${rel}" must be a repo-relative path that stays inside the project`);
     }
     const file = path.join(dir, 'files', rel);
-    if (!exists(file)) throw new Error(`bundle ${name}: files entry "${rel}" not found under files/`);
+    if (!exists(file)) throw new Error(`stack ${name}: files entry "${rel}" not found under files/`);
     return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)) };
   });
 
-  // Syrup: sensitive items (e.g. a workflow needing repo write permissions) that must be
-  // poured only on request. Each entry is an item ref (`files/<path>`) defined in this
-  // bundle; a syrup item is excluded from a bundle's default render unless the consumer
+  // The `syrup:` gate key was renamed to `optIn:` in 0.10.0. Fail loudly on a stale manifest
+  // key rather than silently ignoring it — a silently-dropped gate would un-gate sensitive
+  // syrup (e.g. a workflow needing repo write permissions) into the default render.
+  if (manifest.syrup !== undefined) {
+    throw new Error(`stack ${name}: manifest key \`syrup:\` was renamed to \`optIn:\` in 0.10.0 — rename it in stack.yaml`);
+  }
+
+  // optIn: sensitive items (e.g. a workflow needing repo write permissions) whose syrup must
+  // be poured only on request. Each entry is an item ref (`files/<path>`) defined in this
+  // stack; an opt-in item is excluded from a stack's default render unless the consumer
   // explicitly installs it or already tracks its path in the lock. The gate lives in
   // `computeSelection()`/`renderProject()`; `validate` checks each ref resolves.
-  const syrup = new Set((manifest.syrup ?? []).map((ref) => normalizeItemRef(String(ref))));
+  const optIn = new Set((manifest.optIn ?? []).map((ref) => normalizeItemRef(String(ref))));
 
   return {
     name,
@@ -68,7 +75,7 @@ function loadBundle(name, dir) {
     agents,
     skills,
     files,
-    syrup,
+    optIn,
     config,
     declared,
     env: manifest.env ?? {},
@@ -82,11 +89,11 @@ function loadBundle(name, dir) {
 /**
  * Config keys that are `required` and unresolved. When `usedKeys` is supplied, only
  * keys actually referenced by the selected items are considered — so a partial install
- * (one item from a bundle) does not demand config only the bundle's other items use.
+ * (one item from a stack) does not demand config only the stack's other items use.
  */
-export function missingRequiredKeys(bundle, values, lookup, usedKeys = null) {
+export function missingRequiredKeys(stack, values, lookup, usedKeys = null) {
   const missing = [];
-  for (const [key, spec] of Object.entries(bundle.config)) {
+  for (const [key, spec] of Object.entries(stack.config)) {
     if (!spec?.required) continue;
     if (usedKeys && !usedKeys.has(key)) continue;
     if (lookup(values, key) === undefined) missing.push(key);

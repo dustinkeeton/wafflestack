@@ -15,12 +15,12 @@ export function validateToolkit(rootDir) {
     return [`toolkit failed to load: ${err.message}`];
   }
 
-  for (const bundle of toolkit.bundles.values()) {
-    const ctx = `bundle ${bundle.name}`;
-    if (!bundle.description) problems.push(`${ctx}: missing description`);
+  for (const stack of toolkit.stacks.values()) {
+    const ctx = `stack ${stack.name}`;
+    if (!stack.description) problems.push(`${ctx}: missing description`);
 
     const usedKeys = new Set();
-    for (const agent of bundle.agents) {
+    for (const agent of stack.agents) {
       if (!agent.data.description) problems.push(`${ctx}: agent ${agent.name} missing frontmatter description`);
       if (agent.data.name && agent.data.name !== agent.name) {
         problems.push(`${ctx}: agent ${agent.name} frontmatter name "${agent.data.name}" mismatches filename`);
@@ -28,13 +28,13 @@ export function validateToolkit(rootDir) {
       // Agent `skills:` names are pulled into the dependency closure when the agent is
       // installed. They may point at skills provided outside the toolkit (project-local
       // or not yet authored), so an absent name is allowed — but a name defined in more
-      // than one bundle can't be auto-resolved (frontmatter can't qualify it).
+      // than one stack can't be auto-resolved (frontmatter can't qualify it).
       for (const skillName of agent.data.skills ?? []) {
-        if (bundle.skills.some((s) => s.name === skillName)) continue;
+        if (stack.skills.some((s) => s.name === skillName)) continue;
         const matches = findItems(toolkit, 'skills', skillName);
         if (matches.length > 1) {
-          const where = matches.map((m) => `${m.bundleName}/skills/${skillName}`).join(', ');
-          problems.push(`${ctx}: agent ${agent.name} skill "${skillName}" is ambiguous across bundles (${where})`);
+          const where = matches.map((m) => `${m.stackName}/skills/${skillName}`).join(', ');
+          problems.push(`${ctx}: agent ${agent.name} skill "${skillName}" is ambiguous across stacks (${where})`);
         }
       }
       // Both the body and the frontmatter description are substituted at render time.
@@ -42,33 +42,33 @@ export function validateToolkit(rootDir) {
       for (const k of placeholderKeys(agent.data.description ?? '')) usedKeys.add(k);
     }
 
-    // `requires:` entries must key a real item in this bundle and resolve to real deps.
-    for (const [itemRef, deps] of Object.entries(bundle.requires ?? {})) {
+    // `requires:` entries must key a real item in this stack and resolve to real deps.
+    for (const [itemRef, deps] of Object.entries(stack.requires ?? {})) {
       const parsed = parseRef(itemRef);
-      if (parsed.form === 'bundle' || !itemsOfKind(bundle, parsed.kind).some((i) => i.name === parsed.name)) {
-        problems.push(`${ctx}: requires key "${itemRef}" does not match a skill/agent in this bundle`);
+      if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
+        problems.push(`${ctx}: requires key "${itemRef}" does not match a skill/agent in this stack`);
         continue;
       }
       for (const dep of deps ?? []) {
         try {
-          resolveDepStrict(toolkit, dep, bundle.name);
+          resolveDepStrict(toolkit, dep, stack.name);
         } catch (err) {
           problems.push(`${ctx}: requires[${itemRef}]: ${err.message}`);
         }
       }
     }
-    // `syrup:` entries mark sensitive items as opt-in; each must name a real item in this
-    // bundle (like a `requires:` key), so a typo can't silently un-gate or mis-gate a file.
-    for (const ref of bundle.syrup) {
+    // `optIn:` entries mark sensitive syrup as opt-in; each must name a real item in this
+    // stack (like a `requires:` key), so a typo can't silently un-gate or mis-gate a file.
+    for (const ref of stack.optIn) {
       const parsed = parseRef(ref);
-      if (parsed.form === 'bundle' || !itemsOfKind(bundle, parsed.kind).some((i) => i.name === parsed.name)) {
-        problems.push(`${ctx}: syrup entry "${ref}" does not match a file/skill/agent in this bundle`);
+      if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
+        problems.push(`${ctx}: optIn entry "${ref}" does not match a file/skill/agent in this stack`);
       }
     }
     // Optional per-key `pattern:` (render-time value validation). The regex must compile,
     // and a static string default must satisfy its own pattern (nested/non-string defaults
     // resolve at render, so skip them here).
-    for (const [key, spec] of Object.entries(bundle.config)) {
+    for (const [key, spec] of Object.entries(stack.config)) {
       if (typeof spec?.pattern !== 'string') continue;
       let re;
       try {
@@ -82,7 +82,7 @@ export function validateToolkit(rootDir) {
       }
     }
 
-    for (const skill of bundle.skills) {
+    for (const skill of stack.skills) {
       const raw = fs.readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf8');
       const { data } = parseFrontmatter(raw);
       if (!data.name) problems.push(`${ctx}: skill ${skill.name} missing frontmatter name`);
@@ -95,19 +95,19 @@ export function validateToolkit(rootDir) {
     // Text `files/` payloads are templated just like skills — every {{key}} they use must
     // be declared (GitHub Actions `${{ ... }}` is excluded by the placeholder grammar, so
     // workflow expressions don't register as config keys). Binaries are byte-copied, skip.
-    for (const file of bundle.files) {
+    for (const file of stack.files) {
       if (file.binary) continue;
       for (const k of placeholderKeys(fs.readFileSync(file.path, 'utf8'))) usedKeys.add(k);
     }
 
     for (const key of usedKeys) {
       // `harness.*` is a reserved, always-available namespace (resolved per target) —
-      // it is never declared in bundle config.
-      if (!bundle.declared.has(key) && !key.startsWith('harness.') && looksLikeConfigKey(key)) {
-        problems.push(`${ctx}: placeholder {{${key}}} is not declared in bundle.yaml config`);
+      // it is never declared in stack config.
+      if (!stack.declared.has(key) && !key.startsWith('harness.') && looksLikeConfigKey(key)) {
+        problems.push(`${ctx}: placeholder {{${key}}} is not declared in stack.yaml config`);
       }
     }
-    for (const key of bundle.declared) {
+    for (const key of stack.declared) {
       if (!usedKeys.has(key)) problems.push(`${ctx}: declared config key ${key} is never referenced`);
     }
   }

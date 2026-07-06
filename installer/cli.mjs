@@ -29,7 +29,7 @@ try {
       const force = extractFlag(args, '--force');
       const gitignore = extractFlag(args, '--gitignore');
       if (args.length) {
-        fail('render takes no refs — use `wafflestack install <ref…>` to add a bundle or item (it persists the choice, then re-renders); bare `render` re-renders the current selection');
+        fail('render takes no refs — use `wafflestack install <ref…>` to add a stack or item (it persists the choice, then re-renders); bare `render` re-renders the current selection');
       }
       runRender(force);
       if (gitignore) offerGitignore();
@@ -89,10 +89,10 @@ try {
     case 'init': {
       const gitignore = extractFlag(args, '--gitignore');
       const file = init({ cwd });
-      console.log(`wrote ${file} — pick bundles and config values, then run \`wafflestack render\``);
+      console.log(`wrote ${file} — pick stacks and config values, then run \`wafflestack render\``);
       console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
-      // Only the local overlay (`.waffle/waffle.local.yaml`) is knowable at init (no bundles
-      // chosen yet); `install --gitignore` later adds the worktrees dir once a bundle that
+      // Only the local overlay (`.waffle/waffle.local.yaml`) is knowable at init (no stacks
+      // chosen yet); `install --gitignore` later adds the worktrees dir once a stack that
       // declares it is enabled.
       if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE]));
       break;
