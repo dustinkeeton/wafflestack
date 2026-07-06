@@ -1,0 +1,169 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "wafflestack/delegate/checkpoint",
+  "title": "Delegate run checkpoint",
+  "description": "Typed, schema-validated state written at each delegate phase boundary. One JSON document per run. Each phase appends its section, then validates the document (this schema + the referential cross-checks in checkpoint.mjs) before the next phase reads its load-bearing fields — branch, worktree path, issue number — from it. The checkpoint is the single source of truth for those fields, a resume point after interruption, and the audit trail the Report phase reads.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "runId"],
+  "x-phaseSections": {
+    "fetch": ["scope", "issues"],
+    "classify": ["scope", "issues", "classification"],
+    "plan": ["scope", "issues", "classification", "plan"],
+    "execute": ["scope", "issues", "classification", "plan", "execution"],
+    "report": ["scope", "issues", "classification", "plan", "execution", "report"]
+  },
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Checkpoint schema version. Bump only on a breaking shape change."
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^.+$",
+      "description": "Stable id for this delegation run — reuse the team name (delegate-<timestamp>) for multi-issue runs, or delegate-single-<N>-<timestamp> for the single-issue fast path."
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "description": "Phase 1 output — what this run resolved to delegate.",
+      "properties": {
+        "mode": {
+          "enum": ["current-milestone", "milestone", "all-open", "single-issue", "label", "keyword"],
+          "description": "How the issue set was resolved from $ARGUMENTS."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable scope summary shown in the Phase 3 plan (e.g. the milestone title + number + open-issue count)."
+        },
+        "milestone": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Set for the current-milestone / milestone modes; null otherwise.",
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "title": { "type": "string" }
+          }
+        }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Phase 1 output — every issue in scope. An empty scope means there is nothing to delegate; the run stops before writing a checkpoint.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "title", "labels"],
+        "properties": {
+          "number": { "type": "integer", "minimum": 1 },
+          "title": { "type": "string" },
+          "labels": { "type": "array", "items": { "type": "string" } },
+          "body": { "type": "string", "description": "Optional — the issue body, retained so the Execute phase can build agent prompts without a second fetch." },
+          "milestone": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "classification": {
+      "type": "array",
+      "description": "Phase 2 output — one entry per issue. Every issue number in `issues` must appear exactly once; no entry may reference an unknown issue.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "agent", "area"],
+        "properties": {
+          "number": { "type": "integer", "minimum": 1 },
+          "agent": { "type": "string", "description": "Chosen specialist agent (subagent_type)." },
+          "area": { "type": "string", "description": "Module / subdirectory the issue touches — drives parallelization." },
+          "touchesRoot": { "type": "boolean", "description": "Whether the issue edits root/shared files (forces serialization)." },
+          "touchesShared": { "type": "boolean", "description": "Whether the issue touches the shared-module bottleneck (forces serialization)." }
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["confirmed", "groups"],
+      "description": "Phase 3 output — the confirmed assignment plan. `confirmed` records that the user approved (or that the single-obvious-assignment fast path skipped the gate).",
+      "properties": {
+        "confirmed": { "type": "boolean" },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "mode", "assignments"],
+            "properties": {
+              "id": { "type": "string", "description": "Group label, e.g. \"A\"." },
+              "mode": { "enum": ["parallel", "serial"], "description": "parallel → each assignment gets its own worktree; serial → runs in the main checkout." },
+              "assignments": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["number", "agent", "branch", "worktree"],
+                  "properties": {
+                    "number": { "type": "integer", "minimum": 1 },
+                    "agent": { "type": "string" },
+                    "branch": {
+                      "type": "string",
+                      "pattern": "^(feat|fix|refactor|chore)/issue-[0-9]+-.+",
+                      "description": "Branch per git-workflow conventions. Load-bearing — the Execute phase injects this verbatim and cross-checks it against what the agent actually pushed."
+                    },
+                    "worktree": {
+                      "type": ["string", "null"],
+                      "description": "Absolute worktree path for parallel groups; null for serial groups and the single-issue fast path. checkpoint.mjs enforces: non-null iff the group mode is parallel."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "description": "Board Setup output (optional) — project-board sync metadata. `enabled: false` means board sync was disabled and downstream board updates are skipped.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "projectId": { "type": ["string", "null"] },
+        "statusFieldId": { "type": ["string", "null"] },
+        "inProgressOptionId": { "type": ["string", "null"] },
+        "inReviewOptionId": { "type": ["string", "null"] }
+      }
+    },
+    "execution": {
+      "type": "array",
+      "description": "Phase 4 output — one entry per planned assignment. `number` must reference a planned assignment and `branch` must equal that assignment's branch (this cross-check is what catches a hallucinated branch name).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "agent", "branch", "status", "pr"],
+        "properties": {
+          "number": { "type": "integer", "minimum": 1 },
+          "agent": { "type": "string" },
+          "branch": { "type": "string" },
+          "status": { "enum": ["done", "failed", "skipped"] },
+          "pr": { "type": ["string", "null"], "description": "PR URL or #number when status is done; null otherwise." },
+          "boardMoved": { "type": "boolean", "description": "Whether the board item was advanced (In Review / left In Progress)." }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build"],
+      "description": "Phase 5 output — final report inputs. The Report table itself is rendered from `execution`.",
+      "properties": {
+        "build": { "enum": ["passing", "failing", "unknown"] },
+        "notes": { "type": "string", "description": "Failures, skipped issues, or worktree-cleanup caveats to surface in the summary." }
+      }
+    }
+  }
+}

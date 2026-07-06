@@ -116,6 +116,13 @@ config:
       Optional extra pre-flight gates appended to the spawned-agent prompt's
       checklist step, formatted as additional "- " bullets (e.g. privacy checks,
       "don't hand-edit generated docs" rules). Empty (default) renders nothing.
+  delegate.checkpointDir:
+    required: false
+    default: "{{git.worktreesDir}}/.delegate"
+    description: >-
+      Repo-relative directory for per-run delegate checkpoint files (typed phase
+      state, one JSON doc per run). Defaults under the worktrees dir so it inherits
+      the same gitignore — keep it gitignored, it is throwaway run state.
   docs.auditChecklist:
     required: false
     description: >-

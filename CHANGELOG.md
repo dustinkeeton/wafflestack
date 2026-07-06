@@ -202,6 +202,19 @@ is what you reach for across a breaking one.
   read-only-only (→ warn, green), a blocked Edit/git push (→ red), and a clean run (→ green). Live
   re-verification (guard green, a hygiene PR lands) is deferred to after merge and a credit top-up,
   per the issue. (#82)
+- **Enhancement, content-only — typed checkpoints between `delegate` phases (`orchestration`, #91).**
+  The `/delegate` skill now writes one schema-validated JSON checkpoint per run and validates it at
+  every phase boundary (Fetch → Classify → Plan → Execute → Report). Each phase appends its section
+  (`scope`, `issues`, `classification`, `plan`, `execution`, `report`) and load-bearing fields — issue
+  number, branch, worktree path — are read from the checkpoint as the single source of truth rather
+  than re-derived from prose. Two files ship beside `SKILL.md`: `checkpoint.schema.json` (the documented
+  contract) and `checkpoint.mjs` (a dependency-free validator that also cross-checks references — every
+  classified/assigned/executed issue traces back to a fetched one, worktree presence matches group mode,
+  and an executed branch must equal the branch the plan assigned, catching a hallucinated branch). A
+  corrupt or drifted checkpoint exits non-zero and stops the run instead of drifting silently. Adds one
+  optional config key `delegate.checkpointDir` (default `{{git.worktreesDir}}/.delegate`, gitignored
+  run state). **Re-render to pick it up** — additive, no migration; a repo that never runs `/delegate`
+  is unaffected.
 
 ## [0.9.0] - 2026-07-03
 
