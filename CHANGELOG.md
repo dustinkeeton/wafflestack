@@ -128,6 +128,17 @@ is what you reach for across a breaking one.
   `show_full_output: true`) and the debug flow are documented in the bundle setup notes for both
   hooks. Grounded in `anthropics/claude-code-action` v1.0.162: the `execution_file` output, the
   `show_full_output` input's secret-exposure warning, and the log's raw-message-array shape. (#73)
+- **Layer 1 eval tier: deterministic content assertions on rendered stack prompts** (Part of #89).
+  New `installer/test/content.test.mjs` (picked up by the existing `npm test` glob) asserts the
+  load-bearing *behavior* baked into the highest-risk rendered prompts — not just that they render
+  byte-correctly. Covers: label-hook's constant action-token rule and untrusted-input/no-fan-out
+  refusals; delegate's >2-agent confirmation gate, pre-flight checklist, hard checkpoint gate, and
+  opt-in-and-off-by-default approval gate; the issue and release template sections and tag-safety
+  guardrails; frontmatter presence across every rendered skill/agent; and no leftover config
+  placeholders. The label-hook workflow (gitignored, not committed) is rendered fresh into a temp
+  project via the real render pipeline and asserted on there — the bot-sender gate on both dispatch
+  jobs and the exact-match label gate. Dev-only; no consumer-facing change. The LLM eval tier is
+  tracked as sub-issues of #89.
 
 ### Changed
 - **Overview one-pagers: branded self-contained HTML replaces the SVGs** (#75). `waffledocs.mjs`
