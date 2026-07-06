@@ -1,8 +1,8 @@
 name: orchestration
-description: Multi-agent orchestration — a project-manager coordinator (delivery ceremonies, issue routing), a product-manager (product evolution — user stories, acceptance criteria, backlog priority), and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow bundle (git-workflow, issue, and github-project-management skills are referenced throughout).
+description: Multi-agent orchestration — a project-manager coordinator (delivery ceremonies, issue routing), a product-manager (product evolution — user stories, acceptance criteria, backlog priority), and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow stack (git-workflow, issue, and github-project-management skills are referenced throughout).
 agents: [project-manager, product-manager, task-planner]
 skills: [delegate, audit, docs, standup]
-# Cross-bundle skill dependencies pulled in when an item is installed on its own.
+# Cross-stack skill dependencies pulled in when an item is installed on its own.
 requires:
   skills/delegate:
     - skills/git-workflow
@@ -37,11 +37,11 @@ config:
   git.cmd:
     required: false
     default: git
-    description: The git invocation used in spawned-agent instructions (override for bot identities, same as the github-workflow bundle key).
+    description: The git invocation used in spawned-agent instructions (override for bot identities, same as the github-workflow stack key).
   git.coAuthorTrailer:
     required: false
     default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
-    description: Attribution trailer spawned agents must end commits with (same as the github-workflow bundle key).
+    description: Attribution trailer spawned agents must end commits with (same as the github-workflow stack key).
   git.worktreesDir:
     required: false
     default: .claude/worktrees
@@ -64,11 +64,11 @@ config:
   roster.architectAgent:
     required: false
     default: lead-engineer
-    description: Name of the architecture-audit agent spawned by the audit chain and the docs pipeline (the engineering-team bundle's general architect by default).
+    description: Name of the architecture-audit agent spawned by the audit chain and the docs pipeline (the engineering-team stack's general architect by default).
   roster.securityAgent:
     required: false
     default: security-engineer
-    description: Name of the security-audit agent spawned by the audit chain (the engineering-team bundle's remediating security agent by default).
+    description: Name of the security-audit agent spawned by the audit chain (the engineering-team stack's remediating security agent by default).
   roster.specialistTable:
     required: true
     description: >-
@@ -132,13 +132,13 @@ config:
     default: a root `AGENTS.md` plus per-feature `src/<feature>/AGENTS.md` files
     description: >-
       One-line phrase naming the machine-doc file set (same key as the
-      docs-system bundle) — used in the docs and audit orchestrator prompts.
+      docs-system stack) — used in the docs and audit orchestrator prompts.
   docs.humanDocSet:
     required: false
     default: "`DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root"
     description: >-
       One-line phrase naming the human-doc file set (same key as the
-      docs-system bundle) — used in the docs and audit orchestrator prompts.
+      docs-system stack) — used in the docs and audit orchestrator prompts.
   audit.complianceAgentType:
     required: false
     default: lead-engineer

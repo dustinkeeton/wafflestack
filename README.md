@@ -11,10 +11,14 @@ project — the same batter, baked fresh wherever you need it. Supported harness
 Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Codex (`.codex/agents/*.toml`),
 and the cross-tool agents dir (`.agents/skills`).
 
-Bundles carry three payload types: **agents** and **skills** (rendered into those harness
-dirs) and generic **files** — CI workflows, scripts, or config rendered verbatim to any
-repo-relative path (`.github/workflows/…`, `scripts/…`), with the same `{{key}}`
-substitution, lock tracking, and drift detection.
+The vocabulary: an individual installable item — an agent or a skill — is a **waffle**; a
+named group of waffles is a **stack**; the generic `files/` payload a stack can also carry is
+**syrup**.
+
+Stacks carry three payload types: **agents** and **skills** (waffles, rendered into those
+harness dirs) and generic **files** (syrup) — CI workflows, scripts, or config rendered
+verbatim to any repo-relative path (`.github/workflows/…`, `scripts/…`), with the same
+`{{key}}` substitution, lock tracking, and drift detection.
 
 ## Install into a project
 
@@ -25,7 +29,7 @@ setup. Kick it off one of two ways:
 
 ```text
 Set up wafflestack in this repo: run `npx github:dustinkeeton/wafflestack setup` and
-follow the playbook it prints. Ask me which bundles to enable before you render.
+follow the playbook it prints. Ask me which stacks to enable before you render.
 ```
 
 **Inline shell (Claude Code / Codex)** — type in the prompt:
@@ -39,9 +43,9 @@ follow the playbook it prints. Ask me which bundles to enable before you render.
 > Running `setup` yourself just prints the playbook + inventory for an agent to act on, so
 > there's no standalone "run it yourself" flavor for it.
 
-`setup` prints an agent playbook plus an inventory of every bundle, config key, env
+`setup` prints an agent playbook plus an inventory of every stack, config key, env
 prerequisite, and service-side setup note — generated from the installed toolkit
-version. The agent then detects targets and project commands, asks you which bundles
+version. The agent then detects targets and project commands, asks you which stacks
 to enable, fills `.waffle/waffle.yaml`, verifies externals (e.g. `gh` auth and labels),
 renders, runs `doctor`, and reports what it did.
 
@@ -52,7 +56,7 @@ renders, runs `doctor`, and reports what it did.
 ```bash
 cd your-project
 npx github:dustinkeeton/wafflestack init     # writes a starter .waffle/waffle.yaml
-# edit .waffle/waffle.yaml: pick bundles, fill in config values
+# edit .waffle/waffle.yaml: pick stacks, fill in config values
 npx github:dustinkeeton/wafflestack render   # renders all harness files + lock manifest
 ```
 
@@ -65,7 +69,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | `init` | Write a starter `.waffle/waffle.yaml` (won't overwrite an existing one). Add `--gitignore` to also append `.waffle/waffle.local.yaml` to `.gitignore`. |
 | `setup` | Print the agent-driven install playbook + generated toolkit inventory (see above). |
 | `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.waffle/waffle.lock.json`. |
-| `install [ref…]` | With refs: add them to `.waffle/waffle.yaml` (bundle name → `bundles:`, item → `include:`), pull in their dependencies, then render. Refs are a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` (qualify when a name is in two bundles). Bare `install` = `render`. Add `--gitignore` to append the recommended ignore entries (`.waffle/waffle.local.yaml`, plus the configured `git.worktreesDir` when an enabled bundle declares one) — idempotent, existing content preserved. Also on `render`. |
+| `install [ref…]` | With refs: add them to `.waffle/waffle.yaml` (stack name → `stacks:`, item → `include:`), pull in their dependencies, then render. Refs are a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` (qualify when a name is in two stacks). Bare `install` = `render`. Add `--gitignore` to append the recommended ignore entries (`.waffle/waffle.local.yaml`, plus the configured `git.worktreesDir` when an enabled stack declares one) — idempotent, existing content preserved. Also on `render`. |
 | `upgrade` | Move an existing install across toolkit versions: compare the lock's `toolkitVersion` to the invoked toolkit, print the `CHANGELOG.md` entries in between, run any registered migrations in order, then re-render and run `doctor`. A missing lock or version degrades to a plain render + doctor with a clear note. See [Rules of the road](#rules-of-the-road). |
 | `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational. |
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
@@ -127,7 +131,7 @@ consumer's point of view**:
 | Bump | Example | What it means for you | How to take it |
 |---|---|---|---|
 | patch | `0.5.0 → 0.5.1` | content-only fixes | `… render` |
-| minor | `0.5.0 → 0.6.0` | new bundles/items, additive config | `… render` |
+| minor | `0.5.0 → 0.6.0` | new stacks/items, additive config | `… render` |
 | major / breaking | renamed or removed item, new **required** config key, changed file layout | needs a migration | `… upgrade` |
 
 **Canonical upgrade command** — three copyable forms:

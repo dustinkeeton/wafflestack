@@ -11,6 +11,7 @@ import {
   LEGACY_CONFIG_FILE,
   LOCK_FILE,
   resolveConfigFile,
+  renameLegacyStacksKey,
 } from './project.mjs';
 
 /**
@@ -80,9 +81,9 @@ export function eject({ cwd, item, log = () => {} }) {
 }
 
 /**
- * Additive per-item/bundle install — the mirror of `eject`. Resolves each ref against
- * the toolkit, then does a comment-preserving YAML edit of `.waffle/waffle.yaml`: bundle
- * refs append to `bundles:`, item refs (canonicalized, bundle-qualified only when the
+ * Additive per-item/stack install — the mirror of `eject`. Resolves each ref against
+ * the toolkit, then does a comment-preserving YAML edit of `.waffle/waffle.yaml`: stack
+ * refs append to `stacks:`, item refs (canonicalized, stack-qualified only when the
  * name is ambiguous) append to `include:`. Persistence is required, not cosmetic — the
  * frozen-image contract would otherwise delete an ad-hoc install on the next render.
  * Dependency closure is NOT persisted; it is recomputed each render, so this only
@@ -110,21 +111,24 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   if (errors.length) throw new Error(errors.join('\n'));
 
   const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
-  const bundles = doc.get('bundles') ? doc.get('bundles').toJSON() : [];
+  // Carry a legacy `bundles:` key forward in place (comment-preserving) before touching the
+  // selection, so we never append to a deprecated key or split state across both names.
+  const renamedKey = renameLegacyStacksKey(doc);
+  const stacks = doc.get('stacks') ? doc.get('stacks').toJSON() : [];
   const include = doc.get('include') ? doc.get('include').toJSON() : [];
   const added = [];
   const closures = [];
-  let touchedBundles = false;
+  let touchedStacks = false;
   let touchedInclude = false;
 
   for (const target of resolved) {
-    if (target.type === 'bundle') {
-      if (!bundles.includes(target.name)) {
-        bundles.push(target.name);
+    if (target.type === 'stack') {
+      if (!stacks.includes(target.name)) {
+        stacks.push(target.name);
         added.push(target.name);
-        touchedBundles = true;
+        touchedStacks = true;
       }
-      log(`installing ${target.name} (bundle)`);
+      log(`installing ${target.name} (stack)`);
       continue;
     }
     const canonical = target.canonicalRef;
@@ -138,9 +142,9 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     log(`installing ${canonical}${deps.length ? ` (+${deps.length} dep${deps.length === 1 ? '' : 's'}: ${deps.join(', ')})` : ''}`);
   }
 
-  if (touchedBundles) doc.set('bundles', bundles);
+  if (touchedStacks) doc.set('stacks', stacks);
   if (touchedInclude) doc.set('include', include);
-  if (touchedBundles || touchedInclude) fs.writeFileSync(configFile, doc.toString());
+  if (renamedKey || touchedStacks || touchedInclude) fs.writeFileSync(configFile, doc.toString());
 
   return { added, closures };
 }
@@ -148,13 +152,13 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
 const STARTER_CONFIG = `# wafflestack project config — see the toolkit repo's schema/FORMAT.md
 # Version pin is the npx ref you install with, e.g. npx github:OWNER/wafflestack#v0.1.0
 targets: [claude, codex, agents-dir]
-bundles: []
+stacks: []
 #  - docs-system
 #  - github-workflow
 #  - code-quality
 #  - obsidian-dev
 #  - orchestration
-# Individual items (dependencies pulled in automatically). Prefer whole bundles;
+# Individual items (dependencies pulled in automatically). Prefer whole stacks;
 # use this for one-off skills/agents. \`wafflestack install skills/issue\` edits it for you.
 include: []
 #  - skills/issue

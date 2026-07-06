@@ -1,11 +1,11 @@
-# Managed by wafflestack (github-workflow bundle) — do not edit by hand; re-render instead.
+# Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
 # Release-label hook: when a pull request carrying the configured release label is MERGED,
 # push a lightweight tag `v<version>` on the merge commit, reading <version> from the merged
 # package.json. Deterministic — a plain Actions job with `contents: write`, NO Claude dispatch
 # and NO API spend (unlike the sibling waffle-label-hook). The label string never reaches a
 # shell or prompt; it lives only in the job gate, and render-time validation rejects
 # quotes/newlines/${{ in both the label and the tag-format config values.
-# Prerequisites (see the bundle setup note): the release label existing in the repo, Actions
+# Prerequisites (see the stack setup note): the release label existing in the repo, Actions
 # allowed `contents: write`, and release PRs originating from a branch in THIS repo (a fork PR
 # gets a read-only token, so its tag push would fail — by design, not via pull_request_target).
 name: waffle-release-hook

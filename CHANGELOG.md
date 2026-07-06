@@ -13,9 +13,9 @@ whether an upgrade is a plain re-render or needs a migration.
 WaffleStack versions are semver, read from the perspective of a *consuming* repo:
 
 - **patch** (`0.5.0 → 0.5.1`) — content-only fixes. `render` regenerates; nothing else to do.
-- **minor** (`0.5.0 → 0.6.0`) — new bundles/items or additive config. `render` picks them
+- **minor** (`0.5.0 → 0.6.0`) — new stacks/items or additive config. `render` picks them
   up; existing config and extensions are untouched.
-- **major / breaking** — a renamed or removed bundle/item, a new *required* config key, or
+- **major / breaking** — a renamed or removed stack/item, a new *required* config key, or
   a changed file layout. These ship a **migration** and are called out under Consumer impact.
 
 **Canonical upgrade command** — run the toolkit at the tag you want and let it walk you across:
@@ -32,6 +32,20 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Consumer impact
+- **Breaking, migration ships — rebrand: bundles are now stacks, files are syrup (#59).** The
+  vocabulary changes to match the name: an installable item (agent or skill) is a **waffle**, a
+  named group of waffles is a **stack** (formerly "bundle"), and the generic `files/` payload is
+  **syrup**. **The one breaking consumer change is the `.waffle/waffle.yaml` key `bundles:` →
+  `stacks:`.** A 0.10.0 migration renames it in place (comment-preserving, across the config and
+  its `.local` overlay); `wafflestack upgrade` runs it for you. A plain `render` also keeps
+  working off a legacy `bundles:` key via a read-fallback, emitting a deprecation warning that
+  points at `upgrade`. **Toolkit authors:** the source dir is `stacks/`, the manifest is
+  `stack.yaml`, the `toolkit.yaml` key is `stacks:`, and the opt-in gate key `syrup:` is renamed
+  to `optIn:` (a stale `syrup:` now fails `validate`/`loadStack` loudly rather than silently
+  un-gating). The lock's `bundles` field becomes `stacks` — write-only, so it self-heals on the
+  next render with no migration. **Explicitly unchanged** (no action needed): item refs
+  (`skills/x`, `agents/y`, `files/z`), your `include:` / `eject:` entries, lock file paths, the
+  `files:` manifest key, and the `wafflestack` package/CLI name. **Re-render after upgrading.**
 - **Bug fix, content-only — the scheduled `waffle-hygiene` hook can finally succeed
   (`github-workflow`).** As shipped it dispatched the CI harness with an empty `claude_args`, so
   the headless run began with no `--allowedTools`; in CI there is no human to answer permission

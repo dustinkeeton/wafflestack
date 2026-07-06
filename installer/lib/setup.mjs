@@ -10,7 +10,7 @@ import { readLock } from './render.mjs';
  * The agent-driven install wizard: the static playbook (schema/SETUP.md), an optional
  * "Current configuration" section injected when the project at `cwd` is already configured,
  * then an inventory generated from the installed toolkit — so the agent running the setup
- * always sees the bundle/config/prerequisite surface of the exact version it will render
+ * always sees the stack/config/prerequisite surface of the exact version it will render
  * with (never a stale copy baked into docs) and, on a re-run, its own live selections.
  *
  * `cwd` is optional: without it (or on an unconfigured repo) the current-configuration
@@ -70,7 +70,7 @@ function currentConfigSection(toolkit, cwd) {
     'This repo is already configured, so `setup` is curating from its current selections',
     'rather than starting fresh. **Skip step 1 (`init`)** — it refuses to overwrite an',
     'existing `.waffle/waffle.yaml` — and revisit only the steps your change calls for (new',
-    'bundle → steps 2–7; config change → steps 3, 5, 7). Everything below is read live from',
+    'stack → steps 2–7; config change → steps 3, 5, 7). Everything below is read live from',
     'the repo — trust it over the first-install prose above; the inventory that follows is',
     'the full surface of this toolkit version.',
     '',
@@ -79,8 +79,8 @@ function currentConfigSection(toolkit, cwd) {
 
   lines.push('## Targets', '', project.targets.join(', ') || '(none)', '');
 
-  lines.push('## Bundles enabled', '');
-  lines.push(project.bundles.length ? project.bundles.map((b) => `- ${b}`).join('\n') : '(none)', '');
+  lines.push('## Stacks enabled', '');
+  lines.push(project.stacks.length ? project.stacks.map((b) => `- ${b}`).join('\n') : '(none)', '');
 
   if (project.include.length) {
     lines.push('## Individual includes', '', project.include.map((r) => `- ${r}`).join('\n'), '');
@@ -101,19 +101,19 @@ function currentConfigSection(toolkit, cwd) {
     lines.push('');
   }
 
-  // Group by the bundles that actually contribute selected items (an included item does not
-  // drag in its bundle's siblings) — matching render's per-bundle grouping.
+  // Group by the stacks that actually contribute selected items (an included item does not
+  // drag in its stack's siblings) — matching render's per-stack grouping.
   const groups = new Map();
-  for (const { bundleName, bundle } of selection.items) {
-    if (!groups.has(bundleName)) groups.set(bundleName, bundle);
+  for (const { stackName, stack } of selection.items) {
+    if (!groups.has(stackName)) groups.set(stackName, stack);
   }
 
   const valueLines = [];
-  for (const [bundleName, bundle] of groups) {
-    const entries = Object.entries(bundle.config);
+  for (const [stackName, stack] of groups) {
+    const entries = Object.entries(stack.config);
     if (!entries.length) continue;
-    const resolve = makeResolver(bundle, project.values, primaryTarget);
-    valueLines.push(`### bundle: ${bundleName}`, '');
+    const resolve = makeResolver(stack, project.values, primaryTarget);
+    valueLines.push(`### stack: ${stackName}`, '');
     for (const [key, spec] of entries) {
       const set = lookupPath(project.values, key) !== undefined;
       valueLines.push(formatConfigValue(key, spec, set, resolve(key)));
@@ -124,21 +124,21 @@ function currentConfigSection(toolkit, cwd) {
     lines.push(
       '## Config values (current vs default)',
       '',
-      "Every declared key of each enabled bundle with its effective value. `set` means the",
+      "Every declared key of each enabled stack with its effective value. `set` means the",
       'value comes from your `.waffle/waffle.yaml` (or the `.local` overlay); `default` means',
-      "the bundle's built-in is in force — re-check each default against the project before",
+      "the stack's built-in is in force — re-check each default against the project before",
       'accepting it (step 3). ⚠ marks a required key with no value.',
       '',
       ...valueLines,
     );
   }
 
-  // Required keys with no resolved value — the render blockers, collected across bundles.
+  // Required keys with no resolved value — the render blockers, collected across stacks.
   const missing = [];
-  for (const [bundleName, bundle] of groups) {
-    for (const [key, spec] of Object.entries(bundle.config)) {
+  for (const [stackName, stack] of groups) {
+    for (const [key, spec] of Object.entries(stack.config)) {
       if (spec?.required && lookupPath(project.values, key) === undefined) {
-        missing.push(`${bundleName}: config.${key}`);
+        missing.push(`${stackName}: config.${key}`);
       }
     }
   }
@@ -151,19 +151,19 @@ function currentConfigSection(toolkit, cwd) {
     );
   }
 
-  // Syrup: sensitive files across enabled bundles, tracked/installed vs available-but-not.
+  // Opt-in syrup: sensitive files across enabled stacks, tracked/installed vs available-but-not.
   const installedFiles = new Set(
     selection.items.filter((i) => i.kind === 'files').map((i) => i.item.name),
   );
-  const enabledBundleNames = new Set([...project.bundles, ...groups.keys()]);
-  const syrupLines = [];
-  for (const name of enabledBundleNames) {
-    const bundle = toolkit.bundles.get(name);
-    if (!bundle) continue;
-    for (const f of bundle.files) {
-      if (!bundle.syrup.has(`files/${f.name}`)) continue;
+  const enabledStackNames = new Set([...project.stacks, ...groups.keys()]);
+  const optInLines = [];
+  for (const name of enabledStackNames) {
+    const stack = toolkit.stacks.get(name);
+    if (!stack) continue;
+    for (const f of stack.files) {
+      if (!stack.optIn.has(`files/${f.name}`)) continue;
       const installed = installedFiles.has(f.name);
-      syrupLines.push(
+      optInLines.push(
         `- \`files/${f.name}\` (${name}) — ${
           installed
             ? 'installed — renders on this selection (explicitly included or already tracked)'
@@ -172,8 +172,8 @@ function currentConfigSection(toolkit, cwd) {
       );
     }
   }
-  if (syrupLines.length) {
-    lines.push('## Syrup items (sensitive — opt-in)', '', ...syrupLines, '');
+  if (optInLines.length) {
+    lines.push('## Opt-in syrup (sensitive files — opt-in)', '', ...optInLines, '');
   }
 
   return lines.join('\n').trimEnd();
@@ -198,53 +198,55 @@ function formatConfigValue(key, spec, set, current) {
 }
 
 export function toolkitInventory(toolkit, version) {
-  const hasSyrup = [...toolkit.bundles.values()].some((b) => b.syrup.size);
+  const hasOptIn = [...toolkit.stacks.values()].some((s) => s.optIn.size);
   const lines = [
     `# Toolkit inventory — ${toolkit.name}${version ? ` v${version}` : ''}`,
     '',
     'Generated from the installed toolkit; authoritative for this version.',
     '',
-    'Install a whole bundle by name (adds it to `bundles:`), or a single item by ref —',
-    '`skills/<name>` or `agents/<name>` (adds it to `include:`). Bundle-qualify an item as',
-    '`<bundle>/skills/<name>` when the same name appears in more than one bundle. Installing',
+    'A **waffle** is a single installable item — an agent or a skill. A **stack** is a named',
+    'group of waffles; **syrup** is the generic `files/` payload type a stack can also carry.',
+    'Install a whole stack by name (adds it to `stacks:`), or a single item by ref —',
+    '`skills/<name>` or `agents/<name>` (adds it to `include:`). Stack-qualify an item as',
+    '`<stack>/skills/<name>` when the same name appears in more than one stack. Installing',
     "an item pulls its dependency closure automatically (an agent's `skills:` and any declared",
     '`requires:`), so required config is scoped to what the selected items actually reference.',
     '',
   ];
-  if (hasSyrup) {
+  if (hasOptIn) {
     lines.push(
-      'A **syrup** item (marked below) is a sensitive `files/` payload — e.g. a workflow that',
-      'needs write permissions on the repo. It is NOT part of a bundle default render: enabling',
-      'the bundle does **not** install it. It renders only when you install its ref explicitly',
+      'An **opt-in syrup** item (marked below) is a sensitive `files/` payload — e.g. a workflow',
+      'that needs write permissions on the repo. It is NOT part of a stack default render: enabling',
+      'the stack does **not** install it. It renders only when you install its ref explicitly',
       "(`install files/<path>`) or the repo already tracks it in `.waffle/waffle.lock.json`. **Do",
-      'not install a syrup item unless the user explicitly asks for that specific file** —',
+      'not install an opt-in syrup item unless the user explicitly asks for that specific file** —',
       'default to leaving it out.',
       '',
     );
   }
-  for (const bundle of toolkit.bundles.values()) {
-    lines.push(`## bundle: ${bundle.name}`, '');
-    if (bundle.description) lines.push(bundle.description, '');
-    lines.push(`- skills: ${bundle.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
-    lines.push(`- agents: ${bundle.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);
-    const isSyrup = (f) => bundle.syrup.has(`files/${f.name}`);
-    const plainFiles = bundle.files.filter((f) => !isSyrup(f));
-    const syrupFiles = bundle.files.filter(isSyrup);
+  for (const stack of toolkit.stacks.values()) {
+    lines.push(`## stack: ${stack.name}`, '');
+    if (stack.description) lines.push(stack.description, '');
+    lines.push(`- skills: ${stack.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
+    lines.push(`- agents: ${stack.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);
+    const isOptIn = (f) => stack.optIn.has(`files/${f.name}`);
+    const plainFiles = stack.files.filter((f) => !isOptIn(f));
+    const optInFiles = stack.files.filter(isOptIn);
     if (plainFiles.length) {
       lines.push(`- files: ${plainFiles.map((f) => `files/${f.name}`).join(', ')}`);
     }
-    if (syrupFiles.length) {
+    if (optInFiles.length) {
       lines.push(
-        `- files (syrup — sensitive, do NOT install by default): ${syrupFiles.map((f) => `files/${f.name}`).join(', ')}`,
+        `- files (opt-in syrup — sensitive, do NOT install by default): ${optInFiles.map((f) => `files/${f.name}`).join(', ')}`,
       );
     }
-    const env = Object.entries(bundle.env);
+    const env = Object.entries(stack.env);
     if (env.length) {
       lines.push(`- env prerequisites: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`);
     }
     lines.push('');
-    lines.push(...configSection(bundle.config));
-    if (bundle.setup) lines.push('### setup notes', '', bundle.setup.trim(), '');
+    lines.push(...configSection(stack.config));
+    if (stack.setup) lines.push('### setup notes', '', stack.setup.trim(), '');
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }

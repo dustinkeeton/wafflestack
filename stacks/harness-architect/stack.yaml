@@ -13,4 +13,4 @@ config:
     description: >-
       Prose descriptor of the project whose harness the agent is shaping, e.g.
       "the Synapse Obsidian plugin". Used in the agent's framing; defaults to a
-      generic phrase so the bundle is frictionless for any consumer.
+      generic phrase so the stack is frictionless for any consumer.

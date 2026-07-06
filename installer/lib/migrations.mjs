@@ -1,5 +1,12 @@
-import { compareVersions } from './util.mjs';
-import { migrateLegacyDotfiles } from './project.mjs';
+import fs from 'node:fs';
+import YAML from 'yaml';
+import { compareVersions, exists } from './util.mjs';
+import {
+  migrateLegacyDotfiles,
+  renameLegacyStacksKey,
+  resolveConfigFile,
+  resolveLocalConfigFile,
+} from './project.mjs';
 
 /**
  * Ordered, idempotent, version-keyed migration steps.
@@ -45,6 +52,27 @@ export const MIGRATIONS = [
       // so the 0.6.0 + 0.8.0 pair is idempotent in any combination and a pre-0.6.0 repo
       // lands directly in the current layout.
       migrateLegacyDotfiles(cwd);
+    },
+  },
+  {
+    version: '0.10.0',
+    description: 'rename consumer config key `bundles:` → `stacks:` in .waffle/waffle.yaml (and the .local overlay)',
+    run(cwd) {
+      // Move any legacy dotfiles into `.waffle/` first (chaining onto the 0.6.0/0.8.0 steps),
+      // so the config + overlay are at their current paths before we rename the key inside
+      // them — a pre-0.8.0 repo lands the config in `.waffle/` and gets its key renamed in one
+      // upgrade. Then, for the consumer config AND the `.local` overlay, rename the top-level
+      // `bundles:` key to `stacks:` in place. `renameLegacyStacksKey` mutates the key scalar's
+      // value, preserving the value node and every comment (delete+set would drop them), and
+      // returns false — writing nothing — when there is no `bundles:` pair or `stacks:` already
+      // exists, so this is idempotent on an already-migrated, fresh, or overlay-less repo.
+      migrateLegacyDotfiles(cwd);
+      for (const resolve of [resolveConfigFile, resolveLocalConfigFile]) {
+        const { file } = resolve(cwd);
+        if (!exists(file)) continue;
+        const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+        if (renameLegacyStacksKey(doc)) fs.writeFileSync(file, doc.toString());
+      }
     },
   },
 ];

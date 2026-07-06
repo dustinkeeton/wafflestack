@@ -5,8 +5,8 @@ description: >-
   ux-designer, and a remediating security-engineer, plus a browser-app
   webapp-security-audit skill. Agents are stack-agnostic skeletons; the stack,
   structure, pyramid, and briefs are project config. Pairs with the
-  github-workflow bundle (git-workflow/issue/github-project-management skills
-  are referenced throughout) and slots into the orchestration bundle's roster.
+  github-workflow stack (git-workflow/issue/github-project-management skills
+  are referenced throughout) and slots into the orchestration stack's roster.
 agents:
   [
     lead-engineer,

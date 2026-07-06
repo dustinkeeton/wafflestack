@@ -51,16 +51,16 @@ function isUserInvocable(data) {
 export function generateWaffleDocs({ toolkit, project, selection, errors = [] }) {
   const primaryTarget = project.targets[0] ?? 'claude';
   const resolvers = new Map();
-  const resolverFor = (bundle) => {
-    if (!resolvers.has(bundle.name)) resolvers.set(bundle.name, makeResolver(bundle, project.values, primaryTarget));
-    return resolvers.get(bundle.name);
+  const resolverFor = (stack) => {
+    if (!resolvers.has(stack.name)) resolvers.set(stack.name, makeResolver(stack, project.values, primaryTarget));
+    return resolvers.get(stack.name);
   };
-  const sub = (bundle, text, ctx) =>
-    substitute(String(text ?? ''), resolverFor(bundle), bundle.declared, errors, ctx, NO_PATTERNS).trim();
+  const sub = (stack, text, ctx) =>
+    substitute(String(text ?? ''), resolverFor(stack), stack.declared, errors, ctx, NO_PATTERNS).trim();
 
   const commands = [];
   const agents = [];
-  for (const { bundle, kind, item } of selection.items) {
+  for (const { stack, kind, item } of selection.items) {
     if (kind === 'skills') {
       const { data } = parseFrontmatter(fs.readFileSync(path.join(item.dir, 'SKILL.md'), 'utf8'));
       if (!isUserInvocable(data)) continue;
@@ -68,19 +68,19 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
         name: data.name ?? item.name,
         argumentHint:
           data['argument-hint'] != null
-            ? sub(bundle, data['argument-hint'], `waffledocs:skills/${item.name}#argument-hint`)
+            ? sub(stack, data['argument-hint'], `waffledocs:skills/${item.name}#argument-hint`)
             : '',
-        description: sub(bundle, data.description, `waffledocs:skills/${item.name}#description`),
+        description: sub(stack, data.description, `waffledocs:skills/${item.name}#description`),
       });
     } else if (kind === 'agents') {
       agents.push({
         name: item.data.name ?? item.name,
-        description: sub(bundle, item.data.description, `waffledocs:agents/${item.name}#description`),
+        description: sub(stack, item.data.description, `waffledocs:agents/${item.name}#description`),
         skills: Array.isArray(item.data.skills) ? item.data.skills : [],
       });
     }
   }
-  // Alphabetical, so output is deterministic (stable lock hash) regardless of bundle order.
+  // Alphabetical, so output is deterministic (stable lock hash) regardless of stack order.
   commands.sort((a, b) => a.name.localeCompare(b.name));
   agents.sort((a, b) => a.name.localeCompare(b.name));
 

@@ -39,7 +39,7 @@ git diff --stat "${LAST_TAG:+$LAST_TAG..}HEAD"
 ```
 
 - **patch** — content-only fixes; a consumer just re-renders.
-- **minor** — new bundles/items or additive (optional) config; existing config/extensions untouched.
+- **minor** — new stacks/items or additive (optional) config; existing config/extensions untouched.
 - **major** — a renamed/removed item, a new **required** config key, or a changed file layout (ships a migration).
 
 Prefer the project's `CHANGELOG.md` `[Unreleased]` section as the source of truth for what
@@ -75,7 +75,7 @@ git checkout -b chore/bump-X.Y.Z
    the entry carries a **Consumer impact** line.
 
 4. **Re-render if generated output tracks the version** — if this project generates files from
-   versioned sources (e.g. a toolkit that renders bundles), regenerate them now so the bump and
+   versioned sources (e.g. a toolkit that renders stacks), regenerate them now so the bump and
    its render land in the same commit. Never hand-edit generated output.
 
 ## 4. Pre-flight
@@ -136,7 +136,7 @@ with `gh label list`; if it's missing, ask the user before creating it, e.g.:
 gh label create "waffle:release" --color 0E8A16 --description "Merging pushes the release tag (waffle-release-hook)"
 ```
 
-If the repo has **not** installed `waffle-release-hook.yml` (it is opt-in / syrup), applying
+If the repo has **not** installed `waffle-release-hook.yml` (it is opt-in syrup), applying
 the label does nothing on merge — say so, and the maintainer must push the tag manually:
 `git tag vX.Y.Z <merge-commit-sha> && git push origin vX.Y.Z` (lightweight).
 

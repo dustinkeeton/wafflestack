@@ -3,10 +3,10 @@
  * `install`, `render`, and `validate`.
  *
  * A ref names something installable:
- *   - a bundle:                 `github-workflow`
+ *   - a stack:                  `github-workflow`
  *   - an item:                  `skills/issue`, `agents/project-manager`, `files/.github/workflows/ci.yml`
- *   - a bundle-qualified item:  `engineering-team/skills/security-audit`
- * The qualified form disambiguates names defined in more than one bundle.
+ *   - a stack-qualified item:   `engineering-team/skills/security-audit`
+ * The qualified form disambiguates names defined in more than one stack.
  */
 
 /** Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… → `files/`. */
@@ -14,76 +14,76 @@ export function normalizeItemRef(ref) {
   return ref.replace(/^(agent|skill|file)s?[:/]/, (_m, kind) => `${kind}s/`);
 }
 
-/** The agents, skills, or files array of a bundle, selected by kind. */
-export function itemsOfKind(bundle, kind) {
-  if (kind === 'agents') return bundle.agents;
-  if (kind === 'files') return bundle.files;
-  return bundle.skills;
+/** The agents, skills, or files array of a stack, selected by kind. */
+export function itemsOfKind(stack, kind) {
+  if (kind === 'agents') return stack.agents;
+  if (kind === 'files') return stack.files;
+  return stack.skills;
 }
 
-/** Every (bundleName, item) pair of `kind` across the toolkit that is named `name`. */
+/** Every (stackName, item) pair of `kind` across the toolkit that is named `name`. */
 export function findItems(toolkit, kind, name) {
   const matches = [];
-  for (const [bundleName, bundle] of toolkit.bundles) {
-    const item = itemsOfKind(bundle, kind).find((i) => i.name === name);
-    if (item) matches.push({ bundleName, item });
+  for (const [stackName, stack] of toolkit.stacks) {
+    const item = itemsOfKind(stack, kind).find((i) => i.name === name);
+    if (item) matches.push({ stackName, item });
   }
   return matches;
 }
 
 /**
  * Parse a raw ref into one of:
- *   { form: 'qualified', bundle, kind, name }  — `<bundle>/(agents|skills)/<name>`
- *   { form: 'item', kind, name }               — `(agents|skills)[:/]<name>`
- *   { form: 'bundle', name }                   — anything else (a bundle name)
+ *   { form: 'qualified', stack, kind, name }   — `<stack>/(agents|skills|files)/<name>`
+ *   { form: 'item', kind, name }               — `(agents|skills|files)[:/]<name>`
+ *   { form: 'stack', name }                    — anything else (a stack name)
  */
 export function parseRef(raw) {
   const ref = String(raw).trim();
   const qualified = /^([^/]+)\/(agents|skills|files)\/(.+)$/.exec(ref);
-  if (qualified) return { form: 'qualified', bundle: qualified[1], kind: qualified[2], name: qualified[3] };
+  if (qualified) return { form: 'qualified', stack: qualified[1], kind: qualified[2], name: qualified[3] };
   const item = /^(agents|skills|files)\/(.+)$/.exec(normalizeItemRef(ref));
   if (item) return { form: 'item', kind: item[1], name: item[2] };
-  return { form: 'bundle', name: ref };
+  return { form: 'stack', name: ref };
 }
 
 function availableItemRefs(toolkit) {
   const refs = new Set();
-  for (const bundle of toolkit.bundles.values()) {
-    for (const a of bundle.agents) refs.add(`agents/${a.name}`);
-    for (const s of bundle.skills) refs.add(`skills/${s.name}`);
-    for (const f of bundle.files) refs.add(`files/${f.name}`);
+  for (const stack of toolkit.stacks.values()) {
+    for (const a of stack.agents) refs.add(`agents/${a.name}`);
+    for (const s of stack.skills) refs.add(`skills/${s.name}`);
+    for (const f of stack.files) refs.add(`files/${f.name}`);
   }
   return [...refs].sort();
 }
 
 /**
  * Resolve a single ref against the whole toolkit.
- * Returns { type: 'bundle', name } or
- *         { type: 'item', kind, name, bundle, item, canonicalRef }.
+ * Returns { type: 'stack', name } or
+ *         { type: 'item', kind, name, stack, item, canonicalRef }.
  * `canonicalRef` is the minimal ref that re-resolves uniquely: unqualified when the
- * name is unique toolkit-wide, bundle-qualified when it is not.
+ * name is unique toolkit-wide, stack-qualified when it is not.
  * Throws with an actionable message on unknown or ambiguous refs.
  */
 export function resolveRef(toolkit, raw) {
   const parsed = parseRef(raw);
-  const bundleNames = [...toolkit.bundles.keys()].join(', ');
+  const stackNames = [...toolkit.stacks.keys()].join(', ');
 
-  if (parsed.form === 'bundle') {
-    if (toolkit.bundles.has(parsed.name)) return { type: 'bundle', name: parsed.name };
+  if (parsed.form === 'stack') {
+    if (toolkit.stacks.has(parsed.name)) return { type: 'stack', name: parsed.name };
     throw new Error(
-      `unknown ref "${raw}": no such bundle (have: ${bundleNames}). ` +
+      `unknown ref "${raw}": no such stack (have: ${stackNames}). ` +
       `To install a single item, prefix it: skills/${parsed.name} or agents/${parsed.name}.`,
     );
   }
 
   if (parsed.form === 'qualified') {
-    const bundle = toolkit.bundles.get(parsed.bundle);
-    if (!bundle) throw new Error(`unknown bundle "${parsed.bundle}" in ref "${raw}" (have: ${bundleNames})`);
-    const item = itemsOfKind(bundle, parsed.kind).find((i) => i.name === parsed.name);
+    const stack = toolkit.stacks.get(parsed.stack);
+    if (!stack) throw new Error(`unknown stack "${parsed.stack}" in ref "${raw}" (have: ${stackNames})`);
+    const item = itemsOfKind(stack, parsed.kind).find((i) => i.name === parsed.name);
     if (!item) {
-      const have = itemsOfKind(bundle, parsed.kind).map((i) => `${parsed.bundle}/${parsed.kind}/${i.name}`);
+      const have = itemsOfKind(stack, parsed.kind).map((i) => `${parsed.stack}/${parsed.kind}/${i.name}`);
       throw new Error(
-        `unknown ref "${raw}": bundle "${parsed.bundle}" has no ${singular(parsed.kind)} "${parsed.name}" ` +
+        `unknown ref "${raw}": stack "${parsed.stack}" has no ${singular(parsed.kind)} "${parsed.name}" ` +
         `(has: ${have.join(', ') || '(none)'})`,
       );
     }
@@ -92,9 +92,9 @@ export function resolveRef(toolkit, raw) {
       type: 'item',
       kind: parsed.kind,
       name: parsed.name,
-      bundle: parsed.bundle,
+      stack: parsed.stack,
       item,
-      canonicalRef: ambiguous ? `${parsed.bundle}/${parsed.kind}/${parsed.name}` : `${parsed.kind}/${parsed.name}`,
+      canonicalRef: ambiguous ? `${parsed.stack}/${parsed.kind}/${parsed.name}` : `${parsed.kind}/${parsed.name}`,
     };
   }
 
@@ -106,93 +106,93 @@ export function resolveRef(toolkit, raw) {
     );
   }
   if (matches.length > 1) {
-    const candidates = matches.map((m) => `${m.bundleName}/${parsed.kind}/${parsed.name}`);
-    throw new Error(`ambiguous ref "${raw}": defined in multiple bundles — qualify it (${candidates.join(' | ')})`);
+    const candidates = matches.map((m) => `${m.stackName}/${parsed.kind}/${parsed.name}`);
+    throw new Error(`ambiguous ref "${raw}": defined in multiple stacks — qualify it (${candidates.join(' | ')})`);
   }
   return {
     type: 'item',
     kind: parsed.kind,
     name: parsed.name,
-    bundle: matches[0].bundleName,
+    stack: matches[0].stackName,
     item: matches[0].item,
     canonicalRef: `${parsed.kind}/${parsed.name}`,
   };
 }
 
 /**
- * Strictly resolve a dependency ref (an entry in a bundle's `requires:`), preferring
- * the declaring item's own bundle for bare names, then a unique toolkit-wide match.
+ * Strictly resolve a dependency ref (an entry in a stack's `requires:`), preferring
+ * the declaring item's own stack for bare names, then a unique toolkit-wide match.
  * Throws on unknown or ambiguous refs — `requires:` is authored, so a dangling entry
  * is a toolkit bug.
  */
-export function resolveDepStrict(toolkit, refString, preferBundle) {
+export function resolveDepStrict(toolkit, refString, preferStack) {
   const parsed = parseRef(refString);
-  if (parsed.form === 'bundle') {
+  if (parsed.form === 'stack') {
     throw new Error(`invalid dependency "${refString}" — must be skills/<name> or agents/<name>`);
   }
   if (parsed.form === 'qualified') {
-    const bundle = toolkit.bundles.get(parsed.bundle);
-    const item = bundle && itemsOfKind(bundle, parsed.kind).find((i) => i.name === parsed.name);
-    if (!item) throw new Error(`cannot resolve dependency "${refString}" — no ${parsed.kind}/${parsed.name} in bundle "${parsed.bundle}"`);
-    return { kind: parsed.kind, name: parsed.name, bundle: parsed.bundle, item };
+    const stack = toolkit.stacks.get(parsed.stack);
+    const item = stack && itemsOfKind(stack, parsed.kind).find((i) => i.name === parsed.name);
+    if (!item) throw new Error(`cannot resolve dependency "${refString}" — no ${parsed.kind}/${parsed.name} in stack "${parsed.stack}"`);
+    return { kind: parsed.kind, name: parsed.name, stack: parsed.stack, item };
   }
-  const own = toolkit.bundles.get(preferBundle);
+  const own = toolkit.stacks.get(preferStack);
   const ownItem = own && itemsOfKind(own, parsed.kind).find((i) => i.name === parsed.name);
-  if (ownItem) return { kind: parsed.kind, name: parsed.name, bundle: preferBundle, item: ownItem };
+  if (ownItem) return { kind: parsed.kind, name: parsed.name, stack: preferStack, item: ownItem };
   const matches = findItems(toolkit, parsed.kind, parsed.name);
   if (matches.length === 0) throw new Error(`cannot resolve dependency "${refString}" — no such item in the toolkit`);
   if (matches.length > 1) {
-    const candidates = matches.map((m) => `${m.bundleName}/${parsed.kind}/${parsed.name}`);
-    throw new Error(`ambiguous dependency "${refString}" (${candidates.join(', ')}) — qualify it as <bundle>/${parsed.kind}/${parsed.name}`);
+    const candidates = matches.map((m) => `${m.stackName}/${parsed.kind}/${parsed.name}`);
+    throw new Error(`ambiguous dependency "${refString}" (${candidates.join(', ')}) — qualify it as <stack>/${parsed.kind}/${parsed.name}`);
   }
-  return { kind: parsed.kind, name: parsed.name, bundle: matches[0].bundleName, item: matches[0].item };
+  return { kind: parsed.kind, name: parsed.name, stack: matches[0].stackName, item: matches[0].item };
 }
 
 /**
  * Leniently resolve an agent frontmatter `skills:` entry (a bare skill name). Agent
  * skill lists are harness grant-pointers that may reference skills provided outside
  * this toolkit (project-local, or not yet authored), so an unresolved name is not an
- * error — it is simply skipped. Prefers the agent's own bundle, then a unique
+ * error — it is simply skipped. Prefers the agent's own stack, then a unique
  * toolkit-wide match. Returns the resolved item or null (unknown or ambiguous).
  */
-export function resolveAgentSkill(toolkit, name, preferBundle) {
-  const own = toolkit.bundles.get(preferBundle);
+export function resolveAgentSkill(toolkit, name, preferStack) {
+  const own = toolkit.stacks.get(preferStack);
   const ownItem = own && own.skills.find((s) => s.name === name);
-  if (ownItem) return { kind: 'skills', name, bundle: preferBundle, item: ownItem };
+  if (ownItem) return { kind: 'skills', name, stack: preferStack, item: ownItem };
   const matches = findItems(toolkit, 'skills', name);
-  if (matches.length === 1) return { kind: 'skills', name, bundle: matches[0].bundleName, item: matches[0].item };
+  if (matches.length === 1) return { kind: 'skills', name, stack: matches[0].stackName, item: matches[0].item };
   return null;
 }
 
-/** Direct dependencies of a resolved item: agent frontmatter `skills:` + bundle `requires:`. */
+/** Direct dependencies of a resolved item: agent frontmatter `skills:` + stack `requires:`. */
 function directDeps(toolkit, node) {
-  const bundle = toolkit.bundles.get(node.bundle);
+  const stack = toolkit.stacks.get(node.stack);
   const deps = [];
   if (node.kind === 'agents') {
-    const agent = bundle.agents.find((a) => a.name === node.name);
+    const agent = stack.agents.find((a) => a.name === node.name);
     for (const skillName of agent?.data?.skills ?? []) {
-      const dep = resolveAgentSkill(toolkit, skillName, node.bundle);
+      const dep = resolveAgentSkill(toolkit, skillName, node.stack);
       if (dep) deps.push(dep);
     }
   }
-  for (const ref of bundle.requires?.[`${node.kind}/${node.name}`] ?? []) {
-    deps.push(resolveDepStrict(toolkit, ref, node.bundle));
+  for (const ref of stack.requires?.[`${node.kind}/${node.name}`] ?? []) {
+    deps.push(resolveDepStrict(toolkit, ref, node.stack));
   }
   return deps;
 }
 
 /**
- * Transitive, cross-bundle dependency closure of a resolved item, breadth-first, with
- * the root first. Each node is { kind, name, bundle, item }. Dedup is by
- * bundle+kind+name so the same item pulled via two paths appears once.
+ * Transitive, cross-stack dependency closure of a resolved item, breadth-first, with
+ * the root first. Each node is { kind, name, stack, item }. Dedup is by
+ * stack+kind+name so the same item pulled via two paths appears once.
  */
 export function closureFor(toolkit, root) {
   const seen = new Set();
   const order = [];
-  const queue = [{ kind: root.kind, name: root.name, bundle: root.bundle, item: root.item }];
+  const queue = [{ kind: root.kind, name: root.name, stack: root.stack, item: root.item }];
   while (queue.length) {
     const node = queue.shift();
-    const key = `${node.bundle}::${node.kind}/${node.name}`;
+    const key = `${node.stack}::${node.kind}/${node.name}`;
     if (seen.has(key)) continue;
     seen.add(key);
     order.push(node);
@@ -204,54 +204,54 @@ export function closureFor(toolkit, root) {
 /** The non-root dependency refs of a closure, as `kind/name` strings (for CLI output). */
 export function closureDeps(toolkit, root) {
   return closureFor(toolkit, root)
-    .filter((n) => !(n.bundle === root.bundle && n.kind === root.kind && n.name === root.name))
+    .filter((n) => !(n.stack === root.stack && n.kind === root.kind && n.name === root.name))
     .map((n) => `${n.kind}/${n.name}`);
 }
 
 /** Does an `include:` entry (qualified or not) refer to the given kind/name? */
 export function includeRefMatches(includeRef, kind, name) {
   const parsed = parseRef(includeRef);
-  return parsed.form !== 'bundle' && parsed.kind === kind && parsed.name === name;
+  return parsed.form !== 'stack' && parsed.kind === kind && parsed.name === name;
 }
 
 /**
  * The full set of items to render:
- *   union(items of enabled `bundles:`) ∪ closure(each `include:` item) − `eject:`
+ *   union(items of enabled `stacks:`) ∪ closure(each `include:` item) − `eject:`
  * `trackedFiles` is the set of repo-relative paths the previous lock managed (`oldLock.files`
- * keys); it lets a **syrup** item a repo already renders keep updating even though a fresh
- * bundle expansion would gate it out.
+ * keys); it lets an **opt-in** item a repo already renders keep updating even though a fresh
+ * stack expansion would gate it out.
  * Returns:
- *   items:    [{ bundleName, bundle, kind, item }] deduped by bundle+kind+name, eject-filtered
+ *   items:    [{ stackName, stack, kind, item }] deduped by stack+kind+name, eject-filtered
  *   closures: [{ rootRef, deps: [kind/name…] }] for reporting pulled-in dependencies
- *   errors:   resolution errors (unknown bundle, unknown/ambiguous ref)
+ *   errors:   resolution errors (unknown stack, unknown/ambiguous ref)
  */
 export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   const errors = [];
   const chosen = new Map();
-  const addItem = (bundleName, kind, item) => {
-    const key = `${bundleName}::${kind}/${item.name}`;
-    if (!chosen.has(key)) chosen.set(key, { bundleName, bundle: toolkit.bundles.get(bundleName), kind, item });
+  const addItem = (stackName, kind, item) => {
+    const key = `${stackName}::${kind}/${item.name}`;
+    if (!chosen.has(key)) chosen.set(key, { stackName, stack: toolkit.stacks.get(stackName), kind, item });
   };
-  const addBundle = (bundleName) => {
-    const bundle = toolkit.bundles.get(bundleName);
-    for (const a of bundle.agents) addItem(bundleName, 'agents', a);
-    for (const s of bundle.skills) addItem(bundleName, 'skills', s);
-    for (const f of bundle.files) {
-      // Syrup is opt-in: a bundle's default expansion skips a syrup file unless the repo
-      // already tracks its path in the lock (an existing install keeps getting updates).
-      // An explicit `include:` of the file ref bypasses this gate — it is added via the
-      // closure loop below, whose root is the file itself.
-      if (bundle.syrup.has(`files/${f.name}`) && !trackedFiles.has(f.name)) continue;
-      addItem(bundleName, 'files', f);
+  const addStack = (stackName) => {
+    const stack = toolkit.stacks.get(stackName);
+    for (const a of stack.agents) addItem(stackName, 'agents', a);
+    for (const s of stack.skills) addItem(stackName, 'skills', s);
+    for (const f of stack.files) {
+      // Opt-in syrup is poured on request only: a stack's default expansion skips an opt-in
+      // file unless the repo already tracks its path in the lock (an existing install keeps
+      // getting updates). An explicit `include:` of the file ref bypasses this gate — it is
+      // added via the closure loop below, whose root is the file itself.
+      if (stack.optIn.has(`files/${f.name}`) && !trackedFiles.has(f.name)) continue;
+      addItem(stackName, 'files', f);
     }
   };
 
-  for (const bundleName of project.bundles) {
-    if (!toolkit.bundles.has(bundleName)) {
-      errors.push(`bundle "${bundleName}" not found in toolkit (have: ${[...toolkit.bundles.keys()].join(', ')})`);
+  for (const stackName of project.stacks) {
+    if (!toolkit.stacks.has(stackName)) {
+      errors.push(`stack "${stackName}" not found in toolkit (have: ${[...toolkit.stacks.keys()].join(', ')})`);
       continue;
     }
-    addBundle(bundleName);
+    addStack(stackName);
   }
 
   const closures = [];
@@ -263,8 +263,8 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       errors.push(err.message);
       continue;
     }
-    if (resolved.type === 'bundle') {
-      addBundle(resolved.name);
+    if (resolved.type === 'stack') {
+      addStack(resolved.name);
       continue;
     }
     let closure;
@@ -274,11 +274,11 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       errors.push(err.message);
       continue;
     }
-    for (const node of closure) addItem(node.bundle, node.kind, node.item);
+    for (const node of closure) addItem(node.stack, node.kind, node.item);
     closures.push({
       rootRef: `${resolved.kind}/${resolved.name}`,
       deps: closure
-        .filter((n) => !(n.bundle === resolved.bundle && n.kind === resolved.kind && n.name === resolved.name))
+        .filter((n) => !(n.stack === resolved.stack && n.kind === resolved.kind && n.name === resolved.name))
         .map((n) => `${n.kind}/${n.name}`),
     });
   }

@@ -60,7 +60,7 @@ For each issue, determine the best specialist agent using content-based matching
 | Signal (keywords / paths) | Agent |
 |---------------------------|-------|
 | installer, CLI, render, doctor, eject, template, `installer/**` | general-purpose |
-| bundle, skill, agent definition, config key, `bundles/**`, `schema/**` | general-purpose |
+| stack, skill, agent definition, config key, `stacks/**`, `schema/**` | general-purpose |
 | docs, AGENTS.md, architecture/status docs | docs-agent (machine) / docs-human (human) |
 
 **Label fallback** — if no keyword match:
@@ -87,7 +87,7 @@ Worktree isolation makes it safe for two agents of the **same type** to run at o
 
 **Serialization rules** (override parallel):
 - installer/lib/ (render pipeline — every CLI command and test imports it) is a bottleneck — any two issues touching it must serialize
-- bundle content depends on installer template semantics — `installer/lib` changes merge before dependent `bundles/**` changes.
+- stack content depends on installer template semantics — `installer/lib` changes merge before dependent `stacks/**` changes.
 - Security issues serialize **last**
 - Documentation issues serialize **last** (need final code state)
 
@@ -338,8 +338,8 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - npm run validate
    - npm test
    - npm pack --dry-run
-   - `npm run validate` passes after any bundle/manifest edit
-- If `bundles/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
+   - `npm run validate` passes after any stack/manifest edit
+- If `stacks/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
 5. Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main.
 6. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL>). If you lack these tools, just ensure the PR exists; the orchestrator verifies your work directly.
 

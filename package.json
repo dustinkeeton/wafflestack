@@ -10,7 +10,7 @@
   },
   "files": [
     "installer",
-    "bundles",
+    "stacks",
     "schema",
     "toolkit.yaml",
     "CHANGELOG.md"
