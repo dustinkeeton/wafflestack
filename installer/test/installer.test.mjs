@@ -14,7 +14,7 @@ import { eject, installRefs, init } from '../lib/eject.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
-import { resolveRef, closureDeps, computeSelection } from '../lib/refs.mjs';
+import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions } from '../lib/refs.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 import {
@@ -1410,6 +1410,29 @@ describe('github-workflow: waffle-release-hook payload (#39)', () => {
     const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
     assert.match(inv, /- files \(opt-in syrup — sensitive, do NOT install by default\):[^\n]*waffle-release-hook\.yml/);
   });
+
+  test('R8 stack enable warns the release skill pairs with the un-poured release hook (#74)', () => {
+    // Enabling the stack selects the release SKILL but gates out its release-hook syrup — the
+    // exact half-installed flow #74 exists to surface. The render must warn with the pour command.
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(
+      result.warnings.some((w) =>
+        /opt-in syrup files\/\.github\/workflows\/waffle-release-hook\.yml \(github-workflow\) pairs with selected skills\/release .*wafflestack install files\/\.github\/workflows\/waffle-release-hook\.yml/.test(w),
+      ),
+      JSON.stringify(result.warnings),
+    );
+
+    // Pouring it via include silences that specific warning.
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const poured = render();
+    assert.equal(poured.ok, true, JSON.stringify(poured.errors));
+    assert.ok(
+      !poured.warnings.some((w) => /waffle-release-hook\.yml \(github-workflow\) pairs with selected/.test(w)),
+      JSON.stringify(poured.warnings),
+    );
+  });
 });
 
 // #46: the github-workflow stack also ships a SCHEDULED repo-hygiene hook — a files/ payload
@@ -1873,6 +1896,111 @@ describe('syrup gate — generic (#51)', () => {
   });
 });
 
+// #74: reverse the syrup-companion edge. A stack declares its opt-in syrup's companion waffle
+// via a requires: edge (installing the syrup pulls the companion). The render only walks that
+// forward, so selecting the companion — or enabling the whole stack — leaves the paired syrup
+// gated out and silent. These prove the reverse-edge computation + the render warning on a
+// throwaway fixture.
+describe('skipped syrup companions (#74)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-syrup74-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-syrup74-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: syrup companions\nstacks: [sb]\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Syrup companion fixture.',
+      'skills: [companion]',
+      'files:',
+      '  - safe.txt',
+      '  - danger.yml',
+      'optIn:',
+      '  - files/danger.yml',
+      'requires:',
+      '  files/danger.yml:',
+      '    - skills/companion',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/skills/companion/SKILL.md', '---\nname: companion\ndescription: Companion skill.\n---\n\nPairs with the danger syrup.\n');
+    write(toolkitRoot, 'stacks/sb/files/safe.txt', 'plain payload\n');
+    write(toolkitRoot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = (opts = {}) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', ...opts });
+  const companionWarn = (w) =>
+    /opt-in syrup files\/danger\.yml \(sb\) pairs with selected skills\/companion .*wafflestack install files\/danger\.yml/.test(w);
+
+  test('the fixture validates clean (companion skill + requires edge resolve)', () => {
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('skippedSyrupCompanions surfaces a gated syrup paired with a selected companion', () => {
+    const toolkit = loadToolkit(toolkitRoot);
+    // whole stack enabled → companion skill selected, danger syrup gated out
+    const sel = computeSelection(toolkit, { stacks: ['sb'], include: [], values: {} });
+    assert.deepEqual(skippedSyrupCompanions(toolkit, sel), [
+      { fileRef: 'files/danger.yml', stackName: 'sb', companions: ['skills/companion'] },
+    ]);
+  });
+
+  test('an installed syrup (included or tracked) is not a skipped companion', () => {
+    const toolkit = loadToolkit(toolkitRoot);
+    // explicit include pours it → nothing to surface
+    assert.deepEqual(
+      skippedSyrupCompanions(toolkit, computeSelection(toolkit, { stacks: ['sb'], include: ['files/danger.yml'], values: {} })),
+      [],
+    );
+    // already tracked in the lock → likewise nothing to surface
+    assert.deepEqual(
+      skippedSyrupCompanions(toolkit, computeSelection(toolkit, { stacks: ['sb'], include: [], values: {} }, new Set(['danger.yml']))),
+      [],
+    );
+  });
+
+  test('a gated syrup whose companion is NOT selected is not surfaced', () => {
+    const toolkit = loadToolkit(toolkitRoot);
+    // eject the companion → the danger syrup no longer pairs with anything selected
+    const sel = computeSelection(toolkit, { stacks: ['sb'], include: [], eject: ['skills/companion'], values: {} });
+    assert.deepEqual(skippedSyrupCompanions(toolkit, sel), []);
+  });
+
+  test('render warns about the skipped companion with the exact pour command', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(result.warnings.some(companionWarn), JSON.stringify(result.warnings));
+    // the companion skill DID render — only its paired syrup was gated
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/companion/SKILL.md')));
+    assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false);
+  });
+
+  test('pouring the syrup via include silences the warning', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some(companionWarn), JSON.stringify(result.warnings));
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')));
+  });
+
+  test('a repo already tracking the syrup gets no warning on a later stack-only render', () => {
+    // first render with the include establishes the lock entry…
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    // …then a stack-only render keeps it (tracked) and stays quiet about the pairing
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some(companionWarn), JSON.stringify(result.warnings));
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'tracked syrup survives');
+  });
+});
+
 // The `pattern:` mechanism T6 exercises through the real payload is generic — it works for
 // any stack config key. These prove the toolkit-lint half on a throwaway fixture.
 describe('config value pattern: render-time validation (#27 hardening)', () => {
@@ -2162,6 +2290,41 @@ describe('setup guide — config-aware update mode (#50)', () => {
       write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
       guide = setupGuide(sroot, '0.0.test', scwd);
       assert.match(guide, /- `files\/danger\.yml` \(sb\) — installed — renders on this selection/);
+    } finally {
+      fs.rmSync(sroot, { recursive: true, force: true });
+      fs.rmSync(scwd, { recursive: true, force: true });
+    }
+  });
+
+  test('syrup: a gated syrup paired with a selected companion flags the both/one/neither ask (#74)', () => {
+    const sroot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup74-'));
+    const scwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup74-'));
+    try {
+      write(sroot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nstacks: [sb]\n');
+      write(sroot, 'schema/SETUP.md', '# fixture playbook\n');
+      write(sroot, 'stacks/sb/stack.yaml', [
+        'name: sb',
+        'description: Syrup companion fixture.',
+        'skills: [companion]',
+        'files:',
+        '  - danger.yml',
+        'optIn:',
+        '  - files/danger.yml',
+        'requires:',
+        '  files/danger.yml:',
+        '    - skills/companion',
+        '',
+      ].join('\n'));
+      write(sroot, 'stacks/sb/skills/companion/SKILL.md', '---\nname: companion\ndescription: Companion.\n---\n\nPairs.\n');
+      write(sroot, 'stacks/sb/files/danger.yml', 'x: 1\n');
+
+      // Stack enabled → companion skill selected, syrup gated: update mode flags the pairing.
+      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
+      const guide = setupGuide(sroot, '0.0.test', scwd);
+      assert.match(
+        guide,
+        /- `files\/danger\.yml` \(sb\) — not installed — \*\*pairs with selected skills\/companion\*\*; ask the user both\/one\/neither/,
+      );
     } finally {
       fs.rmSync(sroot, { recursive: true, force: true });
       fs.rmSync(scwd, { recursive: true, force: true });

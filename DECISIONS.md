@@ -9,6 +9,47 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-06: Surface skipped syrup companions — warn, don't prompt (#74)
+
+**Context**: Opt-in syrup pairs with a companion waffle through a `requires:` edge — the
+github-workflow stack's `release` skill with the `waffle-release-hook.yml` tag-on-merge
+workflow, `hygiene` with `waffle-hygiene.yml`, `label-hook` with `waffle-label-hook.yml`. The
+render only ever walked that edge forward (installing the *syrup* pulls the *skill*), so
+enabling a stack — or including just the skill — rendered the manual half of a flow and
+silently gated out the automated half. A consumer ended up with a release flow whose
+tag-on-merge hook was never rendered and never mentioned (#76). The only "ask first" surface
+was advisory playbook prose aimed at AI agents; a bare `wafflestack install <stack>` with no
+agent in the loop surfaced nothing.
+
+**Decision**: Walk the companion edge in reverse (`skippedSyrupCompanions`, `refs.mjs`). When a
+render/install selection includes a waffle whose opt-in syrup companion is gated out,
+`render`/`install` emits a `warning:` naming the skipped syrup and the exact
+`wafflestack install files/<path>` command to pour it; `setup` update-mode flags the same
+pairing. The `schema/SETUP.md` playbook is promoted from advisory ("consider asking") to a
+**required** both/one/neither question the agent must put to the user before finishing
+setup/install. The CLI stays **warn-only** — it does **not** grow a TTY prompt.
+
+**Alternatives considered**: An interactive TTY prompt when stdin is a TTY — rejected. The CLI
+is deliberately non-interactive (every command runs headless in CI, and the whole install is
+agent-driven through the setup playbook); a prompt would fork behavior by stdin shape, need a
+non-TTY fallback anyway, and duplicate the playbook contract that already owns the human
+conversation. Auto-installing the companion syrup — rejected outright: it would silently arm a
+sensitive, write-scoped workflow, the exact thing the opt-in gate exists to prevent. Staying
+advisory-only — rejected: it left the non-agent path (`install <stack>`) with no signal at all.
+
+**Rationale**: The warning is the machine-readable stand-in for the playbook's human question,
+so both the agent path (SETUP.md) and the bare-CLI path (stderr warning) surface the choice
+without either arming syrup on its own. Warnings don't fail a render, don't affect `doctor`, and
+fire only when a companion is actually selected but its syrup is neither included nor
+lock-tracked — so an existing install (syrup already tracked) and an unrelated stack stay quiet.
+
+**Impact**: Consumers enabling a stack with paired opt-in syrup now get a copy-paste pour
+command instead of a silent gap. No config, lock, or render-output change — the reverse-edge
+walk only adds warnings and a setup annotation, so `doctor` is unaffected and no migration
+ships.
+
+---
+
 ## 2026-07-06: Rebrand — waffles, stacks, and syrup (#59)
 
 **Context**: The toolkit's vocabulary had drifted from its own name. Installable items were

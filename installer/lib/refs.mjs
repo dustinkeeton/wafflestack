@@ -288,6 +288,55 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   return { items, closures, errors };
 }
 
+/**
+ * Opt-in syrup companions that pair with a selected item but were gated out of the render.
+ *
+ * A stack declares its opt-in syrup's companion waffle with a `requires: [kind/name]` edge —
+ * installing the syrup pulls the companion (`directDeps`). The render only ever walks that
+ * edge forward, so installing the companion *skill* (or enabling its whole stack) never
+ * surfaces the syrup it pairs with: the flow lands half-installed and silent (issue #74). This
+ * walks the edge in REVERSE. For every opt-in syrup file a stack-in-the-selection did NOT
+ * render, if any waffle it `requires:` IS in the selection, the syrup is a skipped companion of
+ * that selection.
+ *
+ * Scope is the stacks that actually contribute selected items — a companion selected from
+ * stack X means X is in that set, so no relevant pairing is missed, and syrup from an
+ * uninvolved stack is never suggested.
+ *
+ * @param toolkit  loaded toolkit
+ * @param selection  a `computeSelection` result ({ items, … })
+ * @returns [{ fileRef, stackName, companions: ["kind/name"…] }] — one entry per skipped syrup
+ *   file, `companions` naming the selected waffles that pull it into relevance. `fileRef` is a
+ *   ready `wafflestack install <fileRef>` argument. Deterministic order (stack, then manifest).
+ */
+export function skippedSyrupCompanions(toolkit, selection) {
+  const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
+  const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
+  const results = [];
+  for (const stackName of stacksInSelection) {
+    const stack = toolkit.stacks.get(stackName);
+    if (!stack) continue;
+    for (const f of stack.files) {
+      const fileRef = `files/${f.name}`;
+      if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
+      if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
+      const companions = [];
+      for (const ref of stack.requires?.[fileRef] ?? []) {
+        let dep;
+        try {
+          dep = resolveDepStrict(toolkit, ref, stackName);
+        } catch {
+          continue; // a dangling requires is a toolkit bug validate reports; skip it here
+        }
+        const depRef = `${dep.kind}/${dep.name}`;
+        if (selectedRefs.has(depRef)) companions.push(depRef);
+      }
+      if (companions.length) results.push({ fileRef, stackName, companions });
+    }
+  }
+  return results;
+}
+
 function singular(kind) {
   if (kind === 'agents') return 'agent';
   if (kind === 'files') return 'file';

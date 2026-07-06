@@ -93,6 +93,15 @@ is what you reach for across a breaking one.
   `Bash(node installer/cli.mjs:*)`). **Re-render to pick it up** — `project.installCmd` is a new
   *optional* key (default `npm install`), so this is additive with no migration; a repo that never
   installed either syrup hook is unaffected. (#82)
+- **Enhancement, content-only — installs no longer silently half-arm a paired flow (#74).** When a
+  render/install selection includes a waffle whose opt-in syrup companion is gated out — e.g. the
+  `release` skill without its `waffle-release-hook.yml` tag-on-merge hook — `render`/`install` now
+  prints a `warning:` naming the skipped syrup and the exact `wafflestack install files/<path>`
+  command to pour it, and `setup` update-mode flags the same pairing. `schema/SETUP.md` promotes its
+  opt-in-syrup guidance from advisory to a **required** both/one/neither question the installing
+  agent must ask. The CLI stays deliberately non-interactive (no TTY prompt). **Re-render costs
+  nothing** — warnings only, no config/lock/render-output change and no migration; a repo whose
+  paired syrup is already installed or tracked stays quiet.
 
 ### Added
 - **CI observability for the dispatched harness — surface output + fail on denials** (#73,
