@@ -25,6 +25,44 @@ The phases below (Fetch → Classify → Plan → Execute → Report) hand state
 
 The per-phase instructions below each end with a **Checkpoint** step naming the section to write and the phase to validate.
 
+## Run memory
+
+The checkpoint above is **per-run** throwaway state. Run memory is the opposite: **one small, curated, durable doc per repo** that carries lessons *between* runs — repo quirks, setup steps that flake, which issues are entangled, which agent a fuzzy area really belongs to. Without it, everything learned in run N evaporates before run N+1; the two tempting fixes — an append-only log, or stuffing prior notes into prompts — both bloat unbounded until they poison context instead of helping it. So this doc is **curated and hard-capped**, never append-only.
+
+- **One doc per repo**, at `.claude/worktrees/.delegate/memory.md`. It sits alongside the checkpoints and inherits the same gitignore. Same trade-off as the checkpoint dir: it persists locally but is **per-clone** (not committed), so memory does not follow the repo to another machine — that is acceptable, just don't treat it as authoritative shared state.
+- **Hard cap:** `4096` bytes. The cap is the point — it forces the doc to stay a compact working set. When curation would push it over, prune the stalest entries; **never raise the cap to dodge pruning.**
+- **Format** — an H1 title, a one-line preamble, then entries. Each entry is an H2 whose heading *is* the fact, plus three required fields so pruning is judged, not FIFO:
+
+  ```markdown
+  # Delegate run memory — <repo>
+
+  > Curated, capped (see delegate.memoryMaxBytes). Prune stale entries; never blind-append.
+
+  ## Setup step `npm run seed` flakes on a cold checkout
+  - **Why:** Agents burn a cycle when it fails; re-running once clears it — tell them up front.
+  - **Since:** #42 — the summarize agent hit it twice before we noticed.
+  - **Area:** summarize
+
+  ## Issues touching `shared/` must serialize behind the config refactor
+  - **Why:** Parallel edits there collide on the same export map.
+  - **Since:** #55, PR #61 — learned when two worktrees conflicted.
+  - **Area:** shared
+  ```
+
+  - **Why** — why the fact is forward-useful (what it saves a future run).
+  - **Since** — the issue/PR that taught it (must contain a `#N`). This is the **staleness anchor**: when that area is later reworked, re-judge or drop the entry rather than trusting it forever.
+  - **Area** — the module/area tag, so the Execute phase can hand each agent only the entries relevant to *its* issue.
+
+- **Validator / cap gate:** `.claude/skills/delegate/memory.mjs` — dependency-free (Node built-ins only). It enforces the byte cap **and** the entry format:
+
+  ```bash
+  node .claude/skills/delegate/memory.mjs --file .claude/worktrees/.delegate/memory.md --max-bytes 4096
+  ```
+
+  A **missing file is valid** (a repo with no delegate history yet). Exit 0 = within cap and every entry well-formed. **Exit 1 = over cap or a malformed entry — STOP and curate; do not improvise past it, and do not finish the run with the doc over cap.** This is the deterministic gate, same as the checkpoint's — don't replace it with an eyeball "looks small enough".
+
+The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each spawned agent gets only its area's entries), and the **write** policy in Phase 5 (Report curates — prune + rewrite — then runs the gate above).
+
 ## Phase 1: Fetch Issues
 
 **Argument handling** — the fetch path depends on whether `$ARGUMENTS` is provided:
@@ -77,6 +115,8 @@ node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/<
 
 ## Phase 2: Classify
 
+**Load run memory first.** Read `.claude/worktrees/.delegate/memory.md` (skip silently if it does not exist yet) — it is small by design, so load the whole doc as compact context. Let its entries inform classification: a prior run may have recorded that a fuzzy area really belongs to a particular agent, or that two issues are entangled. Do not let memory override a clear content match; use it to break ties and flag known quirks.
+
 For each issue, determine the best specialist agent using content-based matching. Scan the issue title and body for keywords and source paths, then apply the first matching row:
 
 | Signal (keywords / paths) | Agent |
@@ -104,7 +144,7 @@ node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/<
 
 ## Phase 3: Plan & Confirm
 
-Build an assignment plan table and determine parallel grouping.
+Build an assignment plan table and determine parallel grouping. **Consult the run memory loaded in Phase 2** while grouping: an entry recording an *entanglement* ("issues touching `shared/` must serialize behind the config refactor") or a *recurring conflict* is grounds to serialize where the static rules alone would allow parallel. Memory augments the rules below; it never relaxes a serialization the rules require.
 
 **Parallelization rules** — two issues can run in parallel when ALL of these hold:
 - They touch **different areas** (no module/subdirectory overlap)
@@ -345,6 +385,8 @@ Agent(
 
 Each spawned agent receives this prompt. Its load-bearing fields — `{number}`, `{branch-name}`, and `{worktree_path}` — come from this issue's entry in the `plan` checkpoint (the single source of truth), not from re-derivation. For **parallel groups**, fill in `{worktree_path}` with the checkpoint's `worktree` value (the absolute path provisioned for this issue). For **serial groups / single-issue fast path**, omit the "Working directory" section — the agent works in the main checkout and creates its branch there per the git-workflow skill.
 
+**Inject only this issue's relevant memory.** From the run-memory doc loaded in Phase 2, select the entries whose **Area** matches this issue's classified area (plus any that name this issue number in their **Since**), and paste just those into the "Repo notes from prior runs" section below. Do **not** dump the whole doc into every agent — an agent gets only what pertains to its issue. If no entry matches, omit the section entirely.
+
 ```
 You are assigned to GitHub issue #{number}: {title}
 
@@ -363,6 +405,10 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
 ## Issue body
 
 {full issue body from GitHub}
+
+## Repo notes from prior runs
+
+{only the memory entries whose Area matches this issue — omit this whole section if none}
 
 ## Instructions
 
@@ -443,7 +489,24 @@ Build: passing
 
 **Approval gate** — when it was active for the run (any `execution` entry carries an `approval` field), add an **Approved by** column so the report records who approved or rejected each push. A **rejected** issue shows `status: skipped` with no PR; call it out explicitly and note that its worktree/branch was left local and intact for inspection (it is not cleaned up).
 
-**Checkpoint** — write `report` (`build`: `passing`/`failing`/`unknown`, plus optional `notes` for failures, skips, rejected pushes, or worktree-cleanup caveats), then validate the completed run:
+### Curate run memory
+
+Now distil this run's **durable, forward-useful** lessons into the run-memory doc at `.claude/worktrees/.delegate/memory.md` — the source of truth the next run's Classify/Plan phases read (see **Run memory** above). This is a **curation**, not an append:
+
+1. **Read the existing doc** (create it with the H1 + preamble header if this is the repo's first run) and take its current entries as the baseline. Draw candidate lessons from what this run actually surfaced — the checkpoint is the audit trail: setup steps that flaked, a misclassification that had to be corrected, issues that turned out entangled, a repo quirk an agent reported.
+2. **Only record what will help a *future* run.** Skip one-off details and anything already obvious from the code. Every entry needs its three fields — **Why**, **Since** (cite the issue/PR from this run, with a `#N`), and **Area**.
+3. **Prune as you go — judged, not FIFO.** Drop or rewrite entries whose **Since** anchor was superseded by this run (e.g. the quirk it noted was just fixed), and merge duplicates. The doc must stay curated: replacing a stale entry is preferred over adding a new one beside it.
+4. **Enforce the cap.** After rewriting, run the deterministic gate — the run may **not** complete while it fails:
+
+   ```bash
+   node .claude/skills/delegate/memory.mjs --file .claude/worktrees/.delegate/memory.md --max-bytes 4096
+   ```
+
+   **Exit 1** (over cap, or a malformed entry) → **prune further** and re-validate. Do not raise `delegate.memoryMaxBytes` to escape curation, and do not finish the run with the doc over cap or an entry missing a field. **Exit 0** → memory is curated and within budget; proceed.
+
+If nothing durable was learned this run, that is a valid outcome — leave the doc unchanged (or make only prunes) and still run the gate to confirm it is within cap.
+
+**Checkpoint** — write `report` (`build`: `passing`/`failing`/`unknown`, plus optional `notes` for failures, skips, rejected pushes, worktree-cleanup caveats, or memory-curation notes), then validate the completed run:
 
 ```bash
 node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/<runId>.json --phase report
