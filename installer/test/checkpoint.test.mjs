@@ -118,6 +118,47 @@ describe('delegate checkpoint validator', () => {
     assert.match(r.stderr, /does not match pattern/);
   });
 
+  test('approval-gate fields: an approved push and a rejected push both pass execute', () => {
+    const doc = clone(BASE);
+    doc.execution[0] = { number: 3, agent: 'plugin-architect', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6', approval: 'approved', approvedBy: 'dustin' };
+    doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'skipped', pr: null, approval: 'rejected', approvedBy: 'dustin' };
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /is valid for phase/);
+  });
+
+  test('a rejected push that still claims a PR is caught at the execute boundary', () => {
+    const doc = clone(BASE);
+    doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'skipped', pr: '#7', approval: 'rejected', approvedBy: 'dustin' };
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /rejected at the approval gate but has a PR/);
+  });
+
+  test('a rejected push whose status is not "skipped" is caught at the execute boundary', () => {
+    const doc = clone(BASE);
+    doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'done', pr: '#7', approval: 'rejected', approvedBy: 'dustin' };
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /a rejected push must be "skipped"/);
+  });
+
+  test('approvedBy without an approval decision is caught at the execute boundary', () => {
+    const doc = clone(BASE);
+    doc.execution[0].approvedBy = 'dustin';
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /records approvedBy but no approval decision/);
+  });
+
+  test('an unknown approval value fails schema validation', () => {
+    const doc = clone(BASE);
+    doc.execution[0].approval = 'maybe';
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /is not one of/);
+  });
+
   test('malformed JSON produces a clean error, not a stack trace', () => {
     const r = run('{ "version": 1, ', 'fetch');
     assert.equal(r.status, 1);

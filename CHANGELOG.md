@@ -215,6 +215,20 @@ is what you reach for across a breaking one.
   optional config key `delegate.checkpointDir` (default `{{git.worktreesDir}}/.delegate`, gitignored
   run state). **Re-render to pick it up** — additive, no migration; a repo that never runs `/delegate`
   is unaffected.
+- **Enhancement, content-only — opt-in approval gate before push in `delegate` runs (`orchestration`,
+  #92).** A new optional config key `delegate.approveBeforePush` (default `false`) adds a human gate
+  immediately before a delegated agent's branch leaves the machine. When on, each agent runs its
+  pre-flight, commits **locally**, and STOPS before `git push` / `gh pr create`; the orchestrator
+  assembles a compact per-agent summary (branch, target issue, diffstat, commit list), collects the
+  human's decision via `AskUserQuestion` (Approve / Approve all / Reject), and only an explicit
+  approval releases the push and opens the PR. A rejection leaves the worktree and local branch intact
+  for inspection (never cleaned up) and is recorded in the run. The decision is part of the run's typed
+  state: `checkpoint.schema.json` gains `approval` (`approved`/`rejected`) and `approvedBy` on each
+  `execution` entry, and `checkpoint.mjs` enforces that a rejected push is `status: skipped` with a
+  null PR — so a rejection can never masquerade as a merged PR — with tests covering both. The Report
+  phase adds an "Approved by" column when the gate was active. **Re-render to pick it up** — additive,
+  no migration, and **default-off leaves existing `/delegate` behavior unchanged**; a repo that never
+  runs `/delegate` (or never enables the flag) is unaffected.
 
 ## [0.9.0] - 2026-07-03
 
