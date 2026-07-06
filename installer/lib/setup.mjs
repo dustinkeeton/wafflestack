@@ -3,7 +3,7 @@ import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
 import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
-import { computeSelection } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
 import { readLock } from './render.mjs';
 
 /**
@@ -152,8 +152,14 @@ function currentConfigSection(toolkit, cwd) {
   }
 
   // Opt-in syrup: sensitive files across enabled stacks, tracked/installed vs available-but-not.
+  // Reverse the requires: edge (#74) to flag a not-installed syrup that PAIRS with a selected
+  // companion waffle — a half-installed flow the agent must resolve with the both/one/neither
+  // question, not silently leave gated.
   const installedFiles = new Set(
     selection.items.filter((i) => i.kind === 'files').map((i) => i.item.name),
+  );
+  const companionsByRef = new Map(
+    skippedSyrupCompanions(toolkit, selection).map((s) => [s.fileRef, s.companions]),
   );
   const enabledStackNames = new Set([...project.stacks, ...groups.keys()]);
   const optInLines = [];
@@ -161,15 +167,18 @@ function currentConfigSection(toolkit, cwd) {
     const stack = toolkit.stacks.get(name);
     if (!stack) continue;
     for (const f of stack.files) {
-      if (!stack.optIn.has(`files/${f.name}`)) continue;
-      const installed = installedFiles.has(f.name);
-      optInLines.push(
-        `- \`files/${f.name}\` (${name}) — ${
-          installed
-            ? 'installed — renders on this selection (explicitly included or already tracked)'
-            : 'not installed — opt-in only; leave out unless the user asks for it'
-        }`,
-      );
+      const fileRef = `files/${f.name}`;
+      if (!stack.optIn.has(fileRef)) continue;
+      const companions = companionsByRef.get(fileRef);
+      let note;
+      if (installedFiles.has(f.name)) {
+        note = 'installed — renders on this selection (explicitly included or already tracked)';
+      } else if (companions) {
+        note = `not installed — **pairs with selected ${companions.join(', ')}**; ask the user both/one/neither, then pour with \`install ${fileRef}\` if they want the automated half`;
+      } else {
+        note = 'not installed — opt-in only; leave out unless the user asks for it';
+      }
+      optInLines.push(`- \`${fileRef}\` (${name}) — ${note}`);
     }
   }
   if (optInLines.length) {

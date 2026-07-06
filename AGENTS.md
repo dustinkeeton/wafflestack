@@ -87,6 +87,7 @@ export function closureFor(toolkit, root)            // → [{ kind,name,stack,i
 export function closureDeps(toolkit, root)           // → ["kind/name"…] non-root deps
 export function includeRefMatches(includeRef, kind, name) // → boolean
 export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items:[{stackName,stack,kind,item}], closures, errors }  (trackedFiles = prior lock's file paths; ungates already-installed opt-in syrup)
+export function skippedSyrupCompanions(toolkit, selection)                    // → [{ fileRef, stackName, companions:["kind/name"…] }]  (#74: reverse the requires: edge — opt-in syrup gated out of a selection whose companion waffle IS selected; drives the install/render warning + setup update-mode flag)
 
 // template.mjs   (PLACEHOLDER = /(?<!\$)\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g; MAX_SUBSTITUTION_DEPTH = 4)
 export function substitute(text, resolve, declared, errors, context, patterns) // → string (patterns: Map<key,RegExp> render-time value validation)
@@ -221,7 +222,12 @@ rendered = union(items of enabled stacks:) ∪ closure(each include: item) − e
 - Opt-in syrup gate — a stack's `optIn:` `files/` items are excluded from default expansion
   unless the path is already lock-tracked (`trackedFiles`, from the prior lock via
   `renderProject`) or explicitly `include:`-ed (`refs.mjs:239-246`) — an existing install keeps
-  updating, a fresh enable never silently arms a sensitive workflow.
+  updating, a fresh enable never silently arms a sensitive workflow. When a gated opt-in syrup
+  file's `requires:` companion IS in the selection (its skill is rendering), `render`/`install`
+  emits a warning naming the file + the exact `wafflestack install files/<path>` pour command
+  (`skippedSyrupCompanions`, `refs.mjs`) — the non-interactive stand-in for the both/one/neither
+  question `schema/SETUP.md` step 2 requires an agent to ask (#74). Warn-only by design; the CLI
+  stays non-interactive.
 - Dependency closure — installing an item pulls its transitive cross-stack deps (BFS, deduped
   by stack+kind+name). Direct deps of a node = agent frontmatter `skills:` (lenient — absent
   or ambiguous names skipped) + stack `requires:[kind/name]` (strict — a dangling entry is a
@@ -299,7 +305,7 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 173 tests, 32 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 182 tests, 33 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render` |

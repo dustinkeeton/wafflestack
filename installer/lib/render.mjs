@@ -8,7 +8,7 @@ import {
 } from './util.mjs';
 import { substitute, placeholderKeys, compilePattern } from './template.mjs';
 import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
-import { computeSelection } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
   loadProjectConfig,
@@ -67,6 +67,19 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
   // Selection = union(items of enabled stacks) ∪ closure(include items) − eject.
   const selection = computeSelection(toolkit, project, trackedFiles);
   errors.push(...selection.errors);
+
+  // Reverse the syrup companion edge (#74): an opt-in syrup file pairs with a companion waffle
+  // via `requires:` (installing the syrup pulls the companion), but the render only walks that
+  // forward — so selecting the companion, or enabling its whole stack, leaves the paired syrup
+  // gated out and silent. Surface each skipped pairing with the exact pour command. This is the
+  // deliberately non-interactive CLI's stand-in for the both/one/neither question the setup
+  // playbook (schema/SETUP.md step 2) now requires an agent to ask.
+  for (const { fileRef, stackName, companions } of skippedSyrupCompanions(toolkit, selection)) {
+    warnings.push(
+      `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')} but was not ` +
+        `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose`,
+    );
+  }
 
   // Group by owning stack so config/env checks run per stack, but only over the
   // items actually selected (an included item does not drag in its stack's siblings).

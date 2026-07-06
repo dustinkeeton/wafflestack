@@ -69,14 +69,33 @@ candidates listed). Installing an item automatically pulls its dependency closur
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across
 stacks, and required config is scoped to what the selected items actually use.
 
-**Opt-in syrup items are opt-in — do not install them by default.** A stack's generic
-`files/` payloads are called **syrup**; the inventory flags some as **opt-in syrup**:
-sensitive files (e.g. a workflow that needs write permissions on the repo) that enabling
-their stack does **not** render. Leave them out unless the user explicitly asks for that
-specific file — then install the ref directly (`wafflestack install files/<path>`), which
-renders it and persists it to `include:`. A repo that already tracks an opt-in syrup path
-keeps it on re-render, so an existing install is never dropped. This is exactly the
-github-workflow stack's `waffle-label-hook.yml` (step 4).
+**Opt-in syrup items are opt-in — never pour them silently.** A stack's generic `files/`
+payloads are called **syrup**; the inventory flags some as **opt-in syrup**: sensitive files
+(e.g. a workflow that needs write permissions on the repo) that enabling their stack does
+**not** render. The default is to leave them out — install one only on request, by its ref
+(`wafflestack install files/<path>`), which renders it and persists it to `include:`. A repo
+that already tracks an opt-in syrup path keeps it on re-render, so an existing install is never
+dropped.
+
+**Required — the both/one/neither question.** Some opt-in syrup *pairs with* a companion waffle
+through a `requires:` edge, so selecting the companion leaves half a flow gated out and silent:
+the github-workflow stack's `release` skill pairs with `waffle-release-hook.yml` (the tag-on-merge
+half), `hygiene` with `waffle-hygiene.yml`, and `label-hook` with `waffle-label-hook.yml`. When
+your selection pulls in the companion waffle (you enabled the stack, or included the skill) but
+its opt-in syrup stays gated out, `render` prints a `warning:` naming the skipped syrup and the
+exact `wafflestack install files/<path>` command — and the update-mode section above flags the
+same pairing. Do **not** just accept that gap. Before you finish setup/install, put an explicit
+**both / one / neither** choice to the user for each such pair:
+
+- **both** — install the companion waffle *and* pour the syrup (`wafflestack install files/<path>`),
+  then walk that file's prerequisites in step 4.
+- **one** — keep only the companion waffle (the skill/agent) and leave the syrup out: the flow's
+  manual half works, its automated half does not.
+- **neither** — the user wants none of it; drop the companion too (`eject`/remove it from the
+  selection).
+
+Never silently leave a paired flow half-installed — that hole (a release skill with no tag hook)
+is exactly what this question exists to close.
 
 ## 3. Fill config values
 
@@ -157,5 +176,6 @@ content is already byte-identical to the render is adopted silently, no flag nee
   their agent session before new slash commands appear.
 - Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
-  skipped (with reasons); files rendered; and any follow-ups the user still owes
-  (env vars they declined, boards that don't exist yet).
+  skipped (with reasons); the both/one/neither call for each opt-in syrup pairing
+  (step 2) and which way the user went; files rendered; and any follow-ups the user
+  still owes (env vars they declined, boards that don't exist yet).
