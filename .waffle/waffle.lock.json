@@ -39,9 +39,9 @@
     ".github/workflows/waffle-hygiene.yml": "c170ad45c25669bcb1ae38ce3f2829621b71db790b8164cc51cd1bba835878a9",
     ".github/workflows/waffle-label-hook.yml": "050bd0d5d92be33bfd57055f3ee96f925908686746e9543d2acef2b0e92765af",
     ".github/workflows/waffle-release-hook.yml": "dac416aca50050f5cc3060b85130c68a38c4dcc81053108fb1035d6575748d0a",
+    ".waffle/cheatsheet.html": "f5cb94fb4f708be6ecfdebc59d0ce71eb63513367fdbc2c56c67bff511c60f96",
     ".waffle/CHEATSHEET.md": "0c5d64da81f1a62e7c071a7243a41a29109baa69fd2139e429b717d9367a767d",
-    ".waffle/cheatsheet.svg": "6d546075d0e8c6c9c826a60ee879823057afda288bded6d6468412ce0ee2480d",
-    ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29",
-    ".waffle/team.svg": "d53821ace596debac335cbaf5ecdeec7190eb250072e96e5151779a800f129c7"
+    ".waffle/team.html": "64d1cd67a279618928a2b5fbb4199f915829767d7605d7da5829ad94301a01ac",
+    ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29"
   }
 }

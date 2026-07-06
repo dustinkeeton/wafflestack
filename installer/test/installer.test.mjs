@@ -3291,28 +3291,45 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.match(md, /2 agents · generated/);
   });
 
-  test('SVGs are branded, self-contained, and size themselves to the item count', () => {
+  test('HTML pages are branded, self-contained (fonts-only external refs), and reflow to the item count', () => {
     assert.equal(render().ok, true);
-    const cheat = read(cwd, '.waffle/cheatsheet.svg');
-    const team = read(cwd, '.waffle/team.svg');
-    for (const svg of [cheat, team]) {
-      assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
-      assert.match(svg, /#F5C752/, 'golden brand color present');
-      assert.match(svg, /#F08A1D/, 'syrup brand color present');
-      // Self-contained: no external asset/CDN references (the xmlns URI is not a fetch).
-      assert.doesNotMatch(svg, /(href|src)\s*=|https?:\/\/(?!www\.w3\.org)/);
+    const cheat = read(cwd, '.waffle/cheatsheet.html');
+    const team = read(cwd, '.waffle/team.html');
+    for (const html of [cheat, team]) {
+      assert.match(html, /^<!DOCTYPE html>/);
+      assert.match(html, /#F5C752/, 'golden brand color present');
+      assert.match(html, /#F08A1D/, 'syrup brand color present');
+      // Hybrid font strategy: the brand type loads via Google Fonts, with a system fallback.
+      assert.match(html, /fonts\.googleapis\.com/, 'google fonts link present');
+      assert.match(html, /'Baloo 2'/, 'brand display font in the stack');
+      assert.match(html, /system-ui/, 'system-font fallback in the stack');
+      // Self-contained: the ONLY external refs allowed are the two font hosts; the SVG
+      // namespace (www.w3.org) is not a fetch. Everything else must be inline.
+      const urls = html.match(/https?:\/\/[^\s"')]+/g) || [];
+      for (const url of urls) {
+        assert.match(
+          url,
+          /^https:\/\/fonts\.(googleapis|gstatic)\.com\b|^http:\/\/www\.w3\.org\b/,
+          `only the font hosts (https) and the SVG xmlns (www.w3.org) are allowed, got ${url}`,
+        );
+      }
+      // No embedded/remote images or scripts.
+      assert.doesNotMatch(html, /\bsrc\s*=/);
+      assert.doesNotMatch(html, /<script/);
     }
     assert.match(cheat, /\/ship/);
     assert.match(team, />captain</);
-    // Height scales with row count: 3 commands is taller than 2 agents.
-    const h = (svg) => Number(/viewBox="0 0 880 (\d+)"/.exec(svg)[1]);
-    assert.ok(h(cheat) > h(team), `${h(cheat)} > ${h(team)}`);
+    // Rows reflect the item count: 3 commands, 2 agents — more command rows than agent rows.
+    const rowCount = (html) => (html.match(/class="wd-row"/g) || []).length;
+    assert.equal(rowCount(cheat), 3, 'one row per user-invocable skill');
+    assert.equal(rowCount(team), 2, 'one row per agent');
+    assert.ok(rowCount(cheat) > rowCount(team), `${rowCount(cheat)} > ${rowCount(team)}`);
   });
 
   test('generated docs are lock-tracked and doctor flags drift on edit', () => {
     assert.equal(render().ok, true);
     const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
-    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.svg', '.waffle/TEAM.md', '.waffle/team.svg']) {
+    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html']) {
       assert.ok(rel in lock.files, `${rel} tracked in lock`);
     }
     // A hand edit to a generated doc is drift, like any managed file.
@@ -3325,14 +3342,14 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
   test('a doc is pruned when a later selection no longer produces it', () => {
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, '.waffle/TEAM.md')));
-    // Re-select just one skill (no agents) → TEAM.md/team.svg should be pruned; cheat sheet stays.
+    // Re-select just one skill (no agents) → TEAM.md/team.html should be pruned; cheat sheet stays.
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\ninclude: [skills/ship]\nconfig:\n  project:\n    name: Acme\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.ok(result.removed.includes('.waffle/TEAM.md'), JSON.stringify(result.removed));
-    assert.ok(result.removed.includes('.waffle/team.svg'), JSON.stringify(result.removed));
+    assert.ok(result.removed.includes('.waffle/team.html'), JSON.stringify(result.removed));
     assert.ok(!fs.existsSync(path.join(cwd, '.waffle/TEAM.md')));
-    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/team.svg')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/team.html')));
     assert.ok(fs.existsSync(path.join(cwd, '.waffle/CHEATSHEET.md')));
     const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
     assert.ok(!('.waffle/TEAM.md' in lock.files));
@@ -3344,7 +3361,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\ninclude: [skills/backstage]\nconfig:\n  project:\n    name: Acme\n');
     assert.equal(render().ok, true);
     assert.ok(!fs.existsSync(path.join(cwd, '.waffle/CHEATSHEET.md')));
-    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/cheatsheet.svg')));
+    assert.ok(!fs.existsSync(path.join(cwd, '.waffle/cheatsheet.html')));
   });
 });
 
@@ -3413,8 +3430,8 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
     // the ref-taking commands carry an argument-hint that reaches the cheat sheet
     assert.match(cheat, /\*\*`\/waffle-eject`\*\* `<skills\/NAME/);
     assert.match(cheat, /\*\*`\/waffle-install`\*\* `<ref…>/);
-    // and the branded SVG one-pager is produced too
-    assert.ok(fs.existsSync(path.join(cwd, '.waffle/cheatsheet.svg')));
+    // and the branded HTML one-pager is produced too
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/cheatsheet.html')));
   });
 
   test('a per-item install of one wrapper renders just it — no requires: fan-out to siblings', () => {

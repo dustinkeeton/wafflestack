@@ -122,7 +122,7 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
     checkEnvPrerequisites({ stack, project, cwd, warnings });
   }
 
-  // Generate the `.waffle/` overview docs (cheat sheet + team intro, Markdown + branded SVG)
+  // Generate the `.waffle/` overview docs (cheat sheet + team intro, Markdown + branded HTML)
   // from the same computed selection, through the same `emit()` choke point — so they are
   // lock-tracked, doctor-drift-checked, pruned when stale, and refreshed on every render.
   // Only when the item loop was clean: a missing required key already failed the render, and

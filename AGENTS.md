@@ -69,7 +69,7 @@ collision is resolved by the `electron-`/`webapp-` renames; the output-conflict 
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. On an already-configured `cwd`, injects a "Current configuration — update mode" section (live targets/stacks/includes/ejects/effective config/unset required keys/opt-in syrup state) so a re-run curates an update pass. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` rename, the 0.8.0 root→`.waffle/` config move, and the 0.10.0 consumer `bundles:`→`stacks:` key rename (#59). |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
-| `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded self-contained SVG. Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
+| `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded, self-contained HTML page (`cheatsheet.html`/`team.html`; hybrid font strategy — Google Fonts link + system-font fallback, fonts the only external ref). Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
 
 ```js
 // render.mjs
@@ -157,7 +157,7 @@ export function setupGuide(toolkitRoot, toolkitVersion, cwd) // → string (play
 export function toolkitInventory(toolkit, version)      // → string
 
 // waffledocs.mjs
-export function generateWaffleDocs({ toolkit, project, selection, errors }) // → [{ rel, content }] for .waffle/{CHEATSHEET.md,cheatsheet.svg,TEAM.md,team.svg}; each pair omitted when its item set is empty
+export function generateWaffleDocs({ toolkit, project, selection, errors }) // → [{ rel, content }] for .waffle/{CHEATSHEET.md,cheatsheet.html,TEAM.md,team.html}; each pair omitted when its item set is empty
 ```
 
 Import graph (`util.mjs` and `refs.mjs` are pure leaves; `template.mjs` depends only on `yaml`):
@@ -298,7 +298,7 @@ place by `render`/`upgrade`):
 | `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict — account-specific values |
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated | manifest of rendered file → sha256 (+ toolkitVersion, targets, stacks, include); `doctor` diffs against it, `render` rewrites it |
-| `.waffle/{CHEATSHEET,TEAM}.md` + `.waffle/{cheatsheet,team}.svg` | generated (committed by consumers) | overview of the installed selection — cheat sheet of user-invocable skills + team intro of agents, Markdown source of truth + branded SVG. Emitted via `emit()` (`waffledocs.mjs`), so lock-tracked, doctor-checked, and pruned like any managed file |
+| `.waffle/{CHEATSHEET,TEAM}.md` + `.waffle/{cheatsheet,team}.html` | generated (committed by consumers) | overview of the installed selection — cheat sheet of user-invocable skills + team intro of agents, Markdown source of truth + branded self-contained HTML (hybrid font strategy: Google Fonts link + system fallback). Emitted via `emit()` (`waffledocs.mjs`), so lock-tracked, doctor-checked, and pruned like any managed file |
 
 ## Build / test / verify
 
@@ -323,7 +323,7 @@ project — because the CI hygiene harness reads the committed skills and the do
 (required check on main) needs render + lock in git. Re-render AND commit after editing
 `stacks/**`. Gitignored: `.claude/worktrees/` (throwaway), `.codex/`/`.agents/` (non-targets),
 `.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the
-generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, `cheatsheet.svg`, `team.svg`) —
+generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, `cheatsheet.html`, `team.html`) —
 these deliberate absences are tolerated by doctor's `--allow-missing`.
 
 ## Owner-voiced docs — do not rewrite

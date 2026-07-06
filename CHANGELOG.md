@@ -102,6 +102,15 @@ is what you reach for across a breaking one.
   agent must ask. The CLI stays deliberately non-interactive (no TTY prompt). **Re-render costs
   nothing** — warnings only, no config/lock/render-output change and no migration; a repo whose
   paired syrup is already installed or tracked stays quiet.
+- **Enhancement, content-only — the generated overview one-pagers are now branded HTML, not SVG
+  (#75).** `render` used to emit `.waffle/cheatsheet.svg` + `.waffle/team.svg`; it now emits
+  `.waffle/cheatsheet.html` + `.waffle/team.html` — self-contained pages with selectable,
+  searchable, reflowing text and the full brand type stack (Baloo 2 / Outfit / JetBrains Mono via
+  Google Fonts, with a brand-styled system-font fallback so they render correctly offline). The
+  Markdown cheat sheet/team docs are unchanged. **Re-render to pick it up** — the old `.svg` files
+  are pruned automatically by render's frozen-image sweep (they were previously-managed paths this
+  render no longer produces); no config key changes and no migration. If your `.gitignore` listed
+  the old `.svg` overview paths, swap them for the `.html` names.
 
 ### Added
 - **CI observability for the dispatched harness — surface output + fail on denials** (#73,
@@ -119,6 +128,18 @@ is what you reach for across a breaking one.
   `show_full_output: true`) and the debug flow are documented in the bundle setup notes for both
   hooks. Grounded in `anthropics/claude-code-action` v1.0.162: the `execution_file` output, the
   `show_full_output` input's secret-exposure warning, and the log's raw-message-array shape. (#73)
+
+### Changed
+- **Overview one-pagers: branded self-contained HTML replaces the SVGs** (#75). `waffledocs.mjs`
+  swaps its `cheatsheetSvg`/`teamSvg` generators for `cheatsheetHtml`/`teamHtml`, emitting
+  `.waffle/cheatsheet.html` + `.waffle/team.html` through the same `generateWaffleDocs` → `emit()`
+  path (so they stay lock-tracked, doctor-checked, and pruned). Each page is a valid standalone
+  HTML5 document: semantic `<ul>` rows of the same skill/agent frontmatter, the waffle glyph inline
+  as SVG, the wafflestack palette (dark by default, warm-paper light via `prefers-color-scheme`),
+  and a hybrid font strategy — Google Fonts `<link>` tags for the brand type as progressive
+  enhancement, backed by a brand-styled system-font stack, with those font links the only external
+  reference. The retired `.svg` paths are pruned on the next render via render's frozen-image sweep.
+  Docs (`schema/FORMAT.md`, `AGENTS.md`, `.gitignore`) and the installer tests are updated to match.
 
 ### Fixed
 - **`waffle-hygiene.yml` denied every write, so the daily hook was a paid no-op** (#71,

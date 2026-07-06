@@ -189,7 +189,7 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `wafflestack doctor --allow-missing` treats absent managed files as informational (only
   *modified* files fail) — for use as a CI drift gate in repos that deliberately gitignore
   some renders; a missing lock still fails, since that means the repo was never rendered.
-- `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.svg`, `.waffle/team.svg`
+- `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.html`, `.waffle/team.html`
   (generated) — overview docs describing the installed selection (see *Generated overview
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
   pruned by `render`. Commit them; never hand-edit them.
@@ -208,10 +208,14 @@ has, not the whole toolkit:
 - **`.waffle/TEAM.md`** — one entry per installed **agent**: its name, its role / when-to-use
   (from the agent `description`), and the skills it is granted (its hand-off points, from the
   agent frontmatter `skills:`).
-- **`.waffle/cheatsheet.svg`, `.waffle/team.svg`** — branded, fully self-contained SVG
-  one-pagers of the same content (no external fonts or images; GitHub-renderable), sized to
-  the item count. The Markdown is the agent-readable source of truth; the SVGs are the visual
-  summary — argument syntax and hand-offs live in the Markdown.
+- **`.waffle/cheatsheet.html`, `.waffle/team.html`** — branded, self-contained HTML pages of
+  the same content: valid standalone documents with selectable, searchable, reflowing text and
+  the wafflestack palette (dark by default, light via `prefers-color-scheme`). They use a
+  hybrid font strategy — the brand type (Baloo 2 / Outfit / JetBrains Mono) loads via Google
+  Fonts `<link>` tags as progressive enhancement, backed by a brand-styled system-font stack
+  so the page renders correctly fully offline; those font links are the only external
+  reference (no external images, scripts, or stylesheets). The Markdown is the agent-readable
+  source of truth; the HTML pages are the visual one-pagers.
 
 The docs are assembled from item **frontmatter** (no extra manifest surface), and every
 `description` / `argument-hint` is substituted with the same resolver the rendered item uses,
