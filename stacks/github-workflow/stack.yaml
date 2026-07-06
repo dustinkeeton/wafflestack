@@ -6,16 +6,16 @@ files:
   - .github/workflows/waffle-label-hook.yml
   - .github/workflows/waffle-hygiene.yml
   - .github/workflows/waffle-release-hook.yml
-# Syrup: sensitive files poured only on request. The label-hook workflow's jobs need repo
+# optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting; the release-hook workflow holds `contents: write` and pushes tags on merge. Both
-# have a footprint bigger than enabling the bundle should silently imply, so both are opt-in —
-# enabling this bundle does NOT render them. Install one explicitly
+# have a footprint bigger than enabling the stack should silently imply, so both are opt-in —
+# enabling this stack does NOT render them. Install one explicitly
 # (`wafflestack install files/.github/workflows/waffle-release-hook.yml`) or keep an existing
 # install via its lock entry. The doctor workflow is read-only and stays a default render.
-# The hygiene workflow is syrup for the same reason and then some: its job holds
+# The hygiene workflow is opt-in syrup for the same reason and then some: its job holds
 # contents/pull-requests write AND every scheduled fire spends real API money — daily.
-syrup:
+optIn:
   - files/.github/workflows/waffle-label-hook.yml
   - files/.github/workflows/waffle-hygiene.yml
   - files/.github/workflows/waffle-release-hook.yml
@@ -24,7 +24,7 @@ syrup:
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
 # just the workflow renders the whole chain. The hygiene workflow needs its own
 # companion skill, which delegates to git-workflow for the PR flow. (Its first task runs
-# the `docs` skill, but that lives in another bundle and is optional — see the setup note —
+# the `docs` skill, but that lives in another stack and is optional — see the setup note —
 # so it is intentionally NOT a hard requires that would balloon a minimal hygiene install.)
 # The release-hook workflow is deterministic (it does not invoke the skill), but installing
 # it pulls the `release` skill so the full label-a-bump-PR → tag-on-merge flow arrives
@@ -47,7 +47,7 @@ setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
 
-  **Doctor CI workflow.** This bundle ships `.github/workflows/waffle-doctor.yml`,
+  **Doctor CI workflow.** This stack ships `.github/workflows/waffle-doctor.yml`,
   a GitHub Actions job that runs `wafflestack doctor` on push/PR to fail the build when a
   managed file drifts from `.waffle/waffle.lock.json`. It only works when the consuming repo
   commits BOTH the rendered output AND `.waffle/waffle.lock.json` (the step-6 version-control
@@ -61,8 +61,8 @@ setup: |-
   scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
 
-  **Label hook workflow (syrup — opt-in).** This bundle also carries
-  `.github/workflows/waffle-label-hook.yml`, but it is **syrup**: enabling the bundle does
+  **Label hook workflow (opt-in syrup).** This stack also carries
+  `.github/workflows/waffle-label-hook.yml`, but it is **opt-in syrup**: enabling the stack does
   NOT render it, because its jobs need repo write permissions. Pour it only on the user's
   explicit request — `wafflestack install files/.github/workflows/waffle-label-hook.yml`
   renders it and persists the ref; a repo that already tracks the path keeps it on
@@ -109,7 +109,7 @@ setup: |-
   escape the sandbox: a blocked file edit (`Edit`/`Write`), a blocked `git`/`gh`
   branch·commit·push·PR, or a `dangerouslyDisableSandbox` attempt (the last is *always* a hard
   failure — never widen the allowlist to permit it). A denial that is merely **read-only** shell
-  the harness reached for — an ad-hoc `grep|sed|sort`, a `find`, a `for` loop over `bundles/` — is
+  the harness reached for — an ad-hoc `grep|sed|sort`, a `find`, a `for` loop over `stacks/` — is
   downgraded to a **warning**: the call never ran (so nothing was written), and it did not block
   the issue/PR the job delivers, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial
   behavior) was a false alarm. Widening the allowlist stays the fix for a *hard* denial; the
@@ -149,9 +149,9 @@ setup: |-
   `eject: [files/.github/workflows/waffle-label-hook.yml]` (the eject also releases the file
   as project-owned rather than deleting it).
 
-  **Hygiene workflow (syrup — opt-in).** This bundle also carries
+  **Hygiene workflow (opt-in syrup).** This stack also carries
   `.github/workflows/waffle-hygiene.yml`, a **scheduled** repo-upkeep hook, and its companion
-  `hygiene` skill. Like the label hook it is **syrup**: enabling the bundle does NOT render it
+  `hygiene` skill. Like the label hook it is **opt-in syrup**: enabling the stack does NOT render it
   (its job holds `contents`/`pull-requests` write). Pour it explicitly —
   `wafflestack install files/.github/workflows/waffle-hygiene.yml` — or keep an existing
   install via its lock entry. On a daily cron (`hygiene.cron`, default `0 13 * * *` UTC ≈ 5am
@@ -195,7 +195,7 @@ setup: |-
   blocked `git`/`gh` branch·commit·push·PR, or a `dangerouslyDisableSandbox` attempt (that one is
   *always* a hard failure — never widen the allowlist to permit a sandbox escape). A denial that is
   merely **read-only** shell the harness reached for — an ad-hoc `grep|sed|sort`, a `find`, a `for`
-  loop over `bundles/`, or a redundant install/toolkit-CLI call the bootstrap step already
+  loop over `stacks/`, or a redundant install/toolkit-CLI call the bootstrap step already
   handles — is downgraded to a **warning**: the call never ran (nothing was written) and it did not
   block the PR, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial behavior, which
   killed the first guarded live run over 16 setup/read denials) was a false alarm. The guard also
@@ -219,7 +219,7 @@ setup: |-
   (2) commit the rendered `.claude/skills/` — the dispatched harness reads the committed
   `hygiene` skill (the hook needs the `claude` target and does not work in repos that gitignore
   their render). The first task runs the `docs` skill, which ships in the `orchestration` +
-  `docs-system` bundles — enable those so `docs` and its doc-writer agents render, or the docs
+  `docs-system` stacks — enable those so `docs` and its doc-writer agents render, or the docs
   task is skipped with a note;
   (3) enable auto-merge on the repo so `--auto` can arm — a repo setting, in scope to flip for
   the user: `gh api repos/<owner>/<repo> -X PATCH -F allow_auto_merge=true`;
@@ -239,8 +239,8 @@ setup: |-
   `files/.github/workflows/waffle-hygiene.yml` entry from `include:` or
   `eject: [files/.github/workflows/waffle-hygiene.yml]` (the eject releases the file as
   project-owned rather than deleting it).
-  **Release hook workflow (syrup — opt-in).** This bundle also carries
-  `.github/workflows/waffle-release-hook.yml`, also syrup: enabling the bundle does NOT render
+  **Release hook workflow (opt-in syrup).** This stack also carries
+  `.github/workflows/waffle-release-hook.yml`, also opt-in syrup: enabling the stack does NOT render
   it. It is the tag-on-merge half of the release flow and pairs with the `release` skill
   (which opens a labeled `chore/bump-X.Y.Z` PR). When a PR carrying the label in
   `labelHook.releaseLabel` (default `waffle:release`) is **merged**, the hook pushes the

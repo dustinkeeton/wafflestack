@@ -1,9 +1,9 @@
-# Managed by wafflestack (github-workflow bundle) — do not edit by hand; re-render instead.
+# Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
 # Scheduled repo-hygiene hook: on a daily cron (and on manual dispatch) it dispatches the
 # Claude harness to work the hygiene task list (.claude/skills/hygiene/SKILL.md) — first
 # entry runs the `docs` skill, then lands the result as a PR (git-workflow conventions) and
 # enables auto-merge. A scheduled trigger spends real Anthropic API money EVERY day, so this
-# workflow is syrup (opt-in) and stays inert until you complete the opt-ins in the bundle
+# workflow is opt-in syrup and stays inert until you complete the opt-ins in the stack
 # setup note: the ANTHROPIC_API_KEY secret, the rendered .claude/skills committed, "Allow
 # auto-merge" enabled, and — for auto-merge to actually fire — a PAT/GitHub App token in the
 # WAFFLE_HYGIENE_TOKEN secret (PRs opened with the default GITHUB_TOKEN do not trigger the
@@ -137,7 +137,7 @@ jobs:
             case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
             soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
             if [ "$hard" -gt 0 ]; then
-              echo "::error title=waffle-hygiene::Harness was denied ${hard} delivery/sandbox tool call(s) of ${denials} total — a blocked file edit, git/gh commit·push·PR, or a dangerouslyDisableSandbox escape means the run could not land its work. Widen claude_args --allowedTools (see the bundle setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log artifact."
+              echo "::error title=waffle-hygiene::Harness was denied ${hard} delivery/sandbox tool call(s) of ${denials} total — a blocked file edit, git/gh commit·push·PR, or a dangerouslyDisableSandbox escape means the run could not land its work. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log artifact."
               exit 1
             fi
             echo "::warning title=waffle-hygiene::Harness was denied ${soft} read-only/redundant tool call(s) (ad-hoc shell exploration or already-covered setup); none blocked delivery, so this does not fail the job. Review the claude-execution-log artifact if a task looks incomplete."
