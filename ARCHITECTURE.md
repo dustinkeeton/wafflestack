@@ -24,8 +24,8 @@ compiler — neutral source in, harness-native files out.
   SOURCE (this repo)                  RENDER                 YOUR PROJECT
   ─────────────────                   ──────                 ────────────
   toolkit.yaml         ┐
-  bundles/<name>/      │   wafflestack render      .claude/agents/*.md
-    bundle.yaml        ├──────────────────────►    .claude/skills/*/
+  stacks/<name>/      │   wafflestack render      .claude/agents/*.md
+    stack.yaml        ├──────────────────────►    .claude/skills/*/
     agents/*.md        │   (fill placeholders,     .codex/agents/*.toml
     skills/*/SKILL.md  │    resolve per target,    .agents/skills/*/
   schema/FORMAT.md     ┘    append extensions)     .waffle/waffle.lock.json
@@ -43,39 +43,39 @@ only inputs you own — everything under `.claude/` (etc.) is generated.
 
 ## The core pieces
 
-### Bundles
+### Stacks
 
-A **bundle** is a themed group of agents and skills you enable together (for
-example `github-workflow` or `docs-system`). `toolkit.yaml` lists every bundle;
-each bundle's `bundle.yaml` manifest declares its agents, skills, config keys, and
-any environment or service prerequisites. There are **7 bundles** today.
+A **stack** is a themed group of agents and skills you enable together (for
+example `github-workflow` or `docs-system`). `toolkit.yaml` lists every stack;
+each stack's `stack.yaml` manifest declares its agents, skills, config keys, and
+any environment or service prerequisites. There are **7 stacks** today.
 
 ### Picking what to install
 
-You don't have to take a whole bundle. A **ref** names something installable, in
+You don't have to take a whole stack. A **ref** names something installable, in
 one of three forms:
 
 | Ref | Example | Means |
 |-----|---------|-------|
-| bundle | `github-workflow` | the whole bundle |
+| stack | `github-workflow` | the whole stack |
 | item | `skills/issue`, `agents/project-manager` | one skill or agent (the name must be unique across the toolkit) |
-| qualified item | `engineering-team/skills/webapp-security-audit` | one item in a named bundle — use this when the same name exists in two bundles |
+| qualified item | `engineering-team/skills/webapp-security-audit` | one item in a named stack — use this when the same name exists in two stacks |
 
 `wafflestack install <ref…>` records your choice in `.waffle/waffle.yaml`
-(bundles in the `bundles:` list, single items in an `include:` list) and then renders.
+(stacks in the `stacks:` list, single items in an `include:` list) and then renders.
 
 **Dependencies resolve automatically** — installing an item pulls in whatever it
-needs, transitively and across bundles:
+needs, transitively and across stacks:
 
 - an **agent** pulls the skills in its frontmatter `skills:` list (names the
   toolkit doesn't ship — for example a project-local skill — are skipped);
-- a bundle's optional **`requires:`** map pulls declared dependencies (e.g. the
+- a stack's optional **`requires:`** map pulls declared dependencies (e.g. the
   `/delegate` skill pulls in `git-workflow` and `github-project-management`).
 
 The final rendered set is:
 
 ```
-union(items of bundles:)  ∪  closure(each include: item)  −  eject:
+union(items of stacks:)  ∪  closure(each include: item)  −  eject:
 ```
 
 `eject:` wins over both lists, and required config is scoped to only the
@@ -128,7 +128,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 |---------|--------------|
 | `init` | Write a starter `.waffle/waffle.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. |
-| `install <ref…>` | Add a bundle or single item to your config (pulling in dependencies), then render. Bare `install` just renders. |
+| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Bare `install` just renders. |
 | `render` | Regenerate every managed file, delete stale ones, write the lock. |
 | `doctor` | Compare rendered files to the lock; report drift or missing files. |
 | `eject` | Stop managing an item — its files stay and become project-owned. |
@@ -142,10 +142,10 @@ full function-level registry is in the root `AGENTS.md`.
 
 A render is a straight-line flow:
 
-1. **Load** `toolkit.yaml` and each enabled bundle's manifest.
+1. **Load** `toolkit.yaml` and each enabled stack's manifest.
 2. **Load** your project config (`.waffle/waffle.yaml`, plus the gitignored
    `.waffle/waffle.local.yaml` merged on top).
-3. **Select** what to render: every item in your `bundles:`, plus each `include:`
+3. **Select** what to render: every item in your `stacks:`, plus each `include:`
    item and its dependency closure, minus anything in `eject:`.
 4. For every selected item and every target, **substitute** placeholders and
    **append** any project extension.
@@ -162,7 +162,7 @@ Everything a consuming project owns:
 
 | File | Tracked in git? | Purpose |
 |------|-----------------|---------|
-| `.waffle/waffle.yaml` | ✅ committed | Version pin, targets, enabled bundles, individual items (`include`), config values, `eject` list |
+| `.waffle/waffle.yaml` | ✅ committed | Version pin, targets, enabled stacks, individual items (`include`), config values, `eject` list |
 | `.waffle/waffle.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins |
 | `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments |
 | `.waffle/waffle.lock.json` | generated | Map of each rendered file to its hash; `doctor` reads it, `render` rewrites it |
@@ -172,7 +172,7 @@ overwrite them. Change source, config, or an extension instead.
 
 ## How this repo uses itself
 
-wafflestack **dogfoods** its own bundles: `.waffle/waffle.yaml` here renders
+wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders
 `github-workflow`, `docs-system`, and `orchestration` into this repo, so the
 toolkit's own agents and skills are available while developing it. Unlike a normal
 consuming project, the rendered output and lock are **gitignored** here — a
@@ -181,10 +181,10 @@ generated files. Regenerate with `node installer/cli.mjs render`.
 
 ## Getting started (new contributors)
 
-1. **Read the source, not the output.** Neutral definitions live in `bundles/**`
+1. **Read the source, not the output.** Neutral definitions live in `stacks/**`
    and `schema/**`; the render CLI lives in `installer/**`. Anything under
    `.claude/`, `.codex/`, or `.agents/` is generated — don't edit it.
-2. **Make changes to a bundle**, then **re-render**:
+2. **Make changes to a stack**, then **re-render**:
    ```bash
    node installer/cli.mjs render
    ```
@@ -196,6 +196,6 @@ generated files. Regenerate with `node installer/cli.mjs render`.
    ```
 4. **Documentation is generated by agents.** The machine registry (`AGENTS.md`)
    and these human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) are
-   maintained by the `docs-system` bundle's agents. The owner-voiced
+   maintained by the `docs-system` stack's agents. The owner-voiced
    `README.md`, `schema/FORMAT.md`, and `schema/SETUP.md` are edited by hand —
    don't rewrite them in a docs pass.

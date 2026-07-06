@@ -8,10 +8,10 @@
 # generated files from hand-edits. Deliberately still gitignored: the label-hook
 # workflow (committing it would arm a live label→harness dispatch) and the generated
 # .waffle/ overview docs — hence doctor runs with --allow-missing. After changing a
-# bundle, re-render from the working tree and commit the updated render + lock:
+# stack, re-render from the working tree and commit the updated render + lock:
 #   node installer/cli.mjs render
 targets: [claude]
-bundles:
+stacks:
   - github-workflow
   - docs-system
   - orchestration
@@ -20,13 +20,13 @@ bundles:
   # stack's own paradigms (AGENTS.md registry, schema/FORMAT.md, DECISIONS.md ADRs).
   - harness-architect
 include:
-  # Dogfood the scheduled repo-hygiene hook (#46). It is syrup, so the bundle alone won't
+  # Dogfood the scheduled repo-hygiene hook (#46). It is opt-in syrup, so the stack alone won't
   # render it — install the ref so the rendered .github/workflows/waffle-hygiene.yml is
   # produced and committed. Fully armed 2026-07-03: ANTHROPIC_API_KEY + WAFFLE_HYGIENE_TOKEN
   # secrets set, auto-merge enabled, rendered .claude/skills committed, and the doctor
   # check required on main so the daily PR can auto-merge.
   - files/.github/workflows/waffle-hygiene.yml
-  # The release-hook workflow is syrup too (#39) — dogfooded so a labeled bump PR gets
+  # The release-hook workflow is opt-in syrup too (#39) — dogfooded so a labeled bump PR gets
   # auto-tagged on merge; its rendered workflow is likewise committed (see .gitignore). The
   # Claude-dispatched label-hook workflow stays gitignored/uninstalled.
   - files/.github/workflows/waffle-release-hook.yml
@@ -57,22 +57,22 @@ config:
     # (Single quotes only — the claudeArgs pattern rejects double quotes, backslashes, and ${{ }}.)
     claudeArgs: "--allowedTools 'Bash(node installer/cli.mjs:*)'"
   pm:
-    # product-manager (orchestration bundle, #38 round 2) — product evolution for
-    # the toolkit itself: bundle shapes, config-key surface, consumer ergonomics.
+    # product-manager (orchestration stack, #38 round 2) — product evolution for
+    # the toolkit itself: stack shapes, config-key surface, consumer ergonomics.
     brief: >-
       You are the senior product manager for wafflestack, an agent/skill toolkit
       that renders canonical definitions into harness-native files for consuming
       projects. The audience is developers wiring agent tooling into their own
       repos — so be concrete, mechanism-first, and ruthless about scope.
     principles: |-
-      - **Bundles are the product.** Every proposal names the bundle(s) it touches and keeps one grouping philosophy per bundle.
+      - **Stacks are the product.** Every proposal names the stack(s) it touches and keeps one grouping philosophy per stack.
       - **Consumer ergonomics beat toolkit convenience.** Config keys, defaults, and setup notes are user-facing surface — weigh every new required key.
     handoffs: |-
       - Installer / render / CLI mechanics → general-purpose
       - Machine docs → docs-agent; human docs → docs-human
       - Delivery sequencing and issue routing → project-manager
   docs:
-    # This repo's "modules" are bundles + installer libs, not src/ features — one
+    # This repo's "modules" are stacks + installer libs, not src/ features — one
     # root registry replaces the default per-feature machine-doc shape.
     machineDocSet: a single root `AGENTS.md` registry
     machineDocSpec: |-
@@ -83,7 +83,7 @@ config:
       Single machine-doc registry for the toolkit. Contains:
 
       - Project purpose (1-2 sentences)
-      - Bundle registry: table of bundles with path, description, skills, agents
+      - Stack registry: table of stacks with path, description, skills, agents
       - Installer module registry: table of `installer/lib/*.mjs` files with exported
         functions (full signatures) and purpose
       - CLI command registry: table of `wafflestack <cmd>` commands with behavior
@@ -99,8 +99,8 @@ config:
       3. Use `file.mjs:42` format for source references (line number after the colon)
       4. No markdown emphasis (bold/italic) in structured sections
       5. Frontmatter with `last-updated` timestamp (YYYY-MM-DD)
-      6. Keep the file under 300 lines — the bundle registry summarizes; per-bundle
-         detail stays in each `bundle.yaml`
+      6. Keep the file under 300 lines — the stack registry summarizes; per-stack
+         detail stays in each `stack.yaml`
     voiceGuardrailSection: |-
       ## Owner-voiced docs — do not rewrite
 
@@ -112,29 +112,29 @@ config:
     # this file, which the docs agents read in its place.
     architectureSkill: schema/FORMAT.md
     auditChecklist: |-
-      - New or removed bundles, skills, agents, config keys, or CLI commands
+      - New or removed stacks, skills, agents, config keys, or CLI commands
       - Changed installer exports or template semantics (`installer/lib/*.mjs`)
-      - `bundle.yaml` config declarations out of sync with placeholder usage
+      - `stack.yaml` config declarations out of sync with placeholder usage
       - Rendered-output drift: `node installer/cli.mjs doctor --allow-missing` clean
-        (committed render + lock in sync — re-render and commit after bundle edits);
+        (committed render + lock in sync — re-render and commit after stack edits);
         `.gitignore` still covers the deliberately-untracked renders (label-hook
         workflow, worktrees, `.waffle/` overview docs)
   roster:
-    # No specialist agent bundle is enabled — general-purpose executes the audit
+    # No specialist agent stack is enabled — general-purpose executes the audit
     # prompts, which carry the full instructions.
     architectAgent: general-purpose
     securityAgent: general-purpose
     specialistTable: |-
       | Agent | Responsibility |
       |-------|----------------|
-      | general-purpose | Installer/CLI work (`installer/**`: JS + tests) and bundle/skill authoring (`bundles/**`, `schema/**`: markdown + YAML) |
+      | general-purpose | Installer/CLI work (`installer/**`: JS + tests) and stack/skill authoring (`stacks/**`, `schema/**`: markdown + YAML) |
       | docs-agent | Machine docs (root `AGENTS.md` registry) |
       | docs-human | Human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) |
     classificationTable: |-
       | Signal (keywords / paths) | Agent |
       |---------------------------|-------|
       | installer, CLI, render, doctor, eject, template, `installer/**` | general-purpose |
-      | bundle, skill, agent definition, config key, `bundles/**`, `schema/**` | general-purpose |
+      | stack, skill, agent definition, config key, `stacks/**`, `schema/**` | general-purpose |
       | docs, AGENTS.md, architecture/status docs | docs-agent (machine) / docs-human (human) |
     labelFallback: |-
       | Label | Agent |
@@ -145,14 +145,14 @@ config:
       | question | general-purpose |
     rootFiles: toolkit.yaml, package.json, installer/cli.mjs, schema/FORMAT.md, README.md
     sharedModule: installer/lib/ (render pipeline — every CLI command and test imports it)
-    moduleDependencies: bundle content depends on installer template semantics — `installer/lib` changes merge before dependent `bundles/**` changes.
+    moduleDependencies: stack content depends on installer template semantics — `installer/lib` changes merge before dependent `stacks/**` changes.
     rootFileExample: "`toolkit.yaml`"
   delegate:
     # This repo does not plan with milestones (none exist).
     defaultScope: all-open
     extraPreflight: |-
-      - `npm run validate` passes after any bundle/manifest edit
-      - If `bundles/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
+      - `npm run validate` passes after any stack/manifest edit
+      - If `stacks/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
   audit:
     complianceAgentType: general-purpose
     complianceLabel: Toolkit integrity
@@ -168,6 +168,6 @@ config:
       1. `npm run validate` — manifests parse, frontmatter is complete, every placeholder is declared
       2. `npm test` — installer suite passes
       3. `node installer/cli.mjs render && node installer/cli.mjs doctor` — rendered output matches the lock (no hand-edits to generated `.claude/` files)
-      4. Spot-check changed bundles: every placeholder used in content is declared in that `bundle.yaml`; `setup:` notes contain no placeholders
+      4. Spot-check changed stacks: every placeholder used in content is declared in that `stack.yaml`; `setup:` notes contain no placeholders
 
       Fix what your role permits (source side only, then re-render); otherwise report each failure with the command output quoted.

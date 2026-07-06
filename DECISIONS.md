@@ -9,6 +9,50 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-06: Rebrand — waffles, stacks, and syrup (#59)
+
+**Context**: The toolkit's vocabulary had drifted from its own name. Installable items were
+"items", their named groups were "bundles", the generic `files/` payload was just "files",
+and the opt-in gate key was `syrup:`. The name "wafflestack" implies a food metaphor the
+terms never carried, and "bundle" collides with the ubiquitous JS/build sense (a webpack
+bundle, `bundle install`), muddying every doc, help string, and error message.
+
+**Decision**: Adopt a consistent food taxonomy. An individual installable item — an agent or
+a skill — is a **waffle** (user-facing vocabulary only; no directory or key renames). A named
+group of waffles is a **stack** (formerly "bundle"): the source dir becomes `stacks/`, the
+manifest `stack.yaml`, and the key `stacks:` in `toolkit.yaml`, the consumer
+`.waffle/waffle.yaml`, the lock field, and internal identifiers. The generic `files/` payload
+is **syrup** (prose only — the `files:` manifest key and the `files/` ref prefix are
+unchanged); sensitive syrup gated behind explicit opt-in is **opt-in syrup**, and the manifest
+gate key `syrup:` becomes **`optIn:`**. Load-bearing surfaces stay put: the item-ref prefixes
+(`skills/`, `agents/`, `files/`), the `agents/`/`skills/` dirs inside each stack, `.waffle/`
+dotfile names, and the package/CLI name `wafflestack`.
+
+**Alternatives considered**: Renaming the item-ref prefixes and harness dirs too (e.g.
+`waffles/`) — rejected as churny and compatibility-breaking for lock keys and consumer
+`include:`/`eject:` lists, with no vocabulary gain. Keeping `bundle` — rejected: the JS/build
+collision and the missed metaphor were the whole motivation. A silent read-through of a stale
+`syrup:` manifest key — rejected: a silently-ignored gate key would un-gate sensitive
+workflows, so `loadStack` throws on it instead.
+
+**Rationale**: The rename breaks exactly one consumer surface — the `bundles:` key in
+`.waffle/waffle.yaml` — so it ships a 0.10.0 migration (`bundles:` → `stacks:`,
+comment-preserving, across the config and its `.local` overlay) plus a read-fallback: a plain
+`render` still works off a legacy `bundles:` key, emitting a deprecation warning that points
+at `wafflestack upgrade`. Everything else the consumer touches — item refs, `include:` /
+`eject:` entries, lock file paths — is unchanged, so the blast radius is a single key. The
+lock's `bundles` field → `stacks` is write-only and self-heals on the next render (no migration
+needed).
+
+**Impact**: Toolkit authors rename `bundle.yaml` → `stack.yaml`, the `bundles:` registry key →
+`stacks:`, and the `syrup:` gate key → `optIn:`; a stale `syrup:` now fails `loadStack` loudly.
+Consumers already on `stacks:` are unaffected; consumers still on `bundles:` get a warning and
+a one-command migration. `schema/FORMAT.md`, `schema/SETUP.md`, and the generated setup
+inventory adopt the new vocabulary. The package/CLI name, item-ref grammar, and `.waffle/`
+layout are untouched.
+
+---
+
 ## 2026-07-03: Commit the self-render and arm the hygiene/doctor automation loop
 
 **Context**: Activating the dogfooded hygiene hook (#46) required its CI-dispatched

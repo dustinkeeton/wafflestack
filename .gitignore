@@ -4,7 +4,7 @@ node_modules/
 # Self-render (`node installer/cli.mjs render`): the .claude/ output and the lock are
 # COMMITTED, like a consuming project — the CI-dispatched hygiene harness reads the
 # committed skills, and the waffle-doctor drift gate needs render + lock in git to be
-# meaningful. Re-render AND commit after editing bundles/**. Worktrees are throwaway
+# meaningful. Re-render AND commit after editing stacks/**. Worktrees are throwaway
 # working state; .codex/ and .agents/ are non-targets here (targets: [claude]).
 .claude/worktrees/
 .codex/

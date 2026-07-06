@@ -1,16 +1,21 @@
 # Toolkit format reference
 
 The toolkit holds **canonical, harness-neutral definitions** of agents and skills, grouped
-into bundles. The installer renders them into harness-native files inside a consuming
+into stacks. The installer renders them into harness-native files inside a consuming
 project. Rendered files are **generated output** — never edit them; change the source here,
 project config, or a project extension file instead.
+
+The vocabulary: an individual installable item — an agent or a skill — is a **waffle**; a
+named group of waffles is a **stack**; the generic `files/` payload a stack can also carry
+(CI workflows, scripts, config) is **syrup**. A sensitive syrup file gated behind explicit
+opt-in (the `optIn:` manifest key) is **opt-in syrup**.
 
 ## Repository layout
 
 ```
-toolkit.yaml                 registry: name + list of bundles
-bundles/<bundle>/
-  bundle.yaml                bundle manifest (see below)
+toolkit.yaml                 registry: name + list of stacks
+stacks/<stack>/
+  stack.yaml                stack manifest (see below)
   agents/<name>.md           neutral agent definitions
   skills/<name>/SKILL.md     neutral skill definitions (+ supporting files)
   files/<repo-rel-path>      generic project files (CI workflows, scripts, config)
@@ -23,22 +28,22 @@ harness dirs (`.claude/`, `.codex/`, `.agents/`), while **files** render to an a
 repo-relative path. All three get `{{key}}` substitution, lock tracking, `doctor` drift
 detection, and `eject`.
 
-## bundle.yaml
+## stack.yaml
 
 ```yaml
 name: github-workflow
-description: One-line description of the bundle.
+description: One-line description of the stack.
 agents: [architect, security]        # files under agents/, without .md
 skills: [git-workflow, issue]        # directories under skills/
 files:                               # generic files under files/, by repo-relative path
   - .github/workflows/release.yml
   - scripts/check-format.mjs
-syrup:                               # optional: sensitive files that are opt-in, not default
+optIn:                               # optional: sensitive syrup that is opt-in, not default
   - files/.github/workflows/release.yml
 requires:                            # optional per-item dependency declarations
   skills/issue:                      # keyed by item ref (skills/<name> | agents/<name>)
     - skills/git-workflow            # refs pulled in when this item is installed alone
-config:                              # template keys this bundle may reference
+config:                              # template keys this stack may reference
   git.botEmail:
     required: true
     description: Committer email used for automated commits.
@@ -46,13 +51,13 @@ config:                              # template keys this bundle may reference
     required: false
     default: npm run build
     description: Production build command run in preflight checks.
-env:                                 # env vars the bundle's content depends on
+env:                                 # env vars the stack's content depends on
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 setup: |-                            # optional, agent-facing install notes
   Service-side prerequisites and how to verify/create them (CLI auth, labels, boards).
 ```
 
-Only keys **declared** in `config:` are substituted in this bundle's content — any other
+Only keys **declared** in `config:` are substituted in this stack's content — any other
 `{{...}}`-looking text (bash, GraphQL, JS templates) passes through untouched.
 
 A key may also declare an optional **`pattern:`** — a regex the fully-resolved value
@@ -64,28 +69,29 @@ doesn't know, so the pattern makes a bad value loud at render instead of silentl
 
 `requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
 skill telling the reader to "see the `github-project-management` skill"). Each key is an
-item ref (`skills/<name>` / `agents/<name>` / `files/<repo-relative-path>`) defined in this bundle; each value is a list
-of item refs it depends on, resolved against the **whole toolkit** (prefer this bundle,
-then a unique toolkit-wide match; qualify as `<bundle>/skills/<name>` when the name is
+item ref (`skills/<name>` / `agents/<name>` / `files/<repo-relative-path>`) defined in this stack; each value is a list
+of item refs it depends on, resolved against the **whole toolkit** (prefer this stack,
+then a unique toolkit-wide match; qualify as `<stack>/skills/<name>` when the name is
 ambiguous). When that item is installed individually, its `requires:` closure is pulled in
 transitively. Agent → skill dependencies need no `requires:` — they come from the agent's
 frontmatter `skills:` list. `validate` checks every `requires:` ref resolves.
 
-`syrup:` marks **sensitive files that must be poured only on request** — a `files/` payload
-whose footprint (a workflow demanding repo write permissions, say) is bigger than adopting
-the bundle should silently imply. Each entry is an item ref (`files/<repo-relative-path>`)
-defined in this bundle. A syrup item is **excluded from a bundle's default render**: enabling
-the bundle in `bundles:` (or via an `include:` bundle ref) does not render it. It renders only
-when it is **explicitly installed** — `wafflestack install files/<path>`, which persists the
-ref to `include:` — or when the consuming repo **already tracks its path** in
-`.waffle/waffle.lock.json`, so an existing install keeps receiving updates rather than
-vanishing on the next render. Everything else about a syrup file is unchanged: it is
-lock-tracked, drift-checked, and `eject`-able like any other item once installed. `validate`
-checks every `syrup:` entry resolves to a real item in the bundle, and `wafflestack setup`
-lists syrup items under a separate, default-do-not-install acknowledgement.
+`optIn:` marks **opt-in syrup — sensitive syrup files that must be poured only on request** —
+a `files/` payload whose footprint (a workflow demanding repo write permissions, say) is
+bigger than adopting the stack should silently imply. Each entry is an item ref
+(`files/<repo-relative-path>`) defined in this stack. An opt-in syrup item is **excluded from
+a stack's default render**: enabling the stack in `stacks:` (or via an `include:` stack ref)
+does not render it. It renders only when it is **explicitly installed** — `wafflestack install
+files/<path>`, which persists the ref to `include:` — or when the consuming repo **already
+tracks its path** in `.waffle/waffle.lock.json`, so an existing install keeps receiving
+updates rather than vanishing on the next render. Everything else about an opt-in syrup file
+is unchanged: it is lock-tracked, drift-checked, and `eject`-able like any other item once
+installed. `validate` checks every `optIn:` entry resolves to a real item in the stack, and
+`wafflestack setup` lists opt-in syrup items under a separate, default-do-not-install
+acknowledgement.
 
 `setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
-playbook, `schema/SETUP.md`, followed by a generated inventory of every bundle's items,
+playbook, `schema/SETUP.md`, followed by a generated inventory of every stack's items,
 config schema, env, and these notes). It is printed **before** any project config exists,
 so it must not use `{{placeholders}}` — refer to config keys by name instead.
 
@@ -127,12 +133,13 @@ Renders to:
 - **claude** → `.claude/skills/<name>/`
 - **agents-dir** → `.agents/skills/<name>/` (identical content; cross-tool convention)
 
-## Files definition (`files/<repo-relative-path>`)
+## Files definition — syrup (`files/<repo-relative-path>`)
 
-For reusable project scaffolding that lives at an arbitrary repo path rather than in a
-harness dir — CI workflows, helper scripts, shared config. Each entry in the manifest's
-`files:` list is a **repo-relative path** under the bundle's `files/` directory; it renders
-**verbatim to that same path** in the consuming project.
+The generic `files/` payload is **syrup**: reusable project scaffolding that lives at an
+arbitrary repo path rather than in a harness dir — CI workflows, helper scripts, shared
+config. Each entry in the manifest's `files:` list is a **repo-relative path** under the
+stack's `files/` directory; it renders **verbatim to that same path** in the consuming
+project. (Sensitive syrup gated behind `optIn:` is **opt-in syrup** — see above.)
 
 Files are **harness-independent**: they render **once** regardless of `targets:` (a file has
 no per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/check.mjs`.
@@ -149,8 +156,8 @@ no per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/c
 Same frozen-image contract as everything else: tracked in `.waffle/waffle.lock.json`,
 restored verbatim by `render`, drift-flagged by `doctor`, and releasable with
 `wafflestack eject files/<repo-relative-path>` (the file stays in place and becomes
-project-owned). Two enabled bundles that emit the **same** repo path is a hard render error —
-the same cross-bundle conflict rule as same-named skills; enable one or `eject` one.
+project-owned). Two enabled stacks that emit the **same** repo path is a hard render error —
+the same cross-stack conflict rule as same-named skills; enable one or `eject` one.
 
 **GitHub Actions caveat.** A `${{ ... }}` expression (leading `$`) is **not** a wafflestack
 placeholder — only `{{ ... }}` without a `$` is. Workflow expressions like
@@ -165,7 +172,7 @@ but relevant if you ever render from CI.
 Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` directory:
 
 - `.waffle/waffle.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
-  `agents-dir`), `bundles:`, optional `include:` (individual items), `config:` values,
+  `agents-dir`), `stacks:`, optional `include:` (individual items), `config:` values,
   optional `eject:` list.
 - `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
@@ -217,27 +224,27 @@ edited by hand; treat them as generated output.
 
 ## Selecting what renders
 
-The rendered set is `union(items of bundles:) ∪ include: − eject:`.
+The rendered set is `union(items of stacks:) ∪ include: − eject:`.
 
-- `bundles:` — whole bundles; every agent and skill in them renders, **except items marked
-  `syrup:`** in the manifest, which stay opt-in (install the ref explicitly, or keep an
-  existing install alive via its lock entry — see *`syrup:`* under bundle.yaml).
-- `include:` — individual items you want without adopting their whole bundle. Each entry
+- `stacks:` — whole stacks; every agent and skill in them renders, **except items marked
+  `optIn:`** in the manifest (opt-in syrup), which stay opt-in (install the ref explicitly, or
+  keep an existing install alive via its lock entry — see *`optIn:`* under stack.yaml).
+- `include:` — individual items you want without adopting their whole stack. Each entry
   is a **ref**:
-  - a bundle name — `github-workflow` (equivalent to listing it in `bundles:`);
+  - a stack name — `github-workflow` (equivalent to listing it in `stacks:`);
   - an item — `skills/<name>`, `agents/<name>`, or `files/<repo-relative-path>`;
-  - a bundle-qualified item — `<bundle>/skills/<name>`, needed only when the same item
-    name is defined in more than one bundle (e.g. `security-audit`).
+  - a stack-qualified item — `<stack>/skills/<name>`, needed only when the same item
+    name is defined in more than one stack (e.g. `security-audit`).
   Installing an item pulls its **dependency closure** — an agent's frontmatter `skills:`
-  and any `requires:` — transitively and across bundles. Required config is then scoped to
+  and any `requires:` — transitively and across stacks. Required config is then scoped to
   the placeholders the selected items actually use, so a partial install never demands
-  config that only unselected siblings need. Bundle `env:` prerequisites still warn when
-  any item from that bundle renders.
-- `eject:` — items to stop managing; wins over both `bundles:` and `include:`.
+  config that only unselected siblings need. Stack `env:` prerequisites still warn when
+  any item from that stack renders.
+- `eject:` — items to stop managing; wins over both `stacks:` and `include:`.
 
 `wafflestack install <ref…>` performs this edit for you: it resolves each ref (failing on
-unknown or ambiguous names, listing the qualified candidates), appends bundle refs to
-`bundles:` and item refs to `include:` (comment-preserving, bundle-qualified only when
+unknown or ambiguous names, listing the qualified candidates), appends stack refs to
+`stacks:` and item refs to `include:` (comment-preserving, stack-qualified only when
 ambiguous), then runs a full render. Persisting the choice is required, not cosmetic — the
 frozen-image contract deletes any locked file the next render doesn't reproduce, so an
 un-persisted ad-hoc install would be silently removed. Dependency closure is recomputed
@@ -254,7 +261,7 @@ untouched everywhere, so workflow expressions survive rendering and `validate`.
 
 ### Nested substitution
 
-A substituted **value** (project config or bundle default) may itself contain
+A substituted **value** (project config or stack default) may itself contain
 `{{placeholders}}`, expanded recursively (depth-capped). Nested expansion only descends
 into values — canonical text that survives the first pass (GitHub Actions `${{ ... }}`,
 mustache examples) is never touched. Inside a value, anything resolvable is expanded:
@@ -272,10 +279,10 @@ template syntax you embed in values (e.g. don't declare a `secrets.*` namespace)
 
 ### Item-name collisions
 
-Two bundles may define items with the same name — alternative implementations of the same
+Two stacks may define items with the same name — alternative implementations of the same
 skill interface (e.g. the desktop-plugin vs. browser-app `security-audit`). Enabling both
 in one project is an error: the renderer refuses to render the same output path from two
-bundles instead of silently letting the last one win. Pick one, or `eject` one.
+stacks instead of silently letting the last one win. Pick one, or `eject` one.
 
 ### Pre-existing (unmanaged) file collisions
 
@@ -298,7 +305,7 @@ To resolve a refusal, move the named file aside (or fold its content into a
 
 ### The `harness.*` namespace
 
-`harness.*` is a reserved, **always-available** namespace (never declared in a bundle's
+`harness.*` is a reserved, **always-available** namespace (never declared in a stack's
 `config:`). It resolves **per output target**, so one source can carry the small
 per-harness differences — chiefly authorship attribution — without duplicating files:
 

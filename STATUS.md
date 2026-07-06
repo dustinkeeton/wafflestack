@@ -8,23 +8,23 @@
 - **Health**: 🟢 tests 158/158 · `validate` clean · `doctor` clean (no render drift)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
-## Bundles
+## Stacks
 
-All 7 bundles are shipped and stable. Pick the ones a project needs.
-(Reorganized in #38: the `design` bundle was dissolved, near-duplicate roles
+All 7 stacks are shipped and stable. Pick the ones a project needs.
+(Reorganized in #38: the `design` stack was dissolved, near-duplicate roles
 were consolidated, and the colliding `security-audit` skills were renamed.)
 
-| Bundle | Status | What you get |
+| Stack | Status | What you get |
 |--------|--------|--------------|
 | `docs-system` | ✅ Shipped | Two-audience docs: machine (`AGENTS.md`) + human (these files) |
-| `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow + label→harness hook (only bundle with a `setup:` step) |
+| `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects workflow + label→harness hook (only stack with a `setup:` step) |
 | `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate, audit, docs |
 | `code-quality` | ✅ Shipped | Cross-cutting, stack-agnostic practice skills: TDD, codebase-architecture |
 | `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-engineer is the general architect) + webapp-security-audit |
 | `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + obsidian-plugin-dev + electron-security-audit) |
 | `expo-dev` | ✅ Shipped | Expo / React Native app development (mobile-architect + reference skills) |
 
-Totals: 13 agents and 17 skills across the 7 bundles.
+Totals: 13 agents and 17 skills across the 7 stacks.
 
 ## Installer & CLI
 
@@ -33,7 +33,7 @@ tested. All 7 commands work:
 
 `init` · `setup` · `install` · `render` · `doctor` · `eject` · `validate`
 
-`install <ref…>` is the newest: it records a bundle or a single item in
+`install <ref…>` is the newest: it records a stack or a single item in
 `.waffle/waffle.yaml` (resolving dependencies), then renders. Bare `install` with no
 refs just renders.
 
@@ -48,7 +48,7 @@ refs just renders.
   inside `.waffle/` (`waffle.yaml`, `waffle.local.yaml`, `waffle.lock.json`) next to
   `extensions/` — one wafflestack entry at the repo root, with an automatic in-place
   migration on `render`/`upgrade` (#43).
-- **Dogfooding.** The repo renders 4 of its own bundles into itself —
+- **Dogfooding.** The repo renders 4 of its own stacks into itself —
   `github-workflow`, `docs-system`, `orchestration`, and `harness-architect` — so
   the toolkit's own agents and skills are available when developing it. As of
   2026-07-03 the automation loop is live: the daily hygiene run and the
@@ -59,7 +59,7 @@ refs just renders.
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
 - **The self-render is committed** (since 2026-07-03; the label-hook workflow and
   `.waffle/` overview docs stay gitignored). After editing anything under
-  `bundles/**`, `schema/**`, or `installer/**`, re-run
+  `stacks/**`, `schema/**`, or `installer/**`, re-run
   `node installer/cli.mjs render` and commit the updated files + lock — the
   `waffle-doctor` required check fails PRs on drift.
 - ~~Obsidian-plugin phrasing leaks / `security-audit` name collision~~ —
@@ -75,7 +75,7 @@ refs just renders.
 | Node.js | ≥ 18 | Running the CLI |
 | `yaml` | ^2.4.5 | The only runtime dependency (parsing manifests/config) |
 | `git` | any | All git operations |
-| `gh` (GitHub CLI) | authenticated | Required only by the `github-workflow` bundle |
+| `gh` (GitHub CLI) | authenticated | Required only by the `github-workflow` stack |
 
 ## Verify it yourself
 

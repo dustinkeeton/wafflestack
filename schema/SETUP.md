@@ -2,12 +2,12 @@
 
 You are an AI coding agent installing (or updating) wafflestack in the project at your
 current working directory. Follow the steps in order. Detect what you can from the
-repository; ask the user only what you cannot infer — bundle selection, identity
+repository; ask the user only what you cannot infer — stack selection, identity
 choices, and anything that creates or modifies shared external state. Batch your
 questions instead of asking one at a time.
 
-After this playbook, the CLI prints a **toolkit inventory**: every bundle with its
-skills, agents, config schema, environment prerequisites, and bundle-specific setup
+After this playbook, the CLI prints a **toolkit inventory**: every stack with its
+skills, agents, config schema, environment prerequisites, and stack-specific setup
 notes. It is generated from the installed toolkit version — trust it over cached
 knowledge of the toolkit.
 
@@ -21,10 +21,10 @@ so the whole install uses one toolkit version.
   to the cwd. Node >= 18 is required.
 - If `.waffle/waffle.yaml` already exists, this is an **update**, not a first install. The
   CLI injects a **"Current configuration — update mode"** section between this playbook and
-  the inventory: your live targets, enabled bundles, individual includes, ejects, effective
-  config values (current vs. default), any unset required keys, and syrup items — read from
+  the inventory: your live targets, enabled stacks, individual includes, ejects, effective
+  config values (current vs. default), any unset required keys, and opt-in syrup items — read from
   the repo, so you do not have to open the file yourself. Skip step 1 (`init` refuses to
-  overwrite an existing config) and revisit only the steps the change calls for (new bundle →
+  overwrite an existing config) and revisit only the steps the change calls for (new stack →
   steps 2–7; config change → steps 3, 5, 7).
 - If instead a legacy root `.waffle.yaml` (pre-0.8.0) or `.wafflestack.yaml` (pre-0.6.0)
   exists, it is still read with a deprecation note; the next `render`/`upgrade` moves it
@@ -45,41 +45,42 @@ so the whole install uses one toolkit version.
 Run `wafflestack init` (via the pinned invocation). It writes a starter
 `.waffle/waffle.yaml` and refuses to overwrite an existing one.
 
-## 2. Choose bundles (or individual items)
+## 2. Choose stacks (or individual items)
 
-Recommend bundles from the inventory based on repository signals — a GitHub remote
-suggests the GitHub-workflow bundle, an Expo app the Expo bundle, and so on. Present
-the recommendation with one line per bundle on what it adds, and let the user pick.
-Two bundles that define a same-named item cannot both be enabled (the renderer refuses);
-the inventory shows each bundle's item names.
+Recommend stacks from the inventory based on repository signals — a GitHub remote
+suggests the GitHub-workflow stack, an Expo app the Expo stack, and so on. Present
+the recommendation with one line per stack on what it adds, and let the user pick.
+Two stacks that define a same-named item cannot both be enabled (the renderer refuses);
+the inventory shows each stack's item names.
 
-You do not have to adopt a whole bundle. When a project wants just one skill or agent,
+You do not have to adopt a whole stack. When a project wants just one skill or agent,
 select it individually — the inventory lists items in installable ref form
 (`skills/<name>`, `agents/<name>`). Two ways to record the choice:
 
-- Run `wafflestack install <ref…>` — it resolves each ref, appends bundle refs to
-  `bundles:` and item refs to a top-level `include:` list, then renders. It reports the
+- Run `wafflestack install <ref…>` — it resolves each ref, appends stack refs to
+  `stacks:` and item refs to a top-level `include:` list, then renders. It reports the
   dependency closure it pulled in.
-- Or edit `.waffle/waffle.yaml` directly: bundle names under `bundles:`, item refs under
+- Or edit `.waffle/waffle.yaml` directly: stack names under `stacks:`, item refs under
   `include:`, then run `render`.
 
-Refs: a bundle name, `skills/<name>`, `agents/<name>`, or `<bundle>/skills/<name>` when a
-name appears in more than one bundle (an unqualified ambiguous ref fails with the
+Refs: a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` when a
+name appears in more than one stack (an unqualified ambiguous ref fails with the
 candidates listed). Installing an item automatically pulls its dependency closure — an
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across
-bundles, and required config is scoped to what the selected items actually use.
+stacks, and required config is scoped to what the selected items actually use.
 
-**Syrup items are opt-in — do not install them by default.** The inventory flags some
-`files/` payloads as *syrup*: sensitive files (e.g. a workflow that needs write permissions
-on the repo) that enabling their bundle does **not** render. Leave them out unless the user
-explicitly asks for that specific file — then install the ref directly
-(`wafflestack install files/<path>`), which renders it and persists it to `include:`. A repo
-that already tracks a syrup path keeps it on re-render, so an existing install is never
-dropped. This is exactly the github-workflow bundle's `waffle-label-hook.yml` (step 4).
+**Opt-in syrup items are opt-in — do not install them by default.** A stack's generic
+`files/` payloads are called **syrup**; the inventory flags some as **opt-in syrup**:
+sensitive files (e.g. a workflow that needs write permissions on the repo) that enabling
+their stack does **not** render. Leave them out unless the user explicitly asks for that
+specific file — then install the ref directly (`wafflestack install files/<path>`), which
+renders it and persists it to `include:`. A repo that already tracks an opt-in syrup path
+keeps it on re-render, so an existing install is never dropped. This is exactly the
+github-workflow stack's `waffle-label-hook.yml` (step 4).
 
 ## 3. Fill config values
 
-Walk the config schema of every enabled bundle (from the inventory):
+Walk the config schema of every enabled stack (from the inventory):
 
 - **Required keys** must get a value or the render fails.
 - **Defaulted keys**: check each default against reality before accepting it. Command
@@ -91,20 +92,20 @@ Walk the config schema of every enabled bundle (from the inventory):
   account-specific values (bot emails, board IDs, tokens' owners) go in
   `.waffle/waffle.local.yaml`, which must be gitignored. A committed value may reference
   a local-overlay key with `{{...}}` nested substitution.
-- Only keys declared in a bundle's config schema are substituted — do not invent keys.
+- Only keys declared in a stack's config schema are substituted — do not invent keys.
 
 ## 4. External prerequisites
 
-- **Env vars**: a bundle's `env` entries must land in `.claude/settings.json` (`"env"`
+- **Env vars**: a stack's `env` entries must land in `.claude/settings.json` (`"env"`
   section) and/or `.codex/config.toml` (`[shell_environment_policy.set]`). The renderer
   only warns — offer to add them yourself.
-- **Services**: the inventory's per-bundle *setup notes* describe service-side
+- **Services**: the inventory's per-stack *setup notes* describe service-side
   prerequisites (CLI auth, labels, boards, webhooks). Verify each one. Anything that
   creates or modifies shared external state — labels on a shared repo, a project board —
   needs the user's explicit go-ahead first. This includes repository **secrets** some
   workflows need (e.g. `ANTHROPIC_API_KEY` for the github-workflow label hook) — set them
   only with the user's explicit go-ahead (`gh secret set …`). That label hook
-  (`waffle-label-hook.yml`) is a **syrup** file: it is not rendered by enabling the bundle,
+  (`waffle-label-hook.yml`) is an **opt-in syrup** file: it is not rendered by enabling the stack,
   so only walk its prerequisites once the user has asked to install it (step 2).
 
 ## 5. Render
@@ -114,7 +115,7 @@ re-run until it exits cleanly, then read the warnings it printed (env prerequisi
 skipped items).
 
 If the render **refuses to overwrite** a pre-existing file, that path already exists in the
-repo and was not written by wafflestack (a hand-written file whose path a bundle also
+repo and was not written by wafflestack (a hand-written file whose path a stack also
 produces). Nothing is written on a refusal. Inspect each named file: if you want to keep
 it, move it aside — or, for an agent/skill target, fold its additions into a
 `.waffle/extensions/{agents,skills}/<name>.md` file — then re-render; if the toolkit's
@@ -126,7 +127,7 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - **Commit**: `.waffle/waffle.yaml`, the rendered output (`.claude/`, `.codex/`,
   `.agents/`), and `.waffle/waffle.lock.json`. Teammates then get working agent files
   without running the installer, and `wafflestack doctor` can catch drift in CI — the
-  `github-workflow` bundle ships an installable `.github/workflows/waffle-doctor.yml`
+  `github-workflow` stack ships an installable `.github/workflows/waffle-doctor.yml`
   that runs it on every push and pull request, so committing the render + lock is what makes
   that gate meaningful (set `doctor.flags: --allow-missing` if the repo gitignores some
   renders — only modified files fail).
@@ -135,15 +136,15 @@ content is already byte-identical to the render is adopted silently, no flag nee
   `wafflestack install --gitignore` (it idempotently appends only the missing ones under a
   `# wafflestack` marker, preserving existing content) or hand-edit the file. Baseline:
   - `.waffle/waffle.local.yaml` — **always** (account-specific config must never be committed).
-  - the configured `git.worktreesDir` when an enabled bundle declares one (throwaway
-    working state). `init --gitignore` seeds only the local overlay, since no bundle is
+  - the configured `git.worktreesDir` when an enabled stack declares one (throwaway
+    working state). `init --gitignore` seeds only the local overlay, since no stack is
     chosen yet; `install --gitignore` adds the worktrees dir once one is enabled.
 - **Dev-only or self-hosting waffle**: when the render should *not* be committed — a
   consumer who wants the waffle only in their own working environment, or the wafflestack
   source repo itself (where committed copies would duplicate every skill in the tree) —
   also gitignore the rendered output (`.claude/`, `.codex/`, `.agents/`) and
   `.waffle/waffle.lock.json`, and set `doctor.flags: --allow-missing` (github-workflow
-  bundle) so the CI drift gate tolerates the deliberately-absent renders: only modified
+  stack) so the CI drift gate tolerates the deliberately-absent renders: only modified
   files fail, a missing lock still fails.
 - Tell the user the standing rule: never hand-edit rendered files — `render` overwrites
   them. Project-specific additions go in `.waffle/extensions/{agents,skills}/<name>.md`
@@ -154,7 +155,7 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - Run `wafflestack doctor` — it must report that all managed files match the lock.
 - Harnesses load skills and agents at session start: the user may need to restart
   their agent session before new slash commands appear.
-- Report back: targets and bundles enabled; every config value chosen and where it
+- Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
   skipped (with reasons); files rendered; and any follow-ups the user still owes
   (env vars they declined, boards that don't exist yet).
