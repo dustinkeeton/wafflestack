@@ -123,6 +123,18 @@ config:
       Repo-relative directory for per-run delegate checkpoint files (typed phase
       state, one JSON doc per run). Defaults under the worktrees dir so it inherits
       the same gitignore — keep it gitignored, it is throwaway run state.
+  delegate.approveBeforePush:
+    required: false
+    default: false
+    description: >-
+      Opt-in human approval gate immediately before push. When true, each delegated
+      agent runs its pre-flight, commits locally, and STOPS before `git push` /
+      `gh pr create`; the orchestrator presents a per-agent summary (branch, target
+      issue, diffstat, commit list), collects the human's approval via AskUserQuestion,
+      and only then is the branch pushed and the PR opened. A rejection leaves the
+      worktree/branch local and intact and is recorded in the run report (execution
+      `approval`/`approvedBy`, status `skipped`). Default false — agents push
+      autonomously, behavior unchanged.
   docs.auditChecklist:
     required: false
     description: >-

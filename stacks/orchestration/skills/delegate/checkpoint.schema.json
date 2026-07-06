@@ -151,7 +151,15 @@
           "branch": { "type": "string" },
           "status": { "enum": ["done", "failed", "skipped"] },
           "pr": { "type": ["string", "null"], "description": "PR URL or #number when status is done; null otherwise." },
-          "boardMoved": { "type": "boolean", "description": "Whether the board item was advanced (In Review / left In Progress)." }
+          "boardMoved": { "type": "boolean", "description": "Whether the board item was advanced (In Review / left In Progress)." },
+          "approval": {
+            "enum": ["approved", "rejected"],
+            "description": "Present only when the delegate.approveBeforePush gate was on: whether the human approved this agent's push at the pre-push gate. checkpoint.mjs enforces that a rejected push is status 'skipped' with a null pr — a rejection can never show a PR."
+          },
+          "approvedBy": {
+            "type": "string",
+            "description": "Who approved or rejected the push at the approval gate (recorded when delegate.approveBeforePush is on). Requires `approval` to be set."
+          }
         }
       }
     },

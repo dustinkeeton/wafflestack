@@ -176,6 +176,15 @@ function crossChecks(doc, sectionsInScope, errors) {
         );
       }
       if (e.status === 'done' && !e.pr) errors.push(`execution: issue #${e.number} is "done" but has no PR recorded`);
+      // Approval gate (delegate.approveBeforePush): a rejected push must leave no PR behind —
+      // the work stays committed locally and the issue is "skipped", never a merged-looking "done".
+      if (e.approval === 'rejected') {
+        if (e.status !== 'skipped') errors.push(`execution: issue #${e.number} was rejected at the approval gate but status is "${e.status}" (a rejected push must be "skipped")`);
+        if (e.pr) errors.push(`execution: issue #${e.number} was rejected at the approval gate but has a PR recorded (a rejected push is never opened)`);
+      }
+      if (e.approvedBy !== undefined && e.approval === undefined) {
+        errors.push(`execution: issue #${e.number} records approvedBy but no approval decision`);
+      }
       executed.add(e.number);
     }
     for (const n of planned.keys()) {

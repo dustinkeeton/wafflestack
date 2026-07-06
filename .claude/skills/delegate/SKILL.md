@@ -368,21 +368,45 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
 
 1. Read the relevant source files identified in the issue.
 2. Implement the fix/feature following the project's conventions.
-3. Follow the git-workflow skill for commits and push:
-   - End every commit message with `Co-Authored-By: Claude <noreply@anthropic.com>`
-   - Push: git push -u origin {branch-name}
-4. Run the pre-flight checklist before pushing:
+3. Run the pre-flight checklist:
    - npm run lint --if-present
    - npm run validate
    - npm test
    - npm pack --dry-run
    - `npm run validate` passes after any stack/manifest edit
 - If `stacks/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
-5. Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main.
-6. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL>). If you lack these tools, just ensure the PR exists; the orchestrator verifies your work directly.
+4. Commit your work following the git-workflow skill — end every commit message with `Co-Authored-By: Claude <noreply@anthropic.com>`. Commit everything **locally**; do not push yet.
+5. Push and open the PR — but first check the approval gate. The gate is ON when `delegate.approveBeforePush` is `true`; for this run it is **`false`**.
+   - **Gate off (`false`, the default):** push and open the PR yourself, exactly as usual —
+     - Push: git push -u origin {branch-name}
+     - Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main.
+   - **Gate on (`true`):** do NOT run `git push` or `gh pr create`. Stop at the local commit and hand an approval summary to the orchestrator — branch `{branch-name}`, target issue #{number}, diffstat (`git diff --stat origin/main...HEAD`), and commit list (`git log --oneline origin/main..HEAD`):
+     - If you have SendMessage, send that summary to `team-lead` and WAIT for an explicit approval reply. On approval, push and open the PR as above. On rejection, leave the worktree exactly as-is (committed, unpushed) and report the rejection — never push.
+     - If you lack messaging tools, STOP after committing without pushing, and make the approval summary your final message. The orchestrator inspects your worktree, collects approval, and completes or withholds the push itself.
+6. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL, or the approval summary when the gate is on>). If you lack these tools, just ensure the PR exists (gate off) or the local commit is in place (gate on); the orchestrator verifies your work directly.
 
 Branch name: {branch-name}
 ```
+
+### Approval gate (opt-in — only when `delegate.approveBeforePush` is enabled)
+
+This step runs **only when `delegate.approveBeforePush` is `true`**. When it is `false` (the default), agents push and open their own PRs autonomously — skip this section entirely; nothing about the run changes.
+
+When the gate is on, each agent commits locally and STOPS before `git push` (see the agent prompt template). No branch may leave the machine until the human has approved it. For each agent that has reached its pre-push stop:
+
+1. **Assemble the summary.** Take it from the agent's report if it sent one, or reconstruct it straight from the branch/worktree — either is authoritative:
+
+   ```bash
+   # <dir> = the agent's worktree (parallel groups) or the main checkout (serial / single-issue).
+   git -C <dir> log  --oneline origin/main..<branch>   # commit list
+   git -C <dir> diff --stat    origin/main...<branch>  # diffstat
+   ```
+
+2. **Collect the decision.** Present each summary — branch, target issue, diffstat, commit list — to the human with `AskUserQuestion`, offering **Approve**, **Approve all remaining**, and **Reject**. Ask one question per agent, or a single multi-select over all pending agents. Never assume approval on a timeout or a silent agent.
+
+3. **On approval** → the branch is pushed and the PR opened: reply to a waiting (messaging-capable) agent with the approval so it pushes, or, for a silent agent, push and open the PR yourself from its worktree/branch. Record `approval: "approved"` and `approvedBy` (who approved) in this issue's `execution` entry.
+
+4. **On rejection** → do NOT push. Leave the worktree and its local branch intact for inspection (never `git worktree remove` a rejected branch). In this issue's `execution` entry record `status: "skipped"`, `pr: null`, `approval: "rejected"`, and `approvedBy` (who rejected), and surface it in the Report.
 
 ### Post-agent verification
 
@@ -394,7 +418,7 @@ npm run validate && npm test
 
 If verification fails after a parallel agent's worktree merge, stop and report the conflict.
 
-**Checkpoint** — after all agents finish, write `execution`: one entry per planned issue with `number`, `agent`, `branch` (verified from `gh pr list --head <branch>` / the pushed branch — **not** re-typed from memory), `status` (`done`/`failed`/`skipped`), `pr` (URL or `#number`, or `null`), and optional `boardMoved`. Validate:
+**Checkpoint** — after all agents finish, write `execution`: one entry per planned issue with `number`, `agent`, `branch` (verified from `gh pr list --head <branch>` / the pushed branch — **not** re-typed from memory), `status` (`done`/`failed`/`skipped`), `pr` (URL or `#number`, or `null`), and optional `boardMoved`. When the approval gate was on (`delegate.approveBeforePush`), also record `approval` (`approved`/`rejected`) and `approvedBy` per entry — a **rejected** push is `status: "skipped"` with `pr: null` (the validator enforces this, so a rejection can never masquerade as a merged PR). Validate:
 
 ```bash
 node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/<runId>.json --phase execute
@@ -417,7 +441,9 @@ After all agents complete, present a summary. Build the table **from the checkpo
 Build: passing
 ```
 
-**Checkpoint** — write `report` (`build`: `passing`/`failing`/`unknown`, plus optional `notes` for failures, skips, or worktree-cleanup caveats), then validate the completed run:
+**Approval gate** — when it was active for the run (any `execution` entry carries an `approval` field), add an **Approved by** column so the report records who approved or rejected each push. A **rejected** issue shows `status: skipped` with no PR; call it out explicitly and note that its worktree/branch was left local and intact for inspection (it is not cleaned up).
+
+**Checkpoint** — write `report` (`build`: `passing`/`failing`/`unknown`, plus optional `notes` for failures, skips, rejected pushes, or worktree-cleanup caveats), then validate the completed run:
 
 ```bash
 node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/<runId>.json --phase report
@@ -462,7 +488,7 @@ Once each agent's PR is merged, remove its worktree:
 git worktree remove .claude/worktrees/issue-{N}
 ```
 
-Do **not** remove worktrees while their PRs are still open — the user may want to push follow-up commits from there. If `git worktree remove` complains about a dirty tree, leave it for the user to inspect and report it in the delegation summary.
+Do **not** remove worktrees while their PRs are still open — the user may want to push follow-up commits from there. A branch **rejected at the approval gate** has no PR and was never pushed: leave its worktree in place too, so the user can inspect or salvage the local commits. If `git worktree remove` complains about a dirty tree, leave it for the user to inspect and report it in the delegation summary.
 
 ### Team Cleanup (multi-issue only)
 
