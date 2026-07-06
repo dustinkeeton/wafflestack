@@ -9,6 +9,22 @@ argument-hint: "[#N, label, keyword, or `milestone:<name>` — omit for the proj
 
 Fetch open GitHub issues, assign each to the right specialist agent, and orchestrate execution. Handles parallel worktree isolation when safe and serial chaining when necessary.
 
+## Run checkpoints
+
+The phases below (Fetch → Classify → Plan → Execute → Report) hand state forward. Rather than trust that state to prose in the orchestrating context alone, each phase writes a **typed, schema-validated checkpoint** and validates its predecessor's before proceeding. The checkpoint is the **single source of truth** for load-bearing fields — issue numbers, branch names, worktree paths — a resume point after interruption, and the audit trail the Report phase reads.
+
+- **One JSON document per run**, at `{{delegate.checkpointDir}}/<runId>.json`. `<runId>` is the team name for multi-issue runs (`delegate-<timestamp>`) or `delegate-single-<N>-<timestamp>` for the single-issue fast path. Create the directory first: `mkdir -p {{delegate.checkpointDir}}`. It is gitignored throwaway run state.
+- **Schema:** `{{harness.skillsDir}}/delegate/checkpoint.schema.json` — one section per phase (`scope`, `issues`, `classification`, `plan`, `execution`, `report`), each documented inline. Start the file with `{ "version": 1, "runId": "<runId>" }`, then append each phase's section as you complete it.
+- **Validator:** `{{harness.skillsDir}}/delegate/checkpoint.mjs` — dependency-free (Node built-ins only, runs in any consumer repo). At **every phase boundary**, after writing the current phase's section, run:
+
+  ```bash
+  node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase <fetch|classify|plan|execute|report>
+  ```
+
+  It checks the document shape **and** cross-references (every classified/assigned/executed issue traces back to a fetched issue; a parallel assignment has a worktree and a serial one does not; an executed branch matches the branch the plan assigned — this is what catches a hallucinated branch). Exit 0 = proceed. **Exit 1 = STOP the run and report the error verbatim — never improvise past a failed checkpoint.** This deterministic gate is the point of the mechanism; do not replace it with an eyeball "looks right".
+
+The per-phase instructions below each end with a **Checkpoint** step naming the section to write and the phase to validate.
+
 ## Phase 1: Fetch Issues
 
 **Argument handling** — the fetch path depends on whether `$ARGUMENTS` is provided:
@@ -53,6 +69,12 @@ gh issue list --state open --milestone "$MILESTONE_NUMBER" \
 - **Current milestone has zero open issues** → report that it is already clear and stop.
 - Always state the selected milestone (title + number) in the Phase 3 plan so the user can confirm the scope before any agent is spawned.
 
+**Checkpoint** — write `scope` (the resolved `mode`, a human `description`, and `milestone` for milestone modes) and `issues` (one entry per fetched issue: `number`, `title`, `labels`, optionally `body`/`milestone`), then validate:
+
+```bash
+node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase fetch
+```
+
 ## Phase 2: Classify
 
 For each issue, determine the best specialist agent using content-based matching. Scan the issue title and body for keywords and source paths, then apply the first matching row:
@@ -64,6 +86,12 @@ For each issue, determine the best specialist agent using content-based matching
 {{roster.labelFallback}}
 
 After classification, determine the **area** each issue touches — which module or subdirectory, and whether it includes root files ({{roster.rootFiles}}) or {{roster.sharedModule}}. This drives parallelization.
+
+**Checkpoint** — write `classification` (one entry per issue: `number`, `agent`, `area`, and `touchesRoot`/`touchesShared` where known), then validate. The validator enforces that **every fetched issue is classified exactly once** and none references an unknown issue:
+
+```bash
+node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase classify
+```
 
 ## Phase 3: Plan & Confirm
 
@@ -105,6 +133,14 @@ Proceed?
 - **Skip confirmation** for a single obvious assignment (e.g., `/delegate #5` with a clear match)
 
 Wait for the user to approve, modify, or cancel before proceeding.
+
+**Checkpoint** — once the plan is settled (approved, or the single-obvious-assignment fast path), write `plan`: `confirmed` (true) and `groups`, each group carrying `id`, `mode` (`parallel`/`serial`), and `assignments`. Each assignment records `number`, `agent`, `branch` (the exact git-workflow branch name), and `worktree` — the **absolute** path `<repo>/{{git.worktreesDir}}/issue-<N>` for parallel groups, or `null` for serial groups and the single-issue fast path. This plan is the source of truth Phase 4 reads branch and worktree from. Validate:
+
+```bash
+node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase plan
+```
+
+The validator enforces that every issue is assigned exactly once, branch names are well-formed, and worktree presence matches group mode (parallel ⇒ has a path, serial ⇒ null).
 
 ## Board Setup
 
@@ -153,6 +189,8 @@ Before execution begins, discover the project board metadata for kanban sync. Th
 4. If `PROJECT_ID` is empty or any of the above fail → set `BOARD_SYNC_ENABLED=false`, log a warning, and skip all board updates in subsequent phases. When the board is missing entirely (or lacks the standard Status options), note that the `github-project-board` skill can provision or standardize it — but don't run it inline; board provisioning is a deliberate, user-approved step, not something to trigger mid-delegation.
 
 See the `github-project-management` skill for the full GraphQL query catalog, and the `github-project-board` skill to create or standardize the board itself.
+
+**Checkpoint (optional)** — record the resolved board metadata in the checkpoint's `board` section (`enabled`, plus `projectId`, `statusFieldId`, `inProgressOptionId`, `inReviewOptionId` when found) so the Report phase and any resume know whether board sync is live. This section is optional and has no dedicated validation phase; write it if the board was discovered.
 
 ## Phase 4: Execute
 
@@ -213,7 +251,7 @@ Notes:
 - Use `origin/main` as the base, not local `main`, so all worktrees start from the same fetched tip.
 - Keep `{{git.worktreesDir}}/` gitignored.
 
-Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt.
+Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt. This path — and the branch — must match what the `plan` checkpoint recorded for this issue; **read them from the checkpoint** rather than re-deriving them, so a single source of truth drives both provisioning and the agent prompt.
 
 For **serial groups** (including the single-issue fast path), no worktree is needed — the agent runs in the main checkout and switches branches there.
 
@@ -296,7 +334,7 @@ Agent(
 
 ### Agent prompt template
 
-Each spawned agent receives this prompt. For **parallel groups**, fill in `{worktree_path}` with the absolute path of the worktree provisioned for this issue. For **serial groups / single-issue fast path**, omit the "Working directory" section — the agent works in the main checkout and creates its branch there per the git-workflow skill.
+Each spawned agent receives this prompt. Its load-bearing fields — `{number}`, `{branch-name}`, and `{worktree_path}` — come from this issue's entry in the `plan` checkpoint (the single source of truth), not from re-derivation. For **parallel groups**, fill in `{worktree_path}` with the checkpoint's `worktree` value (the absolute path provisioned for this issue). For **serial groups / single-issue fast path**, omit the "Working directory" section — the agent works in the main checkout and creates its branch there per the git-workflow skill.
 
 ```
 You are assigned to GitHub issue #{number}: {title}
@@ -346,9 +384,17 @@ After each agent completes, verify the build still passes in the main working di
 
 If verification fails after a parallel agent's worktree merge, stop and report the conflict.
 
+**Checkpoint** — after all agents finish, write `execution`: one entry per planned issue with `number`, `agent`, `branch` (verified from `gh pr list --head <branch>` / the pushed branch — **not** re-typed from memory), `status` (`done`/`failed`/`skipped`), `pr` (URL or `#number`, or `null`), and optional `boardMoved`. Validate:
+
+```bash
+node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase execute
+```
+
+The validator cross-checks every execution branch against the branch the plan assigned — a mismatch (hallucinated or stale branch) stops the run here rather than surfacing as a broken Report.
+
 ## Phase 5: Report
 
-After all agents complete, present a summary:
+After all agents complete, present a summary. Build the table **from the checkpoint's `execution` and `issues` sections** — that is the audit trail, so the report can never disagree with what actually ran:
 
 ```
 ## Delegation Report
@@ -359,6 +405,12 @@ After all agents complete, present a summary:
 | 5 | Fix folder picker... | lead-engineer | done | #7 |
 
 Build: passing
+```
+
+**Checkpoint** — write `report` (`build`: `passing`/`failing`/`unknown`, plus optional `notes` for failures, skips, or worktree-cleanup caveats), then validate the completed run:
+
+```bash
+node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase report
 ```
 
 ### Board status after work
@@ -415,6 +467,7 @@ TeamDelete(team_name: "delegate-{timestamp}")
 
 ## Error Handling
 
+- **Checkpoint validation failure** — `checkpoint.mjs` exited non-zero. **Stop at that phase boundary.** Report the validator's error verbatim; do not enter the next phase or improvise the missing/mismatched state. Fix the checkpoint (or re-run the phase that wrote it) and re-validate before continuing. The checkpoint also survives an interruption: on resume, re-validate the last-written phase to find where the run left off.
 - **Build failure** — stop the chain, report to the user, do not create a PR for the failing agent's work
 - **Agent cannot complete** — add a comment to the GitHub issue via `gh issue comment {N} --body "..."` explaining what was attempted and what blocked completion, then move on to the next issue
 - **Worktree conflict** — fall back to serial execution in the main working directory, report the conflict
