@@ -229,6 +229,20 @@ is what you reach for across a breaking one.
   phase adds an "Approved by" column when the gate was active. **Re-render to pick it up** — additive,
   no migration, and **default-off leaves existing `/delegate` behavior unchanged**; a repo that never
   runs `/delegate` (or never enables the flag) is unaffected.
+- **Enhancement, content-only — curated, capped run-memory doc for `delegate` runs (`orchestration`,
+  #93).** The `/delegate` skill now keeps ONE small, durable memory doc per repo of forward-useful
+  lessons (repo quirks, recurring failures, issue entanglements) that carry between runs. It is
+  **curated and hard-capped**, never an append-only log: the Report phase distils this run's lessons in —
+  pruning stale entries, never blind-appending — and the Classify/Plan phases read it back (each spawned
+  agent gets only the entries whose **Area** matches its issue). Every entry carries a **Why**, a
+  **Since** (the issue/PR that taught it — its staleness anchor), and an **Area**, so pruning is judged
+  rather than FIFO. A dependency-free validator ships beside `SKILL.md` — `memory.mjs` — that enforces
+  the byte cap **and** the entry format at the Report boundary: over cap or a malformed entry exits
+  non-zero and blocks the run until curation brings it back within budget (a missing doc is valid — a
+  fresh repo simply has none yet). Adds two optional config keys: `delegate.memoryFile` (default
+  `{{delegate.checkpointDir}}/memory.md`, gitignored, per-clone like the checkpoints) and
+  `delegate.memoryMaxBytes` (default `4096`). **Re-render to pick it up** — additive, no migration; a
+  repo that never runs `/delegate` is unaffected.
 
 ## [0.9.0] - 2026-07-03
 

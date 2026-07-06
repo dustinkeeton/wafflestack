@@ -135,6 +135,26 @@ config:
       worktree/branch local and intact and is recorded in the run report (execution
       `approval`/`approvedBy`, status `skipped`). Default false — agents push
       autonomously, behavior unchanged.
+  delegate.memoryFile:
+    required: false
+    default: "{{delegate.checkpointDir}}/memory.md"
+    description: >-
+      Path to the curated run-memory doc — ONE Markdown file per repo of durable,
+      forward-useful facts (repo quirks, recurring failures, issue entanglements) that
+      the Report phase distils into and the Classify/Plan phases read back. Defaults
+      alongside the per-run checkpoints under the worktrees dir, so it inherits the same
+      gitignore. Note the trade-off: like the checkpoints, this persists locally but is
+      per-clone (not committed), so memory does not follow the repo to another machine.
+  delegate.memoryMaxBytes:
+    required: false
+    default: 4096
+    description: >-
+      Hard byte cap on the run-memory doc, enforced deterministically by memory.mjs. The
+      doc is curated (prune + rewrite), never blind-appended, precisely so it stays a
+      compact working set instead of an ever-growing log that poisons context. Exceeding
+      the cap fails the Report gate and forces curation before the run may complete — raise
+      it deliberately, never to dodge pruning. Default 4096 (a few KB — room for ~a dozen
+      tight entries).
   docs.auditChecklist:
     required: false
     description: >-
