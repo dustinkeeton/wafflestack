@@ -1,0 +1,28 @@
+name: wafflestack
+description: >-
+  Self-referential stack — one user-invocable `/waffle-*` skill per wafflestack
+  CLI subcommand (init, setup, install, render, upgrade, doctor, eject,
+  validate). Each skill is a thin wrapper that shells out to
+  `npx <waffle.toolkitRef> <sub>` and interprets the output with agent judgment,
+  so the lifecycle commands are one keystroke away inside any consuming repo. The
+  toolkit dogfoods its own delivery mechanism.
+skills:
+  - waffle-init
+  - waffle-setup
+  - waffle-install
+  - waffle-render
+  - waffle-upgrade
+  - waffle-doctor
+  - waffle-eject
+  - waffle-validate
+config:
+  waffle.toolkitRef:
+    required: false
+    default: github:dustinkeeton/wafflestack
+    description: >-
+      npx spec every `/waffle-*` skill invokes as `npx --yes <ref> <subcommand>` —
+      the same knob as the doctor CI workflow's `doctor.toolkitRef`. Pin to a release
+      tag to freeze the toolkit version the wrappers run (and match the version this
+      repo is pinned to), e.g. "github:dustinkeeton/wafflestack#v0.10.0". Point it at
+      a local checkout path (or use `node installer/cli.mjs` directly) when developing
+      the toolkit itself.
