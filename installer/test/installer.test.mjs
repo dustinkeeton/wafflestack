@@ -101,7 +101,7 @@ describe('end to end', () => {
     write(cwd, '.waffle/waffle.yaml', [
       '# project config comment',
       'targets: [claude, codex, agents-dir]',
-      'bundles: [demo]',
+      'stacks: [demo]',
       'config:',
       '  git:',
       '    botEmail: bot@example.com',
@@ -152,8 +152,8 @@ describe('end to end', () => {
     render();
     assert.equal(fs.readFileSync(file, 'utf8'), original);
 
-    // drop the bundle -> all its files are cleaned up
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    // drop the stack -> all its files are cleaned up
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.equal(fs.existsSync(file), false);
@@ -161,7 +161,7 @@ describe('end to end', () => {
   });
 
   test('missing required config fails with actionable error', () => {
-    write(cwd, '.waffle/waffle.yaml', 'bundles: [demo]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'stacks: [demo]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.git\.botEmail/);
@@ -201,7 +201,7 @@ describe('end to end', () => {
   });
 
   test('validate flags undeclared dotted placeholders and unused keys', () => {
-    const skillMd = path.join(toolkitRoot, 'bundles/demo/skills/demo-skill/SKILL.md');
+    const skillMd = path.join(toolkitRoot, 'stacks/demo/skills/demo-skill/SKILL.md');
     fs.appendFileSync(skillMd, '\nUses {{made.up.key}}.\n');
     const problems = validateToolkit(toolkitRoot);
     assert.ok(problems.some((p) => /made\.up\.key/.test(p)), JSON.stringify(problems));
@@ -215,8 +215,8 @@ describe('harness.* namespace', () => {
   beforeEach(() => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-hz-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-hz-'));
-    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: hz\nbundles: [hz]\n');
-    write(toolkitRoot, 'bundles/hz/bundle.yaml', [
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: hz\nstacks: [hz]\n');
+    write(toolkitRoot, 'stacks/hz/stack.yaml', [
       'name: hz',
       'description: Harness fixture.',
       'agents: [attr]',
@@ -228,7 +228,7 @@ describe('harness.* namespace', () => {
       '    description: bare project name',
       '',
     ].join('\n'));
-    write(toolkitRoot, 'bundles/hz/agents/attr.md', [
+    write(toolkitRoot, 'stacks/hz/agents/attr.md', [
       '---',
       'name: attr',
       'description: Attr agent for {{project.name}}, signed by {{harness.assistantName}}.',
@@ -239,7 +239,7 @@ describe('harness.* namespace', () => {
       'Attributed to {{harness.assistantName}} via {{harness.attributionPath}}.',
       '',
     ].join('\n'));
-    write(toolkitRoot, 'bundles/hz/skills/attr-skill/SKILL.md', [
+    write(toolkitRoot, 'stacks/hz/skills/attr-skill/SKILL.md', [
       '---',
       'name: attr-skill',
       'description: Attr skill.',
@@ -258,7 +258,7 @@ describe('harness.* namespace', () => {
   const writeConfig = (configLines = ['config: {}']) => {
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude, codex, agents-dir]',
-      'bundles: [hz]',
+      'stacks: [hz]',
       ...configLines,
       '',
     ].join('\n'));
@@ -367,15 +367,15 @@ describe('output conflicts and skillsDir', () => {
   beforeEach(() => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-x-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-x-'));
-    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: x\nbundles: [one, two]\n');
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: x\nstacks: [one, two]\n');
     for (const b of ['one', 'two']) {
-      write(toolkitRoot, `bundles/${b}/bundle.yaml`, [
+      write(toolkitRoot, `stacks/${b}/stack.yaml`, [
         `name: ${b}`,
-        `description: Bundle ${b}.`,
+        `description: Stack ${b}.`,
         'skills: [dup-skill]',
         '',
       ].join('\n'));
-      write(toolkitRoot, `bundles/${b}/skills/dup-skill/SKILL.md`, [
+      write(toolkitRoot, `stacks/${b}/skills/dup-skill/SKILL.md`, [
         '---',
         'name: dup-skill',
         `description: Variant ${b}.`,
@@ -394,8 +394,8 @@ describe('output conflicts and skillsDir', () => {
 
   const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
 
-  test('same item from two bundles is a render error', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [one, two]\nconfig: {}\n');
+  test('same item from two stacks is a render error', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [one, two]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.ok(
@@ -405,7 +405,7 @@ describe('output conflicts and skillsDir', () => {
   });
 
   test('harness.skillsDir resolves per target', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude, agents-dir]\nbundles: [one]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude, agents-dir]\nstacks: [one]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, '.claude/skills/dup-skill/SKILL.md'), /Read \.claude\/skills\/dup-skill\/SKILL\.md\./);
@@ -423,7 +423,7 @@ describe('unmanaged collision guard (#25)', () => {
     makeFixtureToolkit(toolkitRoot);
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
-      'bundles: [demo]',
+      'stacks: [demo]',
       'config:',
       '  git:',
       '    botEmail: bot@example.com',
@@ -516,7 +516,7 @@ describe('unmanaged collision guard (#25)', () => {
     // renders against any toolkit with zero config (same trick the #14/upgrade CLI tests
     // use). This exercises the real arg parsing: `--force` must be consumed before the
     // "render takes no refs" guard, and dispatch must exit cleanly.
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
 
     const render = spawnSync(process.execPath, [cli, 'render', '--force', '--cwd', cwd], { encoding: 'utf8' });
@@ -569,20 +569,20 @@ describe('gitignore offer (#29)', () => {
     assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
   });
 
-  test('recommendedGitignoreEntries: local overlay always; worktrees dir when an enabled bundle declares it', () => {
+  test('recommendedGitignoreEntries: local overlay always; worktrees dir when an enabled stack declares it', () => {
     const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
     const toolkit = loadToolkit(repoRoot);
     assert.deepEqual(
-      recommendedGitignoreEntries(toolkit, { bundles: [], values: {}, targets: ['claude'] }),
+      recommendedGitignoreEntries(toolkit, { stacks: [], values: {}, targets: ['claude'] }),
       ['.waffle/waffle.local.yaml'],
     );
     assert.deepEqual(
-      recommendedGitignoreEntries(toolkit, { bundles: ['github-workflow'], values: {}, targets: ['claude'] }),
+      recommendedGitignoreEntries(toolkit, { stacks: ['github-workflow'], values: {}, targets: ['claude'] }),
       ['.waffle/waffle.local.yaml', '.claude/worktrees/'],
     );
-    // a project override of git.worktreesDir wins over the bundle default (and is slash-normalized)
+    // a project override of git.worktreesDir wins over the stack default (and is slash-normalized)
     assert.deepEqual(
-      recommendedGitignoreEntries(toolkit, { bundles: ['github-workflow'], values: { git: { worktreesDir: '.wt' } }, targets: ['claude'] }),
+      recommendedGitignoreEntries(toolkit, { stacks: ['github-workflow'], values: { git: { worktreesDir: '.wt' } }, targets: ['claude'] }),
       ['.waffle/waffle.local.yaml', '.wt/'],
     );
   });
@@ -594,7 +594,7 @@ describe('gitignore offer (#29)', () => {
     assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
 
     // install --gitignore on an empty selection re-applies the offer idempotently (renders, no ref error)
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     const installRun = spawnSync(process.execPath, [cli, 'install', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(installRun.status, 0, installRun.stdout + installRun.stderr);
     assert.doesNotMatch(installRun.stderr, /takes no refs/);
@@ -609,8 +609,8 @@ describe('files/ payload', () => {
   beforeEach(() => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-files-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-files-'));
-    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: files\nbundles: [fb]\n');
-    write(toolkitRoot, 'bundles/fb/bundle.yaml', [
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: files\nstacks: [fb]\n');
+    write(toolkitRoot, 'stacks/fb/stack.yaml', [
       'name: fb',
       'description: Files fixture.',
       'files:',
@@ -622,7 +622,7 @@ describe('files/ payload', () => {
       '    description: project name',
       '',
     ].join('\n'));
-    write(toolkitRoot, 'bundles/fb/files/.github/workflows/ci.yml', [
+    write(toolkitRoot, 'stacks/fb/files/.github/workflows/ci.yml', [
       'name: CI for {{project.name}}',
       'on: [push]',
       'jobs:',
@@ -635,15 +635,15 @@ describe('files/ payload', () => {
     ].join('\n'));
     // Binary payload: PNG signature + a NUL byte (so isBinary sniffs it as binary) plus a
     // `{{x}}`-looking byte run, to prove binaries are copied byte-for-byte, never templated.
-    fs.mkdirSync(path.join(toolkitRoot, 'bundles/fb/files/scripts'), { recursive: true });
+    fs.mkdirSync(path.join(toolkitRoot, 'stacks/fb/files/scripts'), { recursive: true });
     fs.writeFileSync(
-      path.join(toolkitRoot, 'bundles/fb/files/scripts/logo.png'),
+      path.join(toolkitRoot, 'stacks/fb/files/scripts/logo.png'),
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x7b, 0x7b, 0x78, 0x7d, 0x7d]),
     );
     write(cwd, '.waffle/waffle.yaml', [
       '# files fixture comment',
       'targets: [claude, codex, agents-dir]',
-      'bundles: [fb]',
+      'stacks: [fb]',
       'config:',
       '  project:',
       '    name: Waffle',
@@ -662,7 +662,7 @@ describe('files/ payload', () => {
     assert.deepEqual(validateToolkit(toolkitRoot), []);
   });
 
-  test('setup inventory lists the bundle files', () => {
+  test('setup inventory lists the stack files', () => {
     const inv = toolkitInventory(loadToolkit(toolkitRoot), '0.0.test');
     assert.match(inv, /- files: files\/\.github\/workflows\/ci\.yml, files\/scripts\/logo\.png/);
   });
@@ -677,7 +677,7 @@ describe('files/ payload', () => {
     assert.match(wf, /token \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
 
     // binary copied byte-for-byte (the embedded {{x}} bytes are untouched)
-    const src = fs.readFileSync(path.join(toolkitRoot, 'bundles/fb/files/scripts/logo.png'));
+    const src = fs.readFileSync(path.join(toolkitRoot, 'stacks/fb/files/scripts/logo.png'));
     assert.deepEqual(fs.readFileSync(path.join(cwd, 'scripts/logo.png')), src);
 
     // both outputs tracked in the lock at their repo-relative paths
@@ -700,8 +700,8 @@ describe('files/ payload', () => {
     render();
     assert.equal(fs.readFileSync(wf, 'utf8'), original);
 
-    // dropping the bundle cleans up every files output it produced
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    // dropping the stack cleans up every files output it produced
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.equal(fs.existsSync(wf), false);
@@ -728,21 +728,21 @@ describe('files/ payload', () => {
   });
 
   test('validate flags an undeclared {{key}} in a text files payload', () => {
-    const wf = path.join(toolkitRoot, 'bundles/fb/files/.github/workflows/ci.yml');
+    const wf = path.join(toolkitRoot, 'stacks/fb/files/.github/workflows/ci.yml');
     fs.appendFileSync(wf, '\n# uses {{made.up.key}}\n');
     const problems = validateToolkit(toolkitRoot);
     assert.ok(problems.some((p) => /made\.up\.key/.test(p)), JSON.stringify(problems));
   });
 
   test('a required key used only in a files payload is demanded when missing', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [fb]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [fb]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.project\.name/);
   });
 });
 
-// The real github-workflow bundle ships a doctor CI workflow as a files/ payload (#14).
+// The real github-workflow stack ships a doctor CI workflow as a files/ payload (#14).
 // These render THAT actual payload (not a fixture) to prove the shipped artifact is correct.
 describe('github-workflow: waffle-doctor CI payload (#14)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -771,7 +771,7 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
     const wf = read(cwd, REL);
 
-    // (b, default) {{doctor.toolkitRef}} → bundle default; {{doctor.flags}} → empty (its
+    // (b, default) {{doctor.toolkitRef}} → stack default; {{doctor.flags}} → empty (its
     // default), so the invocation is behaviorally unchanged from today. No leftover placeholders.
     assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack doctor/);
     assert.doesNotMatch(wf, /\{\{\s*doctor\.toolkitRef\s*\}\}/);
@@ -849,7 +849,7 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
   });
 });
 
-// The github-workflow bundle also ships the label-event hook (#27): a files/ payload
+// The github-workflow stack also ships the label-event hook (#27): a files/ payload
 // (waffle-label-hook.yml) plus a label-hook skill, wired by the toolkit's first
 // files/-keyed requires: edge. These render THE ACTUAL shipped artifacts.
 describe('github-workflow: waffle-label-hook payload (#27)', () => {
@@ -914,9 +914,9 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
   });
 
   test('T2 label overrides flow through BOTH the workflow gate and the skill action map', () => {
-    // The workflow is syrup, so the bundle alone won't render it — install the ref too.
+    // The workflow is syrup, so the stack alone won't render it — install the ref too.
     writeConfig(
-      `targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\n` +
+      `targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\n` +
         `config:\n  project:\n    name: ${proj}\n` +
         `  labelHook:\n    enrichLabel: 'ai:enrich'\n    implementLabel: 'ai:implement'\n`,
     );
@@ -1151,9 +1151,9 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
   });
 });
 
-// #51: the label-hook workflow is SYRUP — sensitive, opt-in. Enabling the bundle no longer
+// #51: the label-hook workflow is SYRUP — sensitive, opt-in. Enabling the stack no longer
 // renders it; it lands only on an explicit install or when a prior lock tracks its path.
-// These drive the ACTUAL shipped github-workflow bundle.
+// These drive the ACTUAL shipped github-workflow stack.
 describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
   const REL = '.github/workflows/waffle-label-hook.yml';
@@ -1168,9 +1168,9 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
   const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
 
-  test('fresh bundle render omits the syrup workflow but keeps the doctor workflow and label-hook skill', () => {
-    // Acceptance: bundles:[github-workflow], no include/lock entry → workflow NOT written.
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+  test('fresh stack render omits the syrup workflow but keeps the doctor workflow and label-hook skill', () => {
+    // Acceptance: stacks:[github-workflow], no include/lock entry → workflow NOT written.
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
 
@@ -1185,21 +1185,21 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/label-hook/SKILL.md')), 'label-hook skill still renders');
   });
 
-  test('explicit include renders the syrup workflow (bundle enabled + ref installed)', () => {
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+  test('explicit include renders the syrup workflow (stack enabled + ref installed)', () => {
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup file');
   });
 
   test('a repo whose prior lock tracks the workflow keeps rendering it after the include is dropped', () => {
     // First install pins the workflow in the lock…
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, REL)));
 
-    // …then the include is removed but the bundle stays: the tracked path keeps the file
+    // …then the include is removed but the stack stays: the tracked path keeps the file
     // alive (the frozen-image prune must NOT delete it, and the gate must NOT re-exclude it).
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'tracked syrup file survives a later render');
@@ -1209,7 +1209,7 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   });
 
   test('install persists the ref to include: and the follow-up render pours it', () => {
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: []\nconfig:\n  project:\n    name: ${proj}\n`);
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: []\nconfig:\n  project:\n    name: ${proj}\n`);
     const { added } = installRefs({ toolkitRoot: repoRoot, cwd, refs: [REF] });
     assert.ok(added.includes(REF), JSON.stringify(added));
     assert.match(read(cwd, '.waffle/waffle.yaml'), /include:[\s\S]*waffle-label-hook\.yml/);
@@ -1220,15 +1220,15 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   test('setup inventory flags the workflow as syrup (default do-not-install); doctor stays plain', () => {
     const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
     // header explains syrup is opt-in
-    assert.match(inv, /A \*\*syrup\*\* item/);
+    assert.match(inv, /An \*\*opt-in syrup\*\* item/);
     // plain files line lists the read-only doctor workflow but NOT the label hook
     assert.match(inv, /- files: files\/\.github\/workflows\/waffle-doctor\.yml/);
     // a separate syrup line calls out the label-hook workflow with a do-not-install marker
-    assert.match(inv, /- files \(syrup — sensitive, do NOT install by default\): files\/\.github\/workflows\/waffle-label-hook\.yml/);
+    assert.match(inv, /- files \(opt-in syrup — sensitive, do NOT install by default\): files\/\.github\/workflows\/waffle-label-hook\.yml/);
   });
 });
 
-// #39: the github-workflow bundle also ships the DETERMINISTIC release hook — a files/ payload
+// #39: the github-workflow stack also ships the DETERMINISTIC release hook — a files/ payload
 // (waffle-release-hook.yml) plus the `release` skill, wired by a files/-keyed requires: edge.
 // Tag-on-merge is a plain contents:write Actions job: NO Claude dispatch, NO API spend. These
 // render THE ACTUAL shipped artifacts.
@@ -1393,29 +1393,29 @@ describe('github-workflow: waffle-release-hook payload (#39)', () => {
     assert.match(read(cwd, REL), /contains\(github\.event\.pull_request\.labels\.\*\.name, ''\)/);
   });
 
-  test('R6 syrup: fresh bundle render omits the release workflow; explicit include pours it', () => {
-    // bundles:[github-workflow] alone → NOT written (syrup); but the release SKILL still renders
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+  test('R6 syrup: fresh stack render omits the release workflow; explicit include pours it', () => {
+    // stacks:[github-workflow] alone → NOT written (syrup); but the release SKILL still renders
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     assert.equal(fs.existsSync(path.join(cwd, REL)), false, 'syrup release workflow must not render by default');
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/release/SKILL.md')), 'release skill still renders');
 
     // add the explicit include → the file is poured
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup release workflow');
   });
 
   test('R7 setup inventory flags the release workflow as syrup (default do-not-install)', () => {
     const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
-    assert.match(inv, /- files \(syrup — sensitive, do NOT install by default\):[^\n]*waffle-release-hook\.yml/);
+    assert.match(inv, /- files \(opt-in syrup — sensitive, do NOT install by default\):[^\n]*waffle-release-hook\.yml/);
   });
 });
 
-// #46: the github-workflow bundle also ships a SCHEDULED repo-hygiene hook — a files/ payload
+// #46: the github-workflow stack also ships a SCHEDULED repo-hygiene hook — a files/ payload
 // (waffle-hygiene.yml) plus a hygiene skill, wired by a files/-keyed requires: edge. Like the
 // label hook it is syrup (opt-in): its job holds write scopes and every fire spends money daily.
-// These drive THE ACTUAL shipped github-workflow bundle.
+// These drive THE ACTUAL shipped github-workflow stack.
 describe('github-workflow: waffle-hygiene payload (#46)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
   const REL = '.github/workflows/waffle-hygiene.yml';
@@ -1549,9 +1549,9 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     rejects(`    claudeArgs: '--append-system-prompt "x"'`, 'hygiene.claudeArgs');
   });
 
-  test('H4 syrup: bundle-only render omits the file (skill still renders); explicit include pours it', () => {
-    // bundles:[github-workflow] alone → the sensitive workflow is NOT written…
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
+  test('H4 syrup: stack-only render omits the file (skill still renders); explicit include pours it', () => {
+    // stacks:[github-workflow] alone → the sensitive workflow is NOT written…
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     assert.equal(fs.existsSync(path.join(cwd, REL)), false, 'syrup workflow must not render by default');
     // …but the read-only doctor workflow and the (non-syrup) hygiene skill still render.
@@ -1559,7 +1559,7 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/hygiene/SKILL.md')), 'hygiene skill (not syrup) still renders');
 
     // explicit include pours the syrup file
-    writeConfig(`targets: [claude]\nbundles: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'explicit include pours the syrup file');
 
@@ -1567,7 +1567,7 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
     const inv = toolkitInventory(loadToolkit(repoRoot), '0.0.test');
     assert.match(
       inv,
-      /- files \(syrup — sensitive, do NOT install by default\):[^\n]*waffle-hygiene\.yml/,
+      /- files \(opt-in syrup — sensitive, do NOT install by default\):[^\n]*waffle-hygiene\.yml/,
     );
   });
 
@@ -1743,7 +1743,7 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     // npm install, a direct toolkit-CLI call, and a yaml-hunt with "npm" inside a path/echo string)
     const log = RESULT([
       B("grep -rn '^export ' installer/lib/ | sed 's/{.*//' | sort"),
-      B('for f in bundles/*/; do echo "== $f =="; ls "$f"; done'),
+      B('for f in stacks/*/; do echo "== $f =="; ls "$f"; done'),
       B('npm install 2>&1 | tail -3'),
       B('node installer/cli.mjs doctor --allow-missing 2>&1'),
       B('ls node_modules/yaml 2>&1 | head; echo "---npm cache---"; ls ~/.npm/_cacache 2>&1 | head'),
@@ -1770,7 +1770,7 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     const g = renderGuards();
     // mirrors run 28681795718: 13 read-only/redundant denials + 3 dangerouslyDisableSandbox retries
     const log = RESULT([
-      B('for b in bundles/*/; do ls "$b"; done'),
+      B('for b in stacks/*/; do ls "$b"; done'),
       B('node installer/cli.mjs validate 2>&1'),
       B('npm install'),
       B('npm install', { dangerouslyDisableSandbox: true }),
@@ -1792,19 +1792,19 @@ describe('syrup gate — generic (#51)', () => {
   beforeEach(() => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-syrup-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-syrup-g-'));
-    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nbundles: [sb]\n');
-    write(toolkitRoot, 'bundles/sb/bundle.yaml', [
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nstacks: [sb]\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
       'name: sb',
       'description: Syrup fixture.',
       'files:',
       '  - safe.txt',
       '  - danger.yml',
-      'syrup:',
+      'optIn:',
       '  - files/danger.yml',
       '',
     ].join('\n'));
-    write(toolkitRoot, 'bundles/sb/files/safe.txt', 'plain payload\n');
-    write(toolkitRoot, 'bundles/sb/files/danger.yml', 'sensitive: true\n');
+    write(toolkitRoot, 'stacks/sb/files/safe.txt', 'plain payload\n');
+    write(toolkitRoot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
   });
   afterEach(() => {
     fs.rmSync(toolkitRoot, { recursive: true, force: true });
@@ -1817,85 +1817,85 @@ describe('syrup gate — generic (#51)', () => {
     assert.deepEqual(validateToolkit(toolkitRoot), []);
   });
 
-  test('bundle render writes the plain file but gates out the syrup file', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\nconfig: {}\n');
+  test('stack render writes the plain file but gates out the syrup file', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, 'safe.txt')));
     assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false, 'syrup file gated out of the default render');
   });
 
   test('explicit include renders the syrup file', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')));
   });
 
-  test('a prior lock entry keeps the syrup file on a later bundle-only render', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+  test('a prior lock entry keeps the syrup file on a later stack-only render', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
     assert.equal(render().ok, true);
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
     assert.equal(render().ok, true);
-    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'tracked syrup file survives the bundle-only render');
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'tracked syrup file survives the stack-only render');
   });
 
   test('computeSelection gates syrup unless tracked, and honors an explicit include', () => {
     const toolkit = loadToolkit(toolkitRoot);
     const names = (sel) => sel.items.map((i) => `${i.kind}/${i.item.name}`).sort();
-    // bundle only, no tracked files → syrup omitted
-    assert.deepEqual(names(computeSelection(toolkit, { bundles: ['sb'], include: [], values: {} })), ['files/safe.txt']);
+    // stack only, no tracked files → syrup omitted
+    assert.deepEqual(names(computeSelection(toolkit, { stacks: ['sb'], include: [], values: {} })), ['files/safe.txt']);
     // tracked path → syrup included (existing installs keep updating)
     assert.deepEqual(
-      names(computeSelection(toolkit, { bundles: ['sb'], include: [], values: {} }, new Set(['danger.yml']))),
+      names(computeSelection(toolkit, { stacks: ['sb'], include: [], values: {} }, new Set(['danger.yml']))),
       ['files/danger.yml', 'files/safe.txt'],
     );
     // explicit include (no tracking) → syrup included via its closure
     assert.deepEqual(
-      names(computeSelection(toolkit, { bundles: ['sb'], include: ['files/danger.yml'], values: {} })),
+      names(computeSelection(toolkit, { stacks: ['sb'], include: ['files/danger.yml'], values: {} })),
       ['files/danger.yml', 'files/safe.txt'],
     );
   });
 
-  test('validate rejects a syrup entry that names no bundle item', () => {
-    write(toolkitRoot, 'bundles/sb/bundle.yaml', [
+  test('validate rejects an optIn entry that names no stack item', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
       'name: sb',
       'description: Syrup fixture.',
       'files:',
       '  - safe.txt',
-      'syrup:',
+      'optIn:',
       '  - files/nonexistent.yml',
       '',
     ].join('\n'));
     const problems = validateToolkit(toolkitRoot);
     assert.ok(
-      problems.some((p) => /syrup entry "files\/nonexistent\.yml" does not match/.test(p)),
+      problems.some((p) => /optIn entry "files\/nonexistent\.yml" does not match/.test(p)),
       JSON.stringify(problems),
     );
   });
 });
 
 // The `pattern:` mechanism T6 exercises through the real payload is generic — it works for
-// any bundle config key. These prove the toolkit-lint half on a throwaway fixture.
+// any stack config key. These prove the toolkit-lint half on a throwaway fixture.
 describe('config value pattern: render-time validation (#27 hardening)', () => {
   let toolkitRoot;
 
   beforeEach(() => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-pattern-'));
-    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: patterns\nbundles: [pb]\n');
-    write(toolkitRoot, 'bundles/pb/skills/s/SKILL.md', '---\nname: s\ndescription: S.\n---\n\nValue {{x.key}}.\n');
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: patterns\nstacks: [pb]\n');
+    write(toolkitRoot, 'stacks/pb/skills/s/SKILL.md', '---\nname: s\ndescription: S.\n---\n\nValue {{x.key}}.\n');
   });
   afterEach(() => {
     fs.rmSync(toolkitRoot, { recursive: true, force: true });
   });
 
-  const writeBundle = (keyLines) =>
+  const writeStack = (keyLines) =>
     write(
       toolkitRoot,
-      'bundles/pb/bundle.yaml',
-      ['name: pb', 'description: Pattern bundle.', 'skills: [s]', 'config:', '  x.key:', ...keyLines, ''].join('\n'),
+      'stacks/pb/stack.yaml',
+      ['name: pb', 'description: Pattern stack.', 'skills: [s]', 'config:', '  x.key:', ...keyLines, ''].join('\n'),
     );
 
   test('validate flags a pattern that is not a valid regex', () => {
-    writeBundle(['    default: "ok"', "    pattern: '('"]); // unbalanced group → will not compile
+    writeStack(['    default: "ok"', "    pattern: '('"]); // unbalanced group → will not compile
     const problems = validateToolkit(toolkitRoot);
     assert.ok(
       problems.some((p) => /x\.key/.test(p) && /invalid pattern/.test(p)),
@@ -1904,7 +1904,7 @@ describe('config value pattern: render-time validation (#27 hardening)', () => {
   });
 
   test('validate flags a static default that violates its own pattern', () => {
-    writeBundle(['    default: "HAS SPACE"', "    pattern: '[a-z]+'"]);
+    writeStack(['    default: "HAS SPACE"', "    pattern: '[a-z]+'"]);
     const problems = validateToolkit(toolkitRoot);
     assert.ok(
       problems.some((p) => /x\.key/.test(p) && /default .* does not match/.test(p)),
@@ -1913,16 +1913,16 @@ describe('config value pattern: render-time validation (#27 hardening)', () => {
   });
 
   test('a compilable pattern with a matching default is clean and enforces at render', () => {
-    writeBundle(['    default: "abc"', "    pattern: '[a-z]+'"]);
+    writeStack(['    default: "abc"', "    pattern: '[a-z]+'"]);
     assert.deepEqual(validateToolkit(toolkitRoot), []);
 
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-pattern-'));
     try {
       // the matching default renders fine
-      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [pb]\nconfig: {}\n');
+      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [pb]\nconfig: {}\n');
       assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' }).ok, true);
       // a value violating the pattern fails the render, naming the key
-      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [pb]\nconfig:\n  x:\n    key: "NOPE 1"\n');
+      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [pb]\nconfig:\n  x:\n    key: "NOPE 1"\n');
       const r = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
       assert.equal(r.ok, false);
       assert.ok(
@@ -1945,7 +1945,7 @@ describe('doctor --allow-missing (CI drift gate)', () => {
     makeFixtureToolkit(toolkitRoot);
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
-      'bundles: [demo]',
+      'stacks: [demo]',
       'config:',
       '  git:',
       '    botEmail: bot@example.com',
@@ -2029,7 +2029,7 @@ describe('setup guide', () => {
     const guide = setupGuide(repoRoot, '0.0.test');
     assert.match(guide, /# wafflestack setup — agent playbook/);
     assert.match(guide, /# Toolkit inventory — wafflestack v0\.0\.test/);
-    assert.match(guide, /## bundle: github-workflow/);
+    assert.match(guide, /## stack: github-workflow/);
     assert.match(guide, /- `project\.name` \(required\)/);
     // multi-line defaults are shown in a 4-backtick fence (they may contain ``` themselves)
     assert.match(guide, /````\n {2}\| Intent \| Label \|/);
@@ -2041,11 +2041,11 @@ describe('setup guide', () => {
     try {
       makeFixtureToolkit(root);
       fs.appendFileSync(
-        path.join(root, 'bundles/demo/bundle.yaml'),
+        path.join(root, 'stacks/demo/stack.yaml'),
         'setup: |-\n  Create the demo webhook first.\n',
       );
       const inventory = toolkitInventory(loadToolkit(root), '9.9.9');
-      assert.match(inventory, /## bundle: demo/);
+      assert.match(inventory, /## stack: demo/);
       assert.match(inventory, /- skills: skills\/demo-skill/);
       assert.match(inventory, /- agents: agents\/helper/);
       assert.match(inventory, /- env prerequisites: DEMO_FLAG=1/);
@@ -2079,10 +2079,10 @@ describe('setup guide — config-aware update mode (#50)', () => {
     assert.doesNotMatch(guideAt(), /^# Current configuration/m);
   });
 
-  test('configured repo: injects targets, bundles, includes, and current-vs-default values', () => {
+  test('configured repo: injects targets, stacks, includes, and current-vs-default values', () => {
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude, codex]',
-      'bundles: [base]',
+      'stacks: [base]',
       'include: [agents/pm]',
       'config:',
       '  base: {botEmail: bot@example.com}',
@@ -2092,7 +2092,7 @@ describe('setup guide — config-aware update mode (#50)', () => {
     const guide = guideAt();
     assert.match(guide, /# Current configuration — update mode/);
     assert.match(guide, /## Targets\n\nclaude, codex/);
-    assert.match(guide, /## Bundles enabled\n\n- base/);
+    assert.match(guide, /## Stacks enabled\n\n- base/);
     assert.match(guide, /## Individual includes\n\n- agents\/pm/);
     // A set value shows current; the closure-pulled orch keys resolve from config too.
     assert.match(guide, /- `base\.botEmail` \[required\] — set: `bot@example\.com`/);
@@ -2104,7 +2104,7 @@ describe('setup guide — config-aware update mode (#50)', () => {
   });
 
   test('configured repo: an unset required key surfaces as default-marked and a render blocker', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [base]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [base]\nconfig: {}\n');
     const guide = guideAt();
     assert.match(guide, /- `base\.botEmail` \[required\] — unset \(no value, no default\) ⚠/);
     assert.match(
@@ -2116,7 +2116,7 @@ describe('setup guide — config-aware update mode (#50)', () => {
   test('configured repo: an ejected item is listed as project-owned', () => {
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
-      'bundles: [base]',
+      'stacks: [base]',
       'eject: [skills/git]',
       'config:',
       '  base: {botEmail: b@x}',
@@ -2126,7 +2126,7 @@ describe('setup guide — config-aware update mode (#50)', () => {
   });
 
   test('malformed config: surfaces the load error but still prints the inventory', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [nope]\nbundles: [base]\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [nope]\nstacks: [base]\n');
     const guide = guideAt();
     assert.match(guide, /# Current configuration — update mode/);
     assert.match(guide, /could not be read/);
@@ -2138,28 +2138,28 @@ describe('setup guide — config-aware update mode (#50)', () => {
     const sroot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup50s-'));
     const scwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup50s-'));
     try {
-      write(sroot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nbundles: [sb]\n');
+      write(sroot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nstacks: [sb]\n');
       write(sroot, 'schema/SETUP.md', '# fixture playbook\n');
-      write(sroot, 'bundles/sb/bundle.yaml', [
+      write(sroot, 'stacks/sb/stack.yaml', [
         'name: sb',
         'description: Syrup fixture.',
         'files:',
         '  - safe.txt',
         '  - danger.yml',
-        'syrup:',
+        'optIn:',
         '  - files/danger.yml',
         '',
       ].join('\n'));
-      write(sroot, 'bundles/sb/files/safe.txt', 'plain\n');
-      write(sroot, 'bundles/sb/files/danger.yml', 'x: 1\n');
+      write(sroot, 'stacks/sb/files/safe.txt', 'plain\n');
+      write(sroot, 'stacks/sb/files/danger.yml', 'x: 1\n');
 
-      // Bundle-only selection → the syrup file is gated out, shown as opt-in.
-      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\nconfig: {}\n');
+      // Stack-only selection → the syrup file is gated out, shown as opt-in.
+      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
       let guide = setupGuide(sroot, '0.0.test', scwd);
       assert.match(guide, /- `files\/danger\.yml` \(sb\) — not installed — opt-in only/);
 
       // Explicit include → the syrup file is part of the selection, shown as installed.
-      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+      write(scwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
       guide = setupGuide(sroot, '0.0.test', scwd);
       assert.match(guide, /- `files\/danger\.yml` \(sb\) — installed — renders on this selection/);
     } finally {
@@ -2178,14 +2178,14 @@ describe('refs: resolution and dependency closure', () => {
     assert.deepEqual(validateToolkit(root), []);
   });
 
-  test('resolves a bundle name', () => {
-    assert.deepEqual(resolveRef(loadToolkit(root), 'orch'), { type: 'bundle', name: 'orch' });
+  test('resolves a stack name', () => {
+    assert.deepEqual(resolveRef(loadToolkit(root), 'orch'), { type: 'stack', name: 'orch' });
   });
 
-  test('resolves an unambiguous item to its bundle, canonical unqualified', () => {
+  test('resolves an unambiguous item to its stack, canonical unqualified', () => {
     const r = resolveRef(loadToolkit(root), 'skills/git');
     assert.equal(r.type, 'item');
-    assert.equal(r.bundle, 'base');
+    assert.equal(r.stack, 'base');
     assert.equal(r.canonicalRef, 'skills/git');
   });
 
@@ -2195,22 +2195,22 @@ describe('refs: resolution and dependency closure', () => {
     assert.equal(resolveRef(toolkit, 'agent/pm').canonicalRef, 'agents/pm');
   });
 
-  test('ambiguous item errors, listing bundle-qualified candidates', () => {
+  test('ambiguous item errors, listing stack-qualified candidates', () => {
     assert.throws(
       () => resolveRef(loadToolkit(root), 'skills/dupe'),
       /ambiguous.*alt\/skills\/dupe.*alt2\/skills\/dupe/s,
     );
   });
 
-  test('bundle-qualified form disambiguates; canonical stays qualified', () => {
+  test('stack-qualified form disambiguates; canonical stays qualified', () => {
     const r = resolveRef(loadToolkit(root), 'alt2/skills/dupe');
-    assert.equal(r.bundle, 'alt2');
+    assert.equal(r.stack, 'alt2');
     assert.equal(r.canonicalRef, 'alt2/skills/dupe');
   });
 
-  test('unknown bundle / item error and list what exists', () => {
+  test('unknown stack / item error and list what exists', () => {
     const toolkit = loadToolkit(root);
-    assert.throws(() => resolveRef(toolkit, 'nope'), /no such bundle/);
+    assert.throws(() => resolveRef(toolkit, 'nope'), /no such stack/);
     assert.throws(() => resolveRef(toolkit, 'skills/nope'), /no skill "nope".*Available/s);
   });
 
@@ -2222,7 +2222,7 @@ describe('refs: resolution and dependency closure', () => {
     ]);
   });
 
-  test('skill closure follows requires across bundles', () => {
+  test('skill closure follows requires across stacks', () => {
     const toolkit = loadToolkit(root);
     assert.deepEqual(closureDeps(toolkit, resolveRef(toolkit, 'skills/deleg')), ['skills/gpm']);
   });
@@ -2245,8 +2245,8 @@ describe('render selection: include, closure, scoping, eject', () => {
   const render = () => renderProject({ toolkitRoot: root, cwd, toolkitVersion: '0.0.test' });
   const has = (rel) => fs.existsSync(path.join(cwd, rel));
 
-  test('include renders an item and its full closure from non-enabled bundles', () => {
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
+  test('include renders an item and its full closure from non-enabled stacks', () => {
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.ok(has('.claude/agents/pm.md'));
@@ -2258,7 +2258,7 @@ describe('render selection: include, closure, scoping, eject', () => {
   });
 
   test('required config is scoped: installing skills/git demands nothing', () => {
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/git]', 'config: {}']);
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/git]', 'config: {}']);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.ok(has('.claude/skills/git/SKILL.md'));
@@ -2267,39 +2267,39 @@ describe('render selection: include, closure, scoping, eject', () => {
 
   test('include does not demand a non-selected sibling item\'s required key', () => {
     // pm pulls base git+gpm (no config) but not base issue → base.botEmail not required.
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
   });
 
   test('a scoped required key that IS used still fails helpfully', () => {
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/issue]', 'config: {}']);
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/issue]', 'config: {}']);
     const result = render();
     assert.equal(result.ok, false);
     assert.match(result.errors[0], /config\.base\.botEmail/);
   });
 
-  test('bundle-qualified include resolves the ambiguous item', () => {
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [alt2/skills/dupe]', 'config: {}']);
+  test('stack-qualified include resolves the ambiguous item', () => {
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [alt2/skills/dupe]', 'config: {}']);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, '.claude/skills/dupe/SKILL.md'), /variant alt2/);
   });
 
   test('an unqualified ambiguous include entry is a render error', () => {
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/dupe]', 'config: {}']);
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/dupe]', 'config: {}']);
     const result = render();
     assert.equal(result.ok, false);
     assert.ok(result.errors.some((e) => /ambiguous/.test(e)), JSON.stringify(result.errors));
   });
 
   test('eject wins over include (item filtered from the selection)', () => {
-    writeConfig(['targets: [claude]', 'bundles: []', 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
+    writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.ok(!has('.claude/skills/git/SKILL.md'));
     assert.deepEqual(computeSelection(loadToolkit(root), {
-      targets: ['claude'], bundles: [], include: ['skills/git'], eject: ['skills/git'], values: {},
+      targets: ['claude'], stacks: [], include: ['skills/git'], eject: ['skills/git'], values: {},
     }).items, []);
   });
 });
@@ -2314,7 +2314,7 @@ describe('install: persistence and eject include-cleanup', () => {
     write(cwd, '.waffle/waffle.yaml', [
       '# fixture config comment',
       'targets: [claude]',
-      'bundles: [base]',
+      'stacks: [base]',
       'config: {}',
       '',
     ].join('\n'));
@@ -2326,13 +2326,13 @@ describe('install: persistence and eject include-cleanup', () => {
 
   const install = (refs, log) => installRefs({ toolkitRoot: root, cwd, refs, log });
 
-  test('bundle refs append to bundles:, item refs to include:, comments preserved', () => {
+  test('stack refs append to stacks:, item refs to include:, comments preserved', () => {
     install(['orch', 'alt/skills/dupe']);
     const cfg = read(cwd, '.waffle/waffle.yaml');
     assert.match(cfg, /# fixture config comment/);
     assert.match(cfg, /- base/);
     assert.match(cfg, /- orch/);
-    // ambiguous item persisted in bundle-qualified canonical form
+    // ambiguous item persisted in stack-qualified canonical form
     assert.match(cfg, /include:/);
     assert.match(cfg, /- alt\/skills\/dupe/);
   });
@@ -2391,35 +2391,35 @@ describe('validate: agent skills and requires refs', () => {
 
   test('flags an unresolvable requires dependency', () => {
     withToolkit({
-      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [b]\n',
-      'bundles/b/bundle.yaml': ['name: b', 'description: B.', 'skills: [x]', 'requires:', '  skills/x:', '    - skills/missing', ''].join('\n'),
-      'bundles/b/skills/x/SKILL.md': '---\nname: x\ndescription: X.\n---\n\nbody\n',
+      'toolkit.yaml': 'name: f\ndescription: d\nstacks: [b]\n',
+      'stacks/b/stack.yaml': ['name: b', 'description: B.', 'skills: [x]', 'requires:', '  skills/x:', '    - skills/missing', ''].join('\n'),
+      'stacks/b/skills/x/SKILL.md': '---\nname: x\ndescription: X.\n---\n\nbody\n',
     }, (root) => {
       const problems = validateToolkit(root);
       assert.ok(problems.some((p) => /requires\[skills\/x\].*cannot resolve.*skills\/missing/.test(p)), JSON.stringify(problems));
     });
   });
 
-  test('flags a requires key that is not an item in the bundle', () => {
+  test('flags a requires key that is not an item in the stack', () => {
     withToolkit({
-      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [b]\n',
-      'bundles/b/bundle.yaml': ['name: b', 'description: B.', 'skills: [x]', 'requires:', '  skills/ghost:', '    - skills/x', ''].join('\n'),
-      'bundles/b/skills/x/SKILL.md': '---\nname: x\ndescription: X.\n---\n\nbody\n',
+      'toolkit.yaml': 'name: f\ndescription: d\nstacks: [b]\n',
+      'stacks/b/stack.yaml': ['name: b', 'description: B.', 'skills: [x]', 'requires:', '  skills/ghost:', '    - skills/x', ''].join('\n'),
+      'stacks/b/skills/x/SKILL.md': '---\nname: x\ndescription: X.\n---\n\nbody\n',
     }, (root) => {
       const problems = validateToolkit(root);
       assert.ok(problems.some((p) => /requires key "skills\/ghost" does not match/.test(p)), JSON.stringify(problems));
     });
   });
 
-  test('flags an ambiguous agent skill (name in multiple bundles)', () => {
+  test('flags an ambiguous agent skill (name in multiple stacks)', () => {
     withToolkit({
-      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [a1, a2, agt]\n',
-      'bundles/a1/bundle.yaml': 'name: a1\ndescription: A1.\nskills: [dupe]\n',
-      'bundles/a1/skills/dupe/SKILL.md': '---\nname: dupe\ndescription: D1.\n---\n\nx\n',
-      'bundles/a2/bundle.yaml': 'name: a2\ndescription: A2.\nskills: [dupe]\n',
-      'bundles/a2/skills/dupe/SKILL.md': '---\nname: dupe\ndescription: D2.\n---\n\nx\n',
-      'bundles/agt/bundle.yaml': 'name: agt\ndescription: Agt.\nagents: [u]\n',
-      'bundles/agt/agents/u.md': '---\nname: u\ndescription: U.\nskills:\n  - dupe\n---\n\nbody\n',
+      'toolkit.yaml': 'name: f\ndescription: d\nstacks: [a1, a2, agt]\n',
+      'stacks/a1/stack.yaml': 'name: a1\ndescription: A1.\nskills: [dupe]\n',
+      'stacks/a1/skills/dupe/SKILL.md': '---\nname: dupe\ndescription: D1.\n---\n\nx\n',
+      'stacks/a2/stack.yaml': 'name: a2\ndescription: A2.\nskills: [dupe]\n',
+      'stacks/a2/skills/dupe/SKILL.md': '---\nname: dupe\ndescription: D2.\n---\n\nx\n',
+      'stacks/agt/stack.yaml': 'name: agt\ndescription: Agt.\nagents: [u]\n',
+      'stacks/agt/agents/u.md': '---\nname: u\ndescription: U.\nskills:\n  - dupe\n---\n\nbody\n',
     }, (root) => {
       const problems = validateToolkit(root);
       assert.ok(problems.some((p) => /agent u skill "dupe" is ambiguous/.test(p)), JSON.stringify(problems));
@@ -2428,9 +2428,9 @@ describe('validate: agent skills and requires refs', () => {
 
   test('allows an agent skill that is absent from the toolkit (external pointer)', () => {
     withToolkit({
-      'toolkit.yaml': 'name: f\ndescription: d\nbundles: [b]\n',
-      'bundles/b/bundle.yaml': 'name: b\ndescription: B.\nagents: [u]\n',
-      'bundles/b/agents/u.md': '---\nname: u\ndescription: U.\nskills:\n  - external-only\n---\n\nbody\n',
+      'toolkit.yaml': 'name: f\ndescription: d\nstacks: [b]\n',
+      'stacks/b/stack.yaml': 'name: b\ndescription: B.\nagents: [u]\n',
+      'stacks/b/agents/u.md': '---\nname: u\ndescription: U.\nskills:\n  - external-only\n---\n\nbody\n',
     }, (root) => {
       assert.ok(!validateToolkit(root).some((p) => /external-only/.test(p)), 'external agent skill must not be flagged');
     });
@@ -2483,6 +2483,98 @@ describe('migrations: applicability, ordering, idempotency', () => {
   });
 });
 
+describe('rebrand: bundles → stacks consumer key (#59)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rebrand-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  test('loadProjectConfig reads a legacy bundles: key via fallback and notes the deprecation', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [github-workflow]\nconfig: {}\n');
+    const notes = [];
+    const cfg = loadProjectConfig(cwd, notes);
+    assert.deepEqual(cfg.stacks, ['github-workflow']);
+    assert.ok(
+      notes.some((n) => /legacy `bundles:` key.*deprecated.*wafflestack upgrade/.test(n)),
+      JSON.stringify(notes),
+    );
+  });
+
+  test('both stacks: and legacy bundles: present → stacks: wins, note says bundles ignored', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [docs-system]\nbundles: [github-workflow]\nconfig: {}\n');
+    const notes = [];
+    const cfg = loadProjectConfig(cwd, notes);
+    assert.deepEqual(cfg.stacks, ['docs-system']);
+    assert.ok(
+      notes.some((n) => /both `stacks:` and the legacy `bundles:` key.*ignored/.test(n)),
+      JSON.stringify(notes),
+    );
+  });
+
+  test('installRefs renames a legacy bundles: key in place, preserving comments on the untouched value', () => {
+    // Install an include item (not a stack), so the `stacks:` value node is renamed in place
+    // and left intact — proving the key rename preserves the header AND the value's comments.
+    write(cwd, '.waffle/waffle.yaml', '# my project config\ntargets: [claude]\nbundles:\n  - docs-system # keep this comment\nconfig: {}\n');
+    installRefs({ toolkitRoot: repoRoot, cwd, refs: ['skills/issue'] });
+    const out = fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8');
+    assert.match(out, /^stacks:/m, 'key renamed to stacks:');
+    assert.doesNotMatch(out, /^bundles:/m, 'no legacy bundles: key left behind');
+    assert.match(out, /# my project config/, 'header comment preserved');
+    assert.match(out, /# keep this comment/, 'value-item comment preserved (value node untouched)');
+    assert.match(out, /- docs-system/, 'existing entry preserved');
+    assert.match(out, /include:/, 'include key added');
+    assert.match(out, /- skills\/issue/, 'new include item appended');
+  });
+
+  test('0.10.0 migration renames bundles: → stacks: in config + overlay, comment-preserving and idempotent', () => {
+    write(cwd, '.waffle/waffle.yaml', '# header\ntargets: [claude]\nbundles:\n  # keep me\n  - github-workflow\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.local.yaml', 'bundles: [obsidian-dev] # overlay note\n');
+    const step = MIGRATIONS.find((m) => m.version === '0.10.0');
+    assert.ok(step, '0.10.0 migration is registered');
+    step.run(cwd);
+    const cfg = fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8');
+    assert.match(cfg, /^stacks:/m);
+    assert.doesNotMatch(cfg, /^bundles:/m);
+    assert.match(cfg, /# header/, 'header comment preserved');
+    assert.match(cfg, /# keep me/, 'in-list comment preserved');
+    const overlay = fs.readFileSync(path.join(cwd, '.waffle/waffle.local.yaml'), 'utf8');
+    assert.match(overlay, /stacks:/);
+    assert.doesNotMatch(overlay, /bundles:/);
+    assert.match(overlay, /# overlay note/, 'overlay comment preserved');
+    // Idempotent: a second run writes nothing new and leaves the files byte-identical.
+    const cfgBefore = fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8');
+    const overlayBefore = fs.readFileSync(path.join(cwd, '.waffle/waffle.local.yaml'), 'utf8');
+    step.run(cwd);
+    assert.equal(fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8'), cfgBefore);
+    assert.equal(fs.readFileSync(path.join(cwd, '.waffle/waffle.local.yaml'), 'utf8'), overlayBefore);
+  });
+
+  test('0.10.0 is in the real migration window for 0.9.0 → 0.10.0 but not 0.10.0 → 0.10.0', () => {
+    assert.ok(
+      applicableMigrations('0.9.0', '0.10.0').map((s) => s.version).includes('0.10.0'),
+      'migration applies when upgrading into 0.10.0',
+    );
+    assert.deepEqual(applicableMigrations('0.10.0', '0.10.0').map((s) => s.version), []);
+  });
+
+  test('loadToolkit throws on a stale manifest syrup: key (renamed to optIn: in 0.10.0)', () => {
+    const troot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-stale-syrup-'));
+    write(troot, 'toolkit.yaml', 'name: fixture\ndescription: x\nstacks: [sb]\n');
+    write(troot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Stale key fixture.',
+      'files:',
+      '  - danger.yml',
+      'syrup:',
+      '  - files/danger.yml',
+      '',
+    ].join('\n'));
+    write(troot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
+    assert.throws(() => loadToolkit(troot), /`syrup:` was renamed to `optIn:` in 0\.10\.0/);
+    fs.rmSync(troot, { recursive: true, force: true });
+  });
+});
+
 describe('changelogBetween', () => {
   const text = [
     '# Changelog', '',
@@ -2516,7 +2608,7 @@ describe('upgrade: end-to-end across a synthetic breaking change', () => {
     makeFixtureToolkit(toolkitRoot);
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
-      'bundles: [demo]',
+      'stacks: [demo]',
       'config:',
       '  git:',
       '    botEmail: bot@example.com',
@@ -2613,8 +2705,8 @@ describe('upgrade: end-to-end across a synthetic breaking change', () => {
   test('CLI: upgrade on a current, freshly-rendered repo exits 0; rejects positional refs', () => {
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
     // Empty selection renders against any toolkit (incl. the real one the CLI resolves),
-    // so this exercises the real dispatch + pkg.version without needing bundle config.
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
+    // so this exercises the real dispatch + pkg.version without needing stack config.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     const render = spawnSync(process.execPath, [cli, 'render', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(render.status, 0, render.stdout + render.stderr);
 
@@ -2643,22 +2735,22 @@ describe('legacy .wafflestack.* → .waffle.* rename (#17)', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  const LEGACY_CFG = 'targets: [claude]\nbundles: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n';
+  const LEGACY_CFG = 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n';
 
   test('loadProjectConfig falls back to a legacy .wafflestack.yaml (+ .local) with deprecation notes', () => {
-    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nbundles: [demo]\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.wafflestack.yaml'), 'targets: [claude]\nstacks: [demo]\nconfig: {}\n');
     fs.writeFileSync(path.join(cwd, '.wafflestack.local.yaml'), 'config:\n  git:\n    botEmail: local@example.com\n');
     const notes = [];
     const cfg = loadProjectConfig(cwd, notes);
     assert.deepEqual(cfg.targets, ['claude']);
-    assert.deepEqual(cfg.bundles, ['demo']);
+    assert.deepEqual(cfg.stacks, ['demo']);
     assert.equal(cfg.values.git.botEmail, 'local@example.com', 'legacy local overlay still merges and wins');
     assert.ok(notes.some((n) => /legacy \.wafflestack\.yaml is deprecated/.test(n)), JSON.stringify(notes));
     assert.ok(notes.some((n) => /legacy \.wafflestack\.local\.yaml is deprecated/.test(n)), JSON.stringify(notes));
   });
 
   test('a fresh .waffle/waffle.yaml is read with no deprecation note', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: [demo]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\nconfig: {}\n');
     const notes = [];
     loadProjectConfig(cwd, notes);
     assert.deepEqual(notes, []);
@@ -2783,14 +2875,14 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  const ROOT_CFG = 'targets: [claude]\nbundles: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n';
+  const ROOT_CFG = 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n';
 
   test('loadProjectConfig falls back to a root .waffle.yaml (+ .local) with notes naming the path and fix', () => {
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nbundles: [demo]\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [claude]\nstacks: [demo]\nconfig: {}\n');
     fs.writeFileSync(path.join(cwd, '.waffle.local.yaml'), 'config:\n  git:\n    botEmail: local@example.com\n');
     const notes = [];
     const cfg = loadProjectConfig(cwd, notes);
-    assert.deepEqual(cfg.bundles, ['demo']);
+    assert.deepEqual(cfg.stacks, ['demo']);
     assert.equal(cfg.values.git.botEmail, 'local@example.com', 'root local overlay still merges and wins');
     assert.ok(
       notes.some((n) => /legacy \.waffle\.yaml is deprecated.*move it to \.waffle\/waffle\.yaml/.test(n)),
@@ -2803,8 +2895,8 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
   });
 
   test('the current name wins when both generations exist — no note, no accidental legacy read', () => {
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\nconfig: {}\n');
-    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [codex]\nbundles: [demo]\nconfig: {}\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.waffle.yaml'), 'targets: [codex]\nstacks: [demo]\nconfig: {}\n');
     const notes = [];
     const cfg = loadProjectConfig(cwd, notes);
     assert.deepEqual(cfg.targets, ['claude'], 'the .waffle/ file is authoritative');
@@ -2922,7 +3014,7 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
   test('init writes .waffle/waffle.yaml (creating the directory); refuses over a root .waffle.yaml', () => {
     const file = init({ cwd });
     assert.equal(file, path.join(cwd, '.waffle/waffle.yaml'));
-    assert.match(read(cwd, '.waffle/waffle.yaml'), /bundles: \[\]/);
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /stacks: \[\]/);
 
     const other = fs.mkdtempSync(path.join(os.tmpdir(), 'project-r43b-'));
     try {
@@ -2950,10 +3042,10 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
   // granted skills, one without), plus a {{project.name}} placeholder to prove the docs
   // substitute descriptions with the same resolver render uses.
   function makeDocsToolkit(root) {
-    write(root, 'toolkit.yaml', 'name: docsfix\ndescription: docs fixture\nbundles: [crew]\n');
-    write(root, 'bundles/crew/bundle.yaml', [
+    write(root, 'toolkit.yaml', 'name: docsfix\ndescription: docs fixture\nstacks: [crew]\n');
+    write(root, 'stacks/crew/stack.yaml', [
       'name: crew',
-      'description: Crew bundle.',
+      'description: Crew stack.',
       'agents: [captain, scout]',
       'skills: [ship, recon, probe, backstage]',
       'config:',
@@ -2962,37 +3054,37 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
       '    description: project name',
       '',
     ].join('\n'));
-    write(root, 'bundles/crew/agents/captain.md', [
+    write(root, 'stacks/crew/agents/captain.md', [
       '---', 'name: captain',
       'description: Leads the {{project.name}} crew. Use proactively for big calls.',
       'skills:', '  - ship', '  - recon', '---', '', 'Captain body.', '',
     ].join('\n'));
-    write(root, 'bundles/crew/agents/scout.md', [
+    write(root, 'stacks/crew/agents/scout.md', [
       '---', 'name: scout', 'description: Scouts ahead and reports.', '---', '', 'Scout body.', '',
     ].join('\n'));
     // ship: user-invocable with an argument-hint.
-    write(root, 'bundles/crew/skills/ship/SKILL.md', [
+    write(root, 'stacks/crew/skills/ship/SKILL.md', [
       '---', 'name: ship', 'description: Ship a release.',
       'user-invocable: true', 'argument-hint: "<target> [--fast]"', '---', '', '# Ship', '',
     ].join('\n'));
     // recon: user-invocable, description carries a placeholder.
-    write(root, 'bundles/crew/skills/recon/SKILL.md', [
+    write(root, 'stacks/crew/skills/recon/SKILL.md', [
       '---', 'name: recon',
       'description: Recon for {{project.name}} before a run. Use before shipping.',
       'user-invocable: true', '---', '', '# Recon', '',
     ].join('\n'));
     // probe: only disable-model-invocation — still a slash command (default invocable).
-    write(root, 'bundles/crew/skills/probe/SKILL.md', [
+    write(root, 'stacks/crew/skills/probe/SKILL.md', [
       '---', 'name: probe', 'description: Probe the system.',
       'disable-model-invocation: true', '---', '', '# Probe', '',
     ].join('\n'));
     // backstage: explicitly opted out — must NOT appear on the cheat sheet.
-    write(root, 'bundles/crew/skills/backstage/SKILL.md', [
+    write(root, 'stacks/crew/skills/backstage/SKILL.md', [
       '---', 'name: backstage', 'description: Internal helper.', 'user-invocable: false', '---', '', '# Backstage', '',
     ].join('\n'));
   }
 
-  const CFG = 'targets: [claude]\nbundles: [crew]\nconfig:\n  project:\n    name: Acme\n';
+  const CFG = 'targets: [claude]\nstacks: [crew]\nconfig:\n  project:\n    name: Acme\n';
   const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
 
   beforeEach(() => {
@@ -3071,7 +3163,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.equal(render().ok, true);
     assert.ok(fs.existsSync(path.join(cwd, '.waffle/TEAM.md')));
     // Re-select just one skill (no agents) → TEAM.md/team.svg should be pruned; cheat sheet stays.
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\ninclude: [skills/ship]\nconfig:\n  project:\n    name: Acme\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\ninclude: [skills/ship]\nconfig:\n  project:\n    name: Acme\n');
     const result = render();
     assert.equal(result.ok, true);
     assert.ok(result.removed.includes('.waffle/TEAM.md'), JSON.stringify(result.removed));
@@ -3086,7 +3178,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
 
   test('no cheat sheet is produced when the selection has no user-invocable skills', () => {
     // Only the opted-out skill selected → no commands → no CHEATSHEET pair, but agents may still exist.
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nbundles: []\ninclude: [skills/backstage]\nconfig:\n  project:\n    name: Acme\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\ninclude: [skills/backstage]\nconfig:\n  project:\n    name: Acme\n');
     assert.equal(render().ok, true);
     assert.ok(!fs.existsSync(path.join(cwd, '.waffle/CHEATSHEET.md')));
     assert.ok(!fs.existsSync(path.join(cwd, '.waffle/cheatsheet.svg')));
@@ -3098,10 +3190,10 @@ function read(cwd, rel) {
 }
 
 function makeFixtureToolkit(root) {
-  write(root, 'toolkit.yaml', 'name: fixture\ndescription: test fixture\nbundles: [demo]\n');
-  write(root, 'bundles/demo/bundle.yaml', [
+  write(root, 'toolkit.yaml', 'name: fixture\ndescription: test fixture\nstacks: [demo]\n');
+  write(root, 'stacks/demo/stack.yaml', [
     'name: demo',
-    'description: Demo bundle.',
+    'description: Demo stack.',
     'agents: [helper]',
     'skills: [demo-skill]',
     'config:',
@@ -3112,7 +3204,7 @@ function makeFixtureToolkit(root) {
     '  DEMO_FLAG: "1"',
     '',
   ].join('\n'));
-  write(root, 'bundles/demo/agents/helper.md', [
+  write(root, 'stacks/demo/agents/helper.md', [
     '---',
     'name: helper',
     'description: A helper.',
@@ -3125,7 +3217,7 @@ function makeFixtureToolkit(root) {
     'You are a helper. Commit as {{git.botEmail}}.',
     '',
   ].join('\n'));
-  write(root, 'bundles/demo/skills/demo-skill/SKILL.md', [
+  write(root, 'stacks/demo/skills/demo-skill/SKILL.md', [
     '---',
     'name: demo-skill',
     'description: A demo skill.',
@@ -3136,19 +3228,19 @@ function makeFixtureToolkit(root) {
     'Email {{git.botEmail}}; bash ${HOME}/x stays.',
     '',
   ].join('\n'));
-  write(root, 'bundles/demo/skills/demo-skill/ref/data.json', '{"n": 1}\n');
+  write(root, 'stacks/demo/skills/demo-skill/ref/data.json', '{"n": 1}\n');
 }
 
 /**
- * A multi-bundle fixture exercising per-item install:
+ * A multi-stack fixture exercising per-item install:
  *   base — git, gpm (no config); issue uses base.botEmail (required)
  *   orch — pm agent (skills: deleg, git, ghost[external]); deleg requires gpm; env ORCH_FLAG
- *   alt / alt2 — both define skill `dupe` (ambiguous unless bundle-qualified)
+ *   alt / alt2 — both define skill `dupe` (ambiguous unless stack-qualified)
  */
 function makeRefFixture(root) {
-  write(root, 'toolkit.yaml', 'name: reffix\ndescription: ref fixture\nbundles: [base, orch, alt, alt2]\n');
+  write(root, 'toolkit.yaml', 'name: reffix\ndescription: ref fixture\nstacks: [base, orch, alt, alt2]\n');
 
-  write(root, 'bundles/base/bundle.yaml', [
+  write(root, 'stacks/base/stack.yaml', [
     'name: base',
     'description: Base skills.',
     'skills: [git, gpm, issue]',
@@ -3158,11 +3250,11 @@ function makeRefFixture(root) {
     '    description: bot email',
     '',
   ].join('\n'));
-  write(root, 'bundles/base/skills/git/SKILL.md', '---\nname: git\ndescription: Git skill.\n---\n\nBranch and commit.\n');
-  write(root, 'bundles/base/skills/gpm/SKILL.md', '---\nname: gpm\ndescription: Project mgmt.\n---\n\nGraphQL catalog.\n');
-  write(root, 'bundles/base/skills/issue/SKILL.md', '---\nname: issue\ndescription: Issue skill.\n---\n\nFile as {{base.botEmail}}.\n');
+  write(root, 'stacks/base/skills/git/SKILL.md', '---\nname: git\ndescription: Git skill.\n---\n\nBranch and commit.\n');
+  write(root, 'stacks/base/skills/gpm/SKILL.md', '---\nname: gpm\ndescription: Project mgmt.\n---\n\nGraphQL catalog.\n');
+  write(root, 'stacks/base/skills/issue/SKILL.md', '---\nname: issue\ndescription: Issue skill.\n---\n\nFile as {{base.botEmail}}.\n');
 
-  write(root, 'bundles/orch/bundle.yaml', [
+  write(root, 'stacks/orch/stack.yaml', [
     'name: orch',
     'description: Orchestration.',
     'agents: [pm]',
@@ -3181,7 +3273,7 @@ function makeRefFixture(root) {
     '  ORCH_FLAG: "1"',
     '',
   ].join('\n'));
-  write(root, 'bundles/orch/agents/pm.md', [
+  write(root, 'stacks/orch/agents/pm.md', [
     '---',
     'name: pm',
     'description: PM agent.',
@@ -3194,11 +3286,11 @@ function makeRefFixture(root) {
     'You are PM for {{orch.who}}.',
     '',
   ].join('\n'));
-  write(root, 'bundles/orch/skills/deleg/SKILL.md', '---\nname: deleg\ndescription: Delegate.\n---\n\nRoster: {{orch.roster}}. See the gpm skill.\n');
+  write(root, 'stacks/orch/skills/deleg/SKILL.md', '---\nname: deleg\ndescription: Delegate.\n---\n\nRoster: {{orch.roster}}. See the gpm skill.\n');
 
   for (const b of ['alt', 'alt2']) {
-    write(root, `bundles/${b}/bundle.yaml`, `name: ${b}\ndescription: Bundle ${b}.\nskills: [dupe]\n`);
-    write(root, `bundles/${b}/skills/dupe/SKILL.md`, `---\nname: dupe\ndescription: Dupe from ${b}.\n---\n\nvariant ${b}\n`);
+    write(root, `stacks/${b}/stack.yaml`, `name: ${b}\ndescription: Stack ${b}.\nskills: [dupe]\n`);
+    write(root, `stacks/${b}/skills/dupe/SKILL.md`, `---\nname: dupe\ndescription: Dupe from ${b}.\n---\n\nvariant ${b}\n`);
   }
 }
 
