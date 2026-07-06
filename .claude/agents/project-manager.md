@@ -25,7 +25,7 @@ You are the project manager for the wafflestack agent/skill toolkit. Your role i
 
 | Agent | Responsibility |
 |-------|----------------|
-| general-purpose | Installer/CLI work (`installer/**`: JS + tests) and bundle/skill authoring (`bundles/**`, `schema/**`: markdown + YAML) |
+| general-purpose | Installer/CLI work (`installer/**`: JS + tests) and stack/skill authoring (`stacks/**`, `schema/**`: markdown + YAML) |
 | docs-agent | Machine docs (root `AGENTS.md` registry) |
 | docs-human | Human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) |
 

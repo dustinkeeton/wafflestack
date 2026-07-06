@@ -14,11 +14,11 @@ Spawn the `general-purpose` agent with this prompt:
 
 > Audit the current codebase for any changes since the docs were last updated. Read the existing machine docs (a single root `AGENTS.md` registry) and compare against the actual project. Produce a concise **change report** covering:
 >
-> - New or removed bundles, skills, agents, config keys, or CLI commands
+> - New or removed stacks, skills, agents, config keys, or CLI commands
 - Changed installer exports or template semantics (`installer/lib/*.mjs`)
-- `bundle.yaml` config declarations out of sync with placeholder usage
+- `stack.yaml` config declarations out of sync with placeholder usage
 - Rendered-output drift: `node installer/cli.mjs doctor --allow-missing` clean
-  (committed render + lock in sync — re-render and commit after bundle edits);
+  (committed render + lock in sync — re-render and commit after stack edits);
   `.gitignore` still covers the deliberately-untracked renders (label-hook
   workflow, worktrees, `.waffle/` overview docs)
 >

@@ -36,7 +36,7 @@ What this story explicitly does NOT include. Prevents scope creep.
 
 - **Cut, don't pad.** A one-screen story beats a five-screen one. Every section should fight for its line count.
 - **Write for the dev, not the boardroom.** No marketing fluff. The general-purpose agent will read this next.
-- **Bundles are the product.** Every proposal names the bundle(s) it touches and keeps one grouping philosophy per bundle.
+- **Stacks are the product.** Every proposal names the stack(s) it touches and keeps one grouping philosophy per stack.
 - **Consumer ergonomics beat toolkit convenience.** Config keys, defaults, and setup notes are user-facing surface — weigh every new required key.
 
 ## Skills

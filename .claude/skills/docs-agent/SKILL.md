@@ -22,7 +22,7 @@ Produce documentation that LLMs and agents can parse efficiently. The machine do
 Single machine-doc registry for the toolkit. Contains:
 
 - Project purpose (1-2 sentences)
-- Bundle registry: table of bundles with path, description, skills, agents
+- Stack registry: table of stacks with path, description, skills, agents
 - Installer module registry: table of `installer/lib/*.mjs` files with exported
   functions (full signatures) and purpose
 - CLI command registry: table of `wafflestack <cmd>` commands with behavior
@@ -38,7 +38,7 @@ Single machine-doc registry for the toolkit. Contains:
 3. Use `file.mjs:42` format for source references (line number after the colon)
 4. No markdown emphasis (bold/italic) in structured sections
 5. Frontmatter with `last-updated` timestamp (YYYY-MM-DD)
-6. Keep the file under 300 lines — the bundle registry summarizes; per-bundle
-   detail stays in each `bundle.yaml`
+6. Keep the file under 300 lines — the stack registry summarizes; per-stack
+   detail stays in each `stack.yaml`
 
 
