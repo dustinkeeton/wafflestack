@@ -3,9 +3,9 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.9.0 tagged (pre-1.0 — the file contract can still change between minor
-  releases). A sizeable `[Unreleased]` changelog is pending its tag: the 0.10.0
-  bundles→stacks rebrand (breaking, migration ships) plus everything below.
+- **Version**: v0.10.0 tagged (pre-1.0 — the file contract can still change between minor
+  releases). Headlined by the bundles→stacks rebrand (breaking — `wafflestack upgrade`
+  runs the migration) plus the harness/CI fixes and delegate work below.
 - **Last updated**: 2026-07-07
 - **Health**: 🟢 tests 241/241 (43 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
@@ -64,8 +64,6 @@ tested. All 8 commands work:
 ## Known issues & things to watch
 
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
-- **No tag since v0.9.0** — the rebrand and the delegate/eval work above sit in
-  `[Unreleased]`; consumers on the default (untagged) ref already get them.
 - **The self-render is committed.** After editing anything under `stacks/**`,
   `schema/**`, or `installer/**`, re-run `node installer/cli.mjs render` and commit the
   updated files + lock — the `waffle-doctor` required check fails PRs on drift.
