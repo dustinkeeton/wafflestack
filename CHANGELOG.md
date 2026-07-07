@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-07
+
 ### Consumer impact
 - **Breaking, migration ships — rebrand: bundles are now stacks, files are syrup (#59).** The
   vocabulary changes to match the name: an installable item (agent or skill) is a **waffle**, a
