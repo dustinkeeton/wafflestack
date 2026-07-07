@@ -3,6 +3,10 @@
   <img src="assets/wafflestack-social-animated.svg" width="100%" alt="WaffleStack — a stack of golden waffles with an animated syrup pour">
 </p>
 <h3 align="center">Reusable AI agent and skill definitions, distributed shadcn-style but <strong>update-safe</strong>.</h3>
+<p align="center">
+  <a href="https://github.com/sponsors/dustinkeeton"><img src="https://img.shields.io/badge/Sponsor-GitHub-F08A1D?logo=githubsponsors&logoColor=F5C752&labelColor=241204" alt="Sponsor on GitHub"></a>
+  <a href="https://buymeacoffee.com/dustinkeeton"><img src="https://img.shields.io/badge/Support-Buy%20Me%20a%20Coffee-F08A1D?logo=buymeacoffee&logoColor=F5C752&labelColor=241204" alt="Support on Buy Me a Coffee"></a>
+</p>
 
 ---
 
