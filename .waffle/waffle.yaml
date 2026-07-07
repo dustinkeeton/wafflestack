@@ -10,15 +10,13 @@
 # .waffle/ overview docs — hence doctor runs with --allow-missing. After changing a
 # stack, re-render from the working tree and commit the updated render + lock:
 #   node installer/cli.mjs render
-targets: [claude]
+targets: [ claude ]
 stacks:
   - github-workflow
   - docs-system
   - orchestration
-  # harness-architect (#60) — dogfood the harness-building expert; its project
-  # extension (.waffle/extensions/agents/harness-architect.md) grounds it in this
-  # stack's own paradigms (AGENTS.md registry, schema/FORMAT.md, DECISIONS.md ADRs).
   - harness-architect
+  - wafflestack
 include:
   # Dogfood the scheduled repo-hygiene hook (#46). It is opt-in syrup, so the stack alone won't
   # render it — install the ref so the rendered .github/workflows/waffle-hygiene.yml is
@@ -40,7 +38,7 @@ config:
   release:
     # The `release` skill syncs the version line in these files (beyond package.json +
     # lockfile) on a bump. STATUS.md carries a "**Version**: vX.Y.Z" header.
-    versionFiles: [STATUS.md]
+    versionFiles: [ STATUS.md ]
   doctor:
     # The CI drift gate (required check on main) tolerates the deliberately-untracked
     # renders (label-hook workflow, .waffle/ overview docs): only modified files fail;
@@ -145,7 +143,8 @@ config:
       | question | general-purpose |
     rootFiles: toolkit.yaml, package.json, installer/cli.mjs, schema/FORMAT.md, README.md
     sharedModule: installer/lib/ (render pipeline — every CLI command and test imports it)
-    moduleDependencies: stack content depends on installer template semantics — `installer/lib` changes merge before dependent `stacks/**` changes.
+    moduleDependencies: stack content depends on installer template semantics —
+      `installer/lib` changes merge before dependent `stacks/**` changes.
     rootFileExample: "`toolkit.yaml`"
   delegate:
     # This repo does not plan with milestones (none exist).
@@ -159,7 +158,8 @@ config:
     complianceFrontmatterLabel: toolkit integrity
     complianceTaskLabel: Toolkit integrity check
     complianceAgentName: toolkit-integrity
-    complianceDescription: Validates manifests, placeholders, tests, and render/lock integrity (validate + test + render + doctor).
+    complianceDescription: Validates manifests, placeholders, tests, and render/lock
+      integrity (validate + test + render + doctor).
     compliancePrompt: |-
       ### Toolkit integrity (Task 3)
 

@@ -7,7 +7,8 @@
     "github-workflow",
     "docs-system",
     "orchestration",
-    "harness-architect"
+    "harness-architect",
+    "wafflestack"
   ],
   "include": [
     "files/.github/workflows/waffle-hygiene.yml",
@@ -38,12 +39,20 @@
     ".claude/skills/label-hook/SKILL.md": "02b29a4caf5b918178bb5ea5bee57a3b876c0d055eb9c2614ae44edf1d322a41",
     ".claude/skills/release/SKILL.md": "0af76de1ffc0fc89e30e087dd2f71676f5b3a4494b7d7b8c5276f4baaef31c4f",
     ".claude/skills/standup/SKILL.md": "23da70cc4898b311c1493d3ed74a3c2d529f45658513e9669807ed1342d99c78",
+    ".claude/skills/waffle-doctor/SKILL.md": "4fe4a342bc0c5d7ed15e826996d4e586acc5144b6d42cfd2059522739ce8d6e3",
+    ".claude/skills/waffle-eject/SKILL.md": "7ae14ddadd8e7ea711369869e490f90e862f1ce19e9c457874974a85f58a8605",
+    ".claude/skills/waffle-init/SKILL.md": "9e9b9109ee4356bd876908cffec44d8b95373c13b27934669513576d77b822b3",
+    ".claude/skills/waffle-install/SKILL.md": "bc12fe21656038b6a058f160bc166a6172c5f9a8a068249829ea04d2722af8b5",
+    ".claude/skills/waffle-render/SKILL.md": "4eadd2f21d4fc628196bfc65e7dacaf0e4295a6e171d00237976d71b14a6ab4c",
+    ".claude/skills/waffle-setup/SKILL.md": "e2224a8d5ebf372c9b2908cf1cc494a8ba9c8227a7b1b2e099c8ee65d3aa0e0e",
+    ".claude/skills/waffle-upgrade/SKILL.md": "d55fdeb5c01ef79d712ddbd06fab055cf23466c2211ef9bfcc1da6b8e6585040",
+    ".claude/skills/waffle-validate/SKILL.md": "f3efdd48bd9c87dc8ec370d0d9177c373a7e5698cd9bbdf22a24dc90968320f8",
     ".github/workflows/waffle-doctor.yml": "9ca66d8db273ac13496911823f02c94cacc2fd4091daccd02db013389c13fbc5",
     ".github/workflows/waffle-hygiene.yml": "c170ad45c25669bcb1ae38ce3f2829621b71db790b8164cc51cd1bba835878a9",
     ".github/workflows/waffle-label-hook.yml": "050bd0d5d92be33bfd57055f3ee96f925908686746e9543d2acef2b0e92765af",
     ".github/workflows/waffle-release-hook.yml": "dac416aca50050f5cc3060b85130c68a38c4dcc81053108fb1035d6575748d0a",
-    ".waffle/cheatsheet.html": "f5cb94fb4f708be6ecfdebc59d0ce71eb63513367fdbc2c56c67bff511c60f96",
-    ".waffle/CHEATSHEET.md": "0c5d64da81f1a62e7c071a7243a41a29109baa69fd2139e429b717d9367a767d",
+    ".waffle/cheatsheet.html": "086ac79b980ba83af1f59fb00a18f8342ee7a27cae10f236cbb88f381119420f",
+    ".waffle/CHEATSHEET.md": "f4107c8681655b6acd3628b55609e3dcd10d5a9fd7bc20f2e1276f7c9cc92ad0",
     ".waffle/team.html": "64d1cd67a279618928a2b5fbb4199f915829767d7605d7da5829ad94301a01ac",
     ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29"
   }
