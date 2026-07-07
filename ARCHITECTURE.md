@@ -48,7 +48,11 @@ only inputs you own — everything under `.claude/` (etc.) is generated.
 A **stack** is a themed group of agents and skills you enable together (for
 example `github-workflow` or `docs-system`). `toolkit.yaml` lists every stack;
 each stack's `stack.yaml` manifest declares its agents, skills, config keys, and
-any environment or service prerequisites. There are **8 stacks** today.
+any environment or service prerequisites. There are **9 stacks** today — one of
+them, `wafflestack`, is self-referential: eight `/waffle-*` skills, one per CLI
+command, each a thin wrapper that runs `npx wafflestack <command>` and interprets
+the output — so the toolkit ships its own lifecycle the same way it ships
+everything else.
 
 ### Picking what to install
 
@@ -71,7 +75,8 @@ needs, transitively and across stacks:
 - an **agent** pulls the skills in its frontmatter `skills:` list (names the
   toolkit doesn't ship — for example a project-local skill — are skipped);
 - a stack's optional **`requires:`** map pulls declared dependencies (e.g. the
-  `/delegate` skill pulls in `git-workflow` and `github-project-management`).
+  `/delegate` skill pulls in `git-workflow`, `github-project-management`, and
+  `github-project-board`).
 
 The final rendered set is:
 
@@ -101,7 +106,25 @@ silently arms a workflow you didn't ask for.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 21 skills** in total.
+one source can render everywhere. There are **14 agents and 29 skills** in total.
+
+A skill's **supporting files** copy into your repo alongside its `SKILL.md`, and
+they can do real work. The orchestration stack's `/delegate` skill is the
+showcase: it ships three dependency-free Node scripts that act as deterministic
+gates around the LLM's judgment —
+
+- `checkpoint.mjs` + `checkpoint.schema.json` — each delegate run writes one JSON
+  checkpoint, and the script validates it at **every phase boundary** (fetch →
+  classify → plan → execute → report), cross-checking things like "the branch an
+  agent pushed is the branch the plan assigned." A failure exits 1 and hard-stops
+  the run instead of letting it drift.
+- `memory.mjs` — guards a small, **curated, hard-capped** per-repo memory doc of
+  lessons between runs (every entry needs a Why, a Since, and an Area). Over the
+  byte cap, the run must *curate* the doc down — the script never truncates.
+
+An opt-in config flag (`delegate.approveBeforePush`) adds a human gate on top:
+agents commit locally and stop, and nothing is pushed or PR'd until you approve
+each branch; a rejection stays local and is recorded in the checkpoint.
 
 ### Targets (harnesses)
 
@@ -126,7 +149,9 @@ the installer substitutes the values you set in config. Two rules keep this safe
   `${...}`, GitHub Actions `${{ }}`, mustache) passes through untouched.
 - **Substitution is recursive** (up to 4 levels). A committed value can point at
   a key you keep in your gitignored local file — so secrets stay out of git while
-  the template stays in.
+  the template stays in. Even a config key's *default* can be a placeholder:
+  `delegate.memoryFile` defaults to `{{delegate.checkpointDir}}/memory.md`, which
+  itself defaults to `{{git.worktreesDir}}/.delegate`.
 
 ### The installer (render pipeline)
 
@@ -182,6 +207,7 @@ Everything a consuming project owns:
 | `.waffle/waffle.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins |
 | `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments |
 | `.waffle/waffle.lock.json` | generated | Map of each rendered file to its hash; `doctor` reads it, `render` rewrites it |
+| `.waffle/CHEATSHEET.md`, `TEAM.md` + `cheatsheet.html`, `team.html` | generated (usually committed) | Overview docs of your installed selection — a cheat sheet of user-invocable skills and a team intro of agents, in Markdown plus a branded, self-contained HTML page each. Managed like any rendered file (lock-tracked, doctor-checked, pruned) |
 
 **Rule of thumb:** never edit files under `.claude/` (etc.) — a re-render will
 overwrite them. Change source, config, or an extension instead.
@@ -192,7 +218,8 @@ wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders
 `github-workflow`, `docs-system`, `orchestration`, and `harness-architect` into
 this repo, so the toolkit's own agents and skills are available while developing
 it. It also arms two opt-in syrup workflows via `include:` — the hygiene and release
-hooks.
+hooks. (The self-referential `wafflestack` stack is *not* enabled here — while
+developing the toolkit you call `node installer/cli.mjs` directly.)
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)
 and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
@@ -209,7 +236,8 @@ A few things stay deliberately untracked (and `doctor` runs with `--allow-missin
 to tolerate them): `.claude/worktrees/` (throwaway working state), `.codex/` and
 `.agents/` (non-targets — this repo only renders `claude`), the
 `waffle-label-hook.yml` workflow (committing it would arm a live label→harness
-dispatch), and the generated `.waffle/` overview docs.
+dispatch), and the generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`,
+`cheatsheet.html`, `team.html`).
 
 ## Getting started (new contributors)
 

@@ -9,6 +9,197 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-06: Layer-1 evals — deterministic content assertions on the rendered prompts (#89/#108)
+
+**Context**: The test suite proved the render *machinery* (bytes in → bytes out) but nothing
+asserted the **behavior** baked into the rendered prompts. A refactor or a hygiene rewording
+pass could silently drop a load-bearing guardrail — the label-hook's constant-token rule, the
+delegate confirmation gate — and every test would stay green.
+
+**Decision**: Add `installer/test/content.test.mjs`, a first eval layer of **deterministic
+key-phrase assertions** run by plain `npm test`. Assertions pin *meaning*, not bytes: rewording
+a prompt passes, but removing a guardrail fails CI. They run against the **committed
+`.claude/skills/**` render** (the artifact consumers actually get); the one gitignored piece
+(the label-hook workflow) is rendered fresh into a temp project through the real render
+pipeline and asserted there. Coverage: label-hook's constant action-token and
+untrusted-input/no-fan-out refusals, delegate's confirmation/checkpoint/approval gates, the
+issue and release templates and tag-safety guardrails, frontmatter presence everywhere, and
+no leftover unsubstituted placeholders.
+
+**Alternatives considered**: Byte-exact snapshot tests — rejected: they fail on every harmless
+rewording, so they train people to regenerate them blindly, which defeats the guard. Starting
+with LLM-judged evals — deferred: non-deterministic and paid, the wrong first layer for a CI
+gate (tracked as sub-issues of #89 as the future layer 2). Asserting on the *source* files
+instead of the render — rejected: it would miss substitution and render bugs.
+
+**Rationale**: The highest-risk artifacts are the rendered prompts themselves, and the cheapest
+useful protection is a deterministic phrase check on exactly what ships. Testing the committed
+render also means the assertions and the doctor drift gate protect the same artifact.
+
+**Impact**: Suite grows to 241 tests / 43 suites. Dev-only — no consumer-facing change, no
+config, no migration. Removing or gutting a pinned guardrail in any stack now fails CI.
+
+---
+
+## 2026-07-06: Curated, hard-capped run memory — never an append-only log (#93/#107)
+
+**Context**: A `/delegate` run had no durable memory between runs. Lessons — repo quirks,
+recurring failures, issue entanglements — evaporated with the orchestrator's context window,
+so successive runs repeated the same mistakes.
+
+**Decision**: ONE curated Markdown memory doc per repo, **hard-capped** (default 4096 bytes)
+and format-gated by a shipped, dependency-free validator (`memory.mjs`, beside the delegate
+`SKILL.md`). Every entry must carry a **Why** (why it's forward-useful), a **Since** (the
+issue/PR that taught it — its staleness anchor), and an **Area** (a module tag). The Report
+phase *distils* lessons in — pruning stale entries and rewriting, never blind-appending;
+Classify and Plan read the doc back, and each spawned agent receives only the entries whose
+Area matches its issue. Over the cap or a malformed entry → exit 1 and the run is blocked
+until curation brings it back within budget; the validator **never silently truncates**. A
+missing doc is valid (a fresh repo has no memory yet). Config: `delegate.memoryFile` (default
+`{{delegate.checkpointDir}}/memory.md`) and `delegate.memoryMaxBytes` (default 4096).
+
+**Alternatives considered**: An append-only log — rejected outright: it bloats until it
+poisons the context it was meant to help. Auto-truncation (FIFO) at the cap — rejected:
+pruning should be *judged* (that's what Why/Since anchor), and silent truncation hides the
+loss. Committing the memory to the repo — not the default: it lives under the gitignored
+worktrees dir, accepting the documented trade-off that memory is per-clone and doesn't follow
+the repo to another machine.
+
+**Rationale**: Same pattern the typed checkpoints established — an LLM curates, a
+deterministic script enforces. The cap forces the doc to stay a compact working set; the
+required fields make every entry auditable and pruneable on evidence rather than age.
+
+**Impact**: Adds `memory.mjs` to the delegate skill's shipped files and two optional config
+keys. Additive, default paths inherit the worktrees gitignore, no migration; repos that never
+run `/delegate` are unaffected.
+
+---
+
+## 2026-07-06: Opt-in human approval gate before push (#92/#106)
+
+**Context**: Delegated agents pushed branches and opened PRs autonomously. Some projects want
+a human look *before* anything leaves the machine, and there was no seam between "agent
+committed locally" and "branch is public" to put one.
+
+**Decision**: One optional flag — `delegate.approveBeforePush`, **default false**. When on,
+each delegated agent runs its pre-flight, commits **locally**, and STOPS before `git push` /
+`gh pr create`. The orchestrator assembles a compact per-agent summary (branch, target issue,
+diffstat, commit list), collects the human's decision via AskUserQuestion (Approve / Approve
+all / Reject), and only an explicit approval releases the push and opens the PR. A rejection
+leaves the worktree and local branch intact for inspection and is recorded in the typed
+checkpoint (`approval`/`approvedBy` per execution entry; the validator enforces that a
+rejected push is `status: skipped` with no PR — a rejection can never masquerade as delivered).
+
+**Alternatives considered**: An always-on gate — rejected: it would slow every existing
+autonomous flow; default-off leaves behavior unchanged for everyone who doesn't ask. A TTY
+prompt in the CLI — rejected: the CLI is deliberately non-interactive; the harness's question
+tool is the interactive layer. Reviewing after push (draft PRs) — rejected: the branch has
+already left the machine, which is exactly what the gate exists to prevent.
+
+**Rationale**: The gate slots into the checkpoint contract rather than beside it — the
+approval decision is typed run state, so the run report and the validator both see it, and a
+skipped push is auditable, not just remembered.
+
+**Impact**: New optional config key; checkpoint schema + validator gain approval fields; the
+Report phase gains an "Approved by" column when active. Additive, default-off, no migration.
+
+---
+
+## 2026-07-06: Typed checkpoints — a schema-validated gate at every delegate phase boundary (#91/#105)
+
+**Context**: A `/delegate` run's state — which issues, which branch, which worktree — lived
+only as prose in the orchestrator's context. Long runs drifted: a dropped field or a
+hallucinated branch name surfaced downstream as a confusing agent failure instead of being
+caught at the seam where it appeared.
+
+**Decision**: Each run writes ONE JSON checkpoint, validated at **every phase boundary**
+(Fetch → Classify → Plan → Execute → Report) by a shipped, dependency-free validator. Two
+files ship beside the delegate `SKILL.md`: `checkpoint.schema.json` (the documented contract)
+and `checkpoint.mjs` (`node checkpoint.mjs --file F --phase <phase>`). Each phase appends its
+section, and load-bearing fields (issue number, branch, worktree path) are *read from the
+checkpoint* as the single source of truth, never re-derived from prose. The validator also
+cross-checks references: every classified/assigned/executed issue traces back to a fetched
+one, worktree presence matches the group's parallel/serial mode, and an executed branch must
+equal the branch the plan assigned — catching a hallucinated branch. **Exit 1 = hard STOP**:
+the run halts and reports (the checkpoint doubles as the resume point) instead of improvising.
+Config: `delegate.checkpointDir`, default `{{git.worktreesDir}}/.delegate` — a default that is
+itself a placeholder, exercising the template engine's depth-4 nested expansion.
+
+**Alternatives considered**: Keeping prose state — that *is* the failure mode being fixed.
+LLM self-verification ("re-read your plan before executing") — rejected: non-deterministic,
+and a model can't reliably catch its own hallucination; the gate must be a script. A
+schema-library validator (e.g. ajv) — rejected: the script runs inside consuming repos that
+may have no npm deps installed, so it's Node built-ins only, reading the co-located schema.
+
+**Rationale**: Determinism at the boundaries, judgment in between. The phases stay agentic;
+the hand-offs become machine-checked, so drift fails loudly at the boundary where it happened.
+
+**Impact**: The delegate skill now ships supporting files that render into consuming repos
+alongside `SKILL.md`. One new optional config key; checkpoint files are throwaway run state
+under the gitignored worktrees dir. Additive, no migration. #106 (approval) and #107 (memory)
+both build on this contract.
+
+---
+
+## 2026-07-06: Overview one-pagers become self-contained branded HTML, not SVG (#75/#104)
+
+**Context**: `render` emitted `.waffle/cheatsheet.svg` and `.waffle/team.svg` — pictures of
+text. Not selectable, not searchable, fixed layout, and awkward font handling for what is
+fundamentally a text document.
+
+**Decision**: Replace them with `.waffle/cheatsheet.html` + `.waffle/team.html` — each a valid
+standalone HTML5 page: semantic lists built from the same skill/agent frontmatter, the waffle
+glyph inlined as SVG, the brand palette (dark by default, warm-paper light via
+`prefers-color-scheme`), and a **hybrid font strategy** — Google Fonts links for the brand
+type as progressive enhancement, backed by a brand-styled system-font stack, with those font
+links the pages' only external reference (they still render correctly offline). Emitted
+through the same `generateWaffleDocs` → `emit()` path, so they stay lock-tracked,
+doctor-checked, and pruned. The Markdown cheat sheet / team docs are unchanged and remain the
+source of truth.
+
+**Alternatives considered**: Keeping the SVGs — rejected: the images-of-text problems were the
+whole motivation. Fully inlining the webfonts for zero external references — not taken: the
+hybrid strategy keeps the generated pages small while degrading gracefully offline.
+
+**Rationale**: The one-pagers exist to be read and searched; HTML is the right medium for
+text. Routing them through `emit()` keeps them under the same frozen-image contract as every
+other managed file.
+
+**Impact**: The retired `.svg` paths are pruned automatically on the next render (they were
+previously-managed paths the render no longer produces). Consumers who gitignored the old
+`.svg` names swap them for `.html`. No config key changes, no migration.
+
+---
+
+## 2026-07-06: A self-referential `wafflestack` stack — one `/waffle-*` skill per CLI command (#70/#103)
+
+**Context**: Inside a consuming repo, the toolkit's own lifecycle commands (`init`, `setup`,
+`install`, `render`, `upgrade`, `doctor`, `eject`, `validate`) had to be remembered and typed
+as `npx github:dustinkeeton/wafflestack …`. A toolkit whose whole product is installable
+skills shipped no skills for operating *itself*.
+
+**Decision**: Ship a ninth stack, `wafflestack`: eight user-invocable `/waffle-*` skills, one
+per CLI subcommand. Each is deliberately a **thin wrapper** — it shells out to
+`npx <waffle.toolkitRef> <subcommand>` and adds agent judgment around the output (e.g.
+`/waffle-upgrade` reviews the render diff; `/waffle-eject` confirms before releasing a file).
+One optional config key, `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack`) — pin
+it to a release tag to freeze the version the wrappers run, or point it at a local checkout
+while developing the toolkit. The stack is **not** enabled in this repo's own render.
+
+**Alternatives considered**: Reimplementing command logic in skill prose — rejected: the CLI
+is the single implementation, and fat skills would drift from it. Leaving the commands to
+docs alone (`schema/SETUP.md`) — that covers first install, but leaves day-2 lifecycle
+operations without an in-harness entry point.
+
+**Rationale**: The CLI stays authoritative; the skills add exactly what a CLI can't — judgment
+and conversation. And the toolkit now dogfoods its own delivery mechanism: its lifecycle ships
+the same way everything else it makes does.
+
+**Impact**: Stack count 8 → 9, skill count 21 → 29. Purely additive — no agents, no
+migration, and no effect on repos that don't enable it.
+
+---
+
 ## 2026-07-06: Surface skipped syrup companions — warn, don't prompt (#74)
 
 **Context**: Opt-in syrup pairs with a companion waffle through a `requires:` edge — the
