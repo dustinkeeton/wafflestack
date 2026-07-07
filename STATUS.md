@@ -3,29 +3,30 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.9.0 (pre-1.0 — the file contract can still change between minor releases)
-- **Last updated**: 2026-07-03
-- **Health**: 🟢 tests 173/173 (32 suites) · `validate` clean · `doctor` clean (no render drift)
+- **Version**: v0.9.0 tagged (pre-1.0 — the file contract can still change between minor
+  releases). A sizeable `[Unreleased]` changelog is pending its tag: the 0.10.0
+  bundles→stacks rebrand (breaking, migration ships) plus everything below.
+- **Last updated**: 2026-07-07
+- **Health**: 🟢 tests 241/241 (43 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
 
-All 8 stacks are shipped and stable. Pick the ones a project needs.
-(Reorganized in #38: the `design` stack was dissolved, near-duplicate roles
-were consolidated, and the colliding `security-audit` skills were renamed.)
+All 9 stacks are shipped and stable. Pick the ones a project needs.
 
 | Stack | Status | What you get |
 |--------|--------|--------------|
 | `docs-system` | ✅ Shipped | Two-audience docs: machine (`AGENTS.md`) + human (these files) |
 | `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects / release workflow + 4 prefab CI workflows (doctor + 3 opt-in syrup hooks); only stack with a `setup:` step |
-| `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate, audit, docs, standup |
+| `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate (typed checkpoints, run memory, optional approval gate), audit, docs, standup |
 | `code-quality` | ✅ Shipped | Cross-cutting, stack-agnostic practice skills: TDD, codebase-architecture |
 | `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-engineer is the general architect) + webapp-security-audit |
 | `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + obsidian-plugin-dev + electron-security-audit) |
 | `expo-dev` | ✅ Shipped | Expo / React Native app development (mobile-architect + reference skills) |
 | `harness-architect` | ✅ Shipped | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, multi-harness portability) |
+| `wafflestack` | ✅ Shipped | Self-referential (#70): eight `/waffle-*` skills, one per CLI command — thin `npx` wrappers with agent judgment on top |
 
-Totals: 14 agents and 21 skills across the 8 stacks.
+Totals: 14 agents and 29 skills across the 9 stacks.
 
 ## Installer & CLI
 
@@ -34,47 +35,44 @@ tested. All 8 commands work:
 
 `init` · `setup` · `install` · `render` · `upgrade` · `doctor` · `eject` · `validate`
 
-- `install <ref…>` records a stack or a single item in `.waffle/waffle.yaml`
-  (resolving dependencies), then renders. Bare `install` just renders.
-- `render`/`install` take `--force` to override the overwrite guard (render
-  refuses to clobber a pre-existing untracked file without it).
-- A **ref** can now name a `files/PATH` payload (a workflow or script), alongside
-  `agents/NAME` and `skills/NAME` — and `eject` accepts all three forms.
+- `install <ref…>` records a stack or a single item (`agents/`, `skills/`, or a
+  `files/` syrup payload) in `.waffle/waffle.yaml`, resolving dependencies, then renders.
+- `render`/`install` take `--force` (overwrite guard) and `--gitignore` (opt-in entries).
+- `render` also emits the `.waffle/` overview docs: `CHEATSHEET.md`/`TEAM.md` plus
+  branded self-contained HTML pages (`cheatsheet.html`/`team.html` — HTML replaced the
+  old SVGs in #104).
 
 ## Current focus
 
-- **Rebrand — waffles, stacks, syrup (new, #59).** Vocabulary now matches the name: an
-  installable item (agent/skill) is a **waffle**, a named group is a **stack** (was
-  "bundle" — source dir `stacks/`, manifest `stack.yaml`), and the `files/` payload is
-  **syrup** (gated sensitive ones are **opt-in syrup**; manifest key `optIn:`). The one
-  breaking consumer change — `.waffle/waffle.yaml` key `bundles:` → `stacks:` — ships a
-  0.10.0 migration plus a read-fallback (a plain `render` still works with a deprecation
-  warning). Item refs, `include:`/`eject:`, and lock paths are unchanged.
-- **Committed self-render + drift gate (new in 0.9.0).** The repo's own rendered
-  harness (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`) and
-  `.waffle/waffle.lock.json` are now **committed**, like a consuming project. A
-  `waffle-doctor` CI check on `main` fails any PR whose render drifts from source.
-- **Live automation loop.** The daily hygiene run and the release-tag hook operate
-  on this repo, gated by the required `doctor` check.
-- **Opt-in syrup gate.** A stack's sensitive syrup (`files/`) items (the label-hook,
-  hygiene, and release workflows) are excluded from default render unless already
-  installed or explicitly included — enabling a stack never silently arms a
-  workflow that spends API budget or holds write permissions.
-- **Config-aware `setup` (new).** Re-running `setup` on an already-configured repo
-  prints a live "Current configuration — update mode" section so the pass curates
-  an update instead of a fresh install.
+- **Delegate run hardening (new, #105–#107).** Three additions to `/delegate`, each with a
+  shipped dependency-free validator script:
+  - *Typed checkpoints* (#105) — one schema-validated JSON checkpoint per run, checked at
+    every phase boundary; a bad checkpoint exits 1 and hard-STOPs the run.
+  - *Approve-before-push* (#106) — opt-in gate (`delegate.approveBeforePush`, default off):
+    agents commit locally and stop; a human approves each push/PR, rejections stay local.
+  - *Run memory* (#107) — one curated, hard-capped memory doc per repo (`memory.mjs` gate;
+    every entry needs Why/Since/Area; over cap = curate, never truncate).
+- **Eval layer 1 (new, #108).** `installer/test/content.test.mjs` pins load-bearing
+  guardrail phrases in the rendered prompts — rewording passes, removing a guardrail fails
+  CI. LLM-judged evals are tracked as layer 2 under #89.
+- **Rebrand awaiting release (#59).** Waffles / stacks / syrup vocabulary is merged; the
+  `bundles:` → `stacks:` consumer migration ships when 0.10.0 is tagged.
+- **Live automation loop.** The daily hygiene run and the release-tag hook operate on this
+  repo, gated by the required `doctor` check.
+- **Sponsor links (#113).** `.github/FUNDING.yml` + README badges landed.
 
 ## Known issues & things to watch
 
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
-- **The self-render is committed** (since 2026-07-03). After editing anything under
-  `stacks/**`, `schema/**`, or `installer/**`, re-run
-  `node installer/cli.mjs render` and commit the updated files + lock — the
-  `waffle-doctor` required check fails PRs on drift.
+- **No tag since v0.9.0** — the rebrand and the delegate/eval work above sit in
+  `[Unreleased]`; consumers on the default (untagged) ref already get them.
+- **The self-render is committed.** After editing anything under `stacks/**`,
+  `schema/**`, or `installer/**`, re-run `node installer/cli.mjs render` and commit the
+  updated files + lock — the `waffle-doctor` required check fails PRs on drift.
 - **Deliberately gitignored here**: `.claude/worktrees/` (throwaway), `.codex/` /
   `.agents/` (non-targets), the `waffle-label-hook.yml` workflow (would arm a live
   label→harness dispatch), and the generated `.waffle/` overview docs
-  (`CHEATSHEET.md`, `TEAM.md`, `cheatsheet.svg`, `team.svg`). `doctor` runs with
+  (`CHEATSHEET.md`, `TEAM.md`, `cheatsheet.html`, `team.html`). `doctor` runs with
   `--allow-missing` so these absences don't fail CI.
 
 ## Dependencies
@@ -89,7 +87,7 @@ tested. All 8 commands work:
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (173 tests, 32 suites)
+npm test                          # installer test suite (241 tests, 43 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock

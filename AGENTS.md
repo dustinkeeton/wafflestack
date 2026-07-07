@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-07-06
+last-updated: 2026-07-07
 ---
 
 # AGENTS.md — wafflestack
@@ -40,7 +40,7 @@ env, and setup notes live in each `stack.yaml` (authoritative — this table sum
 | `github-workflow` | `stacks/github-workflow/` | (none) | git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release | Git / GitHub issue / Projects v2 / release workflow. `github-project-management` reads/updates board items; `github-project-board` (#54) provisions/standardizes the board itself to the canonical Kanban spec (Status/Priority/Size/Start/Target; Table/Kanban/Roadmap views) — the only create-side board skill. Ships four prefab CI workflows as `files/` (syrup) payloads: `waffle-doctor` (read-only drift gate) plus three **opt-in syrup** hooks — `waffle-label-hook` (label→enrich/implement Claude dispatch), `waffle-hygiene` (daily scheduled `docs`→auto-merge PR), and `waffle-release-hook` (deterministic tag-on-merge, `contents: write`, no Claude/API) — each wired to its companion skill (`label-hook`, `hygiene`, `release`) via a `files/`-keyed `requires:` edge. The `release` skill opens a labeled `chore/bump-X.Y.Z` PR; the hook pushes `release.tagFormat` on merge. Config: `labelHook.{enrich,implement,release}Label`, `hygiene.{cron,claudeArgs}`, `release.{tagFormat,versionFiles}`. Only stack with a `setup:` block (gh auth, labels, board, git identity, hook opt-ins). |
 | `code-quality` | `stacks/code-quality/` | (none) | tdd, codebase-architecture | Cross-cutting, stack-agnostic practice skills (test command, tiers, module map, settings type are config). |
 | `obsidian-dev` | `stacks/obsidian-dev/` | plugin-architect | obsidian-plugin-dev, electron-security-audit | Obsidian plugin development (API, manifest, esbuild, testing patterns) + the desktop-app security-audit variant; plugin-architect is the domain architect. |
-| `orchestration` | `stacks/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs, standup | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management, docs→docs-agent+docs-human). `standup` rounds up a per-agent status pulse — dynamic `.claude/agents/*.md` roster, one read-only parallel wave, collect-via-return-values, no side effects. |
+| `orchestration` | `stacks/orchestration/` | project-manager, product-manager, task-planner | delegate, audit, docs, standup | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config (defaults: `lead-engineer` architect + compliance, `security-engineer` security; override compliance to a domain architect where one exists). Uses `requires:` for its skill deps (delegate→git-workflow+github-project-management+github-project-board, docs→docs-agent+docs-human). `delegate` ships three dependency-free supporting files (copied with the skill): `checkpoint.mjs` + `checkpoint.schema.json` (#105/#106) validate the one-JSON-doc-per-run phase checkpoint at every phase boundary (`node checkpoint.mjs --file F --phase fetch\|classify\|plan\|execute\|report`; schema sections per phase plus cross-reference checks — executed branch = planned branch, every issue traces to fetch, parallel⇒worktree/serial⇒none; exit 1 = STOP); `memory.mjs` (#107) gates the curated per-repo run-memory doc (`node memory.mjs --file F [--max-bytes N]`; missing file valid; hard byte cap + required Why/Since/Area fields per entry; exit 1 = curate, never truncate — memory loads in Classify, informs Plan grouping, injects Area-matched entries into agent prompts, is curated in Report). Opt-in approval gate (`delegate.approveBeforePush`): agents commit locally and STOP before `git push`/`gh pr create`; orchestrator collects human approval via AskUserQuestion; rejection stays local, recorded `skipped` with `approval`/`approvedBy` in the checkpoint. Config: `delegate.{defaultScope,extraPreflight,checkpointDir,approveBeforePush,memoryFile,memoryMaxBytes}` — `checkpointDir`/`memoryFile` defaults are themselves placeholders (`{{git.worktreesDir}}/.delegate`, `{{delegate.checkpointDir}}/memory.md`), exercising depth-4 nested expansion. `standup` rounds up a per-agent status pulse — dynamic `.claude/agents/*.md` roster, one read-only parallel wave, collect-via-return-values, no side effects. |
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development (@expo/ui, dev loop, EAS); mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, slash-command UX, multi-harness portability). One optional config key (`project.longName`). This repo appends a project extension grounding it in the stack's own paradigms (AGENTS.md registry, schema/FORMAT.md contract, DECISIONS.md ADRs, validation gates). |
@@ -306,11 +306,17 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 182 tests, 33 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 241 tests, 43 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render` |
 | verify render | `node installer/cli.mjs doctor` |
+
+Test files: `installer.test.mjs` (render pipeline machinery), `checkpoint.test.mjs` /
+`memory.test.mjs` (the delegate skill's shipped validator CLIs), `content.test.mjs`
+(eval layer 1, #108: deterministic key-phrase assertions on rendered stack prompts —
+reads the committed `.claude/skills/**` render, renders the gitignored label-hook workflow
+to a temp dir; pins load-bearing guardrails so rewording passes but removing one fails CI).
 
 ## Dogfood state
 
