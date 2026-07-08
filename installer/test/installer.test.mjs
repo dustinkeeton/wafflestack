@@ -3273,6 +3273,25 @@ describe('external stack sources: multi-root resolution (#124)', () => {
     assert.doesNotMatch(body, /VERSION TWO/);
     fs.rmSync(work, { recursive: true, force: true });
   });
+
+  test('a git source or ref beginning with "-" is rejected before git runs (argument-injection guard)', () => {
+    // `--upload-pack=x.git` keeps a `.git` suffix, so it classifies as git — but a leading dash
+    // would be read by git as an option, so resolution rejects it before any clone/checkout.
+    const cfg = (source, ref) =>
+      write(cwd, '.waffle/waffle.yaml', ['targets: [claude]', 'stacks:', '  - name: evil', `    source: ${source}`, `    ref: ${ref}`, 'config: {}', ''].join('\n'));
+
+    cfg('--upload-pack=x.git', 'v1');
+    let result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors[0], /git source "--upload-pack=x\.git" must not begin with "-"/);
+
+    // A valid URL but a dash-leading ref is likewise refused (before any network/git call).
+    cfg('https://ok.example/x.git', '--evil');
+    result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors[0], /git ref "--evil" must not begin with "-"/);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'no lock written on the failed render');
+  });
 });
 
 describe('changelogBetween', () => {
