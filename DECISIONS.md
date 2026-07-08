@@ -9,6 +9,138 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-07: Declare, check, and inject dependencies — typed `prerequisites:`, a doctor gate, and harness injection on `harness.*` (#47)
+
+**Context**: The shadcn-style install copies rendered files into the consuming repo — there
+is no package-manager `postinstall` hook, so nothing installs or verifies the external things
+a stack silently depends on. Those prerequisites are prose-only today and warn-at-best: the
+github-workflow stack's `setup:` note tells an agent to check `gh auth status`, create the
+trigger labels, set `ANTHROPIC_API_KEY`, and flip repo settings — but nothing *checks* any of
+it, so a consumer discovers the gap when a label hook dispatches into a repo with no secret and
+bills for a no-op. The one structured seam that exists — a stack's `env:` map, warned at
+render (`checkEnvPrerequisites`, `render.mjs`) and printed in the setup inventory
+(`setup.mjs`) — covers only harness env vars, not the CLI tools, secrets, auth scopes, labels,
+or repo settings the stacks actually lean on. Separately, the rendered CI workflows hardcode
+one harness — `anthropics/claude-code-action` pinned to a SHA in `waffle-label-hook.yml` and
+`waffle-hygiene.yml` — with no seam to pin a different version or inject a different dispatcher
+(raised by #46). This is the HMW: how might we *declare*, *check*, and *inject* the
+dependencies wafflestack uses — including the harness itself as an injectable dependency of the
+workflows it renders.
+
+**Inventory (grounds the schema)**: Sweeping every stack surfaced these implicit
+prerequisites, by kind — this is what a declarative block must be able to express:
+
+- **CLI tools**: `node` >= 18 (renderer, all stacks); `git` (github-workflow, orchestration
+  worktrees); `gh` + a live `gh auth status` (every github-workflow skill); `npx` (the
+  `waffle-doctor.yml` CI job); `jq` (the rendered hooks' `Check harness result` step); the
+  project toolchain behind `project.installCmd`/`lintCmd`/`typecheckCmd`/`testCmd`/`buildCmd`
+  (npm by default).
+- **Secrets**: `ANTHROPIC_API_KEY` (label-hook, hygiene); `WAFFLE_HYGIENE_TOKEN` (hygiene
+  auto-merge, optional fallback).
+- **gh auth scopes**: `project` (`gh auth refresh -s project`, the board skills); the
+  `workflow` credential scope (pushing any `.github/workflows/*` file).
+- **Trigger labels**: `waffle:enrich`/`waffle:implement` (label-hook), `waffle:release`
+  (release-hook), and the `issue.typeLabels`/`issue.priorityLabels`/`issue.inferenceLabel`
+  taxonomy (issue skill — applying a missing label fails `gh issue edit`).
+- **Repo settings**: "Allow GitHub Actions to create and approve pull requests" (implement
+  job); `allow_auto_merge` (hygiene); a required status check on the base branch (hygiene
+  auto-merge); Actions workflow permissions not locked read-only (release-hook `contents:
+  write`); branch protection on the default branch (all three write-scoped hooks); a GitHub
+  remote (all github-workflow skills).
+- **Services / external state**: a Projects v2 board matching `project.name` (optional —
+  skipped with a warning); Anthropic API billing (a cost, not a check).
+- **Harness env vars**: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (orchestration — already the
+  one thing `env:` covers).
+
+**Decision**: Adopt a three-part design, distinct from the internal-only `requires:` keyword
+(which maps render-closure edges between waffles, not external prerequisites):
+
+1. **A declarative `prerequisites:` block per stack** (`stack.yaml`), a typed list where each
+   entry names a **kind** (`tool` | `secret` | `scope` | `label` | `setting` | `service`), the
+   thing needed, a human `description`, a **`check`** (the deterministic probe — `command -v
+   gh`, `gh auth status`, `gh label list`, `gh secret list`, a repo-settings API GET), and a
+   **`level`** (`require` vs `recommend`). The existing `env:` map is subsumed as the `env`
+   kind (kept read-compatible so no stack must migrate at once). Only *declared* prerequisites
+   are surfaced — no magic inference — and, like `requires:`, the block is **scoped to the
+   selected items**, so a partial install is asked only for the prerequisites its own waffles
+   need.
+
+2. **Three enforcement tiers over one declaration**, escalating from advisory to blocking:
+   - **`render` warnings** — generalize the existing env-warning path so every declared
+     prerequisite that can be cheaply probed emits a `warning:` (non-blocking, no effect on
+     `doctor`), and the `setup` inventory lists the whole block per stack. This is the
+     already-shipped, lowest-friction tier.
+   - **`doctor` gate** — `doctor` runs each entry's `check` and **exits 1** on an unmet
+     `require`-level prerequisite (a `recommend` entry only reports). This reuses doctor's
+     existing "report + exit 1 in CI" contract, so a repo that runs the `waffle-doctor.yml`
+     drift gate gets prerequisite verification on the same job — the structured upgrade from
+     "the prose said to check" to "CI checks."
+   - **The setup playbook is the postinstall-prompt analog** — `schema/SETUP.md` step 4 reads
+     the structured block and puts the human questions (create these labels? set this secret?
+     flip this repo setting?) the same way #74 made the both/one/neither syrup question
+     required. Anything that creates or mutates shared external state still needs the user's
+     explicit go-ahead.
+   - **The CLI stays non-interactive** — no TTY postinstall prompt, consistent with #74:
+     `render`/`doctor` warn and gate, the agent-driven playbook owns the human conversation.
+
+3. **Harness injection layers on the reserved `harness.*` namespace** — a config key selects
+   which dispatcher the workflow templates render. `harness.*` is already always-available and
+   per-target, and already abstracts per-harness differences (attribution, skills dir), so it
+   is the natural home. The first, minimal step parameterizes the hardcoded
+   `uses: anthropics/claude-code-action@<sha>` and `anthropic_api_key:` lines behind
+   `harness.actionRef` / `harness.actionVersion` / `harness.apiKeySecret` (defaults = today's
+   pinned claude-code-action), so a consumer can pin a different version or repoint the action
+   without ejecting the workflow. A *fully* swappable dispatcher (Codex or another harness,
+   whose `with:` input shape differs from claude-code-action's) needs a per-harness dispatch
+   snippet the template composes — a partials/include mechanism the render engine does not yet
+   have — so that is explicitly deferred to a follow-up rather than forced into a single
+   scalar.
+
+**Recommended first increment**: ship **(1) the `prerequisites:` schema + (2a) the `doctor`
+gate and render warnings**, seeded from the inventory above for the github-workflow and
+orchestration stacks. Deterministic checks in CI are the highest-value, lowest-risk slice: they
+turn the existing prose into a machine-checked gate on the drift job consumers already run,
+reuse doctor's exit-1 contract, and need no new interactive surface. Harness injection ships as
+a **separate track** (the pin/ref step first; the full dispatch-profile mechanism later).
+Interactive TTY installers are **not** recommended and are not scheduled — the setup playbook
+plus render/doctor already close the loop without forking CLI behavior by stdin shape.
+
+**Alternatives considered**: *Overloading `requires:`* to also carry external prerequisites —
+rejected: `requires:` resolves to installable item refs inside the toolkit and drives the
+render closure; a `gh` binary or an `ANTHROPIC_API_KEY` secret is neither, and conflating them
+would muddy both. *A TTY postinstall prompt in the CLI* (the literal shadcn/npm analog) —
+rejected for the same reasons #74 rejected it: the CLI is deliberately headless (it runs in CI
+and under an agent), a prompt would need a non-TTY fallback anyway, and it would duplicate the
+playbook contract that already owns the human conversation. *Auto-installing/creating
+prerequisites* (running `gh label create`, `gh secret set` for the user) — rejected outright:
+these mutate shared external state and often cost money (arming a paid hook), the exact thing
+the opt-in gate and the "explicit go-ahead" rule exist to prevent; the toolkit checks and
+prompts, it never provisions unasked. *A single `harness.action` scalar* capturing the whole
+dispatcher — rejected as insufficient: different harnesses have different `with:` inputs, so a
+scalar can pin a version but cannot swap the dispatcher; the honest first step is the ref/version
+pin, with the profile mechanism called out as deferred. *Magic inference of prerequisites from
+skill content* — rejected: brittle and implicit; declaration keeps the surface auditable, the
+same principle as only substituting declared config keys.
+
+**Relationship to #88 / #126**: External-stack support (#88 slice 1, #123) lets `stacks:`
+entries pull a third-party stack from a pinned git `source`; #126 adds install-time `validate`
++ an extra syrup-tier confirmation for those external stacks. This design is **adjacent, not
+overlapping**: #126 governs the *trust boundary* of external stack *content*; `prerequisites:`
+governs the *environment* a stack (built-in or external) needs. They compose — an external
+stack ships its own `prerequisites:` block, checked by the same doctor gate — and neither
+subsumes the other.
+
+**Impact**: Design-only — no code, config, or migration ships in this entry; it records the
+decision and splits the work. Follow-up implementation issues filed on GitHub: **#129** — the
+`prerequisites:` schema + doctor gate + render warnings (the first increment); **#130** — the
+setup-inventory / SETUP.md surfacing of the block (the postinstall-prompt analog); **#131** —
+the `harness.*` injection key + parameterized workflow templates. Interactive TTY installers
+are recorded here as deliberately deferred (no issue — the rejected alternative). When the first
+increment lands, `env:` becomes one kind under `prerequisites:` (read-compatibly), and a repo's
+existing `waffle-doctor.yml` job starts verifying prerequisites with no workflow edit.
+
+---
+
 ## 2026-07-06: Layer-1 evals — deterministic content assertions on the rendered prompts (#89/#108)
 
 **Context**: The test suite proved the render *machinery* (bytes in → bytes out) but nothing
