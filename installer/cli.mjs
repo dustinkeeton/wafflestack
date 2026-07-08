@@ -47,8 +47,9 @@ try {
     case 'doctor': {
       const allowMissing = extractFlag(args, '--allow-missing');
       const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing });
-      for (const f of result.modified) console.log(`modified: ${f}`);
-      for (const f of result.missing) console.log(allowMissing ? `missing (tolerated): ${f}` : `missing:  ${f}`);
+      const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
+      for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
+      for (const f of result.missing) console.log((allowMissing ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
       for (const n of result.notes) console.log(n);
       if (result.ok) {
         console.log(

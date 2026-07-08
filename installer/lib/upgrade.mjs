@@ -23,6 +23,11 @@ const CHANGELOG_FILE = 'CHANGELOG.md';
  * no `toolkitVersion` is reported clearly and degrades to "render + doctor, no migrations"
  * rather than erroring — there is simply no known baseline to migrate from.
  *
+ * External sources are re-resolved per pin (`refreshSources`): the re-render re-fetches each git
+ * source so a MOVED ref (e.g. a branch that advanced) is observed rather than served stale from
+ * the session cache, and the resolved commits are diffed against the lock's recorded provenance
+ * to report per-source version moves (#125). `sourceMoves` carries that diff.
+ *
  * Returns a structured result; the CLI is responsible for presentation.
  */
 export function upgrade({
@@ -31,12 +36,15 @@ export function upgrade({
   toolkitVersion,
   migrations = MIGRATIONS,
   changelog, // optional raw markdown override; defaults to reading toolkitRoot/CHANGELOG.md
+  sourceCacheDir, // optional cache dir override (threaded to render); default keeps prod behavior
   log = () => {},
 }) {
   const notes = [];
   const lock = readLock(cwd);
   const fromVersion = lock?.toolkitVersion ?? null;
   const toVersion = toolkitVersion;
+  // Snapshot the pre-render per-source provenance so we can diff resolved commits after re-render.
+  const oldSources = new Map((lock?.sources ?? []).map((s) => [s.name, s]));
 
   // Decide whether we have a baseline to migrate from, and describe the move.
   let status;
@@ -99,11 +107,17 @@ export function upgrade({
     if (!migrationsRun.length) log(`no migrations registered between ${fromVersion} and ${toVersion}`);
   }
 
-  // Re-render, then doctor.
-  const render = renderProject({ toolkitRoot, cwd, toolkitVersion, log });
+  // Re-render (re-resolving each external source at its pin — refreshSources re-fetches git
+  // sources so a moved ref is observed, not served from the session cache), then doctor.
+  const render = renderProject({ toolkitRoot, cwd, toolkitVersion, sourceCacheDir, refreshSources: true, log });
   if (!render.ok) {
-    return { ok: false, status, fromVersion, toVersion, changelogDelta, migrationsRun, render, doctor: null, notes };
+    return { ok: false, status, fromVersion, toVersion, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], notes };
   }
+
+  // Per-source version moves: diff the freshly-resolved commits against the lock's recorded ones.
+  const sourceMoves = diffSources(oldSources, render.sources ?? []);
+  for (const move of sourceMoves) log(describeSourceMove(move));
+
   const dr = doctor({ cwd, toolkitVersion });
 
   return {
@@ -115,8 +129,47 @@ export function upgrade({
     migrationsRun,
     render,
     doctor: dr,
+    sourceMoves,
     notes,
   };
+}
+
+/**
+ * Diff the lock's recorded per-source provenance (`oldSources`, name → entry) against the
+ * freshly-resolved sources from a re-render. Reports a git source whose resolved commit moved
+ * (a ref that advanced), plus sources added since / removed since the last lock. A local-path
+ * source (no commit) never reports a "moved". Sorted by name for deterministic output.
+ */
+export function diffSources(oldSources, newSources) {
+  const moves = [];
+  const newByName = new Map(newSources.map((s) => [s.name, s]));
+  for (const s of newSources) {
+    const prev = oldSources.get(s.name);
+    if (!prev) {
+      moves.push({ name: s.name, ref: s.ref ?? null, sourceType: s.sourceType, from: null, to: s.commit ?? null, status: 'added' });
+    } else if (s.sourceType === 'git' && (prev.commit ?? null) !== (s.commit ?? null)) {
+      moves.push({ name: s.name, ref: s.ref ?? null, sourceType: s.sourceType, from: prev.commit ?? null, to: s.commit ?? null, status: 'moved' });
+    }
+  }
+  for (const [name, prev] of oldSources) {
+    if (!newByName.has(name)) {
+      moves.push({ name, ref: prev.ref ?? null, sourceType: prev.sourceType, from: prev.commit ?? null, to: null, status: 'removed' });
+    }
+  }
+  return moves.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function shortSha(sha) {
+  return sha ? String(sha).slice(0, 12) : 'unknown';
+}
+
+function describeSourceMove(move) {
+  const at = move.ref ? ` (ref ${move.ref})` : '';
+  if (move.status === 'moved') return `source ${move.name}${at} moved ${shortSha(move.from)} → ${shortSha(move.to)}`;
+  if (move.status === 'added') {
+    return `source ${move.name} added${move.sourceType === 'git' ? ` at ${shortSha(move.to)}${at}` : ' (local path)'}`;
+  }
+  return `source ${move.name} removed${move.sourceType === 'git' ? ` (was ${shortSha(move.from)})` : ''}`;
 }
 
 function readChangelog(toolkitRoot) {
