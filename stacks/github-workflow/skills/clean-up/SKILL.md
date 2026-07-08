@@ -37,6 +37,23 @@ is to **show the full plan and wait for a yes** before touching anything.
 
 `--yes` combines with a scope (e.g. `git --yes`).
 
+## Post-merge convention
+
+`git --yes` is the built-in path for the **merging agent**: right after it merges a PR, it runs
+
+```
+clean-up git --yes
+```
+
+to delete the just-merged local branch and worktree and prune stale remote-tracking refs — no
+confirmation prompt, because the agent already knows the PR merged. This is step 3 of the
+[git-workflow "After a PR merges"](../git-workflow/SKILL.md) flow; its sibling steps (verify the
+linked issues closed, reconcile their board Status to **Done**) are a **local-agent** job too,
+handled there via the `github-project-management` skill or the `project-manager` agent — none of
+it is wired into CI. The one remote-side action that *can* be a CI job — deleting the merged head
+branch on the remote — is the optional `waffle-post-merge-hook` workflow; this skill still owns
+everything local.
+
 ## The workflow
 
 1. **Parse scope** from the argument. Default to the full sweep.
