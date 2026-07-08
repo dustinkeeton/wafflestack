@@ -185,6 +185,11 @@ function crossChecks(doc, sectionsInScope, errors) {
       if (e.approvedBy !== undefined && e.approval === undefined) {
         errors.push(`execution: issue #${e.number} records approvedBy but no approval decision`);
       }
+      // Auto-merge arming (delegate.autoMerge): you can only arm a PR that exists —
+      // an entry with no PR can never be armed. A PR left open-but-not-armed records false.
+      if (e.autoMergeArmed === true && !e.pr) {
+        errors.push(`execution: issue #${e.number} is marked autoMergeArmed but has no PR (auto-merge can only arm an open PR)`);
+      }
       executed.add(e.number);
     }
     for (const n of planned.keys()) {

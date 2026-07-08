@@ -135,6 +135,20 @@ config:
       worktree/branch local and intact and is recorded in the run report (execution
       `approval`/`approvedBy`, status `skipped`). Default false — agents push
       autonomously, behavior unchanged.
+  delegate.autoMerge:
+    required: false
+    default: false
+    description: >-
+      Opt-in post-green auto-merge arming for delegate-spawned PRs. When true, after
+      an agent (or the orchestrator) runs `gh pr create` it arms the PR with
+      `gh pr merge --auto --merge` so it merges itself once the base branch's required
+      checks pass — instead of stalling on a human merge (the batch/autopilot path).
+      Consent is per-run, never assumed: `--auto` only arms when the repo has "Allow
+      auto-merge" enabled AND a required status check is configured for the base branch;
+      if arming fails the PR is left open-but-not-armed — never an immediate or `--admin`
+      merge. Merge commits, not squash (squash is disabled on this repo). The Report
+      phase records per-PR whether auto-merge armed. Default false — PRs wait for a
+      human to merge, behavior unchanged.
   delegate.memoryFile:
     required: false
     default: "{{delegate.checkpointDir}}/memory.md"

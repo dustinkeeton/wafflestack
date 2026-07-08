@@ -419,7 +419,14 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - **Gate on (`true`):** do NOT run `{{git.cmd}} push` or `gh pr create`. Stop at the local commit and hand an approval summary to the orchestrator — branch `{branch-name}`, target issue #{number}, diffstat (`{{git.cmd}} diff --stat origin/main...HEAD`), and commit list (`{{git.cmd}} log --oneline origin/main..HEAD`):
      - If you have SendMessage, send that summary to `team-lead` and WAIT for an explicit approval reply. On approval, push and open the PR as above. On rejection, leave the worktree exactly as-is (committed, unpushed) and report the rejection — never push.
      - If you lack messaging tools, STOP after committing without pushing, and make the approval summary your final message. The orchestrator inspects your worktree, collects approval, and completes or withholds the push itself.
-6. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL, or the approval summary when the gate is on>). If you lack these tools, just ensure the PR exists (gate off) or the local commit is in place (gate on); the orchestrator verifies your work directly.
+6. Arm auto-merge — opt-in, and only when a PR was actually opened. Auto-merge is ON when `delegate.autoMerge` is `true`; for this run it is **`{{delegate.autoMerge}}`**.
+   - **Off (`false`, the default):** do nothing — leave the PR for a human to merge. Skip this step; nothing else changes.
+   - **On (`true`):** immediately after `gh pr create` succeeds, arm the PR to merge itself once the base branch's required checks pass:
+     - gh pr merge --auto --merge <pr-number>
+     - Merge commits, not squash — squash is disabled on this repo. `--auto` only arms when the repo has **"Allow auto-merge"** enabled *and* a required status check is configured for the base branch (otherwise there is nothing for it to wait on). If it cannot arm, report the PR as **open but auto-merge could not be enabled** — do **NOT** fall back to an immediate merge or `--admin` merge, and never bypass branch protection.
+   - If the approval gate (step 5) was on and your push was **rejected**, there is no PR — skip this step.
+   - State in your report whether auto-merge armed on the PR.
+7. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL and whether auto-merge armed, or the approval summary when the gate is on>). If you lack these tools, just ensure the PR exists (gate off) or the local commit is in place (gate on); the orchestrator verifies your work directly.
 
 Branch name: {branch-name}
 ```
@@ -440,7 +447,7 @@ When the gate is on, each agent commits locally and STOPS before `git push` (see
 
 2. **Collect the decision.** Present each summary — branch, target issue, diffstat, commit list — to the human with `AskUserQuestion`, offering **Approve**, **Approve all remaining**, and **Reject**. Ask one question per agent, or a single multi-select over all pending agents. Never assume approval on a timeout or a silent agent.
 
-3. **On approval** → the branch is pushed and the PR opened: reply to a waiting (messaging-capable) agent with the approval so it pushes, or, for a silent agent, push and open the PR yourself from its worktree/branch. Record `approval: "approved"` and `approvedBy` (who approved) in this issue's `execution` entry.
+3. **On approval** → the branch is pushed and the PR opened: reply to a waiting (messaging-capable) agent with the approval so it pushes (it then arms auto-merge itself per step 6 of its prompt), or, for a silent agent, push and open the PR yourself from its worktree/branch — and when you open it yourself, arm auto-merge too if `delegate.autoMerge` is on, following the same guardrails (arm with `gh pr merge --auto --merge`; on failure leave it open-but-not-armed, never `--admin`). Record `approval: "approved"` and `approvedBy` (who approved) in this issue's `execution` entry.
 
 4. **On rejection** → do NOT push. Leave the worktree and its local branch intact for inspection (never `git worktree remove` a rejected branch). In this issue's `execution` entry record `status: "skipped"`, `pr: null`, `approval: "rejected"`, and `approvedBy` (who rejected), and surface it in the Report.
 
@@ -454,7 +461,7 @@ After each agent completes, verify the build still passes in the main working di
 
 If verification fails after a parallel agent's worktree merge, stop and report the conflict.
 
-**Checkpoint** — after all agents finish, write `execution`: one entry per planned issue with `number`, `agent`, `branch` (verified from `gh pr list --head <branch>` / the pushed branch — **not** re-typed from memory), `status` (`done`/`failed`/`skipped`), `pr` (URL or `#number`, or `null`), and optional `boardMoved`. When the approval gate was on (`delegate.approveBeforePush`), also record `approval` (`approved`/`rejected`) and `approvedBy` per entry — a **rejected** push is `status: "skipped"` with `pr: null` (the validator enforces this, so a rejection can never masquerade as a merged PR). Validate:
+**Checkpoint** — after all agents finish, write `execution`: one entry per planned issue with `number`, `agent`, `branch` (verified from `gh pr list --head <branch>` / the pushed branch — **not** re-typed from memory), `status` (`done`/`failed`/`skipped`), `pr` (URL or `#number`, or `null`), and optional `boardMoved`. When the approval gate was on (`delegate.approveBeforePush`), also record `approval` (`approved`/`rejected`) and `approvedBy` per entry — a **rejected** push is `status: "skipped"` with `pr: null` (the validator enforces this, so a rejection can never masquerade as a merged PR). When auto-merge was enabled for the run (`delegate.autoMerge`), also record `autoMergeArmed` (`true`/`false`) per entry — whether `gh pr merge --auto` actually armed on that PR. **Verify it, don't assume it:** `gh pr view <pr> --json autoMergeRequest -q '.autoMergeRequest != null'` returns `true` only when the PR is really armed; a PR left open-but-not-armed (no required check, or auto-merge disabled on the repo) records `false`. The validator enforces that only a PR-bearing entry can be `autoMergeArmed: true`. Validate:
 
 ```bash
 node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase execute
@@ -478,6 +485,8 @@ Build: passing
 ```
 
 **Approval gate** — when it was active for the run (any `execution` entry carries an `approval` field), add an **Approved by** column so the report records who approved or rejected each push. A **rejected** issue shows `status: skipped` with no PR; call it out explicitly and note that its worktree/branch was left local and intact for inspection (it is not cleaned up).
+
+**Auto-merge** — when it was enabled for the run (`delegate.autoMerge`; any `execution` entry carries an `autoMergeArmed` field), add an **Auto-merge** column reading `armed` or `not armed` per PR. Call out every PR that came back **not armed** explicitly — it is open but will **not** merge itself (auto-merge disabled on the repo, or no required check on the base branch), so a human still has to merge it. An armed PR merges itself once its required checks pass; the post-merge board-to-Done move for those is the orchestrator's job (see **Board status after work**), not a human's.
 
 ### Curate run memory
 
@@ -528,6 +537,8 @@ gh api graphql -f query='
 **Skip if:** agent failed, no PR was created, or board setup was disabled (warning in Board Setup phase).
 
 **Failed agents** leave the issue as "In Progress" — this is intentional, as stalled "In Progress" items are visible on the board as work that needs attention.
+
+**Auto-merge armed PRs (`delegate.autoMerge`)** merge themselves once their required checks pass — no human is at the merge to move the board. So for an armed PR the **post-merge move to Done is the orchestrator's housekeeping**, not a human's: after arming, once the PR has actually merged (poll `gh pr view <pr> --json state -q .state` for `MERGED`, or pick it up on the next post-merge sweep), set its board item to "Done" and close any straggler issue. Until it merges it stays "In Review" (or "In Progress"), same as any other open PR. Do **not** move it to Done at arming time — arming only queues the merge; it is not merged yet.
 
 Include any failures or skipped issues with reasons.
 
