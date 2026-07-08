@@ -40,6 +40,17 @@ is what you reach for across a breaking one.
   (load-bearing path) discovery and would apply to agents only, so the lock manifest already
   answers the question authoritatively for every render kind. No config, render, or lock
   changes.
+- **Enhancement, additive — new `adversarial-review` skill in the `code-quality` stack
+  (part of #112).** A user- and agent-invocable skill (`/adversarial-review <PR#>`, defaults
+  to the current branch's PR) that reviews a finished, CI-green PR from a hostile reviewer's
+  seat — poking holes in correctness edge cases, error handling, test depth, API/naming, and
+  simplification — and posts an honest-severity review (blocker / should-fix / nit) back on
+  the PR, where "no holes found" is a valid outcome. Distinct from the built-in
+  `/code-review` (which reviews the author's uncommitted working diff); this gates a
+  committed, green PR just before merge. Introduces **no new config keys** and no syrup.
+  Enable/upgrade `code-quality` and re-render to pick it up; a repo that doesn't enable the
+  stack is unaffected. The companion opt-in workflow that auto-runs it on PR-green is **not
+  shipped yet** — it remains blocked on the CI-harness dispatch fix (#133).
 
 ## [0.10.0] - 2026-07-07
 
