@@ -97,6 +97,18 @@ same pairing. Do **not** just accept that gap. Before you finish setup/install, 
 Never silently leave a paired flow half-installed — that hole (a release skill with no tag hook)
 is exactly what this question exists to close.
 
+**External opt-in syrup — an extra acknowledgement (trust boundary).** When opt-in syrup comes from
+an **external source** — a stack pulled from a git URL or a local path under `stacks:`, not a
+built-in one — its content was authored *outside this repo*, so `render` enforces two extra gates.
+First, it lints every external stack's definitions and **blocks** on a malformed one (bad
+frontmatter, an undeclared placeholder), naming the source; fix it at the source, not by hand-editing
+the render. Second, pouring external opt-in syrup needs an **explicit, separate acknowledgement from
+the user, beyond the both/one/neither choice above** — because the file is third-party (and may
+demand elevated permissions, e.g. repo write). Name the source and its pinned `ref`, spell out what
+the file does, and get a clear yes before you install it; `render` also surfaces this as a warning
+whenever external opt-in syrup is selected. This is distinct from built-in opt-in syrup, which the
+normal opt-in flow already covers.
+
 ## 3. Fill config values
 
 Walk the config schema of every enabled stack (from the inventory):

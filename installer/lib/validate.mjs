@@ -7,16 +7,47 @@ import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 
 /** Toolkit-developer lint. Returns a list of problems (empty = clean). */
 export function validateToolkit(rootDir) {
-  const problems = [];
   let toolkit;
   try {
     toolkit = loadToolkit(rootDir);
   } catch (err) {
     return [`toolkit failed to load: ${err.message}`];
   }
+  const problems = [];
+  for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
+  return problems;
+}
 
+/**
+ * Enforce the external-source trust boundary at install/render time (#126): run the same lint
+ * over every EXTERNAL stack's definitions (a stack merged in from a `source:` carries a
+ * `provenance` record — see `loadToolkitWithSources`), so a malformed third-party stack fails
+ * loudly before anything renders. Cross-stack resolution sees the full merged toolkit (an
+ * external stack may legitimately depend on a built-in item), but only the external stacks'
+ * problems are reported — built-in stacks are vetted by the toolkit's own `validate` in CI and
+ * the consumer can neither cause nor fix a built-in problem here. Each problem names the source.
+ * Returns a list of problems (empty = clean).
+ */
+export function validateExternalStacks(toolkit) {
+  const problems = [];
   for (const stack of toolkit.stacks.values()) {
-    const ctx = `stack ${stack.name}`;
+    if (!stack.provenance) continue; // only source-provided (external) stacks
+    const { source, ref } = stack.provenance;
+    const where = ref ? `${source}@${ref}` : source;
+    problems.push(...validateStack(toolkit, stack, `external stack "${stack.name}" (${where})`));
+  }
+  return problems;
+}
+
+/**
+ * Lint a single loaded stack against its containing (possibly multi-root) toolkit. `ctx` is the
+ * prefix each problem is reported under — `stack <name>` for a built-in, or an external-source
+ * identity for a third-party stack — so the same checks serve both the toolkit-developer
+ * `validate` and the install-time external gate. Returns this stack's problems (empty = clean).
+ */
+export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
+  const problems = [];
+  {
     if (!stack.description) problems.push(`${ctx}: missing description`);
 
     const usedKeys = new Set();
