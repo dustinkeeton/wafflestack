@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 import { normalizeItemRef } from './refs.mjs';
+import { resolveSourceRoot } from './sources.mjs';
 
 /** Load the toolkit registry and every stack it lists. */
 export function loadToolkit(rootDir) {
@@ -13,6 +14,73 @@ export function loadToolkit(rootDir) {
     stacks.set(name, loadStack(name, dir));
   }
   return { name: registry.name, description: registry.description, stacks };
+}
+
+/**
+ * Load the built-in toolkit plus every external `source` declared in the project, merging them
+ * into one registry so a single render/lock/doctor pipeline handles all of them (#88).
+ *
+ * Each external `{ name, source, ref }` entry resolves to a toolkit root on disk (a git URL
+ * fetched at the pinned `ref`, or a local path read in place — see `resolveSourceRoot`) and its
+ * `name` selects a single stack from that root, loaded with the same `loadStack` machinery the
+ * built-in stacks use. The stack is registered under the entry `name`, carrying a `source` tag
+ * for provenance (fuller lock provenance is #125).
+ *
+ * Collision detection is a hard error, never a silent shadow: if an external stack name is
+ * already defined by another source — the built-in toolkit or an earlier external source — the
+ * load fails loudly naming BOTH sources. (Item-name clashes among the *enabled* stacks of two
+ * sources surface downstream as the render's per-output-path `emit()` conflict, which names the
+ * two contributing stacks — hence a stack name uniquely identifies its source.)
+ *
+ * With no external stacks this is exactly `loadToolkit(builtinRoot)` — nothing is fetched.
+ */
+export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch }) {
+  const builtin = loadToolkit(builtinRoot);
+  if (!externalStacks.length) return builtin;
+
+  const stacks = new Map(builtin.stacks);
+  const origin = new Map(); // stackName -> human-readable source, for collision messages
+  for (const name of builtin.stacks.keys()) origin.set(name, 'the built-in toolkit');
+
+  for (const ext of externalStacks) {
+    if (stacks.has(ext.name)) {
+      throw new Error(
+        `stack "${ext.name}" is defined by two sources — ${origin.get(ext.name)} and external source ` +
+          `${describeSource(ext)} — a stack name must be unique across all sources; rename or remove one`,
+      );
+    }
+    const root = resolveSourceRoot(ext, { cwd, cacheDir, gitFetch });
+    const dir = externalStackDir(root, ext.name);
+    if (!dir) {
+      throw new Error(
+        `external stack "${ext.name}" (source: ${ext.source}) resolved to ${root} but no stack was found there — ` +
+          `expected stacks/${ext.name}/stack.yaml (a toolkit root) or a stack.yaml at the source root (a single-stack source)`,
+      );
+    }
+    const stack = loadStack(ext.name, dir);
+    stack.source = ext.source; // provenance tag; fuller lock provenance is #125
+    stacks.set(ext.name, stack);
+    origin.set(ext.name, `external source ${describeSource(ext)}`);
+  }
+
+  return { name: builtin.name, description: builtin.description, stacks };
+}
+
+/**
+ * Locate the stack `name` under a resolved external source root. A source may be a full toolkit
+ * root (the stack lives at `stacks/<name>/`, exactly like the built-in layout) or point directly
+ * at a single stack directory (a `stack.yaml` at its root). Prefers the toolkit-root shape.
+ * Returns the stack directory, or null when neither layout has a `stack.yaml`.
+ */
+function externalStackDir(root, name) {
+  const inToolkit = path.join(root, 'stacks', name);
+  if (exists(path.join(inToolkit, 'stack.yaml'))) return inToolkit;
+  if (exists(path.join(root, 'stack.yaml'))) return root;
+  return null;
+}
+
+function describeSource(ext) {
+  return ext.ref ? `${ext.source}@${ext.ref}` : ext.source;
 }
 
 function loadStack(name, dir) {

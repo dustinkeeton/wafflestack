@@ -3094,13 +3094,12 @@ describe('external stack sources (#88, slice 1)', () => {
     assert.throws(() => loadProjectConfig(cwd), /external stack "acme".*no `ref:`/);
   });
 
-  test('render on a source-bearing config fails with a clear not-yet-resolvable error and writes no lock', () => {
+  test('render on a missing local source fails with a clear error and writes no lock', () => {
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
       'stacks:',
-      '  - name: acme-process',
-      '    source: https://github.com/acme/waffle-stacks',
-      '    ref: v1.2.0',
+      '  - name: ghost',
+      '    source: ./does-not-exist',
       'config: {}',
       '',
     ].join('\n'));
@@ -3109,9 +3108,170 @@ describe('external stack sources (#88, slice 1)', () => {
     assert.equal(result.errors.length, 1);
     assert.match(
       result.errors[0],
-      /external stack "acme-process".*declared but not yet resolvable.*issue #88/,
+      /external stack "ghost" source path "\.\/does-not-exist" does not resolve to a directory/,
     );
     assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'no lock written on the failed render');
+  });
+});
+
+describe('external stack sources: multi-root resolution (#124)', () => {
+  let builtinRoot;
+  let extRoot;
+  let cwd;
+  let cacheDir;
+  const gitOk = spawnSync('git', ['--version']).status === 0;
+
+  beforeEach(() => {
+    builtinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-builtin-'));
+    extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-ext-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-multiroot-'));
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wafflestack-src-cache-'));
+
+    // Built-in toolkit: `core` (the consumer enables it) plus `shared` (defined but not enabled,
+    // to exercise the cross-source collision below).
+    write(builtinRoot, 'toolkit.yaml', 'name: builtin\ndescription: built-in fixture\nstacks: [core, shared]\n');
+    write(builtinRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core stack.\nskills: [alpha]\n');
+    write(builtinRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha from the built-in toolkit.\n');
+    write(builtinRoot, 'stacks/shared/stack.yaml', 'name: shared\ndescription: Shared (built-in).\nskills: [gamma]\n');
+    write(builtinRoot, 'stacks/shared/skills/gamma/SKILL.md', '---\nname: gamma\ndescription: Gamma skill.\n---\n\nGamma from the built-in toolkit.\n');
+
+    // External source, laid out as a toolkit root: an `extra` stack, plus a `shared` stack that
+    // collides with the built-in one by name.
+    write(extRoot, 'stacks/extra/stack.yaml', 'name: extra\ndescription: Extra (external).\nskills: [beta]\n');
+    write(extRoot, 'stacks/extra/skills/beta/SKILL.md', '---\nname: beta\ndescription: Beta skill.\n---\n\nBeta from the external source.\n');
+    write(extRoot, 'stacks/shared/stack.yaml', 'name: shared\ndescription: Shared (external).\nskills: [delta]\n');
+    write(extRoot, 'stacks/shared/skills/delta/SKILL.md', '---\nname: delta\ndescription: Delta skill.\n---\n\nDelta from the external source.\n');
+  });
+
+  afterEach(() => {
+    for (const d of [builtinRoot, extRoot, cwd, cacheDir]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const render = () =>
+    renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+
+  test('local-path source (resolved relative to the repo) renders alongside built-in stacks; doctor round-trips', () => {
+    // A relative source proves resolution is anchored at the consumer repo, not the cwd of the CLI.
+    const rel = path.relative(cwd, extRoot);
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: extra',
+      `    source: ${rel}`,
+      'config: {}',
+      '',
+    ].join('\n'));
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    // Built-in stack rendered.
+    assert.match(read(cwd, '.claude/skills/alpha/SKILL.md'), /Alpha from the built-in toolkit/);
+    // External stack rendered "like a built-in one".
+    assert.match(read(cwd, '.claude/skills/beta/SKILL.md'), /Beta from the external source/);
+    // One lock/doctor pipeline covers both roots.
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+    // The `shared` stacks (in both roots but enabled by neither) did not render.
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/gamma/SKILL.md')), false);
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/delta/SKILL.md')), false);
+  });
+
+  test('a source pointing directly at a single stack dir (stack.yaml at its root) resolves', () => {
+    const single = fs.mkdtempSync(path.join(os.tmpdir(), 'single-stack-'));
+    write(single, 'stack.yaml', 'name: solo\ndescription: Single-stack source.\nskills: [omega]\n');
+    write(single, 'skills/omega/SKILL.md', '---\nname: omega\ndescription: Omega.\n---\n\nOmega from a single-stack source.\n');
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: solo',
+      `    source: ${single}`,
+      'config: {}',
+      '',
+    ].join('\n'));
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, '.claude/skills/omega/SKILL.md'), /Omega from a single-stack source/);
+    fs.rmSync(single, { recursive: true, force: true });
+  });
+
+  test('cross-source stack-name collision is a hard error naming both sources, and writes no lock', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: shared', // collides with the built-in `shared` stack
+      `    source: ${extRoot}`,
+      'config: {}',
+      '',
+    ].join('\n'));
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0], /stack "shared" is defined by two sources/);
+    assert.match(result.errors[0], /the built-in toolkit/);
+    assert.ok(result.errors[0].includes(extRoot), `collision names the external source: ${result.errors[0]}`);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'no lock written on the failed render');
+  });
+
+  test('cross-source item-name collision among enabled stacks fails loudly (per-output-path guard)', () => {
+    // An external `dup` stack whose skill `alpha` renders to the same path as built-in core/alpha.
+    write(extRoot, 'stacks/dup/stack.yaml', 'name: dup\ndescription: Dup items.\nskills: [alpha]\n');
+    write(extRoot, 'stacks/dup/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha (external).\n---\n\nExternal alpha.\n');
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: dup',
+      `    source: ${extRoot}`,
+      'config: {}',
+      '',
+    ].join('\n'));
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((e) => /output conflict/.test(e) && /core\/skills\/alpha/.test(e) && /dup\/skills\/alpha/.test(e)),
+      JSON.stringify(result.errors),
+    );
+  });
+
+  test('git source is fetched at the pinned ref, not HEAD', { skip: gitOk ? false : 'git not available' }, () => {
+    // A toolkit-root git repo with two versions: skill body "VERSION ONE" tagged v1.0.0, then HEAD
+    // advanced to "VERSION TWO". Pinning to v1.0.0 must render the v1 body — proving the ref pin
+    // resolves rather than following HEAD. `file://` forces git classification + the git transport,
+    // and the fetch stays offline (a local repo, no network).
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ext-git-work-'));
+    const git = (...a) => {
+      const r = spawnSync('git', ['-C', work, ...a], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
+    };
+    assert.equal(spawnSync('git', ['init', '-q', '-b', 'main', work]).status, 0);
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    const skill = 'stacks/pinned/skills/pin/SKILL.md';
+    write(work, 'stacks/pinned/stack.yaml', 'name: pinned\ndescription: Pinned stack.\nskills: [pin]\n');
+    write(work, skill, '---\nname: pin\ndescription: Pin skill.\n---\n\nVERSION ONE\n');
+    git('add', '-A');
+    git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'v1');
+    git('tag', 'v1.0.0');
+    write(work, skill, '---\nname: pin\ndescription: Pin skill.\n---\n\nVERSION TWO\n');
+    git('add', '-A');
+    git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'v2');
+
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - name: pinned',
+      `    source: file://${work}`,
+      '    ref: v1.0.0',
+      'config: {}',
+      '',
+    ].join('\n'));
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const body = read(cwd, '.claude/skills/pin/SKILL.md');
+    assert.match(body, /VERSION ONE/);
+    assert.doesNotMatch(body, /VERSION TWO/);
+    fs.rmSync(work, { recursive: true, force: true });
   });
 });
 
