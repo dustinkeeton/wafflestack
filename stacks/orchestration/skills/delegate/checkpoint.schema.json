@@ -88,6 +88,10 @@
       "description": "Phase 3 output — the confirmed assignment plan. `confirmed` records that the user approved (or that the single-obvious-assignment fast path skipped the gate).",
       "properties": {
         "confirmed": { "type": "boolean" },
+        "confirmedVia": {
+          "enum": ["interactive", "batch-scope", "single-obvious"],
+          "description": "Optional — how confirmation was obtained: `interactive` (a human approved at the Phase 3 gate), `batch-scope` (delegate.batchMode was on and explicit scope stood in for the gate — no human pause), or `single-obvious` (the single-obvious-assignment fast path skipped the gate). Records the confirmation provenance so a batch run is auditable after the fact. checkpoint.mjs enforces that it may only be set when `confirmed` is true."
+        },
         "groups": {
           "type": "array",
           "minItems": 1,

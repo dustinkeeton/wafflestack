@@ -188,6 +188,20 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /do \*\*NOT\*\* fall back to an immediate merge or `--admin` merge/);
   });
 
+  test('batch mode is opt-in, needs explicit scope, and never weakens the other gates', () => {
+    // Opt-in and OFF by default — the interactive confirmation gate is unchanged when off.
+    assert.match(md, /Batch mode is ON when `delegate\.batchMode` is `true`/);
+    // An unscoped batch run must not auto-proceed — it falls back to interactive confirmation.
+    assert.match(md, /fall back to interactive confirmation/);
+    // Ambiguous classification falls back to the safest choice (serial in the main checkout),
+    // not a human pause.
+    assert.match(md, /Ambiguous classification falls back to the safest choice/);
+    // Batch mode composes with the other opt-ins but must NOT weaken the pre-push gate.
+    assert.match(md, /`delegate\.approveBeforePush` still wins/);
+    // Confirmation provenance is recorded so the run stays auditable.
+    assert.match(md, /confirmedVia: "batch-scope"/);
+  });
+
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {
     assert.match(md, /Hard cap:\*\* `4096` bytes/);
     assert.match(md, /memory\.mjs --file .*--max-bytes 4096/);

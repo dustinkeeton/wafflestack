@@ -63,13 +63,27 @@ The checkpoint above is **per-run** throwaway state. Run memory is the opposite:
 
 The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each spawned agent gets only its area's entries), and the **write** policy in Phase 5 (Report curates — prune + rewrite — then runs the gate above).
 
+## Batch mode
+
+`/delegate` pauses for human confirmation whenever the plan is non-trivial (the Phase 3 gate: >2 agents, an ambiguous assignment, or parallel execution). That gate is correct for interactive use, but it blocks delegate from running as a building block for the autonomous backlog runner, which must work through a supplied issue list without a human accepting each plan. **Batch mode** removes that interactive pause by treating **explicit scope** as the confirmation.
+
+- **Opt-in, per run.** Batch mode is ON when `delegate.batchMode` is `true`; for this run it is **{{delegate.batchMode}}**. Default `false` — the interactive confirmation gate behaves exactly as it always has.
+- **Activation requires explicit scope.** Batch mode applies only when the invoker (a human or the autopilot orchestrator) supplied the issue set explicitly — an issue list / `#N`, `milestone:<name>`, a known label, a keyword, or the `all-open` default scope. That explicit scope is what stands in for the human accepting the plan. If `delegate.batchMode` is `true` but the resolved scope carries no such signal, **fall back to interactive confirmation** — never auto-proceed on an unscoped run.
+- **It changes decision points, not machinery.** Classification, the parallel-only-when-areas-disjoint rules, worktree isolation for parallel groups, serial dependency chains, per-issue PR creation, and board updates are all unchanged. Batch mode changes exactly two decisions:
+  1. **The Phase 3 confirmation gate is skipped** — instead of pausing, **log** the plan that would have been shown for approval (the same table) so the run stays auditable after the fact, then proceed. The `plan` checkpoint still records `confirmed: true`, tagged `confirmedVia: "batch-scope"` to mark that confirmation came from explicit scope under batch mode, not from a human.
+  2. **Ambiguous classification falls back to the safest choice** — serial execution in the main checkout (a serial group, worktree `null`) — instead of pausing to ask.
+- **It composes with the other opt-ins and never weakens them.**
+  - With `delegate.autoMerge` (the autopilot orchestrator, #100, sets both), delegate plans and spawns with no pause and each PR arms itself on green — the fully unattended path.
+  - **`delegate.approveBeforePush` still wins.** Batch mode removes only the Phase-3 *planning* confirmation; it does **not** disable the pre-push *push* approval gate. A batch run with `delegate.approveBeforePush: true` still stops each agent at its pre-push gate exactly as in interactive mode. The two gates are independent: batch mode silences the plan pause, `approveBeforePush` still holds each push.
+- **Process the supplied list one group at a time**, in the same reasonably-chunked units delegate already produces — batch mode neither widens scope nor merges groups.
+
 ## Phase 1: Fetch Issues
 
 **Argument handling** — the fetch path depends on whether `$ARGUMENTS` is provided:
 
 - **No `$ARGUMENTS` (default)** → delegate the project's configured default scope, which for this project is **{{delegate.defaultScope}}**:
   - `current-milestone` → delegate **every open issue in the current milestone, and only that milestone**. Resolve the current milestone first (see below), then fetch its issues. This path must **never** silently widen to all open issues.
-  - `all-open` → fetch **every open issue** in the repo: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`. This is the bulk path for repos that don't plan with milestones; the Phase 3 confirmation gate guards it — always present the full plan before spawning anything.
+  - `all-open` → fetch **every open issue** in the repo: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`. This is the bulk path for repos that don't plan with milestones; in interactive mode the Phase 3 confirmation gate guards it — always present the full plan before spawning anything. (In batch mode, `all-open` is an explicit-scope signal: the plan is **logged**, not paused on — see **Batch mode**.)
 - `#N` or a bare number → fetch that single issue: `gh issue view N --json number,title,labels,body,milestone`
 - `milestone:<title-or-number>` → delegate that milestone explicitly: resolve a number directly, or match the title against `gh api "repos/$OWNER/$REPO/milestones?state=open"`, then fetch its open issues exactly as in the current-milestone path.
 - A known label (`bug`, `enhancement`, `documentation`, `question`) → filter: `gh issue list --state open --label "$ARGUMENTS" --json number,title,labels,body,milestone`
@@ -127,6 +141,8 @@ For each issue, determine the best specialist agent using content-based matching
 
 After classification, determine the **area** each issue touches — which module or subdirectory, and whether it includes root files ({{roster.rootFiles}}) or {{roster.sharedModule}}. This drives parallelization.
 
+**Ambiguous classification in batch mode** — when `delegate.batchMode` is on and an issue's agent or area cannot be pinned down confidently, do **not** defer it to a human. Resolve it to the **safest** option: settle on your best-guess agent, and flag the issue `touchesShared: true` so Phase 3 places it in a **serial group in the main checkout** (worktree `null`) rather than parallelizing on an uncertain area. Note the fallback in the plan you log in Phase 3. In interactive mode an ambiguous classification instead surfaces at the Phase 3 confirmation gate as usual.
+
 **Checkpoint** — write `classification` (one entry per issue: `number`, `agent`, `area`, and `touchesRoot`/`touchesShared` where known), then validate. The validator enforces that **every fetched issue is classified exactly once** and none references an unknown issue:
 
 ```bash
@@ -169,18 +185,19 @@ Proceed?
 ```
 
 **Confirmation gate:**
+- **Batch mode (`delegate.batchMode` is `true`) with explicit scope → do not pause.** Explicit scope stands in for the human accepting the plan, so skip the interactive gate: **log** the plan table above (the same assignment/grouping decisions you would have shown for approval) so the run is auditable after the fact, then proceed straight to execution. Any assignment that would be *ambiguous* was already resolved to the safest choice — serial execution in the main checkout — back in Phase 2, so it never reaches a pause here. This does **not** touch `delegate.approveBeforePush`: if that pre-push gate is on, each agent still stops before `git push` (see **Batch mode**).
 - **Always confirm** when: >2 agents would spawn, any assignment is ambiguous, or parallel execution is planned
 - **Skip confirmation** for a single obvious assignment (e.g., `/delegate #5` with a clear match)
 
-Wait for the user to approve, modify, or cancel before proceeding.
+Wait for the user to approve, modify, or cancel before proceeding. **In batch mode there is no wait** — the logged plan is the audit record and execution proceeds immediately.
 
-**Checkpoint** — once the plan is settled (approved, or the single-obvious-assignment fast path), write `plan`: `confirmed` (true) and `groups`, each group carrying `id`, `mode` (`parallel`/`serial`), and `assignments`. Each assignment records `number`, `agent`, `branch` (the exact git-workflow branch name), and `worktree` — the **absolute** path `<repo>/{{git.worktreesDir}}/issue-<N>` for parallel groups, or `null` for serial groups and the single-issue fast path. This plan is the source of truth Phase 4 reads branch and worktree from. Validate:
+**Checkpoint** — once the plan is settled (approved, the batch-mode logged plan, or the single-obvious-assignment fast path), write `plan`: `confirmed` (true), `confirmedVia` (how confirmation was obtained — `interactive` when a human approved the gate, `batch-scope` when batch mode + explicit scope stood in for it, or `single-obvious` for the fast path), and `groups`, each group carrying `id`, `mode` (`parallel`/`serial`), and `assignments`. Each assignment records `number`, `agent`, `branch` (the exact git-workflow branch name), and `worktree` — the **absolute** path `<repo>/{{git.worktreesDir}}/issue-<N>` for parallel groups, or `null` for serial groups and the single-issue fast path. This plan is the source of truth Phase 4 reads branch and worktree from. Validate:
 
 ```bash
 node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase plan
 ```
 
-The validator enforces that every issue is assigned exactly once, branch names are well-formed, and worktree presence matches group mode (parallel ⇒ has a path, serial ⇒ null).
+The validator enforces that every issue is assigned exactly once, branch names are well-formed, worktree presence matches group mode (parallel ⇒ has a path, serial ⇒ null), and — when set — `confirmedVia` requires `confirmed: true` (a recorded confirmation source can't sit atop an unconfirmed plan).
 
 ## Board Setup
 
