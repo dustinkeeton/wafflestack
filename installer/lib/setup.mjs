@@ -5,6 +5,12 @@ import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
 import { readLock, collectUsedKeys } from './render.mjs';
+import {
+  applicablePrerequisites,
+  evaluatePrerequisites,
+  formatPrereq,
+  PREREQ_KINDS,
+} from './prerequisites.mjs';
 
 /**
  * The agent-driven install wizard: the static playbook (schema/SETUP.md), an optional
@@ -221,6 +227,39 @@ function currentConfigSection(toolkit, cwd) {
     lines.push('## Opt-in syrup (sensitive files — opt-in)', '', ...optInLines, '');
   }
 
+  // Typed external prerequisites (#129/#130): run the applicable stacks' checks the way `doctor`
+  // does and flag any unmet **require** as a blocker for THIS repo — the update-mode analog of
+  // doctor's gate, surfaced for the human (the postinstall-prompt analog of #47), mirroring the
+  // unset-required-config and skipped-syrup flags above. Unmet `recommend` entries only report.
+  // Anything that creates or mutates shared external state (a secret, a label, a repo setting, a
+  // service) still needs the user's explicit go-ahead — the toolkit checks and prompts, it never
+  // provisions unasked.
+  const { unmetRequired: unmetReqPrereqs, unmetRecommended: unmetRecPrereqs } = evaluatePrerequisites(
+    applicablePrerequisites(toolkit, selection),
+    cwd,
+  );
+  if (unmetReqPrereqs.length) {
+    lines.push(
+      '## Prerequisites unmet (require — blockers)',
+      '',
+      'These `require` prerequisites of the selected stacks are unmet in this repo — `doctor` fails',
+      'on them too. Resolve each before relying on the flow. Anything that creates or mutates shared',
+      'external state (a secret, a label, a repo setting, a service) needs the user\'s explicit',
+      'go-ahead first — surface the exact command and wait for a clear yes; never provision unasked.',
+      '',
+      ...unmetReqPrereqs.map((p) => `- ⚠ ${formatPrereq(p)}`),
+      '',
+    );
+  }
+  if (unmetRecPrereqs.length) {
+    lines.push(
+      '## Prerequisites unmet (recommend — report-only)',
+      '',
+      ...unmetRecPrereqs.map((p) => `- ${formatPrereq(p)}`),
+      '',
+    );
+  }
+
   return lines.join('\n').trimEnd();
 }
 
@@ -290,10 +329,53 @@ export function toolkitInventory(toolkit, version) {
       lines.push(`- env prerequisites: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`);
     }
     lines.push('');
+    lines.push(...prerequisitesSection(stack.prerequisites));
     lines.push(...configSection(stack.config));
     if (stack.setup) lines.push('### setup notes', '', stack.setup.trim(), '');
   }
   return `${lines.join('\n').trimEnd()}\n`;
+}
+
+/**
+ * The stack's typed external prerequisites (#47/#129), grouped by kind for the inventory — the
+ * human-facing surface (#130) of the block `render` warns on and `doctor` gates. Each line names
+ * the thing, its `require`/`recommend` level, any item scope, and the deterministic check, so the
+ * setup agent can walk step 4 of the playbook kind by kind. Returns [] when a stack declares none,
+ * so a prerequisite-free stack's inventory is byte-unchanged.
+ */
+function prerequisitesSection(prerequisites) {
+  if (!prerequisites?.length) return [];
+  const byKind = new Map();
+  for (const p of prerequisites) {
+    const k = p.kind || 'other';
+    if (!byKind.has(k)) byKind.set(k, []);
+    byKind.get(k).push(p);
+  }
+  // Canonical kind order first, then any leftover kind (a malformed one `validate` already flags).
+  const kinds = [
+    ...PREREQ_KINDS.filter((k) => byKind.has(k)),
+    ...[...byKind.keys()].filter((k) => !PREREQ_KINDS.includes(k)),
+  ];
+  const lines = [
+    '### prerequisites',
+    '',
+    'External things this stack needs that the copy-in install can neither provide nor verify,',
+    'grouped by kind. `[require]` blocks a clean `doctor`; `[recommend]` only reports. Walk these in',
+    "step 4 — and get the user's explicit go-ahead before creating or mutating any shared state (a",
+    'repo secret, a trigger label, a repo setting, an external service).',
+    '',
+  ];
+  for (const kind of kinds) {
+    lines.push(`- **${kind}**`);
+    for (const p of byKind.get(kind)) {
+      const scope = p.items?.length ? ` (needed by ${p.items.join(', ')})` : '';
+      const desc = p.description ? ` — ${p.description}` : '';
+      const check = p.check ? ` — check: \`${p.check}\`` : '';
+      lines.push(`  - \`${p.name}\` [${p.level}]${scope}${desc}${check}`);
+    }
+  }
+  lines.push('');
+  return lines;
 }
 
 function configSection(config) {

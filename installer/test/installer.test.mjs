@@ -2346,6 +2346,58 @@ describe('setup guide', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('inventory lists the full prerequisites block, grouped by kind (#130)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup-pq-'));
+    try {
+      makeFixtureToolkit(root);
+      // Append a two-kind prerequisites block (a stack-wide require tool + an item-scoped
+      // recommend secret) so the inventory's grouping, level, scope, and check all get asserted.
+      fs.appendFileSync(
+        path.join(root, 'stacks/demo/stack.yaml'),
+        [
+          'prerequisites:',
+          '  - kind: tool',
+          '    name: gh',
+          '    level: require',
+          '    check: command -v gh',
+          '    description: GitHub CLI.',
+          '  - kind: secret',
+          '    name: DEMO_TOKEN',
+          '    level: recommend',
+          '    check: "false"',
+          '    items: [skills/demo-skill]',
+          '    description: A repo secret the demo skill bills to.',
+          '',
+        ].join('\n'),
+      );
+      const inventory = toolkitInventory(loadToolkit(root), '9.9.9');
+      // A grouped section with a preamble that names the go-ahead requirement for shared state.
+      assert.match(inventory, /### prerequisites/);
+      assert.match(inventory, /grouped by kind/);
+      assert.match(inventory, /explicit go-ahead before creating or mutating any shared state/);
+      // The require tool: kind heading, level, and check.
+      assert.match(inventory, /- \*\*tool\*\*\n {2}- `gh` \[require\] — GitHub CLI\. — check: `command -v gh`/);
+      // The recommend secret: its own kind heading, level, and item scope.
+      assert.match(
+        inventory,
+        /- \*\*secret\*\*\n {2}- `DEMO_TOKEN` \[recommend\] \(needed by skills\/demo-skill\) — A repo secret/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('inventory for a prerequisite-free stack is byte-unchanged (no empty section)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup-nopq-'));
+    try {
+      makeFixtureToolkit(root);
+      const inventory = toolkitInventory(loadToolkit(root), '9.9.9');
+      assert.doesNotMatch(inventory, /### prerequisites/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('setup guide — config-aware update mode (#50)', () => {
@@ -2549,6 +2601,82 @@ describe('setup guide — config-aware update mode (#50)', () => {
     } finally {
       fs.rmSync(sroot, { recursive: true, force: true });
       fs.rmSync(scwd, { recursive: true, force: true });
+    }
+  });
+
+  test('prerequisites: update mode flags an unmet require as a blocker, met/recommend separately (#130)', () => {
+    const proot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup130-'));
+    const pcwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup130-'));
+    try {
+      write(proot, 'toolkit.yaml', 'name: fixture\ndescription: prereq surfacing\nstacks: [pq]\n');
+      write(proot, 'schema/SETUP.md', '# fixture playbook\n');
+      // A satisfied require (`true`), an unmet require secret (`false`), and an unmet recommend.
+      write(proot, 'stacks/pq/stack.yaml', [
+        'name: pq',
+        'description: Prereq stack.',
+        'skills: [alpha]',
+        'prerequisites:',
+        '  - kind: tool',
+        '    name: present-tool',
+        '    level: require',
+        '    check: "true"',
+        '    description: A satisfied require.',
+        '  - kind: secret',
+        '    name: MISSING_SECRET',
+        '    level: require',
+        '    check: "false"',
+        '    description: A repo secret that is not set.',
+        '  - kind: label',
+        '    name: soft-label',
+        '    level: recommend',
+        '    check: "false"',
+        '    description: A recommended label.',
+        '',
+      ].join('\n'));
+      write(proot, 'stacks/pq/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha body.\n');
+
+      write(pcwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [pq]\nconfig: {}\n');
+      const current = setupGuide(proot, '0.0.test', pcwd).split('# Toolkit inventory')[0];
+      // The unmet require is a flagged blocker, with the shared-state go-ahead requirement named.
+      assert.match(current, /## Prerequisites unmet \(require — blockers\)/);
+      assert.match(current, /- ⚠ stack "pq" requires secret MISSING_SECRET/);
+      assert.match(current, /explicit\s+go-ahead first/);
+      // A satisfied require is not flagged.
+      assert.doesNotMatch(current, /present-tool/);
+      // The unmet recommend reports separately — never as a blocker.
+      assert.match(current, /## Prerequisites unmet \(recommend — report-only\)/);
+      assert.match(current, /soft-label/);
+    } finally {
+      fs.rmSync(proot, { recursive: true, force: true });
+      fs.rmSync(pcwd, { recursive: true, force: true });
+    }
+  });
+
+  test('prerequisites: update mode is silent when all applicable requires are met (#130)', () => {
+    const proot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup130ok-'));
+    const pcwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup130ok-'));
+    try {
+      write(proot, 'toolkit.yaml', 'name: fixture\ndescription: prereq ok\nstacks: [pq]\n');
+      write(proot, 'schema/SETUP.md', '# fixture playbook\n');
+      write(proot, 'stacks/pq/stack.yaml', [
+        'name: pq',
+        'description: Prereq stack.',
+        'skills: [alpha]',
+        'prerequisites:',
+        '  - kind: tool',
+        '    name: present-tool',
+        '    level: require',
+        '    check: "true"',
+        '    description: A satisfied require.',
+        '',
+      ].join('\n'));
+      write(proot, 'stacks/pq/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha body.\n');
+      write(pcwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [pq]\nconfig: {}\n');
+      const current = setupGuide(proot, '0.0.test', pcwd).split('# Toolkit inventory')[0];
+      assert.doesNotMatch(current, /Prerequisites unmet/);
+    } finally {
+      fs.rmSync(proot, { recursive: true, force: true });
+      fs.rmSync(pcwd, { recursive: true, force: true });
     }
   });
 });
