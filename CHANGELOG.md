@@ -31,6 +31,16 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Consumer impact
+- **Docs only — no re-render needed (#80).** `schema/FORMAT.md` now documents the
+  "how do I know a file is wafflestack-managed?" story: the lock manifest
+  (`.waffle/waffle.lock.json`) is the authoritative marker, backed by `render`'s
+  refuse-to-clobber behavior and `doctor` drift detection. Records the decision to **not**
+  adopt a `.wfl.md` filename convention — a suffix breaks skill (`SKILL.md`) and syrup
+  (load-bearing path) discovery and would apply to agents only, so the lock manifest already
+  answers the question authoritatively for every render kind. No config, render, or lock
+  changes.
+
 ## [0.10.0] - 2026-07-07
 
 ### Consumer impact
