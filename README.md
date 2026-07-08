@@ -25,6 +25,19 @@ harness dirs) and generic **files** (syrup) — CI workflows, scripts, or config
 verbatim to any repo-relative path (`.github/workflows/…`, `scripts/…`), with the same
 `{{key}}` substitution, lock tracking, and drift detection.
 
+## Where this fits
+
+wafflestack is the **update-safe distribution layer** for agent process and skills content —
+the piece that carries that content across repos and harnesses and keeps it current. It
+deliberately doesn't own the neighboring layers. **Process packs** like
+[gstack](https://github.com/garrytan/gstack) produce the shipped agent process and skills
+content, but distribute it as producer-owned monoliths you fork and then drift from.
+**Always-on agent runtimes** own the event-driven, service-layer end — what triggers agents
+when nobody's typing. wafflestack's job is the distribution in between: consumer-owned files
+under a lock manifest, drift `doctor`, and explicit, diffable upgrades with versioned
+migrations. (The shadcn metaphor above is the *mechanism* that makes that work; this is the
+*position*.)
+
 ## Install into a project
 
 **Guided (recommended)** — let your coding agent (Claude Code, Codex, …) drive the whole
