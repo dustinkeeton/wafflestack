@@ -434,6 +434,11 @@ local path, or a duplicate name — fails config load loudly with a message nami
 > resolved commit in the lock, per-source `doctor`/`upgrade`, install-time trust confirmation, and
 > third-party authoring docs are tracked as follow-up sub-issues of #88.
 
+**Authoring an external stack.** For the third-party author's side — the repo layout a `source`
+must present, cutting versions and how consumers pin a `ref`, carrying consumers across changes,
+and a worked minimal example — see
+[AUTHORING-EXTERNAL-STACKS.md](AUTHORING-EXTERNAL-STACKS.md).
+
 ## Template values
 
 `{{key}}` looks up `key` as a dotted path in the merged `config:` maps. Strings substitute
