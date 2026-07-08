@@ -158,6 +158,18 @@ if [ "${#SKIPPED_UNPUSHED[@]}" -gt 0 ]; then
   echo
 fi
 
+echo "Default-branch refresh (${DEFAULT_BRANCH}):"
+if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ]; then
+  if git diff --quiet && git diff --cached --quiet; then
+    echo "  will fast-forward to origin/${DEFAULT_BRANCH} after prune (if it's a fast-forward)"
+  else
+    echo "  will skip: working tree dirty"
+  fi
+else
+  echo "  will skip: not on ${DEFAULT_BRANCH} (on ${CURRENT_BRANCH:-<detached>})"
+fi
+echo
+
 if [ "$MODE" = "dry-run" ]; then
   echo "Dry run complete. Re-run with --execute to apply."
   exit 0
@@ -198,5 +210,22 @@ done
 
 echo "Pruning stale remote-tracking refs..."
 git fetch --prune
+
+# Fast-forward the local default branch to the freshly-fetched remote tip — only when
+# we're already on it and the tree is clean. Never switch branches, never merge-commit.
+echo "Refreshing default branch..."
+if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ]; then
+  if git diff --quiet && git diff --cached --quiet; then
+    if git merge --ff-only "origin/${DEFAULT_BRANCH}" >/dev/null 2>&1; then
+      echo "  ${DEFAULT_BRANCH}: fast-forwarded to $(git rev-parse --short HEAD)"
+    else
+      echo "  ${DEFAULT_BRANCH}: skipped (diverged — not a fast-forward)"
+    fi
+  else
+    echo "  ${DEFAULT_BRANCH}: skipped (working tree dirty)"
+  fi
+else
+  echo "  ${DEFAULT_BRANCH}: skipped (not on ${DEFAULT_BRANCH})"
+fi
 
 echo "Done."
