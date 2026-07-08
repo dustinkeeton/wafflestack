@@ -1,10 +1,11 @@
 name: code-quality
 description: >-
   Cross-cutting code-quality practice skills — TDD (red-green-refactor
-  discipline, test priority tiers, boundary mocking) and codebase-architecture
-  (module boundaries, coding conventions). Stack-agnostic: the test command,
-  tier tables, module map, and settings type are project config.
-skills: [tdd, codebase-architecture]
+  discipline, test priority tiers, boundary mocking), codebase-architecture
+  (module boundaries, coding conventions), and adversarial-review (hostile
+  post-green PR review that pokes holes before merge). Stack-agnostic: the test
+  command, tier tables, module map, and settings type are project config.
+skills: [tdd, codebase-architecture, adversarial-review]
 config:
   project.longName:
     required: true
@@ -28,3 +29,23 @@ config:
   arch.depExceptions:
     required: true
     description: Documented inter-module dependency exception(s) allowed by the architecture, e.g. "VideoModule → AudioModule (documented exception)".
+setup: |-
+  **Adversarial review.** The `adversarial-review` skill drives the `gh` CLI against the
+  current repo's pull requests — verify `gh auth status` succeeds and the repo has a GitHub
+  remote before relying on it. It needs a token with **pull-request read + review-write**
+  scope: it reads the full PR diff (`gh pr diff`) and posts findings back as a PR review
+  (`gh api …/pulls/N/reviews`). It introduces no config keys and no syrup — nothing to
+  configure beyond having `gh` authenticated.
+
+  Invoke it as `/adversarial-review <PR#>` (a `#N`, bare number, or PR URL); omit the
+  argument to review the current branch's open PR. It reviews a **finished, CI-green** PR
+  from a hostile reviewer's seat — poking holes in correctness edge cases, error handling,
+  test depth, API/naming, and simplification — and posts an honest-severity review
+  (blocker / should-fix / nit), where "no holes found" is a valid outcome. This is distinct
+  from the built-in `/code-review`, which reviews the author's uncommitted working diff; this
+  gates a committed, green PR just before merge. Agents can be granted it via their
+  frontmatter `skills:` list to gate a PR an auto-merge flow would otherwise merge unchecked.
+
+  A companion opt-in workflow that auto-runs this skill the moment a PR turns green is planned
+  in the `github-workflow` stack but **not shipped yet** — it depends on the CI-harness
+  dispatch fix (issue #133). Until then, invoke the skill manually or from an agent.
