@@ -23,6 +23,8 @@ import {
   staleGitignoreEntries,
   ensureGitignoreEntries,
   recommendedGitignoreEntries,
+  normalizeStackEntries,
+  classifyStackSource,
 } from '../lib/project.mjs';
 
 describe('template', () => {
@@ -2860,6 +2862,163 @@ describe('rebrand: bundles → stacks consumer key (#59)', () => {
     write(troot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
     assert.throws(() => loadToolkit(troot), /`syrup:` was renamed to `optIn:` in 0\.10\.0/);
     fs.rmSync(troot, { recursive: true, force: true });
+  });
+});
+
+describe('external stack sources (#88, slice 1)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-ext-src-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  test('classifyStackSource: git schemes, scp form, and .git suffix are git; paths are path', () => {
+    for (const g of [
+      'https://github.com/acme/waffle-stacks',
+      'http://example.com/x',
+      'git://example.com/x',
+      'ssh://git@example.com/acme/x',
+      'git@github.com:acme/waffle-stacks.git',
+      'https://github.com/acme/x.git',
+      './vendored/x.git',
+    ]) {
+      assert.equal(classifyStackSource(g), 'git', g);
+    }
+    for (const p of [
+      '../shared-stacks/local-experiments',
+      './local',
+      '/abs/path/to/stacks',
+      'relative/dir',
+    ]) {
+      assert.equal(classifyStackSource(p), 'path', p);
+    }
+  });
+
+  test('normalizeStackEntries splits bare names from external sources, recording type + ref', () => {
+    const { stacks, externalStacks } = normalizeStackEntries([
+      'github-workflow',
+      { name: 'acme-process', source: 'https://github.com/acme/waffle-stacks', ref: 'v1.2.0' },
+      { name: 'local-experiments', source: '../shared-stacks/local-experiments' },
+    ]);
+    assert.deepEqual(stacks, ['github-workflow']);
+    assert.deepEqual(externalStacks, [
+      { name: 'acme-process', source: 'https://github.com/acme/waffle-stacks', sourceType: 'git', ref: 'v1.2.0' },
+      { name: 'local-experiments', source: '../shared-stacks/local-experiments', sourceType: 'path', ref: null },
+    ]);
+  });
+
+  test('normalizeStackEntries: undefined/empty list yields empty split', () => {
+    assert.deepEqual(normalizeStackEntries(undefined), { stacks: [], externalStacks: [] });
+    assert.deepEqual(normalizeStackEntries([]), { stacks: [], externalStacks: [] });
+  });
+
+  test('normalizeStackEntries rejects a git source with no ref (pinning required)', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ name: 'acme', source: 'https://github.com/acme/x' }]),
+      /git `source:`.*but no `ref:`.*pin it/,
+    );
+  });
+
+  test('normalizeStackEntries rejects a ref on a local-path source', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ name: 'local', source: '../x', ref: 'v1' }]),
+      /local-path `source:`.*`ref:` is only valid for a git source/,
+    );
+  });
+
+  test('normalizeStackEntries rejects an empty ref on a git source', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ name: 'acme', source: 'https://github.com/acme/x', ref: '  ' }]),
+      /empty `ref:`/,
+    );
+  });
+
+  test('normalizeStackEntries rejects a mapping without a name', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ source: 'https://github.com/acme/x', ref: 'v1' }]),
+      /mapping without a `name:`/,
+    );
+  });
+
+  test('normalizeStackEntries rejects a mapping without a source', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ name: 'acme' }]),
+      /must declare a non-empty `source:`/,
+    );
+  });
+
+  test('normalizeStackEntries rejects an unknown key (catches a pin:/rev: typo)', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ name: 'acme', source: 'https://github.com/acme/x', pin: 'v1' }]),
+      /unknown key\(s\) pin — allowed: name, source, ref/,
+    );
+  });
+
+  test('normalizeStackEntries rejects a duplicate name across built-in and external', () => {
+    assert.throws(
+      () => normalizeStackEntries(['acme', { name: 'acme', source: '../acme' }]),
+      /stack "acme".*declared more than once.*unique across all sources/,
+    );
+  });
+
+  test('normalizeStackEntries rejects a non-array stacks value', () => {
+    assert.throws(() => normalizeStackEntries('github-workflow'), /must be a list of stack names/);
+  });
+
+  test('normalizeStackEntries rejects a non-string/non-mapping entry', () => {
+    assert.throws(() => normalizeStackEntries([42]), /must be a stack name or a \{ name, source \} mapping \(got number\)/);
+  });
+
+  test('loadProjectConfig parses a valid mixed stacks: list into stacks + externalStacks', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - github-workflow',
+      '  - name: acme-process',
+      '    source: https://github.com/acme/waffle-stacks',
+      '    ref: v1.2.0',
+      '  - name: local-experiments',
+      '    source: ../shared-stacks/local-experiments',
+      'config: {}',
+      '',
+    ].join('\n'));
+    const cfg = loadProjectConfig(cwd);
+    assert.deepEqual(cfg.stacks, ['github-workflow']);
+    assert.deepEqual(cfg.externalStacks, [
+      { name: 'acme-process', source: 'https://github.com/acme/waffle-stacks', sourceType: 'git', ref: 'v1.2.0' },
+      { name: 'local-experiments', source: '../shared-stacks/local-experiments', sourceType: 'path', ref: null },
+    ]);
+  });
+
+  test('loadProjectConfig fails loudly on a malformed external entry', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - name: acme',
+      '    source: https://github.com/acme/x',
+      'config: {}',
+      '',
+    ].join('\n'));
+    assert.throws(() => loadProjectConfig(cwd), /external stack "acme".*no `ref:`/);
+  });
+
+  test('render on a source-bearing config fails with a clear not-yet-resolvable error and writes no lock', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - name: acme-process',
+      '    source: https://github.com/acme/waffle-stacks',
+      '    ref: v1.2.0',
+      'config: {}',
+      '',
+    ].join('\n'));
+    const result = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.length, 1);
+    assert.match(
+      result.errors[0],
+      /external stack "acme-process".*declared but not yet resolvable.*issue #88/,
+    );
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'no lock written on the failed render');
   });
 });
 

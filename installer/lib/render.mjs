@@ -40,6 +40,25 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
     );
   }
   const project = loadProjectConfig(cwd, warnings);
+
+  // External bundle sources (#88, slice 1): the `waffle.yaml` schema now accepts a
+  // `{ name, source, ref }` stack entry, and `loadProjectConfig` validates its shape — but
+  // multi-root resolution is not implemented yet. Fail loudly with a clear, actionable error
+  // rather than silently ignoring the declaration or crashing deep in the loader. (Resolution,
+  // lock provenance, install-time trust, and authoring docs are tracked as sub-issues of #88.)
+  if (project.externalStacks?.length) {
+    return {
+      ok: false,
+      warnings,
+      errors: project.externalStacks.map(
+        (s) =>
+          `external stack "${s.name}" (source: ${s.source}) is declared but not yet resolvable — ` +
+          `external bundle sources are not implemented yet (see issue #88); remove the source entry to render, ` +
+          `or follow the tracking sub-issues`,
+      ),
+    };
+  }
+
   const toolkit = loadToolkit(toolkitRoot);
   const errors = [];
   const outputs = new Map(); // relative path -> content (string | Buffer)
