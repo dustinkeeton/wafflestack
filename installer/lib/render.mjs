@@ -10,6 +10,7 @@ import { substitute, placeholderKeys, compilePattern } from './template.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
+import { validateExternalStacks } from './validate.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
   loadProjectConfig,
@@ -68,6 +69,26 @@ export function renderProject({
   } catch (err) {
     return { ok: false, warnings, errors: [err.message] };
   }
+
+  // Install-time trust boundary (#126): before rendering anything, lint the definitions of every
+  // EXTERNAL stack (a stack pulled from a `source:` — it carries `provenance`). A malformed
+  // third-party stack (missing frontmatter, undeclared placeholder, dangling `requires:`) must
+  // fail loudly HERE, before a single file is written, with a message naming the source — the
+  // consumer can't fix it and shouldn't ship a broken render. Load-time already rejects the
+  // coarser breakage (unparseable manifest, missing SKILL.md); this adds the finer lint the
+  // toolkit's own `validate` runs, scoped to external stacks so built-in ones aren't re-linted on
+  // every consumer render. Returning here leaves the tree untouched (nothing is written yet).
+  if (project.externalStacks?.length) {
+    const problems = validateExternalStacks(toolkit);
+    if (problems.length) {
+      return {
+        ok: false,
+        warnings,
+        errors: problems.map((p) => `${p} — malformed external stack; fix it at the source before rendering`),
+      };
+    }
+  }
+
   const errors = [];
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "stack/kind/name" that emitted it
@@ -105,9 +126,36 @@ export function renderProject({
   // deliberately non-interactive CLI's stand-in for the both/one/neither question the setup
   // playbook (schema/SETUP.md step 2) now requires an agent to ask.
   for (const { fileRef, stackName, companions } of skippedSyrupCompanions(toolkit, selection)) {
+    // External opt-in syrup is doubly gated (#126): a paired external syrup file was authored
+    // outside this repo, so its extra trust-boundary acknowledgement rides along with the
+    // both/one/neither pairing note — distinct from a built-in companion, which needs only the
+    // ordinary opt-in.
+    const prov = toolkit.stacks.get(stackName)?.provenance;
+    const external = prov
+      ? ` — this is EXTERNAL syrup from source "${stackName}" (${describeProvenance(prov)}), so pouring it ` +
+        `additionally requires an explicit trust-boundary acknowledgement beyond the normal opt-in`
+      : '';
     warnings.push(
       `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')} but was not ` +
-        `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose`,
+        `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose${external}`,
+    );
+  }
+
+  // Trust-boundary acknowledgement for EXTERNAL opt-in syrup being poured (#126). Opt-in syrup is
+  // already gated behind explicit opt-in; when it comes from an external source, the content was
+  // authored OUTSIDE this repo (and may demand elevated permissions — a workflow with repo write),
+  // so pouring it deserves one more, clearly-worded acknowledgement, distinct from built-in opt-in
+  // syrup. The CLI never prompts, so — like the pairing warning above — this is surfaced as a
+  // required acknowledgement the setup/install flow must put to the user.
+  for (const { stackName, stack, kind, item } of selection.items) {
+    if (kind !== 'files' || !stack.provenance) continue;
+    if (!stack.optIn.has(`files/${item.name}`)) continue;
+    warnings.push(
+      `EXTERNAL opt-in syrup files/${item.name} (from external source "${stackName}" — ` +
+        `${describeProvenance(stack.provenance)}) is being rendered into this repo. It was authored ` +
+        `OUTSIDE this repo and may demand elevated permissions (e.g. repo write) — acknowledge this ` +
+        `trust boundary, beyond the normal opt-in, and confirm you trust the source before committing ` +
+        `the render`,
     );
   }
 
@@ -391,6 +439,12 @@ export function readLock(cwd) {
   const { file } = resolveLockFile(cwd);
   if (!exists(file)) return null;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/** Human-readable identity of an external source from its lock provenance: `source@ref`, or just
+ * `source` for a local path (no ref). Used in the trust-boundary warnings for external syrup. */
+function describeProvenance(prov) {
+  return prov?.ref ? `${prov.source}@${prov.ref}` : prov?.source;
 }
 
 /**

@@ -11,9 +11,9 @@ import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath, sha256, 
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject, installRefs, init } from '../lib/eject.mjs';
-import { validateToolkit } from '../lib/validate.mjs';
+import { validateToolkit, validateExternalStacks } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
-import { loadToolkit } from '../lib/toolkit.mjs';
+import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions } from '../lib/refs.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
@@ -3484,6 +3484,203 @@ describe('external stack sources: provenance, attribution, re-resolution (#125)'
     assert.deepEqual(result.sourceMoves, []);
     assert.match(read(cwd, '.claude/skills/pin/SKILL.md'), /VERSION ONE/, 'tag pin unaffected by branch advance');
     fs.rmSync(work, { recursive: true, force: true });
+  });
+});
+
+describe('external stack sources: install-time validation + syrup confirmation (#126)', () => {
+  let builtinRoot;
+  let extRoot;
+  let cwd;
+  let cacheDir;
+
+  beforeEach(() => {
+    builtinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'v126-builtin-'));
+    extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'v126-ext-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'v126-project-'));
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v126-cache-'));
+
+    // Built-in toolkit: a clean `core` stack the consumer always enables.
+    write(builtinRoot, 'toolkit.yaml', 'name: builtin\ndescription: built-in fixture\nstacks: [core]\n');
+    write(builtinRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core stack.\nskills: [alpha]\n');
+    write(builtinRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha from the built-in toolkit.\n');
+  });
+
+  afterEach(() => {
+    for (const d of [builtinRoot, extRoot, cwd, cacheDir]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const render = () =>
+    renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+
+  // Enable built-in `core` plus the external `acme` stack (a local-path source), with optional
+  // top-level `include:` refs.
+  const writeConfig = ({ include = [] } = {}) =>
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: acme',
+      `    source: ${extRoot}`,
+      ...(include.length ? ['include:', ...include.map((r) => `  - ${r}`)] : []),
+      'config: {}',
+      '',
+    ].join('\n'));
+
+  const lockExists = () => fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json'));
+
+  // ── Install-time validation ─────────────────────────────────────────────────────────────────
+
+  test('a malformed external stack (agent missing a frontmatter description) is rejected at install', () => {
+    write(extRoot, 'stacks/acme/stack.yaml', 'name: acme\ndescription: Acme.\nagents: [bot]\n');
+    write(extRoot, 'stacks/acme/agents/bot.md', '---\nname: bot\n---\n\nBody, no description.\n');
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some(
+        (e) => /external stack "acme"/.test(e) && /agent bot missing frontmatter description/.test(e) && /fix it at the source/.test(e),
+      ),
+      JSON.stringify(result.errors),
+    );
+    // The error names the source and nothing was written.
+    assert.ok(result.errors.some((e) => e.includes(extRoot)), JSON.stringify(result.errors));
+    assert.equal(lockExists(), false, 'no lock written when an external stack fails validation');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/alpha/SKILL.md')), false, 'the built-in render is blocked too');
+  });
+
+  test('a malformed external stack (undeclared placeholder in a skill) is rejected at install', () => {
+    write(extRoot, 'stacks/acme/stack.yaml', 'name: acme\ndescription: Acme.\nskills: [tool]\n');
+    write(extRoot, 'stacks/acme/skills/tool/SKILL.md', '---\nname: tool\ndescription: Tool.\n---\n\nUse {{acme.token}} here.\n');
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((e) => /external stack "acme"/.test(e) && /\{\{acme\.token\}\} is not declared/.test(e)),
+      JSON.stringify(result.errors),
+    );
+    assert.equal(lockExists(), false, 'no lock written when an external stack fails validation');
+  });
+
+  test('a well-formed external stack passes the gate and renders (no false positives)', () => {
+    write(extRoot, 'stacks/acme/stack.yaml', 'name: acme\ndescription: Acme.\nskills: [tool]\n');
+    write(extRoot, 'stacks/acme/skills/tool/SKILL.md', '---\nname: tool\ndescription: Tool.\n---\n\nClean body, no placeholders.\n');
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, '.claude/skills/tool/SKILL.md'), /Clean body/);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('the gate lints ONLY external stacks — a built-in lint issue is not enforced at consumer render', () => {
+    // A built-in `core` skill with an undeclared placeholder: a lint problem `validate` catches,
+    // but the render itself never lints built-ins (an undeclared placeholder just passes through).
+    const b = fs.mkdtempSync(path.join(os.tmpdir(), 'v126-builtin-lint-'));
+    write(b, 'toolkit.yaml', 'name: builtin\ndescription: d\nstacks: [core]\n');
+    write(b, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [alpha]\n');
+    write(b, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha.\n---\n\nUndeclared {{core.secret}}.\n');
+    // A clean external stack alongside it.
+    write(extRoot, 'stacks/acme/stack.yaml', 'name: acme\ndescription: Acme.\nskills: [tool]\n');
+    write(extRoot, 'stacks/acme/skills/tool/SKILL.md', '---\nname: tool\ndescription: Tool.\n---\n\nClean.\n');
+    try {
+      // The full toolkit lint DOES see the built-in problem…
+      assert.ok(
+        validateToolkit(b).some((p) => /stack core:.*\{\{core\.secret\}\} is not declared/.test(p)),
+        'validateToolkit surfaces the built-in lint issue',
+      );
+      // …but the external gate over the merged toolkit ignores built-in stacks (clean external → []).
+      const merged = loadToolkitWithSources({
+        builtinRoot: b,
+        externalStacks: [{ name: 'acme', source: extRoot, sourceType: 'path', ref: null }],
+        cwd,
+      });
+      assert.deepEqual(validateExternalStacks(merged), []);
+      // End to end: the consumer render succeeds despite the built-in lint issue.
+      write(cwd, '.waffle/waffle.yaml', ['targets: [claude]', 'stacks:', '  - core', '  - name: acme', `    source: ${extRoot}`, 'config: {}', ''].join('\n'));
+      const result = renderProject({ toolkitRoot: b, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+    } finally {
+      fs.rmSync(b, { recursive: true, force: true });
+    }
+  });
+
+  // ── Syrup-tier trust-boundary acknowledgement ───────────────────────────────────────────────
+
+  test('pouring EXTERNAL opt-in syrup surfaces the extra trust-boundary acknowledgement, naming the source', () => {
+    write(extRoot, 'stacks/acme/stack.yaml', ['name: acme', 'description: Acme.', 'skills: [tool]', 'files:', '  - .github/workflows/acme.yml', 'optIn:', '  - files/.github/workflows/acme.yml', ''].join('\n'));
+    write(extRoot, 'stacks/acme/skills/tool/SKILL.md', '---\nname: tool\ndescription: Tool.\n---\n\nClean.\n');
+    write(extRoot, 'stacks/acme/files/.github/workflows/acme.yml', 'name: acme\non: push\n');
+    writeConfig({ include: ['files/.github/workflows/acme.yml'] });
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    // The external syrup rendered…
+    assert.equal(fs.existsSync(path.join(cwd, '.github/workflows/acme.yml')), true);
+    // …and the render surfaced exactly one distinct external trust-boundary acknowledgement.
+    const ack = result.warnings.filter((w) => /EXTERNAL opt-in syrup/.test(w));
+    assert.equal(ack.length, 1, JSON.stringify(result.warnings));
+    assert.match(ack[0], /files\/\.github\/workflows\/acme\.yml/);
+    assert.match(ack[0], /external source "acme"/);
+    assert.match(ack[0], /trust boundary/);
+    assert.match(ack[0], /elevated permissions/);
+    assert.ok(ack[0].includes(extRoot), 'the acknowledgement names the source');
+  });
+
+  test('pouring a BUILT-IN opt-in syrup does not trigger the external acknowledgement (distinctness)', () => {
+    // Give built-in `core` its own opt-in syrup file; enable only built-in stacks (no external).
+    write(builtinRoot, 'stacks/core/stack.yaml', ['name: core', 'description: Core stack.', 'skills: [alpha]', 'files:', '  - .github/workflows/core.yml', 'optIn:', '  - files/.github/workflows/core.yml', ''].join('\n'));
+    write(builtinRoot, 'stacks/core/files/.github/workflows/core.yml', 'name: core\non: push\n');
+    write(cwd, '.waffle/waffle.yaml', ['targets: [claude]', 'stacks:', '  - core', 'include:', '  - files/.github/workflows/core.yml', 'config: {}', ''].join('\n'));
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(fs.existsSync(path.join(cwd, '.github/workflows/core.yml')), true, 'built-in opt-in syrup still pours');
+    assert.ok(!result.warnings.some((w) => /EXTERNAL opt-in syrup/.test(w)), JSON.stringify(result.warnings));
+  });
+
+  test('a skipped EXTERNAL opt-in syrup companion carries the trust-boundary note alongside the pairing warning', () => {
+    write(extRoot, 'stacks/acme/stack.yaml', [
+      'name: acme',
+      'description: Acme.',
+      'skills: [release]',
+      'files:',
+      '  - .github/workflows/acme-hook.yml',
+      'optIn:',
+      '  - files/.github/workflows/acme-hook.yml',
+      'requires:',
+      '  files/.github/workflows/acme-hook.yml:',
+      '    - skills/release',
+      '',
+    ].join('\n'));
+    write(extRoot, 'stacks/acme/skills/release/SKILL.md', '---\nname: release\ndescription: Release.\n---\n\nCut a release.\n');
+    write(extRoot, 'stacks/acme/files/.github/workflows/acme-hook.yml', 'name: acme-hook\non: push\n');
+    writeConfig(); // enable the acme stack: the `release` companion is selected, the syrup is gated out
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    // The opt-in syrup was NOT poured (gated out of the default stack expansion)…
+    assert.equal(fs.existsSync(path.join(cwd, '.github/workflows/acme-hook.yml')), false);
+    // …and the both/one/neither pairing warning is augmented with the external trust-boundary note.
+    const w = result.warnings.find((x) => /pairs with selected skills\/release/.test(x));
+    assert.ok(w, JSON.stringify(result.warnings));
+    assert.match(w, /EXTERNAL syrup from source "acme"/);
+    assert.match(w, /trust-boundary acknowledgement/);
+  });
+
+  test('setup (update mode) surfaces the external trust-boundary acknowledgement for declared sources', () => {
+    write(builtinRoot, 'schema/SETUP.md', '# setup playbook\n\nInstall wafflestack.\n');
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: acme',
+      '    source: https://github.com/acme/x',
+      '    ref: v1.0.0',
+      'config: {}',
+      '',
+    ].join('\n'));
+    const guide = setupGuide(builtinRoot, '0.0.test', cwd);
+    assert.match(guide, /## External stack sources/);
+    assert.match(guide, /acme ← https:\/\/github\.com\/acme\/x @ v1\.0\.0/);
+    assert.match(guide, /Trust boundary — external content/);
+    assert.match(guide, /explicit, separate/); // the acknowledgement the flow must obtain
+    assert.match(guide, /beyond the normal opt-in and the both\/one\/neither question/);
   });
 });
 

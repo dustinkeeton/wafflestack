@@ -96,6 +96,16 @@ function currentConfigSection(toolkit, cwd) {
       '> local paths are read in place. A name that collides with a built-in stack or another',
       '> source is a hard error, not a silent shadow.',
       '',
+      '> **Trust boundary — external content (#126).** These stacks are authored OUTSIDE this repo,',
+      '> so `render` enforces two extra gates at install time. (1) It lints each external stack\'s',
+      '> definitions and BLOCKS the render on a malformed one (bad frontmatter, undeclared',
+      '> placeholder, dangling `requires:`), naming the source. (2) Any **opt-in syrup** an external',
+      '> source carries (e.g. a workflow demanding repo write) needs an **explicit, separate',
+      '> acknowledgement from the user, beyond the normal opt-in and the both/one/neither question**',
+      '> in step 2 — the content is third-party. Name the source and its pinned `ref`, note it may',
+      '> demand elevated permissions, and get a clear yes before you pour it; `render` also prints',
+      '> this as a warning when such syrup is selected.',
+      '',
     );
   }
 
