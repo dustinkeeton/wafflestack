@@ -27,8 +27,9 @@ compiler — neutral source in, harness-native files out.
   stacks/<name>/      │   wafflestack render      .claude/agents/*.md
     stack.yaml        ├──────────────────────►    .claude/skills/*/
     agents/*.md        │   (fill placeholders,     .codex/agents/*.toml
-    skills/*/SKILL.md  │    resolve per target,    .agents/skills/*/
-  schema/FORMAT.md     ┘    append extensions)     .waffle/waffle.lock.json
+    skills/*/SKILL.md  │    resolve per target,    .agents/agents/*.md
+  schema/FORMAT.md     ┘    append extensions)     .agents/skills/*/
+                                                   .waffle/waffle.lock.json
 
               ▲                                            │
               │            your settings                   │
@@ -130,11 +131,16 @@ each branch; a rejection stays local and is recorded in the checkpoint.
 
 A **target** is a coding assistant you render for. Three are supported:
 
-| Target | Renders to | Notes |
-|--------|-----------|-------|
-| `claude` | `.claude/agents/`, `.claude/skills/` | Claude Code |
-| `codex` | `.codex/agents/*.toml` | OpenAI Codex (agents only) |
-| `agents-dir` | `.agents/skills/` | Cross-tool convention (skills only) |
+| Target | Agents render to | Skills render to | Notes |
+|--------|-----------|-----------|-------|
+| `claude` | `.claude/agents/*.md` | `.claude/skills/*/` | Claude Code |
+| `codex` | `.codex/agents/*.toml` | `.agents/skills/*/` | OpenAI Codex — agents as TOML; skills via the cross-tool `.agents/skills` dir Codex scans (cwd → repo root) |
+| `agents-dir` | `.agents/agents/*.md` | `.agents/skills/*/` | Cross-tool AGENTS.md convention — harness-neutral Markdown |
+
+**Every target renders both agents and skills** — there is no half-covered
+harness. Because Codex and the cross-tool `agents-dir` both consume skills from
+the same `.agents/skills/` convention, a repo that enables both renders that
+directory once (shared, not duplicated).
 
 The small per-harness differences (like whose name goes in an attribution line)
 come from a reserved `harness.*` set of values that resolve differently per

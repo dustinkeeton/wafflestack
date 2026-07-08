@@ -280,11 +280,14 @@ Render targets (`VALID_TARGETS`, `project.mjs:27`):
 
 | Source | claude | codex | agents-dir |
 |--------|--------|-------|------------|
-| agent `agents/<n>.md` | `.claude/agents/<n>.md` (frontmatter name/description/skills + `claude:` passthrough; body) | `.codex/agents/<n>.toml` (name, description, developer_instructions=body) | — |
-| skill `skills/<n>/` | `.claude/skills/<n>/` | — | `.agents/skills/<n>/` |
+| agent `agents/<n>.md` | `.claude/agents/<n>.md` (frontmatter name/description/skills + `claude:` passthrough; body) | `.codex/agents/<n>.toml` (name, description, developer_instructions=body) | `.agents/agents/<n>.md` (neutral Markdown: frontmatter name/description/skills, no `claude:` passthrough; body) |
+| skill `skills/<n>/` | `.claude/skills/<n>/` | `.agents/skills/<n>/` | `.agents/skills/<n>/` |
 
-Skills render byte-for-byte except substitution + extension append; non-`.md` supporting
-files are copied verbatim.
+Full matrix — every target renders both kinds (#94). codex + agents-dir share the cross-tool
+`.agents/skills/<n>/` skill dir (Codex scans `.agents/skills` cwd→repo-root, matching
+`harness.skillsDir`); `renderSkill` dedupes it by output dir (first target wins) so enabling
+both writes it once. Skills render byte-for-byte except substitution + extension append;
+non-`.md` supporting files are copied verbatim.
 
 ## Consuming-project contract
 

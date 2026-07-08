@@ -9,6 +9,41 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-07: Close the render-target asymmetry — every target renders both agents and skills (#94)
+
+**Context**: The multi-harness story was only half true. `renderAgent` emitted for `claude`
+and `codex` but had no `agents-dir` branch; `renderSkill` emitted for `claude` and
+`agents-dir` but had no `codex` branch. So Codex got agents but no skills, the cross-tool
+agents dir got skills but no agents, and only Claude got both. The README and setup output
+presented all three as full harnesses — exactly the docs-vs-reality drift the toolkit exists
+to prevent, and a consumer enabling `codex` or `agents-dir` silently lost half their bundle.
+
+**Decision**: Implement the two missing cells (Option A — full coverage, not a scoped-back
+claim). **Codex skills** render to the cross-tool `.agents/skills/<name>/` directory: OpenAI's
+docs confirm Codex scans `.agents/skills` from the cwd up to the repo root, which is exactly
+where the existing `harness.skillsDir` codex built-in already pointed — so no built-in changed,
+and Codex shares the one skill render with `agents-dir`. `renderSkill` dedupes by output dir
+(first target wins) so enabling both writes `.agents/skills` once, not twice. **agents-dir
+agents** render to `.agents/agents/<name>.md` as harness-neutral Markdown — frontmatter
+`name`/`description`/the neutral `skills:` grant-pointer plus body, dropping the Claude-only
+`claude:` passthrough block. `eject` learned the new `.agents/agents/<n>.md` path.
+
+**Alternatives considered**: (a) *Docs-only (Option B)* — annotate the limitation and scope the
+README's claim honestly. Rejected: the whole point of a compiler is that its targets actually
+compile; a permanently half-implemented second target is a worse answer than finishing it.
+(b) *Give Codex its own `.codex/skills/` namespace* (symmetric per-target dirs). Rejected: Codex
+does not read a `.codex/skills` dir — it reads `.agents/skills` — so a per-namespace render
+would be output the harness never loads. Following the harness's real convention beats internal
+tidiness. (c) *A `.agents/agents/` external standard* — none exists; the AGENTS.md ecosystem
+standardizes `.agents/skills/` and `AGENTS.md`, not agent-persona files. `.agents/agents/` is
+wafflestack's own symmetric choice, mirroring `.claude/agents` + `.claude/skills`.
+
+**Impact**: `render.mjs` (`renderAgent` agents-dir branch, `renderSkill` codex branch + dir
+dedup), `eject.mjs` (agent release paths), the installer test matrix (new per-target coverage
+suite), and every coverage surface (README, ARCHITECTURE, FORMAT, AGENTS.md matrix). The
+acceptance bar — no surface implies coverage the renderer doesn't deliver — is met by delivering
+the coverage rather than trimming the claim.
+
 ## 2026-07-07: Declare, check, and inject dependencies — typed `prerequisites:`, a doctor gate, and harness injection on `harness.*` (#47)
 
 **Context**: The shadcn-style install copies rendered files into the consuming repo — there

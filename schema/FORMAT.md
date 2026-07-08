@@ -121,6 +121,9 @@ Renders to:
 - **codex** → `.codex/agents/<name>.toml` — `name`, `description`,
   `developer_instructions` = body (skill access is conveyed in body prose; the
   `skills:`/`claude:` frontmatter has no TOML equivalent).
+- **agents-dir** → `.agents/agents/<name>.md` — harness-neutral Markdown: frontmatter
+  `name`, `description`, and the neutral `skills:` grant-pointer, then the body. The
+  Claude-only `claude:` passthrough block is dropped (it has no cross-tool meaning).
 
 ## Skill definition (`skills/<name>/SKILL.md`)
 
@@ -132,6 +135,9 @@ along (`.md` files get substitution, everything else verbatim).
 Renders to:
 - **claude** → `.claude/skills/<name>/`
 - **agents-dir** → `.agents/skills/<name>/` (identical content; cross-tool convention)
+- **codex** → `.agents/skills/<name>/` — Codex consumes skills from the same cross-tool
+  `.agents/skills` directory (it scans from the cwd up to the repo root), so codex and
+  agents-dir share one render; enabling both renders the directory once, not twice.
 
 ## Files definition — syrup (`files/<repo-relative-path>`)
 

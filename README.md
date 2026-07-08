@@ -11,9 +11,10 @@
 ---
 
 One canonical source repo, rendered into harness-native files inside each consuming
-project — the same batter, baked fresh wherever you need it. Supported harnesses:
-Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Codex (`.codex/agents/*.toml`),
-and the cross-tool agents dir (`.agents/skills`).
+project — the same batter, baked fresh wherever you need it. Every supported harness gets
+both agents and skills: Claude Code (`.claude/agents`, `.claude/skills`), OpenAI Codex
+(`.codex/agents/*.toml` for agents, plus skills in the cross-tool `.agents/skills` dir it
+scans), and the cross-tool agents dir (`.agents/agents`, `.agents/skills`).
 
 The vocabulary: an individual installable item — an agent or a skill — is a **waffle**; a
 named group of waffles is a **stack**; the generic `files/` payload a stack can also carry is
