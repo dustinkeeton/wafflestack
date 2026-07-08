@@ -159,6 +159,31 @@ describe('delegate checkpoint validator', () => {
     assert.match(r.stderr, /is not one of/);
   });
 
+  test('auto-merge fields: an armed PR and a not-armed PR both pass execute', () => {
+    const doc = clone(BASE);
+    doc.execution[0] = { number: 3, agent: 'plugin-architect', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6', autoMergeArmed: true };
+    doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'done', pr: '#7', autoMergeArmed: false };
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /is valid for phase/);
+  });
+
+  test('autoMergeArmed on an entry with no PR is caught at the execute boundary', () => {
+    const doc = clone(BASE);
+    doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'skipped', pr: null, autoMergeArmed: true };
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /marked autoMergeArmed but has no PR/);
+  });
+
+  test('a non-boolean autoMergeArmed fails schema validation', () => {
+    const doc = clone(BASE);
+    doc.execution[0].autoMergeArmed = 'yes';
+    const r = run(doc, 'execute');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /expected type boolean/);
+  });
+
   test('malformed JSON produces a clean error, not a stack trace', () => {
     const r = run('{ "version": 1, ', 'fetch');
     assert.equal(r.status, 1);

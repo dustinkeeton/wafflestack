@@ -177,6 +177,17 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /a \*\*rejected\*\* push is `status: "skipped"` with `pr: null`/);
   });
 
+  test('auto-merge arming is opt-in and OFF by default', () => {
+    // The arming step only fires when delegate.autoMerge is true; false is the default,
+    // and in that default state PRs wait for a human to merge.
+    assert.match(md, /Auto-merge is ON when `delegate\.autoMerge` is `true`/);
+    // Merge commits, not squash (squash is disabled on this repo), armed via gh pr merge --auto.
+    assert.match(md, /gh pr merge --auto --merge/);
+    // On failure the PR is left open-but-not-armed — never an immediate or --admin merge.
+    assert.match(md, /open but auto-merge could not be enabled/);
+    assert.match(md, /do \*\*NOT\*\* fall back to an immediate merge or `--admin` merge/);
+  });
+
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {
     assert.match(md, /Hard cap:\*\* `4096` bytes/);
     assert.match(md, /memory\.mjs --file .*--max-bytes 4096/);
