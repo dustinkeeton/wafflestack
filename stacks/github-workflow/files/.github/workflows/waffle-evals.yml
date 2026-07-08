@@ -1,0 +1,168 @@
+# Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
+# Scheduled Layer 2 eval hook: on a nightly cron (and on manual dispatch) it runs the metered,
+# LLM-driven eval tier (`node installer/evals.mjs`) against the toolkit's own stack prompts and
+# reports pass/fail per case. This is the scheduled counterpart to the free per-PR Layer 1 gate
+# (`npm test`): Layer 2 calls a real model, so it costs real Anthropic API money EVERY run and
+# must NOT gate every PR. Unlike the sibling hooks it dispatches NO Claude harness — it is a
+# plain Node job that checks out the toolkit, installs deps, and runs the eval runner directly.
+# The run is bounded by an explicit, ENFORCED call budget (evals.maxCalls → --max-calls): the
+# runner refuses to start a model call once the cap is reached and marks the rest skipped, and
+# the Check step fails the job loudly when any case fails OR the budget was exhausted. Because a
+# scheduled trigger spends money on a timer, this is opt-in syrup and stays inert until you set
+# the ANTHROPIC_API_KEY secret and install it — see the stack setup note. (This workflow only
+# makes sense in the wafflestack toolkit repo or a fork of it, where installer/evals.mjs and the
+# stacks/*/evals/ cases live; a plain consuming project has neither, so it never installs this.)
+name: waffle-evals
+
+on:
+  schedule:
+    # Cron is UTC. Default '0 8 * * *' ≈ 00:00 America/Los_Angeles (PST; 01:00 during PDT).
+    # Override via the evals.cron config key. (A scheduled workflow with no repo activity for
+    # 60 days is auto-disabled by GitHub until a manual dispatch re-enables it.)
+    - cron: '{{evals.cron}}'
+  # Manual runs (test the flow, or run the suite on demand). The max_calls input overrides the
+  # configured budget for this run only — raise it to fit a suite that grew past evals.maxCalls.
+  workflow_dispatch:
+    inputs:
+      max_calls:
+        description: 'Model-call budget for this run (overrides evals.maxCalls). Passed to --max-calls.'
+        required: false
+        default: '{{evals.maxCalls}}'
+
+# One eval run at a time: a manual dispatch fired during a scheduled run queues behind it rather
+# than cancelling a mid-flight (paid) run.
+concurrency:
+  group: waffle-evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Least privilege: the job only reads the checked-out toolkit and calls the Anthropic API.
+    # No git writes, no PR, no issue — so contents:read is all it needs (the API key is a secret).
+    permissions:
+      contents: read
+    env:
+      # The runner writes its --json summary (per-case pass/fail, assertions, AND the transcript
+      # of each case) here; the Upload + Check steps both read it. Defined once at job scope so
+      # every step agrees on the path even if an earlier step exits early.
+      RESULTS_FILE: ${{ runner.temp }}/eval-results.json
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+      # The eval runner imports the toolkit's one runtime dep (`yaml`) to load cases, so a fresh
+      # Actions checkout must install before it can run. `npm ci` is deterministic against the
+      # committed package-lock.json — this is the toolkit's own checkout, not a consumer project.
+      - name: Install toolkit dependencies
+        run: npm ci
+      # Run the metered eval tier. --json emits the full structured summary (with transcripts) to
+      # stdout, which we capture to RESULTS_FILE for the artifact + result check. The runner exits
+      # non-zero on any failure/skip, but we DON'T fail this step on that — the Check step below is
+      # the loud, classifying gate and runs on always(); this step only hard-fails on a
+      # missing/invalid budget or a missing API key, where there is nothing to report.
+      - name: Run Layer 2 evals
+        id: run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # workflow_dispatch may override the budget; every other trigger uses the configured
+          # default. evals.maxCalls is a digits-only config value (render-time pattern), so this
+          # never injects into the shell.
+          MAX_CALLS: ${{ github.event.inputs.max_calls || '{{evals.maxCalls}}' }}
+          # Optional model override for cost control (empty ⇒ the runner's own default). Restricted
+          # to a model-id charset at render time, so it reaches the runner only as inert data.
+          MODEL: '{{evals.model}}'
+        run: |
+          set -o pipefail
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::error title=waffle-evals::ANTHROPIC_API_KEY secret is not set — the metered eval tier cannot run. Set it with the owner's go-ahead (gh secret set ANTHROPIC_API_KEY). See the stack setup note."
+            exit 1
+          fi
+          # Defense in depth: the config pattern already restricts MAX_CALLS to digits, but a
+          # workflow_dispatch input is free-form, so re-check it is a positive integer before it
+          # reaches --max-calls.
+          case "$MAX_CALLS" in
+            ''|*[!0-9]*) echo "::error title=waffle-evals::budget (max_calls) must be a positive integer, got '$MAX_CALLS'"; exit 1 ;;
+          esac
+          if [ "$MAX_CALLS" -eq 0 ]; then
+            echo "::error title=waffle-evals::budget (max_calls) must be greater than zero"; exit 1
+          fi
+          echo "Running Layer 2 evals with a budget of $MAX_CALLS model calls${MODEL:+ (model $MODEL)}."
+          # Build the arg list as an array so an empty MODEL simply drops --model (no word-split).
+          args=(--max-calls "$MAX_CALLS" --json)
+          if [ -n "${MODEL:-}" ]; then args+=(--model "$MODEL"); fi
+          set +e
+          node installer/evals.mjs "${args[@]}" > "$RESULTS_FILE"
+          code=$?
+          set -e
+          echo "runner_exit=$code" >> "$GITHUB_OUTPUT"
+          echo "Eval runner exited with code $code; structured results written to $RESULTS_FILE."
+          # Never fail here — the Check step reads RESULTS_FILE and is the hard gate.
+          exit 0
+      # Preserve the structured results (per-case pass/fail + assertion detail + the full
+      # transcript of every case) as a workflow artifact so a regression can be inspected after
+      # the fact, following the same observability pattern as the other hooks. always() so even a
+      # failed/partial run still uploads whatever the runner wrote.
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eval-results
+          path: ${{ runner.temp }}/eval-results.json
+          if-no-files-found: warn
+          retention-days: 7
+      # Result-check gate: read the runner's JSON summary strictly as DATA (jq, never eval'd),
+      # write a human digest to the run summary, and FAIL the job loudly when any case failed or
+      # the run exhausted its budget — so a regression is a red X, not a silent green check.
+      - name: Check eval result
+        if: always()
+        run: |
+          set -o pipefail
+          file="${RESULTS_FILE}"
+          if [ ! -s "$file" ]; then
+            echo "::error title=waffle-evals::No eval results at ${file} — the runner produced no JSON summary (it likely crashed before finishing: a bad API key, no cases discovered, or a runtime error). See the 'Run Layer 2 evals' step above."
+            exit 1
+          fi
+          # A malformed/partial file is a hard failure too — we must not treat an unreadable run as a pass.
+          if ! jq -e . "$file" >/dev/null 2>&1; then
+            echo "::error title=waffle-evals::Eval results at ${file} are not valid JSON — the run likely crashed mid-write. See the 'Run Layer 2 evals' step above and the eval-results artifact."
+            exit 1
+          fi
+          ok=$(jq -r '.ok' "$file")
+          total=$(jq -r '.total' "$file")
+          passed=$(jq -r '.passed' "$file")
+          failed=$(jq -r '.failed' "$file")
+          skipped=$(jq -r '.skippedCount // 0' "$file")
+          budgetHit=$(jq -r '.budgetHit' "$file")
+          calls=$(jq -r '.usage.calls' "$file")
+          maxCalls=$(jq -r '.usage.maxCalls // "∞"' "$file")
+          inTok=$(jq -r '.usage.inputTokens' "$file")
+          outTok=$(jq -r '.usage.outputTokens' "$file")
+          # Human digest → the Actions run summary (markdown, rendered — never executed).
+          {
+            echo "## 🧇 waffle-evals — Layer 2 LLM eval results"
+            echo ""
+            echo "- **Result:** ${passed} passed, ${failed} failed of ${total} (${skipped} skipped)"
+            echo "- **Budget:** ${calls} / ${maxCalls} model calls"
+            echo "- **Tokens:** ${inTok} in + ${outTok} out"
+            echo ""
+            echo "| Case | Result |"
+            echo "|------|--------|"
+            jq -r '(.results[] | "| \(.stack)/\(.name) | \(if .error then "⚠️ ERROR: \(.error)" elif .pass then "✅ pass" else "❌ fail" end) |"), (.skipped[]? | "| \(.stack)/\(.name) | ⏭️ skipped (budget) |")' "$file"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ok" = "true" ]; then
+            echo "All ${total} eval case(s) passed within the ${calls}/${maxCalls}-call budget."
+            exit 0
+          fi
+          # Budget exhaustion: the enforced cap stopped the run before every case ran.
+          if [ "$budgetHit" = "true" ] || { [ -n "$skipped" ] && [ "$skipped" != "0" ]; }; then
+            echo "::error title=waffle-evals::Eval run hit its call budget (${maxCalls}); ${skipped} case(s) were skipped unrun. Raise evals.maxCalls (or the workflow_dispatch max_calls input) so the whole suite fits under the cap. Detail: the eval-results artifact."
+          fi
+          # Case failures (a judge/deterministic assertion failed) and errored cases (a case that
+          # threw) both land in .failed — a stack prompt no longer behaves as its case pins.
+          if [ -n "$failed" ] && [ "$failed" != "0" ]; then
+            echo "::error title=waffle-evals::${failed} eval case(s) FAILED — a stack prompt no longer behaves the way its case pins, or a case errored. Download the eval-results artifact for the failing transcript + assertion detail."
+          fi
+          exit 1

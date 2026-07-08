@@ -7,6 +7,7 @@ files:
   - .github/workflows/waffle-hygiene.yml
   - .github/workflows/waffle-release-hook.yml
   - .github/workflows/waffle-post-merge-hook.yml
+  - .github/workflows/waffle-evals.yml
 # optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting; the release-hook and post-merge-hook workflows each hold `contents: write` (to push
@@ -14,13 +15,16 @@ files:
 # should silently imply, so all are opt-in — enabling this stack does NOT render them. Install
 # one explicitly (`wafflestack install files/.github/workflows/waffle-release-hook.yml`) or keep
 # an existing install via its lock entry. The doctor workflow is read-only and stays a default
-# render. The hygiene workflow is opt-in syrup for the same reason and then some: its job holds
-# contents/pull-requests write AND every scheduled fire spends real API money — daily.
+# render. The hygiene and evals workflows are opt-in syrup for the same reason and then some:
+# each spends real API money on a schedule — the hygiene job additionally holds
+# contents/pull-requests write, while the read-only evals job bills for the metered LLM tier on
+# every nightly fire.
 optIn:
   - files/.github/workflows/waffle-label-hook.yml
   - files/.github/workflows/waffle-hygiene.yml
   - files/.github/workflows/waffle-release-hook.yml
   - files/.github/workflows/waffle-post-merge-hook.yml
+  - files/.github/workflows/waffle-evals.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
@@ -340,6 +344,58 @@ setup: |-
   branch hygiene only. Pushing the workflow file needs the `workflow` credential scope; eject/
   uninstall exactly like the label hook, swapping the filename.
 
+  **Evals workflow (opt-in syrup).** This stack also carries
+  `.github/workflows/waffle-evals.yml`, the scheduled runner for the **Layer 2 LLM eval tier**
+  (`installer/evals.mjs`, `npm run evals`) — the metered behavioral tier that renders each
+  stack's skill/agent prompts and drives a real model against a scenario. It is the scheduled
+  counterpart to the free per-PR **Layer 1** gate (deterministic key-phrase assertions inside
+  `npm test`): Layer 2 calls a real model, so it costs Anthropic API money per run and must NOT
+  gate every PR. Unlike the label/hygiene hooks it dispatches **no Claude harness** — it is a
+  plain Node job (checkout → `npm ci` → `node installer/evals.mjs --max-calls <N> --json`) that
+  needs only the toolkit checkout and the `ANTHROPIC_API_KEY` secret. It is opt-in syrup for the
+  same reason as the hygiene hook — a scheduled trigger spends real money on a timer — so
+  enabling the stack does NOT render it. **It only makes sense in the wafflestack toolkit repo
+  or a fork/third-party-stack repo**, where `installer/evals.mjs` and the `stacks/*/evals/` cases
+  live; a plain consuming project has neither, so it never installs this. Pour it explicitly —
+  `wafflestack install files/.github/workflows/waffle-evals.yml` — or keep an existing install
+  via its lock entry.
+  **Budget (the enforced cost cap).** `--max-calls` is a REQUIRED, enforced ceiling on model
+  calls: the runner refuses to start a call once the cap is reached and marks the rest of the
+  suite skipped. The workflow surfaces it as the `evals.maxCalls` config key (default 40 — the
+  current suite is 8 cases × ~2 calls = ~16, so the default leaves generous headroom for growth),
+  rendered into `--max-calls` and into the `workflow_dispatch` `max_calls` input default. Raise
+  it when the suite grows, or use a cheaper `evals.model` (empty ⇒ the runner's own default) to
+  cut per-call cost. A manual dispatch can override the budget for one run via the `max_calls`
+  input without editing config.
+  **Triggers.** A nightly `schedule` (`evals.cron`, default `0 8 * * *` UTC ≈ midnight Pacific)
+  plus `workflow_dispatch` for manual/on-demand runs. There is deliberately **no on-release
+  trigger**: the release flow pushes a tag with the default `GITHUB_TOKEN`, which by GitHub's
+  anti-recursion rule would not start an `on: push: tags` job anyway (see the release-hook note),
+  and adding a per-release fire would double the metered spend for little signal over the nightly
+  run — add one yourself if your release cadence warrants it. Note GitHub auto-disables a
+  `schedule` after 60 days with no repo activity; a manual dispatch re-enables it.
+  **Reporting / observability.** Same pattern as the other hooks: the runner's `--json` summary
+  — per-case pass/fail, each assertion's detail, AND the full transcript of every case — is
+  captured to a file and uploaded as the **`eval-results`** workflow artifact (`always()`, 7-day
+  retention), so a regression can be inspected after the fact. A **`Check eval result`** step
+  (`always()`) reads that summary strictly as DATA (jq, never eval'd), writes a human digest to
+  the run summary, and **fails the job loudly** when any case failed/errored OR the run exhausted
+  its budget — so a regression is a red X, not a silent green check. A missing/unparseable
+  summary (the runner crashed — bad API key, no cases, a runtime error) is likewise a hard
+  failure.
+  **Cost — a scheduled trigger spends real money on a timer.** Every nightly fire bills the
+  metered tier whether or not a prompt regressed; unlike the label hook (paid per human label)
+  it bills itself daily with no human in the loop. Rein it in with a lower `evals.maxCalls`, a
+  cheaper `evals.model`, and a sparser `evals.cron`. It stays inert until you complete the
+  opt-in: set the API key secret with the user's go-ahead — `gh secret set ANTHROPIC_API_KEY`
+  (the same secret the hygiene/label hooks use; without it the job fails loudly with an
+  actionable message rather than running). The job is read-only (`contents: read`) — it opens no
+  PR and needs no auto-merge token, write permission, or branch protection. Pushing the workflow
+  file needs the `workflow` credential scope. To stop managing it, drop the
+  `files/.github/workflows/waffle-evals.yml` entry from `include:` or
+  `eject: [files/.github/workflows/waffle-evals.yml]` (the eject releases the file as
+  project-owned rather than deleting it).
+
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
   `issue.inferenceLabel` lifecycle label. Applying a label that doesn't exist makes
@@ -573,6 +629,47 @@ config:
       backslashes, newlines, or `${{` (enforced at render by the pattern above; single quotes
       are allowed). Security-sensitive: an unvalidated passthrough to the harness CLI — flags
       here can widen the harness's authority, so set only what you understand and trust.
+  evals.cron:
+    required: false
+    default: "0 8 * * *"
+    pattern: '[-0-9*/, ]+'
+    description: >-
+      Schedule for the scheduled Layer 2 eval workflow (.github/workflows/waffle-evals.yml),
+      as a GitHub Actions POSIX cron expression in UTC. Default "0 8 * * *" ≈ 00:00
+      America/Los_Angeles (PST; 01:00 during PDT). Rendered verbatim into the workflow's
+      `schedule:` block as a single-quoted YAML scalar, so it is restricted to the cron alphabet
+      (digits, spaces, and `* / , -`) by the pattern above — an allowlist that both blocks
+      injection (no quotes, `${{`, or newlines can break out of the scalar) and rejects an empty
+      value (which would render an invalid schedule). A bad value fails the render loudly instead
+      of shipping a broken or subverted workflow. GitHub validates the cron fields themselves at
+      workflow-parse time. The trigger also has `workflow_dispatch` for manual runs independent
+      of this schedule.
+  evals.maxCalls:
+    required: false
+    default: "40"
+    pattern: '^[0-9]+$'
+    description: >-
+      The ENFORCED model-call budget for the scheduled Layer 2 eval run
+      (.github/workflows/waffle-evals.yml) — rendered into the runner's required `--max-calls`
+      cap and into the workflow_dispatch `max_calls` input default. The runner refuses to start a
+      model call once the cap is reached and marks the rest of the suite skipped; the workflow's
+      Check step then fails the job loudly. Each case spends 1 call for its scenario plus 1 per
+      `judge` assertion, so size this to roughly (sum over cases of 1 + judge count) with
+      headroom. Default "40" covers the current ~8-case suite (~16 calls) with room to grow —
+      raise it as the suite grows. Restricted to digits by the pattern (the value lands in a
+      shell `--max-calls` argument and a YAML input default), so no quotes/spaces/`${{` can reach
+      the command; a manual dispatch can override it for a single run via the max_calls input.
+  evals.model:
+    required: false
+    default: ""
+    pattern: '^[A-Za-z0-9._-]*$'
+    description: >-
+      Optional model id for the scheduled Layer 2 eval run
+      (.github/workflows/waffle-evals.yml), passed to the runner's `--model` for cost control on
+      the daily job (e.g. point it at a cheaper model). Empty by default ⇒ the runner uses its
+      own default model, and a case's own `model:` still wins per-case. Rendered into a YAML env
+      value and used only as inert data (never eval'd); the pattern restricts it to a model-id
+      charset (alphanumerics and `. _ -`), so no quotes, spaces, or `${{` can reach the command.
   release.tagFormat:
     required: false
     default: "v{version}"
