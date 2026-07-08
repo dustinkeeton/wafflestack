@@ -172,8 +172,9 @@ but relevant if you ever render from CI.
 Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` directory:
 
 - `.waffle/waffle.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
-  `agents-dir`), `stacks:`, optional `include:` (individual items), `config:` values,
-  optional `eject:` list.
+  `agents-dir`), `stacks:` (bare built-in names, or `{ name, source, ref }` mappings for
+  external sources — see *External stack sources* below), optional `include:` (individual
+  items), `config:` values, optional `eject:` list.
 - `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
 - `.waffle/extensions/agents/<name>.md`, `.waffle/extensions/skills/<name>.md`
@@ -254,6 +255,47 @@ frozen-image contract deletes any locked file the next render doesn't reproduce,
 un-persisted ad-hoc install would be silently removed. Dependency closure is recomputed
 each render (not persisted), so it tracks upstream changes. `wafflestack eject skills/<name>`
 also drops any matching `include:` entry so it isn't left orphaned.
+
+## External stack sources
+
+A `stacks:` entry is normally a **bare stack name** resolved against the built-in toolkit
+(`stacks/<name>`). An entry may instead be a **mapping** that declares where the stack comes
+from — a git URL or a local path — so a project can pull in a third-party stack alongside the
+built-in ones:
+
+```yaml
+stacks:
+  - github-workflow                    # bare name → built-in toolkit (unchanged)
+  - name: acme-process                 # external stack from a pinned git source
+    source: https://github.com/acme/waffle-stacks
+    ref: v1.2.0
+  - name: local-experiments           # external stack from a local path
+    source: ../shared-stacks/local-experiments
+```
+
+Mapping fields:
+
+- **`name`** (required) — the stack name. It must be **unique across every `stacks:` entry**,
+  built-in and external alike; a duplicate is a hard error, never a silent shadow.
+- **`source`** (required) — a **git URL** (`https://…`, `git://…`, `ssh://…`, `git@host:owner/repo`,
+  or any address ending in `.git`) or a **local filesystem path** (relative or absolute).
+  Anything with a URL scheme, an scp-style `user@host:` prefix, or a `.git` suffix is treated as
+  git; everything else is a local path.
+- **`ref`** (git sources: **required**; local paths: **must be omitted**) — the pin for a git
+  source: a tag, branch, or commit. Pinning is mandatory so an external install is reproducible.
+  A local path is used as-is and carries no `ref`.
+
+An unknown key on the mapping (a `pin:` or `rev:` typo, say) is rejected rather than silently
+ignored. A malformed entry — missing `name`/`source`, an unpinned git source, a `ref` on a
+local path, or a duplicate name — fails config load loudly with a message naming the entry.
+
+> **Not yet resolvable.** Slice 1 (issue #88) only extends and validates the schema — multi-root
+> resolution is **not implemented yet**. A config that declares any `source`-bearing entry parses
+> and validates, but `render` then fails with a clear *"external stack … is declared but not yet
+> resolvable"* error rather than silently ignoring the entry or crashing in the loader. Fetching
+> the source, resolving multiple toolkit roots with collision detection, recording source
+> provenance in the lock, per-source `doctor`/`upgrade`, install-time trust confirmation, and
+> third-party authoring docs are tracked as follow-up sub-issues of #88.
 
 ## Template values
 

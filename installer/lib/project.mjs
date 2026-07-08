@@ -232,30 +232,150 @@ export function loadProjectConfig(cwd, notes = []) {
   // as a fallback so a repo that has not re-rendered keeps working; `stacks:` wins when both
   // are present. Either legacy read pushes a deprecation note onto `notes` (surfaced as a
   // render warning), pointing at `wafflestack upgrade` which renames the key in place.
-  let stacks;
+  let rawStacks;
   if (cfg.stacks !== undefined) {
-    stacks = cfg.stacks;
+    rawStacks = cfg.stacks;
     if (cfg.bundles !== undefined) {
       notes.push(
         `both \`stacks:\` and the legacy \`bundles:\` key are set in ${CONFIG_FILE} — using \`stacks:\`; the \`bundles:\` key is ignored (remove it)`,
       );
     }
   } else if (cfg.bundles !== undefined) {
-    stacks = cfg.bundles;
+    rawStacks = cfg.bundles;
     notes.push(
       `legacy \`bundles:\` key in ${CONFIG_FILE} is deprecated — run \`wafflestack upgrade\` to rename it to \`stacks:\``,
     );
   } else {
-    stacks = [];
+    rawStacks = [];
   }
+
+  // A `stacks:` entry is either a bare name (a built-in toolkit stack, unchanged) or a
+  // `{ name, source, ref }` mapping declaring an external source (#88). Split and validate
+  // the two shapes here; `externalStacks` is validated but NOT yet resolvable — `render`
+  // fails loudly on it (multi-root resolution is a follow-up).
+  const { stacks, externalStacks } = normalizeStackEntries(rawStacks);
 
   return {
     targets,
     stacks,
+    externalStacks,
     include: cfg.include ?? [],
     values: cfg.config ?? {},
     eject: cfg.eject ?? [],
   };
+}
+
+// Keys a `{ name, source, ref }` external stack entry may carry. An unknown key is rejected
+// (catches a `pin:`/`rev:` typo instead of silently ignoring the pin).
+const STACK_ENTRY_KEYS = new Set(['name', 'source', 'ref']);
+
+/**
+ * Classify an external stack `source:` string as a `'git'` URL or a local `'path'`. Git when it
+ * carries a URL scheme (`https://`, `http://`, `git://`, `ssh://`, …), an scp-style
+ * `user@host:owner/repo` address, or a trailing `.git`; anything else (relative or absolute
+ * filesystem path) is a local path. Slice 1 only records the classification — nothing is
+ * fetched or resolved yet.
+ */
+export function classifyStackSource(source) {
+  const s = String(source).trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return 'git'; // scheme://host/…
+  if (/^[^/@\s]+@[^/@\s]+:/.test(s)) return 'git'; // git@host:owner/repo(.git)
+  if (/\.git\/?$/.test(s)) return 'git'; // …/repo.git
+  return 'path';
+}
+
+/**
+ * Normalize a raw `stacks:` list into built-in stack names plus external source declarations,
+ * validating the shape and failing loudly on a malformed entry (#88, slice 1). Each list item
+ * is either:
+ *   - a bare string — a built-in toolkit stack (unchanged); or
+ *   - a `{ name, source, ref }` mapping — an external source, where `source` is a git URL or a
+ *     local path. A git source must be pinned with `ref` (tag/branch/commit) for reproducible
+ *     installs; a local-path source must NOT carry a `ref` (it is used as-is).
+ *
+ * Returns `{ stacks: [name…], externalStacks: [{ name, source, sourceType, ref }] }`. A stack
+ * name must be unique across every entry (built-in and external alike) — a collision is an
+ * error, not a silent shadow. External sources validate here but are not yet resolvable:
+ * `render` reports a clear "declared but not yet resolvable" error until multi-root resolution
+ * lands (see #88).
+ */
+export function normalizeStackEntries(raw) {
+  if (raw === undefined || raw === null) return { stacks: [], externalStacks: [] };
+  if (!Array.isArray(raw)) {
+    throw new Error(
+      `\`stacks:\` in ${CONFIG_FILE} must be a list of stack names or { name, source } mappings`,
+    );
+  }
+  const stacks = [];
+  const externalStacks = [];
+  const seen = new Map(); // stack name -> 1-based entry position, for collision reporting
+
+  raw.forEach((entry, i) => {
+    const pos = i + 1;
+    let name;
+    if (typeof entry === 'string') {
+      name = entry.trim();
+      if (!name) throw new Error(`stack entry #${pos} in ${CONFIG_FILE} is empty — give it a stack name`);
+      stacks.push(name);
+    } else if (isPlainObject(entry)) {
+      name = typeof entry.name === 'string' ? entry.name.trim() : '';
+      if (!name) {
+        throw new Error(
+          `stack entry #${pos} in ${CONFIG_FILE} is a mapping without a \`name:\` — an external source needs \`{ name, source }\``,
+        );
+      }
+      const unknown = Object.keys(entry).filter((k) => !STACK_ENTRY_KEYS.has(k));
+      if (unknown.length) {
+        throw new Error(
+          `external stack "${name}" in ${CONFIG_FILE} has unknown key(s) ${unknown.join(', ')} — allowed: ${[...STACK_ENTRY_KEYS].join(', ')}`,
+        );
+      }
+      if (typeof entry.source !== 'string' || !entry.source.trim()) {
+        throw new Error(
+          `external stack "${name}" in ${CONFIG_FILE} must declare a non-empty \`source:\` (a git URL or a local path)`,
+        );
+      }
+      const source = entry.source.trim();
+      const sourceType = classifyStackSource(source);
+
+      let ref;
+      if (entry.ref !== undefined) {
+        if (typeof entry.ref !== 'string' || !entry.ref.trim()) {
+          throw new Error(
+            `external stack "${name}" in ${CONFIG_FILE} has an empty \`ref:\` — pin it to a tag, branch, or commit, or remove it`,
+          );
+        }
+        ref = entry.ref.trim();
+      }
+      if (sourceType === 'git') {
+        if (!ref) {
+          throw new Error(
+            `external stack "${name}" in ${CONFIG_FILE} has a git \`source:\` (${source}) but no \`ref:\` — pin it to a tag, branch, or commit for reproducible installs`,
+          );
+        }
+      } else if (ref !== undefined) {
+        throw new Error(
+          `external stack "${name}" in ${CONFIG_FILE} has a local-path \`source:\` (${source}); \`ref:\` is only valid for a git source — remove it`,
+        );
+      }
+      externalStacks.push({ name, source, sourceType, ref: ref ?? null });
+    } else {
+      throw new Error(
+        `stack entry #${pos} in ${CONFIG_FILE} must be a stack name or a { name, source } mapping (got ${entry === null ? 'null' : typeof entry})`,
+      );
+    }
+
+    // A name must appear once across ALL entries — built-in or external — so an external source
+    // can't silently shadow a built-in (or another source) of the same name.
+    if (seen.has(name)) {
+      throw new Error(
+        `stack "${name}" in ${CONFIG_FILE} is declared more than once (entries #${seen.get(name)} and #${pos}) — each stack name must be unique across all sources`,
+      );
+    }
+    seen.set(name, pos);
+  });
+
+  return { stacks, externalStacks };
 }
 
 /**

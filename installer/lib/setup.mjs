@@ -82,6 +82,22 @@ function currentConfigSection(toolkit, cwd) {
   lines.push('## Stacks enabled', '');
   lines.push(project.stacks.length ? project.stacks.map((b) => `- ${b}`).join('\n') : '(none)', '');
 
+  // External bundle sources (#88, slice 1) parse and validate but are not yet resolvable.
+  // Surface them honestly here rather than silently omitting them from the guide — `render`
+  // fails until they are removed (multi-root resolution is a tracked follow-up).
+  if (project.externalStacks?.length) {
+    lines.push('## External stack sources (declared — not yet resolvable)', '');
+    for (const s of project.externalStacks) {
+      lines.push(`- ${s.name} ← ${s.source}${s.ref ? ` @ ${s.ref}` : ''} (${s.sourceType})`);
+    }
+    lines.push(
+      '',
+      '> External sources validate but multi-root resolution is not implemented yet; `render`',
+      '> will fail until they are removed (tracked in #88).',
+      '',
+    );
+  }
+
   if (project.include.length) {
     lines.push('## Individual includes', '', project.include.map((r) => `- ${r}`).join('\n'), '');
   }
