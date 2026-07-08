@@ -31,7 +31,25 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **Layer 2 eval harness + per-stack case format (#109).** A metered, LLM-driven eval tier
+  (Layer 2 of #89, on top of the Layer 1 content assertions in #108). Behavioral cases live
+  next to their stack at `stacks/<stack>/evals/<name>.eval.yaml`: a declarative case is a
+  render target (skill/agent, resolved within the stack) + a scenario prompt + one or more
+  transcript-level assertions (`includes`/`excludes`/`regex` deterministic; `judge` LLM-graded).
+  The runner (`installer/lib/evals.mjs`, driven by `npm run evals`) renders the target through
+  the real pipeline, drives a model against the scenario, and evaluates the assertions,
+  returning structured pass/fail with the transcript. Because it costs real API money it is a
+  **separate entry point, never part of `npm test`**, and every run is bounded by an explicit,
+  enforced `--max-calls` budget (the runner refuses to start a call once the cap is reached).
+  A `--dry-run` mock mode (and the `installer/test/evals.test.mjs` unit test) exercises the
+  whole harness with no API key and no cost. Format documented in `schema/FORMAT.md`; ships a
+  seed case under `stacks/github-workflow/evals/`.
+
 ### Consumer impact
+- **Additive, no re-render needed (#109).** The eval harness and `evals/` layout are new
+  authoring/CI surface; they do not touch any consuming repo's render, config, or lock. The
+  `evals/` directory is inert to `render`/`validate`/`doctor`.
 - **Docs only — no re-render needed (#80).** `schema/FORMAT.md` now documents the
   "how do I know a file is wafflestack-managed?" story: the lock manifest
   (`.waffle/waffle.lock.json`) is the authoritative marker, backed by `render`'s

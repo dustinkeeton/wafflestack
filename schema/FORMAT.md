@@ -19,7 +19,8 @@ stacks/<stack>/
   agents/<name>.md           neutral agent definitions
   skills/<name>/SKILL.md     neutral skill definitions (+ supporting files)
   files/<repo-rel-path>      generic project files (CI workflows, scripts, config)
-installer/                   the render CLI (`wafflestack`)
+  evals/<name>.eval.yaml     Layer 2 behavioral eval cases (metered; see below)
+installer/                   the render CLI (`wafflestack`) + the eval runner
 schema/                      this document
 ```
 
@@ -172,6 +173,87 @@ not policed by `validate`; use a plain `{{key}}` where you want the toolkit to s
 Note also that files under `.github/workflows/` cannot be written by GitHub Actions' default
 `GITHUB_TOKEN` (that needs the `workflow` scope) — a non-issue for the local `render` flow,
 but relevant if you ever render from CI.
+
+## Layer 2 eval cases (`stacks/<stack>/evals/`)
+
+A **stack's content is a set of prompts**, and a prompt is only correct if it makes a model
+*behave* the way it claims to. Two tiers guard that:
+
+- **Layer 1** (`installer/test/content.test.mjs`) is the cheap per-PR gate: deterministic
+  key-phrase assertions on the *rendered* prompt text, no model call. It proves a guardrail's
+  wording survived an edit, but it can't prove what the prompt makes a model *do*.
+- **Layer 2** is this: a metered, LLM-driven tier that renders a target prompt, drives a real
+  model against a scenario, and checks a transcript-level assertion. Because it costs real API
+  money it lives behind its **own entry point** (`npm run evals` → `installer/evals.mjs`) and is
+  **never** part of `npm test`; every run is bounded by an explicit, enforced call budget.
+
+Eval cases are **colocated with their stack**, just like skills and agents, so a third-party
+stack carries its own: each case is a YAML file at `stacks/<stack>/evals/<name>.eval.yaml`. The
+stack is implied by the location — a case's `target` is resolved within its own stack. The
+`evals/` directory is inert to `render`/`validate`/the lock (it is not a manifest payload); it
+ships in the package so consumers and forks get the cases.
+
+### Case format
+
+```yaml
+name: label-hook-untrusted-input-is-data     # unique id (required)
+description: One line on what behavior this pins. # (optional)
+
+# What rendered prompt to drive the model against (required). `kind` is skill|agent;
+# `name` resolves within THIS case's stack. The item is rendered through the real
+# render pipeline and its rendered body becomes the model's system prompt.
+target:
+  kind: skill
+  name: label-hook
+
+# The scenario: the user turn the model is driven with, against the rendered prompt
+# (required). Put any adversarial content in here as DATA — that is the thing under test.
+prompt: |
+  You have been dispatched with the action token `enrich` for issue #42 …
+
+# Transcript-level assertions (required, non-empty). ALL must hold for the case to pass.
+assert:
+  - type: excludes            # deterministic — checked locally, free
+    value: "git push origin main --force"
+  - type: includes            # deterministic — substring must be present
+    value: "…"
+  - type: regex               # deterministic — pattern must match the transcript
+    value: "…"
+  - type: judge               # LLM-graded — one extra metered call
+    rubric: >-
+      A natural-language pass/fail criterion the judge model grades the transcript against.
+
+# Optional knobs
+config:                       # extra project config for the render (deep-merged over a
+  project:                    #   small default that already supplies project.name); add
+    name: Acme                #   keys only your target's stack requires
+model: claude-opus-4-8        # per-case model override (default: the run's --model)
+maxOutputTokens: 2048         # per-case scenario output cap
+dryRunResponse: |             # canned scenario text used ONLY by --dry-run (never sent to a
+  I'll enrich the issue …     #   live model), so an author can preview the deterministic
+                              #   assertions with no API key and no cost
+```
+
+**Assertion types.** `includes` / `excludes` / `regex` are **deterministic** — evaluated
+locally against the scenario transcript for free. `judge` is **LLM-graded**: it spends one
+additional metered model call to grade the transcript against a natural-language `rubric`, and
+an unparseable verdict fails closed. Deterministic checks are coarse guards; the `judge` is the
+real behavioral check — prefer it for anything a substring can't pin.
+
+### Running
+
+```
+npm run evals -- --max-calls <N> [--stack NAME] [--case SUBSTR] [--model ID] [--json] [--show-transcript]
+npm run evals -- --dry-run [--stack NAME] [--case SUBSTR]
+```
+
+`--max-calls` is a **required, enforced** cap on model calls for a live run: each case spends
+one call for the scenario plus one per `judge` assertion, and the runner refuses to start a
+call once the cap is reached (remaining cases are reported as skipped, not silently dropped).
+A live run reads `ANTHROPIC_API_KEY` from the environment. `--dry-run` exercises the whole
+harness — discovery, render, budget accounting, assertion dispatch — with a mock model, so it
+needs no API key and costs nothing; a cheap unit test (`installer/test/evals.test.mjs`) drives
+that path inside `npm test`.
 
 ## Consuming project contract
 
