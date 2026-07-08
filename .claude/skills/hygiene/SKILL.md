@@ -42,7 +42,7 @@ After a task produces changes, follow the `git-workflow` skill end-to-end:
    waiting on a human:
 
    ```bash
-   gh pr merge --auto --squash
+   gh pr merge --auto --merge
    ```
 
    `--auto` only arms when the repo has **"Allow auto-merge"** enabled *and* a required

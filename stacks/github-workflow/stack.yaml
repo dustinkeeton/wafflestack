@@ -178,7 +178,7 @@ setup: |-
   install via its lock entry. On a daily cron (`hygiene.cron`, default `0 13 * * *` UTC ≈ 5am
   Pacific) plus `workflow_dispatch` for manual runs, it dispatches the Claude Code action to
   work the hygiene task list in the `hygiene` skill: first entry runs the `docs` skill, then
-  lands the result as a PR per the git-workflow skill with `gh pr merge --auto --squash`.
+  lands the result as a PR per the git-workflow skill with `gh pr merge --auto --merge`.
   **What the harness may do (baked-in allowlist).** The workflow's `claude_args` ships a
   default `--allowedTools` so the dispatched harness can actually complete that chain. In CI
   there is no human to answer permission prompts, so a gated tool call outside the allowlist is

@@ -77,10 +77,11 @@ All git logic lives in `scripts/clean_up.sh` so the dry-run is provably read-onl
 execute path is identical every time. **Always go through the script — don't hand-roll
 `git branch -D` loops**, because the staleness check is subtle:
 
-> Most GitHub repos (this one included) squash-merge PRs. A squash-merged branch's commits
-> never land on `main` under their original SHAs, so `git branch --merged main` reports
-> **nothing** — it misses every merged branch. The script instead asks GitHub for merged PR
-> state via `gh`, which is the only authoritative signal.
+> `git branch --merged main` is not a reliable signal for which branches have merged. Depending
+> on the merge method, a merged branch's commits may never land on `main` under their original
+> SHAs — squash and rebase merges rewrite them — so `git branch --merged main` can report
+> **nothing** and miss merged branches. The script instead asks GitHub for merged PR state via
+> `gh`, which is the authoritative signal regardless of how the PR was merged.
 
 Run it dry-run to get the plan, then with `--execute` once confirmed:
 
@@ -160,7 +161,8 @@ In dry-run/preview, end with **"Proceed? (y/N)"**. After executing, end with a o
 - **Nothing stale** — say so plainly ("Nothing to clean up — no merged branches, no finished
   agents.") and stop. Don't invent work.
 - **`gh` missing or not authenticated** — the script exits non-zero with a clear message. Relay
-  it; do **not** fall back to `git branch --merged` (it silently misses squash-merges) or guess.
+  it; do **not** fall back to `git branch --merged` (it can miss merged branches depending on the
+  merge method) or guess.
 - **A worktree the user actively reuses** (e.g. a long-lived dependabot scratch worktree) may be
   flagged because its setup PR merged. That's exactly what the confirm step is for — if the user
   says keep it, drop it from the plan.
