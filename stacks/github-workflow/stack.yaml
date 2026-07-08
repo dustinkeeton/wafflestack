@@ -280,6 +280,12 @@ setup: |-
   `files/.github/workflows/waffle-hygiene.yml` entry from `include:` or
   `eject: [files/.github/workflows/waffle-hygiene.yml]` (the eject releases the file as
   project-owned rather than deleting it).
+
+  **Auto-merge paper-trail label.** The hygiene skill (and delegate, when it arms auto-merge)
+  labels a PR with `autoMerge.label` (default `waffle-auto-merged`) right after arming. Applying
+  a label that doesn't exist makes `gh pr edit --add-label` fail, so create it:
+    gh label create "waffle-auto-merged" --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
+
   **Release hook workflow (opt-in syrup).** This stack also carries
   `.github/workflows/waffle-release-hook.yml`, also opt-in syrup: enabling the stack does NOT render
   it. It is the tag-on-merge half of the release flow and pairs with the `release` skill
@@ -595,6 +601,15 @@ config:
       pattern above; single quotes are allowed). Security-sensitive: an unvalidated passthrough to
       the harness CLI — flags here can widen the harness's authority, so set only what you
       understand and trust.
+  autoMerge.label:
+    required: false
+    default: waffle-auto-merged
+    description: >-
+      Label applied to a PR immediately after auto-merge is successfully armed
+      (`gh pr merge --auto`), as a durable paper trail that automation — not a human —
+      queued the merge (filter with `is:pr label:<value>`). Applied only on a successful
+      arm (means "armed," not "attempted"). Must pre-exist in the repo — `gh pr edit
+      --add-label` will not create it.
   hygiene.cron:
     required: false
     default: "0 13 * * *"
