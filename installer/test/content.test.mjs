@@ -79,7 +79,7 @@ describe('rendered content: frontmatter present where required', () => {
 describe('rendered content: no leftover config placeholders', () => {
   // The high-risk skills the eval tier targets must carry ZERO wafflestack-style
   // {{placeholders}} — every one should have been substituted at render time.
-  for (const name of ['label-hook', 'issue', 'delegate', 'release']) {
+  for (const name of ['label-hook', 'issue', 'delegate', 'release', 'autopilot']) {
     test(`${name} render has no {{placeholder}} left`, () => {
       const keys = [...placeholderKeys(readSkill(name))];
       assert.deepEqual(keys, [], `${name}: unsubstituted placeholders ${keys.join(', ')}`);
@@ -206,6 +206,70 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /Hard cap:\*\* `4096` bytes/);
     assert.match(md, /memory\.mjs --file .*--max-bytes 4096/);
     assert.match(md, /never raise the cap to dodge pruning/i);
+  });
+});
+
+describe('autopilot skill: instantiation contract, handoff, and guardrails', () => {
+  let md;
+  before(() => {
+    md = readSkill('autopilot');
+  });
+
+  test('instantiation contract: scope is REQUIRED and is what activates delegate batch mode', () => {
+    assert.match(md, /Issue scope — REQUIRED/);
+    // The explicit scope doubles as delegate batch mode's confirmation stand-in.
+    assert.match(md, /it is what activates `delegate\.batchMode`/);
+    // An unscoped run must not run — it can't activate batch mode.
+    assert.match(md, /an unscoped run cannot activate batch mode/);
+  });
+
+  test('auto-merge consent is per-run, explicit, default OFF, and never sticky', () => {
+    assert.match(md, /Auto-merge consent — per-run, explicit, default OFF/);
+    // The rendered per-run default value is false (off unless opted in this run).
+    assert.match(md, /The default for the run is \*\*false\*\*/);
+    assert.match(md, /Consent is per-run and never sticky/);
+    assert.match(md, /Consent is per-run only — never sticky/);
+  });
+
+  test('plan→implement handoff: a written plan-file artifact, a brief not a contract', () => {
+    // One planning context writes a per-issue plan file the fresh implementer receives.
+    assert.match(md, /issue-<N>\.md/);
+    assert.match(md, /fresh context/);
+    assert.match(md, /a brief, not a contract/);
+    assert.match(md, /full authority to adjust/);
+  });
+
+  test('implement→PR runs delegate with batch mode engaged (composition, not duplication)', () => {
+    assert.match(md, /`delegate\.batchMode` engaged/);
+    // The final outcome of every issue is always a PR.
+    assert.match(md, /The final outcome of every issue is always a PR/);
+    // approveBeforePush is orthogonal and must not be weakened.
+    assert.match(md, /`delegate\.approveBeforePush` is orthogonal and \*\*not weakened\*\*/);
+  });
+
+  test('every PR is verified directly — created, and armed when auto-merge consented', () => {
+    assert.match(md, /gh pr list --head <branch-name>/);
+    assert.match(md, /autoMergeRequest != null/);
+  });
+
+  test('post-merge housekeeping composes clean-up and the git-workflow close-out', () => {
+    assert.match(md, /clean-up git --yes/);
+    // Verify the linked issue actually closed after merge.
+    assert.match(md, /gh issue view <N> --json state -q \.state/);
+    // Board item to Done is the orchestrator's job for auto-merged PRs.
+    assert.match(md, /Move the board item to Done/);
+  });
+
+  test('guardrails: never main, never --admin, per-run consent, stop after a second failure', () => {
+    assert.match(md, /Never push to `main`/);
+    assert.match(md, /Never `--admin`-merge and never bypass branch protection/);
+    // A failed arm never becomes an immediate or --admin merge.
+    assert.match(md, /open but not armed/);
+    assert.match(md, /does \*\*not\*\* fall back to an immediate merge/);
+    // Stop-and-report when the same issue fails twice (one retry, then stop).
+    assert.match(md, /Stop and report if the same issue fails twice/);
+    assert.match(md, /Retry the issue \*\*once\*\*/);
+    assert.match(md, /fails a second time, STOP that issue/);
   });
 });
 
