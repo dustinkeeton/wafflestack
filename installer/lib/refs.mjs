@@ -9,6 +9,30 @@
  * The qualified form disambiguates names defined in more than one stack.
  */
 
+import path from 'node:path';
+
+/**
+ * Predicate matching the repo-relative output paths a rendered item owns, across ALL targets
+ * (claude/codex/agents-dir) — the inverse of the render's item→path mapping. A `files/` item is
+ * its own single repo-relative path (matched exactly, so `scripts/build` never sweeps up
+ * `scripts/build.mjs`); an agent or skill expands to its per-target render dirs. Deliberately
+ * target-blind: a lock only holds paths for the *enabled* targets, so an over-broad pattern set
+ * can never over-match — it just finds whichever of an item's paths the lock actually tracks.
+ * Shared by `eject` (drop an item's files from the lock) and `list` (drift-check them).
+ */
+export function itemOutputMatcher(kind, name) {
+  if (kind === 'files') return (rel) => rel === name;
+  const patterns =
+    kind === 'agents'
+      ? [
+          path.join('.claude', 'agents', `${name}.md`),
+          path.join('.codex', 'agents', `${name}.toml`),
+          path.join('.agents', 'agents', `${name}.md`),
+        ]
+      : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
+  return (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
+}
+
 /** Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… → `files/`. */
 export function normalizeItemRef(ref) {
   return ref.replace(/^(agent|skill|file)s?[:/]/, (_m, kind) => `${kind}s/`);
