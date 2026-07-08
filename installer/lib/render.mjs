@@ -19,6 +19,7 @@ import {
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   resolveLockFile,
+  HARNESS_PATTERNS,
   CONFIG_FILE,
   LOCK_FILE,
   EXTENSIONS_DIR,
@@ -502,6 +503,16 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
  */
 function compilePatterns(stack, errors) {
   const map = new Map();
+  // Reserved `harness.*` injection guards (#131) — always enforced, never declared in a
+  // stack's config. Seed them first; a stack's own `config:` patterns cannot collide because
+  // `harness.*` is never a declarable config key.
+  for (const [sub, pattern] of Object.entries(HARNESS_PATTERNS)) {
+    try {
+      map.set(`harness.${sub}`, compilePattern(pattern));
+    } catch (err) {
+      errors.push(`reserved harness.${sub} has an invalid pattern: ${err.message}`);
+    }
+  }
   for (const [key, spec] of Object.entries(stack.config)) {
     if (typeof spec?.pattern !== 'string') continue;
     try {

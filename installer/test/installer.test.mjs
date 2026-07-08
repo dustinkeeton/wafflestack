@@ -416,6 +416,102 @@ describe('harness.* namespace', () => {
   });
 });
 
+// #131: the reserved harness.* namespace also pins the CI workflow dispatcher via three
+// target-independent scalar built-ins (actionRef / actionVersion / apiKeySecret), each
+// injection-guarded so a consumer can repoint the harness action WITHOUT ejecting the workflow.
+describe('harness.* CI dispatcher pin + injection guards (#131)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-hzdisp-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-hzdisp-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: hzdisp\nstacks: [wf]\n');
+    write(toolkitRoot, 'stacks/wf/stack.yaml', [
+      'name: wf',
+      'description: Dispatcher fixture.',
+      'files:',
+      '  - .github/workflows/hook.yml',
+      'config:',
+      '  project.name:',
+      '    required: false',
+      '    default: Fixtureproj',
+      '    description: bare project name',
+      '',
+    ].join('\n'));
+    // A minimal dispatcher that splices the three reserved harness.* keys exactly the way the
+    // real waffle-label-hook / waffle-hygiene templates do (bare in `uses:`, and inside the
+    // GitHub-Actions `${{ secrets.<NAME> }}` expression).
+    write(toolkitRoot, 'stacks/wf/files/.github/workflows/hook.yml', [
+      'name: hook for {{project.name}}',
+      'jobs:',
+      '  dispatch:',
+      '    steps:',
+      '      - uses: {{harness.actionRef}}@{{harness.actionVersion}}',
+      '        with:',
+      '          anthropic_api_key: ${{ secrets.{{harness.apiKeySecret}} }}',
+      '',
+    ].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const writeConfig = (configLines = ['config: {}']) => {
+    write(cwd, '.waffle/waffle.yaml', ['targets: [claude]', 'stacks: [wf]', ...configLines, ''].join('\n'));
+  };
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('the fixture is valid — reserved harness.* keys need no stack declaration', () => {
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('defaults pin today\'s action + api-key secret (scalar built-ins resolve)', () => {
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const wf = read(cwd, '.github/workflows/hook.yml');
+    assert.match(wf, /uses: anthropics\/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1\.0\.162/);
+    assert.match(wf, /anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
+    assert.deepEqual([...placeholderKeys(wf)], [], 'no unsubstituted placeholders');
+  });
+
+  test('overriding harness.* repoints the dispatcher without an eject', () => {
+    writeConfig([
+      'config:',
+      '  harness:',
+      '    actionRef: myorg/my-harness',
+      '    actionVersion: v9.9.9',
+      '    apiKeySecret: MY_HARNESS_KEY',
+    ]);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const wf = read(cwd, '.github/workflows/hook.yml');
+    assert.match(wf, /uses: myorg\/my-harness@v9\.9\.9/);
+    assert.match(wf, /anthropic_api_key: \$\{\{ secrets\.MY_HARNESS_KEY \}\}/);
+  });
+
+  test('injection guards reject a hostile override at render (workflow never corrupted)', () => {
+    const rejects = (configLines, key) => {
+      writeConfig(configLines);
+      const r = render();
+      assert.equal(r.ok, false, 'render must fail on a hostile value');
+      assert.ok(
+        r.errors.some((e) => e.includes(key) && /does not match its declared pattern/.test(e)),
+        JSON.stringify(r.errors),
+      );
+    };
+    // a ${{ }} in the pinned version would be expanded by GitHub Actions (e.g. secret exfil)
+    rejects(['config:', '  harness:', '    actionVersion: "${{ secrets.X }}"'], 'harness.actionVersion');
+    // a secret name that closes the expression and injects another
+    rejects(['config:', '  harness:', '    apiKeySecret: "X }} ${{ secrets.Y"'], 'harness.apiKeySecret');
+    // an action ref carrying a space + `#` could mangle the uses: line into a comment
+    rejects(['config:', '  harness:', '    actionRef: "evil # comment"'], 'harness.actionRef');
+  });
+});
+
 describe('nested substitution', () => {
   const declared = new Set(['git.coAuthorTrailer', 'git.cmd', 'a.b']);
   const values = {

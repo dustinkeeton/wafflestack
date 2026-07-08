@@ -47,9 +47,9 @@ jobs:
           {{project.installCmd}}
       - name: Dispatch harness (hygiene)
         id: harness
-        uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
+        uses: {{harness.actionRef}}@{{harness.actionVersion}}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.{{harness.apiKeySecret}} }}
           # Prefer a PAT/GitHub App token (WAFFLE_HYGIENE_TOKEN) so the PR the harness opens
           # triggers the repo's required CI and auto-merge can fire; falls back to the default
           # GITHUB_TOKEN, under which auto-merge stays pending (documented in the setup note).
