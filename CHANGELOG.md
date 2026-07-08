@@ -32,6 +32,20 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Declarative `prerequisites:` schema + `doctor` gate (#129, first increment of #47).** A stack
+  may now declare the **external** things it leans on — a `tool`, `secret`, `scope`, `label`,
+  `setting`, `service`, or `env` — as a typed `prerequisites:` list in `stack.yaml`, distinct from
+  the internal-only `requires:` keyword. Each entry carries a `kind`, `name`, `description`, a
+  deterministic `check` (a shell command; exit 0 = satisfied), a `level` (`require` | `recommend`),
+  and an optional `items:` list scoping it to specific waffles like `requires:`. `wafflestack
+  doctor` runs each **selected** entry's check and **exits 1** on an unmet `require` (a `recommend`
+  only reports), so a repo running the shipped `waffle-doctor.yml` gate verifies prerequisites on
+  the same CI run; `render` additionally warns for each unmet cheaply-probed (`tool`/`env`)
+  prerequisite. `validate` checks the block's shape. The legacy `env:` map is subsumed as the `env`
+  kind **read-compatibly** (it keeps working, still warned at render — no stack must migrate). The
+  `github-workflow` + `orchestration` stacks are seeded from the #47 inventory: only `command -v`
+  tool probes (node/git/gh) are `require`; every secret/scope/label/setting/service is `recommend`.
+  Documented in `schema/FORMAT.md`.
 - **Layer 2 eval harness + per-stack case format (#109).** A metered, LLM-driven eval tier
   (Layer 2 of #89, on top of the Layer 1 content assertions in #108). Behavioral cases live
   next to their stack at `stacks/<stack>/evals/<name>.eval.yaml`: a declarative case is a
@@ -47,6 +61,13 @@ is what you reach for across a breaking one.
   seed case under `stacks/github-workflow/evals/`.
 
 ### Consumer impact
+- **Additive; no re-render diff, but `doctor` now checks prerequisites (#129).** The
+  `prerequisites:` block does not render into any file, so a re-render produces no output/lock
+  change. A repo that runs `waffle-doctor.yml` (or `wafflestack doctor`) will, on its next run,
+  start verifying the selected stacks' declared prerequisites — an unmet `require` fails the
+  check. The seeded `require`s are only `command -v node/git/gh` (present on any CI runner and
+  dev machine); everything environment-specific is `recommend` (reports, never fails), so a
+  correctly-set-up repo stays green. An existing `env:` map is unchanged.
 - **Additive, no re-render needed (#109).** The eval harness and `evals/` layout are new
   authoring/CI surface; they do not touch any consuming repo's render, config, or lock. The
   `evals/` directory is inert to `render`/`validate`/`doctor`.

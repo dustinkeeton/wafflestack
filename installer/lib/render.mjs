@@ -11,6 +11,7 @@ import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
 import { validateExternalStacks } from './validate.mjs';
+import { applicablePrerequisites, evaluatePrerequisites, formatPrereq, RENDER_PROBE_KINDS } from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
   loadProjectConfig,
@@ -198,6 +199,21 @@ export function renderProject({
     }
     // Env prerequisites still warn when any item from this stack renders.
     checkEnvPrerequisites({ stack, project, cwd, warnings });
+  }
+
+  // Generalized prerequisite warnings (#129): beyond the legacy `env:` map above, every declared
+  // `prerequisites:` entry cheap to probe locally (a `tool`/`env` kind — a `command -v` binary
+  // check or an env-var read) that is currently unmet emits a non-blocking `warning:`. This is
+  // advisory only — it never fails the render (that is `doctor`'s job), and it deliberately does
+  // NOT shell out for the network/auth kinds (secret, scope, label, setting, service), which the
+  // deliberate `doctor` gate verifies instead. Scoped to the selected items, like `requires:`.
+  {
+    const prereqs = applicablePrerequisites(toolkit, { items: selection.items });
+    const { unmetRequired, unmetRecommended } = evaluatePrerequisites(prereqs, cwd, {
+      kinds: RENDER_PROBE_KINDS,
+      timeoutMs: 5000,
+    });
+    for (const p of [...unmetRequired, ...unmetRecommended]) warnings.push(formatPrereq(p));
   }
 
   // Generate the `.waffle/` overview docs (cheat sheet + team intro, Markdown + branded HTML)

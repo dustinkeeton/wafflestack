@@ -2,7 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sha256, exists } from './util.mjs';
 import { readLock } from './render.mjs';
-import { LOCK_FILE, resolveLockFile } from './project.mjs';
+import { LOCK_FILE, resolveLockFile, loadProjectConfig } from './project.mjs';
+import { loadToolkitWithSources } from './toolkit.mjs';
+import { computeSelection } from './refs.mjs';
+import { applicablePrerequisites, evaluatePrerequisites } from './prerequisites.mjs';
+import { defaultSourceCacheDir } from './sources.mjs';
+
+/** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
+function noPrereqs() {
+  return { evaluated: false, unmetRequired: [], unmetRecommended: [], met: [] };
+}
 
 /**
  * Compare managed files against the lock manifest.
@@ -18,11 +27,19 @@ import { LOCK_FILE, resolveLockFile } from './project.mjs';
  * (#125), so a drift report names which external source a modified/missing file belongs to.
  * Built-in files have no entry (attributed to the toolkit); a pre-#125 lock with no `sources`
  * block yields an empty map — doctor then behaves exactly as before.
+ *
+ * `prerequisites` is the typed-prerequisite gate (#129): when `toolkitRoot` is supplied (the CLI
+ * always passes it), doctor loads the project's selection and runs each SELECTED stack's declared
+ * `prerequisites:` checks. An unmet `require`-level prerequisite is drift-equivalent — it fails
+ * doctor (exit 1), so the shipped `waffle-doctor.yml` CI job verifies prerequisites on the same
+ * run; a `recommend` entry only reports. The result is `{ evaluated, unmetRequired,
+ * unmetRecommended, met }`. Evaluation is best-effort: if the toolkit/config cannot be loaded it
+ * is skipped with a note rather than breaking the drift check, which needs neither.
  */
-export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
+export function doctor({ cwd, toolkitVersion, allowMissing = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
   const lock = readLock(cwd);
   if (!lock) {
-    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing };
+    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, prerequisites: noPrereqs() };
   }
 
   const attribution = {};
@@ -64,9 +81,35 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
     notes.push(`${missing.length} managed file(s) absent but tolerated (--allow-missing) — expected when a repo gitignores some renders (partial/CI checkout)`);
   }
 
+  // Typed-prerequisite gate (#129). Best-effort: any failure to load the toolkit/config/selection
+  // is surfaced as a note and skips the gate rather than breaking the drift check (which needs
+  // neither). Only an unmet `require`-level prerequisite of a SELECTED stack fails doctor.
+  let prerequisites = noPrereqs();
+  if (toolkitRoot) {
+    try {
+      const project = loadProjectConfig(cwd);
+      const toolkit = loadToolkitWithSources({
+        builtinRoot: toolkitRoot,
+        externalStacks: project.externalStacks ?? [],
+        cwd,
+        cacheDir: sourceCacheDir,
+        refreshSources: false,
+      });
+      const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
+      const trackedFiles = new Set(Object.keys(lock.files ?? {}));
+      const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
+      const applicable = applicablePrerequisites(toolkit, selection);
+      prerequisites = { evaluated: true, ...evaluatePrerequisites(applicable, cwd) };
+    } catch (err) {
+      notes.push(`could not evaluate prerequisites: ${err.message}`);
+    }
+  }
+
   // With --allow-missing, only *modified* files count as drift; absent files are informational.
-  const ok = allowMissing ? modified.length === 0 : modified.length === 0 && missing.length === 0;
-  return { ok, modified, missing, notes, attribution, allowMissing };
+  const driftOk = allowMissing ? modified.length === 0 : modified.length === 0 && missing.length === 0;
+  // An unmet `require` prerequisite is drift-equivalent — it fails the gate; `recommend` never does.
+  const ok = driftOk && prerequisites.unmetRequired.length === 0;
+  return { ok, modified, missing, notes, attribution, allowMissing, prerequisites };
 }
 
 /**

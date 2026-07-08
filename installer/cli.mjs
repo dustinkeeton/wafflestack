@@ -10,6 +10,7 @@ import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { upgrade } from './lib/upgrade.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
+import { formatPrereq } from './lib/prerequisites.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -46,17 +47,23 @@ try {
     }
     case 'doctor': {
       const allowMissing = extractFlag(args, '--allow-missing');
-      const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing });
+      const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing, toolkitRoot });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
       for (const f of result.missing) console.log((allowMissing ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
       for (const n of result.notes) console.log(n);
+      // Prerequisite gate (#129): an unmet `require` fails the check; a `recommend` only reports.
+      for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
+      for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
       if (result.ok) {
         console.log(
           result.missing.length
             ? `all present managed files match the lock manifest (${result.missing.length} absent, tolerated)`
             : 'all managed files match the lock manifest',
         );
+        if (result.prerequisites.unmetRecommended.length) {
+          console.log(`${result.prerequisites.unmetRecommended.length} recommended prerequisite(s) unmet — reported above, not blocking`);
+        }
       }
       process.exit(result.ok ? 0 : 1);
       break;

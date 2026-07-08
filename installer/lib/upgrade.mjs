@@ -118,7 +118,7 @@ export function upgrade({
   const sourceMoves = diffSources(oldSources, render.sources ?? []);
   for (const move of sourceMoves) log(describeSourceMove(move));
 
-  const dr = doctor({ cwd, toolkitVersion });
+  const dr = doctor({ cwd, toolkitVersion, toolkitRoot });
 
   return {
     ok: render.ok && dr.ok,

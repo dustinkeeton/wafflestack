@@ -54,6 +54,18 @@ config:                              # template keys this stack may reference
     description: Production build command run in preflight checks.
 env:                                 # env vars the stack's content depends on
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+prerequisites:                       # optional: typed external prerequisites, checked by doctor
+  - kind: tool                       # tool|secret|scope|label|setting|service|env
+    name: gh
+    level: require                   # require (fails doctor) | recommend (reports only)
+    check: command -v gh             # deterministic shell command; exit 0 = satisfied
+    description: GitHub CLI — every skill in this stack drives it.
+  - kind: secret
+    name: ANTHROPIC_API_KEY
+    level: recommend
+    check: gh secret list | grep -q '^ANTHROPIC_API_KEY'
+    items: [files/.github/workflows/waffle-hygiene.yml]  # scope to specific waffles (optional)
+    description: Repo secret billing the dispatched harness runs.
 setup: |-                            # optional, agent-facing install notes
   Service-side prerequisites and how to verify/create them (CLI auth, labels, boards).
 ```
@@ -95,6 +107,30 @@ acknowledgement.
 playbook, `schema/SETUP.md`, followed by a generated inventory of every stack's items,
 config schema, env, and these notes). It is printed **before** any project config exists,
 so it must not use `{{placeholders}}` — refer to config keys by name instead.
+
+`prerequisites:` declares the **external** things a stack leans on that the copy-in install
+can neither provide nor verify — distinct from `requires:` (which maps render-closure edges
+between waffles, *inside* the toolkit). Each entry names a **`kind`** (`tool` | `secret` |
+`scope` | `label` | `setting` | `service` | `env`), the **`name`** of the thing needed, a human
+**`description`**, a deterministic **`check`** (a shell command whose exit `0` means satisfied —
+`command -v gh`, `gh auth status`, `gh secret list`, a repo-settings API GET), and a **`level`**:
+
+- **`require`** — an unmet one **fails `doctor`** (exit 1), so a repo running the shipped
+  `waffle-doctor.yml` gate verifies it on the same run. Declare `require` only for something
+  certain to exist wherever `doctor` runs (e.g. a `command -v` binary probe) — not an
+  environment-specific secret/scope/label/setting, which would redden CI where it is absent.
+- **`recommend`** — reported by `doctor`, never fails it. The safe default for anything
+  environment-specific.
+
+Like `requires:`, the block is **scoped to the selected items**: an optional **`items:`** list
+(item refs defined in this stack) limits an entry to the waffles that need it, so a partial
+install is asked only for its own prerequisites (omit `items:` for stack-wide). `validate`
+checks each entry's kind/level/fields and that every `items:` ref resolves. `doctor` runs every
+selected entry's `check` and gates on unmet `require`s; `render` additionally emits a non-blocking
+`warning:` for each unmet **cheaply-probed** prerequisite (`tool`/`env` kinds), leaving the
+network/auth kinds to the deliberate `doctor` gate. The legacy `env:` map is **subsumed as the
+`env` kind, read-compatibly** — an existing `env:` map keeps working and is still warned at render,
+so no stack must migrate at once.
 
 ## Agent definition (`agents/<name>.md`)
 

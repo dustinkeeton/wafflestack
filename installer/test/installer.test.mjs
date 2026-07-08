@@ -15,6 +15,7 @@ import { validateToolkit, validateExternalStacks } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions } from '../lib/refs.mjs';
+import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 import { agentAvatarSvg } from '../lib/waffledocs.mjs';
@@ -4475,6 +4476,163 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/waffle-doctor/SKILL.md')));
     assert.ok(!fs.existsSync(path.join(cwd, '.claude/skills/waffle-render/SKILL.md')), 'no sibling pulled in');
+  });
+});
+
+// Typed external prerequisites: schema validation, the doctor exit-1 gate, item-scoping, and the
+// generalized render warning (#129).
+describe('prerequisites: schema + doctor gate (#129)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-pq-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-pq-'));
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  // A one-stack toolkit whose `prerequisites:` block is supplied per test. Two skills (alpha,
+  // beta) let an item-scoped entry be exercised.
+  const writeToolkit = (prereqLines) => {
+    write(toolkitRoot, 'toolkit.yaml', 'name: pqfix\ndescription: prereq fixture\nstacks: [pq]\n');
+    write(toolkitRoot, 'stacks/pq/stack.yaml', [
+      'name: pq',
+      'description: Prereq stack.',
+      'skills: [alpha, beta]',
+      ...(prereqLines ? ['prerequisites:', ...prereqLines] : []),
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/pq/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha body.\n');
+    write(toolkitRoot, 'stacks/pq/skills/beta/SKILL.md', '---\nname: beta\ndescription: Beta skill.\n---\n\nBeta body.\n');
+  };
+  const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const runDoctor = () => doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, allowMissing: true });
+
+  // One satisfiable require, one reporting-only recommend, one require scoped to skills/beta
+  // (unmet, so it only bites when beta is in the selection).
+  const GOOD_PREREQS = [
+    '  - kind: tool',
+    '    name: always-ok',
+    '    level: require',
+    '    check: "true"',
+    '    description: A satisfiable require.',
+    '  - kind: secret',
+    '    name: needs-secret',
+    '    level: recommend',
+    '    check: "false"',
+    '    description: A reporting-only recommend.',
+    '  - kind: tool',
+    '    name: beta-only',
+    '    level: require',
+    '    check: "false"',
+    '    items: [skills/beta]',
+    '    description: A require scoped to beta.',
+  ];
+
+  test('validate flags unknown kind/level, a missing check, and a dangling items ref', () => {
+    writeToolkit([
+      '  - kind: bogus',
+      '    name: bad-kind',
+      '    level: sometimes',
+      '    check: "true"',
+      '    description: bad kind and level',
+      '  - kind: tool',
+      '    name: no-check',
+      '    level: require',
+      '    description: missing a check',
+      '  - kind: tool',
+      '    name: bad-scope',
+      '    level: recommend',
+      '    check: "true"',
+      '    description: points at a non-existent item',
+      '    items: [skills/ghost]',
+    ]);
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /unknown kind "bogus"/.test(p)), JSON.stringify(problems));
+    assert.ok(problems.some((p) => /unknown level "sometimes"/.test(p)), JSON.stringify(problems));
+    assert.ok(problems.some((p) => /no-check/.test(p) && /missing a/.test(p)), JSON.stringify(problems));
+    assert.ok(problems.some((p) => /skills\/ghost.*does not match/.test(p)), JSON.stringify(problems));
+  });
+
+  test('a well-formed prerequisites block validates clean', () => {
+    writeToolkit(GOOD_PREREQS);
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('doctor passes when a require is satisfied; a recommend only reports', () => {
+    // Select just alpha, so the unmet beta-scoped require does not apply.
+    writeToolkit(GOOD_PREREQS);
+    writeConfig('targets: [claude]\ninclude: [skills/alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    const dr = runDoctor();
+    assert.equal(dr.prerequisites.evaluated, true);
+    assert.equal(dr.ok, true, JSON.stringify(dr.prerequisites));
+    assert.equal(dr.prerequisites.unmetRequired.length, 0);
+    assert.ok(dr.prerequisites.unmetRecommended.some((p) => p.name === 'needs-secret'));
+    assert.ok(dr.prerequisites.met.some((p) => p.name === 'always-ok'));
+  });
+
+  test('doctor FAILS (the exit-1 contract) on an unmet require prerequisite', () => {
+    // Selecting the whole stack pulls beta in, so the unmet beta-scoped require applies.
+    writeToolkit(GOOD_PREREQS);
+    writeConfig('targets: [claude]\nstacks: [pq]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    const dr = runDoctor();
+    assert.equal(dr.ok, false);
+    assert.ok(dr.prerequisites.unmetRequired.some((p) => p.name === 'beta-only'), JSON.stringify(dr.prerequisites));
+  });
+
+  test('item-scoping: a beta-only prerequisite is not asked of an alpha-only install', () => {
+    writeToolkit(GOOD_PREREQS);
+    const toolkit = loadToolkit(toolkitRoot);
+    const selection = computeSelection(toolkit, { stacks: [], include: ['skills/alpha'], eject: [] });
+    const applicable = applicablePrerequisites(toolkit, selection);
+    assert.ok(!applicable.some((p) => p.name === 'beta-only'), JSON.stringify(applicable.map((p) => p.name)));
+    assert.ok(applicable.some((p) => p.name === 'always-ok'), 'stack-wide prereq still applies');
+  });
+
+  test('render warns for an unmet cheap-probe (tool) prerequisite, not for a network kind', () => {
+    writeToolkit([
+      '  - kind: tool',
+      '    name: missing-tool',
+      '    level: recommend',
+      '    check: "false"',
+      '    description: an unmet local tool',
+      '  - kind: secret',
+      '    name: some-secret',
+      '    level: recommend',
+      '    check: "false"',
+      '    description: a network-kind check not probed at render',
+    ]);
+    writeConfig('targets: [claude]\nstacks: [pq]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.ok(result.warnings.some((w) => /missing-tool/.test(w)), JSON.stringify(result.warnings));
+    assert.ok(!result.warnings.some((w) => /some-secret/.test(w)), 'network kind must not be probed at render');
+  });
+
+  test('doctor without a toolkit root skips the gate (backward compatible)', () => {
+    writeToolkit(GOOD_PREREQS);
+    writeConfig('targets: [claude]\nstacks: [pq]\nconfig: {}\n');
+    render();
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(dr.prerequisites.evaluated, false);
+    assert.equal(dr.ok, true);
+  });
+
+  test('normalizePrerequisites defaults level to recommend and normalizes item refs', () => {
+    const [a, b] = normalizePrerequisites([
+      { kind: 'tool', name: 'x', check: 'command -v x', description: 'd' },
+      { kind: 'label', name: 'y', level: 'require', check: 'c', description: 'd', items: ['skill:alpha', 'files/z'] },
+    ]);
+    assert.equal(a.level, 'recommend');
+    assert.deepEqual(a.items, []);
+    assert.equal(b.level, 'require');
+    assert.deepEqual(b.items, ['skills/alpha', 'files/z']);
   });
 });
 
