@@ -80,7 +80,8 @@ setup: |-
   issue:*)` for the title/body/label edits and `Bash(gh api:*)` for the GraphQL board plus
   milestone calls — with no file edits and no git. **implement** additionally authorizes the full
   delivery chain: edit the code (`Edit`/`Write`), branch/stage/commit/push (`Bash(git:*)`), open
-  the PR (`Bash(gh pr:*)`), comment the PR link on the issue (`Bash(gh issue:*)`), and the
+  the PR (`Bash(gh pr:*)`), comment the PR link on the issue (`Bash(gh issue:*)`), read-only repo
+  inspection (`Bash(gh repo view:*)`), and the
   `git-workflow` pre-flight. Those pre-flight commands are project-specific, so the workflow
   renders your `project.lintCmd` / `project.typecheckCmd` / `project.testCmd` / `project.buildCmd`
   straight into the implement allowlist — the very keys that skill runs as its pre-flight — so
@@ -113,7 +114,20 @@ setup: |-
   downgraded to a **warning**: the call never ran (so nothing was written), and it did not block
   the issue/PR the job delivers, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial
   behavior) was a false alarm. Widening the allowlist stays the fix for a *hard* denial; the
-  read-only warning is just an FYI that a task may have used a fallback path. The full execution
+  read-only warning is just an FYI that a task may have used a fallback path.
+  **Delivery-aware downgrade (#85).** The program-name classifier can't read intent — it can't
+  tell a read-only `git status` / `gh api` GET from a mutating `git push`, and a `cd …`-prefixed
+  compound (`cd /home/runner/work/… && …`) matches no allowlist entry at all, so a legitimate
+  audit command gets denied and then hard-classified for merely *containing* `git`/`gh`/`xargs`.
+  When that happens but the run's final text still reports a **PR URL** — proof it delivered — the
+  guard **downgrades those hard delivery denials to a warning** rather than reddening a run the PR
+  itself disproves. A `dangerouslyDisableSandbox` attempt is the one exception: it is **never**
+  downgraded, staying red even on a delivered run. Two source-side fixes cut the denials upstream:
+  the dispatch `prompt:` now tells the harness the session starts at the repo root (do not prefix
+  `cd`, prefer single-program commands over compounds so the allowlist can match), and the
+  implement allowlist adds `Bash(gh repo view:*)` so read-only repo inspection has an allowlisted
+  form — steer to `gh repo view --json …` instead of an ad-hoc `gh api` GET (which is hard to
+  scope narrowly). The full execution
   log (every message plus the final result JSON) is uploaded as the **`claude-execution-log-<job>`**
   workflow artifact (`always()`, 7-day retention) — the output the action hides from the run log by
   default. We deliberately do **not** set the action's `show_full_output: true`: it streams *all*
@@ -164,7 +178,8 @@ setup: |-
   auto-denied — with no allowlist at all the harness writes nothing, opens no PR, and bills you
   for a no-op. The default authorizes editing the doc set (`Edit`/`Write`), the
   branch/stage/commit/push flow (`Bash(git:*)`), opening the PR and arming auto-merge
-  (`Bash(gh pr:*)`), and the `git-workflow` pre-flight. Those pre-flight commands are
+  (`Bash(gh pr:*)`), read-only repo inspection (`Bash(gh repo view:*)`, so drift-audit reads have
+  an allowlisted form — see #85), and the `git-workflow` pre-flight. Those pre-flight commands are
   project-specific, so the workflow renders your `project.lintCmd` / `project.typecheckCmd` /
   `project.testCmd` / `project.buildCmd` straight into the allowlist — the very keys that skill
   runs as its pre-flight — so change a pre-flight command, re-render, and the allowlist follows
@@ -198,7 +213,22 @@ setup: |-
   loop over `stacks/`, or a redundant install/toolkit-CLI call the bootstrap step already
   handles — is downgraded to a **warning**: the call never ran (nothing was written) and it did not
   block the PR, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial behavior, which
-  killed the first guarded live run over 16 setup/read denials) was a false alarm. The guard also
+  killed the first guarded live run over 16 setup/read denials) was a false alarm.
+  **Delivery-aware downgrade (#85).** The classifier is program-name only — it can't tell a
+  read-only `git status --short` drift check or a `gh api …` GET from a mutating one, and a
+  `cd …`-prefixed compound the harness habitually runs (`cd /home/runner/work/… && node … && git
+  status`) matches no allowlist entry, so it gets denied and then hard-classified for merely
+  *containing* `git`/`gh`/`xargs`. That is exactly how run 28683597890 delivered PR #84 and STILL
+  showed a red X. So when hard delivery denials exist BUT the run's final text reports a **PR
+  URL** — proof it landed its work — the guard now **downgrades them to a warning** and softens the
+  wording ("may not have landed its work"), instead of asserting a failure the PR disproves. A
+  `dangerouslyDisableSandbox` attempt is the sole exception — **never** downgraded, red even on a
+  delivered run. Two source-side fixes shrink the denials upstream: the dispatch `prompt:` tells
+  the harness the session starts at the repo root (no `cd` prefix; prefer single-program commands
+  over compounds so the allowlist matches), and `Bash(gh repo view:*)` is allowlisted so read-only
+  repo inspection has an allowlisted form — prefer `gh repo view --json …` over an ad-hoc `gh api`
+  GET, which is hard to scope narrowly.
+  The guard also
   still **warns** when a run ends without opening a PR or reporting an explicit `no drift`/`skipped` —
   a best-effort catch for a silent no-op (the harness's final text is free-form, so this one is a
   heuristic, not a hard gate). The full execution log is
