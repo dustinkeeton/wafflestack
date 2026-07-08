@@ -7,9 +7,9 @@ choices, and anything that creates or modifies shared external state. Batch your
 questions instead of asking one at a time.
 
 After this playbook, the CLI prints a **toolkit inventory**: every stack with its
-skills, agents, config schema, environment prerequisites, and stack-specific setup
-notes. It is generated from the installed toolkit version — trust it over cached
-knowledge of the toolkit.
+skills, agents, config schema, external prerequisites (grouped by kind), and
+stack-specific setup notes. It is generated from the installed toolkit version —
+trust it over cached knowledge of the toolkit.
 
 Run every CLI command with the same invocation and ref this guide was printed with
 (e.g. `npx github:OWNER/wafflestack#vX.Y.Z setup` → `npx github:OWNER/wafflestack#vX.Y.Z render`),
@@ -22,10 +22,10 @@ so the whole install uses one toolkit version.
 - If `.waffle/waffle.yaml` already exists, this is an **update**, not a first install. The
   CLI injects a **"Current configuration — update mode"** section between this playbook and
   the inventory: your live targets, enabled stacks, individual includes, ejects, effective
-  config values (current vs. default), any unset required keys, and opt-in syrup items — read from
-  the repo, so you do not have to open the file yourself. Skip step 1 (`init` refuses to
-  overwrite an existing config) and revisit only the steps the change calls for (new stack →
-  steps 2–7; config change → steps 3, 5, 7).
+  config values (current vs. default), any unset required keys, unmet prerequisites, and opt-in
+  syrup items — read from the repo, so you do not have to open the file yourself. Skip step 1
+  (`init` refuses to overwrite an existing config) and revisit only the steps the change calls
+  for (new stack → steps 2–7; config change → steps 3, 5, 7).
 - If instead a legacy root `.waffle.yaml` (pre-0.8.0) or `.wafflestack.yaml` (pre-0.6.0)
   exists, it is still read with a deprecation note; the next `render`/`upgrade` moves it
   and the other dotfiles into `.waffle/` in place. Afterwards, update the repo's
@@ -125,19 +125,36 @@ Walk the config schema of every enabled stack (from the inventory):
   a local-overlay key with `{{...}}` nested substitution.
 - Only keys declared in a stack's config schema are substituted — do not invent keys.
 
-## 4. External prerequisites
+## 4. External prerequisites — walk the block (required)
 
-- **Env vars**: a stack's `env` entries must land in `.claude/settings.json` (`"env"`
-  section) and/or `.codex/config.toml` (`[shell_environment_policy.set]`). The renderer
-  only warns — offer to add them yourself.
-- **Services**: the inventory's per-stack *setup notes* describe service-side
-  prerequisites (CLI auth, labels, boards, webhooks). Verify each one. Anything that
-  creates or modifies shared external state — labels on a shared repo, a project board —
-  needs the user's explicit go-ahead first. This includes repository **secrets** some
-  workflows need (e.g. `ANTHROPIC_API_KEY` for the github-workflow label hook) — set them
-  only with the user's explicit go-ahead (`gh secret set …`). That label hook
-  (`waffle-label-hook.yml`) is an **opt-in syrup** file: it is not rendered by enabling the stack,
-  so only walk its prerequisites once the user has asked to install it (step 2).
+Every stack in the inventory carries a **`### prerequisites`** block: the external things it leans
+on that the copy-in install can neither provide nor verify, grouped by **kind** — `tool`, `secret`,
+`scope`, `label`, `setting`, `service`, `env` — and marked `[require]` or `[recommend]`. This is a
+**required, structured walk**, not a "consider checking": for every enabled stack, go kind by kind
+and resolve each entry — exactly as the both/one/neither question in step 2 is required. `render`
+warns on the cheap local kinds and `doctor` gates every `require`, so a skipped prerequisite
+resurfaces later as a failing check; handle it here. On a re-run, the update-mode section flags
+every `require` still unmet for this repo — treat each as a blocker.
+
+Run each entry's `check` and act by kind:
+
+- **tool** / **env** — local, no shared state. Install the missing CLI tool, or land the harness env
+  var in `.claude/settings.json` (`"env"` section) and/or `.codex/config.toml`
+  (`[shell_environment_policy.set]`). (A stack's legacy `env prerequisites:` line is the same
+  env-var surface.) The renderer only warns — offer to add these yourself. No go-ahead needed.
+- **scope** — an auth scope on the user's *own* CLI session (e.g. `gh auth refresh -s project`).
+  Name the missing scope and the exact command; the user runs it.
+- **secret** / **label** / **setting** / **service** — each creates or mutates **shared external
+  state** (a repo Actions secret, a trigger label, a repo setting, an external service). **Get the
+  user's explicit go-ahead before creating or changing any of them** — name the exact command
+  (`gh secret set …`, `gh label create …`, `gh api …`) and wait for a clear yes. The toolkit checks
+  and prompts; it never provisions unasked.
+
+An entry scoped to specific items (`needed by …`) applies only when your selection includes one of
+them — skip the rest. And an **opt-in syrup** file's prerequisites (e.g. the `ANTHROPIC_API_KEY`
+secret the github-workflow label hook bills to) are walked **only once the user has asked to install
+that file** (step 2): `waffle-label-hook.yml` is not rendered by enabling the stack, so do not
+provision for syrup you have not poured.
 
 ## 5. Render
 
