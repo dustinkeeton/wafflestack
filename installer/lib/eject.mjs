@@ -4,7 +4,7 @@ import YAML from 'yaml';
 import { exists, writeFileEnsuringDir } from './util.mjs';
 import { readLock } from './render.mjs';
 import { loadToolkit } from './toolkit.mjs';
-import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches } from './refs.mjs';
+import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches, itemOutputMatcher } from './refs.mjs';
 import {
   CONFIG_FILE,
   LEGACY_ROOT_CONFIG_FILE,
@@ -54,18 +54,11 @@ export function eject({ cwd, item, log = () => {} }) {
   const lock = readLock(cwd);
   const released = [];
   if (lock) {
-    // A `files/` item is a single output at its repo-relative path — match it exactly
-    // (no prefix match, so `scripts/build` never sweeps up `scripts/build.mjs`). Agents
-    // and skills expand to their per-target render dirs.
-    let matches;
-    if (kind === 'files') {
-      matches = (rel) => rel === name;
-    } else {
-      const patterns = kind === 'agents'
-        ? [path.join('.claude', 'agents', `${name}.md`), path.join('.codex', 'agents', `${name}.toml`), path.join('.agents', 'agents', `${name}.md`)]
-        : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
-      matches = (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
-    }
+    // A `files/` item is a single output at its repo-relative path — matched exactly (no
+    // prefix match, so `scripts/build` never sweeps up `scripts/build.mjs`). Agents and skills
+    // expand to their per-target render dirs. `itemOutputMatcher` is the shared inverse of the
+    // render's item→path mapping (also used by `list` for per-item drift).
+    const matches = itemOutputMatcher(kind, name);
     for (const rel of Object.keys(lock.files)) {
       if (matches(rel)) {
         delete lock.files[rel];

@@ -14,7 +14,8 @@ import { eject, installRefs, init } from '../lib/eject.mjs';
 import { validateToolkit, validateExternalStacks } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
-import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions } from '../lib/refs.mjs';
+import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, itemOutputMatcher } from '../lib/refs.mjs';
+import { computeListModel, formatListTable, selectableChoices, STATUS } from '../lib/list.mjs';
 import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
@@ -2152,6 +2153,196 @@ describe('syrup gate — generic (#51)', () => {
       problems.some((p) => /optIn entry "files\/nonexistent\.yml" does not match/.test(p)),
       JSON.stringify(problems),
     );
+  });
+});
+
+// #119: the `list` command. State model (loadToolkit ∪ selection ∪ lock ∪ doctor-style drift ∪
+// version skew), the plain non-TTY table, and the interactive picker's pure choice-builder — all
+// on a throwaway fixture, plus real-CLI spawns proving non-TTY safety (never blocks on readline).
+describe('list command (#119)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-list-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-list-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: list fixture\nstacks: [alpha, beta]\n');
+    write(toolkitRoot, 'stacks/alpha/stack.yaml', [
+      'name: alpha',
+      'description: Alpha stack.',
+      'agents: [aa]',
+      'skills: [sa]',
+      'files:',
+      '  - plain.txt',
+      '  - secret.yml',
+      'optIn:',
+      '  - files/secret.yml',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/alpha/agents/aa.md', '---\nname: aa\ndescription: Agent A.\n---\n\nBody A.\n');
+    write(toolkitRoot, 'stacks/alpha/skills/sa/SKILL.md', '---\nname: sa\ndescription: Skill A.\n---\n\n# Skill A\n');
+    write(toolkitRoot, 'stacks/alpha/files/plain.txt', 'plain payload\n');
+    write(toolkitRoot, 'stacks/alpha/files/secret.yml', 'sensitive: true\n');
+    write(toolkitRoot, 'stacks/beta/stack.yaml', ['name: beta', 'description: Beta stack.', 'skills: [sb]', ''].join('\n'));
+    write(toolkitRoot, 'stacks/beta/skills/sb/SKILL.md', '---\nname: sb\ndescription: Skill B.\n---\n\n# Skill B\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const configure = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '1.0.0' });
+  const model = (toolkitVersion = '1.0.0') => computeListModel({ toolkitRoot, cwd, toolkitVersion });
+  const rowFor = (m, ref) => m.stacks.flatMap((s) => s.rows).find((r) => r.ref === ref);
+  const stackFor = (m, name) => m.stacks.find((s) => s.name === name);
+
+  test('itemOutputMatcher maps items to their per-target output paths (shared with eject)', () => {
+    const files = itemOutputMatcher('files', '.github/workflows/ci.yml');
+    assert.equal(files('.github/workflows/ci.yml'), true);
+    assert.equal(files('.github/workflows/ci.yml.bak'), false); // exact, not a prefix
+    const agents = itemOutputMatcher('agents', 'helper');
+    assert.equal(agents('.claude/agents/helper.md'), true);
+    assert.equal(agents('.codex/agents/helper.toml'), true);
+    assert.equal(agents('.agents/agents/helper.md'), true);
+    const skills = itemOutputMatcher('skills', 'demo');
+    assert.equal(skills('.claude/skills/demo/SKILL.md'), true);
+    assert.equal(skills('.agents/skills/demo/ref/data.json'), true);
+    assert.equal(skills('.claude/skills/demo2/SKILL.md'), false);
+  });
+
+  test('unconfigured repo: every item lists as not-installed', () => {
+    const m = model();
+    assert.equal(m.hasConfig, false);
+    const statuses = new Set(m.stacks.flatMap((s) => s.rows).map((r) => r.status));
+    assert.deepEqual([...statuses], [STATUS.NOT_INSTALLED]);
+    assert.equal(m.counts[STATUS.CURRENT], 0);
+    assert.equal(m.counts[STATUS.OUTDATED], 0);
+  });
+
+  test('after render: enabled-stack items are current; unenabled stack + gated syrup are not-installed', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    const m = model();
+    assert.equal(rowFor(m, 'agents/aa').status, STATUS.CURRENT);
+    assert.equal(rowFor(m, 'skills/sa').status, STATUS.CURRENT);
+    assert.equal(rowFor(m, 'files/plain.txt').status, STATUS.CURRENT);
+    // opt-in syrup not included → gated out of the selection → not installed, flagged opt-in
+    const secret = rowFor(m, 'files/secret.yml');
+    assert.equal(secret.status, STATUS.NOT_INSTALLED);
+    assert.equal(secret.optIn, true);
+    // beta not enabled → its items are not installed
+    assert.equal(rowFor(m, 'skills/sb').status, STATUS.NOT_INSTALLED);
+    assert.equal(stackFor(m, 'alpha').enabled, true);
+    assert.equal(stackFor(m, 'beta').enabled, false);
+  });
+
+  test('opt-in syrup that is explicitly included reads as current', () => {
+    configure('targets: [claude]\nstacks: [alpha]\ninclude: [files/secret.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    const secret = rowFor(model(), 'files/secret.yml');
+    assert.equal(secret.status, STATUS.CURRENT);
+    assert.equal(secret.optIn, true); // opt-in by nature, now installed
+  });
+
+  test('file drift flips one installed item to out-of-date; siblings stay current', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    fs.appendFileSync(path.join(cwd, '.claude/agents/aa.md'), 'local drift\n');
+    const m = model();
+    assert.equal(rowFor(m, 'agents/aa').status, STATUS.OUTDATED);
+    assert.equal(rowFor(m, 'skills/sa').status, STATUS.CURRENT);
+  });
+
+  test('a missing rendered file reads as out-of-date, mirroring default doctor', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    fs.rmSync(path.join(cwd, '.claude/agents/aa.md'));
+    assert.equal(rowFor(model(), 'agents/aa').status, STATUS.OUTDATED);
+  });
+
+  test('toolkit version skew marks every installed item out-of-date; not-installed unaffected', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true); // lock stamped 1.0.0
+    const m = model('2.0.0'); // invoked CLI is newer
+    assert.equal(m.versionSkew, true);
+    assert.equal(rowFor(m, 'agents/aa').status, STATUS.OUTDATED);
+    assert.equal(rowFor(m, 'skills/sa').status, STATUS.OUTDATED);
+    assert.equal(rowFor(m, 'skills/sb').status, STATUS.NOT_INSTALLED);
+  });
+
+  test('a malformed config surfaces an error but still lists the full toolkit surface', () => {
+    configure('targets: [claude]\nstacks: [alpha\nconfig: {}\n'); // broken YAML
+    const m = model();
+    assert.ok(m.configError, 'config error captured');
+    // Inventory still rendered, everything not-installed (no selection could be computed).
+    assert.equal(rowFor(m, 'agents/aa').status, STATUS.NOT_INSTALLED);
+    assert.match(formatListTable(m, { color: false }), /config error:/);
+  });
+
+  test('plain table: no ANSI when color is off; carries status words, stack state, opt-in tag', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    const out = formatListTable(model(), { color: false });
+    assert.doesNotMatch(out, /\x1b\[/); // no escape codes — safe for CI/pipes/agents
+    assert.match(out, /installed & current/);
+    assert.match(out, /not installed/);
+    assert.match(out, /files\/secret\.yml {2}\(opt-in syrup\)/);
+    assert.match(out, /alpha\s+\[enabled\]/);
+    assert.match(out, /beta\s+\[available\]/);
+    assert.match(out, /summary: \d+ current, \d+ out of date, \d+ not installed/);
+    assert.ok(out.endsWith('\n'));
+  });
+
+  test('color table emits ANSI when color is on', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.match(formatListTable(model(), { color: true }), /\x1b\[/);
+  });
+
+  test('selectableChoices: excludes current, pre-checks outdated, qualifies the install ref', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    fs.appendFileSync(path.join(cwd, '.claude/agents/aa.md'), 'drift\n'); // aa → outdated
+    const byRef = Object.fromEntries(selectableChoices(model()).map((c) => [c.ref, c]));
+    // current items are not offered
+    assert.equal(byRef['skills/sa'], undefined);
+    assert.equal(byRef['files/plain.txt'], undefined);
+    // outdated item: offered, pre-checked, stack-qualified install ref
+    assert.equal(byRef['agents/aa'].checked, true);
+    assert.equal(byRef['agents/aa'].installRef, 'alpha/agents/aa');
+    // not-installed items: offered, unchecked; opt-in flagged
+    assert.equal(byRef['skills/sb'].checked, false);
+    assert.equal(byRef['files/secret.yml'].checked, false);
+    assert.equal(byRef['files/secret.yml'].optIn, true);
+  });
+
+  test('CLI list is non-TTY-safe: prints the table and exits 0', () => {
+    // Drive the REAL cli against an empty selection (same trick as the render CLI test) so we
+    // exercise real dispatch + non-TTY guarding without needing the fixture toolkit.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = spawnSync(process.execPath, [cli, 'list', '--cwd', cwd], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /wafflestack list/);
+    assert.match(run.stdout, /summary:/);
+  });
+
+  test('CLI list --interactive without a TTY falls back to the table (never hangs)', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = spawnSync(process.execPath, [cli, 'list', '--interactive', '--cwd', cwd], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stderr, /needs a TTY/);
+    assert.match(run.stdout, /summary:/);
+  });
+
+  test('CLI list rejects stray refs', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = spawnSync(process.execPath, [cli, 'list', 'skills/foo', '--cwd', cwd], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /takes no refs/);
   });
 });
 

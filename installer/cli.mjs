@@ -11,6 +11,7 @@ import { setupGuide } from './lib/setup.mjs';
 import { upgrade } from './lib/upgrade.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
 import { formatPrereq } from './lib/prerequisites.mjs';
+import { computeListModel, formatListTable, interactiveSelect } from './lib/list.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -109,6 +110,32 @@ try {
       process.stdout.write(setupGuide(toolkitRoot, pkg.version, cwd));
       break;
     }
+    case 'list': {
+      const interactive = extractFlag(args, '--interactive');
+      const noColor = extractFlag(args, '--no-color');
+      if (args.length) fail(`list takes no refs (got ${args.join(', ')}) — it reports the whole toolkit surface`);
+      const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: pkg.version });
+
+      // Interactive is opt-in (`--interactive`) AND needs a real TTY on both ends. The DEFAULT is
+      // always the plain table — safe for CI, pipes and agents, consistent with the toolkit's
+      // deliberately non-interactive CLI. `--interactive` without a TTY degrades to the table
+      // (never blocks on readline).
+      if (interactive && process.stdin.isTTY && process.stdout.isTTY) {
+        const result = await interactiveSelect(model);
+        if (result.applied && result.refs.length) {
+          installRefs({ toolkitRoot, cwd, refs: result.refs, log: console.log });
+          runRender();
+        } else {
+          console.log(result.reason ?? 'no changes selected');
+        }
+        break;
+      }
+      if (interactive) console.error('note: --interactive needs a TTY on stdin/stdout; printing the plain table instead');
+      // Color only when writing to a real terminal and neither NO_COLOR nor --no-color opts out.
+      const color = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !noColor;
+      process.stdout.write(formatListTable(model, { color }));
+      break;
+    }
     case 'validate': {
       const problems = validateToolkit(toolkitRoot);
       for (const p of problems) console.error(p);
@@ -124,7 +151,7 @@ try {
           '┣━╋━╋━┫  one batter, every repo',
           '┗━┻━┻━┛',
           '',
-          'usage: wafflestack <init|setup|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]',
+          'usage: wafflestack <init|setup|list|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]',
         ].join('\n'),
       );
   }
