@@ -6,8 +6,8 @@
 - **Version**: v0.10.0 tagged (pre-1.0 — the file contract can still change between minor
   releases). Headlined by the bundles→stacks rebrand (breaking — `wafflestack upgrade`
   runs the migration) plus the harness/CI fixes and delegate work below.
-- **Last updated**: 2026-07-07
-- **Health**: 🟢 tests 241/241 (43 suites) · `validate` clean · `doctor --allow-missing` clean
+- **Last updated**: 2026-07-08
+- **Health**: 🟢 tests 280/280 (46 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -18,7 +18,7 @@ All 9 stacks are shipped and stable. Pick the ones a project needs.
 |--------|--------|--------------|
 | `docs-system` | ✅ Shipped | Two-audience docs: machine (`AGENTS.md`) + human (these files) |
 | `github-workflow` | ✅ Shipped | Git / GitHub issue / Projects / release workflow + 4 prefab CI workflows (doctor + 3 opt-in syrup hooks); only stack with a `setup:` step |
-| `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate (typed checkpoints, run memory, optional approval gate), audit, docs, standup |
+| `orchestration` | ✅ Shipped | Multi-agent orchestration: project/product management, delegate (typed checkpoints, run memory, optional approval gate, opt-in batch mode + auto-merge), autopilot (unattended backlog runner composing delegate batch mode + auto-merge, clean-up, and git-workflow), audit, docs, standup |
 | `code-quality` | ✅ Shipped | Cross-cutting, stack-agnostic practice skills: TDD, codebase-architecture |
 | `engineering-team` | ✅ Shipped | 6-agent product-engineering roster (lead-engineer is the general architect) + webapp-security-audit |
 | `obsidian-dev` | ✅ Shipped | Obsidian plugin development (plugin-architect + obsidian-plugin-dev + electron-security-audit) |
@@ -26,7 +26,7 @@ All 9 stacks are shipped and stable. Pick the ones a project needs.
 | `harness-architect` | ✅ Shipped | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, multi-harness portability) |
 | `wafflestack` | ✅ Shipped | Self-referential (#70): eight `/waffle-*` skills, one per CLI command — thin `npx` wrappers with agent judgment on top |
 
-Totals: 14 agents and 29 skills across the 9 stacks.
+Totals: 14 agents and 30 skills across the 9 stacks.
 
 ## Installer & CLI
 
@@ -55,10 +55,20 @@ tested. All 8 commands work:
 - **Eval layer 1 (new, #108).** `installer/test/content.test.mjs` pins load-bearing
   guardrail phrases in the rendered prompts — rewording passes, removing a guardrail fails
   CI. LLM-judged evals are tracked as layer 2 under #89.
-- **Rebrand awaiting release (#59).** Waffles / stacks / syrup vocabulary is merged; the
-  `bundles:` → `stacks:` consumer migration ships when 0.10.0 is tagged.
-- **Live automation loop.** The daily hygiene run and the release-tag hook operate on this
-  repo, gated by the required `doctor` check.
+- **Autonomous backlog runner (new, #98–#101).** Two per-run, default-**off** delegate opt-ins
+  — `delegate.autoMerge` (#98: after `gh pr create`, arms `gh pr merge --auto --merge` so the PR
+  self-merges once required checks pass; if it can't arm — no auto-merge setting or no required
+  check — the PR is left **open-but-not-armed**, never an immediate or `--admin` merge) and
+  `delegate.batchMode` (#99: skips delegate's plan-approval pause when explicit scope is
+  supplied; never weakens the `approveBeforePush` gate) — plus the new **`autopilot`** skill
+  (#100), config `autopilot.autoMerge` (default false) + `autopilot.planDir`.
+- **Live automation loop (backlog → merge).** Three loops run on this repo, all gated by the
+  required `doctor` check. **Autopilot** is the end-to-end runner over a *required* explicit
+  issue scope — per issue: a read-only context writes a plan → a fresh delegate-spawned
+  implementer treats it as a **brief, not a contract** → `/delegate` batch mode implements and
+  opens the PR → doctor-gated auto-merge (opt-in, **fresh every run, never sticky**) →
+  post-merge housekeeping (issue closed, board → Done, `clean-up git --yes`); every issue's
+  outcome is always a PR. The **daily hygiene run** and **release-tag hook** are the other two.
 - **Sponsor links (#113).** `.github/FUNDING.yml` + README badges landed.
 
 ## Known issues & things to watch
@@ -85,7 +95,7 @@ tested. All 8 commands work:
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (241 tests, 43 suites)
+npm test                          # installer test suite (280 tests, 46 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock

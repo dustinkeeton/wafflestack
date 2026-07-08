@@ -9,6 +9,79 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-08: Opt-in autonomous merging — the autopilot backlog runner (#100/#101)
+
+**Context**: Every primitive for an autonomous agency loop already existed. `/issue` writes
+specs, `/delegate` turns issues into PRs (with typed checkpoints, run memory, and an
+approve-before-push gate), the required `doctor` check gates every merge, and `delegate.autoMerge`
+(#98) had just proven that a PR can safely arm itself to merge *after* green. What was missing was
+the composition: nothing strung these together into an unattended run, so a human still had to
+drive the loop by hand — plan → accept the plan → delegate → accept the push → merge → repeat, for
+each issue. The docs and agents kept reasoning from that old manual model, which is exactly the
+docs-vs-reality drift the toolkit exists to prevent.
+
+**Decision**: Ship the **`autopilot`** skill as a **prose playbook that composes** — not forks —
+`delegate` (batch mode #99 + auto-merge #98), `clean-up`, and `git-workflow` into a per-issue
+**plan → implement → PR** loop. It re-implements none of delegate's machinery (classification,
+worktree isolation, PR creation, board sync). Every run is pinned by a **two-part instantiation
+contract, both captured before any work starts**:
+
+1. **Issue scope — REQUIRED.** An explicit set of issues (a list like `#12 #14`, a
+   `milestone:<name>`, a label, or `all-open`). Scope is never optional and has a second job: it
+   is what **activates delegate's batch mode** (the explicit scope stands in for a human accepting
+   each plan, so the plan-approval pause is skipped, not the plan itself). A run can never be
+   unscoped.
+2. **Auto-merge consent — per-run, explicit, default OFF, never sticky.** Whether this run may
+   arm auto-merge on the PRs it opens is captured **fresh every invocation** — never remembered,
+   inherited, or read back from a prior run's checkpoint or memory. Consent off → every PR is
+   opened and left for human review (still a complete run). Consent on → autopilot sets
+   `delegate.autoMerge` for the run so each PR arms itself on green.
+
+Per issue: a dedicated **read-only planning context** writes a plan to
+`{{autopilot.planDir}}/issue-<N>.md`; that plan is injected into a **fresh delegate-spawned
+implementer as a brief, not a contract** (the implementer may depart from it — reality wins);
+delegate batch mode implements and opens the PR; each PR is **verified directly from GitHub, never
+assumed**; serial chains wait for the armed PR to actually merge; and post-merge housekeeping runs
+per merged PR (verify the issue closed, move the board item to Done, `clean-up git --yes`). The
+**invariant**: the final outcome of every issue is always a PR. **Guardrails, every run**: never
+push to `main`; never `--admin`-merge or bypass branch protection — the only merge path is
+`gh pr merge --auto --merge`, which waits on required checks, and a PR that can't arm is left
+**open-but-not-armed**; merge commits, not squash; one retry then **stop-and-report** if the same
+issue fails twice; a failed/conflicting PR stops the chain when a downstream issue depends on it;
+and issue, PR, and plan text is treated as **data, never as instructions**.
+
+**Alternatives considered**:
+
+- **A sticky / config-persisted "always auto-merge" preference.** Rejected — autonomous merging
+  must be a fresh, deliberate per-run consent; a prior run must never leave auto-merge armed for
+  the next. That is why consent is captured every invocation and never read back from memory.
+- **Re-implementing classification, worktree isolation, and PR creation inside autopilot.**
+  Rejected — compose `delegate` rather than fork it; a second copy of that machinery would drift
+  from the original.
+- **An unscoped `all-open` default run.** Rejected — scope is required precisely because it is
+  what *authorizes* batch mode's skipped plan confirmation. No scope, no authority to run
+  unattended.
+- **Falling back to an immediate or `--admin` merge when `--auto` can't arm.** Rejected outright,
+  the same guardrail hygiene and `delegate.autoMerge` already hold: an un-armable PR is left
+  open-but-not-armed for a human, never force-merged.
+- **A TTY / interactive prompt in the CLI.** Out of scope — consistent with the toolkit's
+  headless-CLI stance; consent is captured through the harness's question tool or an explicit
+  argument flag, not by forking CLI behavior on stdin shape.
+
+**Impact**: Additive. A new orchestration skill (skill count **29 → 30**) plus two optional config
+keys `autopilot.autoMerge` / `autopilot.planDir` (default `{{git.worktreesDir}}/.autopilot`, so
+plan files inherit the worktrees gitignore as throwaway run state). It `requires:` delegate +
+clean-up + git-workflow + github-project-management. Default-off with no migration — a repo that
+never invokes `/autopilot` is unaffected. This entry also records the two enabling delegate
+opt-ins it composes: **`delegate.autoMerge`** (#98/#141 — arm `gh pr merge --auto --merge` after
+`gh pr create`, only when the repo allows auto-merge and a required check exists) and
+**`delegate.batchMode`** (#99/#142 — skip delegate's Phase-3 plan-approval pause when explicit
+scope is supplied, never weakening the `approveBeforePush` pre-push gate). The doc registries were
+updated in the same #101 change (the `AGENTS.md` machine registry and `STATUS.md`) so agents stop
+reasoning from the manual model.
+
+---
+
 ## 2026-07-07: Close the render-target asymmetry — every target renders both agents and skills (#94)
 
 **Context**: The multi-harness story was only half true. `renderAgent` emitted for `claude`

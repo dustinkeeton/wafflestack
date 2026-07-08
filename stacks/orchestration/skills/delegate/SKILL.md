@@ -65,7 +65,7 @@ The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each 
 
 ## Batch mode
 
-`/delegate` pauses for human confirmation whenever the plan is non-trivial (the Phase 3 gate: >2 agents, an ambiguous assignment, or parallel execution). That gate is correct for interactive use, but it blocks delegate from running as a building block for the autonomous backlog runner, which must work through a supplied issue list without a human accepting each plan. **Batch mode** removes that interactive pause by treating **explicit scope** as the confirmation.
+`/delegate` pauses for human confirmation whenever the plan is non-trivial (the Phase 3 gate: >2 agents, an ambiguous assignment, or parallel execution). That gate is correct for interactive use, but it blocks delegate from running as a building block for the autonomous backlog runner (the `autopilot` skill), which must work through a supplied issue list without a human accepting each plan. **Batch mode** removes that interactive pause by treating **explicit scope** as the confirmation.
 
 - **Opt-in, per run.** Batch mode is ON when `delegate.batchMode` is `true`; for this run it is **{{delegate.batchMode}}**. Default `false` — the interactive confirmation gate behaves exactly as it always has.
 - **Activation requires explicit scope.** Batch mode applies only when the invoker (a human or the autopilot orchestrator) supplied the issue set explicitly — an issue list / `#N`, `milestone:<name>`, a known label, a keyword, or the `all-open` default scope. That explicit scope is what stands in for the human accepting the plan. If `delegate.batchMode` is `true` but the resolved scope carries no such signal, **fall back to interactive confirmation** — never auto-proceed on an unscoped run.
