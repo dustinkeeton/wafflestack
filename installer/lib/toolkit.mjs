@@ -3,6 +3,7 @@ import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 import { normalizeItemRef } from './refs.mjs';
 import { resolveSource } from './sources.mjs';
+import { normalizePrerequisites } from './prerequisites.mjs';
 
 /** Load the toolkit registry and every stack it lists. */
 export function loadToolkit(rootDir) {
@@ -157,7 +158,15 @@ function loadStack(name, dir) {
     optIn,
     config,
     declared,
+    // Legacy harness `env:` map — read-compatible and unchanged (#129): still warned at render
+    // by `checkEnvPrerequisites` (target-aware — it checks the harness settings file). The typed
+    // `prerequisites:` list below SUBSUMES env as one of its kinds without forcing this map to
+    // migrate; a stack may use either or both.
     env: manifest.env ?? {},
+    // Typed external prerequisites (#47/#129): a declared list of environment things the stack
+    // needs (tool/secret/scope/label/setting/service/env), each with a deterministic `check`
+    // and a require/recommend `level`. Verified by the `doctor` gate and warned at render.
+    prerequisites: normalizePrerequisites(manifest.prerequisites),
     // Optional per-item dependency declarations: `skills/<name>`/`agents/<name>` →
     // list of `skills/<name>`/`agents/<name>` refs. Formalizes prose-only skill deps.
     requires: manifest.requires ?? {},

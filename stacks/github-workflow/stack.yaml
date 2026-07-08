@@ -54,6 +54,131 @@ requires:
     - skills/release
   files/.github/workflows/waffle-post-merge-hook.yml:
     - skills/clean-up
+# Typed external prerequisites (#47/#129). ONLY the three tool-presence probes are `require`
+# (they fail `doctor`): a `command -v` binary check for node/git/gh is certain to pass in every
+# environment doctor runs — the CI runner and local dev alike. Everything environment-specific
+# (a secret, a gh auth scope, a trigger label, a repo setting, a service) is `recommend`
+# (reports, never fails): the doctor CI runner has no auth and no secrets, and a consumer's
+# setup varies. Each is scoped with `items:` to the waffles that actually need it, so a partial
+# install is asked only for its own prerequisites. Checks are literal shell — the label/setting
+# probes use the DEFAULT config values (a consumer who overrides labelHook.*/autoMerge.label
+# sees a harmless false "unmet" report until #130 threads config through).
+prerequisites:
+  - kind: tool
+    name: git
+    level: require
+    check: command -v git
+    description: Git CLI — branching, commits, and worktrees. Every github-workflow skill drives it.
+  - kind: tool
+    name: gh
+    level: require
+    check: command -v gh
+    description: GitHub CLI — issues, PRs, labels, and project boards. Every skill in this stack shells out to it.
+  - kind: tool
+    name: node
+    level: require
+    check: command -v node
+    description: Node.js (>=18) runs the wafflestack renderer and the waffle-doctor CI job.
+  - kind: tool
+    name: jq
+    level: recommend
+    check: command -v jq
+    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml]
+    description: jq parses the harness execution log in the label-hook/hygiene workflows' Check-harness-result step.
+  - kind: scope
+    name: gh-auth
+    level: recommend
+    check: gh auth status
+    description: An authenticated GitHub CLI session — every skill's gh calls need it. Run `gh auth login`.
+  - kind: scope
+    name: project
+    level: recommend
+    check: "gh auth status 2>&1 | grep -qw project"
+    items: [skills/issue, skills/github-project-management, skills/github-project-board]
+    description: The gh `project` OAuth scope for Projects v2 board automation. Add it with `gh auth refresh -s project`.
+  - kind: scope
+    name: workflow
+    level: recommend
+    check: "gh auth status 2>&1 | grep -qw workflow"
+    items: [files/.github/workflows/waffle-doctor.yml, files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-release-hook.yml, files/.github/workflows/waffle-post-merge-hook.yml, files/.github/workflows/waffle-evals.yml]
+    description: The gh `workflow` credential scope — required to push any file under .github/workflows/.
+  - kind: secret
+    name: ANTHROPIC_API_KEY
+    level: recommend
+    check: "gh secret list 2>/dev/null | grep -q '^ANTHROPIC_API_KEY'"
+    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-evals.yml]
+    description: Repo Actions secret billing the label-hook / hygiene / evals runs. Set with `gh secret set ANTHROPIC_API_KEY`.
+  - kind: secret
+    name: WAFFLE_HYGIENE_TOKEN
+    level: recommend
+    check: "gh secret list 2>/dev/null | grep -q '^WAFFLE_HYGIENE_TOKEN'"
+    items: [files/.github/workflows/waffle-hygiene.yml]
+    description: PAT/App-token secret so the hygiene PR triggers CI and can auto-merge (falls back to GITHUB_TOKEN when unset).
+  - kind: secret
+    name: WAFFLE_RELEASE_TOKEN
+    level: recommend
+    check: "gh secret list 2>/dev/null | grep -q '^WAFFLE_RELEASE_TOKEN'"
+    items: [files/.github/workflows/waffle-release-hook.yml]
+    description: Optional PAT/App-token secret so a pushed release tag triggers on-push-tags workflows (falls back to GITHUB_TOKEN).
+  - kind: label
+    name: "waffle:enrich"
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:enrich'"
+    items: [files/.github/workflows/waffle-label-hook.yml]
+    description: Trigger label the label-hook enrich job gates on (default labelHook.enrichLabel). Create with `gh label create`.
+  - kind: label
+    name: "waffle:implement"
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:implement'"
+    items: [files/.github/workflows/waffle-label-hook.yml]
+    description: Trigger label the label-hook implement job gates on (default labelHook.implementLabel).
+  - kind: label
+    name: "waffle:release"
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:release'"
+    items: [files/.github/workflows/waffle-release-hook.yml]
+    description: Label whose merge fires the release tag hook (default labelHook.releaseLabel).
+  - kind: label
+    name: waffle-auto-merged
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle-auto-merged'"
+    items: [files/.github/workflows/waffle-hygiene.yml]
+    description: Paper-trail label applied after auto-merge is armed (default autoMerge.label). Must pre-exist — gh will not create it.
+  - kind: label
+    name: Needs Inference
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'Needs Inference'"
+    items: [skills/issue]
+    description: Lifecycle label the issue skill toggles (default issue.inferenceLabel); the type/priority taxonomy must also exist.
+  - kind: setting
+    name: actions-can-approve-prs
+    level: recommend
+    check: "gh api repos/{owner}/{repo}/actions/permissions/workflow --jq .can_approve_pull_request_reviews 2>/dev/null | grep -q true"
+    items: [files/.github/workflows/waffle-label-hook.yml]
+    description: The Allow-GitHub-Actions-to-create-and-approve-PRs repo setting must be on for the implement job to open PRs.
+  - kind: setting
+    name: allow-auto-merge
+    level: recommend
+    check: "gh api repos/{owner}/{repo} --jq .allow_auto_merge 2>/dev/null | grep -q true"
+    items: [files/.github/workflows/waffle-hygiene.yml]
+    description: The repo Allow-auto-merge setting must be enabled for the hygiene PR's `--auto` arm.
+  - kind: setting
+    name: actions-write
+    level: recommend
+    check: "gh api repos/{owner}/{repo}/actions/permissions/workflow --jq .default_workflow_permissions 2>/dev/null | grep -q write"
+    items: [files/.github/workflows/waffle-release-hook.yml, files/.github/workflows/waffle-post-merge-hook.yml]
+    description: Actions default workflow permissions must not be read-only, so the release/post-merge jobs can push a tag or delete a branch.
+  - kind: setting
+    name: github-remote
+    level: recommend
+    check: "gh repo view --json nameWithOwner >/dev/null 2>&1"
+    description: A GitHub remote for the current repo — every skill in this stack targets it.
+  - kind: service
+    name: projects-v2-board
+    level: recommend
+    check: "gh project list --limit 1 >/dev/null 2>&1"
+    items: [skills/issue, skills/github-project-management, skills/github-project-board]
+    description: An accessible Projects v2 board (title matched to project.name); optional — the board skills skip with a warning when absent.
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.

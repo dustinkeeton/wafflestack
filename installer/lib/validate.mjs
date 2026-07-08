@@ -4,6 +4,7 @@ import { loadToolkit } from './toolkit.mjs';
 import { placeholderKeys, compilePattern } from './template.mjs';
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
+import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
 
 /** Toolkit-developer lint. Returns a list of problems (empty = clean). */
 export function validateToolkit(rootDir) {
@@ -96,6 +97,29 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
         problems.push(`${ctx}: optIn entry "${ref}" does not match a file/skill/agent in this stack`);
       }
     }
+    // Typed external prerequisites (#129): each declared entry must name a known kind and level,
+    // carry a human description and a deterministic check, and any `items:` scoping ref must
+    // resolve to a real item in this stack (like a `requires:` key or `optIn:` entry) — so a typo
+    // can't silently mis-scope or drop a check.
+    for (const p of stack.prerequisites ?? []) {
+      const label = p.name ? `prerequisite "${p.name}"` : 'a prerequisite';
+      if (!p.name) problems.push(`${ctx}: a prerequisite is missing its \`name\``);
+      if (!PREREQ_KINDS.includes(p.kind)) {
+        problems.push(`${ctx}: ${label} has ${p.kind ? `unknown kind "${p.kind}"` : 'no `kind`'} (valid: ${PREREQ_KINDS.join(', ')})`);
+      }
+      if (!PREREQ_LEVELS.includes(p.level)) {
+        problems.push(`${ctx}: ${label} has unknown level "${p.level}" (valid: ${PREREQ_LEVELS.join(', ')})`);
+      }
+      if (!p.description) problems.push(`${ctx}: ${label} is missing a \`description\``);
+      if (!p.check) problems.push(`${ctx}: ${label} is missing a \`check\` (a deterministic shell command whose exit 0 means satisfied)`);
+      for (const ref of p.items ?? []) {
+        const parsed = parseRef(ref);
+        if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
+          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
+        }
+      }
+    }
+
     // Optional per-key `pattern:` (render-time value validation). The regex must compile,
     // and a static string default must satisfy its own pattern (nested/non-string defaults
     // resolve at render, so skip them here).
