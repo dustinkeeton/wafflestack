@@ -30,6 +30,19 @@ export function resolveSourceRoot(ext, { cwd, cacheDir = defaultSourceCacheDir()
         `external stack "${ext.name}" git source "${ext.source}" has no \`ref:\` to pin — a git source must be pinned`,
       );
     }
+    // Harden against argument injection: `source`/`ref` come from waffle.yaml and are passed as
+    // git argv. A value beginning with `-` would be parsed by git as an OPTION rather than a
+    // positional — e.g. a `--upload-pack=…` on a `.git`-suffixed source, or an ssh
+    // `-oProxyCommand=…` on an scp-form host — which can escalate to command execution. A real
+    // git URL or ref never begins with `-`, so reject it outright (belt to the `--`
+    // end-of-options marker at the exec site).
+    for (const [label, value] of [['source', ext.source], ['ref', ext.ref]]) {
+      if (String(value).startsWith('-')) {
+        throw new Error(
+          `external stack "${ext.name}": git ${label} "${value}" must not begin with "-" — refusing to pass it to git as a possible option`,
+        );
+      }
+    }
     const dest = path.join(cacheDir, sha256(`${ext.source}@${ext.ref}`).slice(0, 24));
     if (!exists(path.join(dest, '.git'))) {
       fs.rmSync(dest, { recursive: true, force: true }); // clear any partial/failed prior fetch
@@ -63,7 +76,9 @@ export function resolveSourceRoot(ext, { cwd, cacheDir = defaultSourceCacheDir()
  */
 export function gitFetchCheckout(source, ref, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  run('git', ['clone', '--quiet', source, dest]);
+  // `--` ends option parsing so a `source`/`ref` can never be read as a git flag (resolveSourceRoot
+  // also rejects a leading `-` up front — defense in depth against argument injection).
+  run('git', ['clone', '--quiet', '--', source, dest]);
   run('git', ['-C', dest, 'checkout', '--quiet', ref]);
 }
 
