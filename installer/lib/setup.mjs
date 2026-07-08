@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadToolkit } from './toolkit.mjs';
+import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
 import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
-import { readLock } from './render.mjs';
+import { readLock, collectUsedKeys } from './render.mjs';
 
 /**
  * The agent-driven install wizard: the static playbook (schema/SETUP.md), an optional
@@ -102,15 +102,21 @@ function currentConfigSection(toolkit, cwd) {
   }
 
   // Group by the stacks that actually contribute selected items (an included item does not
-  // drag in its stack's siblings) — matching render's per-stack grouping.
+  // drag in its stack's siblings) — matching render's per-stack grouping, and carrying the
+  // selected items so config can be scoped to the keys they reference.
   const groups = new Map();
-  for (const { stackName, stack } of selection.items) {
-    if (!groups.has(stackName)) groups.set(stackName, stack);
+  for (const { stackName, stack, kind, item } of selection.items) {
+    if (!groups.has(stackName)) groups.set(stackName, { stack, items: [] });
+    groups.get(stackName).items.push({ kind, item });
   }
+  // Scope each stack's config surface to the keys its *selected* items actually reference —
+  // exactly what the renderer does (`collectUsedKeys`). A partial stack selection (one skill
+  // of many) must not surface config only its unselected siblings use (#77).
+  for (const g of groups.values()) g.usedKeys = collectUsedKeys(g.items);
 
   const valueLines = [];
-  for (const [stackName, stack] of groups) {
-    const entries = Object.entries(stack.config);
+  for (const [stackName, { stack, usedKeys }] of groups) {
+    const entries = Object.entries(stack.config).filter(([key]) => usedKeys.has(key));
     if (!entries.length) continue;
     const resolve = makeResolver(stack, project.values, primaryTarget);
     valueLines.push(`### stack: ${stackName}`, '');
@@ -124,22 +130,25 @@ function currentConfigSection(toolkit, cwd) {
     lines.push(
       '## Config values (current vs default)',
       '',
-      "Every declared key of each enabled stack with its effective value. `set` means the",
-      'value comes from your `.waffle/waffle.yaml` (or the `.local` overlay); `default` means',
-      "the stack's built-in is in force — re-check each default against the project before",
-      'accepting it (step 3). ⚠ marks a required key with no value.',
+      'Every config key the selected items actually reference, with its effective value —',
+      'scoped like the render (a partial stack selection shows only the keys it uses). `set`',
+      'means the value comes from your `.waffle/waffle.yaml` (or the `.local` overlay);',
+      "`default` means the stack's built-in is in force — re-check each default against the",
+      'project before accepting it (step 3). ⚠ marks a required key with no value.',
       '',
       ...valueLines,
     );
   }
 
   // Required keys with no resolved value — the render blockers, collected across stacks.
+  // Computed exactly as render does: scoped to the selected items' `usedKeys` and resolved
+  // through `makeResolver` (default-aware), so setup reports only the blockers render will
+  // actually enforce — not every required key of a partially-selected stack (#77).
   const missing = [];
-  for (const [stackName, stack] of groups) {
-    for (const [key, spec] of Object.entries(stack.config)) {
-      if (spec?.required && lookupPath(project.values, key) === undefined) {
-        missing.push(`${stackName}: config.${key}`);
-      }
+  for (const [stackName, { stack, usedKeys }] of groups) {
+    const resolve = makeResolver(stack, project.values, primaryTarget);
+    for (const key of missingRequiredKeys(stack, project.values, (_values, k) => resolve(k), usedKeys)) {
+      missing.push(`${stackName}: config.${key}`);
     }
   }
   if (missing.length) {

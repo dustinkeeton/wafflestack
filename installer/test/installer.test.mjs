@@ -2241,6 +2241,64 @@ describe('setup guide — config-aware update mode (#50)', () => {
     );
   });
 
+  test('subset of a stack: a sibling-only required key is not a false render blocker (#77)', () => {
+    // Select only `skills/git` from `base` (no `stacks:` entry, so its siblings are NOT
+    // dragged in). `base.botEmail` is required but referenced only by the sibling `issue`
+    // skill — the renderer scopes required config to the selected items' keys, so it would
+    // never enforce it here. Setup must match: no false blocker, no ⚠ in the value view.
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'include: [skills/git]',
+      'config: {}',
+      '',
+    ].join('\n'));
+    const guide = guideAt();
+    // Scope the assertions to the current-config section — the inventory below always lists
+    // every declared key (including base.botEmail) regardless of selection.
+    const current = guide.split('# Toolkit inventory')[0];
+    assert.match(current, /# Current configuration — update mode/);
+    assert.match(current, /## Individual includes\n\n- skills\/git/);
+    // git references no config; a sibling-only required key must not appear as a blocker…
+    assert.doesNotMatch(current, /Required keys still unset/);
+    // …nor anywhere in the scoped current-config view (value list included).
+    assert.doesNotMatch(current, /base\.botEmail/);
+  });
+
+  test('used required key with a default resolves like render, not a blocker (#77)', () => {
+    // A required key that carries a default resolves through the same resolver render uses,
+    // so a selection that references it (but sets no value) is NOT a render blocker.
+    const droot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-setup77d-'));
+    const dcwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-setup77d-'));
+    try {
+      write(droot, 'toolkit.yaml', 'name: fixture\ndescription: defaults\nstacks: [db]\n');
+      write(droot, 'schema/SETUP.md', '# fixture playbook\n');
+      write(droot, 'stacks/db/stack.yaml', [
+        'name: db',
+        'description: Default-bearing required key.',
+        'skills: [uses]',
+        'config:',
+        '  db.branch:',
+        '    required: true',
+        '    default: main',
+        '    description: branch',
+        '',
+      ].join('\n'));
+      write(droot, 'stacks/db/skills/uses/SKILL.md', '---\nname: uses\ndescription: Uses branch.\n---\n\nBranch {{db.branch}}.\n');
+
+      write(dcwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [db]\nconfig: {}\n');
+      const guide = setupGuide(droot, '0.0.test', dcwd);
+      const current = guide.split('# Toolkit inventory')[0];
+      // Old logic (raw `values` lookup) reported this as unset → a false blocker.
+      assert.doesNotMatch(current, /Required keys still unset/);
+      // It shows as "using default", never the ⚠ unset marker.
+      assert.match(current, /- `db\.branch` \[required\] — using default: `main`/);
+      assert.doesNotMatch(current, /db\.branch.*⚠/);
+    } finally {
+      fs.rmSync(droot, { recursive: true, force: true });
+      fs.rmSync(dcwd, { recursive: true, force: true });
+    }
+  });
+
   test('configured repo: an ejected item is listed as project-owned', () => {
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',

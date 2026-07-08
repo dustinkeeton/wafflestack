@@ -350,7 +350,7 @@ function compilePatterns(stack, errors) {
 }
 
 /** Placeholder keys referenced by a set of selected items' source content. */
-function collectUsedKeys(items) {
+export function collectUsedKeys(items) {
   const keys = new Set();
   for (const { kind, item } of items) {
     if (kind === 'agents') {
