@@ -389,6 +389,37 @@ export const HARNESS_BUILTINS = {
   // Where rendered skills live from that target's point of view, for content that
   // references skill files by path ("read {{harness.skillsDir}}/x/SKILL.md").
   skillsDir: { claude: '.claude/skills', codex: '.agents/skills', 'agents-dir': '.agents/skills' },
+  // CI workflow dispatcher (#131). The rendered GitHub-workflow files splice one pinned
+  // action into their `uses:` / `with:` lines; these built-ins are its default identity, so a
+  // consumer can pin a different version, repoint the ref, or rename the API-key secret via
+  // `config.harness.*` WITHOUT ejecting the workflow. Target-independent (the same action
+  // drives every harness), hence plain scalars rather than per-target maps. The values must
+  // reproduce today's pinned action byte-for-byte so `doctor` stays clean for an unconfigured
+  // repo; the injection guards below keep an override from corrupting the workflow.
+  actionRef: 'anthropics/claude-code-action',
+  actionVersion: '6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162',
+  apiKeySecret: 'ANTHROPIC_API_KEY',
+};
+
+/**
+ * Injection-guard patterns for the reserved `harness.*` keys that render into CI workflow
+ * files (#131) — the same discipline stack config applies to its other workflow-spliced keys
+ * (reject `${{`, quotes, newlines), but attached to the reserved namespace rather than a
+ * stack's `config:`. Enforced at render (render.mjs seeds these into the pattern map so every
+ * splice is validated) and checked by `validate` (the built-in defaults must satisfy them).
+ * Keyed by sub-key; a `harness.<sub>` with no entry here is unguarded, as before.
+ */
+export const HARNESS_PATTERNS = {
+  // `owner/repo[/path]` action slug spliced bare into `uses:`. Strict slug — no `@` (the
+  // template supplies it), spaces, quotes, `#`, `${{`, or newlines that could mangle the
+  // `uses:` line or inject an expression.
+  actionRef: '^[A-Za-z0-9._/-]+$',
+  // Git ref (SHA or tag) plus the preserved `# vX.Y.Z` comment, spliced into `uses:` after
+  // the `@`. No `${{`, quotes, or newlines; `#`/spaces are allowed so the comment survives.
+  actionVersion: "^(?!.*\\$\\{\\{)[^'\"\\r\\n]*$",
+  // Secret name spliced INSIDE `${{ secrets.<NAME> }}` — restrict to a GitHub secret
+  // identifier so a value can neither close that expression early nor inject another.
+  apiKeySecret: '^[A-Za-z_][A-Za-z0-9_]*$',
 };
 
 /**
@@ -406,7 +437,13 @@ export function makeResolver(stack, values, target) {
       if (override !== undefined) {
         v = isPlainObject(override) ? override[target] : override;
       }
-      if (v === undefined) v = HARNESS_BUILTINS[sub]?.[target];
+      if (v === undefined) {
+        // Built-ins are usually a per-target map (Claude vs Codex identity); a
+        // target-independent value (e.g. the CI dispatcher pin) is a plain scalar that
+        // applies to every target.
+        const builtin = HARNESS_BUILTINS[sub];
+        v = isPlainObject(builtin) ? builtin[target] : builtin;
+      }
       return v;
     }
     const v = lookupPath(values, key);

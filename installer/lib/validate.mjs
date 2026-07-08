@@ -5,6 +5,7 @@ import { placeholderKeys, compilePattern } from './template.mjs';
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
+import { HARNESS_BUILTINS, HARNESS_PATTERNS } from './project.mjs';
 
 /** Toolkit-developer lint. Returns a list of problems (empty = clean). */
 export function validateToolkit(rootDir) {
@@ -15,7 +16,43 @@ export function validateToolkit(rootDir) {
     return [`toolkit failed to load: ${err.message}`];
   }
   const problems = [];
+  problems.push(...validateHarnessBuiltins());
   for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
+  return problems;
+}
+
+/**
+ * Lint the reserved `harness.*` injection guards (#131). Those keys render into CI workflow
+ * files but are resolved from HARNESS_BUILTINS rather than a stack's `config:`, so they carry
+ * their guard in HARNESS_PATTERNS instead of a declared `pattern:`. Check the same two things
+ * `validateStack` checks for a stack's own patterns: every guard regex must compile, and the
+ * built-in default it guards must satisfy it — so a bad default can't ship a self-violating or
+ * unenforceable guard. Toolkit-global (not per-stack), so it runs once. Returns problems.
+ */
+export function validateHarnessBuiltins() {
+  const problems = [];
+  for (const [sub, pattern] of Object.entries(HARNESS_PATTERNS)) {
+    let re;
+    try {
+      re = compilePattern(pattern);
+    } catch (err) {
+      problems.push(`reserved harness.${sub} has an invalid pattern: ${err.message}`);
+      continue;
+    }
+    const builtin = HARNESS_BUILTINS[sub];
+    if (builtin === undefined) {
+      problems.push(`reserved harness.${sub} declares an injection guard but has no built-in default`);
+      continue;
+    }
+    // A built-in is a scalar (target-independent) or a per-target map — check every concrete
+    // string value. A value carrying {{placeholders}} resolves at render, so skip it here.
+    const values = builtin && typeof builtin === 'object' ? Object.values(builtin) : [builtin];
+    for (const v of values) {
+      if (typeof v === 'string' && !v.includes('{{') && !re.test(v)) {
+        problems.push(`reserved harness.${sub} default "${v}" does not match its injection guard`);
+      }
+    }
+  }
   return problems;
 }
 

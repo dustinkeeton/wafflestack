@@ -553,3 +553,21 @@ config:
 
 Because substitution runs once per target, the same `{{harness.*}}` placeholder can render
 differently in `.claude/…` vs `.codex/…` / `.agents/…` from a single canonical source.
+
+The namespace also carries three **target-independent** keys that pin the CI workflow
+dispatcher, so a consumer can repin or repoint the harness action without ejecting the
+rendered workflow:
+
+| Key | default |
+|---|---|
+| `harness.actionRef` | `anthropics/claude-code-action` |
+| `harness.actionVersion` | the current pinned SHA, with its `# vX.Y.Z` comment preserved |
+| `harness.apiKeySecret` | `ANTHROPIC_API_KEY` |
+
+These splice into the `uses:` and `anthropic_api_key:` lines of `waffle-label-hook.yml` and
+`waffle-hygiene.yml`. Override `config.harness.actionVersion` to pin a different version of
+the same action (or `actionRef` to repoint it, `apiKeySecret` to rename the billing secret);
+the defaults reproduce today's action byte-for-byte, so an unconfigured repo stays
+doctor-clean. They are injection-guarded at render — an override carrying `${{`, a quote, or a
+newline (or, for `apiKeySecret`, anything outside a GitHub secret name) fails the render loudly
+rather than corrupting the workflow.
