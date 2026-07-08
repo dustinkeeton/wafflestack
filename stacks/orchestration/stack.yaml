@@ -149,6 +149,23 @@ config:
       merge. Merge commits, not squash (squash is disabled on this repo). The Report
       phase records per-PR whether auto-merge armed. Default false — PRs wait for a
       human to merge, behavior unchanged.
+  delegate.batchMode:
+    required: false
+    default: false
+    description: >-
+      Opt-in non-interactive batch mode for unattended runs (the autopilot backlog
+      runner). When true AND the invoker supplied explicit scope (an issue list, a
+      milestone, a label, a keyword, or the all-open default), the Phase 3 confirmation
+      gate is skipped: explicit scope stands in for the human accepting the plan, and the
+      plan that would have been shown is logged instead so the run stays auditable. An
+      ambiguous classification falls back to the safest choice — serial execution in the
+      main checkout — rather than pausing. Batch mode changes only those decision points;
+      classification, parallelization rules, worktree isolation, serial chains, per-issue
+      PRs, and board updates are unchanged. It composes with delegate.autoMerge (the fully
+      unattended path) and must NOT weaken delegate.approveBeforePush — if that pre-push
+      gate is on it still stops each agent before push. If batchMode is true but scope was
+      not explicit, delegate falls back to interactive confirmation. Default false —
+      the interactive confirmation gate behaves exactly as before.
   delegate.memoryFile:
     required: false
     default: "{{delegate.checkpointDir}}/memory.md"

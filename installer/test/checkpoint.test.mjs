@@ -184,6 +184,31 @@ describe('delegate checkpoint validator', () => {
     assert.match(r.stderr, /expected type boolean/);
   });
 
+  test('confirmedVia: a batch-scope plan (confirmed: true) passes the plan boundary', () => {
+    const doc = clone(BASE);
+    doc.plan.confirmedVia = 'batch-scope';
+    const r = run(doc, 'plan');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /is valid for phase/);
+  });
+
+  test('confirmedVia recorded atop an unconfirmed plan is caught at the plan boundary', () => {
+    const doc = clone(BASE);
+    doc.plan.confirmed = false;
+    doc.plan.confirmedVia = 'batch-scope';
+    const r = run(doc, 'plan');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /confirmedVia .* but confirmed is not true/);
+  });
+
+  test('an unknown confirmedVia value fails schema validation', () => {
+    const doc = clone(BASE);
+    doc.plan.confirmedVia = 'vibes';
+    const r = run(doc, 'plan');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /is not one of/);
+  });
+
   test('malformed JSON produces a clean error, not a stack trace', () => {
     const r = run('{ "version": 1, ', 'fetch');
     assert.equal(r.status, 1);

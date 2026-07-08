@@ -143,6 +143,12 @@ function crossChecks(doc, sectionsInScope, errors) {
   }
 
   if (sectionsInScope.has('plan')) {
+    // Confirmation provenance (delegate.batchMode): you can only record HOW a plan was
+    // confirmed if it was in fact confirmed — a `confirmedVia` tag with confirmed !== true
+    // would claim a source for a confirmation that never happened.
+    if (doc.plan?.confirmedVia !== undefined && doc.plan?.confirmed !== true) {
+      errors.push(`plan: records confirmedVia "${doc.plan.confirmedVia}" but confirmed is not true (a confirmation source requires confirmed: true)`);
+    }
     const planned = new Map(); // number -> branch
     for (const g of doc.plan?.groups ?? []) {
       for (const a of g.assignments ?? []) {
