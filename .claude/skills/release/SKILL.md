@@ -140,6 +140,17 @@ If the repo has **not** installed `waffle-release-hook.yml` (it is opt-in syrup)
 the label does nothing on merge — say so, and the maintainer must push the tag manually:
 `git tag vX.Y.Z <merge-commit-sha> && git push origin vX.Y.Z` (lightweight).
 
+**Caveat — tag-triggered downstream pipelines.** If the repo has `on: push: tags` workflows
+(a build, provenance, or GitHub-Release-asset pipeline the tag is meant to start), the identity
+that pushes the tag decides whether they fire. The installed hook pushes with the default
+`GITHUB_TOKEN` unless a `WAFFLE_RELEASE_TOKEN` PAT/GitHub App token secret is set — and a tag
+pushed by `GITHUB_TOKEN` does **not** trigger other workflows (GitHub's anti-recursion rule).
+The tag lands and looks done, but nothing downstream ships. Tell the maintainer to set
+`WAFFLE_RELEASE_TOKEN` (or have the tag workflow expose a `workflow_call` entry point invoked by
+a content-gated tagging workflow); see the github-workflow stack's release-hook setup note. A
+**manual** `git push origin vX.Y.Z` runs under the maintainer's own credentials, so it does
+trigger those workflows — the limitation is specific to the hook's `GITHUB_TOKEN` push.
+
 ## 7. Report
 
 Output: the new version and inferred level, the PR URL, that the release label was applied

@@ -289,10 +289,23 @@ setup: |-
   about — but keep branch protection on the default branch so releases still go through a PR.
   Release PRs must originate from a branch in THIS repo: a fork PR runs with a read-only
   `GITHUB_TOKEN`, so its tag push fails by design (the hook deliberately uses `pull_request`,
-  never the fork-with-secrets `pull_request_target`). Pushing the workflow file needs the
-  `workflow` credential scope. Eject/uninstall exactly like the label hook, swapping the
-  filename. Point `release.versionFiles` at any files (beyond package.json/lockfile) whose
-  version string the skill should sync.
+  never the fork-with-secrets `pull_request_target`). (3) **If your repo has `on: push: tags`
+  workflows** (a build, provenance, or GitHub-Release-asset pipeline that the tag is meant to
+  kick off), know that GitHub **will not** trigger them when the hook pushes the tag with the
+  default `GITHUB_TOKEN` — the anti-recursion rule keys on the token that CREATES the event, not
+  on who authored the workflow, so a tag pushed by `GITHUB_TOKEN` never starts another workflow
+  (the same limitation the hygiene hook documents for `pull_request` CI). The tag lands and
+  everything looks done, but nothing downstream ships. Two fixes: set a **PAT or GitHub App
+  token** in the `WAFFLE_RELEASE_TOKEN` secret — the hook's `actions/checkout` reads
+  `${{ secrets.WAFFLE_RELEASE_TOKEN || github.token }}`, so the tag push then runs under that
+  identity and DOES trigger `on: push: tags` (creating the token is a **user action**; this
+  playbook does not mint credentials): `gh secret set WAFFLE_RELEASE_TOKEN`. Or keep zero-config
+  and have your tag workflow expose a `workflow_call` entry point that a content-gated tagging
+  workflow invokes directly. Repos with **no** tag-triggered workflows need neither — the default
+  `GITHUB_TOKEN` tag push is all the hook does, and zero-config behavior is unchanged. Pushing the
+  workflow file needs the `workflow` credential scope. Eject/uninstall exactly like the label hook,
+  swapping the filename. Point `release.versionFiles` at any files (beyond package.json/lockfile)
+  whose version string the skill should sync.
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
