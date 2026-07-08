@@ -1,13 +1,18 @@
 name: orchestration
-description: Multi-agent orchestration — a project-manager coordinator (delivery ceremonies, issue routing), a product-manager (product evolution — user stories, acceptance criteria, backlog priority), and a task-planner tracker plus delegate, audit, and docs skills that fan issues and pipelines out to specialist agents. The agent roster and module map are project config. Pairs with the github-workflow stack (git-workflow, issue, and github-project-management skills are referenced throughout).
+description: Multi-agent orchestration — a project-manager coordinator (delivery ceremonies, issue routing), a product-manager (product evolution — user stories, acceptance criteria, backlog priority), and a task-planner tracker plus delegate, autopilot, audit, and docs skills that fan issues and pipelines out to specialist agents. Autopilot is the unattended backlog runner that composes delegate (batch mode + auto-merge), clean-up, and git-workflow into a plan→implement→PR loop. The agent roster and module map are project config. Pairs with the github-workflow stack (git-workflow, issue, and github-project-management skills are referenced throughout).
 agents: [project-manager, product-manager, task-planner]
-skills: [delegate, audit, docs, standup]
+skills: [delegate, autopilot, audit, docs, standup]
 # Cross-stack skill dependencies pulled in when an item is installed on its own.
 requires:
   skills/delegate:
     - skills/git-workflow
     - skills/github-project-management
     - skills/github-project-board
+  skills/autopilot:
+    - skills/delegate
+    - skills/clean-up
+    - skills/git-workflow
+    - skills/github-project-management
   skills/docs:
     - skills/docs-agent
     - skills/docs-human
@@ -186,6 +191,28 @@ config:
       the cap fails the Report gate and forces curation before the run may complete — raise
       it deliberately, never to dodge pruning. Default 4096 (a few KB — room for ~a dozen
       tight entries).
+  autopilot.autoMerge:
+    required: false
+    default: false
+    description: >-
+      Per-run auto-merge consent for the autopilot backlog runner — whether an autopilot
+      run may arm `gh pr merge --auto --merge` on the PRs it opens. When true, autopilot
+      sets delegate.autoMerge for the run so each PR arms itself once the base branch's
+      required checks pass; when false (the default) every PR is opened and left for human
+      review. Consent is captured fresh every invocation and is NEVER sticky — there is no
+      carry-over from a prior run, and autopilot never reads a previous run's consent from
+      any checkpoint or memory. Same guardrails as delegate.autoMerge: `--auto` only arms
+      when the repo has "Allow auto-merge" enabled AND a required status check is configured
+      for the base branch; if arming fails the PR is left open-but-not-armed — never an
+      immediate or `--admin` merge. Default false — PRs wait for a human, behavior off.
+  autopilot.planDir:
+    required: false
+    default: "{{git.worktreesDir}}/.autopilot"
+    description: >-
+      Repo-relative directory where the autopilot plan-context writes one implementation
+      plan file per issue (`issue-<N>.md`), which the fresh implementer context then
+      receives in its prompt as a brief. Defaults under the worktrees dir so it inherits
+      the same gitignore — these are throwaway run artifacts, not committed.
   docs.auditChecklist:
     required: false
     description: >-
