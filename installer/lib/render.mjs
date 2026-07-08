@@ -241,6 +241,19 @@ function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, patt
       context,
     );
   }
+  if (project.targets.includes('agents-dir')) {
+    // Cross-tool `.agents/` convention: harness-neutral Markdown that mirrors the Claude
+    // agent shape (frontmatter name/description + the neutral `skills:` grant-pointer, body)
+    // but drops the Claude-only `claude:` passthrough block — so it renders correctly for any
+    // AGENTS.md-ecosystem tool. Skills already land in the sibling `.agents/skills/`.
+    const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('agents-dir') };
+    if (agent.data.skills) fm.skills = agent.data.skills;
+    emit(
+      path.join('.agents', 'agents', `${agent.name}.md`),
+      stringifyFrontmatter(fm, bodyFor('agents-dir')),
+      context,
+    );
+  }
 }
 
 function agentToml(agent, body, description = agent.data.description ?? '') {
@@ -264,10 +277,18 @@ function tomlMultilineString(s) {
 }
 
 function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, patterns }) {
-  const targetDirs = [];
-  if (project.targets.includes('claude')) targetDirs.push({ target: 'claude', dir: path.join('.claude', 'skills', skill.name) });
-  if (project.targets.includes('agents-dir')) targetDirs.push({ target: 'agents-dir', dir: path.join('.agents', 'skills', skill.name) });
-  if (!targetDirs.length) return;
+  // Map each output dir → the target identity to substitute it with. Codex and agents-dir
+  // both consume skills from the cross-tool `.agents/skills` convention (per OpenAI's docs,
+  // Codex scans `.agents/skills` from the cwd up to the repo root), so they share one output
+  // dir — deduped here (first target wins) to avoid emitting the same path twice. Their
+  // `harness.*` built-ins are identical, so the shared render is unambiguous.
+  const skillDirs = new Map(); // dir -> target identity
+  const addDir = (dir, target) => { if (!skillDirs.has(dir)) skillDirs.set(dir, target); };
+  if (project.targets.includes('claude')) addDir(path.join('.claude', 'skills', skill.name), 'claude');
+  const crossToolDir = path.join('.agents', 'skills', skill.name);
+  if (project.targets.includes('agents-dir')) addDir(crossToolDir, 'agents-dir');
+  if (project.targets.includes('codex')) addDir(crossToolDir, 'codex');
+  if (!skillDirs.size) return;
 
   const itemContext = `${stack.name}/skills/${skill.name}`;
   const extPath = path.join(EXTENSIONS_DIR, 'skills', `${skill.name}.md`);
@@ -277,15 +298,15 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, patt
       const context = `${itemContext}/${rel}`;
       const raw = fs.readFileSync(abs, 'utf8');
       // Substitute per target: `.claude/skills` uses the claude identity, `.agents/skills`
-      // the agents-dir (Codex) identity — they diverge only where `harness.*` is used.
-      for (const { target, dir } of targetDirs) {
+      // the agents-dir/codex (Codex) identity — they diverge only where `harness.*` is used.
+      for (const [dir, target] of skillDirs) {
         let content = substitute(raw, resolvers[target], stack.declared, errors, context, patterns);
         if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
         emit(path.join(dir, rel), content, itemContext);
       }
     } else {
       const content = fs.readFileSync(abs);
-      for (const { dir } of targetDirs) emit(path.join(dir, rel), content, itemContext);
+      for (const dir of skillDirs.keys()) emit(path.join(dir, rel), content, itemContext);
     }
   }
 }

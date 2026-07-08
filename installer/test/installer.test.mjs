@@ -131,8 +131,18 @@ describe('end to end', () => {
     assert.match(toml, /Commit as bot@example\.com\./);
     assert.doesNotMatch(toml, /allowed-tools/);
 
+    // agents-dir agent: neutral Markdown mirroring the Claude shape (name/description/skills)
+    // but with NO Claude-only `claude:` passthrough (so no allowed-tools).
+    const agentsDirAgent = read(cwd, '.agents/agents/helper.md');
+    assert.match(agentsDirAgent, /^---\nname: helper\ndescription: A helper\.\nskills:\n {2}- demo-skill\n---\n/);
+    assert.match(agentsDirAgent, /Commit as bot@example\.com\./);
+    assert.doesNotMatch(agentsDirAgent, /allowed-tools/);
+
+    // Skills: codex + agents-dir both consume the cross-tool `.agents/skills` dir, so a
+    // codex-enabled render lands skills there identical to the Claude render.
     assert.equal(read(cwd, '.claude/skills/demo-skill/SKILL.md'), read(cwd, '.agents/skills/demo-skill/SKILL.md'));
     assert.equal(read(cwd, '.claude/skills/demo-skill/ref/data.json'), '{"n": 1}\n');
+    assert.equal(read(cwd, '.agents/skills/demo-skill/ref/data.json'), '{"n": 1}\n');
     assert.match(read(cwd, '.claude/skills/demo-skill/SKILL.md'), /\$\{HOME\}\/x stays/);
 
     const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
@@ -210,6 +220,86 @@ describe('end to end', () => {
   });
 });
 
+// Every target renders BOTH agents and skills — no half-implemented harness (#94).
+describe('render-target coverage matrix (#94)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-cov-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-cov-'));
+    makeFixtureToolkit(toolkitRoot);
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const configFor = (targets) =>
+    write(cwd, '.waffle/waffle.yaml', [
+      `targets: [${targets.join(', ')}]`,
+      'stacks: [demo]',
+      'config:',
+      '  git:',
+      '    botEmail: bot@example.com',
+      '',
+    ].join('\n'));
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const has = (rel) => fs.existsSync(path.join(cwd, rel));
+
+  test('codex renders BOTH: agent TOML in .codex, skill in the cross-tool .agents/skills', () => {
+    configFor(['codex']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    assert.ok(has('.codex/agents/helper.toml'), 'codex agent rendered');
+    // The formerly-missing cell: codex skills land in `.agents/skills` (Codex scans it).
+    assert.ok(has('.agents/skills/demo-skill/SKILL.md'), 'codex skill rendered to .agents/skills');
+    assert.equal(read(cwd, '.agents/skills/demo-skill/ref/data.json'), '{"n": 1}\n');
+    // Attribution uses the Codex identity for the skill body.
+    assert.match(read(cwd, '.agents/skills/demo-skill/SKILL.md'), /Email bot@example\.com/);
+    // No other target's outputs.
+    assert.equal(has('.claude/skills/demo-skill/SKILL.md'), false);
+    assert.equal(has('.agents/agents/helper.md'), false);
+
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('agents-dir renders BOTH: agent Markdown in .agents/agents, skill in .agents/skills', () => {
+    configFor(['agents-dir']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // The formerly-missing cell: agents-dir agents land as neutral Markdown.
+    assert.ok(has('.agents/agents/helper.md'), 'agents-dir agent rendered');
+    assert.match(read(cwd, '.agents/agents/helper.md'), /^---\nname: helper\ndescription: A helper\.\n/);
+    assert.doesNotMatch(read(cwd, '.agents/agents/helper.md'), /allowed-tools/);
+    assert.ok(has('.agents/skills/demo-skill/SKILL.md'), 'agents-dir skill rendered');
+    // No Claude or Codex outputs.
+    assert.equal(has('.claude/agents/helper.md'), false);
+    assert.equal(has('.codex/agents/helper.toml'), false);
+
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('codex + agents-dir together share one .agents/skills render (deduped, no drift)', () => {
+    configFor(['codex', 'agents-dir']);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // Both agent forms coexist (distinct dirs); skills are written once to the shared dir.
+    assert.ok(has('.codex/agents/helper.toml'));
+    assert.ok(has('.agents/agents/helper.md'));
+    assert.ok(has('.agents/skills/demo-skill/SKILL.md'));
+    // The shared skill dir is tracked exactly once in the lock (no double emit / last-write race).
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    const skillEntries = Object.keys(lock.files).filter((f) => f === '.agents/skills/demo-skill/SKILL.md');
+    assert.equal(skillEntries.length, 1);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+});
+
 describe('harness.* namespace', () => {
   let toolkitRoot;
   let cwd;
@@ -274,6 +364,8 @@ describe('harness.* namespace', () => {
 
     assert.match(read(cwd, '.claude/agents/attr.md'), /Attributed to Claude via claude-code\./);
     assert.match(read(cwd, '.codex/agents/attr.toml'), /Attributed to Codex via Codex\./);
+    // agents-dir agent uses the cross-tool (Codex) identity, same as the codex agent's prose.
+    assert.match(read(cwd, '.agents/agents/attr.md'), /Attributed to Codex via Codex\./);
     assert.match(read(cwd, '.claude/skills/attr-skill/SKILL.md'), /Signed by Claude\./);
     assert.match(read(cwd, '.agents/skills/attr-skill/SKILL.md'), /Signed by Codex\./);
   });

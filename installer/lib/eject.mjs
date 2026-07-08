@@ -62,7 +62,7 @@ export function eject({ cwd, item, log = () => {} }) {
       matches = (rel) => rel === name;
     } else {
       const patterns = kind === 'agents'
-        ? [path.join('.claude', 'agents', `${name}.md`), path.join('.codex', 'agents', `${name}.toml`)]
+        ? [path.join('.claude', 'agents', `${name}.md`), path.join('.codex', 'agents', `${name}.toml`), path.join('.agents', 'agents', `${name}.md`)]
         : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
       matches = (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
     }
