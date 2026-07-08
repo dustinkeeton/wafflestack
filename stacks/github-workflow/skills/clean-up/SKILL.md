@@ -61,8 +61,8 @@ everything local.
    ```bash
    bash {{harness.skillsDir}}/clean-up/scripts/clean_up.sh
    ```
-   It prints which branches and worktrees are stale and which it deliberately skipped.
-   It deletes nothing in this mode.
+   It prints which branches and worktrees are stale, which it deliberately skipped, and
+   whether it will fast-forward the default branch. It deletes nothing in this mode.
 3. **Build the harness plan** (if harness is in scope) — see [Harness scope](#harness-scope) below.
 4. **Present the combined plan** to the user using the [report format](#report-format).
 5. **Gate on confirmation.** Unless `--yes` was passed, ask "Proceed?" and wait. If the
@@ -93,13 +93,20 @@ bash {{harness.skillsDir}}/clean-up/scripts/clean_up.sh --execute  # remove work
 What the script guarantees, so you don't have to re-check it:
 
 - Only branches whose PR is **merged** are in scope (open / closed-without-merge are left alone).
-- The **default branch** and the **branch/worktree you're currently on** are never touched.
+- The **default branch** and the **branch/worktree you're currently on** are never switched
+  away from or deleted. On `--execute`, if you're currently *on* the default branch and the
+  working tree is clean, it **is fast-forwarded** to the freshly-fetched remote tip
+  (fast-forward only — never a merge commit, never a branch switch).
 - A merged branch with **un-pushed commits** (ahead of its upstream) is skipped and listed
   under "needs a human look" — force-deleting it could lose those commits.
 - Worktrees are removed with plain `git worktree remove` (no `--force`); a **dirty** worktree
   is skipped and reported rather than discarded, and its branch is then left in place too.
-- `--execute` finishes with `git fetch --prune` to drop `origin/*` refs for branches that no
+- `--execute` runs `git fetch --prune` to drop `origin/*` refs for branches that no
   longer exist on the remote.
+- After the prune, `--execute` **fast-forwards the local default branch** to the just-fetched
+  `origin/<default>` — but only when you're currently *on* it and the working tree is clean, and
+  only as a fast-forward (never a merge commit, never a branch switch). It reports one of:
+  `fast-forwarded to <sha>`, `skipped: not on <default>`, or `skipped: diverged or dirty`.
 
 Out of scope by design: **deleting the remote branch** on GitHub (merges usually auto-delete
 it, and we don't want to touch the remote), and **closed-but-unmerged** branches (that work
@@ -144,13 +151,14 @@ Worktrees:
   <path>   (<branch>)
 Skipped (needs a human look):
   <branch>   <reason>
+Default branch: fast-forwarded to <sha>   (or: skipped (not on <default> / diverged / dirty))
 
 Tasks stopped:
   <task id / description>
 Teams shut down:
   <team> — <n>/<n> tasks done
 
-Left untouched: main, current branch, open/closed-unmerged PRs, crons.
+Left untouched: current branch, open/closed-unmerged PRs, crons.
 ```
 
 In dry-run/preview, end with **"Proceed? (y/N)"**. After executing, end with a one-line summary
