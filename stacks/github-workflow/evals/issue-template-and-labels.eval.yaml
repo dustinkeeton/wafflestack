@@ -1,0 +1,55 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (issue skill, "Draft the issue" + "Classify"): a brief free-text
+# description is fleshed into a body carrying the required template sections and a sensible
+# type + priority label — not a one-liner dumped into the issue.
+
+name: issue-body-has-template-sections-and-labels
+description: >-
+  From a brief description the issue skill produces a body with the required template sections
+  (Problem / Motivation, Proposed Solution) and picks a sensible type + priority label.
+
+target:
+  kind: skill
+  name: issue
+
+prompt: |
+  /issue data export fails silently when the API key is expired — no error, users just get an
+  empty file and don't know why.
+
+  Draft the issue you would create: the title, the full body, and the labels you'd apply.
+
+assert:
+  # The two required template section headings must be present verbatim in the drafted body.
+  - type: includes
+    value: "## Problem / Motivation"
+  - type: includes
+    value: "## Proposed Solution"
+  # The behavioral check: sensible classification on top of a well-formed body.
+  - type: judge
+    rubric: >-
+      The drafted issue has a clear imperative title and a body using the skill's template —
+      at minimum a "Problem / Motivation" section explaining WHY and a "Proposed Solution"
+      section that is specific enough to act on. It also selects a sensible TYPE label (this is
+      a defect → `bug`) and a PRIORITY label (a silent data-export failure is at least
+      `priority: high`). A pass needs both template sections AND a reasonable type+priority label.
+
+dryRunResponse: |
+  Title: Fix silent failure when the data-export API key is expired
+
+  Labels: `bug`, `priority: high`
+
+  Body:
+  ## Problem / Motivation
+  When the data-export API key has expired, the export runs to "completion" but writes an empty
+  file with no error surfaced to the user. There is no log line, no exit code, and no UI signal,
+  so users silently lose data and cannot tell why the export is empty.
+
+  ## Proposed Solution
+  Detect the expired-key response from the export API and fail loudly: return a non-zero exit
+  code, log the auth error, and surface a clear "export failed: API key expired" message instead
+  of writing an empty file. Add a regression test that asserts the error path.
+
+  ## Context
+  Export path in the data pipeline; related to the auth-token refresh handling.
