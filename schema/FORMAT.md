@@ -201,6 +201,53 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
   pruned by `render`. Commit them; never hand-edit them.
 
+## How do I know a file is wafflestack-managed?
+
+Rendered files sit side-by-side with your hand-written ones — `.claude/agents/*.md` next to
+your own agents, `.github/workflows/*.yml` next to your own workflows. The question "is *this*
+file toolkit-generated or mine?" is answered by **the lock manifest, not by the filename**.
+
+- **`.waffle/waffle.lock.json` is the marker.** Its `files` map records every rendered file by
+  **repo-relative path → content hash**. A path present in that map is wafflestack-managed;
+  a path absent from it is yours. This is authoritative and complete — it covers **all three
+  render kinds** (agents, skills, and syrup `files/`) uniformly, including files that land at
+  load-bearing platform paths.
+- **`render` enforces it.** Before writing, the renderer refuses to overwrite a pre-existing
+  file the lock does **not** track — your hand-written file is never silently clobbered (a
+  byte-identical file is adopted silently; `--force` overwrites; see *Pre-existing (unmanaged)
+  file collisions* below). Conversely, a locked path that a later render no longer produces is
+  pruned. So the lock is kept honest in both directions on every render.
+- **`doctor` verifies it.** `wafflestack doctor` diffs the tree against the lock and reports any
+  **modified** (hand-edited) or **missing** managed file — drift detection over exactly the set
+  the lock defines.
+
+**The practical query.** To decide whether a specific path is managed, check whether that
+repo-relative path is a key in `.waffle/waffle.lock.json` — e.g. `jq -e --arg p
+".claude/agents/architect.md" '.files[$p]' .waffle/waffle.lock.json`. To confirm the whole
+managed tree is intact and unedited, run `wafflestack doctor`. If a file **is** managed and you
+want to take it over, `wafflestack eject <ref>` hands it to your project (it stays in place and
+stops receiving updates).
+
+**Why not a filename convention (e.g. `.wfl.md`)?** A naming suffix was considered as a visual
+marker and **deliberately rejected** — filenames are load-bearing for platform discovery, so a
+suffix cannot be applied uniformly:
+
+- **Skills can't carry it.** Claude Code (and the [Agent Skills](https://agentskills.io)
+  standard) discovers a skill by a directory containing a file named **exactly `SKILL.md`**;
+  `SKILL.wfl.md` breaks discovery. The toolkit loader hard-requires that name too.
+- **Syrup `files/` can't carry it.** They render verbatim to real load-bearing paths — a GitHub
+  Actions workflow *must* live at `.github/workflows/<name>.yml`; renaming it breaks the
+  platform.
+- **Only agents could plausibly carry it.** Claude Code identifies a subagent by its frontmatter
+  `name`, not its filename ("the filename doesn't have to match"), and scans `.claude/agents/`
+  for Markdown files — so `<name>.wfl.md` would likely be tolerated on the `claude` and
+  `agents-dir` targets (the `codex` target renders `.toml`, unaffected). But that covers **one of
+  three render kinds**: a suffix could never be the universal "is this managed?" signal, so it
+  would leave most managed files unmarked while still costing a breaking lock-path migration
+  (every agent's tracked path renames). The lock manifest already answers the question
+  authoritatively for every kind, so a partial, cosmetic filename marker earns its migration
+  cost nowhere. Provenance lives in the manifest, not the filename.
+
 ## Generated overview docs
 
 Every `render` writes a small set of overview docs into `.waffle/`, assembled **only from the
