@@ -17,6 +17,7 @@ import { loadToolkit } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions } from '../lib/refs.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
+import { agentAvatarSvg } from '../lib/waffledocs.mjs';
 import {
   loadProjectConfig,
   migrateLegacyDotfiles,
@@ -3738,6 +3739,94 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.equal(render().ok, true);
     assert.ok(!fs.existsSync(path.join(cwd, '.waffle/CHEATSHEET.md')));
     assert.ok(!fs.existsSync(path.join(cwd, '.waffle/cheatsheet.html')));
+  });
+
+  test('team.html gives each agent a name-seeded waffle avatar and a stable anchor id', () => {
+    assert.equal(render().ok, true);
+    const team = read(cwd, '.waffle/team.html');
+    // One avatar per agent (the header brand mark is a wd-glyph, not a wd-avatar).
+    assert.equal((team.match(/class="wd-avatar"/g) || []).length, 2, 'one avatar per agent');
+    assert.equal((team.match(/<svg class="wd-av"/g) || []).length, 2, 'one avatar svg per agent');
+    // Deep-link anchors on each row.
+    assert.match(team, /<li class="wd-row" id="agent-captain">/);
+    assert.match(team, /<li class="wd-row" id="agent-scout">/);
+    // The avatar sits before the agent name inside the row headline.
+    assert.match(team, /<span class="wd-avatar"><svg class="wd-av"[\s\S]*?<\/svg><\/span><code class="wd-name">captain<\/code>/);
+    // Avatars are self-contained inline SVG: only the SVG namespace URL, no image src.
+    assert.doesNotMatch(team, /<img\b/);
+  });
+
+  test('cheatsheet.html badges each skill with the agents that hold it, linking to their team row', () => {
+    assert.equal(render().ok, true);
+    const cheat = read(cwd, '.waffle/cheatsheet.html');
+    // captain grants ship + recon (both user-invocable) → its mini avatar links from both blocks.
+    assert.equal(
+      (cheat.match(/href="team\.html#agent-captain"/g) || []).length,
+      2,
+      'captain badged on /ship and /recon',
+    );
+    // The hover ID card carries the agent's name, one-line description and skill count.
+    assert.match(cheat, /<span class="wd-idcard-name">captain<\/span>/);
+    assert.match(cheat, /<span class="wd-idcard-count">2 skills<\/span>/);
+    assert.match(cheat, /class="wd-agents"/);
+    // scout holds no skills → it is badged on nothing and never linked from the cheat sheet.
+    assert.doesNotMatch(cheat, /agent-scout/);
+    // probe is granted by no agent → its block has no agents strip (only two blocks get one).
+    assert.equal((cheat.match(/class="wd-agents"/g) || []).length, 2, 'only ship + recon are badged');
+  });
+
+  test('avatars are deterministic — the same selection renders byte-identical docs', () => {
+    assert.equal(render().ok, true);
+    const team1 = read(cwd, '.waffle/team.html');
+    const cheat1 = read(cwd, '.waffle/cheatsheet.html');
+    // Render the identical selection into a fresh project against the same toolkit.
+    const cwd2 = fs.mkdtempSync(path.join(os.tmpdir(), 'docsprj2-'));
+    try {
+      write(cwd2, '.waffle/waffle.yaml', CFG);
+      assert.equal(renderProject({ toolkitRoot, cwd: cwd2, toolkitVersion: '0.0.test' }).ok, true);
+      assert.equal(read(cwd2, '.waffle/team.html'), team1, 'team.html byte-identical across renders');
+      assert.equal(read(cwd2, '.waffle/cheatsheet.html'), cheat1, 'cheatsheet.html byte-identical across renders');
+    } finally {
+      fs.rmSync(cwd2, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('agentAvatarSvg (deterministic per-agent waffle avatar)', () => {
+  const skillSquares = (svg) => (svg.match(/class="wd-av-skill"/g) || []).length;
+  const eyeSquares = (svg) => (svg.match(/class="wd-av-eye"/g) || []).length;
+
+  test('is a pure function of name + skill count (same inputs ⇒ identical string)', () => {
+    assert.equal(agentAvatarSvg('scout', 3), agentAvatarSvg('scout', 3));
+    assert.equal(agentAvatarSvg('scout', 3, { px: 26 }), agentAvatarSvg('scout', 3, { px: 26 }));
+  });
+
+  test('different names yield different avatars', () => {
+    assert.notEqual(agentAvatarSvg('captain', 2), agentAvatarSvg('scout', 2));
+    assert.notEqual(agentAvatarSvg('a', 1), agentAvatarSvg('b', 1));
+  });
+
+  test('always renders two eyes and encodes the skill count as darker squares, capped at 7', () => {
+    for (const n of [0, 1, 4, 7]) {
+      const svg = agentAvatarSvg('captain', n);
+      assert.equal(eyeSquares(svg), 2, `two eyes at count ${n}`);
+      assert.equal(skillSquares(svg), n, `${n} skill squares at count ${n}`);
+    }
+    // Nine pockets − two eyes ⇒ at most seven skill squares; extra skills do not overflow.
+    assert.equal(skillSquares(agentAvatarSvg('captain', 9)), 7);
+    assert.equal(skillSquares(agentAvatarSvg('captain', 99)), 7);
+    // Nine total pockets regardless of count.
+    assert.equal((agentAvatarSvg('captain', 4).match(/<rect class="wd-av-/g) || []).length, 9);
+  });
+
+  test('emits a self-contained inline SVG with no external fetch beyond the SVG namespace', () => {
+    const svg = agentAvatarSvg('captain', 2, { px: 40 });
+    assert.match(svg, /^<svg class="wd-av"/);
+    assert.match(svg, /<\/svg>$/);
+    assert.match(svg, /width="40" height="40"/);
+    const urls = svg.match(/https?:\/\/[^\s"')]+/g) || [];
+    for (const url of urls) assert.match(url, /^http:\/\/www\.w3\.org\b/, `only the SVG xmlns allowed, got ${url}`);
+    assert.doesNotMatch(svg, /\bsrc\s*=/);
   });
 });
 

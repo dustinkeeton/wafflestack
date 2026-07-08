@@ -52,9 +52,9 @@
     ".github/workflows/waffle-hygiene.yml": "67378f86a18b085d85daf88634d1e3cb351414f8bd1faac6ad8c9fcae7a59d2a",
     ".github/workflows/waffle-label-hook.yml": "3417106489840e666e29e2f7ead9342e836d46d81cbf68248a192766e9b66e53",
     ".github/workflows/waffle-release-hook.yml": "f78b5d85d7d98d1d85d5f2d58cf5742452ed4f3ef285c6222f07b494a6e7c208",
-    ".waffle/cheatsheet.html": "984556496f98e82e10dba474bc3e4911c80936eef6cb138e0dba66af154e3f56",
+    ".waffle/cheatsheet.html": "265413c006e2475db2cb746c890ffe6038fd6c9902b4cab76f183888ca911699",
     ".waffle/CHEATSHEET.md": "853a0e1053ecb5ea17a366acde9453a8b74a6d216992fbf40ef0edbf896579e4",
-    ".waffle/team.html": "64d1cd67a279618928a2b5fbb4199f915829767d7605d7da5829ad94301a01ac",
+    ".waffle/team.html": "ee8abe0da2beff484f522329babe07367f6882a97930b11a1371a02fc4633a8e",
     ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29"
   }
 }

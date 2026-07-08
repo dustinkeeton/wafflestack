@@ -26,6 +26,7 @@ import path from 'node:path';
 import { parseFrontmatter } from './util.mjs';
 import { substitute } from './template.mjs';
 import { makeResolver } from './project.mjs';
+import { resolveAgentSkill } from './refs.mjs';
 
 const CHEATSHEET_MD = path.join('.waffle', 'CHEATSHEET.md');
 const CHEATSHEET_HTML = path.join('.waffle', 'cheatsheet.html');
@@ -69,6 +70,9 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
       const { data } = parseFrontmatter(fs.readFileSync(path.join(item.dir, 'SKILL.md'), 'utf8'));
       if (!isUserInvocable(data)) continue;
       commands.push({
+        // `ref` is the skill's item name (its dir name) — the key an agent's frontmatter
+        // `skills:` list resolves against, so the skill→agents reverse map can join on it.
+        ref: item.name,
         name: data.name ?? item.name,
         argumentHint:
           data['argument-hint'] != null
@@ -79,6 +83,9 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
     } else if (kind === 'agents') {
       agents.push({
         name: item.data.name ?? item.name,
+        // `stackName` is retained so agent `skills:` refs resolve preferring their own stack
+        // (matching render's own resolution) when building the cheatsheet reverse map.
+        stackName: stack.name,
         description: sub(stack, item.data.description, `waffledocs:agents/${item.name}#description`),
         skills: Array.isArray(item.data.skills) ? item.data.skills : [],
       });
@@ -88,10 +95,27 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
   commands.sort((a, b) => a.name.localeCompare(b.name));
   agents.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Skill→agents reverse map: for each installed agent, resolve every granted skill ref
+  // (leniently — an unresolved/ambiguous name is silently skipped, as elsewhere) and index
+  // the granting agents by the resolved skill's item name, so the cheatsheet can badge each
+  // skill block with the agents that hold it. Deterministic: agents are already sorted, so
+  // each ref's agent set iterates in stable alphabetical order.
+  const agentsByRef = new Map();
+  for (const a of agents) {
+    for (const skillName of a.skills) {
+      const resolved = resolveAgentSkill(toolkit, skillName, a.stackName);
+      if (!resolved) continue;
+      if (!agentsByRef.has(resolved.name)) agentsByRef.set(resolved.name, []);
+      const list = agentsByRef.get(resolved.name);
+      if (!list.includes(a.name)) list.push(a.name);
+    }
+  }
+  const agentByName = new Map(agents.map((a) => [a.name, a]));
+
   const docs = [];
   if (commands.length) {
     docs.push({ rel: CHEATSHEET_MD, content: cheatsheetMarkdown(commands, toolkit.name) });
-    docs.push({ rel: CHEATSHEET_HTML, content: cheatsheetHtml(commands, toolkit.name) });
+    docs.push({ rel: CHEATSHEET_HTML, content: cheatsheetHtml(commands, toolkit.name, { agentsByRef, agentByName }) });
   }
   if (agents.length) {
     docs.push({ rel: TEAM_MD, content: teamMarkdown(agents, toolkit.name) });
@@ -188,6 +212,147 @@ function waffleGlyphSvg(px) {
     '<rect x="22" y="22" width="70" height="70" rx="18" fill="#D0902B" stroke="#5B2B0E" stroke-width="6"/>' +
     '<rect x="14.5" y="14.5" width="70" height="70" rx="18" fill="#E4A93D" stroke="#5B2B0E" stroke-width="6"/>' +
     '<rect x="7" y="7" width="70" height="70" rx="18" fill="#F5C752" stroke="#5B2B0E" stroke-width="6.5"/>' +
+    pockets +
+    '</svg>'
+  );
+}
+
+// ---- Per-agent waffle avatars ----------------------------------------------------------
+//
+// A branded waffle character generated per agent, entirely from the agent NAME (plus its
+// installed-skill count) — no `Math.random`, no `Date`, no external asset. Rendered docs flow
+// through `emit()` and are lock-tracked + doctor-drift-checked, so every trait MUST be a pure
+// function of the name: same selection ⇒ byte-identical output.
+//
+// Character: a golden rounded-square waffle viewed straight-on, a 3×3 grid of pockets, a
+// swoosh of orange syrup on top like a hairdo, and two pockets darkened as eyes. The skill
+// count freckles the remaining pockets (capped at 7 = 9 pockets − 2 eyes).
+
+const AV_OUTLINE = '#5B2B0E'; // brand cocoa — the waffle's edge line
+const AV_EYE = '#2A1608'; // darkest pocket — the eyes
+
+// Skin tones cluster around the GOLDEN anchor; each carries a matched darker `pocket` (empty
+// squares) and `freckle` (skill squares) shade so the waffle reads as one baked piece.
+const AV_SKINS = [
+  { fill: GOLDEN, pocket: '#E3AE3E', freckle: '#B87A24' },
+  { fill: '#F0BD46', pocket: '#DBA636', freckle: '#AE7020' },
+  { fill: '#F7CE63', pocket: '#E6B94E', freckle: '#BE8130' },
+  { fill: '#EAB94A', pocket: '#D6A338', freckle: '#A96C1E' },
+  { fill: '#F3C74F', pocket: '#E0A93A', freckle: '#B37622' },
+  { fill: '#F8D06A', pocket: '#E8BC55', freckle: '#C08834' },
+];
+
+// Syrup "hair" — shape and colour variants around the SYRUP anchor. Each path is a swoosh
+// that sits across the top of the head (drawn before the body so the body clips its base).
+const AV_SYRUP_COLORS = [SYRUP, '#E67E12', '#F59A34', '#D9750F', '#EE8418'];
+const AV_HAIR_PATHS = [
+  'M14 30 C10 12 34 5 52 9 C70 13 90 9 86 28 C77 19 66 21 55 19 C39 16 22 19 14 30 Z',
+  'M17 29 C13 9 41 3 55 11 C65 16 76 7 83 25 C73 21 63 22 55 20 C41 17 26 17 17 29 Z',
+  'M14 27 C19 9 46 6 63 11 C74 14 81 10 86 25 C71 22 59 24 47 22 C34 19 22 18 14 27 Z',
+  'M15 30 C11 13 33 6 50 8 C64 10 74 6 82 16 C86 21 84 27 84 29 C78 21 66 21 55 19 C40 16 23 19 15 30 Z',
+];
+
+// Eye "expressions" — which two of the nine pockets are the eyes. Each pair is a within-row
+// couple with a gap, so the face reads as a face whichever row it lands on.
+const AV_EXPRESSIONS = [
+  [0, 2],
+  [3, 5],
+  [6, 8],
+  [0, 1],
+  [1, 2],
+  [3, 4],
+];
+
+// Pocket grid geometry (viewBox 0 0 100 100), matching the body rect below.
+const AV_COLS = [25, 43.5, 62];
+const AV_ROWS = [33, 51.5, 70];
+
+// FNV-1a — a tiny, stable, dependency-free string hash. Deterministic across runs/hosts.
+function avHash(name) {
+  let h = 2166136261 >>> 0;
+  const s = String(name);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+// mulberry32 — a seeded PRNG. Seeded from the name hash, it yields a stable trait stream, so
+// avatar traits are reproducible without `Math.random`.
+function avRng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Deterministic Fisher–Yates using the seeded stream (used to place freckles).
+function avShuffle(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = a[i];
+    a[i] = a[j];
+    a[j] = tmp;
+  }
+  return a;
+}
+
+/** Stable anchor id / URL fragment for an agent, shared by team.html ids and cheatsheet links. */
+function agentAnchorId(name) {
+  const slug = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `agent-${slug}`;
+}
+
+/**
+ * Deterministic waffle avatar for an agent, as a self-contained inline SVG string. Every trait
+ * (skin tone, syrup hair shape/colour, eye expression, freckle positions) is derived from
+ * `name`; `skillCount` (clamped to 0..7) sets how many non-eye pockets are darkened as skill
+ * squares. Pure — same inputs ⇒ identical string. `www.w3.org` is the SVG namespace, not a fetch.
+ */
+export function agentAvatarSvg(name, skillCount = 0, { px = 40, className = '' } = {}) {
+  const rng = avRng(avHash(name));
+  const skin = AV_SKINS[Math.floor(rng() * AV_SKINS.length)];
+  const hair = AV_HAIR_PATHS[Math.floor(rng() * AV_HAIR_PATHS.length)];
+  const syrup = AV_SYRUP_COLORS[Math.floor(rng() * AV_SYRUP_COLORS.length)];
+  const eyes = AV_EXPRESSIONS[Math.floor(rng() * AV_EXPRESSIONS.length)];
+
+  const count = Math.max(0, Math.min(Math.trunc(Number(skillCount) || 0), 7));
+  const candidates = [];
+  for (let g = 0; g < 9; g++) if (!eyes.includes(g)) candidates.push(g);
+  const freckles = new Set(avShuffle(candidates, rng).slice(0, count));
+
+  let pockets = '';
+  for (let g = 0; g < 9; g++) {
+    const x = AV_COLS[g % 3];
+    const y = AV_ROWS[Math.floor(g / 3)];
+    let fill;
+    let cls;
+    if (eyes.includes(g)) {
+      fill = AV_EYE;
+      cls = 'wd-av-eye';
+    } else if (freckles.has(g)) {
+      fill = skin.freckle;
+      cls = 'wd-av-skill';
+    } else {
+      fill = skin.pocket;
+      cls = 'wd-av-pocket';
+    }
+    pockets += `<rect class="${cls}" x="${x}" y="${y}" width="13" height="13" rx="4" fill="${fill}"/>`;
+  }
+
+  const extraClass = className ? ` ${className}` : '';
+  return (
+    `<svg class="wd-av${extraClass}" width="${px}" height="${px}" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" stroke-linejoin="round">` +
+    `<path d="${hair}" fill="${syrup}" stroke="${AV_OUTLINE}" stroke-width="2"/>` +
+    `<rect x="16" y="24" width="68" height="68" rx="14" fill="${skin.fill}" stroke="${AV_OUTLINE}" stroke-width="3"/>` +
     pockets +
     '</svg>'
   );
@@ -293,25 +458,88 @@ body {
   padding: 3px 9px;
   border-radius: 999px;
 }
-.wd-foot { margin: 28px 0 0; font-size: 12.5px; color: var(--muted); }`;
+.wd-foot { margin: 28px 0 0; font-size: 12.5px; color: var(--muted); }
+.wd-av { display: block; }
+/* team.html: the agent's avatar, centred against its mono name. */
+.wd-avatar { flex: none; align-self: center; line-height: 0; }
+.wd-avatar .wd-av { border-radius: 10px; }
+/* cheatsheet.html: small, de-emphasised avatars of every agent granted a skill. */
+.wd-agents { margin: 12px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.wd-agents-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.wd-mini {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+  text-decoration: none;
+  color: inherit;
+  opacity: 0.82;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.wd-mini:hover, .wd-mini:focus-visible { opacity: 1; transform: translateY(-2px); z-index: 4; outline: none; }
+.wd-mini .wd-av { border-radius: 8px; }
+/* CSS-only "ID card" popover revealed on hover/focus of a mini avatar. */
+.wd-idcard {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  z-index: 20;
+  width: 244px;
+  display: flex;
+  gap: 11px;
+  padding: 12px 13px;
+  background: var(--chip-bg);
+  border: 1px solid var(--rule);
+  border-radius: 13px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(5px);
+  transition: opacity 130ms ease, transform 130ms ease, visibility 130ms;
+  text-align: left;
+}
+.wd-mini:hover .wd-idcard, .wd-mini:focus-visible .wd-idcard {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+.wd-idcard-av { flex: none; line-height: 0; }
+.wd-idcard-av .wd-av { border-radius: 9px; }
+.wd-idcard-body { flex: 1; min-width: 0; }
+.wd-idcard-name { display: block; font-family: var(--mono); font-weight: 700; font-size: 14px; color: var(--heading); }
+.wd-idcard-desc { display: block; margin: 4px 0 7px; font-size: 12.5px; line-height: 1.4; color: var(--text); }
+.wd-idcard-count { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px; color: var(--accent); }`;
 
 /**
- * One `<li>` per item. `rows` is `[{ primary, hint, secondary, tags }]`:
+ * One `<li>` per item. `rows` is `[{ primary, hint, secondary, tags, avatar, anchorId, extra }]`:
  *   primary   — the mono headline (`/name` or an agent name)
  *   hint      — optional mono chip (a skill's argument syntax)
  *   secondary — the one-line description (selectable, reflowing prose)
  *   tags      — optional pill list (an agent's granted skills / hand-offs)
+ *   avatar    — optional pre-built inline SVG (already safe HTML) shown before the name
+ *   anchorId  — optional stable `id` on the `<li>` for deep-linking (team.html#agent-<name>)
+ *   extra     — optional pre-built trailing HTML block (the cheatsheet's agent avatars)
  */
-function rowHtml({ primary, hint, secondary, tags }) {
+function rowHtml({ primary, hint, secondary, tags, avatar, anchorId, extra }) {
   const hintHtml = hint ? ` <code class="wd-hint">${esc(hint)}</code>` : '';
+  const avatarHtml = avatar ? `<span class="wd-avatar">${avatar}</span>` : '';
   const tagsHtml =
     tags && tags.length
       ? `\n      <p class="wd-tags">${tags.map((t) => `<span class="wd-tag">${esc(t)}</span>`).join(' ')}</p>`
       : '';
+  const extraHtml = extra ? `\n${extra}` : '';
+  const idAttr = anchorId ? ` id="${esc(anchorId)}"` : '';
   return (
-    '    <li class="wd-row">\n' +
-    `      <p class="wd-line"><code class="wd-name">${esc(primary)}</code>${hintHtml}</p>\n` +
-    `      <p class="wd-desc">${esc(secondary)}</p>${tagsHtml}\n` +
+    `    <li class="wd-row"${idAttr}>\n` +
+    `      <p class="wd-line">${avatarHtml}<code class="wd-name">${esc(primary)}</code>${hintHtml}</p>\n` +
+    `      <p class="wd-desc">${esc(secondary)}</p>${tagsHtml}${extraHtml}\n` +
     '    </li>'
   );
 }
@@ -354,11 +582,46 @@ ${rows.map(rowHtml).join('\n')}
 `;
 }
 
-function cheatsheetHtml(commands, toolkitName) {
+/**
+ * A skill block's trailing strip of agent avatars: every installed agent granted this skill,
+ * as a small de-emphasised waffle that reveals a CSS-only "ID card" on hover/focus and links
+ * through to that agent's row on team.html. Empty string when no agent holds the skill.
+ */
+function agentAvatarsHtml(agentNames, agentByName) {
+  if (!agentNames || !agentNames.length) return '';
+  const chips = agentNames
+    .map((name) => {
+      const agent = agentByName.get(name);
+      if (!agent) return '';
+      const n = agent.skills.length;
+      const card =
+        '<span class="wd-idcard" role="tooltip">' +
+        `<span class="wd-idcard-av">${agentAvatarSvg(agent.name, n, { px: 46 })}</span>` +
+        '<span class="wd-idcard-body">' +
+        `<span class="wd-idcard-name">${esc(agent.name)}</span>` +
+        `<span class="wd-idcard-desc">${esc(oneLiner(agent.description, 120))}</span>` +
+        `<span class="wd-idcard-count">${n} skill${n === 1 ? '' : 's'}</span>` +
+        '</span>' +
+        '</span>';
+      return (
+        `<a class="wd-mini" href="team.html#${esc(agentAnchorId(agent.name))}" aria-label="${esc(agent.name)}">` +
+        agentAvatarSvg(agent.name, n, { px: 26 }) +
+        card +
+        '</a>'
+      );
+    })
+    .join('');
+  return `      <p class="wd-agents"><span class="wd-agents-label">Agents</span>${chips}</p>`;
+}
+
+function cheatsheetHtml(commands, toolkitName, { agentsByRef, agentByName } = {}) {
+  const byRef = agentsByRef ?? new Map();
+  const byName = agentByName ?? new Map();
   const rows = commands.map((c) => ({
     primary: `/${c.name}`,
     hint: c.argumentHint || '',
     secondary: oneLiner(c.description, 200),
+    extra: agentAvatarsHtml(byRef.get(c.ref), byName),
   }));
   return htmlDoc({
     eyebrow: toolkitName,
@@ -374,6 +637,8 @@ function teamHtml(agents, toolkitName) {
     primary: a.name,
     secondary: oneLiner(a.description, 200),
     tags: a.skills,
+    avatar: agentAvatarSvg(a.name, a.skills.length, { px: 44 }),
+    anchorId: agentAnchorId(a.name),
   }));
   return htmlDoc({
     eyebrow: toolkitName,
