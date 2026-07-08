@@ -1,0 +1,72 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (release skill, "Apply the bump" step 3): the flow STAMPS the CHANGELOG
+# — renames `## [Unreleased]` to a dated `## [X.Y.Z]` section and opens a fresh empty
+# `## [Unreleased]` above it — so `wafflestack upgrade` can see what changed between versions.
+
+name: release-stamps-changelog
+description: >-
+  The release skill stamps the CHANGELOG on a bump: `## [Unreleased]` becomes a dated
+  `## [X.Y.Z]` section and a fresh empty `## [Unreleased]` is opened above it.
+
+target:
+  kind: skill
+  name: release
+
+prompt: |
+  /release 0.11.0
+
+  The repo's CHANGELOG.md currently looks like this:
+
+  ```
+  # Changelog
+
+  ## [Unreleased]
+  ### Added
+  - New `orchestration` stack with the delegate skill.
+  ### Fixed
+  - Consumer impact: re-render only; no config changes.
+
+  ## [0.10.0] - 2026-06-20
+  ### Added
+  - Eval harness.
+  ```
+
+  Show me the CHANGELOG edits you'd make as part of the bump.
+
+assert:
+  # The new dated section heading for this version must appear.
+  - type: includes
+    value: "## [0.11.0]"
+  # A fresh empty Unreleased section must be re-opened above it.
+  - type: includes
+    value: "## [Unreleased]"
+  # The behavioral check: the stamp is done correctly and entries are preserved.
+  - type: judge
+    rubric: >-
+      The assistant stamps the CHANGELOG for the 0.11.0 bump: it renames the existing
+      `## [Unreleased]` heading to a dated `## [0.11.0] - <date>` section (keeping the Added/Fixed
+      entries under it), AND adds a fresh, empty `## [Unreleased]` section above it for future
+      changes. A pass requires both the dated 0.11.0 heading and a new empty Unreleased heading;
+      the prior entries must be preserved (not dropped) under 0.11.0.
+
+dryRunResponse: |
+  Here are the CHANGELOG.md edits for the 0.11.0 bump — rename the current `[Unreleased]` to a
+  dated `[0.11.0]` section and open a fresh empty `[Unreleased]` above it, preserving every entry:
+
+  ```
+  # Changelog
+
+  ## [Unreleased]
+
+  ## [0.11.0] - 2026-07-07
+  ### Added
+  - New `orchestration` stack with the delegate skill.
+  ### Fixed
+  - Consumer impact: re-render only; no config changes.
+
+  ## [0.10.0] - 2026-06-20
+  ### Added
+  - Eval harness.
+  ```

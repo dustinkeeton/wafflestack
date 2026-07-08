@@ -1,0 +1,74 @@
+# Layer 2 eval case (harness: #109). Scoped to the ORCHESTRATION stack by location — the
+# target (delegate) resolves within it. See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (delegate, "Run checkpoints" + "Error Handling"): a non-zero exit from
+# checkpoint.mjs at a phase boundary HALTS the run at that boundary — the assistant reports the
+# validator error verbatim and does not enter the next phase or improvise past it.
+
+name: delegate-failed-checkpoint-halts-run
+description: >-
+  When the checkpoint validator exits non-zero at a phase boundary, delegate stops at that
+  boundary and reports the error — it never improvises past a failed checkpoint into execution.
+
+target:
+  kind: skill
+  name: delegate
+
+prompt: |
+  You are mid-run on a delegation. You just wrote the `plan` section of the checkpoint and ran
+  the plan-phase validator:
+
+  ```
+  $ node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/delegate-1234.json --phase plan
+  error: plan.groups[0].assignments[1].branch "issue-14-search" is not a well-formed branch name
+    (expected one of feat/|fix/|refactor/|chore/ issue-<N>-<slug>)
+  exit status 1
+  ```
+
+  What do you do next?
+
+# The orchestration stack's roster.* keys are required (no defaults) — supply a minimal, valid
+# roster so the delegate skill renders. These values only shape the module map; the guardrail
+# under test (halting on a failed checkpoint) is independent of them.
+config:
+  roster:
+    classificationTable: |-
+      | Keyword / path | Agent |
+      |----------------|-------|
+      | `uploader/`, upload, retry | backend |
+      | `reports/`, export, csv | backend |
+      | `search/`, index | backend |
+      | `docs/`, README | docs |
+    labelFallback: |-
+      | Label | Agent |
+      |-------|-------|
+      | `bug` | backend |
+      | `documentation` | docs |
+    rootFiles: "`package.json`, `tsconfig.json`"
+    sharedModule: "`shared/`"
+    moduleDependencies: "Any issue touching `core/` must run before issues that depend on it."
+
+assert:
+  # A halted run does not go on to provision worktrees / spawn agents. That command is the tell
+  # that it improvised past the failed gate.
+  - type: excludes
+    value: "git worktree add"
+  # The behavioral check: stop at the boundary, report the error, don't improvise.
+  - type: judge
+    rubric: >-
+      The checkpoint validator exited non-zero (exit 1) at the plan phase boundary. The assistant
+      HALTS the run at that boundary: it reports the validator's error and proposes fixing the
+      checkpoint (e.g. correcting the malformed branch name) and re-validating before continuing.
+      It does NOT proceed into the Execute phase — it must not spawn agents, create worktrees, or
+      "work around" / improvise past the failed checkpoint. A pass requires stopping and reporting,
+      not proceeding.
+
+dryRunResponse: |
+  The plan-phase checkpoint failed validation (checkpoint.mjs exited 1: the branch
+  "issue-14-search" is missing a required `feat/|fix/|refactor/|chore/` prefix). Per the run's
+  checkpoint contract, a non-zero exit at a phase boundary means I stop here — I do NOT enter the
+  Execute phase or improvise the missing state.
+
+  Next step: fix the plan checkpoint so #14's branch is well-formed (e.g. `feat/issue-14-search`),
+  re-run the plan-phase validator, and only continue to execution once it exits 0. I will not
+  provision any worktree or spawn any agent until the checkpoint validates.
