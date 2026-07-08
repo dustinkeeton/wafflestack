@@ -102,7 +102,44 @@ EOF
 - PR title should be under 70 characters.
 - Always target `main` as the base branch.
 - Push and PR without waiting for human approval — the user reviews in GitHub.
-- Closing keywords apply **per issue reference**: `Closes #1, #2` only closes #1. Write `Closes #1, closes #2` (one keyword per issue) — and after merge, verify the issues actually closed.
+- Closing keywords apply **per issue reference**: `Closes #1, #2` only closes #1. Write `Closes #1, closes #2` (one keyword per issue) — and after merge, verify the issues actually closed (see [After a PR merges](#after-a-pr-merges)).
+
+## After a PR merges
+
+Merging isn't the end of the task. Three things go stale the moment a PR lands, and the
+**merging agent** owns all three — a CI job can't reach your machine, so local cleanup and
+board reconciliation are a **local-agent step by design** (the optional post-merge CI hook
+stays scoped to remote-only branch hygiene; see the stack setup note):
+
+1. **Verify the close.** Closing keywords fire only on merge, and only per issue reference
+   (see the rule above), so confirm each linked issue actually closed — don't assume it did:
+
+   ```bash
+   gh issue view <n> --json state -q .state   # expect CLOSED
+   ```
+
+   Re-close by hand any a missing or mis-written keyword left open: `gh issue close <n>`.
+
+2. **Reconcile the board.** If the project has a Projects v2 board, make sure each linked
+   issue's **Status** reflects reality — a merged-and-closed issue should read **Done**, not
+   linger in *In Progress* or *In Review*. Fix drift in place with the
+   `github-project-management` skill, or hand the sweep to the `project-manager` agent. This
+   stays a **local-agent step, not CI**: it needs no API budget, and the agent that just
+   merged already has the context to fix drift — so board verification is deliberately *not*
+   wired into the post-merge CI hook (which does remote branch hygiene only).
+
+3. **Clean up the debris.** Run the `clean-up` skill in its non-interactive post-merge mode to
+   delete the merged local branch and its worktree and prune stale remote-tracking refs:
+
+   ```
+   clean-up git --yes
+   ```
+
+   `--yes` exists for exactly this — an agent calling it right after it merges a PR (it skips
+   the confirmation prompt; see the `clean-up` skill). The **remote** head branch is removed by
+   GitHub's auto-delete setting or the optional `waffle-post-merge-hook` workflow, but the
+   **local** branch and worktree are always the merging agent's job — nothing remote can delete
+   them.
 
 ## Releases
 

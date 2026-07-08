@@ -6,19 +6,21 @@ files:
   - .github/workflows/waffle-label-hook.yml
   - .github/workflows/waffle-hygiene.yml
   - .github/workflows/waffle-release-hook.yml
+  - .github/workflows/waffle-post-merge-hook.yml
 # optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
-# setting; the release-hook workflow holds `contents: write` and pushes tags on merge. Both
-# have a footprint bigger than enabling the stack should silently imply, so both are opt-in —
-# enabling this stack does NOT render them. Install one explicitly
-# (`wafflestack install files/.github/workflows/waffle-release-hook.yml`) or keep an existing
-# install via its lock entry. The doctor workflow is read-only and stays a default render.
-# The hygiene workflow is opt-in syrup for the same reason and then some: its job holds
+# setting; the release-hook and post-merge-hook workflows each hold `contents: write` (to push
+# a tag / delete the merged head branch). All have a footprint bigger than enabling the stack
+# should silently imply, so all are opt-in — enabling this stack does NOT render them. Install
+# one explicitly (`wafflestack install files/.github/workflows/waffle-release-hook.yml`) or keep
+# an existing install via its lock entry. The doctor workflow is read-only and stays a default
+# render. The hygiene workflow is opt-in syrup for the same reason and then some: its job holds
 # contents/pull-requests write AND every scheduled fire spends real API money — daily.
 optIn:
   - files/.github/workflows/waffle-label-hook.yml
   - files/.github/workflows/waffle-hygiene.yml
   - files/.github/workflows/waffle-release-hook.yml
+  - files/.github/workflows/waffle-post-merge-hook.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
@@ -28,7 +30,10 @@ optIn:
 # so it is intentionally NOT a hard requires that would balloon a minimal hygiene install.)
 # The release-hook workflow is deterministic (it does not invoke the skill), but installing
 # it pulls the `release` skill so the full label-a-bump-PR → tag-on-merge flow arrives
-# together; the skill needs git-workflow.
+# together; the skill needs git-workflow. The post-merge-hook workflow is deterministic too
+# (remote branch delete, no skill dispatch), but it is the REMOTE half of post-merge hygiene, so
+# installing it pulls the `clean-up` skill — its LOCAL companion (delete the merged local
+# branch/worktree, prune) — so the pair arrives together.
 requires:
   skills/label-hook:
     - skills/issue
@@ -43,6 +48,8 @@ requires:
     - skills/git-workflow
   files/.github/workflows/waffle-release-hook.yml:
     - skills/release
+  files/.github/workflows/waffle-post-merge-hook.yml:
+    - skills/clean-up
 setup: |-
   Every skill drives the `gh` CLI against the current repo — verify `gh auth status`
   succeeds and the repo has a GitHub remote before rendering.
@@ -306,6 +313,32 @@ setup: |-
   workflow file needs the `workflow` credential scope. Eject/uninstall exactly like the label hook,
   swapping the filename. Point `release.versionFiles` at any files (beyond package.json/lockfile)
   whose version string the skill should sync.
+
+  **Post-merge hook (opt-in syrup).** This stack also carries
+  `.github/workflows/waffle-post-merge-hook.yml`, the remote-side half of post-merge hygiene. Like
+  the release hook it shares the `pull_request: types: [closed]` + `merged == true` trigger shape
+  and is **deterministic — a plain `contents: write` Actions job, no Claude dispatch, no API
+  spend**; enabling the stack does NOT render it. Pour it only on request:
+  `wafflestack install files/.github/workflows/waffle-post-merge-hook.yml` renders it and pulls its
+  `clean-up` companion skill; a repo already tracking the path keeps it on re-render. Once merged, a
+  PR whose head branch lives in THIS repo (fork heads are skipped) and is not the default branch has
+  that head branch **deleted on the remote**, and the run summary emits a prune signal so local
+  clones know to `git fetch --prune`. An already-deleted head (GitHub's native
+  auto-delete-head-branches got there first) is a no-op success; a branch that can't be deleted but
+  still exists (protected, or Actions denied `contents: write`) is a **warning, not a failed run** —
+  a lingering branch is a hygiene miss, not a delivery failure. Complete the opt-in: confirm Actions
+  may write contents (Settings → Actions → General → Workflow permissions not locked to read-only;
+  `gh api repos/{owner}/{repo}/actions/permissions/workflow`), and keep branch protection on the
+  default branch. It needs no repo secret and no label — it fires on every merged same-repo PR.
+  **This is the ONLY post-merge action that belongs in CI.** The rest of the post-merge flow stays a
+  **local-agent step by design** (see the git-workflow "After a PR merges" section and the
+  `clean-up` skill): a CI job can't reach a developer's machine to delete the merged *local* branch
+  and worktree, and **board/issue verification is kept local on purpose** — it costs zero API budget
+  and the agent that just merged already has the context to reconcile a linked issue's board Status
+  to Done. Routing board checks through a Claude-dispatch CI job (label-hook style) would spend real
+  money per merge for drift the local agent fixes for free, so the hook deliberately does remote
+  branch hygiene only. Pushing the workflow file needs the `workflow` credential scope; eject/
+  uninstall exactly like the label hook, swapping the filename.
 
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
