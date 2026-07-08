@@ -424,12 +424,14 @@ An unknown key on the mapping (a `pin:` or `rev:` typo, say) is rejected rather 
 ignored. A malformed entry — missing `name`/`source`, an unpinned git source, a `ref` on a
 local path, or a duplicate name — fails config load loudly with a message naming the entry.
 
-> **Not yet resolvable.** Slice 1 (issue #88) only extends and validates the schema — multi-root
-> resolution is **not implemented yet**. A config that declares any `source`-bearing entry parses
-> and validates, but `render` then fails with a clear *"external stack … is declared but not yet
-> resolvable"* error rather than silently ignoring the entry or crashing in the loader. Fetching
-> the source, resolving multiple toolkit roots with collision detection, recording source
-> provenance in the lock, per-source `doctor`/`upgrade`, install-time trust confirmation, and
+> **How it resolves.** At `render`, each `source`-bearing entry is resolved to a toolkit root and
+> merged with the built-in stacks through one pipeline, so external stacks/waffles render, lock,
+> and `doctor` exactly like built-in ones. A git source is fetched at the pinned `ref` (tag,
+> branch, or commit) and cached; a local path is read in place. The entry's `name` selects a stack
+> from that root — `stacks/<name>/` for a toolkit-root source, or a `stack.yaml` at the source root
+> for a single-stack source. A stack name defined by two sources (a built-in and an external, or
+> two externals) is a **hard error naming both**, never a silent shadow. Recording each source's
+> resolved commit in the lock, per-source `doctor`/`upgrade`, install-time trust confirmation, and
 > third-party authoring docs are tracked as follow-up sub-issues of #88.
 
 ## Template values

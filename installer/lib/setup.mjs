@@ -82,18 +82,19 @@ function currentConfigSection(toolkit, cwd) {
   lines.push('## Stacks enabled', '');
   lines.push(project.stacks.length ? project.stacks.map((b) => `- ${b}`).join('\n') : '(none)', '');
 
-  // External bundle sources (#88, slice 1) parse and validate but are not yet resolvable.
-  // Surface them honestly here rather than silently omitting them from the guide — `render`
-  // fails until they are removed (multi-root resolution is a tracked follow-up).
+  // External stack sources (#88): a `{ name, source, ref }` entry pulls a stack from a git URL
+  // (pinned by `ref`) or a local path; `render` resolves and merges it with the built-in stacks.
+  // The inventory below is the built-in surface — external stacks resolve at render time.
   if (project.externalStacks?.length) {
-    lines.push('## External stack sources (declared — not yet resolvable)', '');
+    lines.push('## External stack sources', '');
     for (const s of project.externalStacks) {
       lines.push(`- ${s.name} ← ${s.source}${s.ref ? ` @ ${s.ref}` : ''} (${s.sourceType})`);
     }
     lines.push(
       '',
-      '> External sources validate but multi-root resolution is not implemented yet; `render`',
-      '> will fail until they are removed (tracked in #88).',
+      '> These resolve and render at `render` time — git sources are fetched at the pinned `ref`,',
+      '> local paths are read in place. A name that collides with a built-in stack or another',
+      '> source is a hard error, not a silent shadow.',
       '',
     );
   }

@@ -7,7 +7,8 @@ import {
   stringifyFrontmatter,
 } from './util.mjs';
 import { substitute, placeholderKeys, compilePattern } from './template.mjs';
-import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
+import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
+import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
@@ -26,7 +27,14 @@ import {
  * Frozen-image contract: outputs are regenerated verbatim; managed files from the
  * previous lock that are no longer rendered get deleted; a fresh lock is written.
  */
-export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false, log = () => {} }) {
+export function renderProject({
+  toolkitRoot,
+  cwd,
+  toolkitVersion,
+  force = false,
+  log = () => {},
+  sourceCacheDir = defaultSourceCacheDir(),
+}) {
   const warnings = [];
   // Carry a legacy repo forward before reading anything: move the consumer dot-paths
   // (root `.waffle.*`, or pre-0.6.0 `.wafflestack.*`) into `.waffle/` so config load and
@@ -41,25 +49,23 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
   }
   const project = loadProjectConfig(cwd, warnings);
 
-  // External bundle sources (#88, slice 1): the `waffle.yaml` schema now accepts a
-  // `{ name, source, ref }` stack entry, and `loadProjectConfig` validates its shape — but
-  // multi-root resolution is not implemented yet. Fail loudly with a clear, actionable error
-  // rather than silently ignoring the declaration or crashing deep in the loader. (Resolution,
-  // lock provenance, install-time trust, and authoring docs are tracked as sub-issues of #88.)
-  if (project.externalStacks?.length) {
-    return {
-      ok: false,
-      warnings,
-      errors: project.externalStacks.map(
-        (s) =>
-          `external stack "${s.name}" (source: ${s.source}) is declared but not yet resolvable — ` +
-          `external bundle sources are not implemented yet (see issue #88); remove the source entry to render, ` +
-          `or follow the tracking sub-issues`,
-      ),
-    };
+  // External stack sources (#88): resolve each declared `{ name, source, ref }` entry to a
+  // toolkit root — a git URL fetched at the pinned `ref`, or a local path read in place — and
+  // merge its named stack into the registry, so one render/lock/doctor pipeline handles built-in
+  // and external stacks alike. Cross-source name collisions are a hard error naming both sources
+  // (see loadToolkitWithSources). A resolution/collision failure is surfaced as a render error
+  // (same fail-loud, tree-untouched contract as the guards below), not thrown.
+  let toolkit;
+  try {
+    toolkit = loadToolkitWithSources({
+      builtinRoot: toolkitRoot,
+      externalStacks: project.externalStacks ?? [],
+      cwd,
+      cacheDir: sourceCacheDir,
+    });
+  } catch (err) {
+    return { ok: false, warnings, errors: [err.message] };
   }
-
-  const toolkit = loadToolkit(toolkitRoot);
   const errors = [];
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "stack/kind/name" that emitted it
@@ -83,8 +89,11 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
   const oldLock = readLock(cwd);
   const trackedFiles = new Set(Object.keys(oldLock?.files ?? {}));
 
-  // Selection = union(items of enabled stacks) ∪ closure(include items) − eject.
-  const selection = computeSelection(toolkit, project, trackedFiles);
+  // Selection = union(items of enabled stacks) ∪ closure(include items) − eject. An external
+  // `{ name, source, ref }` entry enables its stack exactly like a bare built-in name — both are
+  // registered in `toolkit.stacks` — so fold the external names into the enabled set here.
+  const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
+  const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
   errors.push(...selection.errors);
 
   // Reverse the syrup companion edge (#74): an opt-in syrup file pairs with a companion waffle
@@ -201,6 +210,9 @@ export function renderProject({ toolkitRoot, cwd, toolkitVersion, force = false,
     lockFiles[rel] = sha256(content);
   }
 
+  // `stacks:` records the enabled built-in stack names. External sources render into `files`
+  // (so doctor drift-checks them like any managed file); recording each external source's
+  // resolved provenance (source + resolved commit) in the lock is a follow-up (#125).
   const lock = {
     toolkitVersion,
     targets: project.targets,

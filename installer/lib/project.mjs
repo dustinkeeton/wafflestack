@@ -250,9 +250,9 @@ export function loadProjectConfig(cwd, notes = []) {
   }
 
   // A `stacks:` entry is either a bare name (a built-in toolkit stack, unchanged) or a
-  // `{ name, source, ref }` mapping declaring an external source (#88). Split and validate
-  // the two shapes here; `externalStacks` is validated but NOT yet resolvable — `render`
-  // fails loudly on it (multi-root resolution is a follow-up).
+  // `{ name, source, ref }` mapping declaring an external source (#88). Split and validate the
+  // two shapes here; `render` resolves each external source to a toolkit root and merges its
+  // named stack via `loadToolkitWithSources`.
   const { stacks, externalStacks } = normalizeStackEntries(rawStacks);
 
   return {
@@ -295,9 +295,9 @@ export function classifyStackSource(source) {
  *
  * Returns `{ stacks: [name…], externalStacks: [{ name, source, sourceType, ref }] }`. A stack
  * name must be unique across every entry (built-in and external alike) — a collision is an
- * error, not a silent shadow. External sources validate here but are not yet resolvable:
- * `render` reports a clear "declared but not yet resolvable" error until multi-root resolution
- * lands (see #88).
+ * error, not a silent shadow. External sources validate here; `render` then resolves each to a
+ * toolkit root and merges its named stack (`loadToolkitWithSources`), where a name that collides
+ * with a built-in or another source is likewise a hard error (see #88).
  */
 export function normalizeStackEntries(raw) {
   if (raw === undefined || raw === null) return { stacks: [], externalStacks: [] };
