@@ -3294,6 +3294,199 @@ describe('external stack sources: multi-root resolution (#124)', () => {
   });
 });
 
+describe('external stack sources: provenance, attribution, re-resolution (#125)', () => {
+  let builtinRoot;
+  let extRoot;
+  let cwd;
+  let cacheDir;
+  const gitOk = spawnSync('git', ['--version']).status === 0;
+
+  beforeEach(() => {
+    builtinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-builtin-'));
+    extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-ext-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-project-'));
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-cache-'));
+
+    write(builtinRoot, 'toolkit.yaml', 'name: builtin\ndescription: built-in fixture\nstacks: [core]\n');
+    write(builtinRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core stack.\nskills: [alpha]\n');
+    write(builtinRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha from the built-in toolkit.\n');
+
+    // External source laid out as a toolkit root with an `extra` stack.
+    write(extRoot, 'stacks/extra/stack.yaml', 'name: extra\ndescription: Extra (external).\nskills: [beta]\n');
+    write(extRoot, 'stacks/extra/skills/beta/SKILL.md', '---\nname: beta\ndescription: Beta skill.\n---\n\nBeta from the external source.\n');
+  });
+
+  afterEach(() => {
+    for (const d of [builtinRoot, extRoot, cwd, cacheDir]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const readLockJson = () => JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+  const writeExternalConfig = () =>
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: extra',
+      `    source: ${extRoot}`,
+      'config: {}',
+      '',
+    ].join('\n'));
+
+  // A local git repo laid out as a toolkit root, with an initial `VERSION ONE` commit tagged
+  // v1.0.0 on branch `main`. Returns helpers to advance it and read its commits. `file://`
+  // forces git classification + the git transport, and the fetch stays offline (a local repo).
+  const makeGitToolkit = () => {
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-git-work-'));
+    const git = (...a) => {
+      const r = spawnSync('git', ['-C', work, ...a], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
+    };
+    assert.equal(spawnSync('git', ['init', '-q', '-b', 'main', work]).status, 0);
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    const skill = 'stacks/pinned/skills/pin/SKILL.md';
+    write(work, 'stacks/pinned/stack.yaml', 'name: pinned\ndescription: Pinned stack.\nskills: [pin]\n');
+    write(work, skill, '---\nname: pin\ndescription: Pin skill.\n---\n\nVERSION ONE\n');
+    git('add', '-A');
+    git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'v1');
+    git('tag', 'v1.0.0');
+    const revParse = (ref) => spawnSync('git', ['-C', work, 'rev-parse', ref], { encoding: 'utf8' }).stdout.trim();
+    return {
+      work,
+      revParse,
+      advance: (body) => {
+        write(work, skill, `---\nname: pin\ndescription: Pin skill.\n---\n\n${body}\n`);
+        git('add', '-A');
+        git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', body);
+      },
+    };
+  };
+  const writeGitConfig = (work, ref) =>
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - name: pinned',
+      `    source: file://${work}`,
+      `    ref: ${ref}`,
+      'config: {}',
+      '',
+    ].join('\n'));
+
+  test('a built-in-only lock records no `sources` block (backward-compatible shape)', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\nconfig: {}\n');
+    const result = renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!('sources' in readLockJson()), 'no sources key when there are no external sources');
+    assert.deepEqual(result.sources, []);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('a local-path source records path provenance (no ref/commit) plus the files it produced', () => {
+    writeExternalConfig();
+    const result = renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const lock = readLockJson();
+    assert.equal(lock.sources.length, 1);
+    assert.deepEqual(lock.sources[0], {
+      name: 'extra',
+      source: extRoot,
+      sourceType: 'path',
+      ref: null,
+      commit: null,
+      files: ['.claude/skills/beta/SKILL.md'],
+    });
+    // The built-in file is NOT attributed to the external source (stays toolkit-owned).
+    assert.ok(!lock.sources[0].files.includes('.claude/skills/alpha/SKILL.md'));
+    // render() surfaces the same provenance it wrote to the lock.
+    assert.deepEqual(result.sources, lock.sources);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('doctor attributes a modified external file to its source; built-in drift stays unattributed', () => {
+    writeExternalConfig();
+    assert.equal(renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir }).ok, true);
+    fs.appendFileSync(path.join(cwd, '.claude/skills/beta/SKILL.md'), '\nlocal edit\n');
+    fs.appendFileSync(path.join(cwd, '.claude/skills/alpha/SKILL.md'), '\nlocal edit\n');
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(dr.ok, false);
+    assert.ok(dr.modified.includes('.claude/skills/beta/SKILL.md'));
+    assert.ok(dr.modified.includes('.claude/skills/alpha/SKILL.md'));
+    assert.equal(dr.attribution['.claude/skills/beta/SKILL.md'], `extra (${extRoot})`);
+    assert.equal(dr.attribution['.claude/skills/alpha/SKILL.md'], undefined, 'built-in file has no source attribution');
+  });
+
+  test('backward compat: a lock with no `sources` block doctors clean, attribution empty', () => {
+    writeExternalConfig();
+    assert.equal(renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir }).ok, true);
+    // Simulate a pre-#125 lock: strip the provenance block, keep the tracked file hashes.
+    const lockPath = path.join(cwd, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    delete lock.sources;
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(dr.ok, true, JSON.stringify(dr));
+    assert.deepEqual(dr.attribution, {});
+  });
+
+  test('a git source records URL + pinned ref + resolved commit in the lock', { skip: gitOk ? false : 'git not available' }, () => {
+    const { work, revParse } = makeGitToolkit();
+    const commit = revParse('v1.0.0');
+    writeGitConfig(work, 'v1.0.0');
+    const result = renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const lock = readLockJson();
+    assert.equal(lock.sources.length, 1);
+    assert.deepEqual(lock.sources[0], {
+      name: 'pinned',
+      source: `file://${work}`,
+      sourceType: 'git',
+      ref: 'v1.0.0',
+      commit,
+      files: ['.claude/skills/pin/SKILL.md'],
+    });
+    // The recorded commit attributes doctor drift to the exact source version.
+    fs.appendFileSync(path.join(cwd, '.claude/skills/pin/SKILL.md'), '\nedit\n');
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).attribution['.claude/skills/pin/SKILL.md'], `pinned @ ${commit.slice(0, 12)}`);
+    fs.rmSync(work, { recursive: true, force: true });
+  });
+
+  test('upgrade re-resolves a moved branch ref and reports the per-source commit move', { skip: gitOk ? false : 'git not available' }, () => {
+    const { work, revParse, advance } = makeGitToolkit();
+    const c1 = revParse('HEAD');
+    writeGitConfig(work, 'main');
+    // First render pins the branch to c1.
+    assert.equal(renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.1.0', sourceCacheDir: cacheDir }).ok, true);
+    assert.equal(readLockJson().sources[0].commit, c1);
+
+    // Advance the branch — `main` now points at a new commit.
+    advance('VERSION TWO');
+    const c2 = revParse('HEAD');
+    assert.notEqual(c1, c2);
+
+    const result = upgrade({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.1.0', sourceCacheDir: cacheDir });
+    assert.equal(result.ok, true, JSON.stringify(result.notes));
+    // Re-resolution re-fetched the moved ref and re-rendered the newer body + re-stamped the lock.
+    assert.match(read(cwd, '.claude/skills/pin/SKILL.md'), /VERSION TWO/);
+    assert.equal(readLockJson().sources[0].commit, c2);
+    assert.equal(result.sourceMoves.length, 1);
+    assert.deepEqual(result.sourceMoves[0], { name: 'pinned', ref: 'main', sourceType: 'git', from: c1, to: c2, status: 'moved' });
+    fs.rmSync(work, { recursive: true, force: true });
+  });
+
+  test('upgrade on an unmoved (immutable-tag) pin reports no source moves', { skip: gitOk ? false : 'git not available' }, () => {
+    const { work, advance } = makeGitToolkit();
+    writeGitConfig(work, 'v1.0.0');
+    assert.equal(renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.1.0', sourceCacheDir: cacheDir }).ok, true);
+    // The branch advances, but the pin is the immutable tag — its resolved commit must not move.
+    advance('VERSION TWO');
+    const result = upgrade({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.1.0', sourceCacheDir: cacheDir });
+    assert.equal(result.ok, true, JSON.stringify(result.notes));
+    assert.deepEqual(result.sourceMoves, []);
+    assert.match(read(cwd, '.claude/skills/pin/SKILL.md'), /VERSION ONE/, 'tag pin unaffected by branch advance');
+    fs.rmSync(work, { recursive: true, force: true });
+  });
+});
+
 describe('changelogBetween', () => {
   const text = [
     '# Changelog', '',

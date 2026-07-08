@@ -34,6 +34,7 @@ export function renderProject({
   force = false,
   log = () => {},
   sourceCacheDir = defaultSourceCacheDir(),
+  refreshSources = false,
 }) {
   const warnings = [];
   // Carry a legacy repo forward before reading anything: move the consumer dot-paths
@@ -62,6 +63,7 @@ export function renderProject({
       externalStacks: project.externalStacks ?? [],
       cwd,
       cacheDir: sourceCacheDir,
+      refreshSources,
     });
   } catch (err) {
     return { ok: false, warnings, errors: [err.message] };
@@ -210,20 +212,29 @@ export function renderProject({
     lockFiles[rel] = sha256(content);
   }
 
-  // `stacks:` records the enabled built-in stack names. External sources render into `files`
-  // (so doctor drift-checks them like any managed file); recording each external source's
-  // resolved provenance (source + resolved commit) in the lock is a follow-up (#125).
+  // Per-source provenance (#125): attribute every rendered *external* file to the source it came
+  // from. `producedBy` records "<stackName>/<kind>/…" per output, and only external stacks carry
+  // `provenance` — so built-in and waffledocs outputs have no source entry and stay attributable
+  // to the toolkit as before. The `sources` block is omitted when empty, so a built-in-only lock
+  // is byte-identical to the pre-#125 shape (backward compatible: an old lock still validates and
+  // doctors clean, since doctor/upgrade treat a missing `sources` as "all built-in").
+  const sources = collectSourceProvenance(groups, producedBy, lockFiles);
+
+  // `stacks:` records the enabled built-in stack names; `sources` (when present) records each
+  // external source's resolved provenance and the files it produced. External files also live in
+  // `files` so doctor drift-checks them like any managed file.
   const lock = {
     toolkitVersion,
     targets: project.targets,
     stacks: project.stacks,
     include: project.include,
+    ...(sources.length ? { sources } : {}),
     files: lockFiles,
   };
   writeFileEnsuringDir(path.join(cwd, LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`);
 
   log(`rendered ${outputs.size} files${removed.length ? `, removed ${removed.length} stale` : ''}`);
-  return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed };
+  return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed, sources };
 }
 
 function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, patterns }) {
@@ -380,6 +391,37 @@ export function readLock(cwd) {
   const { file } = resolveLockFile(cwd);
   if (!exists(file)) return null;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/**
+ * Build the lock's per-source provenance: one `{ name, source, sourceType, ref, commit, files }`
+ * entry per external source that rendered at least one file, `files` being the source's rendered
+ * paths. `groups` is the per-stack render grouping (only external stacks carry `provenance`);
+ * `producedBy` maps each output path to its "<stackName>/…" context, whose leading segment names
+ * the owning stack (stack names are unique across all sources, so the segment identifies it
+ * unambiguously). Built-in and waffledocs outputs have no external source and are simply absent.
+ * Sources and their file lists are sorted for a deterministic lock.
+ */
+function collectSourceProvenance(groups, producedBy, lockFiles) {
+  const provenanceByStack = new Map();
+  for (const { stack } of groups.values()) {
+    if (stack.provenance) provenanceByStack.set(stack.name, stack.provenance);
+  }
+  if (!provenanceByStack.size) return [];
+
+  const filesBySource = new Map();
+  for (const rel of Object.keys(lockFiles)) {
+    const stackName = producedBy.get(rel)?.split('/')[0];
+    if (stackName && provenanceByStack.has(stackName)) {
+      if (!filesBySource.has(stackName)) filesBySource.set(stackName, []);
+      filesBySource.get(stackName).push(rel);
+    }
+  }
+
+  return [...provenanceByStack.values()]
+    .map((prov) => ({ ...prov, files: (filesBySource.get(prov.name) ?? []).sort((a, b) => a.localeCompare(b)) }))
+    .filter((source) => source.files.length)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**

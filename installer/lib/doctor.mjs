@@ -6,18 +6,29 @@ import { LOCK_FILE, resolveLockFile } from './project.mjs';
 
 /**
  * Compare managed files against the lock manifest.
- * Returns { ok, modified, missing, notes, allowMissing }.
+ * Returns { ok, modified, missing, notes, attribution, allowMissing }.
  *
  * `allowMissing` turns doctor into a CI-friendly drift gate: absent managed files are
  * reported informationally instead of failing the check, for repos that deliberately
  * gitignore some renders (so those files are legitimately absent in a fresh CI checkout).
  * Modified files are still an error, and a missing lock is still an error — the repo never
  * rendered, which the flag must not mask.
+ *
+ * `attribution` maps each externally-sourced file to a human label for the source it came from
+ * (#125), so a drift report names which external source a modified/missing file belongs to.
+ * Built-in files have no entry (attributed to the toolkit); a pre-#125 lock with no `sources`
+ * block yields an empty map — doctor then behaves exactly as before.
  */
 export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
   const lock = readLock(cwd);
   if (!lock) {
-    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], allowMissing };
+    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing };
+  }
+
+  const attribution = {};
+  for (const src of lock.sources ?? []) {
+    const label = sourceLabel(src);
+    for (const rel of src.files ?? []) attribution[rel] = label;
   }
 
   const modified = [];
@@ -55,5 +66,18 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false }) {
 
   // With --allow-missing, only *modified* files count as drift; absent files are informational.
   const ok = allowMissing ? modified.length === 0 : modified.length === 0 && missing.length === 0;
-  return { ok, modified, missing, notes, allowMissing };
+  return { ok, modified, missing, notes, attribution, allowMissing };
+}
+
+/**
+ * Human label for a lock `sources` entry, used to attribute drift. A git source reads as
+ * "<name> @ <short-commit>" (falling back to the ref when a pre-#125-ish lock recorded no
+ * commit); a local-path source as "<name> (<path>)".
+ */
+function sourceLabel(src) {
+  if (src.sourceType === 'git') {
+    const at = src.commit ? String(src.commit).slice(0, 12) : (src.ref ?? 'unknown');
+    return `${src.name} @ ${at}`;
+  }
+  return `${src.name} (${src.source})`;
 }

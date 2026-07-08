@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 import { normalizeItemRef } from './refs.mjs';
-import { resolveSourceRoot } from './sources.mjs';
+import { resolveSource } from './sources.mjs';
 
 /** Load the toolkit registry and every stack it lists. */
 export function loadToolkit(rootDir) {
@@ -21,10 +21,12 @@ export function loadToolkit(rootDir) {
  * into one registry so a single render/lock/doctor pipeline handles all of them (#88).
  *
  * Each external `{ name, source, ref }` entry resolves to a toolkit root on disk (a git URL
- * fetched at the pinned `ref`, or a local path read in place — see `resolveSourceRoot`) and its
+ * fetched at the pinned `ref`, or a local path read in place — see `resolveSource`) and its
  * `name` selects a single stack from that root, loaded with the same `loadStack` machinery the
- * built-in stacks use. The stack is registered under the entry `name`, carrying a `source` tag
- * for provenance (fuller lock provenance is #125).
+ * built-in stacks use. The stack is registered under the entry `name`, carrying a `provenance`
+ * record ({ name, source, sourceType, ref, commit }) so `render` can attribute every file it
+ * emits to its source in the lock (#125). `refreshSources` forces a git re-fetch of each pinned
+ * ref (how `upgrade` observes a moved ref) rather than reusing the session cache.
  *
  * Collision detection is a hard error, never a silent shadow: if an external stack name is
  * already defined by another source — the built-in toolkit or an earlier external source — the
@@ -34,7 +36,7 @@ export function loadToolkit(rootDir) {
  *
  * With no external stacks this is exactly `loadToolkit(builtinRoot)` — nothing is fetched.
  */
-export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch }) {
+export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) {
   const builtin = loadToolkit(builtinRoot);
   if (!externalStacks.length) return builtin;
 
@@ -49,7 +51,7 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
           `${describeSource(ext)} — a stack name must be unique across all sources; rename or remove one`,
       );
     }
-    const root = resolveSourceRoot(ext, { cwd, cacheDir, gitFetch });
+    const { root, commit } = resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, refresh: refreshSources });
     const dir = externalStackDir(root, ext.name);
     if (!dir) {
       throw new Error(
@@ -58,7 +60,16 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
       );
     }
     const stack = loadStack(ext.name, dir);
-    stack.source = ext.source; // provenance tag; fuller lock provenance is #125
+    // Full provenance (#125): where every file this stack renders came from, recorded in the lock
+    // so drift and upgrades attribute per source. Git → URL + pinned ref + resolved commit; a
+    // local path → the path (no ref/commit).
+    stack.provenance = {
+      name: ext.name,
+      source: ext.source,
+      sourceType: ext.sourceType,
+      ref: ext.ref ?? null,
+      commit: commit ?? null,
+    };
     stacks.set(ext.name, stack);
     origin.set(ext.name, `external source ${describeSource(ext)}`);
   }
