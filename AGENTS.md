@@ -20,8 +20,10 @@ stacks/<name>/
   stack.yaml              manifest: agents, skills, requires, config schema, env, setup
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
+  evals/<name>.eval.yaml   Layer 2 behavioral eval case (metered; inert to render/validate/lock)
 installer/cli.mjs          bin entry: dispatches commands, global --cwd flag
-installer/lib/*.mjs        render pipeline (ES modules)
+installer/evals.mjs        eval runner entry (`npm run evals`, metered — NOT in npm test)
+installer/lib/*.mjs        render pipeline + eval harness (ES modules)
 installer/test/*.test.mjs  node:test suite
 schema/FORMAT.md           format reference (owner-voiced)
 schema/SETUP.md            agent install playbook (owner-voiced)
@@ -70,6 +72,7 @@ collision is resolved by the `electron-`/`webapp-` renames; the output-conflict 
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` rename, the 0.8.0 root→`.waffle/` config move, and the 0.10.0 consumer `bundles:`→`stacks:` key rename (#59). |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render + doctor. Also exports the changelog-section parser. |
 | `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded, self-contained HTML page (`cheatsheet.html`/`team.html`; hybrid font strategy — Google Fonts link + system-font fallback, fonts the only external ref). Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
+| `installer/lib/evals.mjs` | Layer 2 eval harness (#109): discover/validate `stacks/*/evals/*.eval.yaml` cases, render a case's target through `renderProject` into a temp project (rendered body → system prompt), drive a model, evaluate transcript assertions (`includes`/`excludes`/`regex` deterministic; `judge` LLM-graded). `Budget` enforces a hard call cap BEFORE each call (`BudgetExceededError` stops the run, remaining cases skipped). `anthropicClient` (fetch-based, no SDK dep) for live runs; `mockClient` for dry-run/tests. Driven by `installer/evals.mjs` (`npm run evals`), never by `npm test`. |
 
 ```js
 // render.mjs
@@ -309,17 +312,21 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 280 tests, 46 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 303 tests, 54 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render` |
 | verify render | `node installer/cli.mjs doctor` |
+| evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). **Not** in `npm test`. |
 
 Test files: `installer.test.mjs` (render pipeline machinery), `checkpoint.test.mjs` /
 `memory.test.mjs` (the delegate skill's shipped validator CLIs), `content.test.mjs`
 (eval layer 1, #108: deterministic key-phrase assertions on rendered stack prompts —
 reads the committed `.claude/skills/**` render, renders the gitignored label-hook workflow
-to a temp dir; pins load-bearing guardrails so rewording passes but removing one fails CI).
+to a temp dir; pins load-bearing guardrails so rewording passes but removing one fails CI),
+`evals.test.mjs` (eval layer 2 harness, #109: discovery/validation, target render, assertion
++ budget logic, and a dry-run over the shipped seed case — all with the mock model, so it runs
+free inside `npm test`; the metered runner itself is `npm run evals`, never `npm test`).
 
 ## Dogfood state
 

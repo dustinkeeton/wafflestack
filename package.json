@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "test": "node --test installer/test/*.test.mjs",
-    "validate": "node installer/cli.mjs validate"
+    "validate": "node installer/cli.mjs validate",
+    "evals": "node installer/evals.mjs"
   },
   "dependencies": {
     "yaml": "^2.4.5"
