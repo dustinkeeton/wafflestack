@@ -30,8 +30,8 @@
       "description": "Phase 1 output — what this run resolved to delegate.",
       "properties": {
         "mode": {
-          "enum": ["current-milestone", "milestone", "all-open", "single-issue", "label", "keyword"],
-          "description": "How the issue set was resolved from $ARGUMENTS."
+          "enum": ["current-milestone", "milestone", "all-open", "single-issue", "label", "keyword", "todo-column"],
+          "description": "How the issue set was resolved from $ARGUMENTS. `todo-column` only when the board's Todo set was actually delegated — a todo-column run that fell back (missing board or missing Todo option) records `all-open`, with the fallback provenance in `description`: the mode records what actually ran."
         },
         "description": {
           "type": "string",

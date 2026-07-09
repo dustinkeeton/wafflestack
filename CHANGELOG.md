@@ -32,6 +32,28 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`todo-column` board scope for `delegate.defaultScope` (#206, `orchestration`).** A third
+  default-scope value alongside `current-milestone` and `all-open`: delegate **exactly the open
+  issues in the project board's Status = "Todo" column**, resolved via the
+  `github-project-management` GraphQL catalog (board by title — with the `organization(login:)`
+  variant for org-owned repos → Status field's "Todo" option → items filtered client-side to this
+  repo's open Todo issues, with `pageInfo` detection of the `items(first: 100)` bound: paginate or
+  stop, never trust a truncated set; the intersection carries a raised `--limit 500` bound plus a
+  count invariant). A missing board or missing Todo option falls back to `all-open` — the
+  documented contract of choosing the value, but **explicit, never silent**: the Phase 3 plan
+  leads with the fallback line, interactive runs still gate the widened set, batch runs log it,
+  and the checkpoint records what actually ran (`mode: "all-open"` with the fallback provenance in
+  `description`). A **failed** board lookup (API error, missing Projects v2 token scope) is not a
+  missing board — it stops the run rather than falling back, so a transient error never widens an
+  unattended batch run. An empty-but-present Todo column is **not** a fallback — it stops the run
+  as "nothing to delegate". Batch mode counts the `todo-column` default as an explicit-scope
+  signal, same as `all-open`. Phase 1 also captures the In Progress / In Review option IDs so
+  Board Setup's reuse of the Phase 1 lookups keeps kanban sync intact. The checkpoint schema's
+  `scope.mode` enum gains `todo-column` (additive — old checkpoints stay valid, no version bump).
+  - **Consumer impact:** additive, prompt-only. **No new config keys** — the existing
+    `delegate.defaultScope` key accepts the new value; its default stays `current-milestone`. A
+    plain re-render picks it up; behavior is unchanged unless a repo sets
+    `delegate.defaultScope: todo-column`.
 - **Per-run round caps for autopilot's gate loops — `+qa:N` / `+review:N` (#230,
   `orchestration`).** The QA-gate and review-loop consent flags may now carry an optional round
   count using the same colon syntax as `milestone:<name>`: `+review:3` consents to the review

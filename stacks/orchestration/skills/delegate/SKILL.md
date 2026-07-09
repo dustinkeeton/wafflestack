@@ -68,7 +68,7 @@ The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each 
 `/delegate` pauses for human confirmation whenever the plan is non-trivial (the Phase 3 gate: >2 agents, an ambiguous assignment, or parallel execution). That gate is correct for interactive use, but it blocks delegate from running as a building block for the autonomous backlog runner (the `autopilot` skill), which must work through a supplied issue list without a human accepting each plan. **Batch mode** removes that interactive pause by treating **explicit scope** as the confirmation.
 
 - **Opt-in, per run.** Batch mode is ON when `delegate.batchMode` is `true`; for this run it is **{{delegate.batchMode}}**. Default `false` — the interactive confirmation gate behaves exactly as it always has.
-- **Activation requires explicit scope.** Batch mode applies only when the invoker (a human or the autopilot orchestrator) supplied the issue set explicitly — an issue list / `#N`, `milestone:<name>`, a known label, a keyword, or the `all-open` default scope. That explicit scope is what stands in for the human accepting the plan. If `delegate.batchMode` is `true` but the resolved scope carries no such signal, **fall back to interactive confirmation** — never auto-proceed on an unscoped run.
+- **Activation requires explicit scope.** Batch mode applies only when the invoker (a human or the autopilot orchestrator) supplied the issue set explicitly — an issue list / `#N`, `milestone:<name>`, a known label, a keyword, or the `all-open` / `todo-column` default scopes (a config-chosen default set is an explicit opt-in; a `todo-column` fallback resolves to `all-open`, itself an explicit-scope signal). That explicit scope is what stands in for the human accepting the plan. If `delegate.batchMode` is `true` but the resolved scope carries no such signal, **fall back to interactive confirmation** — never auto-proceed on an unscoped run.
 - **It changes decision points, not machinery.** Classification, the parallel-only-when-areas-disjoint rules, worktree isolation for parallel groups, serial dependency chains, per-issue PR creation, and board updates are all unchanged. Batch mode changes exactly two decisions:
   1. **The Phase 3 confirmation gate is skipped** — instead of pausing, **log** the plan that would have been shown for approval (the same table) so the run stays auditable after the fact, then proceed. The `plan` checkpoint still records `confirmed: true`, tagged `confirmedVia: "batch-scope"` to mark that confirmation came from explicit scope under batch mode, not from a human.
   2. **Ambiguous classification falls back to the safest choice** — serial execution in the main checkout (a serial group, worktree `null`) — instead of pausing to ask.
@@ -84,6 +84,7 @@ The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each 
 - **No `$ARGUMENTS` (default)** → delegate the project's configured default scope, which for this project is **{{delegate.defaultScope}}**:
   - `current-milestone` → delegate **every open issue in the current milestone, and only that milestone**. Resolve the current milestone first (see below), then fetch its issues. This path must **never** silently widen to all open issues.
   - `all-open` → fetch **every open issue** in the repo: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`. This is the bulk path for repos that don't plan with milestones; in interactive mode the Phase 3 confirmation gate guards it — always present the full plan before spawning anything. (In batch mode, `all-open` is an explicit-scope signal: the plan is **logged**, not paused on — see **Batch mode**.)
+  - `todo-column` → delegate **exactly the open issues in the project board's "Todo" Status column**. Resolve the board and its Status = "Todo" option first (see **Resolving the Todo column** below), then fetch those issues. **No project board, or no "Todo" option on the Status field → fall back to `all-open`** (a **failed** board lookup — API error, missing token scope — is *not* a missing board: it **stops** the run; see **Resolving the Todo column**) — that fallback is the documented contract of choosing `delegate.defaultScope: todo-column`, but it must be **explicit, never silent**: lead the Phase 3 plan with `Board or Todo column not found → falling back to all-open (N issues)`; in interactive mode the confirmation gate still guards the widened set, and in batch mode that line is **logged**, not paused on. A Todo column that exists but is empty is **NOT a fallback** — that is "nothing to delegate": report that the Todo column is clear and **stop** (the zero-matching-issues rule below). Never widen past the Todo set for any other reason. (Contrast with `current-milestone`, which **stops** rather than widens — there the user never consented to more than the milestone; here the fallback is what the configured scope value itself opted into.)
 - `#N` or a bare number → fetch that single issue: `gh issue view N --json number,title,labels,body,milestone`
 - `milestone:<title-or-number>` → delegate that milestone explicitly: resolve a number directly, or match the title against `gh api "repos/$OWNER/$REPO/milestones?state=open"`, then fetch its open issues exactly as in the current-milestone path.
 - A known label (`bug`, `enhancement`, `documentation`, `question`) → filter: `gh issue list --state open --label "$ARGUMENTS" --json number,title,labels,body,milestone`
@@ -121,7 +122,105 @@ gh issue list --state open --milestone "$MILESTONE_NUMBER" \
 - **Current milestone has zero open issues** → report that it is already clear and stop.
 - Always state the selected milestone (title + number) in the Phase 3 plan so the user can confirm the scope before any agent is spawned.
 
-**Checkpoint** — write `scope` (the resolved `mode`, a human `description`, and `milestone` for milestone modes) and `issues` (one entry per fetched issue: `number`, `title`, `labels`, optionally `body`/`milestone`), then validate:
+### Resolving the Todo column (todo-column path)
+
+Delegate exactly the board's Status = "Todo" open issues. Three lookups, in order — a **successful-but-empty** result at step 1 or 2 triggers the **explicit `all-open` fallback** described above; an empty result at step 3 is a clear column, which **stops** the run instead.
+
+**Failed lookup ≠ empty lookup.** An empty capture means "no match" only when the query itself succeeded. A **failed** lookup at any step — a non-zero `gh` exit (check `$?` immediately after the capture) or an `errors` key in the GraphQL response (rate limit, 5xx, a token without Projects v2 read scope — the default Actions `GITHUB_TOKEN` cannot see Projects v2 at all) — must **stop the run and report the error**, never take the fallback. Only a confirmed no-match may widen scope; a transient failure must never widen it. This matters most in batch mode, where the fallback line is logged rather than gated — an unattended run that read an API error as "no board" would delegate the entire backlog.
+
+1. Discover `PROJECT_ID` — the same title-match query Board Setup uses (an account may own several projects, so never assume the first result):
+
+   ```bash
+   OWNER=$(gh repo view --json owner -q .owner.login)
+   REPO=$(gh repo view --json name -q .name)
+
+   PROJECT_ID=$(gh api graphql -f query='
+     query($owner: String!) {
+       user(login: $owner) {
+         projectsV2(first: 20) {
+           nodes { id number title }
+         }
+       }
+     }
+   ' -f owner="$OWNER" --jq 'first(.data.user.projectsV2.nodes[] | select(.title | test("{{project.name}}"; "i")) | .id) // empty')
+   ```
+
+   For an **organization-owned** repo, replace `user(login: $owner)` with `organization(login: $owner)` — the same caveat `github-project-board` documents. It is not optional here: against an org owner the `user` query resolves to a `null` account node and the `--jq` filter errors (a **failed** lookup, not an empty one), so without the org variant a `todo-column` run on an org repo can never find its board.
+
+   `PROJECT_ID` empty **and the query succeeded** → **no board**: fall back to `all-open`, stated explicitly per above. Empty because the lookup **failed** → stop and report (the failed-lookup rule above).
+
+2. Find the Status field and its "Todo" option — the Board Setup fields query. Extract the field ID and **all** the status option IDs in one pass while `$STATUS_FIELD` is in hand: Board Setup reuses them for kanban sync instead of re-querying, so capturing only the Todo option here would leave the board mutations without their In Progress / In Review IDs (an absent "In Review" option simply leaves `IN_REVIEW_OPTION_ID` empty, exactly as Board Setup allows):
+
+   ```bash
+   STATUS_FIELD=$(gh api graphql -f query='
+     query($projectId: ID!) {
+       node(id: $projectId) {
+         ... on ProjectV2 {
+           fields(first: 50) {
+             nodes {
+               ... on ProjectV2SingleSelectField {
+                 id name
+                 options { id name }
+               }
+             }
+           }
+         }
+       }
+     }
+   ' -f projectId="$PROJECT_ID" --jq 'first(.data.node.fields.nodes[] | select(.name == "Status")) // empty')
+
+   STATUS_FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id // empty')
+   TODO_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "Todo") | .id) // empty')
+   IN_PROGRESS_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "In Progress") | .id) // empty')
+   IN_REVIEW_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "In Review") | .id) // empty')
+   ```
+
+   `TODO_OPTION_ID` empty **and the query succeeded** → **no "Todo" option on the Status field** (or no Status field at all): fall back to `all-open`, stated explicitly per above. A failed fields query → stop and report (the failed-lookup rule above).
+
+3. List the issue numbers currently in the Todo column — the `github-project-management` skill's items-with-status catalog query, filtered client-side to items whose content is an **open Issue in this repo** and whose Status `fieldValues` value is "Todo". The repo filter is load-bearing: a user-level project (matched by a fuzzy title regex above) can track several repos' issues, and a foreign repo's Todo issue whose number collides with an open issue here must not leak into the set:
+
+   ```bash
+   TODO_ITEMS=$(gh api graphql -f query='
+     query($projectId: ID!) {
+       node(id: $projectId) {
+         ... on ProjectV2 {
+           items(first: 100) {
+             pageInfo { hasNextPage endCursor }
+             nodes {
+               content { ... on Issue { number state repository { nameWithOwner } } }
+               fieldValues(first: 20) {
+                 nodes {
+                   ... on ProjectV2ItemFieldSingleSelectValue {
+                     field { ... on ProjectV2SingleSelectField { name } }
+                     name
+                   }
+                 }
+               }
+             }
+           }
+         }
+       }
+     }
+   ' -f projectId="$PROJECT_ID")
+
+   HAS_NEXT_PAGE=$(echo "$TODO_ITEMS" | jq -r '.data.node.items.pageInfo.hasNextPage')
+
+   TODO_NUMBERS=$(echo "$TODO_ITEMS" | jq -r --arg repo "$OWNER/$REPO" '[.data.node.items.nodes[] | select(.content.state == "OPEN") | select(.content.repository.nameWithOwner == $repo) | select(any(.fieldValues.nodes[]?; .field.name == "Status" and .name == "Todo")) | .content.number | tostring] | join(" ")')
+   ```
+
+   **The `items(first: 100)` bound is detectable, not hypothetical** — `HAS_NEXT_PAGE` is the signal. `true` means the board holds more than 100 items and `TODO_NUMBERS` is a truncated set: re-run the query with an `after:` cursor argument set to the returned `endCursor` and merge each page's numbers until `hasNextPage` comes back `false` — or stop and report the truncation. Never trust a truncated `TODO_NUMBERS`; this path's contract is *exactly* the Todo set.
+
+   `TODO_NUMBERS` empty → the Todo column exists but is **empty**. This is NOT a fallback — report that the Todo column is clear and stop (the zero-matching-issues rule).
+
+Then fetch full issue JSON in bulk and intersect client-side — keep only the issues whose `number` appears in `TODO_NUMBERS` (same pattern as the keyword path). Unlike the all-open and keyword paths — where `--limit 50` *defines* the set — the bound here must only be a **superset** of the board's Todo issues, so raise it comfortably above the 100-item board page (`--limit 50` would silently clip a Todo issue that is not among the first 50 open issues):
+
+```bash
+gh issue list --state open --json number,title,labels,body,milestone --limit 500
+```
+
+That intersection is the delegated set. **Count invariant:** the intersection must hold exactly as many issues as `TODO_NUMBERS` — a mismatch means a Todo issue fell outside the fetched window (or the board tracks an issue that is missing here); **stop and report the discrepancy** rather than silently under-delegate.
+
+**Checkpoint** — write `scope` (the resolved `mode`, a human `description`, and `milestone` for milestone modes) and `issues` (one entry per fetched issue: `number`, `title`, `labels`, optionally `body`/`milestone`), then validate. `mode` is `todo-column` only when the Todo set was actually delegated; a run that **fell back records `mode: "all-open"`** with the provenance in `description` (e.g. `defaultScope todo-column: no Todo column on board — fell back to all-open (12 issues)`) — the checkpoint records what actually ran, the description carries why. Validate:
 
 ```bash
 node {{harness.skillsDir}}/delegate/checkpoint.mjs --file {{delegate.checkpointDir}}/<runId>.json --phase fetch
@@ -166,7 +265,7 @@ Worktree isolation makes it safe for two agents of the **same type** to run at o
 - Security issues serialize **last**
 - Documentation issues serialize **last** (need final code state)
 
-Present the plan to the user. On the no-args path, **lead with the resolved scope** — the milestone (title, number, open-issue count) or `all open issues (N)` — so the user confirms exactly what is being delegated:
+Present the plan to the user. On the no-args path, **lead with the resolved scope** — the milestone (title, number, open-issue count), `all open issues (N)`, `board Todo column (N issues)`, or the todo-column fallback line (`Board or Todo column not found → falling back to all-open (N issues)`) — so the user confirms exactly what is being delegated:
 
 ```
 ## Delegation Plan
@@ -201,7 +300,7 @@ The validator enforces that every issue is assigned exactly once, branch names a
 
 ## Board Setup
 
-Before execution begins, discover the project board metadata for kanban sync. This is best-effort — if the project or status options are not found, log a warning and skip all board updates.
+Before execution begins, discover the project board metadata for kanban sync. This is best-effort — if the project or status options are not found, log a warning and skip all board updates. A `todo-column` run already discovered `PROJECT_ID`, `STATUS_FIELD_ID`, `IN_PROGRESS_OPTION_ID`, and `IN_REVIEW_OPTION_ID` while resolving the Todo column in Phase 1 — reuse those values instead of re-running steps 2–3's queries.
 
 1. Get repo owner/name:
    ```bash

@@ -202,6 +202,39 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /confirmedVia: "batch-scope"/);
   });
 
+  test('todo-column scope: board Todo set, explicit all-open fallback, empty column stops', () => {
+    // The third defaultScope value delegates exactly the board's Status="Todo" issues.
+    assert.match(md, /`todo-column`/);
+    // A missing board / missing Todo option falls back to all-open — explicitly, never silently.
+    assert.match(md, /falling back to all-open/);
+    assert.match(md, /explicit, never silent/);
+    // An empty-but-present Todo column is "nothing to delegate", never a widened scope.
+    assert.match(md, /NOT a fallback/);
+    // A FAILED board lookup (API error, missing Projects-v2 token scope) is not a
+    // missing board: it stops the run — only a successful no-match takes the fallback,
+    // so a transient error can never widen an unattended batch run.
+    assert.match(md, /stop the run and report the error/);
+    assert.match(md, /a transient failure must never widen/);
+    // Org-owned repos need the organization(login:) query variant, or the board
+    // lookup fails on every run and todo-column can never fire.
+    assert.match(md, /organization\(login: \$owner\)/);
+    // The Todo set is resolved from the board via the project-items GraphQL query.
+    assert.match(md, /fieldValues/);
+    // The >100-item case is detectable (pageInfo requested) and the rule is explicit:
+    // paginate or stop — never trust a truncated Todo set.
+    assert.match(md, /hasNextPage/);
+    assert.match(md, /Never trust a truncated/);
+    // The intersection's lookup table must be a superset of the Todo set (raised
+    // bound) and the count invariant catches any silent loss.
+    assert.match(md, /Count invariant/);
+    // Phase 1 captures ALL the status option IDs (not just Todo) so Board Setup's
+    // reuse note doesn't strand kanban sync without In Progress / In Review IDs.
+    assert.match(md, /Board Setup reuses them for kanban sync/);
+    // Multi-repo user projects: items are filtered to THIS repo so a foreign issue
+    // with a colliding number can't be wrongly delegated.
+    assert.match(md, /nameWithOwner/);
+  });
+
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {
     assert.match(md, /Hard cap:\*\* `4096` bytes/);
     assert.match(md, /memory\.mjs --file .*--max-bytes 4096/);

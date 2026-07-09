@@ -68,6 +68,17 @@ describe('delegate checkpoint validator', () => {
     }
   });
 
+  test('a todo-column scope mode passes the fetch boundary', () => {
+    // The board-column default scope (#206): the enum addition is additive — a run that
+    // delegated the board's Status="Todo" set records mode "todo-column" (a fallback run
+    // records "all-open" instead, which the base fixture family already covers).
+    const doc = clone(BASE);
+    doc.scope = { mode: 'todo-column', description: 'board Todo column — 2 items', milestone: null };
+    const r = run(doc, 'fetch');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /is valid for phase/);
+  });
+
   test('missing required section for the phase stops the run', () => {
     const doc = clone(BASE);
     delete doc.report;
