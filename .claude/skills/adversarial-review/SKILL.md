@@ -107,15 +107,23 @@ the hole, the concrete failure it causes, and what would resolve it. Prefer **in
 anchored to the offending line** so the author sees them in context, plus one **summary
 review comment** that gives the verdict and lists the findings by severity.
 
-Post everything as a **single review** so the author gets one coherent notification. Build a
-JSON payload and submit it in one call — `line` must be a line that appears in the PR's diff,
-`side: RIGHT` for added/context lines and `LEFT` for removed lines:
+Post everything as a **single review** so the author gets one coherent notification.
 
-```bash
-gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input - <<'EOF'
+**Assemble the payload in a file, then post it with one single-line command.** Use the `Write`
+tool to create `/tmp/adversarial-review.json` (outside the repo, so the working tree stays
+clean), then submit it. Never build the review with a heredoc (`--input - <<'EOF'`) or a
+multi-line `--body "…"`: a heredoc is a *multi-line command*, and an automated caller's tool
+allowlist matches on the command's leading program (`Bash(gh api:*)`), which a multi-line
+compound never matches — the call is denied and the review silently never posts.
+
+Write this JSON to `/tmp/adversarial-review.json` — `line` must be a line that appears in the
+PR's diff, `side: RIGHT` for added/context lines and `LEFT` for removed lines. The `body` MUST
+carry the literal marker `<!-- waffle-adversarial-review -->` on its own line (see below):
+
+```json
 {
   "event": "COMMENT",
-  "body": "**Adversarial review** — 1 blocker, 2 should-fix, 1 nit.\n\n- **[blocker]** `parseRange` returns the wrong bound for an empty input (see inline).\n- **[should-fix]** No test covers the `null` config path added in `load.ts`.\n- **[should-fix]** `flush()` swallows the write error instead of surfacing it.\n- **[nit]** `tmp2` could reuse the existing `withTempDir` helper.",
+  "body": "<!-- waffle-adversarial-review -->\n**Adversarial review** — 1 blocker, 2 should-fix, 1 nit.\n\n- **[blocker]** `parseRange` returns the wrong bound for an empty input (see inline).\n- **[should-fix]** No test covers the `null` config path added in `load.ts`.\n- **[should-fix]** `flush()` swallows the write error instead of surfacing it.\n- **[nit]** `tmp2` could reuse the existing `withTempDir` helper.",
   "comments": [
     { "path": "src/range.ts", "line": 42, "side": "RIGHT",
       "body": "**[blocker]** With `input === \"\"` this returns `[0, -1]`, so every downstream slice is empty. Add an explicit empty-input guard and a test that pins the returned bound." },
@@ -123,11 +131,21 @@ gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input - <<'EOF'
       "body": "**[should-fix]** This new `null`-config branch has no test — deleting the branch wouldn't fail the suite. Add a case that exercises it." }
   ]
 }
-EOF
+```
+
+Then post it — one program, one line, no compounds:
+
+```bash
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input /tmp/adversarial-review.json
 ```
 
 Notes on mechanics:
 
+- **The marker is load-bearing.** Every review this skill posts — findings *or* no-holes —
+  must contain the exact literal `<!-- waffle-adversarial-review -->` on its own line in the
+  summary body. The `waffle-pr-green-hook` workflow keys its duplicate-review guard on that
+  marker (matched against the review's `commit_id`) and its delivery check on its presence;
+  omitting or altering it causes duplicate reviews and a falsely-red job.
 - Use **`event: "COMMENT"`** — an honest, non-approving review. Escalate to
   `event: "REQUEST_CHANGES"` **only** when you found a genuine **blocker**; never as a default
   posture. GitHub forbids `REQUEST_CHANGES`/`APPROVE` on your **own** PR, so if the review
@@ -136,18 +154,28 @@ Notes on mechanics:
 - A `line` that isn't part of the diff is rejected by the API. If a finding is about code the
   diff only *touches indirectly*, describe it in the **summary body** with a `file:line`
   reference instead of forcing an inline anchor.
-- For a large batch, `--input` with a heredoc (above) avoids the shell-escaping traps of
-  many `-f`/`-F` flags. Write the JSON to a file first if it's easier to assemble.
+- The file is the standard path, not a fallback: `--input <file>` sidesteps both the
+  shell-escaping traps of many `-f`/`-F` flags and the multi-line-command trap above.
 
 ## 6. "No holes found" is a valid outcome
 
 If the PR genuinely holds up — edge cases handled, tests real and sufficient, API clean, no
 obvious simplification — **say so plainly** and do not invent findings to justify the run.
 Post a short approving-in-spirit summary (still `event: "COMMENT"` unless you're authorized to
-approve and aren't the author):
+approve and aren't the author). Same rule as step 5: the body goes in a **file**, never inline
+after `--body` — a multi-line body inside the command is the same allowlist trap. `Write` the
+summary to `/tmp/adversarial-review-summary.md`, marker on its own line:
+
+```markdown
+<!-- waffle-adversarial-review -->
+Adversarial review: no holes found. Checked correctness edge cases, error handling, test depth,
+API/naming, and simplification against the full diff — nothing blocks or should-fix. Solid PR.
+```
+
+Then post it with a single-line command:
 
 ```bash
-gh pr review "$N" --comment --body "Adversarial review: no holes found. Checked correctness edge cases, error handling, test depth, API/naming, and simplification against the full diff — nothing blocks or should-fix. Solid PR."
+gh pr review "$N" --comment --body-file /tmp/adversarial-review-summary.md
 ```
 
 ## 7. Report back

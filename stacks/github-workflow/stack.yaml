@@ -568,21 +568,42 @@ setup: |-
   PRs (a bot's own PR is not reviewed), fork-head PRs (a fork's green checks must not spend this
   repo's budget — the `workflow_run` token is read/write even for forks, so this gate is the
   guard), a PR that isn't fully green yet, and — the dedup — a head commit that already carries an
-  adversarial review (detected by a stable `<!-- waffle-adversarial-review -->` marker the dispatch
-  prompt tells the harness to embed, matched against the review's `commit_id`). So a re-run of
+  adversarial review (detected by a stable `<!-- waffle-adversarial-review -->` marker the skill
+  itself embeds in every review it posts, matched against the review's `commit_id`). So a re-run of
   checks on an already-reviewed head posts no duplicate, while a new commit (new head SHA, no
   marker) is reviewed afresh — once per green transition. The review posts findings only (no
   commits, no file edits), so it can't itself retrigger CI.
   **What the harness may do (baked-in allowlist).** The workflow's `claude_args` ships a default
-  `--allowedTools 'Bash(gh pr:*),Bash(gh api:*),Bash(gh repo:*)'` — enough for the skill to read
-  the PR (`gh pr diff`/`gh pr view`), read surrounding source (`gh repo view`/`gh api`, plus the
-  harness's ungated Read/Grep over the checked-out head), and post exactly one review
-  (`gh api …/pulls/N/reviews` or `gh pr review`). No git and no Edit/Write: the job holds no
-  `contents: write`. Append cost-control or allowlist-widening flags via `prGreen.claudeArgs` (the
-  CLI unions repeated `--allowedTools`). A **`Check harness result`** step (`always()`) reads the
-  execution log as DATA (jq) and fails the job on a sandbox-escape attempt or a denied gh/git call
-  (the review may not have posted); the log is uploaded as the **`claude-execution-log-pr-green`**
-  artifact for debugging.
+  `--allowedTools 'Write,Bash(gh pr:*),Bash(gh api:*),Bash(gh repo:*),Bash(git log:*),Bash(git
+  diff:*),Bash(git show:*),Bash(git status:*)'` — enough for the skill to read the PR (`gh pr
+  diff`/`gh pr view`), read surrounding source (`gh repo view`/`gh api`, plus the harness's ungated
+  Read/Grep over the checked-out head), explore history with read-only git, and post exactly one
+  review (`gh api …/pulls/N/reviews --input <file>`, or `gh pr review --body-file <file>` for the
+  no-holes path). `Write` is **required, not a convenience** (#188): a review body is multi-line,
+  and a multi-line command — a `<<EOF` heredoc, an embedded-newline `--body` — matches *no*
+  `Bash()` pattern (they match on the leading program), so the payload must reach `gh` through a
+  **file** and `Write` is the only allowlisted tool that can create one. The first live run
+  (release PR #186) died exactly here: the skill's heredoc was denied, the harness improvised
+  `Write` and `cat > f <<EOF`, both denied, and the completed review never posted. `Edit` and a
+  blanket `Bash(git:*)` stay **absent** — the job holds `contents: read`, never edits a tracked
+  file and never commits/pushes/tags; `Write` targets a scratch payload under `/tmp`. Append
+  cost-control or allowlist-widening flags via `prGreen.claudeArgs` (the CLI unions repeated
+  `--allowedTools`).
+  **Verified delivery, not a guess (#188).** A **`Check harness result`** step (`always()`) reads
+  the execution log as DATA (jq) and classifies its `permission_denials`. A `dangerouslyDisableSandbox`
+  attempt is **unconditionally red** — never downgraded, whatever else the run did. For every other
+  hard (delivery-classified) denial the guard asks **GitHub** whether the review actually landed,
+  re-running the gate's own query: *is a review carrying the `<!-- waffle-adversarial-review -->`
+  marker present on this head commit?* Where the sibling hooks downgrade on a **PR URL in the run's
+  final text**, that proof is worthless here (the reviewed PR's URL pre-exists), so this hook checks
+  the source of truth instead. Review present ⇒ the denial provably blocked nothing ⇒ **warning**;
+  review absent ⇒ **red**. The check is **fail-closed** (any API hiccup ⇒ treated as not delivered)
+  and it replaces the old free-text no-op heuristic outright. The upshot: a denied read-only
+  `git log` / `git tag` no longer reds a run that posted its review, while a genuinely blocked post
+  still does. This is why the marker is emitted by the **skill** on both post paths, not just
+  injected by the dispatch prompt — a manual `/adversarial-review` posts a marked, dedup-protected
+  review too. The full execution log is uploaded as the **`claude-execution-log-pr-green`** artifact
+  for debugging.
   **Opt-ins to arm it.** It stays inert until (1) the `ANTHROPIC_API_KEY` secret is set (with the
   user's go-ahead — `gh secret set ANTHROPIC_API_KEY`; the same secret the hygiene/label hooks
   bill); (2) the `adversarial-review` skill is rendered and committed (above); and (3) a token with

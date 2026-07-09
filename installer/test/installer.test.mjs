@@ -1900,6 +1900,160 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
   });
 });
 
+// #188: the pr-green hook died on its FIRST live invocation (release PR #186, run 28994016078) —
+// the harness completed the review but was denied every tool it used to POST it. Root cause: the
+// dispatch prompt asks for single-program commands so the CI allowlist can match them, while the
+// skill it dispatches instructed a `gh api … --input - <<'EOF'` heredoc. A heredoc is a MULTI-LINE
+// command, and Bash() allowlist patterns match on the leading program — so `Bash(gh api:*)` never
+// matched. Any multi-line review body needs a file, and no allowed tool could create one.
+// These tests pin the coupled invariant: the skill's commands stay single-line, and the workflow's
+// allowlist covers every one of them (plus the `Write` that builds the payload file).
+describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-pr-green-hook.yml';
+  const SKILL_REL = '.claude/skills/adversarial-review/SKILL.md';
+  const REF = `files/${REL}`;
+  const SKILL_REF = 'code-quality/skills/adversarial-review';
+  const proj = 'PrGreenProj';
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-pr-green-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  // The workflow is opt-in syrup AND its skill lives in another stack (code-quality, not enabled),
+  // so both refs are installed explicitly — exactly the shape this repo's own .waffle/waffle.yaml
+  // uses to arm the hook.
+  const renderBoth = () => {
+    write(cwd, '.waffle/waffle.yaml',
+      `targets: [claude]\ninclude: [${REF}, ${SKILL_REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+  };
+
+  const claudeArgsOf = (wf) =>
+    YAML.parse(wf).jobs['adversarial-review'].steps.find((s) => s.with && 'claude_args' in s.with).with.claude_args;
+
+  // 'Write,Bash(gh pr:*),Bash(git log:*)' → ['Write', 'Bash(gh pr:*)', 'Bash(git log:*)']
+  const allowedTools = (claudeArgs) => {
+    const m = /--allowedTools\s+'([^']*)'/.exec(claudeArgs);
+    assert.ok(m, `claude_args carries a quoted --allowedTools: ${claudeArgs}`);
+    return m[1].split(',').map((s) => s.trim()).filter(Boolean);
+  };
+  // Bash(gh pr:*) → 'gh pr'   (the program+subcommand prefix the CLI matches a command against)
+  const bashPrefixes = (tools) =>
+    tools.filter((t) => t.startsWith('Bash(')).map((t) => t.slice('Bash('.length, -1).replace(/:\*$/, ''));
+
+  // every fenced ```bash command in the skill, comments stripped
+  const skillBashBlocks = (skill) => [...skill.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const skillBashCommands = (skill) =>
+    skillBashBlocks(skill)
+      .flatMap((b) => b.split('\n'))
+      .map((l) => l.replace(/\s+#.*$/, '').trim())
+      .filter((l) => l && !l.startsWith('#'));
+
+  test('P1 workflow + skill render together; allowlist grants Write but never Edit or blanket git', () => {
+    renderBoth();
+    assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
+    assert.ok(fs.existsSync(path.join(cwd, SKILL_REL)), 'adversarial-review skill rendered alongside it');
+    const wf = read(cwd, REL);
+    assert.doesNotMatch(wf, /\{\{\s*prGreen\./);
+    assert.doesNotMatch(wf, /\{\{\s*harness\./);
+
+    const args = claudeArgsOf(wf);
+    assert.match(args, /^--allowedTools '/, `claude_args opens with the baked allowlist: ${args}`);
+    // Write is MANDATORY (#188): a multi-line review body must reach `gh` through a file, and Write
+    // is the only allowlisted tool that can create one. Without it the harness improvises
+    // `cat > f <<EOF` — a multi-line command no Bash() pattern matches — and the review never posts.
+    const tools = allowedTools(args);
+    for (const tool of ['Write', 'Bash(gh pr:*)', 'Bash(gh api:*)', 'Bash(gh repo:*)', 'Bash(git log:*)']) {
+      assert.ok(tools.includes(tool), `pr-green allowlist covers ${tool}: ${args}`);
+    }
+    // the job holds contents: read — no tracked-file edits, no commit/push/tag. Read-only git verbs
+    // ONLY; a blanket Bash(git:*) would hand it `git push`/`git tag`.
+    for (const forbidden of ['Edit', 'MultiEdit', 'Bash(git:*)', 'Bash(git push:*)', 'Bash(gh secret:*)']) {
+      assert.ok(!tools.includes(forbidden), `pr-green stays narrow — must not grant ${forbidden}: ${args}`);
+    }
+    for (const prefix of bashPrefixes(tools).filter((p) => p.startsWith('git'))) {
+      assert.match(prefix, /^git (log|diff|show|status)$/, `only read-only git verbs are granted: ${prefix}`);
+    }
+    // empty prGreen.claudeArgs folds to nothing after the allowlist
+    assert.ok(args.trimEnd().endsWith("'"), `no trailing junk when prGreen.claudeArgs is empty: ${args}`);
+
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.equal(lock.files[REL], sha256(wf));
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('P2 the skill posts with NO heredoc — every bash command is single-line (#188 regression guard)', () => {
+    renderBoth();
+    const skill = read(cwd, SKILL_REL);
+    const blocks = skillBashBlocks(skill);
+    assert.ok(blocks.length >= 3, `the skill still carries its bash examples: ${blocks.length}`);
+
+    // THE root-cause guard: a heredoc anywhere in a bash block is a multi-line command, which no
+    // Bash() allowlist pattern can match. This is what silently killed run 28994016078.
+    for (const block of blocks) {
+      assert.ok(!block.includes('<<'), `no heredoc in the skill's bash commands:\n${block}`);
+    }
+    // the two traps by name, checked against the COMMANDS (the prose names them to warn the reader):
+    // `--input -` (heredoc-fed stdin) and a multi-line inline `--body "…"`.
+    const bash = blocks.join('\n');
+    assert.doesNotMatch(bash, /--input\s+-(\s|$)/m, 'the review payload comes from a FILE, not stdin');
+    assert.doesNotMatch(bash, /--body\s+"/, 'the no-holes summary uses --body-file, not an inline --body');
+    assert.match(bash, /--input \/tmp\/[\w.-]+\.json/, 'step 5 posts a file payload');
+    assert.match(bash, /--body-file \/tmp\/[\w.-]+\.md/, 'step 6 posts a file body');
+
+    // and no command is a compound the allowlist could not match either
+    for (const cmd of skillBashCommands(skill)) {
+      assert.ok(!cmd.includes('&&'), `no && compound in the skill's commands: ${cmd}`);
+      assert.ok(!cmd.startsWith('cd '), `the session starts at the repo root — no cd prefix: ${cmd}`);
+    }
+  });
+
+  test('P3 every gh/git command the skill runs is covered by the workflow allowlist (#188)', () => {
+    renderBoth();
+    const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL))));
+    const commands = skillBashCommands(read(cwd, SKILL_REL));
+    assert.ok(commands.length >= 5, `the skill runs some commands: ${commands.length}`);
+
+    let checked = 0;
+    for (const cmd of commands) {
+      // every gated-program invocation in the line, including inside $( … ) substitutions
+      for (const m of cmd.matchAll(/\b(gh|git)\s+([a-z][a-z-]*)/g)) {
+        const invocation = `${m[1]} ${m[2]}`;
+        checked += 1;
+        assert.ok(
+          prefixes.some((p) => invocation === p || invocation.startsWith(`${p} `)),
+          `the skill runs \`${invocation}\` but no --allowedTools entry covers it (from: ${cmd})`,
+        );
+      }
+    }
+    assert.ok(checked >= 5, `found gated invocations to check: ${checked}`);
+  });
+
+  test('P4 both post paths emit the dedup marker the workflow guard keys on (#188)', () => {
+    renderBoth();
+    const skill = read(cwd, SKILL_REL);
+    const MARKER = '<!-- waffle-adversarial-review -->';
+    // The marker used to be injected ONLY by the dispatch prompt, so a manual /adversarial-review
+    // posted an unmarked review with no dedup protection — and the guard's delivery check now keys
+    // on it too. It must live in the SKILL, on BOTH post paths.
+    const jsonBlock = /```json\n([\s\S]*?)```/.exec(skill);
+    assert.ok(jsonBlock, 'step 5 ships a JSON payload block');
+    assert.ok(jsonBlock[1].includes(MARKER), `step 5's review body carries the marker:\n${jsonBlock[1]}`);
+    const mdBlock = /```markdown\n([\s\S]*?)```/.exec(skill);
+    assert.ok(mdBlock, 'step 6 ships a markdown summary block');
+    assert.ok(mdBlock[1].includes(MARKER), `step 6's no-holes body carries the marker:\n${mdBlock[1]}`);
+    // the marker sits on its own line, both times
+    assert.match(jsonBlock[1], new RegExp(`"body": "${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\\\n`));
+    assert.match(mdBlock[1], new RegExp(`^${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+
+    // the workflow's gate + guard both query for the SAME marker text
+    const wf = read(cwd, REL);
+    assert.equal((wf.match(/waffle-adversarial-review/g) || []).length >= 3, true, 'gate, guard, and prompt agree on the marker');
+  });
+});
+
 // #82: the Check harness result guard no longer fails on EVERY permission denial — it CLASSIFIES
 // them, failing only on delivery/sandbox denials and WARNING on ad-hoc read-only shell (the 16
 // setup/read denials that killed the first guarded live run, run 28681795718). These EXECUTE the
@@ -1912,11 +2066,12 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
   beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-guard-')); });
   afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
 
-  // render both harness workflows and return each job's Check-harness-result run script
+  // render the harness workflows and return each job's Check-harness-result run script
   const renderGuards = () => {
     write(cwd, '.waffle/waffle.yaml',
       'targets: [claude]\n' +
-      'include: [files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-label-hook.yml]\n' +
+      'include: [files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-label-hook.yml,' +
+      ' files/.github/workflows/waffle-pr-green-hook.yml, code-quality/skills/adversarial-review]\n' +
       'config:\n  project:\n    name: GuardProj\n');
     const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
     assert.equal(r.ok, true, JSON.stringify(r.errors));
@@ -1926,6 +2081,7 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       hygiene: guardOf('.github/workflows/waffle-hygiene.yml', 'hygiene'),
       enrich: guardOf('.github/workflows/waffle-label-hook.yml', 'enrich'),
       implement: guardOf('.github/workflows/waffle-label-hook.yml', 'implement'),
+      prGreen: guardOf('.github/workflows/waffle-pr-green-hook.yml', 'adversarial-review'),
     };
   };
 
@@ -2064,6 +2220,138 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       assert.equal(code, 1, `${job} must red an undelivered run with hard denials: ${out}`);
       assert.match(out, /may not have landed its work/, `${job} uses the softened wording: ${out}`);
     });
+  });
+
+  // #188: the pr-green guard cannot use the siblings' "did the final text print a PR URL?" proof —
+  // the reviewed PR's URL pre-exists, so printing it proves nothing. Instead it ASKS GITHUB whether
+  // a review carrying the `<!-- waffle-adversarial-review -->` marker is on the head commit. These
+  // exec the rendered guard with a fake `gh` on PATH that returns a canned reviews payload.
+  const HEAD = 'a'.repeat(40);
+  const OTHER_SHA = 'b'.repeat(40);
+  const MARKED = { commit_id: HEAD, body: '<!-- waffle-adversarial-review -->\nAdversarial review: 1 nit.' };
+
+  // a `gh` stub that ignores its args and prints the canned reviews JSON (what `gh api …/reviews`
+  // returns); the guard reads it through jq, so only the payload matters.
+  const fakeGh = (reviews) => {
+    const bin = path.join(cwd, 'fakebin');
+    fs.mkdirSync(bin, { recursive: true });
+    const payload = path.join(cwd, 'reviews.json');
+    fs.writeFileSync(payload, JSON.stringify(reviews));
+    const ghPath = path.join(bin, 'gh');
+    fs.writeFileSync(ghPath, `#!/bin/sh\ncat ${JSON.stringify(payload)}\n`);
+    fs.chmodSync(ghPath, 0o755);
+    return bin;
+  };
+
+  const runPrGreenGuard = (script, log, reviews) => {
+    const bin = fakeGh(reviews);
+    const gf = path.join(cwd, 'guard-pr-green.sh');
+    const lf = path.join(cwd, 'log-pr-green.json');
+    fs.writeFileSync(gf, script);
+    fs.writeFileSync(lf, JSON.stringify(log));
+    const res = spawnSync('bash', [gf], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        EXECUTION_FILE: lf,
+        RUNNER_TEMP: os.tmpdir(),
+        GH_TOKEN: 'fake',
+        GITHUB_REPOSITORY: 'o/r',
+        PR_NUMBER: '7',
+        HEAD_SHA: HEAD,
+      },
+    });
+    return { code: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
+  };
+
+  test('pr-green: a denied read-only git log does NOT red a run whose review posted (#188)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // denial #5 of the real failing run. `git log` is hard-classified (the program-name heuristic
+    // can't tell it from `git push`), but the marked review IS on the head commit — so it blocked
+    // nothing and must be a warning, not a failure. This is issue #188's 2nd acceptance criterion.
+    const log = RESULT([B('git log --oneline v0.10.0..HEAD')], 'Reviewed: 1 blocker, 2 nits.');
+    const { code, out } = runPrGreenGuard(g.prGreen, log, [MARKED]);
+    assert.equal(code, 0, `a delivered review must not red on a denied git log: ${out}`);
+    assert.match(out, /::warning/, `it warns about the downgraded denial: ${out}`);
+    assert.doesNotMatch(out, /::error/, `it must not error once the review posted: ${out}`);
+  });
+
+  test('pr-green: a denied gh api with NO marker review on the head reds the run (#188)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // exactly run 28994016078: the review POST was denied, so nothing landed.
+    const log = RESULT([B("gh api repos/o/r/pulls/7/reviews --method POST --input -")], 'Posted the review.');
+    const { code, out } = runPrGreenGuard(g.prGreen, log, []);
+    assert.equal(code, 1, `a blocked review post must red the run: ${out}`);
+    assert.match(out, /::error/, `it errors on the undelivered review: ${out}`);
+  });
+
+  test('pr-green: an UNMARKED review, or a marked one on another commit, is not delivery (#188)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
+    // (a) a human's unmarked review on this head is NOT this run's review
+    let r = runPrGreenGuard(g.prGreen, log, [{ commit_id: HEAD, body: 'LGTM, ship it.' }]);
+    assert.equal(r.code, 1, `an unmarked review is not delivery proof: ${r.out}`);
+    // (b) a MARKED review on a DIFFERENT commit (an earlier head) is stale, not this run's
+    r = runPrGreenGuard(g.prGreen, log, [{ commit_id: OTHER_SHA, body: '<!-- waffle-adversarial-review -->\nold' }]);
+    assert.equal(r.code, 1, `a marked review on another commit is not delivery proof: ${r.out}`);
+  });
+
+  test('pr-green: a sandbox escape stays RED even when the review posted (#188)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // the escape check stays FIRST and is NEVER downgraded by delivery — same invariant as #85.
+    const log = RESULT([B('ls -la', { dangerouslyDisableSandbox: true })], 'Reviewed: no holes found.');
+    const { code, out } = runPrGreenGuard(g.prGreen, log, [MARKED]);
+    assert.equal(code, 1, `a sandbox escape must stay red despite a delivered review: ${out}`);
+    assert.match(out, /::error/, `it errors on the sandbox escape: ${out}`);
+    assert.match(out, /sandbox escape/, `it names the sandbox escape: ${out}`);
+  });
+
+  test('pr-green: a clean run passes green; a silent no-op warns (#188)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // zero denials + the review on the head commit ⇒ fully green, no annotations
+    let r = runPrGreenGuard(g.prGreen, RESULT([], 'Reviewed: no holes found.'), [MARKED]);
+    assert.equal(r.code, 0, `a clean delivered run is green: ${r.out}`);
+    assert.doesNotMatch(r.out, /::(error|warning)/, `no annotations on a clean delivered run: ${r.out}`);
+    // zero denials but NO review posted ⇒ the run silently no-op'd: warn, do not fail
+    r = runPrGreenGuard(g.prGreen, RESULT([], 'I looked at the PR. 1 nit. https://github.com/o/r/pull/7'), []);
+    assert.equal(r.code, 0, `a no-op run warns rather than failing: ${r.out}`);
+    assert.match(r.out, /::warning/, `it warns that no marked review is present: ${r.out}`);
+    assert.doesNotMatch(r.out, /::error/, `the no-op check never errors: ${r.out}`);
+  });
+
+  test('pr-green: a failing GitHub API is fail-closed — no delivery proof means red (#188)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // a `gh` that exits non-zero (rate limit, auth failure) must NEVER be read as "delivered"
+    const bin = path.join(cwd, 'fakebin');
+    fs.mkdirSync(bin, { recursive: true });
+    const ghPath = path.join(bin, 'gh');
+    fs.writeFileSync(ghPath, '#!/bin/sh\necho "API rate limit exceeded" >&2\nexit 1\n');
+    fs.chmodSync(ghPath, 0o755);
+    const gf = path.join(cwd, 'guard-failclosed.sh');
+    const lf = path.join(cwd, 'log-failclosed.json');
+    fs.writeFileSync(gf, g.prGreen);
+    fs.writeFileSync(lf, JSON.stringify(RESULT([B('git log --oneline')], 'Reviewed: 1 nit.')));
+    const res = spawnSync('bash', [gf], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        EXECUTION_FILE: lf,
+        RUNNER_TEMP: os.tmpdir(),
+        GH_TOKEN: 'fake',
+        GITHUB_REPOSITORY: 'o/r',
+        PR_NUMBER: '7',
+        HEAD_SHA: HEAD,
+      },
+    });
+    assert.equal(res.status, 1, `an API failure is fail-closed (red), never a silent pass: ${res.stdout}${res.stderr}`);
   });
 });
 
