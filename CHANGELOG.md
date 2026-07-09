@@ -31,6 +31,20 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **`/pr-response` skill — rubric-scored PR review triage (#194, `github-workflow`).** The consuming
+  side of `adversarial-review`: resolve a PR, read every review + review comment, score each finding
+  0–3 on four dimensions (Severity · Validity · Effort/Risk · Alignment), and record an
+  **Implement (≥8) / Defer (4–7) / Decline (≤3)** verdict with its score and a one-line reason.
+  Accepted fixes are applied per `git-workflow`; one reply carrying a `<!-- waffle-pr-response -->`
+  dedup marker summarizes the verdict table and is updated in place on re-runs. Two rules override
+  the arithmetic: a **confirmed blocker is always Implement**, a **false positive is always
+  Decline**. Because the recorded scores are the calibration dataset, the skill documents *how to
+  recalibrate* its own thresholds. Agent callers pass `--yes` to skip the confirmation gate (the
+  `clean-up` convention).
+  - **Consumer impact:** additive. Enabling `github-workflow` renders one new file,
+    `.claude/skills/pr-response/SKILL.md`; `render` picks it up. **No new config keys.**
+
 ## [0.11.0] - 2026-07-08
 
 ### Consumer impact
