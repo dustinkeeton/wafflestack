@@ -482,6 +482,12 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     assert.match(md, /\+review\[:N\]/);
   });
 
+  test('the colon form does double duty: consent AND cap in one flag', () => {
+    // Rewording `+review:N` to cap-only (consent captured elsewhere) must fail CI —
+    // an unattended run's consent semantics hang on this sentence.
+    assert.match(md, /consents to the loop AND caps it at/);
+  });
+
   test('N is validated: positive integer only; malformed/zero reverts to unspecified + ask', () => {
     assert.match(md, /`N` must be a positive integer \(`N >= 1`\)/);
     // A zero/negative/non-numeric count never starts a loop — the flag is treated as
