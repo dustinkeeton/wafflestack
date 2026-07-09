@@ -156,7 +156,7 @@ stacks: []
 include: []
 #  - skills/issue
 #  - agents/project-manager
-config: {}
+config:
 #  project:
 #    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:

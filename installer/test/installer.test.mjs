@@ -1446,7 +1446,9 @@ describe('github-workflow: project.name first-run (#216)', () => {
   const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
 
   test('enabling github-workflow without project.name fails naming config.project.name (non-destructive)', () => {
-    init({ cwd }); // seeds the starter — project.name is commented, hence absent
+    // Hand-write the post-init state directly: github-workflow enabled with an empty config, i.e.
+    // project.name absent — exactly what init's commented starter yields (proven by the
+    // "init seeds a commented project.name example" test below, so no need to re-run init() here).
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [github-workflow]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, false);
@@ -4874,8 +4876,16 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
     // the required-by-github-workflow key is present as a commented, discoverable example
     assert.match(cfg, /#\s*project:/);
     assert.match(cfg, /#\s*name:/);
-    // comments don't change parsing — config stays an empty map, still valid YAML
-    assert.deepEqual(YAML.parse(cfg).config, {});
+    // block-style empty `config:` parses to null (the loader normalizes it to {}); the commented
+    // example stays inactive, so the file is still valid YAML with no project.name set
+    assert.equal(YAML.parse(cfg).config, null);
+    // F1 regression: uncommenting the example lines must yield VALID YAML that carries
+    // project.name — no leftover `config: {}` triggering "All mapping items must start at the
+    // same column". The block-style `config:` is what makes the invited uncomment path parse.
+    const uncommented = cfg
+      .replace(/^#(\s*project:)\s*$/m, '$1')
+      .replace(/^#(\s*name: .*)$/m, '$1');
+    assert.equal(YAML.parse(uncommented).config.project.name, 'My Project');
   });
 
   test('staleGitignoreEntries flags root .waffle.* lines and stays quiet on .waffle/ paths', () => {
