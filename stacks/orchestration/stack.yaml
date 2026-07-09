@@ -353,7 +353,7 @@ config:
       - Any architectural violations or inconsistencies
   docs.machineDocSet:
     required: false
-    default: a root `AGENTS.md` plus per-feature `src/<feature>/AGENTS.md` files
+    default: a root `AGENTS.md` (plus a per-feature `AGENTS.md` in each `src/<feature>/` directory, where the codebase is organized that way)
     description: >-
       One-line phrase naming the machine-doc file set (same key as the
       docs-system stack) — used in the docs and audit orchestrator prompts.
