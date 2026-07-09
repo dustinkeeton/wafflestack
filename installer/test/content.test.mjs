@@ -224,6 +224,9 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     // paginate or stop — never trust a truncated Todo set.
     assert.match(md, /hasNextPage/);
     assert.match(md, /Never trust a truncated/);
+    // The intersection's lookup table must be a superset of the Todo set (raised
+    // bound) and the count invariant catches any silent loss.
+    assert.match(md, /Count invariant/);
   });
 
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {

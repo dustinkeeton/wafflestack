@@ -209,13 +209,13 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 
    `TODO_NUMBERS` empty → the Todo column exists but is **empty**. This is NOT a fallback — report that the Todo column is clear and stop (the zero-matching-issues rule).
 
-Then fetch full issue JSON in bulk and intersect client-side — keep only the issues whose `number` appears in `TODO_NUMBERS` (same pattern as the keyword path):
+Then fetch full issue JSON in bulk and intersect client-side — keep only the issues whose `number` appears in `TODO_NUMBERS` (same pattern as the keyword path). Unlike the all-open and keyword paths — where `--limit 50` *defines* the set — the bound here must only be a **superset** of the board's Todo issues, so raise it comfortably above the 100-item board page (`--limit 50` would silently clip a Todo issue that is not among the first 50 open issues):
 
 ```bash
-gh issue list --state open --json number,title,labels,body,milestone --limit 50
+gh issue list --state open --json number,title,labels,body,milestone --limit 500
 ```
 
-That intersection is the delegated set.
+That intersection is the delegated set. **Count invariant:** the intersection must hold exactly as many issues as `TODO_NUMBERS` — a mismatch means a Todo issue fell outside the fetched window (or the board tracks an issue that is missing here); **stop and report the discrepancy** rather than silently under-delegate.
 
 **Checkpoint** — write `scope` (the resolved `mode`, a human `description`, and `milestone` for milestone modes) and `issues` (one entry per fetched issue: `number`, `title`, `labels`, optionally `body`/`milestone`), then validate. `mode` is `todo-column` only when the Todo set was actually delegated; a run that **fell back records `mode: "all-open"`** with the provenance in `description` (e.g. `defaultScope todo-column: no Todo column on board — fell back to all-open (12 issues)`) — the checkpoint records what actually ran, the description carries why. Validate:
 
