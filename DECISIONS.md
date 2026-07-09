@@ -9,6 +9,42 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-09: Seed `project.name` in the init starter config; defer a consumer-config preflight (#216)
+
+**Context**: `wafflestack init` scaffolds `.waffle/waffle.yaml` from a starter template whose
+`config:` block was empty (`{}`) and never mentioned `project.name`. But the `github-workflow`
+stack declares `project.name` as **required with no default**, so a consumer who enabled that
+stack hit a **render failure** only after discovering and adding the key by hand. `wafflestack
+validate` gave false assurance here — it lints the *toolkit's* own definitions, never the
+*consumer's* project config — so the missing key surfaced at render time, not before.
+
+**Decision**: Make the required key **discoverable at init** rather than build a new check for
+it. `init`'s starter now seeds a commented `project.name` example (placed before the existing
+`git.botEmail` comment, with an inline note on why it's required). The block is switched to a
+block-style `config:` (empty, parsing to null → normalized to `{}` by the loader) so that
+uncommenting the two example lines yields valid YAML instead of an "all mapping items must start
+at the same column" error. The existing render error stays the enforcement point: it already
+fails non-destructively (exit 1, no files written) and names the exact missing key, the offending
+stack, and where to add it.
+
+**Alternatives considered**: A **consumer-config preflight** — deliberately **deferred**.
+Extending `validate` to check consumer config was rejected: it would conflate the
+toolkit-developer lint audience with the consumer audience and risk drifting from the real render
+check. A `render --check` dry-run is a cleaner, separable follow-up (its own issue under epic
+#191) rather than something forced into this change.
+
+**Rationale**: The render failure already names `config.project.name` actionably and
+non-destructively, so a discoverable starter comment closes the "didn't know the key existed" gap
+at near-zero cost, where a dedicated preflight adds CLI surface for marginal value. Keep the
+single source of truth — render — as the check.
+
+**Impact**: `installer/lib/eject.mjs` (starter template) + tests only — **no `stacks/**` change,
+so no re-render or lock commit**. `init`'s output is behavior-identical (the example stays
+commented, so `config:` still parses as an empty map). A consumer-config preflight remains an
+open, deferred follow-up under epic #191.
+
+---
+
 ## 2026-07-08: Hook arming/dogfood state lives in DECISIONS, not waffle.yaml comments (#189)
 
 **Context**: Installing `waffle-post-merge-hook` (#189) ran `wafflestack install`, which
