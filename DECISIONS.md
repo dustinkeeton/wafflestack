@@ -9,6 +9,63 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-09: docs-system's default machine-doc shape becomes layout-adaptive, not `src/`-feature-assuming (#217)
+
+**Context**: The `docs-system` stack's `docs.machineDocSpec` / `docs.machineDocSet` defaults — the
+file set and format rules a consumer's docs-agent writes against when it doesn't override them —
+assumed a per-feature application layout: a root `AGENTS.md` **plus** a per-feature
+`src/<feature>/AGENTS.md`. For a consumer with a **flat `src/`** (a handful of files, no per-feature
+subdirectories), that default instructed the doc writer to produce per-feature docs for directories
+that don't exist — **inventing phantom `src/<feature>/AGENTS.md` files on the very first docs run**,
+the exact docs-vs-reality drift the toolkit exists to prevent. The two stacks that name the same
+file set (docs-system, and orchestration, which cites it in its docs/audit orchestrator prompts) had
+also drifted slightly in wording.
+
+**Decision**: Make the default **layout-adaptive** rather than layout-assuming, without dropping
+per-feature docs where they're warranted:
+
+- The default **always** produces the root `AGENTS.md`, and adds per-feature `src/<feature>/AGENTS.md`
+  files **only when the code is actually split into feature/module directories** — with an explicit
+  instruction **not to create docs for directories that don't exist** (fold that detail into the
+  root registry instead).
+- The root registry line generalizes from a "module registry" to a **module/component registry**
+  over the codebase's real units — feature directories where they exist, otherwise the files or
+  layers of a flat `src/`.
+- Sync the one-line `docs.machineDocSet` default **byte-identically** across docs-system and
+  orchestration, so the two stacks that refer to "the machine docs" stay in lockstep.
+- Sharpen the `docs.machineDocSpec` description: the default now adapts to layout, so a flat `src/`
+  needs **no override**; override only for a fundamentally different machine-doc shape (e.g. a single
+  root registry with a module/layer table — which is exactly what this repo does).
+- Add a docs-system **`setup:` block** steering a flat-`src/` consumer before its first docs run:
+  check `src/`, keep the default when it has feature subdirectories, and reach for an override only
+  to force a specific shape.
+
+**Alternatives considered**:
+
+- **Keep the `src/`-feature default and make flat-`src/` consumers override it.** Rejected — it left
+  the common flat-repo case a footgun that surfaced only as phantom directories on the first docs
+  run, well after the choice was made.
+- **Go fully layout-agnostic — drop the per-feature default and always emit a single root
+  registry.** Rejected — the per-feature shape is genuinely the right default for a real
+  `src/<feature>` application. Adapting to the layout keeps that win while also covering flat repos,
+  where a root-only default would under-document a large feature-split codebase.
+
+**Rationale**: The default should describe the repo it's pointed at, not assume one. Layout-adaptive
+gets both common cases right with no override, and the explicit "don't invent directories"
+instruction turns a silent footgun into a guardrail. The `setup:` block and sharpened description
+hand a flat-`src/` consumer the override path up front for the cases where they do want a specific
+shape.
+
+**Impact**: `stacks/docs-system/stack.yaml` (the two defaults, the description, and a new `setup:`
+block) and `stacks/orchestration/stack.yaml` (the synced `machineDocSet` default) only. A
+**consumer-facing default change with no migration** — a consumer taking the default now gets
+layout-adaptive machine docs; a consumer that already overrides both keys is unaffected. This repo
+is one of the latter (it pins a single-root `AGENTS.md` registry in `.waffle/waffle.yaml`), so **its
+own render is unchanged** — no re-render or lock diff here. Child of epic #191, sibling to the #216
+init-starter decision below.
+
+---
+
 ## 2026-07-09: Seed `project.name` in the init starter config; defer a consumer-config preflight (#216)
 
 **Context**: `wafflestack init` scaffolds `.waffle/waffle.yaml` from a starter template whose
