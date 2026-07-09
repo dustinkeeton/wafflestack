@@ -216,16 +216,23 @@ gh pr review "$N" --comment --body-file /tmp/qa-summary.md
 ## 7. Verify delivery, then report back
 
 **Prove the review actually posted** before claiming success — an allowlist denial or an API
-error leaves all the work done and nothing delivered. Check that at least one review on the
-PR carries this skill's marker:
+error leaves all the work done and nothing delivered. Check that at least one review **on the
+current head commit** carries this skill's marker. The head-scoping is load-bearing: a
+review's `commit_id` is the PR head at submit time, and an *unscoped* check would be
+satisfied by an **earlier round's** review — in a multi-round loop (autopilot runs
+`qa` → `pr-response` repeatedly) a silently denied POST from round 2 on would still "verify"
+against round 1's review and this round's findings would be lost. `--paginate` matters in the
+other direction: the reviews endpoint pages at 30, so on a busy PR an unpaginated check can
+miss the marked review and fail falsely:
 
 ```bash
-gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --jq '[.[] | select(.body | contains("<!-- waffle-qa -->"))] | length'
+HEAD_SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[] | select(.commit_id == "'"$HEAD_SHA"'") | select(.body | contains("<!-- waffle-qa -->")) | .id'
 ```
 
-Expect **≥ 1**. **Fail closed:** if the POST in step 5/6 errored, or this check errors or
-returns 0, report the error verbatim and do **not** claim the review posted — a QA pass whose
-findings never landed is a failed pass, not a clean one.
+Expect **at least one review id**. **Fail closed:** if the POST in step 5/6 errored, or this
+check errors or prints nothing, report the error verbatim and do **not** claim the review
+posted — a QA pass whose findings never landed is a failed pass, not a clean one.
 
 Then return a concise summary to the caller: the PR URL, the count of findings by severity
 (blocker / should-fix / nit, or "none") — the per-severity count is what an orchestrating

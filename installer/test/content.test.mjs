@@ -487,6 +487,12 @@ describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
     // Delivery is verified against the marker and the skill fails closed on a missed post.
     assert.match(md, /contains\("<!-- waffle-qa -->"\)/);
     assert.match(md, /Fail closed/);
+    // #232 review: the delivery check is HEAD-scoped (a review's commit_id is the PR head at
+    // submit time) so an earlier round's review can never satisfy a later round's check in
+    // autopilot's multi-round loop, and paginated so a marked review past page 1 of the
+    // reviews endpoint is not read as a false 0.
+    assert.match(md, /select\(\.commit_id == /);
+    assert.match(md, /\/reviews" --paginate/);
   });
 
   test('the adversarial-review marker literal NEVER appears in this skill', () => {
