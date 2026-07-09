@@ -107,7 +107,12 @@ config:
   git.cmd:
     required: false
     default: git
-    description: The git invocation used in spawned-agent instructions (override for bot identities, same as the github-workflow stack key).
+    description: >-
+      The git invocation used in spawned-agent instructions (same key as the github-workflow
+      stack; the bare default never overrides a human's identity). Projects with a bot identity
+      set it to 'git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'. This stack
+      does NOT declare those identity keys, so they must be set as real values in project config
+      — a recipe leaning on the github-workflow stack's defaults renders them literally here.
   git.coAuthorTrailer:
     required: false
     default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"

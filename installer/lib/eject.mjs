@@ -161,6 +161,9 @@ config:
 #    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:
 #    botName: Wafflebot        # bot identity for automated commits (github-workflow)
+#    cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+#      # ^ the opt-in: without this, commands run under your own git config. Quote user.name.
+#      #   Commit botEmail too (not the overlay) if you commit your render / re-render in CI.
 #
 # Account-specific values belong in .waffle/waffle.local.yaml (gitignore it) — NOT here.
 # That file takes the same shape; uncomment these there, never in this committed file:

@@ -32,6 +32,36 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **The main bot identity is now wired through `git.cmd` (#155, `github-workflow`).** #154 declared
+  the identity keys; nothing consumed them. A project now opts into a managed bot identity with one
+  config line — `cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` — which
+  injects the identity into every rendered commit/push example via `-c` flags, leaving the machine's
+  ambient `user.name` / `user.email` untouched. `{{git.cmd}}` now also threads through the `release`
+  skill's branch/commit/push commands (previously bare `git`), and the `git-workflow` skill renders
+  the resolved `git.cmd` so an agent can see whether an identity is in effect. `git.coAuthorTrailer`
+  is unchanged by design: with a bot identity the commit *author* is the bot, while the trailer
+  credits the AI harness.
+  **Deliberately not an engine conditional.** `git.cmd` keeps its bare `git` default and there is no
+  "if a bot identity is configured" branch in the renderer. A conditional keyed on merged config
+  would make renders irreproducible — the trigger input would include the gitignored
+  `.waffle/waffle.local.yaml`, which is absent in CI and in fresh `git worktree` checkouts, so a
+  rendered `git.cmd` would differ per machine and trip the doctor drift gate. The config recipe *is*
+  the conditional.
+  **Two rules the docs now state.** (1) Quote `user.name`: `git.botName` admits single interior
+  spaces and `git.cmd` splices it into an unquoted shell word. (2) Set **both** `git.botName` and
+  `git.botEmail` as real project-config values rather than leaning on their stack defaults — stacks
+  that declare `git.cmd` but not the identity keys (e.g. `orchestration`) resolve nested keys from
+  project *values* only, so a defaults-only recipe renders a literal `{{git.botEmail}}` into their
+  skills, silently. Also new: a repo that commits its render and re-renders in CI should commit
+  `git.botEmail` too (use a noreply-style address) rather than hiding it in the local overlay — the
+  overlay split assumes local-only rendering. `git.signingKey` stays out of the recipe (#158).
+  **Consumer impact: no behavior change.** No command default changed and no key became required.
+  A re-render leaves every rendered git command byte-identical (`release/SKILL.md` is unchanged for
+  a default consumer); `git-workflow/SKILL.md` gains the opt-in prose and a resolved-`git.cmd`
+  block, so `render` rewrites that one file. Adopting the bot identity is an explicit opt-in; the
+  `wafflestack init` scaffold and `schema/SETUP.md` now show the recipe. Enforcement is prompt-level
+  (agents follow the rendered examples) — #159/#160 harden it. This toolkit repo dogfoods the opt-in
+  and now commits agent work as `Wafflebot <bot@wafflenet.io>`.
 - **First-class GitHub identity config keys (#154, `github-workflow`).** `git.botName`,
   `git.botEmail`, `git.signingKey`, and `git.agentIdentities` are now declared in the stack's
   `config:` schema with placeholder defaults, and a rendered "Bot identity (config)" reference

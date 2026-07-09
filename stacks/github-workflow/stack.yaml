@@ -704,12 +704,45 @@ setup: |-
   up to it, always asking before it creates or mutates. Milestones are optional — the issue
   skill skips them when none match.
 
-  **Git.** Make sure the configured `git.worktreesDir` is gitignored. If the project commits
-  under a bot identity, set `git.botName` in the committed .waffle/waffle.yaml and keep the
-  account-specific `git.botEmail` / `git.signingKey` in the gitignored
-  .waffle/waffle.local.yaml; `git.agentIdentities` holds per-agent overrides (its entries may
-  be split across the two files — they deep-merge). Then point `git.identitySection` /
-  `git.cmd` / `git.coAuthorTrailer` at those keys via `{{...}}` nested substitution.
+  **Git.** Make sure the configured `git.worktreesDir` is gitignored.
+
+  `git.cmd` defaults to a bare `git`, so out of the box every rendered command example runs
+  under the developer's own `user.name` / `user.email` — the toolkit never clobbers a human
+  identity. A project opts into a managed bot identity by setting the values and pointing
+  `git.cmd` at them. That one config block IS the opt-in; there is no separate switch:
+
+    config:
+      git:
+        botName: Wafflebot
+        botEmail: wafflebot@users.noreply.github.com
+        cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+
+  Four rules for that recipe:
+  (1) **Quote `user.name`.** `git.botName` admits single interior spaces (`Waffle Bot` is a
+  legal value) and `git.cmd` splices it into an unquoted shell word — unquoted, a spaced name
+  breaks the command. The botName pattern excludes `"`, `$`, backtick and `\`, so the quotes
+  cannot be escaped out of. Leave `user.email` unquoted (its pattern admits no spaces).
+  (2) **Set BOTH `git.botName` and `git.botEmail` explicitly in project config** — do not lean
+  on the stack defaults. Other stacks (e.g. orchestration) declare `git.cmd` but not the
+  identity keys; nested substitution resolves those keys from *project config values*, so a
+  recipe relying on this stack's `default:` renders a literal `{{git.botEmail}}` into their
+  skills, silently.
+  (3) **Layering.** `git.botName` is shared, so it belongs in the committed .waffle/waffle.yaml;
+  `git.botEmail` / `git.signingKey` are account-specific and belong in the gitignored
+  .waffle/waffle.local.yaml. Exception: a repo that COMMITS its render and re-renders in CI (or
+  in fresh `git worktree` checkouts, where gitignored files do not exist) must commit `botEmail`
+  too — otherwise the render differs per machine and the doctor drift gate goes red. Use a
+  public noreply-style address when you do. `git.agentIdentities` holds per-agent overrides and
+  may itself be split across the two files (they deep-merge).
+  (4) **Signing is separate.** Do not add `{{git.signingKey}}` to `git.cmd` unless you have set
+  it: the empty default renders `git -c user.signingkey= …`, which git rejects at run time.
+
+  Then set `git.identitySection` to prose that says the bot identity is in effect. Leave
+  `git.coAuthorTrailer` alone unless you want to: with a bot identity configured the commit
+  *author* is the bot and the trailer's job is crediting the AI harness — a project that would
+  rather have the trailer name the bot can point it at `{{git.botName}} <{{git.botEmail}}>`.
+  Enforcement is prompt-level: agents follow the rendered examples, the same as every other
+  git-workflow convention.
 config:
   git.identitySection:
     required: false
@@ -719,6 +752,8 @@ config:
       ```
       {{git.coAuthorTrailer}}
       ```
+
+      (A project opts into a managed bot identity by setting `git.botName` / `git.botEmail` and pointing `git.cmd` at them — see the stack's setup note. Whether one is in effect here is shown by the resolved `git.cmd` under "Bot identity" below: a bare `git` means these commands run under your own git config.)
     description: >-
       Verbatim body of the git-workflow "Identity" section. Override for projects
       that commit under a dedicated bot identity (describe the bot config there);
@@ -727,9 +762,12 @@ config:
     required: false
     default: git
     description: >-
-      The git invocation used in command examples. Projects with a bot identity
-      set it to e.g. "git -c user.email={{git.botEmail}} -c user.name={{git.botName}}"
-      (nested keys may live in the gitignored .waffle/waffle.local.yaml).
+      The git invocation used in command examples. The bare default never overrides a human's
+      user.name / user.email. Setting this to the canonical recipe IS the bot-identity opt-in:
+      'git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}' — quote user.name
+      (botName admits interior spaces) and set BOTH identity keys in project config rather than
+      relying on their stack defaults, which stacks that declare only git.cmd cannot resolve.
+      See the stack setup note for the layering rules.
   git.coAuthorTrailer:
     required: false
     default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
@@ -784,10 +822,11 @@ config:
       name — the intended shape is { <agent>: { botName, botEmail, signingKey? } }. Empty (the
       default) means every agent commits as the main git.botName / git.botEmail identity. Entries
       may be split across the committed config (names) and the gitignored local overlay
-      (emails/keys) — the two deep-merge, local winning per key. UNVALIDATED until #155: a
+      (emails/keys) — the two deep-merge, local winning per key. UNVALIDATED: a
       `pattern:` guards only string scalars, so this map's shape is not checked and its
       botName/botEmail/signingKey leaves do NOT inherit the sibling patterns above. Treat entries
-      as free-form until the consumer (#155) enforces the shape.
+      as free-form until the consumer (#156) enforces the shape. #155 wires only the MAIN bot
+      identity through git.cmd; nothing reads this map yet.
   git.worktreesDir:
     required: false
     default: .claude/worktrees
