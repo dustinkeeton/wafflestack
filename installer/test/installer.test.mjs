@@ -1623,10 +1623,10 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   const RECIPE = 'git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\"]/g, '\\$&');
 
-  /** github-workflow + orchestration, with every key orchestration marks `required: true`. */
-  const orchBase = () => [
+  /** orchestration (+ github-workflow by default), with every key orchestration marks `required: true`. */
+  const orchBase = (stacks = 'github-workflow, orchestration') => [
     'targets: [claude]',
-    'stacks: [github-workflow, orchestration]',
+    `stacks: [${stacks}]`,
     'config:',
     '  project:',
     '    name: Wire155',
@@ -1720,8 +1720,33 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   test('W5 a botEmail that fails its pattern is rejected when composed through the recipe', () => {
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${RECIPE}\n`);
     const result = render();
+    // Scoped claim: proves the guard fires when the DECLARING stack (github-workflow) is
+    // installed. W5b/W5c carry the general claim — see the note there.
     assert.equal(result.ok, false, 'command substitution must not reach an unquoted shell word');
     assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+  });
+
+  // #155 review (blocker): the pattern guards were compiled PER STACK, and only github-workflow
+  // declares the identity keys. So an orchestration-only install — the exact configuration the
+  // orchestration stack's own `git.cmd` description steers users into — spliced an unvalidated
+  // project value straight into an agent-executed shell command in delegate/SKILL.md, while the
+  // identical value was rejected the moment github-workflow was co-installed. The guard was an
+  // accident of which stack happened to be present. Patterns are now compiled toolkit-wide, so a
+  // key's guard travels with the KEY. Revert compilePatterns to per-stack and both of these go red.
+  test('W5b botEmail command substitution is rejected with NO github-workflow stack installed', () => {
+    write(cwd, '.waffle/waffle.yaml', `${orchBase('orchestration')}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'the guard must not depend on github-workflow being installed');
+    assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+  });
+
+  test('W5c a botName that breaks out of the recipe quoting is rejected cross-stack', () => {
+    // `Evil"; id; echo "` closes git.cmd's quotes and appends a command. The botName pattern
+    // excludes `"`, `$`, backtick and `\` precisely so the quoting in rule (1) holds.
+    write(cwd, '.waffle/waffle.yaml', `${orchBase('orchestration')}  git:\n    botName: 'Evil"; id; echo "'\n    botEmail: ok@x.com\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'a quote-breaking botName must never reach a shell word');
+    assert.match(JSON.stringify(result.errors), /git\.botName/);
   });
 });
 

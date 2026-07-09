@@ -46,14 +46,20 @@ export function substitute(text, resolve, declared, errors, context, patterns) {
     // fully-expanded value that actually lands in the output. Textual substitution cannot
     // know its target context (a YAML scalar, a workflow `if:` expression, a shell word),
     // so escaping is impossible in general — a pattern makes an unsafe value fail loudly at
-    // render instead of silently corrupting the output. `patterns` is a Map<key, RegExp>.
-    const re = patterns?.get(key);
-    if (re && !re.test(value)) {
+    // render instead of silently corrupting the output. `patterns` is a Map<key, RegExp[]>
+    // spanning every stack in the toolkit, and a guarded value must satisfy every pattern.
+    if (violatesPattern(patterns, key, value)) {
       errors.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
       return match;
     }
     return value;
   });
+}
+
+/** True when `key` carries pattern guards and `value` fails any of them. */
+function violatesPattern(patterns, key, value) {
+  const res = patterns?.get(key);
+  return Boolean(res) && !res.every((re) => re.test(value));
 }
 
 /**
@@ -62,8 +68,9 @@ export function substitute(text, resolve, declared, errors, context, patterns) {
  * user.email={{git.botEmail}}`) is exactly the case a pattern exists to police, and it never
  * appears as a top-level placeholder in the canonical text. Validating only at the top level
  * would make the guard an accident of whether some other item happens to reference the key
- * directly. A violating nested value pushes an error and leaves its placeholder in place —
- * the render fails, same as the top-level path.
+ * directly — and compiling the guards per stack (fixed in #155's review) made it an accident
+ * of which stack happened to be installed. A violating nested value pushes an error and leaves
+ * its placeholder in place — the render fails, same as the top-level path.
  */
 function expandNested(text, resolve, depth, patterns, errors, context) {
   if (depth >= MAX_SUBSTITUTION_DEPTH) return text;
@@ -71,8 +78,7 @@ function expandNested(text, resolve, depth, patterns, errors, context) {
     const v = resolve(key);
     if (v === undefined) return match;
     const value = expandNested(formatValue(v), resolve, depth + 1, patterns, errors, context);
-    const re = patterns?.get(key);
-    if (re && !re.test(value)) {
+    if (violatesPattern(patterns, key, value)) {
       errors?.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
       return match;
     }
