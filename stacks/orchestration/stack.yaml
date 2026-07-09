@@ -15,6 +15,7 @@ requires:
     - skills/github-project-management
     - skills/adversarial-review
     - skills/pr-response
+    - skills/audit
     - skills/issue
   skills/docs:
     - skills/docs-agent
@@ -59,7 +60,7 @@ prerequisites:
     level: recommend
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle-manual-review'"
     items: [skills/autopilot]
-    description: Hold label autopilot applies to the follow-up issue it files when the review loop can't converge (default autopilot.holdLabel); it excludes hold-labeled issues from automatic scope, so this must pre-exist.
+    description: Hold label autopilot applies to the follow-up issue it files when the review loop can't converge or the /audit gate hard-blocks a PR on unresolved Critical/High findings (default autopilot.holdLabel); it excludes hold-labeled issues from automatic scope, so this must pre-exist.
   - kind: setting
     name: allow-auto-merge
     level: recommend
@@ -71,10 +72,12 @@ setup: |-
   with `autoMerge.label` (default `waffle-auto-merged`); it must pre-exist in the repo —
     gh label create "waffle-auto-merged" --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
 
-  **Review-loop hold label.** When autopilot's opt-in review loop can't converge within
-  `autopilot.maxReviewRounds`, it files a follow-up issue labeled `autopilot.holdLabel`
-  (default `waffle-manual-review`) and thereafter excludes hold-labeled issues from automatic
-  scope (all-open / a label / a milestone) so a human triages them by number; it must pre-exist —
+  **Review-loop / audit-gate hold label.** When autopilot's opt-in review loop can't converge
+  within `autopilot.maxReviewRounds` — or its opt-in `/audit` gate (`autopilot.auditStep`)
+  hard-blocks a PR on unresolved Critical/High findings — it files a follow-up issue labeled
+  `autopilot.holdLabel` (default `waffle-manual-review`) and thereafter excludes hold-labeled
+  issues from automatic scope (all-open / a label / a milestone) so a human triages them by
+  number; it must pre-exist —
     gh label create "waffle-manual-review" --color D93F0B --description "Held for human triage — autopilot skips this issue until it is actioned by number"
 config:
   project.name:
@@ -313,11 +316,30 @@ config:
     default: waffle-manual-review
     description: >-
       Label autopilot applies to the follow-up issue it files when the review loop exhausts
-      autopilot.maxReviewRounds without converging. It marks the issue as held for human triage:
-      autopilot's scope resolution EXCLUDES hold-labeled issues from every automatic scope form
-      (all-open, a label, or a milestone) — only naming the issue explicitly by #N re-actions it.
-      Must pre-exist in the repo — `gh issue edit --add-label` will not create it. Default
-      waffle-manual-review.
+      autopilot.maxReviewRounds without converging, OR when the /audit gate hard-blocks a PR on
+      unresolved Critical/High findings (autopilot.auditStep). It marks the issue as held for
+      human triage: autopilot's scope resolution EXCLUDES hold-labeled issues from every automatic
+      scope form (all-open, a label, or a milestone) — only naming the issue explicitly by #N
+      re-actions it. Must pre-exist in the repo — `gh issue edit --add-label` will not create it.
+      Default waffle-manual-review.
+  autopilot.auditStep:
+    required: false
+    default: false
+    description: >-
+      Per-run consent for the autopilot /audit gate — whether an autopilot run runs the /audit
+      chain on each PR as the FINAL pre-merge quality gate, after the review loop and before the
+      merge-wait, scoped to the PR's diff. INDEPENDENT of autopilot.autoMerge and
+      autopilot.reviewLoop: any combination may be on. When true, autopilot defers auto-merge
+      arming past the review loop out to this gate — it waits for the PR to go green, composes the
+      /audit playbook itself (the skill is disable-model-invocation: true, so it is never
+      auto-invoked) scoped to the PR's changed paths, owns the Team lifecycle end to end
+      (create → run the 6 passes → TeamDelete, even on failure), lands the audit's fixes on the PR
+      branch and re-waits for green, then HARD-GATES on unresolved Critical/High findings: such a
+      finding blocks the merge (the PR is left for a human with an autopilot.holdLabel follow-up
+      issue) EVEN IF auto-merge was consented — autopilot never merges past an unresolved security
+      gate. Auto-merge is armed, if consented, only once the gate passes green. Consent is captured
+      fresh every invocation and is NEVER sticky — no carry-over from a prior run, never read from a
+      checkpoint or memory. Default false — no audit gate, behavior unchanged.
   docs.auditChecklist:
     required: false
     description: >-
