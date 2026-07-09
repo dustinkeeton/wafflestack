@@ -32,6 +32,43 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **The main bot identity is now wired through `git.cmd` (#155, `github-workflow`).** #154 declared
+  the identity keys; nothing consumed them. A project now opts into a managed bot identity with one
+  config line — `cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` — which
+  injects the identity via `-c` flags into the rendered examples that actually record a committer
+  (`commit`), leaving the machine's ambient `user.name` / `user.email` untouched. Identity-free
+  commands (`push`, `checkout`, `diff`, `log`) stay a bare `git`: they write no committer, so the
+  flags were noise. `{{git.cmd}}` now also threads through the `release`
+  skill's commit and the `delegate` skill's spawned-agent commit instruction, and `git-workflow` renders
+  the resolved `git.cmd` so an agent can see whether an identity is in effect. `git.coAuthorTrailer`
+  is unchanged by design: with a bot identity the commit *author* is the bot, while the trailer
+  credits the AI harness.
+  **Deliberately not an engine conditional.** `git.cmd` keeps its bare `git` default and there is no
+  "if a bot identity is configured" branch in the renderer. A conditional keyed on merged config
+  would make renders irreproducible — the trigger input would include the gitignored
+  `.waffle/waffle.local.yaml`, which is absent in CI and in fresh `git worktree` checkouts, so a
+  rendered `git.cmd` would differ per machine and trip the doctor drift gate. The config recipe *is*
+  the conditional.
+  **Two rules the docs now state.** (1) Quote `user.name`: `git.botName` admits single interior
+  spaces and `git.cmd` splices it into an unquoted shell word. (2) Set **both** `git.botName` and
+  `git.botEmail` as real project-config values rather than leaning on their stack defaults — stacks
+  that declare `git.cmd` but not the identity keys (e.g. `orchestration`) resolve nested keys from
+  project *values* only, so a defaults-only recipe renders a literal `{{git.botEmail}}` into their
+  skills, silently. Also new: a repo that commits its render and re-renders in CI should commit
+  `git.botEmail` too (use a noreply-style address) rather than hiding it in the local overlay — the
+  overlay split assumes local-only rendering. `git.signingKey` stays out of the recipe (#158).
+  **Signing is not covered by `git.cmd`.** It overrides the identity and nothing else, so an ambient
+  `commit.gpgsign = true` still signs a bot-authored commit with the developer's key (GitHub then
+  attributes the vouching to the human), and a prompting signer blocks the non-interactive commit.
+  Setup-note rule (4) now says so and gives the remedy — `-c commit.gpgsign=false` when the bot holds
+  no `signingKey`, which this repo's own `git.cmd` now uses. A real signing model is #158.
+  **Consumer impact: no behavior change.** No command default changed and no key became required.
+  A re-render leaves every rendered git command byte-identical (`release/SKILL.md` is unchanged for
+  a default consumer); `git-workflow/SKILL.md` gains the opt-in prose and a resolved-`git.cmd`
+  block, so `render` rewrites that one file. Adopting the bot identity is an explicit opt-in; the
+  `wafflestack init` scaffold and `schema/SETUP.md` now show the recipe. Enforcement is prompt-level
+  (agents follow the rendered examples) — #159/#160 harden it. This toolkit repo dogfoods the opt-in
+  and now commits agent work as `Wafflebot <bot@wafflenet.io>`.
 - **First-class GitHub identity config keys (#154, `github-workflow`).** `git.botName`,
   `git.botEmail`, `git.signingKey`, and `git.agentIdentities` are now declared in the stack's
   `config:` schema with placeholder defaults, and a rendered "Bot identity (config)" reference
@@ -159,6 +196,18 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Fixed
+- **Config `pattern:` guards are compiled toolkit-wide, not per stack (#155 review, security).**
+  `render` compiled each stack's `pattern:` guards while rendering *that stack's* items, so a guard
+  only applied where its declaring stack happened to be installed. Only `github-workflow` declares
+  `git.botName` / `git.botEmail`, so an **orchestration-only** install — the configuration
+  `orchestration`'s own `git.cmd` description steers users into — spliced *unvalidated* project
+  config into an agent-executed shell command: `botEmail: "$(id)@x.com"` and a quote-breaking
+  `botName` both rendered `ok=true` into `delegate/SKILL.md`, while the identical values were
+  rejected the moment `github-workflow` was co-installed. Guards now compile once across every
+  stack, so a guard travels with the **key**; a key guarded by more than one stack must satisfy all
+  of its patterns. **Consumer impact:** a render that was silently accepting a value violating a
+  guard declared in a stack you do not install will now fail loudly — which is the point. No
+  conforming config changes behavior.
 - **`waffle-post-merge-hook` — broaden the undeletable-branch warning.** The `else`-branch
   `::warning` (and its matching comments) now name a transient API error (5xx / rate-limit / network)
   alongside "protected" and "missing `contents: write`", since that branch also fires when the ref

@@ -161,13 +161,23 @@ config:
 #    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:
 #    botName: Wafflebot        # bot identity for automated commits (github-workflow)
+#    botEmail: bot@example.com # REQUIRED whenever cmd references it — see below
+#    cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+#      # ^ the opt-in: without this, commands run under your own git config. Quote user.name.
+#      #   cmd: needs BOTH botName and botEmail as real values HERE. Leaning on the
+#      #   github-workflow stack's defaults renders a literal {{git.botEmail}} into other
+#      #   stacks' skills (e.g. orchestration's delegate) — silently, with no render error.
+#      #   botEmail is otherwise account-specific; keep it committed only while cmd uses it
+#      #   (a public noreply-style address), which you must anyway if you commit your
+#      #   render / re-render in CI.
 #
 # Account-specific values belong in .waffle/waffle.local.yaml (gitignore it) — NOT here.
 # That file takes the same shape; uncomment these there, never in this committed file:
 #
 #  config:
 #    git:
-#      botEmail: bot@example.com   # account-specific
+#      botEmail: bot@example.com   # account-specific — but see the cmd note above: if cmd
+#                                  # references {{git.botEmail}}, commit it instead of this
 #      signingKey: ""              # GPG key ID / SSH pubkey path (never private key material)
 `;
 

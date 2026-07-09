@@ -30,6 +30,21 @@ committed `.waffle/waffle.yaml` and the email / signing key in the gitignored
 reference the overlay's keys. Never put private key material in `git.signingKey`: it is a key ID or
 a public-key path, and it renders into committed files.
 
+Setting those values alone changes nothing. The opt-in is pointing `git.cmd` at them, so the
+identity is injected via `-c` flags into the command examples that actually write it — `commit`,
+and an annotated `tag` if you add one. `checkout`, `push`, `diff` and `log` record no committer, so
+they stay a bare `git`. In this project `git.cmd` resolves to:
+
+```bash
+{{git.cmd}}
+```
+
+If that is a bare `git`, no bot identity is in effect and agent commits use the machine's own git
+config. To opt in, set `git.cmd` to `git -c user.name="…" -c user.email=…` referencing the two
+identity keys with nested `{{...}}` substitution — quoting `user.name` (it may contain spaces) and
+setting **both** keys explicitly in project config rather than relying on their stack defaults. See
+the stack's setup note for the exact recipe and the layering rules.
+
 ## Branch Strategy
 
 ### Main is protected
@@ -49,7 +64,7 @@ a public-key path, and it renders into committed files.
 
 ```bash
 git checkout main && git pull
-{{git.cmd}} checkout -b feat/my-feature
+git checkout -b feat/my-feature
 ```
 
 ## Commits
@@ -93,7 +108,7 @@ EOF
 ### Pushing
 
 ```bash
-{{git.cmd}} push -u origin feat/my-feature
+git push -u origin feat/my-feature
 ```
 
 ### Creating PRs (no human in the loop)

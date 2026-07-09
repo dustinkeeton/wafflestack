@@ -127,7 +127,15 @@ Walk the config schema of every enabled stack (from the inventory):
   `git.botEmail` and `git.signingKey` are account-specific (local overlay) — and a single
   `git.agentIdentities` entry may be split across both files, since the two deep-merge per key
   (local wins). `git.signingKey` is a GPG key ID or an SSH public-key path, never private key
-  material — config values render into committed files.
+  material — config values render into committed files. Setting the identity values does not by
+  itself change any command: the bot-identity **opt-in** is pointing `git.cmd` at them —
+  `cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` (quote `user.name`;
+  set both keys explicitly rather than leaning on their stack defaults, which stacks that declare
+  `git.cmd` alone cannot resolve). Left bare, `git.cmd` runs under the developer's own git config.
+  **Caveat to the layering split:** a repo that commits its rendered output and re-renders in CI
+  or in fresh `git worktree` checkouts must commit `git.botEmail` too — a gitignored overlay does
+  not exist there, so the value would render differently per machine and trip the doctor drift
+  gate. Use a public noreply-style address. The overlay split suits repos that render locally only.
 - Only keys declared in a stack's config schema are substituted — do not invent keys.
 
 ## 4. External prerequisites — walk the block (required)

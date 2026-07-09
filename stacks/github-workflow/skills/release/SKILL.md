@@ -90,7 +90,7 @@ Run the full checklist from `git-workflow`; do not open the PR if any fail:
 ## 5. Commit, push, open the labeled PR
 
 ```bash
-git commit -m "$(cat <<'EOF'
+{{git.cmd}} commit -m "$(cat <<'EOF'
 chore: bump to X.Y.Z
 
 {{git.coAuthorTrailer}}

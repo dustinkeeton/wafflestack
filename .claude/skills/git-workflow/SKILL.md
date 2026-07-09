@@ -8,7 +8,14 @@ user-invocable: false
 
 ## Identity
 
-Use the project's standard git config — do not override `user.name` / `user.email` unless the project explicitly defines a bot identity. What makes agent commits traceable is the attribution trailer, which every agent-made commit must end with:
+This project commits agent work under the managed bot identity — the `commit` examples
+below inject it via `-c` flags (`git.cmd`), so the machine's ambient `user.name` /
+`user.email` is never what lands on an agent commit. Identity-free commands (`push`,
+`checkout`, `diff`, `log`) stay a bare `git`. Human commits made outside these examples
+keep the developer's own config. Note that `git.cmd` overrides the identity and nothing
+else: ambient `commit.gpgsign` still applies, so a machine with signing on will sign a
+bot-authored commit with the human's key (or block on a prompting agent). Every
+agent-made commit must still end with:
 
 ```
 Co-Authored-By: Claude <noreply@anthropic.com>
@@ -20,7 +27,7 @@ Reference data resolved from config — the Identity section above governs wheth
 is actually in effect.
 
 - Name (`git.botName`): `Wafflebot`
-- Email (`git.botEmail`): `wafflebot@users.noreply.github.com`
+- Email (`git.botEmail`): `bot@wafflenet.io`
 - Signing key (`git.signingKey`): "" — empty means no dedicated bot signing key
 - Per-agent identities (`git.agentIdentities`; `{}` means every agent uses the main identity):
 
@@ -33,6 +40,21 @@ committed `.waffle/waffle.yaml` and the email / signing key in the gitignored
 `.waffle/waffle.local.yaml` — nested `{{...}}` substitution lets committed values such as `git.cmd`
 reference the overlay's keys. Never put private key material in `git.signingKey`: it is a key ID or
 a public-key path, and it renders into committed files.
+
+Setting those values alone changes nothing. The opt-in is pointing `git.cmd` at them, so the
+identity is injected via `-c` flags into the command examples that actually write it — `commit`,
+and an annotated `tag` if you add one. `checkout`, `push`, `diff` and `log` record no committer, so
+they stay a bare `git`. In this project `git.cmd` resolves to:
+
+```bash
+git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io
+```
+
+If that is a bare `git`, no bot identity is in effect and agent commits use the machine's own git
+config. To opt in, set `git.cmd` to `git -c user.name="…" -c user.email=…` referencing the two
+identity keys with nested `{{...}}` substitution — quoting `user.name` (it may contain spaces) and
+setting **both** keys explicitly in project config rather than relying on their stack defaults. See
+the stack's setup note for the exact recipe and the layering rules.
 
 ## Branch Strategy
 
@@ -81,7 +103,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ### Example
 
 ```bash
-git commit -m "$(cat <<'EOF'
+git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
 feat: add data-export command
 
 Three-phase flow: collect eligible records, confirm with the user,

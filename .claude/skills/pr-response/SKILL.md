@@ -138,7 +138,7 @@ For each **Implement** finding, in order, following the `git-workflow` skill:
    ```
 
    Use the commit format and attribution trailer from `git-workflow` — pass the message with
-   `git commit -F <message-file>` when it needs a body.
+   `git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -F <message-file>` when it needs a body.
 
 5. Run the pre-flight before pushing: `npm run lint --if-present`, `npm run validate`,
    `npm test`, `npm pack --dry-run`.

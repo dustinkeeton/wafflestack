@@ -169,6 +169,11 @@ export function renderProject({
     groups.get(stackName).items.push({ kind, item });
   }
 
+  // Compile every `pattern:` guard the toolkit declares ONCE, across all stacks, then enforce
+  // them at every substitution site below (render-time value validation for config values).
+  // Toolkit-wide, not per-stack: see compilePatterns.
+  const patterns = compilePatterns(toolkit, errors);
+
   for (const [stackName, { stack, items }] of groups) {
     // One resolver per enabled target — the reserved `harness.*` keys resolve
     // differently per output target (Claude vs. Codex attribution, etc.).
@@ -188,10 +193,6 @@ export function renderProject({
       );
       continue;
     }
-
-    // Compile any `pattern:` guards this stack declares once, then enforce them at every
-    // substitution site below (render-time value validation for config values).
-    const patterns = compilePatterns(stack, errors);
 
     for (const { kind, item } of items) {
       if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, patterns });
@@ -496,29 +497,48 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
 }
 
 /**
- * Compile every `pattern:` a stack's config declares into a Map<key, RegExp> for
+ * Compile every `pattern:` declared anywhere in the toolkit into a Map<key, RegExp[]> for
  * render-time value validation. A pattern that fails to compile is a toolkit-authoring
  * bug (validate reports it precisely) — here we fail the render loudly rather than
  * silently skip the check, so a broken guard can never ship unenforced.
+ *
+ * The map spans **every** stack, not just the selected ones (#155 review). A guard is a
+ * property of the config KEY, not of which stack happens to be installed. `git.cmd` is
+ * declared by both `github-workflow` and `orchestration`, but only the former declares the
+ * `git.botName` / `git.botEmail` it composes — so a per-stack map left an orchestration-only
+ * install splicing an unvalidated `botEmail: "$(id)@x.com"` straight into an agent-executed
+ * shell command, while the identical value was rejected once `github-workflow` was co-installed.
+ * That is the same "accident of what else happens to be present" failure mode `expandNested`'s
+ * doc comment (template.mjs) says the nested-enforcement path exists to prevent.
+ *
+ * A key declared with a pattern in more than one stack must satisfy ALL of them — the strictest
+ * reading, and the only one that cannot be weakened by adding a stack.
  */
-function compilePatterns(stack, errors) {
+function compilePatterns(toolkit, errors) {
   const map = new Map();
+  const add = (key, re) => {
+    const existing = map.get(key);
+    if (existing) existing.push(re);
+    else map.set(key, [re]);
+  };
   // Reserved `harness.*` injection guards (#131) — always enforced, never declared in a
   // stack's config. Seed them first; a stack's own `config:` patterns cannot collide because
   // `harness.*` is never a declarable config key.
   for (const [sub, pattern] of Object.entries(HARNESS_PATTERNS)) {
     try {
-      map.set(`harness.${sub}`, compilePattern(pattern));
+      add(`harness.${sub}`, compilePattern(pattern));
     } catch (err) {
       errors.push(`reserved harness.${sub} has an invalid pattern: ${err.message}`);
     }
   }
-  for (const [key, spec] of Object.entries(stack.config)) {
-    if (typeof spec?.pattern !== 'string') continue;
-    try {
-      map.set(key, compilePattern(spec.pattern));
-    } catch (err) {
-      errors.push(`stack "${stack.name}" config key ${key} has an invalid pattern: ${err.message}`);
+  for (const [stackName, stack] of toolkit.stacks) {
+    for (const [key, spec] of Object.entries(stack.config ?? {})) {
+      if (typeof spec?.pattern !== 'string') continue;
+      try {
+        add(key, compilePattern(spec.pattern));
+      } catch (err) {
+        errors.push(`stack "${stackName}" config key ${key} has an invalid pattern: ${err.message}`);
+      }
     }
   }
   return map;

@@ -1601,6 +1601,209 @@ describe('github-workflow: identity config schema (#154)', () => {
   });
 });
 
+// #155: wiring the MAIN bot identity through git.cmd. #154 declared the identity keys; nothing
+// consumed them. The mechanism is deliberately NOT an engine conditional — `git.cmd` keeps its
+// bare `git` default (so a human's user.name/user.email is never clobbered) and the opt-in is a
+// documented config recipe that injects `-c` flags. These tests pin the two halves of that
+// contract (fall back / inject), the quoting that makes a spaced botName survive the shell word,
+// and the cross-stack resolution hazard the "set BOTH keys explicitly" doc rule guards.
+describe('github-workflow: main-agent identity wiring (#155)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const GIT_SKILL = '.claude/skills/git-workflow/SKILL.md';
+  const RELEASE_SKILL = '.claude/skills/release/SKILL.md';
+  const DELEGATE_SKILL = '.claude/skills/delegate/SKILL.md';
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-155-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+  const base = 'targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: Wire155\n';
+  // The canonical recipe from the stack setup note, byte-for-byte.
+  const RECIPE = 'git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\"]/g, '\\$&');
+
+  /** orchestration (+ github-workflow by default), with every key orchestration marks `required: true`. */
+  const orchBase = (stacks = 'github-workflow, orchestration') => [
+    'targets: [claude]',
+    `stacks: [${stacks}]`,
+    'config:',
+    '  project:',
+    '    name: Wire155',
+    '    longName: the Wire155 project',
+    '  pm:',
+    '    brief: You are the PM.',
+    '    principles: "- Ship small."',
+    '    handoffs: "- Everything else -> general-purpose"',
+    '  roster:',
+    '    specialistTable: "| Agent | Responsibility |"',
+    '    classificationTable: "| Signal | Agent |"',
+    '    labelFallback: "| Label | Agent |"',
+    '    rootFiles: package.json',
+    '    sharedModule: lib/',
+    '    moduleDependencies: none',
+    '  audit:',
+    '    complianceLabel: Integrity',
+    '    complianceFrontmatterLabel: integrity',
+    '    complianceTaskLabel: Integrity check',
+    '    complianceAgentName: integrity',
+    '    complianceDescription: Validates the thing.',
+    '    compliancePrompt: Run the checks.',
+    '',
+  ].join('\n');
+
+  test('W1 with NO bot identity configured, every command example falls back to bare git (no clobber)', () => {
+    write(cwd, '.waffle/waffle.yaml', base);
+    assert.equal(render().ok, true);
+    for (const file of [GIT_SKILL, RELEASE_SKILL]) {
+      const skill = read(cwd, file);
+      // Line-anchored: the skill's PROSE legitimately shows the opt-in recipe, so a bare
+      // substring check would match the documentation rather than an executed command.
+      assert.doesNotMatch(skill, /^git -c user\./m, `${file}: no identity injected into a command`);
+      assert.match(skill, /^git commit -m /m, `${file}: commit runs under the human's own config`);
+      assert.match(skill, /^git push -u origin /m, `${file}: push runs under the human's own config`);
+    }
+    // The default identitySection tells the reader exactly that, and points at the opt-in.
+    assert.match(read(cwd, GIT_SKILL), /do not override `user\.name` \/ `user\.email`/);
+    // ...and the resolved git.cmd — the authoritative signal — renders as the bare default.
+    assert.match(read(cwd, GIT_SKILL), /^git$/m, 'the resolved git.cmd fence shows a bare git');
+  });
+
+  test('W2 the canonical recipe injects the identity into commit, quoting a spaced name', () => {
+    // An interior space is a LEGAL botName (github-actions[bot], "Waffle Bot"). Drop the quotes
+    // from the recipe and `-c user.name=Waffle Bot commit` splits into a broken command — so the
+    // rendered text must carry them.
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Waffle Bot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
+    assert.equal(render().ok, true);
+    const injected = 'git -c user.name="Waffle Bot" -c user.email=bot@example.com';
+    // #155 threads git.cmd through the release skill's commit too (it is agent-executed).
+    for (const file of [GIT_SKILL, RELEASE_SKILL]) {
+      assert.match(read(cwd, file), new RegExp(`^${escapeRe(injected)} commit -m `, 'm'), `${file}: commit carries the identity`);
+    }
+  });
+
+  // #155 review (should-fix): `commit` is the only rendered command that writes a committer
+  // identity. `push`, `checkout -b`, `diff --stat` and `log --oneline` read neither user.name nor
+  // user.email, so splicing the `-c` flags into them was noise the agent had to reproduce — and it
+  // drew the identity-bearing line arbitrarily (W2b already pinned `git checkout main` as bare
+  // while `git checkout -b` got the flags). Identity now lands only where identity is recorded.
+  test('W2b the maintainer-run and identity-free commands stay bare git', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
+    assert.equal(render().ok, true);
+    // `git checkout main && git pull` moves no identity; the tag push explicitly runs under the
+    // maintainer's own credentials (and a lightweight tag carries no identity at all).
+    assert.match(read(cwd, GIT_SKILL), /^git checkout main && git pull$/m);
+    assert.match(read(cwd, RELEASE_SKILL), /`git tag vX\.Y\.Z /);
+    // Branch creation and push record no committer — bare git, in both skills.
+    assert.match(read(cwd, GIT_SKILL), /^git checkout -b feat\/my-feature$/m);
+    assert.match(read(cwd, GIT_SKILL), /^git push -u origin feat\/my-feature$/m);
+    assert.match(read(cwd, RELEASE_SKILL), /^git checkout -b chore\/bump-X\.Y\.Z$/m);
+    assert.match(read(cwd, RELEASE_SKILL), /^git push -u origin chore\/bump-X\.Y\.Z$/m);
+  });
+
+  test('W3 the identity resolves cross-stack into the orchestration delegate skill', () => {
+    // The hazard: orchestration declares git.cmd but NOT the identity keys. Nested substitution
+    // resolves them from project *values*, so a project that sets both gets the injected form
+    // here too — and no literal placeholder survives (nested misses are SILENT, not errors).
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const delegate = read(cwd, DELEGATE_SKILL);
+    // The spawned agent's COMMIT carries the identity (the only command that records one)...
+    assert.match(delegate, /git -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit/);
+    // ...and its push does not.
+    assert.match(delegate, /- Push: git push -u origin \{branch-name\}/);
+    assert.doesNotMatch(delegate, /\{\{git\./, 'no identity placeholder survives the render');
+  });
+
+  test('W4 leaning on the STACK DEFAULTS instead of project values leaks a literal placeholder cross-stack', () => {
+    // This is why the setup note says "set BOTH keys explicitly in project config". github-workflow
+    // declares the identity keys, so ITS render resolves them from `default:`. Orchestration does
+    // not declare them, so `{{git.botEmail}}` is a nested MISS there — and a nested miss renders
+    // verbatim with no error. Pinning it keeps the doc rule honest; a future engine change that
+    // makes stack defaults globally visible should flip this assertion, not pass unnoticed.
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}  git:\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, true, 'a nested miss is silent — the render still succeeds');
+    assert.match(read(cwd, GIT_SKILL), /git -c user\.name="Wafflebot" -c user\.email=wafflebot@users\.noreply\.github\.com/);
+    assert.match(read(cwd, DELEGATE_SKILL), /\{\{git\.botName\}\}/, 'the undeclared key leaks verbatim');
+  });
+
+  test('W5 a botEmail that fails its pattern is rejected when composed through the recipe', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    // Scoped claim: proves the guard fires when the DECLARING stack (github-workflow) is
+    // installed. W5b/W5c carry the general claim — see the note there.
+    assert.equal(result.ok, false, 'command substitution must not reach an unquoted shell word');
+    assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+  });
+
+  // #155 review (should-fix): `git.cmd` overrides the identity and NOTHING else — ambient
+  // `commit.gpgsign` survives, so a signing-enabled machine signs a bot-authored commit with the
+  // human's key (or hangs on a prompting agent). Setup-note rule (4) now documents the remedy;
+  // this pins that the hardened recipe still satisfies the identity guards and renders clean.
+  // The engine-level signing model (a `git.sign` tri-state) is #158.
+  test('W7 the gpgsign-hardened recipe renders and still enforces the identity guards', () => {
+    const hardened = 'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${hardened}\n`);
+    assert.equal(render().ok, true);
+    assert.match(read(cwd, GIT_SKILL), /^git -c commit\.gpgsign=false -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m);
+    // The guard still bites through the longer recipe.
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${hardened}\n`);
+    assert.equal(render().ok, false, 'gpgsign hardening must not weaken the botEmail guard');
+  });
+
+  // #155 review (blocker): the pattern guards were compiled PER STACK, and only github-workflow
+  // declares the identity keys. So an orchestration-only install — the exact configuration the
+  // orchestration stack's own `git.cmd` description steers users into — spliced an unvalidated
+  // project value straight into an agent-executed shell command in delegate/SKILL.md, while the
+  // identical value was rejected the moment github-workflow was co-installed. The guard was an
+  // accident of which stack happened to be present. Patterns are now compiled toolkit-wide, so a
+  // key's guard travels with the KEY. Revert compilePatterns to per-stack and both of these go red.
+  test('W5b botEmail command substitution is rejected with NO github-workflow stack installed', () => {
+    write(cwd, '.waffle/waffle.yaml', `${orchBase('orchestration')}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'the guard must not depend on github-workflow being installed');
+    assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+  });
+
+  // #155 review (should-fix): uncommenting the shipped `wafflestack init` scaffold VERBATIM used
+  // to trip the setup note's own rule (2) — `botName` + `cmd` were in the committed block but
+  // `botEmail` was only offered in the .local overlay, so the recipe resolved botEmail from the
+  // github-workflow stack DEFAULT. That default is invisible to orchestration (which declares no
+  // such key), making it a silent nested miss: a literal `{{git.botEmail}}` in the push command.
+  // The scaffold now ships botEmail alongside botName. This test reads the real scaffold rather
+  // than a copy of it, so drifting the two apart goes red.
+  test('W6 uncommenting the init scaffold verbatim leaks no placeholder into any skill', () => {
+    const file = init({ cwd });
+    const scaffold = fs.readFileSync(file, 'utf8');
+    // Uncomment exactly the identity block a user following the scaffold would: the committed
+    // `#  git:` mapping and the keys indented under it. Nothing from the .local overlay section.
+    const block = scaffold
+      .split('\n')
+      .filter((l) => /^#\s{2,}(git:|botName:|botEmail:|cmd:)/.test(l))
+      .map((l) => l.replace(/^#/, '')) // exactly what a user does: delete the comment marker
+      .join('\n');
+    assert.match(block, /^\s+botEmail:/m, 'the committed block must offer botEmail alongside botName');
+    assert.match(block, /^\s+cmd:/m, 'the committed block still ships the opt-in recipe');
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}${block}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    for (const f of [GIT_SKILL, DELEGATE_SKILL]) {
+      assert.doesNotMatch(read(cwd, f), /\{\{git\./, `${f}: no identity placeholder survives`);
+    }
+  });
+
+  test('W5c a botName that breaks out of the recipe quoting is rejected cross-stack', () => {
+    // `Evil"; id; echo "` closes git.cmd's quotes and appends a command. The botName pattern
+    // excludes `"`, `$`, backtick and `\` precisely so the quoting in rule (1) holds.
+    write(cwd, '.waffle/waffle.yaml', `${orchBase('orchestration')}  git:\n    botName: 'Evil"; id; echo "'\n    botEmail: ok@x.com\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'a quote-breaking botName must never reach a shell word');
+    assert.match(JSON.stringify(result.errors), /git\.botName/);
+  });
+});
+
 // #154 review: a declared `pattern:` must be enforced on the NESTED composition path, not only
 // where the key happens to appear as a top-level placeholder.
 //
@@ -5103,6 +5306,11 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
       .replace(/^#(\s*project:)\s*$/m, '$1')
       .replace(/^#(\s*name: .*)$/m, '$1');
     assert.equal(YAML.parse(uncommented).config.project.name, 'My Project');
+
+    // #155: the bot-identity opt-in is discoverable at init too — botName alone changes nothing,
+    // so the scaffold carries the `cmd:` recipe (quoted user.name) that actually injects it.
+    assert.match(cfg, /#\s*botName: Wafflebot/);
+    assert.match(cfg, /#\s*cmd: git -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/);
   });
 
   test('staleGitignoreEntries flags root .waffle.* lines and stays quiet on .waffle/ paths', () => {
