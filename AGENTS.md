@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-07-08
+last-updated: 2026-07-09
 ---
 
 # AGENTS.md — wafflestack
@@ -235,7 +235,7 @@ Usage: `wafflestack <init|setup|list|install|render|upgrade|doctor|eject|validat
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.waffle/waffle.yaml` (targets / stacks / include / config / eject scaffold, creating `.waffle/`); errors if one exists at any generation. `--gitignore` also appends `.waffle/waffle.local.yaml` (only that — no stack chosen yet). `eject.mjs:165` |
+| `init` | Write starter `.waffle/waffle.yaml` (targets / stacks / include / config / eject scaffold, creating `.waffle/`); errors if one exists at any generation. `--gitignore` also appends `.waffle/waffle.local.yaml` (only that — no stack chosen yet). `eject.mjs:167` |
 | `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit; when `--cwd` (or the invoked repo) is already configured, also prints a live "Current configuration — update mode" section. `setup.mjs:25` |
 | `list` | Report the whole toolkit surface per stack/item vs. what this repo has installed (`installed & current` / `out of date` / `not installed`) as an aligned plain table (default — agent/CI-safe; ANSI only on a TTY, `--no-color` opts out). `--interactive` (real TTY both ends) drives a keypress multi-select that installs/updates the chosen refs then renders; degrades to the table without a TTY. Takes no refs. `list.mjs`, `cli.mjs:113` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `--force` overrides the overwrite guard; `--gitignore` appends recommended entries after a clean render. `eject.mjs:86` |
