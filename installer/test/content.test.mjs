@@ -210,6 +210,11 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /explicit, never silent/);
     // An empty-but-present Todo column is "nothing to delegate", never a widened scope.
     assert.match(md, /NOT a fallback/);
+    // A FAILED board lookup (API error, missing Projects-v2 token scope) is not a
+    // missing board: it stops the run — only a successful no-match takes the fallback,
+    // so a transient error can never widen an unattended batch run.
+    assert.match(md, /stop the run and report the error/);
+    assert.match(md, /a transient failure must never widen/);
     // The Todo set is resolved from the board via the project-items GraphQL query.
     assert.match(md, /fieldValues/);
   });

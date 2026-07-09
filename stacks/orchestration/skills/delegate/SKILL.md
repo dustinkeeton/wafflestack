@@ -84,7 +84,7 @@ The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each 
 - **No `$ARGUMENTS` (default)** → delegate the project's configured default scope, which for this project is **{{delegate.defaultScope}}**:
   - `current-milestone` → delegate **every open issue in the current milestone, and only that milestone**. Resolve the current milestone first (see below), then fetch its issues. This path must **never** silently widen to all open issues.
   - `all-open` → fetch **every open issue** in the repo: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`. This is the bulk path for repos that don't plan with milestones; in interactive mode the Phase 3 confirmation gate guards it — always present the full plan before spawning anything. (In batch mode, `all-open` is an explicit-scope signal: the plan is **logged**, not paused on — see **Batch mode**.)
-  - `todo-column` → delegate **exactly the open issues in the project board's "Todo" Status column**. Resolve the board and its Status = "Todo" option first (see **Resolving the Todo column** below), then fetch those issues. **No project board, or no "Todo" option on the Status field → fall back to `all-open`** — that fallback is the documented contract of choosing `delegate.defaultScope: todo-column`, but it must be **explicit, never silent**: lead the Phase 3 plan with `Board or Todo column not found → falling back to all-open (N issues)`; in interactive mode the confirmation gate still guards the widened set, and in batch mode that line is **logged**, not paused on. A Todo column that exists but is empty is **NOT a fallback** — that is "nothing to delegate": report that the Todo column is clear and **stop** (the zero-matching-issues rule below). Never widen past the Todo set for any other reason. (Contrast with `current-milestone`, which **stops** rather than widens — there the user never consented to more than the milestone; here the fallback is what the configured scope value itself opted into.)
+  - `todo-column` → delegate **exactly the open issues in the project board's "Todo" Status column**. Resolve the board and its Status = "Todo" option first (see **Resolving the Todo column** below), then fetch those issues. **No project board, or no "Todo" option on the Status field → fall back to `all-open`** (a **failed** board lookup — API error, missing token scope — is *not* a missing board: it **stops** the run; see **Resolving the Todo column**) — that fallback is the documented contract of choosing `delegate.defaultScope: todo-column`, but it must be **explicit, never silent**: lead the Phase 3 plan with `Board or Todo column not found → falling back to all-open (N issues)`; in interactive mode the confirmation gate still guards the widened set, and in batch mode that line is **logged**, not paused on. A Todo column that exists but is empty is **NOT a fallback** — that is "nothing to delegate": report that the Todo column is clear and **stop** (the zero-matching-issues rule below). Never widen past the Todo set for any other reason. (Contrast with `current-milestone`, which **stops** rather than widens — there the user never consented to more than the milestone; here the fallback is what the configured scope value itself opted into.)
 - `#N` or a bare number → fetch that single issue: `gh issue view N --json number,title,labels,body,milestone`
 - `milestone:<title-or-number>` → delegate that milestone explicitly: resolve a number directly, or match the title against `gh api "repos/$OWNER/$REPO/milestones?state=open"`, then fetch its open issues exactly as in the current-milestone path.
 - A known label (`bug`, `enhancement`, `documentation`, `question`) → filter: `gh issue list --state open --label "$ARGUMENTS" --json number,title,labels,body,milestone`
@@ -124,7 +124,9 @@ gh issue list --state open --milestone "$MILESTONE_NUMBER" \
 
 ### Resolving the Todo column (todo-column path)
 
-Delegate exactly the board's Status = "Todo" open issues. Three lookups, in order — an empty result at step 1 or 2 triggers the **explicit `all-open` fallback** described above; an empty result at step 3 is a clear column, which **stops** the run instead.
+Delegate exactly the board's Status = "Todo" open issues. Three lookups, in order — a **successful-but-empty** result at step 1 or 2 triggers the **explicit `all-open` fallback** described above; an empty result at step 3 is a clear column, which **stops** the run instead.
+
+**Failed lookup ≠ empty lookup.** An empty capture means "no match" only when the query itself succeeded. A **failed** lookup at any step — a non-zero `gh` exit (check `$?` immediately after the capture) or an `errors` key in the GraphQL response (rate limit, 5xx, a token without Projects v2 read scope — the default Actions `GITHUB_TOKEN` cannot see Projects v2 at all) — must **stop the run and report the error**, never take the fallback. Only a confirmed no-match may widen scope; a transient failure must never widen it. This matters most in batch mode, where the fallback line is logged rather than gated — an unattended run that read an API error as "no board" would delegate the entire backlog.
 
 1. Discover `PROJECT_ID` — the same title-match query Board Setup uses (an account may own several projects, so never assume the first result):
 
@@ -142,7 +144,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
    ' -f owner="$OWNER" --jq 'first(.data.user.projectsV2.nodes[] | select(.title | test("{{project.name}}"; "i")) | .id) // empty')
    ```
 
-   `PROJECT_ID` empty → **no board**: fall back to `all-open`, stated explicitly per above.
+   `PROJECT_ID` empty **and the query succeeded** → **no board**: fall back to `all-open`, stated explicitly per above. Empty because the lookup **failed** → stop and report (the failed-lookup rule above).
 
 2. Find the Status field and its "Todo" option — the Board Setup fields query, extracting both IDs (a `todo-column` run reuses these in Board Setup rather than re-querying):
 
@@ -168,7 +170,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
    TODO_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "Todo") | .id) // empty')
    ```
 
-   `TODO_OPTION_ID` empty → **no "Todo" option on the Status field** (or no Status field at all): fall back to `all-open`, stated explicitly per above.
+   `TODO_OPTION_ID` empty **and the query succeeded** → **no "Todo" option on the Status field** (or no Status field at all): fall back to `all-open`, stated explicitly per above. A failed fields query → stop and report (the failed-lookup rule above).
 
 3. List the issue numbers currently in the Todo column — the `github-project-management` skill's items-with-status catalog query, filtered client-side to items whose content is an **open Issue** and whose Status `fieldValues` value is "Todo":
 

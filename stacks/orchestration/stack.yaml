@@ -181,7 +181,9 @@ config:
       repos that don't use milestones), or `todo-column` (the open issues in
       the project board's "Todo" Status column; a missing board or missing
       Todo option falls back to `all-open`, stated explicitly in the plan —
-      never silently — while an empty Todo column stops instead of widening).
+      never silently — while an empty Todo column stops instead of widening,
+      and a failed board lookup — API error, missing token scope — stops
+      rather than falling back).
   delegate.extraPreflight:
     required: false
     default: ""
