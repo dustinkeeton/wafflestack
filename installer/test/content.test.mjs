@@ -292,8 +292,8 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.match(md, /\+review/);
     // Independent of auto-merge — neither consent implies the other.
     assert.match(md, /Independent of auto-merge consent/);
-    // Never sticky — both consents reset to off each run.
-    assert.match(md, /consents — auto-merge and the review loop — are off unless explicitly opted in/);
+    // Never sticky — all consents reset to off each run (the guardrail now spans all three).
+    assert.match(md, /consents — auto-merge, the review loop, and the audit step — are off unless explicitly opted in/);
   });
 
   test('auto-merge arming is deferred out of the delegate run when the loop is on', () => {
@@ -331,6 +331,71 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     // A skill error is one failed round, retried once, then stop — bounded by maxReviewRounds.
     assert.match(md, /one failed round, not a signal to keep looping/);
     assert.match(md, /bounds the loop regardless, so it can never spin/);
+  });
+});
+
+// #221: the opt-in /audit gate as the FINAL pre-merge quality gate, after #220's review loop.
+// Each assertion pins a load-bearing piece — its separate per-run consent, the arming deferred
+// past the audit gate (armed only once it passes green), the diff-scoped composed audit with an
+// owned Team lifecycle torn down even on failure, the hard gate that blocks the merge on
+// unresolved Critical/High even under auto-merge consent, and the bounded failure handling — so a
+// meaning-breaking edit fails CI instead of shipping silently.
+describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () => {
+  let md;
+  before(() => {
+    md = readSkill('autopilot');
+  });
+
+  test('audit-step consent is a separate per-run opt-in, default OFF, +audit flag, any combination', () => {
+    // A FOURTH instantiation-contract item, distinct from auto-merge and review-loop consent.
+    assert.match(md, /Audit-step consent/);
+    assert.match(md, /separate from auto-merge and the review loop, default OFF/);
+    // A single-run flag opts it in, mirroring +automerge / +review.
+    assert.match(md, /\+audit/);
+    // Independent of the other two consents — any combination of the three may be on.
+    assert.match(md, /any combination may be on/);
+    // Never sticky — all three consents reset to off each run (guardrail spans all three).
+    assert.match(md, /consents — auto-merge, the review loop, and the audit step — are off unless explicitly opted in/);
+  });
+
+  test('auto-merge arming is deferred past the audit gate — armed only once it passes green', () => {
+    // When the audit step is on, autopilot must not arm until the gate passes green.
+    assert.match(md, /must not arm auto-merge until this gate passes green/);
+    // The audit gate is always the last gate — arming is owned by the last gate that is on.
+    assert.match(md, /the audit gate is always the last gate/);
+    // Step 4 skips the arm check because the PR is intentionally not armed yet under either gate.
+    assert.match(md, /Review loop or the audit step on/);
+  });
+
+  test('the gate: wait-green then a diff-scoped composed /audit with an owned Team lifecycle', () => {
+    // Autopilot composes the audit playbook itself — never relies on auto-invocation.
+    assert.match(md, /playbook itself/);
+    assert.match(md, /disable-model-invocation: true/);
+    // The focus is scoped to the PR's changed paths — architecture pass constrained to the diff.
+    assert.match(md, /gh pr view <pr> --json files -q '\.files\[\]\.path'/);
+    assert.match(md, /not\*\* a whole-repo refactor/);
+    // Autopilot owns the Team teardown even on failure — a leaked team is never acceptable.
+    assert.match(md, /even if a pass errors/);
+    assert.match(md, /Team is always torn down/);
+  });
+
+  test('hard gate: unresolved Critical/High blocks the merge even under auto-merge consent', () => {
+    assert.match(md, /unresolved Critical\/High blocks the merge/);
+    // Do NOT merge even if auto-merge was consented — never merge past a security gate.
+    assert.match(md, /do NOT merge, even if auto-merge was consented/i);
+    assert.match(md, /never merges past an unresolved security gate/);
+    // A hold-labeled /issue follow-up captures the unresolved findings (reused #220 hold label).
+    assert.match(md, /triage unresolved audit findings on PR/);
+    assert.match(md, /--add-label "waffle-manual-review"/);
+  });
+
+  test('failure handling: audit fix leaving CI red stops-and-reports; chain errors bounded, Team torn down', () => {
+    // A red audit fix stops the gate — never arm a red PR.
+    assert.match(md, /audit fix left the PR's CI red/);
+    // A chain error is retried once then stops — never loops forever; Team torn down regardless.
+    assert.match(md, /chain errored/);
+    assert.match(md, /one retry, then stop/);
+    assert.match(md, /tear the Team down regardless/);
   });
 });
 
