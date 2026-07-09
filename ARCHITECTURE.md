@@ -55,6 +55,33 @@ command, each a thin wrapper that runs `npx wafflestack <command>` and interpret
 the output — so the toolkit ships its own lifecycle the same way it ships
 everything else.
 
+**A stack can also come from outside this toolkit.** A `stacks:` entry is usually a
+built-in name, but it can instead be a `{ name, source, ref }` mapping that points at a
+third-party stack — in another git repo (pinned to a `ref`) or at a local path. External
+stacks render through the exact same pipeline as built-ins: the lock records where each
+external file came from (source, ref, resolved commit), `doctor` attributes any drift back
+to its source, `upgrade` re-fetches each pin and reports commit moves, and `render`
+validates an external stack before writing a byte. See
+[`schema/AUTHORING-EXTERNAL-STACKS.md`](schema/AUTHORING-EXTERNAL-STACKS.md) to author one.
+
+### Prerequisites
+
+Some stacks lean on things a copy-in install can neither provide nor verify — a CLI tool
+like `gh`, a repo secret, a GitHub auth scope, a trigger label, a repo setting, or a running
+service. A stack **declares** these as a typed `prerequisites:` list, each with a kind, a
+one-line shell `check`, and a level of `require` or `recommend`. They are checked, not just
+documented:
+
+- **`doctor`** runs every selected stack's checks and **fails (exit 1) on an unmet
+  `require`** — so a repo running the shipped `waffle-doctor` CI gate verifies its
+  prerequisites on the same run. A `recommend` only reports.
+- **`render`** warns for the cheap-to-probe kinds (a missing tool or env var), and **`setup`**
+  lists the whole block so the install playbook can ask you to create the labels or set the
+  secret.
+
+This is separate from `requires:` (below): `requires:` wires up *other waffles* inside the
+toolkit; `prerequisites:` names things in *your own environment*.
+
 ### Picking what to install
 
 You don't have to take a whole stack. A **ref** names something installable. An
@@ -107,7 +134,7 @@ silently arms a workflow you didn't ask for.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 29 skills** in total.
+one source can render everywhere. There are **14 agents and 32 skills** in total.
 
 A skill's **supporting files** copy into your repo alongside its `SKILL.md`, and
 they can do real work. The orchestration stack's `/delegate` skill is the
@@ -168,16 +195,18 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 |---------|--------------|
 | `init` | Write a starter `.waffle/waffle.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
+| `list` | Show every stack/item as installed & current / out of date / not installed; `--interactive` multi-selects the ones to add/update and applies them. |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
 | `render` | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, then re-render + `doctor`. |
-| `doctor` | Compare rendered files to the lock; report drift or missing files. |
+| `doctor` | Compare rendered files to the lock and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 
-Under the hood, `installer/lib/` holds 13 small modules (load the toolkit, load
-project config, substitute templates, render, diff against the lock, etc.). The
-full function-level registry is in the root `AGENTS.md`.
+Under the hood, `installer/lib/` holds 17 small modules (load the toolkit, resolve
+external sources, load project config, substitute templates, render, diff against
+the lock, check prerequisites, etc.). The full function-level registry is in the
+root `AGENTS.md`.
 
 ## How the pieces interact
 
@@ -220,12 +249,14 @@ overwrite them. Change source, config, or an extension instead.
 
 ## How this repo uses itself
 
-wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders
-`github-workflow`, `docs-system`, `orchestration`, and `harness-architect` into
-this repo, so the toolkit's own agents and skills are available while developing
-it. It also arms two opt-in syrup workflows via `include:` — the hygiene and release
-hooks. (The self-referential `wafflestack` stack is *not* enabled here — while
-developing the toolkit you call `node installer/cli.mjs` directly.)
+wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders **five**
+stacks — `github-workflow`, `docs-system`, `orchestration`, `harness-architect`, and
+the self-referential `wafflestack` — into this repo, so the toolkit's own agents and
+skills are available while developing it. It also arms three opt-in syrup workflows via
+`include:` — the hygiene, release, and PR-green hooks — plus the single
+`code-quality/skills/adversarial-review` skill the PR-green hook dispatches. (While
+developing the toolkit you still drive it with `node installer/cli.mjs` directly rather
+than the rendered `/waffle-*` wrappers.)
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)
 and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
