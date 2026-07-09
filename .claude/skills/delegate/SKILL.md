@@ -177,11 +177,12 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 3. List the issue numbers currently in the Todo column — the `github-project-management` skill's items-with-status catalog query, filtered client-side to items whose content is an **open Issue** and whose Status `fieldValues` value is "Todo":
 
    ```bash
-   TODO_NUMBERS=$(gh api graphql -f query='
+   TODO_ITEMS=$(gh api graphql -f query='
      query($projectId: ID!) {
        node(id: $projectId) {
          ... on ProjectV2 {
            items(first: 100) {
+             pageInfo { hasNextPage endCursor }
              nodes {
                content { ... on Issue { number state } }
                fieldValues(first: 20) {
@@ -197,10 +198,14 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
          }
        }
      }
-   ' -f projectId="$PROJECT_ID" --jq '[.data.node.items.nodes[] | select(.content.state == "OPEN") | select(any(.fieldValues.nodes[]?; .field.name == "Status" and .name == "Todo")) | .content.number | tostring] | join(" ")')
+   ' -f projectId="$PROJECT_ID")
+
+   HAS_NEXT_PAGE=$(echo "$TODO_ITEMS" | jq -r '.data.node.items.pageInfo.hasNextPage')
+
+   TODO_NUMBERS=$(echo "$TODO_ITEMS" | jq -r '[.data.node.items.nodes[] | select(.content.state == "OPEN") | select(any(.fieldValues.nodes[]?; .field.name == "Status" and .name == "Todo")) | .content.number | tostring] | join(" ")')
    ```
 
-   Note the `items(first: 100)` bound — a board with more than 100 items needs pagination before the Todo set can be trusted.
+   **The `items(first: 100)` bound is detectable, not hypothetical** — `HAS_NEXT_PAGE` is the signal. `true` means the board holds more than 100 items and `TODO_NUMBERS` is a truncated set: re-run the query with an `after:` cursor argument set to the returned `endCursor` and merge each page's numbers until `hasNextPage` comes back `false` — or stop and report the truncation. Never trust a truncated `TODO_NUMBERS`; this path's contract is *exactly* the Todo set.
 
    `TODO_NUMBERS` empty → the Todo column exists but is **empty**. This is NOT a fallback — report that the Todo column is clear and stop (the zero-matching-issues rule).
 

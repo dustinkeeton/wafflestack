@@ -220,6 +220,10 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /organization\(login: \$owner\)/);
     // The Todo set is resolved from the board via the project-items GraphQL query.
     assert.match(md, /fieldValues/);
+    // The >100-item case is detectable (pageInfo requested) and the rule is explicit:
+    // paginate or stop — never trust a truncated Todo set.
+    assert.match(md, /hasNextPage/);
+    assert.match(md, /Never trust a truncated/);
   });
 
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {
