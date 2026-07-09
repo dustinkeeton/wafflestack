@@ -227,6 +227,9 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     // The intersection's lookup table must be a superset of the Todo set (raised
     // bound) and the count invariant catches any silent loss.
     assert.match(md, /Count invariant/);
+    // Phase 1 captures ALL the status option IDs (not just Todo) so Board Setup's
+    // reuse note doesn't strand kanban sync without In Progress / In Review IDs.
+    assert.match(md, /Board Setup reuses them for kanban sync/);
   });
 
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {

@@ -148,7 +148,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 
    `PROJECT_ID` empty **and the query succeeded** → **no board**: fall back to `all-open`, stated explicitly per above. Empty because the lookup **failed** → stop and report (the failed-lookup rule above).
 
-2. Find the Status field and its "Todo" option — the Board Setup fields query, extracting both IDs (a `todo-column` run reuses these in Board Setup rather than re-querying):
+2. Find the Status field and its "Todo" option — the Board Setup fields query. Extract the field ID and **all** the status option IDs in one pass while `$STATUS_FIELD` is in hand: Board Setup reuses them for kanban sync instead of re-querying, so capturing only the Todo option here would leave the board mutations without their In Progress / In Review IDs (an absent "In Review" option simply leaves `IN_REVIEW_OPTION_ID` empty, exactly as Board Setup allows):
 
    ```bash
    STATUS_FIELD=$(gh api graphql -f query='
@@ -170,6 +170,8 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 
    STATUS_FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id // empty')
    TODO_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "Todo") | .id) // empty')
+   IN_PROGRESS_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "In Progress") | .id) // empty')
+   IN_REVIEW_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r 'first(.options[]? | select(.name == "In Review") | .id) // empty')
    ```
 
    `TODO_OPTION_ID` empty **and the query succeeded** → **no "Todo" option on the Status field** (or no Status field at all): fall back to `all-open`, stated explicitly per above. A failed fields query → stop and report (the failed-lookup rule above).
@@ -306,7 +308,7 @@ The validator enforces that every issue is assigned exactly once, branch names a
 
 ## Board Setup
 
-Before execution begins, discover the project board metadata for kanban sync. This is best-effort — if the project or status options are not found, log a warning and skip all board updates. A `todo-column` run already discovered `PROJECT_ID` and `STATUS_FIELD_ID` while resolving the Todo column in Phase 1 — reuse those values instead of re-running steps 2–3's queries.
+Before execution begins, discover the project board metadata for kanban sync. This is best-effort — if the project or status options are not found, log a warning and skip all board updates. A `todo-column` run already discovered `PROJECT_ID`, `STATUS_FIELD_ID`, `IN_PROGRESS_OPTION_ID`, and `IN_REVIEW_OPTION_ID` while resolving the Todo column in Phase 1 — reuse those values instead of re-running steps 2–3's queries.
 
 1. Get repo owner/name:
    ```bash
