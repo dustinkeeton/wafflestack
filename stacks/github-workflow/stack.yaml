@@ -477,7 +477,7 @@ setup: |-
   that head branch **deleted on the remote**, and the run summary emits a prune signal so local
   clones know to `git fetch --prune`. An already-deleted head (GitHub's native
   auto-delete-head-branches got there first) is a no-op success; a branch that can't be deleted but
-  still exists (protected, or Actions denied `contents: write`) is a **warning, not a failed run** —
+  still exists (protected, missing perms, or a transient API error) is a **warning, not a failed run** —
   a lingering branch is a hygiene miss, not a delivery failure. Complete the opt-in: confirm Actions
   may write contents (Settings → Actions → General → Workflow permissions not locked to read-only;
   `gh api repos/{owner}/{repo}/actions/permissions/workflow`), and keep branch protection on the

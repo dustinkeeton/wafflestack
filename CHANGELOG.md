@@ -73,6 +73,10 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Fixed
+- **`waffle-post-merge-hook` — broaden the undeletable-branch warning.** The `else`-branch
+  `::warning` (and its matching comments) now name a transient API error (5xx / rate-limit / network)
+  alongside "protected" and "missing `contents: write`", since that branch also fires when the ref
+  still exists after a flaky delete. Message-only; no behavior change (#189 review nit).
 - **PR-green hook could never post its review (#188, `github-workflow` + `code-quality`).** The
   `waffle-pr-green-hook` dispatch prompt asks the harness for single-program commands so the CI
   allowlist can match them, while `adversarial-review` instructed a `gh api … --input - <<'EOF'`

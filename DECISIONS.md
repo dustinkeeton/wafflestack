@@ -9,6 +9,44 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-08: Hook arming/dogfood state lives in DECISIONS, not waffle.yaml comments (#189)
+
+**Context**: Installing `waffle-post-merge-hook` (#189) ran `wafflestack install`, which
+re-serialized `.waffle/waffle.yaml` and silently stripped ~16 lines of `include:` comments — the
+only record of which secrets/tokens arm which dogfooded hook, and when. The armed pr-green
+adversarial review (#112) flagged it as a should-fix: `doctor` can't catch the loss because
+`waffle.yaml` is source config, not a lock-hashed render, and the knowledge isn't recoverable
+anywhere else in the tree.
+
+**Decision**: Treat `waffle.yaml` comments as non-durable and record hook arming/dogfood state here
+instead. State as of this entry:
+
+- **waffle-hygiene.yml (#46)** — ARMED 2026-07-03: `ANTHROPIC_API_KEY` + `WAFFLE_HYGIENE_TOKEN`
+  secrets set, auto-merge enabled, rendered `.claude/skills` committed, and the `doctor` check
+  required on `main` so the daily hygiene PR can auto-merge.
+- **waffle-release-hook.yml (#39)** — dogfooded so a labeled bump PR gets auto-tagged on merge; its
+  rendered workflow is committed. The Claude-dispatched `waffle-label-hook` stays gitignored /
+  uninstalled.
+- **waffle-pr-green-hook.yml (#112)** — ARMED: on every green PR it dispatches the `adversarial-review`
+  skill to post a hostile pre-merge review (once per green transition, deduped by the
+  `<!-- waffle-adversarial-review -->` marker). Needs `ANTHROPIC_API_KEY` + a PR review-write token.
+- **waffle-post-merge-hook.yml (#67/#114)** — installed here (#189): deterministic remote merged-head
+  branch delete, `contents: write`, no Claude dispatch / no API spend.
+
+**Alternatives considered**: Restore the comments in `waffle.yaml` — rejected: the CLI is a lossy
+YAML round-trip for comments, so the next `install`/`upgrade` strips them again. A `STATUS.md` note —
+rejected: STATUS is a capped (<100-line) rolling snapshot, not an append-only durable record.
+
+**Rationale**: `DECISIONS.md` is append-only and not lock-managed, so it survives re-render and keeps
+history. This mirrors the 2026-07-02 label-hook entry (#27), which likewise folded a workflow's
+operational rationale — and an adversarial finding about it — into the decision log rather than a YAML
+comment.
+
+**Impact**: `.waffle/waffle.yaml` stays comment-free by design; hook arming/dogfood state is tracked
+here going forward. Future arming changes append a new entry rather than editing YAML comments.
+
+---
+
 ## 2026-07-08: External third-party stacks — pull a stack from a pinned git source (#88, #124–#127)
 
 **Context**: Every stack had to live inside this toolkit. A team that wanted to ship its own
