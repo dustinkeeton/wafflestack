@@ -1480,6 +1480,20 @@ describe('github-workflow: identity config schema (#154)', () => {
   const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
   const base = 'targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: Ident154\n';
 
+  /**
+   * Parse the ```yaml fence that {{git.agentIdentities}} renders into. Anchored on its own
+   * bullet (the rendered skill carries other fences), and parsed rather than grepped: a
+   * substring assertion would pass on a map emitted at the wrong indentation, outside the
+   * fence, or flattened by formatValue's string-array join — none of which is YAML.
+   */
+  const parseIdentityFence = (skill) => {
+    const after = skill.split('Per-agent identities')[1];
+    assert.ok(after, 'agentIdentities bullet is present');
+    const fence = after.match(/```yaml\n([\s\S]*?)```/);
+    assert.ok(fence, 'agentIdentities renders inside a ```yaml fence');
+    return YAML.parse(fence[1]);
+  };
+
   test('I1 placeholder defaults render when the project sets no git.* identity', () => {
     write(cwd, '.waffle/waffle.yaml', base);
     const result = render();
@@ -1492,7 +1506,7 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.match(skill, /Signing key \(`git\.signingKey`\): "" —/);
     assert.doesNotMatch(skill, /\{\{git\./, 'no identity placeholder survives the render');
     // agentIdentities default {} renders as an empty YAML map inside the fence
-    assert.match(skill, /```yaml\n\{\}\n```/);
+    assert.deepEqual(parseIdentityFence(skill), {});
   });
 
   test('I2 precedence: local overlay > committed config: > stack default', () => {
@@ -1518,10 +1532,12 @@ describe('github-workflow: identity config schema (#154)', () => {
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
 
+    // Parse the fence, don't grep it: this pins the deep-merge, the shape AND the column-0
+    // placeholder decision in one assertion — it fails if the indentation regresses.
     const skill = read(cwd, SKILL);
-    assert.match(skill, /security-auditor:/);
-    assert.match(skill, /botName: SecBot/);
-    assert.match(skill, /botEmail: sec@example\.com/);
+    assert.deepEqual(parseIdentityFence(skill), {
+      'security-auditor': { botName: 'SecBot', botEmail: 'sec@example.com' },
+    });
   });
 
   test('I4 declared patterns fail the render loudly on an unsafe identity value', () => {
@@ -1532,6 +1548,136 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.match(result.errors.join('\n'), /pattern/);
     // a failed render is non-destructive
     assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false);
+  });
+
+  // I5: one negative case per guarded key. Before this, deleting `pattern:` from git.botName or
+  // git.signingKey left the whole suite green — the guards were unpinned.
+  for (const [key, value, why] of [
+    ['botName', 'Bad\nName', 'newline'],
+    ['botName', 'Bot`Name', 'backtick breaks the markdown code span it renders into'],
+    ['botName', 'Bot;rm -rf /', 'shell metacharacter in the git.cmd shell word'],
+    ['botName', '${{ secrets.LEAK }}', 'a ${{ }} expression survives the renderer verbatim'],
+    ['botEmail', '$(id)@x.com', 'command substitution needs no space, @ or quote'],
+    ['botEmail', 'a@b', 'no TLD'],
+    ['signingKey', 'has"a quote', 'quote escapes the rendered quoted span'],
+    ['signingKey', '${{ secrets.LEAK }}', 'a ${{ }} expression survives the renderer verbatim'],
+  ]) {
+    test(`I5 git.${key} pattern rejects ${JSON.stringify(value)} (${why})`, () => {
+      write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ${key}: ${JSON.stringify(value)}\n`);
+      const result = render();
+      assert.equal(result.ok, false, `expected git.${key}=${JSON.stringify(value)} to fail the render`);
+      const errs = result.errors.join('\n');
+      assert.match(errs, new RegExp(`git\\.${key}`), 'the error names the offending key');
+      assert.match(errs, /pattern/);
+      assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
+    });
+  }
+
+  test('I6 a safe value composed through git.cmd renders, and the composed command carries it', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    botName: CIBot\n    botEmail: ci@example.com\n    cmd: git -c user.email={{git.botEmail}} -c user.name={{git.botName}}\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /git -c user\.email=ci@example\.com -c user\.name=CIBot/);
+  });
+
+  test('I7 git.agentIdentities is UNVALIDATED — its leaves bypass the sibling patterns (documented, pinned)', () => {
+    // Guardrail, not an endorsement: `pattern:` guards string scalars only, so a leaf value that
+    // git.botEmail's own pattern rejects sails through under agentIdentities. The key description
+    // and the CHANGELOG say so explicitly; #155 is where the shape gets enforced. If a future
+    // change starts validating these leaves, this test fails and BOTH docs must be updated.
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    agentIdentities:\n      rogue:\n        botEmail: "$(id)@x.com"\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, true, 'leaves are not pattern-checked today (see #155)');
+    assert.deepEqual(parseIdentityFence(read(cwd, SKILL)), { rogue: { botEmail: '$(id)@x.com' } });
+  });
+});
+
+// #154 review: a declared `pattern:` must be enforced on the NESTED composition path, not only
+// where the key happens to appear as a top-level placeholder.
+//
+// The github-workflow stack cannot prove this on its own: its "Bot identity (config)" block
+// references {{git.botEmail}} at top level in every render, so the guard fires incidentally and a
+// nested-only regression stays invisible there. `/waffle-eject` the git-workflow skill, or mirror
+// `git.cmd` from a stack that declares no patterns, and the guard was simply gone.
+//
+// This synthetic stack removes the incidental reference: `id.email` carries the pattern and is
+// reachable ONLY through `id.cmd`, which itself declares none. Delete the `patterns` threading
+// from expandNested (template.mjs) and N1 goes green — that is the regression this pins.
+describe('render: a pattern is enforced through nested composition (#154 review)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-nest-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-nest-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: nestfix\ndescription: nested-pattern fixture\nstacks: [nest]\n');
+    write(toolkitRoot, 'stacks/nest/stack.yaml', [
+      'name: nest',
+      'description: Nested-pattern stack.',
+      'skills: [compose]',
+      'config:',
+      '  id.email:',
+      '    required: false',
+      '    default: ok@example.com',
+      "    pattern: '^(?!.*\\$\\{\\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'",
+      '    description: Guarded email.',
+      '  id.cmd:',
+      '    required: false',
+      '    default: git -c user.email={{id.email}}',
+      '    description: Composes id.email. Declares no pattern of its own.',
+      '',
+    ].join('\n'));
+    // The skill body references ONLY id.cmd — id.email never appears as a top-level placeholder.
+    write(toolkitRoot, 'stacks/nest/skills/compose/SKILL.md',
+      '---\nname: compose\ndescription: Compose skill.\n---\n\nRun `{{id.cmd}}` to commit.\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const SKILL = '.claude/skills/compose/SKILL.md';
+  const base = 'targets: [claude]\nstacks: [nest]\nconfig:\n';
+
+  test('N1 an unsafe value reachable only through composition fails the render, naming the key', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  id:\n    email: "$(id)@x.com"\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'the nested-only guarded value must fail the render');
+    const errs = result.errors.join('\n');
+    assert.match(errs, /id\.email/, 'the error names the guarded key, not the composing one');
+    assert.match(errs, /pattern/);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
+  });
+
+  test('N2 a ${{ }} expression in a nested-only value cannot ride through the renderer', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  id:\n    email: "\${{ secrets.LEAK }}"\n`);
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /id\.email/);
+  });
+
+  test('N3 a safe nested-only value still renders, expanded into the composing key', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  id:\n    email: bot@example.com\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, SKILL), /Run `git -c user\.email=bot@example\.com` to commit\./);
+  });
+
+  test('N4 the stack default (nested-only, unreferenced at top level) satisfies its own pattern', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [nest]\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, SKILL), /git -c user\.email=ok@example\.com/);
   });
 });
 
