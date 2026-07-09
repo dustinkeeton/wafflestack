@@ -41,6 +41,7 @@
     ".claude/skills/hygiene/SKILL.md": "6918fcf43fad8261e30542ba89620c9dc0aea0130071c38e1a35d00338605539",
     ".claude/skills/issue/SKILL.md": "26095c7c69150a33269bf9158d034b61ce8bdee2f9ea37584540e3b9e56bcb7f",
     ".claude/skills/label-hook/SKILL.md": "02b29a4caf5b918178bb5ea5bee57a3b876c0d055eb9c2614ae44edf1d322a41",
+    ".claude/skills/pr-response/SKILL.md": "fa308368e0917054e912832d787ff1cf4341a715ceb0cf8ab7ec4eaa1709ed58",
     ".claude/skills/release/SKILL.md": "a93fd547da03f2ddad493c75b39a7ea750653ca30007b724efa4d3cbfc8b5254",
     ".claude/skills/standup/SKILL.md": "23da70cc4898b311c1493d3ed74a3c2d529f45658513e9669807ed1342d99c78",
     ".claude/skills/waffle-doctor/SKILL.md": "4fe4a342bc0c5d7ed15e826996d4e586acc5144b6d42cfd2059522739ce8d6e3",
@@ -56,8 +57,8 @@
     ".github/workflows/waffle-label-hook.yml": "3417106489840e666e29e2f7ead9342e836d46d81cbf68248a192766e9b66e53",
     ".github/workflows/waffle-pr-green-hook.yml": "17ab76f33baf0a5478ba126eafcc7c29646cd8fc9c0d95649a6b3dc0e90ebf5e",
     ".github/workflows/waffle-release-hook.yml": "f78b5d85d7d98d1d85d5f2d58cf5742452ed4f3ef285c6222f07b494a6e7c208",
-    ".waffle/cheatsheet.html": "8642637280b855c08a27d68077186fdd00755e94dd03caaa313aac480e422df5",
-    ".waffle/CHEATSHEET.md": "069f2e6ea377c268d84b41ced1101abe42f3f91ea854e114099427e8cd73157d",
+    ".waffle/cheatsheet.html": "57fd5770cf8325682f657c1475be37162e10113176723e2e60d916aa45baebfc",
+    ".waffle/CHEATSHEET.md": "2b524d01d479e314dc16ae25442a2cb86fef0cde8ea7693e9b1ed37dfbea482e",
     ".waffle/team.html": "80109e846b3201f98684501e2cf502dcc02f44c5047d3d5d5be7e4db642dc04b",
     ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29"
   }
