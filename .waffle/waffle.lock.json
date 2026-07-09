@@ -14,7 +14,8 @@
     "files/.github/workflows/waffle-hygiene.yml",
     "files/.github/workflows/waffle-release-hook.yml",
     "files/.github/workflows/waffle-pr-green-hook.yml",
-    "code-quality/skills/adversarial-review"
+    "code-quality/skills/adversarial-review",
+    "files/.github/workflows/waffle-post-merge-hook.yml"
   ],
   "files": {
     ".claude/agents/docs-agent.md": "97f222634193b8db702f0e3e223e53bb592cc0bd56a15152bb12aeae0b526705",
@@ -54,6 +55,7 @@
     ".github/workflows/waffle-doctor.yml": "9ca66d8db273ac13496911823f02c94cacc2fd4091daccd02db013389c13fbc5",
     ".github/workflows/waffle-hygiene.yml": "67378f86a18b085d85daf88634d1e3cb351414f8bd1faac6ad8c9fcae7a59d2a",
     ".github/workflows/waffle-label-hook.yml": "3417106489840e666e29e2f7ead9342e836d46d81cbf68248a192766e9b66e53",
+    ".github/workflows/waffle-post-merge-hook.yml": "61a1980a5d008afdf38e689859feab7b25a028da4214be138267e271ef2f82dd",
     ".github/workflows/waffle-pr-green-hook.yml": "ebc4911f5af868b42e01bfe61d0c1a7df030bb9e5cad56f9e13d0ba6e0f63617",
     ".github/workflows/waffle-release-hook.yml": "f78b5d85d7d98d1d85d5f2d58cf5742452ed4f3ef285c6222f07b494a6e7c208",
     ".waffle/cheatsheet.html": "8642637280b855c08a27d68077186fdd00755e94dd03caaa313aac480e422df5",

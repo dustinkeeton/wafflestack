@@ -1,0 +1,68 @@
+# Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
+# Post-merge hook: when a pull request is MERGED, delete its (same-repo) head branch on the
+# remote so nothing lingers after the merge, and emit a prune signal in the run summary so
+# local clones know a `git fetch --prune` will drop the now-stale origin/* tracking ref.
+# Deterministic — a plain Actions job with `contents: write`, NO Claude dispatch and NO API
+# spend (unlike the sibling waffle-label-hook), same trigger shape as waffle-release-hook.
+#
+# This is the REMOTE half of post-merge hygiene. The LOCAL half — deleting the merged local
+# branch + worktree and pruning — stays the merging agent's job via the `clean-up` skill
+# (`clean-up git --yes`), because a CI job cannot reach a developer's machine. Board/issue
+# reconciliation is likewise a local-agent step (see the clean-up + git-workflow skills), NOT
+# done here: keeping it local costs zero API budget and lets the agent that just merged fix
+# board drift in place — this job stays scoped to remote-only branch hygiene on purpose.
+#
+# Safety: only a branch in THIS repo is ever touched — a fork PR's head lives on the fork, so
+# the same-repo gate skips it (and the base repo's read-only fork token could not delete it
+# anyway) — and never the default branch. An already-deleted head (GitHub's native
+# auto-delete-head-branches beat us to it) is treated as success, and a branch that cannot be
+# deleted but still exists (protected, or Actions denied `contents: write`) is a WARNING, not a
+# failed run: a lingering branch is a hygiene miss, not a delivery failure, so it never reds a
+# clean merge. Prerequisite (see the stack setup note): Actions allowed `contents: write`.
+name: waffle-post-merge-hook
+
+on:
+  pull_request:
+    types: [closed]
+
+# One run at a time per PR; never cancel an in-flight branch delete.
+concurrency:
+  group: waffle-post-merge-hook-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    # Fire only when the PR was actually MERGED (not merely closed), its head branch lives in
+    # THIS repo (fork heads are unreachable and left alone), and that head is not the default
+    # branch (never delete the trunk).
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Least privilege: the only write this job performs is deleting a branch ref.
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the merged head branch
+        env:
+          # The branch name reaches the shell only through the environment and is passed to
+          # `gh api` as a data argument (never eval'd); GitHub branch names cannot contain shell
+          # metacharacters, spaces, or `..`, so the quoted expansion below is safe.
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Delete the head ref via the REST API (no checkout needed). Three outcomes:
+          #   1. DELETE succeeds        -> branch removed, note the prune signal.
+          #   2. DELETE fails + ref gone -> GitHub's native auto-delete already removed it (fine).
+          #   3. DELETE fails + ref left -> protected branch or missing perms: warn, do not fail.
+          if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" >/dev/null 2>&1; then
+            echo "🧇 waffle-post-merge-hook: deleted remote branch \`${BRANCH}\` (PR #${PR_NUMBER}). Run \`git fetch --prune\` locally — or the clean-up skill's \`git --yes\` — to drop the stale origin/${BRANCH} tracking ref." | tee -a "$GITHUB_STEP_SUMMARY"
+          elif ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" >/dev/null 2>&1; then
+            echo "🧇 waffle-post-merge-hook: remote branch \`${BRANCH}\` was already gone (GitHub native auto-delete beat us to it) — nothing to delete. Prune locally to drop any stale origin/${BRANCH} ref." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=waffle-post-merge-hook::Could not delete remote branch '${BRANCH}' (PR #${PR_NUMBER}) though it still exists — it may be protected, or Actions may lack contents: write. Delete it by hand if you want it gone; this hygiene hook does not fail the run over a lingering branch."
+          fi
