@@ -1,6 +1,6 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
-skills: [git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release]
+skills: [git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release, pr-response]
 files:
   - .github/workflows/waffle-doctor.yml
   - .github/workflows/waffle-label-hook.yml
@@ -41,7 +41,10 @@ optIn:
 # together; the skill needs git-workflow. The post-merge-hook workflow is deterministic too
 # (remote branch delete, no skill dispatch), but it is the REMOTE half of post-merge hygiene, so
 # installing it pulls the `clean-up` skill — its LOCAL companion (delete the merged local
-# branch/worktree, prune) — so the pair arrives together.
+# branch/worktree, prune) — so the pair arrives together. The pr-response skill applies the
+# fixes it accepts (branch/commit/push, pre-flight), so it needs git-workflow. It deliberately
+# does NOT require code-quality's adversarial-review: it triages findings from any reviewer,
+# human or bot, and is useful with no review bot installed at all.
 requires:
   skills/label-hook:
     - skills/issue
@@ -58,6 +61,8 @@ requires:
     - skills/release
   files/.github/workflows/waffle-post-merge-hook.yml:
     - skills/clean-up
+  skills/pr-response:
+    - skills/git-workflow
 # Typed external prerequisites (#47/#129). ONLY the three tool-presence probes are `require`
 # (they fail `doctor`): a `command -v` binary check for node/git/gh is certain to pass in every
 # environment doctor runs — the CI runner and local dev alike. Everything environment-specific
