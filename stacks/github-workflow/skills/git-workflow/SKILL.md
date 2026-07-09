@@ -31,8 +31,9 @@ reference the overlay's keys. Never put private key material in `git.signingKey`
 a public-key path, and it renders into committed files.
 
 Setting those values alone changes nothing. The opt-in is pointing `git.cmd` at them, so the
-identity is injected into every command example below via `-c` flags. In this project `git.cmd`
-resolves to:
+identity is injected via `-c` flags into the command examples that actually write it — `commit`,
+and an annotated `tag` if you add one. `checkout`, `push`, `diff` and `log` record no committer, so
+they stay a bare `git`. In this project `git.cmd` resolves to:
 
 ```bash
 {{git.cmd}}
@@ -63,7 +64,7 @@ the stack's setup note for the exact recipe and the layering rules.
 
 ```bash
 git checkout main && git pull
-{{git.cmd}} checkout -b feat/my-feature
+git checkout -b feat/my-feature
 ```
 
 ## Commits
@@ -107,7 +108,7 @@ EOF
 ### Pushing
 
 ```bash
-{{git.cmd}} push -u origin feat/my-feature
+git push -u origin feat/my-feature
 ```
 
 ### Creating PRs (no human in the loop)

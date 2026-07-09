@@ -1669,20 +1669,24 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     assert.match(read(cwd, GIT_SKILL), /^git$/m, 'the resolved git.cmd fence shows a bare git');
   });
 
-  test('W2 the canonical recipe injects the identity into commit + push, quoting a spaced name', () => {
+  test('W2 the canonical recipe injects the identity into commit, quoting a spaced name', () => {
     // An interior space is a LEGAL botName (github-actions[bot], "Waffle Bot"). Drop the quotes
     // from the recipe and `-c user.name=Waffle Bot commit` splits into a broken command — so the
     // rendered text must carry them.
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Waffle Bot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
     assert.equal(render().ok, true);
     const injected = 'git -c user.name="Waffle Bot" -c user.email=bot@example.com';
-    assert.match(read(cwd, GIT_SKILL), new RegExp(`^${escapeRe(injected)} commit -m `, 'm'));
-    assert.match(read(cwd, GIT_SKILL), new RegExp(`^${escapeRe(injected)} push -u origin `, 'm'));
-    // #155 threads git.cmd through the release skill's commit/push too (they are agent-executed).
-    assert.match(read(cwd, RELEASE_SKILL), new RegExp(`^${escapeRe(injected)} commit -m `, 'm'));
-    assert.match(read(cwd, RELEASE_SKILL), new RegExp(`^${escapeRe(injected)} push -u origin `, 'm'));
+    // #155 threads git.cmd through the release skill's commit too (it is agent-executed).
+    for (const file of [GIT_SKILL, RELEASE_SKILL]) {
+      assert.match(read(cwd, file), new RegExp(`^${escapeRe(injected)} commit -m `, 'm'), `${file}: commit carries the identity`);
+    }
   });
 
+  // #155 review (should-fix): `commit` is the only rendered command that writes a committer
+  // identity. `push`, `checkout -b`, `diff --stat` and `log --oneline` read neither user.name nor
+  // user.email, so splicing the `-c` flags into them was noise the agent had to reproduce — and it
+  // drew the identity-bearing line arbitrarily (W2b already pinned `git checkout main` as bare
+  // while `git checkout -b` got the flags). Identity now lands only where identity is recorded.
   test('W2b the maintainer-run and identity-free commands stay bare git', () => {
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
     assert.equal(render().ok, true);
@@ -1690,6 +1694,11 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     // maintainer's own credentials (and a lightweight tag carries no identity at all).
     assert.match(read(cwd, GIT_SKILL), /^git checkout main && git pull$/m);
     assert.match(read(cwd, RELEASE_SKILL), /`git tag vX\.Y\.Z /);
+    // Branch creation and push record no committer — bare git, in both skills.
+    assert.match(read(cwd, GIT_SKILL), /^git checkout -b feat\/my-feature$/m);
+    assert.match(read(cwd, GIT_SKILL), /^git push -u origin feat\/my-feature$/m);
+    assert.match(read(cwd, RELEASE_SKILL), /^git checkout -b chore\/bump-X\.Y\.Z$/m);
+    assert.match(read(cwd, RELEASE_SKILL), /^git push -u origin chore\/bump-X\.Y\.Z$/m);
   });
 
   test('W3 the identity resolves cross-stack into the orchestration delegate skill', () => {
@@ -1700,7 +1709,10 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     const delegate = read(cwd, DELEGATE_SKILL);
-    assert.match(delegate, /git -c user\.name="Wafflebot" -c user\.email=bot@example\.com push -u origin/);
+    // The spawned agent's COMMIT carries the identity (the only command that records one)...
+    assert.match(delegate, /git -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit/);
+    // ...and its push does not.
+    assert.match(delegate, /- Push: git push -u origin \{branch-name\}/);
     assert.doesNotMatch(delegate, /\{\{git\./, 'no identity placeholder survives the render');
   });
 
@@ -1724,6 +1736,21 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     // installed. W5b/W5c carry the general claim — see the note there.
     assert.equal(result.ok, false, 'command substitution must not reach an unquoted shell word');
     assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+  });
+
+  // #155 review (should-fix): `git.cmd` overrides the identity and NOTHING else — ambient
+  // `commit.gpgsign` survives, so a signing-enabled machine signs a bot-authored commit with the
+  // human's key (or hangs on a prompting agent). Setup-note rule (4) now documents the remedy;
+  // this pins that the hardened recipe still satisfies the identity guards and renders clean.
+  // The engine-level signing model (a `git.sign` tri-state) is #158.
+  test('W7 the gpgsign-hardened recipe renders and still enforces the identity guards', () => {
+    const hardened = 'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${hardened}\n`);
+    assert.equal(render().ok, true);
+    assert.match(read(cwd, GIT_SKILL), /^git -c commit\.gpgsign=false -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m);
+    // The guard still bites through the longer recipe.
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${hardened}\n`);
+    assert.equal(render().ok, false, 'gpgsign hardening must not weaken the botEmail guard');
   });
 
   // #155 review (blocker): the pattern guards were compiled PER STACK, and only github-workflow

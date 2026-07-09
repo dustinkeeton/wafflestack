@@ -52,7 +52,7 @@ Never work on `main`. Create the bump branch (per `git-workflow`):
 
 ```bash
 git checkout main && git pull
-{{git.cmd}} checkout -b chore/bump-X.Y.Z
+git checkout -b chore/bump-X.Y.Z
 ```
 
 ## 3. Apply the bump
@@ -96,7 +96,7 @@ chore: bump to X.Y.Z
 {{git.coAuthorTrailer}}
 EOF
 )" <explicit paths — package.json, package-lock.json, CHANGELOG.md, and each versionFiles path>
-{{git.cmd}} push -u origin chore/bump-X.Y.Z
+git push -u origin chore/bump-X.Y.Z
 ```
 
 Open the PR against `main`. The body must carry the **consumer-impact notes** for this

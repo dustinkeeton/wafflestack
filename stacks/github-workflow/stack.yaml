@@ -734,8 +734,21 @@ setup: |-
   too — otherwise the render differs per machine and the doctor drift gate goes red. Use a
   public noreply-style address when you do. `git.agentIdentities` holds per-agent overrides and
   may itself be split across the two files (they deep-merge).
-  (4) **Signing is separate.** Do not add `{{git.signingKey}}` to `git.cmd` unless you have set
-  it: the empty default renders `git -c user.signingkey= …`, which git rejects at run time.
+  (4) **Signing is separate — and `git.cmd` does NOT disable it.** Do not add
+  `{{git.signingKey}}` to `git.cmd` unless you have set it: the empty default renders
+  `git -c user.signingkey= …`, which git rejects at run time. Just as important, `git.cmd`
+  overrides `user.name` / `user.email` and *nothing else* — the machine's ambient
+  `commit.gpgsign` survives. On a developer machine with signing on, an agent following the
+  rendered example produces a commit AUTHORED as the bot but SIGNED with the human's key: GitHub
+  marks it "Verified" and attributes the vouching to the human, which is the opposite of what a
+  separate bot identity is for. A signer that prompts (1Password's SSH agent, a passphrase-guarded
+  GPG key) blocks the non-interactive commit outright. Either give the bot its own key
+  (`git.signingKey`) or append `-c commit.gpgsign=false` to `git.cmd` when it has none:
+
+    cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+
+  Note this is prompt-level, not enforced: agents follow the rendered examples. Making the toolkit
+  reason about signing (a `git.sign` tri-state rather than a hand-assembled `cmd`) is #158.
 
   Then set `git.identitySection` to prose that says the bot identity is in effect. Leave
   `git.coAuthorTrailer` alone unless you want to: with a bot identity configured the commit
@@ -762,8 +775,10 @@ config:
     required: false
     default: git
     description: >-
-      The git invocation used in command examples. The bare default never overrides a human's
-      user.name / user.email. Setting this to the canonical recipe IS the bot-identity opt-in:
+      The git invocation used in the command examples that WRITE a committer identity — commit,
+      and an annotated tag if one is ever added. Identity-free commands (checkout, push, diff,
+      log) stay a bare git. The bare default never overrides a human's user.name / user.email.
+      Setting this to the canonical recipe IS the bot-identity opt-in:
       'git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}' — quote user.name
       (botName admits interior spaces) and set BOTH identity keys in project config rather than
       relying on their stack defaults, which stacks that declare only git.cmd cannot resolve.
