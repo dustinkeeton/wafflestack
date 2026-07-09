@@ -1740,6 +1740,33 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     assert.match(JSON.stringify(result.errors), /git\.botEmail/);
   });
 
+  // #155 review (should-fix): uncommenting the shipped `wafflestack init` scaffold VERBATIM used
+  // to trip the setup note's own rule (2) — `botName` + `cmd` were in the committed block but
+  // `botEmail` was only offered in the .local overlay, so the recipe resolved botEmail from the
+  // github-workflow stack DEFAULT. That default is invisible to orchestration (which declares no
+  // such key), making it a silent nested miss: a literal `{{git.botEmail}}` in the push command.
+  // The scaffold now ships botEmail alongside botName. This test reads the real scaffold rather
+  // than a copy of it, so drifting the two apart goes red.
+  test('W6 uncommenting the init scaffold verbatim leaks no placeholder into any skill', () => {
+    const file = init({ cwd });
+    const scaffold = fs.readFileSync(file, 'utf8');
+    // Uncomment exactly the identity block a user following the scaffold would: the committed
+    // `#  git:` mapping and the keys indented under it. Nothing from the .local overlay section.
+    const block = scaffold
+      .split('\n')
+      .filter((l) => /^#\s{2,}(git:|botName:|botEmail:|cmd:)/.test(l))
+      .map((l) => l.replace(/^#/, '')) // exactly what a user does: delete the comment marker
+      .join('\n');
+    assert.match(block, /^\s+botEmail:/m, 'the committed block must offer botEmail alongside botName');
+    assert.match(block, /^\s+cmd:/m, 'the committed block still ships the opt-in recipe');
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}${block}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    for (const f of [GIT_SKILL, DELEGATE_SKILL]) {
+      assert.doesNotMatch(read(cwd, f), /\{\{git\./, `${f}: no identity placeholder survives`);
+    }
+  });
+
   test('W5c a botName that breaks out of the recipe quoting is rejected cross-stack', () => {
     // `Evil"; id; echo "` closes git.cmd's quotes and appends a command. The botName pattern
     // excludes `"`, `$`, backtick and `\` precisely so the quoting in rule (1) holds.
