@@ -1433,6 +1433,35 @@ describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   });
 });
 
+// #216: project.name is required (no default) by the github-workflow stack. init() now seeds it
+// as a commented example, so a fresh init leaves it ABSENT — enabling the stack must fail loudly
+// (naming config.project.name, non-destructively) until the user supplies it. Drives the real stack.
+describe('github-workflow: project.name first-run (#216)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-216-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+
+  test('enabling github-workflow without project.name fails naming config.project.name (non-destructive)', () => {
+    init({ cwd }); // seeds the starter — project.name is commented, hence absent
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [github-workflow]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /config\.project\.name/);
+    // failed render writes nothing — no lock, no rendered output
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false);
+  });
+
+  test('github-workflow renders once project.name is supplied', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: Demo216\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+  });
+});
+
 // #39: the github-workflow stack also ships the DETERMINISTIC release hook — a files/ payload
 // (waffle-release-hook.yml) plus the `release` skill, wired by a files/-keyed requires: edge.
 // Tag-on-merge is a plain contents:write Actions job: NO Claude dispatch, NO API spend. These
@@ -4837,6 +4866,16 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
     } finally {
       fs.rmSync(other, { recursive: true, force: true });
     }
+  });
+
+  test('init seeds a commented project.name example (discoverable at init) (#216)', () => {
+    init({ cwd });
+    const cfg = read(cwd, '.waffle/waffle.yaml');
+    // the required-by-github-workflow key is present as a commented, discoverable example
+    assert.match(cfg, /#\s*project:/);
+    assert.match(cfg, /#\s*name:/);
+    // comments don't change parsing — config stays an empty map, still valid YAML
+    assert.deepEqual(YAML.parse(cfg).config, {});
   });
 
   test('staleGitignoreEntries flags root .waffle.* lines and stays quiet on .waffle/ paths', () => {

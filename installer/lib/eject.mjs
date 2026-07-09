@@ -157,6 +157,8 @@ include: []
 #  - skills/issue
 #  - agents/project-manager
 config: {}
+#  project:
+#    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:
 #    botEmail: bot@example.com
 # Account-specific values belong in .waffle/waffle.local.yaml (gitignore it).
