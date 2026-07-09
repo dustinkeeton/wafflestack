@@ -36,6 +36,27 @@ include:
   # would loop. Runtime still needs ANTHROPIC_API_KEY + WAFFLE_HYGIENE_TOKEN (both already set here).
   - files/.github/workflows/waffle-pr-response-hook.yml
 config:
+  git:
+    # #155: the managed Wafflebot identity, injected into every rendered git example via
+    # `-c` flags. BOTH values are committed here rather than split into the gitignored
+    # .waffle/waffle.local.yaml (the usual layering for botEmail): this repo commits its
+    # render and re-renders it in CI (the audit compliancePrompt runs `render && doctor`)
+    # and in fresh delegate worktrees — neither of which has the gitignored overlay, so an
+    # overlay-held botEmail would render the placeholder there and red the doctor drift gate.
+    # bot@wafflenet.io is already public in this repo's history; nothing is leaked.
+    # `user.name` is quoted because git.botName admits interior spaces.
+    botName: Wafflebot
+    botEmail: bot@wafflenet.io
+    cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+    identitySection: |-
+      This project commits agent work under the managed bot identity — every command example
+      below injects it via `-c` flags (`git.cmd`), so the machine's ambient `user.name` /
+      `user.email` is never what lands on an agent commit. Human commits made outside these
+      examples keep the developer's own config. Every agent-made commit must still end with:
+
+      ```
+      {{git.coAuthorTrailer}}
+      ```
   project:
     name: wafflestack
     longName: the wafflestack agent/skill toolkit
