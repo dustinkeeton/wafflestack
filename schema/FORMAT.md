@@ -498,11 +498,24 @@ git:
 ```
 
 can reference keys kept in the gitignored `.waffle/waffle.local.yaml`. Unresolvable nested
-placeholders pass through verbatim. (`git.botName` / `git.botEmail` are since declared
-first-class in the github-workflow stack, with placeholder defaults — so *those two* now fall
-back to their defaults rather than passing through. The undeclared-path expansion above is what
-makes any *genuinely* undeclared overlay key work.) Avoid config key names that collide with literal
-template syntax you embed in values (e.g. don't declare a `secrets.*` namespace).
+placeholders pass through verbatim.
+
+(`git.botName`, `git.botEmail`, `git.signingKey` and `git.agentIdentities` are since declared
+first-class in the github-workflow stack, with placeholder defaults — so **all four** now fall back
+to their defaults rather than passing through. Mind `git.signingKey`: its default is the **empty
+string**, so referencing `{{git.signingKey}}` without defining it renders
+`git -c user.signingkey= …` — a silent failure that git only rejects at run time — where an
+undeclared key would have left the obviously broken literal `{{git.signingKey}}` behind. The
+undeclared-path expansion above is what makes any *genuinely* undeclared overlay key work.)
+
+A declared `pattern:` is enforced on the fully-expanded value **wherever the key is substituted —
+including nested composition**. `git.cmd: git -c user.email={{git.botEmail}}` validates
+`git.botEmail` against its pattern even though the canonical text never names that key at top
+level. Patterns apply to string scalars only: a key whose value is a map or a list (e.g.
+`git.agentIdentities`) is not shape-checked, and its leaves do not inherit any sibling's pattern.
+
+Avoid config key names that collide with literal template syntax you embed in values (e.g. don't
+declare a `secrets.*` namespace).
 
 ### Item-name collisions
 
