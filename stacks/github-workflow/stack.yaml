@@ -739,37 +739,55 @@ config:
   git.botName:
     required: false
     default: Wafflebot
-    pattern: "[^\\r\\n'\"]+"
+    # Allowlist, not a denylist: this value is spliced into an unquoted shell word by
+    # git.cmd and into a markdown code span by the git-workflow skill, so a backtick, `$`,
+    # `;`, `|`, `&` or `\` would corrupt one or the other. Leading/trailing/doubled spaces
+    # are excluded too. `^(?!.*\$\{\{)` is the sibling injection guard: PLACEHOLDER's
+    # `(?<!\$)` lookbehind means a `${{ ... }}` in a config value survives the render verbatim.
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
     description: >-
       Bot committer name for automated commits (git user.name). Placeholder default; a project
       that commits under a bot identity overrides it in the committed .waffle/waffle.yaml and
       points git.cmd / git.identitySection at it via {{git.botName}}. Because it is a declared
       key, an unset value now falls back to this placeholder instead of passing through verbatim.
+      The pattern is an allowlist — letters, digits, "." "_" "-" "[" "]", single interior spaces
+      (so "github-actions[bot]" and "Wafflebot" pass); shell metacharacters do not.
   git.botEmail:
     required: false
     default: wafflebot@users.noreply.github.com
-    pattern: "[^\\s@'\"]+@[^\\s@'\"]+"
+    # Allowlist. The old denylist excluded only whitespace, `@` and quotes — and command
+    # substitution (`$(id)@x.com`, backticks) contains none of those, while git.cmd places
+    # this value in an unquoted shell word. A TLD is required, so `a@b` no longer passes.
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
     description: >-
       Bot committer email (git user.email). Placeholder default; account-specific, so the real
       value belongs in the gitignored .waffle/waffle.local.yaml (nested substitution resolves it
-      from committed values such as git.cmd).
+      from committed values such as git.cmd). The pattern is an allowlist requiring a TLD; shell
+      metacharacters and command-substitution syntax do not pass.
   git.signingKey:
     required: false
     default: ""
-    pattern: "[^\\r\\n'\"]*"
+    # Allowlist covering a GPG key ID / fingerprint and an SSH public-key path. Empty is
+    # allowed (the default). No spaces: this lands in an unquoted `git -c user.signingkey=`.
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]*$'
     description: >-
       Signing key identifier for bot commits — a GPG key ID or an SSH public-key path, NEVER
       private key material (it renders into committed files). Empty (the default) means commits
       are not signed with a dedicated bot key. Keep the real value in .waffle/waffle.local.yaml.
+      Note the empty default is a *silent* fallback: a git.cmd referencing {{git.signingKey}}
+      without defining it renders `git -c user.signingkey= …`, which git rejects at run time.
   git.agentIdentities:
     required: false
     default: {}
     description: >-
       Map of per-agent virtualized identities that override the main bot identity, keyed by agent
-      name: { <agent>: { botName, botEmail, signingKey? } }. Empty (the default) means every agent
-      commits as the main git.botName / git.botEmail identity. Entries may be split across the
-      committed config (names) and the gitignored local overlay (emails/keys) — the two deep-merge,
-      local winning per key.
+      name — the intended shape is { <agent>: { botName, botEmail, signingKey? } }. Empty (the
+      default) means every agent commits as the main git.botName / git.botEmail identity. Entries
+      may be split across the committed config (names) and the gitignored local overlay
+      (emails/keys) — the two deep-merge, local winning per key. UNVALIDATED until #155: a
+      `pattern:` guards only string scalars, so this map's shape is not checked and its
+      botName/botEmail/signingKey leaves do NOT inherit the sibling patterns above. Treat entries
+      as free-form until the consumer (#155) enforces the shape.
   git.worktreesDir:
     required: false
     default: .claude/worktrees
