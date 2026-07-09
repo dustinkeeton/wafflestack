@@ -3,8 +3,8 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.10.0 tagged (pre-1.0 — the file contract can still change between minor
-  releases). Additive work has since merged to `main` (CHANGELOG `[Unreleased]`; see Current focus).
+- **Version**: v0.11.0 (pre-1.0 — the file contract can still change between minor
+  releases). See Current focus for what this release adds.
 - **Last updated**: 2026-07-08
 - **Health**: 🟢 tests 363/363 (62 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
@@ -44,7 +44,7 @@ tested. All 9 commands work:
 
 ## Current focus
 
-All merged 2026-07-08 — additive, post-0.10.0 (CHANGELOG `[Unreleased]`):
+All shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 
 - **External third-party stacks (new, #88/#124–#127).** A `stacks:` entry can now be a
   `{name, source, ref}` mapping pointing at a third-party git (pinned ref) or local source.

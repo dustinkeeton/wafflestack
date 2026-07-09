@@ -31,7 +31,135 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-08
+
+### Consumer impact
+- **New capability, additive — third-party stacks: pull a stack from a pinned git source or a
+  local path (#88, #124–#127).** A `stacks:` entry in `.waffle/waffle.yaml` may now be **either** a
+  bare built-in name (unchanged) **or** a `{ name, source, ref }` mapping pointing at an external
+  toolkit — a git URL (pinned to a **required** `ref`) or a local filesystem path. External sources
+  are resolved and merged into one registry, so a **single render / lock / `doctor` / `upgrade`
+  pipeline handles built-in and external stacks alike**. Provenance is recorded in the lock (a
+  `sources` block), `doctor` attributes any drift to its source, and `upgrade` re-resolves each pin
+  and reports commit moves. External stacks are lint-validated **before any byte is written**, and
+  pouring their opt-in syrup asks for an extra trust-boundary acknowledgement. **Purely additive** —
+  a repo using only built-in names renders byte-identically (the `sources` lock block is omitted when
+  empty), and `list`/`setup` still operate on the built-in surface only. Authoring guide:
+  `schema/AUTHORING-EXTERNAL-STACKS.md`.
+- **Additive; no re-render diff, but `doctor` now checks prerequisites, `setup` surfaces them, and
+  the CI dispatcher is now repointable (#129/#130/#131).** The typed `prerequisites:` block does not
+  render into any file, so a re-render produces no output/lock change. A repo that runs
+  `waffle-doctor.yml` (or `wafflestack doctor`) will, on its next run, start verifying the selected
+  stacks' declared prerequisites — an unmet `require` fails the check. The seeded `require`s are only
+  `command -v node/git/gh` (present on any CI runner and dev machine); everything
+  environment-specific is `recommend` (reports, never fails), so a correctly-set-up repo stays green.
+  An existing `env:` map is unchanged. `setup` now lists each stack's prerequisites by kind and flags
+  unmet `require`s as blockers in update mode (#130). Three reserved `harness.*` keys
+  (`harness.actionRef` / `harness.actionVersion` / `harness.apiKeySecret`, #131) let a consumer pin a
+  different action version or rename the billing secret **without ejecting** the rendered CI
+  workflows; the built-in defaults reproduce today's pinned action byte-for-byte, so an unconfigured
+  repo's render/lock is unchanged.
+- **New CLI command, additive — `list` (#119).** `wafflestack list` prints an aligned, agent/CI-safe
+  plain-text table classifying every stack and item **installed & current** / **out of date** / **not
+  installed** (`--no-color`/`NO_COLOR` honored); `--interactive` (real TTY) drives a keypress
+  multi-select — out-of-date items pre-checked — that installs/updates the chosen refs and re-renders.
+  Read-only by default; no render/config change and no new dependency. CLI command count 8 → 9.
+- **Re-render to pick up — full codex/agents-dir target coverage closes the render asymmetry (#94).**
+  Previously `codex` got agents but no skills and the cross-tool `.agents/` dir got skills but no
+  agents; now **every target renders both**. A consumer rendering the `codex` target gains its stack's
+  skills (in the `.agents/skills/` dir Codex already scans), and one rendering `agents-dir` gains
+  agents as neutral Markdown at `.agents/agents/<name>.md`. Re-render adds those files; no config
+  change, no migration. Repos rendering only the `claude` target are unaffected.
+- **Opt-in — enable/upgrade `code-quality` and re-render for two new skills, now project-agnostic
+  (#112/#116/#117).** `adversarial-review` (`/adversarial-review <PR#>`, defaults to the current
+  branch's PR) reviews a finished, CI-green PR from a hostile reviewer's seat — correctness edge
+  cases, error handling, test depth, API/naming, simplification — and posts an honest-severity review
+  (blocker / should-fix / nit), where "no holes found" is a valid outcome; distinct from the built-in
+  `/code-review`, which reviews the author's *uncommitted* diff. `dry` (`/dry <path>`) removes genuine
+  duplication under rule-of-three and semantic-sameness guardrails. Neither adds config keys. The
+  stack also shed its Obsidian/Synapse-specific assumptions, so it now drops cleanly into any project
+  (#117). **The PR-green auto-trigger now ships** as opt-in syrup in `github-workflow`
+  (`waffle-pr-green-hook.yml`): it dispatches `adversarial-review` the moment a PR's required checks go
+  green (once per green transition, deduped by a review marker), and can render just the one skill via
+  the qualified `code-quality/skills/adversarial-review` ref alongside the workflow. This repo now
+  dogfoods both. A repo that doesn't enable `code-quality` (or install the workflow) is unaffected.
+- **Additive, opt-in, default-off — the autopilot backlog runner and its two delegate opt-ins
+  (#98/#99/#100/#101).** The new `autopilot` orchestration skill composes `delegate` + `clean-up` +
+  `git-workflow` into an unattended per-issue **plan → implement → PR** loop; every run captures an
+  explicit issue scope and a fresh, never-sticky auto-merge consent, and its guardrails never push to
+  `main`, never `--admin`-merge, and always leave a PR. It rides on two new default-off delegate keys:
+  `delegate.autoMerge` (#98 — arm `gh pr merge --auto --merge` after `gh pr create`, only where the
+  repo allows auto-merge and a required check exists) and `delegate.batchMode` (#99 — skip delegate's
+  Phase-3 plan-approval pause when explicit scope is given, without weakening `approveBeforePush`). Two
+  optional keys `autopilot.autoMerge` / `autopilot.planDir` are added. Re-render to pick them up; a
+  repo that never invokes these is unchanged.
+- **Re-render for the skills, opt-in for the hook — post-merge close-out and a faster clean-up
+  (#67/#114).** The `git-workflow` and `clean-up` skills gain a post-merge convention (verify each
+  linked issue closed, board Status → Done, then `clean-up git --yes`), and a new opt-in syrup
+  workflow `waffle-post-merge-hook.yml` deterministically deletes a merged same-repo head branch on
+  the remote (no Claude dispatch, no API spend; fork heads and the default branch skipped). Separately,
+  `clean-up --execute` now fast-forwards the local default branch to the freshly-fetched remote tip —
+  **only** when you are on it with a clean tree, and only as a fast-forward (never a merge, switch, or
+  rebase), previewed in the dry-run plan (#114). Re-render for the skill changes; the hook is opt-in.
+- **Additive, re-render + create one label — armed PRs are tagged `waffle-auto-merged` (#134).**
+  Wherever the toolkit arms `gh pr merge --auto` (the hygiene and delegate skills), it now applies a
+  configurable label on a successful arm as a durable paper trail that automation queued the merge
+  (`is:pr label:waffle-auto-merged`). New optional key `autoMerge.label` (default `waffle-auto-merged`,
+  declared in both the `github-workflow` and `orchestration` stacks). Re-render to pick it up, and
+  create the label — `gh pr edit --add-label` will not.
+- **Re-render (repos running the syrup hooks) — hygiene/CI fixes (#85/#97).** The dispatched-harness
+  guard in `waffle-hygiene.yml` and both `waffle-label-hook.yml` jobs is now **delivery-aware**: when a
+  run reports a PR URL (proof it landed its work) its hard denials are downgraded to a warning instead
+  of red — a `dangerouslyDisableSandbox` escape is the sole always-red exception — ending the
+  green-mission/red-check that trained alert fatigue (#85). And the `hygiene` skill now arms auto-merge
+  with a **merge commit** (`gh pr merge --auto --merge`) rather than `--squash`, which errors on a
+  squash-disabled repo, while `clean-up`'s branch detection is documented as merge-method-agnostic
+  (#97). Re-render; repos that never installed these syrup hooks are unaffected.
+- **Additive, one optional secret — release-hook `WAFFLE_RELEASE_TOKEN` fallback (#76).**
+  `waffle-release-hook.yml`'s checkout now reads `${{ secrets.WAFFLE_RELEASE_TOKEN || github.token }}`,
+  so a tag it pushes can trigger a consumer's downstream `on: push: tags` CI (a tag pushed by the
+  ambient `GITHUB_TOKEN` cannot, by GitHub's anti-recursion rule). Zero-config behavior is unchanged;
+  supply the PAT/App-token secret only if you need downstream workflows to fire. Re-render (repos
+  running the release hook).
+- **Re-render regenerates them — per-agent waffle avatars in the `.waffle/` overview docs
+  (#128/#161).** `team.html` and `cheatsheet.html` now show a branded per-agent "wafflebot" avatar,
+  every trait a pure function of the agent name (so renders stay byte-identical and doctor-clean) with
+  the installed-skill count encoded in the waffle pockets, plus deep-link anchors and a hover ID card.
+  These are generated output — commit them, don't hand-edit — and refresh on the next render; a repo
+  with no agents gets no `team.html`.
+- **Docs only — no re-render needed (#80).** `schema/FORMAT.md` now documents the
+  "how do I know a file is wafflestack-managed?" story: the lock manifest
+  (`.waffle/waffle.lock.json`) is the authoritative marker, backed by `render`'s
+  refuse-to-clobber behavior and `doctor` drift detection. Records the decision to **not**
+  adopt a `.wfl.md` filename convention — a suffix breaks skill (`SKILL.md`) and syrup
+  (load-bearing path) discovery and would apply to agents only, so the lock manifest already
+  answers the question authoritatively for every render kind. No config, render, or lock
+  changes.
+- **Dev / CI tooling — no consumer render or config change.** The Layer 2 eval harness and its cases
+  (#109/#110) are authoring/CI surface inert to `render`/`validate`/`doctor`; their only
+  consumer-facing surface is an **off-by-default opt-in syrup** workflow `waffle-evals.yml` (#111), so
+  nothing arms until you install it. The #47 entry is a **design-only ADR** (no code shipped). This
+  repo also installs the toolkit's own `wafflestack` self-stack (#120) and repositions itself in the
+  README (#86) — neither touches a consuming repo — and `wafflestack setup`'s render-blocker report is
+  now scoped accurately to the selected items' keys (#77).
+- **No migration ships in this release** — it is a **minor, additive** move (contrast 0.10.0, which
+  carried one). A plain re-render picks up every rendered change above; the opt-in items (external
+  stacks, the `code-quality` skills, `autopilot`, and the syrup workflows) arm only when you install
+  them.
+
 ### Added
+- **External third-party stacks — pinned git / local source, resolved through one pipeline** (#88,
+  #124–#127). `loadProjectConfig` classifies each `stacks:` entry as a built-in name or a validated
+  `{ name, source, ref }` external source (source required; a git source must be pinned with `ref`, a
+  local path must not carry one; names unique across all sources). A new `installer/lib/sources.mjs`
+  resolves a git source (clone + checkout at the pinned ref into a content-addressed cache) or a local
+  path (read in place); `loadToolkitWithSources` merges built-in + external roots into one registry and
+  makes a stack name defined by two sources a **hard error naming both** (never a silent shadow).
+  `render` lint-validates every external stack before writing (`validateExternalStacks`), writes a
+  per-source `sources` provenance block to the lock (source, ref, resolved commit, files), and adds an
+  extra trust-boundary acknowledgement when external opt-in syrup is poured; `doctor` attributes drift
+  to its source and `upgrade` re-resolves each pin and reports `sourceMoves`. Authoring guide
+  `schema/AUTHORING-EXTERNAL-STACKS.md` documents the source side. (#88, #124, #125, #126, #127)
 - **Declarative `prerequisites:` schema + `doctor` gate (#129, first increment of #47).** A stack
   may now declare the **external** things it leans on — a `tool`, `secret`, `scope`, `label`,
   `setting`, `service`, or `env` — as a typed `prerequisites:` list in `stack.yaml`, distinct from
@@ -45,7 +173,58 @@ is what you reach for across a breaking one.
   kind **read-compatibly** (it keeps working, still warned at render — no stack must migrate). The
   `github-workflow` + `orchestration` stacks are seeded from the #47 inventory: only `command -v`
   tool probes (node/git/gh) are `require`; every secret/scope/label/setting/service is `recommend`.
-  Documented in `schema/FORMAT.md`.
+  Documented in `schema/FORMAT.md`. New module `installer/lib/prerequisites.mjs`.
+- **Prerequisites surfaced in `setup` + the SETUP.md playbook** (#130). The setup inventory lists each
+  stack's whole `prerequisites:` block grouped by kind (with level, item scope, and check); update mode
+  runs the applicable checks the way `doctor` does and flags unmet `require`s as blockers; and
+  `schema/SETUP.md` step 4 becomes a required, structured walk of the block — shared-state kinds
+  (secret/label/setting/service) still gated on the user's explicit go-ahead (warn-don't-provision). No
+  new interactive CLI surface.
+- **Repointable CI dispatcher — reserved `harness.*` keys** (#131). `harness.actionRef` /
+  `harness.actionVersion` / `harness.apiKeySecret` render into the `uses:`/`with:` lines of both
+  dispatch workflow templates, so a consumer can pin a different action version, repoint the ref, or
+  rename the billing secret via config without ejecting. Injection-guarded (rejects `${{`, quotes,
+  newlines; `apiKeySecret` restricted to a secret identifier) and enforced at render + `validate`;
+  built-in defaults reproduce today's pinned action byte-for-byte.
+- **`list` CLI command** (#119). New `installer/lib/list.mjs` composes `loadToolkit` +
+  `loadProjectConfig` + `computeSelection` + the lock and doctor-style sha256 drift + version skew to
+  classify every stack/waffle/syrup file **current** / **out of date** / **not installed**. Default
+  output is a plain, non-TTY-safe aligned table (status the fixed-width leading column); `--interactive`
+  drives a hand-rolled `node:readline` + ANSI multi-select that applies via the existing
+  `installRefs()` + `renderProject()` path — **no new dependency**. The item→output-path matcher is
+  extracted into `refs.mjs` (`itemOutputMatcher`), shared with `eject`. README Commands table updated.
+- **`adversarial-review` skill + PR-green auto-trigger** (#112, `code-quality` + `github-workflow`).
+  The config-free `/adversarial-review <PR#>` skill (defaults to the current branch's PR) reviews a
+  finished, CI-green PR from a hostile reviewer's seat and posts an honest-severity review; the opt-in
+  syrup `waffle-pr-green-hook.yml` dispatches it when a PR's required checks go green, once per green
+  transition (deduped by a head-commit review marker; draft/bot/fork/idempotency gates,
+  least-privilege perms). Adds optional `prGreen.watchWorkflows` / `prGreen.claudeArgs` (both
+  injection-guarded). Dogfooded/armed in this repo.
+- **`dry` skill** (#116, `code-quality`). A project-agnostic `/dry <path>` skill that removes genuine
+  duplication under rule-of-three and semantic-sameness guardrails, then proves behavior unchanged via
+  `{{project.testCmd}}` (reuses the existing key; no new config). Both user-invocable and agent-granted.
+- **`autopilot` skill + the delegate opt-ins it composes** (#100/#101, orchestration; #98/#99,
+  orchestration). `autopilot` is a prose playbook that composes `delegate` (batch mode + auto-merge),
+  `clean-up`, and `git-workflow` into an unattended plan → implement → PR loop with a required issue
+  scope and per-run, non-sticky auto-merge consent; two optional keys `autopilot.autoMerge` /
+  `autopilot.planDir`, `requires:` delegate + clean-up + git-workflow + github-project-management. It
+  rides `delegate.autoMerge` (#98 — arm `gh pr merge --auto --merge` after create; `autoMergeArmed`
+  checkpoint field) and `delegate.batchMode` (#99 — skip the Phase-3 plan-approval pause under explicit
+  scope; `confirmedVia` checkpoint field), both default-off.
+- **Post-merge automation** (#67, `github-workflow`). New "After a PR merges" section in `git-workflow`
+  and "Post-merge convention" in `clean-up` (verify issue closed → board Done → `clean-up git --yes`),
+  plus opt-in syrup `waffle-post-merge-hook.yml` — a deterministic `pull_request: closed` + `merged`
+  job (`contents: write`, no Claude dispatch) that deletes the merged same-repo head branch on the
+  remote and emits a prune signal, skipping fork heads and the default branch.
+- **`autoMerge.label` — a `waffle-auto-merged` paper trail on armed PRs** (#134). New optional key
+  (default `waffle-auto-merged`), applied on a successful `gh pr merge --auto` arm at both live arming
+  sites (the hygiene skill and both delegate arming paths); declared in the `github-workflow` and
+  `orchestration` stacks. Setup notes instruct creating the label.
+- **`WAFFLE_RELEASE_TOKEN` fallback in the release hook** (#76, `github-workflow`).
+  `waffle-release-hook.yml`'s `actions/checkout` reads `${{ secrets.WAFFLE_RELEASE_TOKEN ||
+  github.token }}`, mirroring the `WAFFLE_HYGIENE_TOKEN` pattern, so a tag it pushes runs under a
+  PAT/App token when supplied and triggers downstream CI. Setup note + `release` skill caveat document
+  the GitHub anti-recursion limitation.
 - **Layer 2 eval harness + per-stack case format (#109).** A metered, LLM-driven eval tier
   (Layer 2 of #89, on top of the Layer 1 content assertions in #108). Behavioral cases live
   next to their stack at `stacks/<stack>/evals/<name>.eval.yaml`: a declarative case is a
@@ -59,37 +238,65 @@ is what you reach for across a breaking one.
   A `--dry-run` mock mode (and the `installer/test/evals.test.mjs` unit test) exercises the
   whole harness with no API key and no cost. Format documented in `schema/FORMAT.md`; ships a
   seed case under `stacks/github-workflow/evals/`.
+- **Layer 2 eval cases + a scheduled runner** (#110, #111). Initial behavioral cases pin the costliest
+  guardrails of the four highest-risk skills — `label-hook` (constant dispatch token, no fan-out),
+  `issue` (template sections + sensible labels), `release` (never tags/pushes `main`; stamps the
+  CHANGELOG), and `delegate` (>2-agent confirmation gate; a failed checkpoint halts) — each with a
+  deterministic assertion plus a judge rubric (#110). The opt-in syrup `waffle-evals.yml` runs the
+  metered tier nightly + on dispatch as a plain Node job (no Claude dispatch, `contents: read`, needs
+  only `ANTHROPIC_API_KEY`), bounded by `evals.maxCalls` and reporting an `eval-results` artifact; adds
+  `evals.cron` / `evals.maxCalls` / `evals.model` config (#111).
+- **Per-agent waffle avatars in the overview docs** (#128, #161). The docs generator draws a branded
+  per-agent avatar as inline SVG in `team.html` (with `id="agent-<name>"` deep-link anchors) and mini
+  avatars badging each skill in `cheatsheet.html` (with a CSS-only ID-card popover). Every trait is a
+  pure function of the agent name and the installed-skill count encodes into the waffle pockets, so
+  renders stay byte-identical and doctor-drift-clean. #161 redesigns them to the "wafflebot" reference
+  (waffle-iron + antenna, 10 expressive lid presets, six syrup flavors, gentle deterministic SMIL
+  animation).
 
-### Consumer impact
-- **Additive; no re-render diff, but `doctor` now checks prerequisites (#129).** The
-  `prerequisites:` block does not render into any file, so a re-render produces no output/lock
-  change. A repo that runs `waffle-doctor.yml` (or `wafflestack doctor`) will, on its next run,
-  start verifying the selected stacks' declared prerequisites — an unmet `require` fails the
-  check. The seeded `require`s are only `command -v node/git/gh` (present on any CI runner and
-  dev machine); everything environment-specific is `recommend` (reports, never fails), so a
-  correctly-set-up repo stays green. An existing `env:` map is unchanged.
-- **Additive, no re-render needed (#109).** The eval harness and `evals/` layout are new
-  authoring/CI surface; they do not touch any consuming repo's render, config, or lock. The
-  `evals/` directory is inert to `render`/`validate`/`doctor`.
-- **Docs only — no re-render needed (#80).** `schema/FORMAT.md` now documents the
-  "how do I know a file is wafflestack-managed?" story: the lock manifest
-  (`.waffle/waffle.lock.json`) is the authoritative marker, backed by `render`'s
-  refuse-to-clobber behavior and `doctor` drift detection. Records the decision to **not**
-  adopt a `.wfl.md` filename convention — a suffix breaks skill (`SKILL.md`) and syrup
-  (load-bearing path) discovery and would apply to agents only, so the lock manifest already
-  answers the question authoritatively for every render kind. No config, render, or lock
-  changes.
-- **Enhancement, additive — new `adversarial-review` skill in the `code-quality` stack
-  (part of #112).** A user- and agent-invocable skill (`/adversarial-review <PR#>`, defaults
-  to the current branch's PR) that reviews a finished, CI-green PR from a hostile reviewer's
-  seat — poking holes in correctness edge cases, error handling, test depth, API/naming, and
-  simplification — and posts an honest-severity review (blocker / should-fix / nit) back on
-  the PR, where "no holes found" is a valid outcome. Distinct from the built-in
-  `/code-review` (which reviews the author's uncommitted working diff); this gates a
-  committed, green PR just before merge. Introduces **no new config keys** and no syrup.
-  Enable/upgrade `code-quality` and re-render to pick it up; a repo that doesn't enable the
-  stack is unaffected. The companion opt-in workflow that auto-runs it on PR-green is **not
-  shipped yet** — it remains blocked on the CI-harness dispatch fix (#133).
+### Changed
+- **Full codex / agents-dir render coverage** (#94). `renderAgent` gains an agents-dir branch
+  (neutral Markdown at `.agents/agents/<name>.md` — `name`/`description`/`skills` frontmatter + body,
+  no Claude `claude:` passthrough) and `renderSkill` gains a codex branch that shares the `.agents/skills`
+  render with `agents-dir` (deduped by output dir, first target wins). `eject` learned the new
+  `.agents/agents/<name>.md` path. README / ARCHITECTURE / FORMAT / AGENTS.md now describe full
+  coverage.
+- **`code-quality` made project-agnostic** (#117). `codebase-architecture` generalizes the Obsidian
+  `onload()/onunload()` lifecycle to a neutral register/teardown contract and drops the hardcoded file
+  tree for generic structure guidance; `tdd` gains an explicit "how and when to use" section; and the
+  stack's config descriptions are scrubbed of Obsidian/Synapse example strings. No config keys added
+  or removed.
+- **`clean-up` fast-forwards the local default branch** (#114). After `git fetch --prune`,
+  `clean_up.sh --execute` fast-forwards the local default branch to the remote tip when you are on it
+  with a clean tree — ff-only, previewed in the dry-run plan — and the "never touched" guarantee and
+  report format are reworded to match.
+- **Docs & dogfooding.** README gains a "Where this fits" market-positioning section (#86); this repo
+  installs the toolkit's own `wafflestack` self-stack (#120); and the machine/human doc registries
+  (`AGENTS.md`, `STATUS.md`, `DECISIONS.md`) are refreshed for the autopilot loop and the 2026-07-08
+  feature work (#101 doc pass; internal doc-registry sync).
+
+### Fixed
+- **`setup` over-reported render blockers** (#77). Setup iterated a stack's entire `config` schema
+  whenever any of its items was selected and tested the raw value (ignoring defaults), so a partial
+  selection saw phantom blockers and a defaulted required key read "unset". It now derives `usedKeys`
+  from the **selected** items (`collectUsedKeys`, newly exported from `render.mjs`) and resolves through
+  the default-aware `makeResolver` — exactly as `render` computes them — for both the blocker list and
+  the "Config values" ⚠ markers.
+- **The CI guard false-redded delivered hygiene/label-hook runs** (#85). The #82 guard classified a
+  delivered run's denials as HARD and failed the job even though it had opened a PR seconds earlier. The
+  guard is now delivery-aware across the hygiene template and both label-hook jobs: hard delivery
+  denials are downgraded to a warning when the run's final text reports a PR URL (a
+  `dangerouslyDisableSandbox` escape stays always-red), the dispatch prompts steer to single-program
+  (no-`cd`) commands so allowlisted `git`/`gh` calls actually match, and `Bash(gh repo view:*)` is
+  allowlisted for read-only inspection.
+- **Auto-merge assumed squash-merge** (#97). The `hygiene` skill's `gh pr merge --auto --squash` errors
+  on a squash-disabled repo; it now uses `--merge` (a merge commit), and `clean-up`'s merged-branch
+  detection is reworded as merge-method-agnostic (it always read PR state via `gh`, never the merge
+  method).
+- **Argument-injection guard on external git sources** (#124). A `source`/`ref` from `waffle.yaml` that
+  begins with `-` (e.g. `--upload-pack=…` on a `.git` source, or an ssh `-oProxyCommand=…`) would be
+  parsed by git as an option; `resolveSourceRoot` now rejects a leading-dash git source or ref before
+  any git call, with a `--` end-of-options marker on the clone as defense in depth.
 
 ## [0.10.0] - 2026-07-07
 
