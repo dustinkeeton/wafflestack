@@ -230,6 +230,9 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     // Phase 1 captures ALL the status option IDs (not just Todo) so Board Setup's
     // reuse note doesn't strand kanban sync without In Progress / In Review IDs.
     assert.match(md, /Board Setup reuses them for kanban sync/);
+    // Multi-repo user projects: items are filtered to THIS repo so a foreign issue
+    // with a colliding number can't be wrongly delegated.
+    assert.match(md, /nameWithOwner/);
   });
 
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {

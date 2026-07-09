@@ -132,6 +132,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 
    ```bash
    OWNER=$(gh repo view --json owner -q .owner.login)
+   REPO=$(gh repo view --json name -q .name)
 
    PROJECT_ID=$(gh api graphql -f query='
      query($owner: String!) {
@@ -176,7 +177,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 
    `TODO_OPTION_ID` empty **and the query succeeded** → **no "Todo" option on the Status field** (or no Status field at all): fall back to `all-open`, stated explicitly per above. A failed fields query → stop and report (the failed-lookup rule above).
 
-3. List the issue numbers currently in the Todo column — the `github-project-management` skill's items-with-status catalog query, filtered client-side to items whose content is an **open Issue** and whose Status `fieldValues` value is "Todo":
+3. List the issue numbers currently in the Todo column — the `github-project-management` skill's items-with-status catalog query, filtered client-side to items whose content is an **open Issue in this repo** and whose Status `fieldValues` value is "Todo". The repo filter is load-bearing: a user-level project (matched by a fuzzy title regex above) can track several repos' issues, and a foreign repo's Todo issue whose number collides with an open issue here must not leak into the set:
 
    ```bash
    TODO_ITEMS=$(gh api graphql -f query='
@@ -186,7 +187,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
            items(first: 100) {
              pageInfo { hasNextPage endCursor }
              nodes {
-               content { ... on Issue { number state } }
+               content { ... on Issue { number state repository { nameWithOwner } } }
                fieldValues(first: 20) {
                  nodes {
                    ... on ProjectV2ItemFieldSingleSelectValue {
@@ -204,7 +205,7 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
 
    HAS_NEXT_PAGE=$(echo "$TODO_ITEMS" | jq -r '.data.node.items.pageInfo.hasNextPage')
 
-   TODO_NUMBERS=$(echo "$TODO_ITEMS" | jq -r '[.data.node.items.nodes[] | select(.content.state == "OPEN") | select(any(.fieldValues.nodes[]?; .field.name == "Status" and .name == "Todo")) | .content.number | tostring] | join(" ")')
+   TODO_NUMBERS=$(echo "$TODO_ITEMS" | jq -r --arg repo "$OWNER/$REPO" '[.data.node.items.nodes[] | select(.content.state == "OPEN") | select(.content.repository.nameWithOwner == $repo) | select(any(.fieldValues.nodes[]?; .field.name == "Status" and .name == "Todo")) | .content.number | tostring] | join(" ")')
    ```
 
    **The `items(first: 100)` bound is detectable, not hypothetical** — `HAS_NEXT_PAGE` is the signal. `true` means the board holds more than 100 items and `TODO_NUMBERS` is a truncated set: re-run the query with an `after:` cursor argument set to the returned `endCursor` and merge each page's numbers until `hasNextPage` comes back `false` — or stop and report the truncation. Never trust a truncated `TODO_NUMBERS`; this path's contract is *exactly* the Todo set.
