@@ -3,11 +3,12 @@ description: >-
   Cross-cutting code-quality practice skills — TDD (red-green-refactor
   discipline, test priority tiers, boundary mocking), codebase-architecture
   (module boundaries, coding conventions), adversarial-review (hostile
-  post-green PR review that pokes holes before merge), and dry (disciplined
-  de-duplication under the rule of three and semantic-sameness guardrails).
-  Stack-agnostic: the test command, tier tables, module map, and settings type
-  are project config.
-skills: [tdd, codebase-architecture, adversarial-review, dry]
+  post-green PR review that pokes holes before merge), qa (functional
+  post-green QA of a PR against its linked issue's intent and test coverage),
+  and dry (disciplined de-duplication under the rule of three and
+  semantic-sameness guardrails). Stack-agnostic: the test command, tier
+  tables, module map, and settings type are project config.
+skills: [tdd, codebase-architecture, adversarial-review, qa, dry]
 config:
   project.longName:
     required: true
@@ -52,3 +53,16 @@ setup: |-
   moment a PR's checks turn green, so green PRs get gated without a manual step. It's opt-in —
   enable it in that stack to arm it; until then, invoke the skill manually
   (`/adversarial-review <PR#>`) or from an agent.
+
+  **QA.** The `qa` skill is `adversarial-review`'s functional sibling — same `gh` needs
+  (an authenticated session with pull-request read + review-write scope; it reads
+  `gh pr diff` and posts one review via `gh api …/pulls/N/reviews`) but it gates a green PR
+  against its **linked issue's intent**: it reads the diff plus the issue's acceptance
+  criteria, best-effort runs the project's test command and exercises the changed behavior,
+  assesses whether the diff carries real test coverage, and posts one honest-severity review
+  under its own dedup marker (deliberately distinct from adversarial-review's, so the
+  pr-green/pr-response automation never mistakes one gate's post for the other's). "No QA
+  concerns" is a valid outcome. Invoke it as `/qa <PR#>`; omit the argument for the current
+  branch's open PR. It introduces no config keys — it reuses `project.testCmd` — and it only
+  reports; the `pr-response` skill is the half that applies accepted findings. The
+  `orchestration` stack's autopilot composes it as an opt-in QA gate (`autopilot.qaLoop`).

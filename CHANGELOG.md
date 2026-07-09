@@ -32,6 +32,27 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`/qa` skill + opt-in autopilot QA gate (#228, `code-quality` + `orchestration`).** The
+  functional sibling of `adversarial-review`: `/qa <PR#>` checks a **green PR against its linked
+  issue's intent** — it reads the diff plus the issue's acceptance criteria, best-effort runs
+  `project.testCmd` and exercises the changed behavior, assesses whether the diff carries real
+  test coverage, and posts **one** PR review (inline comments + summary verdict) under its own
+  dedup marker `<!-- waffle-qa -->` — deliberately distinct from adversarial-review's, so the
+  pr-green dedup guard and the pr-response hook never mistake one gate's post for the other's.
+  "No QA concerns" is a valid outcome; the skill reports only (`pr-response` is the applying
+  half). Autopilot composes it as a **fifth instantiation-contract entry (fourth consent)** (`+qa` /
+  `autopilot.qaLoop`, per-run, never sticky, default OFF): a new Step 5 between PR verification
+  and the review loop that loops `qa <pr>` → `pr-response <pr> --yes` up to
+  `autopilot.maxQaRounds` rounds (0 findings implemented = converged; cap reached = safety cap,
+  not a merge blocker — file an `autopilot.holdLabel` follow-up and proceed). Auto-merge arming
+  defers to the **last enabled gate**: QA gate (Step 5) → review loop (Step 6) → audit gate
+  (Step 7).
+  - **Consumer impact:** additive. `code-quality` gains the `qa` skill (renders
+    `.claude/skills/qa/SKILL.md`; reuses `project.testCmd`, **no new required keys**);
+    `orchestration` gains two optional keys — `autopilot.qaLoop` (default `false`) and
+    `autopilot.maxQaRounds` (default `2`) — and a `skills/autopilot → skills/qa` requires edge,
+    so installing `skills/autopilot` by ref now pulls the qa skill into the render. A plain
+    re-render picks everything up; behavior is unchanged unless a run opts in with `+qa`.
 - **`/pr-response` skill — rubric-scored PR review triage (#194, `github-workflow`).** The consuming
   side of `adversarial-review`: resolve a PR, read every review + review comment, score each finding
   0–3 on four dimensions (Severity · Validity · Effort/Risk · Alignment), and record an

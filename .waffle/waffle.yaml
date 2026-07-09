@@ -22,6 +22,10 @@ include:
   - files/.github/workflows/waffle-release-hook.yml
   - files/.github/workflows/waffle-pr-green-hook.yml
   - code-quality/skills/adversarial-review
+  # The qa skill (#228) — adversarial-review's functional sibling: post-green QA of a PR against
+  # its linked issue's intent + test coverage. Autopilot's opt-in QA gate (autopilot.qaLoop)
+  # composes it, so render it here (whole-stack installs don't pull requires closures).
+  - code-quality/skills/qa
   - files/.github/workflows/waffle-post-merge-hook.yml
   # The PR-response hook (#195) — the consuming half of pr-green, opt-in syrup, ARMED here: when an
   # adversarial review lands on a PR, it dispatches the harness to run the pr-response skill, apply
