@@ -79,7 +79,7 @@ describe('rendered content: frontmatter present where required', () => {
 describe('rendered content: no leftover config placeholders', () => {
   // The high-risk skills the eval tier targets must carry ZERO wafflestack-style
   // {{placeholders}} — every one should have been substituted at render time.
-  for (const name of ['label-hook', 'issue', 'delegate', 'release', 'autopilot']) {
+  for (const name of ['label-hook', 'issue', 'delegate', 'release', 'autopilot', 'qa']) {
     test(`${name} render has no {{placeholder}} left`, () => {
       const keys = [...placeholderKeys(readSkill(name))];
       assert.deepEqual(keys, [], `${name}: unsubstituted placeholders ${keys.join(', ')}`);
@@ -292,8 +292,8 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.match(md, /\+review/);
     // Independent of auto-merge — neither consent implies the other.
     assert.match(md, /Independent of auto-merge consent/);
-    // Never sticky — all consents reset to off each run (the guardrail now spans all three).
-    assert.match(md, /consents — auto-merge, the review loop, and the audit step — are off unless explicitly opted in/);
+    // Never sticky — all consents reset to off each run (the guardrail now spans all four).
+    assert.match(md, /consents — auto-merge, the QA gate, the review loop, and the audit step — are off unless explicitly opted in/);
   });
 
   test('auto-merge arming is deferred out of the delegate run when the loop is on', () => {
@@ -352,10 +352,10 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /separate from auto-merge and the review loop, default OFF/);
     // A single-run flag opts it in, mirroring +automerge / +review.
     assert.match(md, /\+audit/);
-    // Independent of the other two consents — any combination of the three may be on.
+    // Independent of the other consents — any combination may be on.
     assert.match(md, /any combination may be on/);
-    // Never sticky — all three consents reset to off each run (guardrail spans all three).
-    assert.match(md, /consents — auto-merge, the review loop, and the audit step — are off unless explicitly opted in/);
+    // Never sticky — all consents reset to off each run (guardrail spans all four).
+    assert.match(md, /consents — auto-merge, the QA gate, the review loop, and the audit step — are off unless explicitly opted in/);
   });
 
   test('auto-merge arming is deferred past the audit gate — armed only once it passes green', () => {
@@ -363,8 +363,8 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /must not arm auto-merge until this gate passes green/);
     // The audit gate is always the last gate — arming is owned by the last gate that is on.
     assert.match(md, /the audit gate is always the last gate/);
-    // Step 4 skips the arm check because the PR is intentionally not armed yet under either gate.
-    assert.match(md, /Review loop or the audit step on/);
+    // Step 4 skips the arm check because the PR is intentionally not armed yet under any gate.
+    assert.match(md, /QA gate, review loop, or the audit step on/);
   });
 
   test('the gate: wait-green then a diff-scoped composed /audit with an owned Team lifecycle', () => {
@@ -396,6 +396,135 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /chain errored/);
     assert.match(md, /one retry, then stop/);
     assert.match(md, /tear the Team down regardless/);
+  });
+});
+
+// #228: the opt-in qa → pr-response functional-QA gate, BEFORE #220's review loop in the
+// pipeline. Each assertion pins a load-bearing piece — the fifth per-run consent, the arming
+// deferred to the last enabled gate, the wait-green → qa → respond → converge loop, the
+// "cap is not a merge blocker" escape hatch with its hold-labeled follow-up, and the bounded
+// failure handling — so a meaning-breaking edit fails CI instead of shipping silently.
+describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () => {
+  let md;
+  let qaStep;
+  before(() => {
+    md = readSkill('autopilot');
+    // The QA loop's own step body, so phrases shared with the review loop (0-findings
+    // convergence, re-wait for green) are asserted inside the RIGHT step.
+    qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    assert.ok(qaStep.length > 0, 'Step 5 is the QA → respond loop');
+  });
+
+  test('QA-gate consent is a FIFTH per-run opt-in, default OFF, +qa flag, any combination', () => {
+    // A fifth instantiation-contract item, distinct from the other three gate consents.
+    assert.match(md, /QA-gate consent/);
+    assert.match(md, /separate from the other consents, default OFF/);
+    // A single-run flag opts it in, mirroring +automerge / +review / +audit.
+    assert.match(md, /\+qa/);
+    // Contract entry §5 but FIRST gate in the pipeline — the order is stated explicitly.
+    assert.match(md, /QA gate \(Step 5\) → review loop \(Step 6\) → audit gate \(Step 7\)/);
+    // Never sticky — the guardrail now spans all four consents.
+    assert.match(md, /consents — auto-merge, the QA gate, the review loop, and the audit step — are off unless explicitly opted in/);
+  });
+
+  test('auto-merge arming is deferred out of the delegate run when the QA gate is on', () => {
+    // Step 3 withholds arming from delegate so a green PR cannot merge before it is QA\'d.
+    assert.match(md, /unless the QA gate \(§5\), the review loop \(§3\), or the audit step \(§4\) is on/);
+    assert.match(md, /withholds arming from delegate/);
+    // Step 4 skips the arm check under the QA gate too.
+    assert.match(md, /QA gate, review loop, or the audit step on/);
+    // The QA gate arms only when it is the LAST gate that is on.
+    assert.match(md, /the QA gate is \*not\* the last gate — do \*\*not\*\* arm here/);
+  });
+
+  test('the loop: wait-green then qa then pr-response --yes, converge on 0 implemented', () => {
+    assert.match(qaStep, /run `qa <pr>`/);
+    assert.match(qaStep, /pr-response <pr> --yes/);
+    // Convergence is the 0-implemented terminal signal read from pr-response's return.
+    assert.match(qaStep, /A round that implements \*\*0 findings\*\* is the terminal signal/);
+    // qa is a post-green gate — re-waited between rounds that pushed fixes.
+    assert.match(qaStep, /re-wait for green/);
+  });
+
+  test('QA cap reached is a safety bound, not a merge blocker: proceed + hold-labeled follow-up', () => {
+    assert.match(qaStep, /safety cap, not a merge blocker/);
+    // The follow-up captures the last QA findings and carries the hold label.
+    assert.match(qaStep, /last QA findings/);
+    assert.match(qaStep, /--add-label "waffle-manual-review"/);
+  });
+
+  test('failure handling: a red QA round stops-and-reports; qa errors are bounded, never loop forever', () => {
+    assert.match(md, /QA round left the PR's CI red/);
+    assert.match(md, /never run `qa` on a red PR and never arm a red PR/);
+    // A skill error is one failed round, retried once, then stop — never arm on an
+    // incomplete QA pass.
+    assert.match(md, /a QA pass that never completed/);
+    assert.match(md, /never spin on a flapping QA pass/);
+  });
+});
+
+// #228: the qa skill itself — the functional sibling of adversarial-review. These pin the
+// posting mechanics (one review, file payload, single-line commands — the #188 allowlist
+// discipline) and the marker contract: the qa marker is its own, and the adversarial-review
+// marker literal must NEVER appear in this skill — waffle-pr-green-hook keys its dedup guard
+// on that literal and the armed pr-response hook dispatches on reviews carrying it, so a qa
+// review that carried it would skip the real adversarial review and fire a paid dispatch.
+describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
+  let md;
+  before(() => {
+    md = readSkill('qa');
+  });
+
+  const bashBlocks = () => [...md.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const bashCommands = () =>
+    bashBlocks()
+      .flatMap((b) => b.split('\n'))
+      .map((l) => l.replace(/\s+#.*$/, '').trim())
+      .filter((l) => l && !l.startsWith('#'));
+
+  test('every review the skill posts carries its own dedup marker', () => {
+    assert.match(md, /<!-- waffle-qa -->/);
+    // Delivery is verified against the marker and the skill fails closed on a missed post.
+    assert.match(md, /contains\("<!-- waffle-qa -->"\)/);
+    assert.match(md, /Fail closed/);
+  });
+
+  test('the adversarial-review marker literal NEVER appears in this skill', () => {
+    assert.ok(
+      !md.includes('waffle-adversarial-review'),
+      'the qa skill must never spell the adversarial-review marker — pr-green dedup and the pr-response hook key on it',
+    );
+  });
+
+  test('QA is issue-intent-driven and reports only — pr-response is the applying half', () => {
+    // Reads the linked issue(s), not just the diff.
+    assert.match(md, /closingIssuesReferences/);
+    assert.match(md, /acceptance checklist/);
+    // Best-effort execution: the project test command renders into the run step.
+    assert.match(md, /```bash\n\s+npm test\n/);
+    // Reports, never commits fixes or tests.
+    assert.match(md, /never commits fixes or tests/);
+    // A clean PR is a valid outcome — no manufactured findings.
+    assert.match(md, /"No QA concerns" is a valid/);
+  });
+
+  test('posts ONE review via a file payload — no heredoc, no compounds, no inline body (#188 discipline)', () => {
+    const blocks = bashBlocks();
+    assert.ok(blocks.length >= 4, `the skill carries its bash examples: ${blocks.length}`);
+    // A heredoc anywhere in a bash block is a multi-line command no Bash() allowlist matches.
+    for (const block of blocks) {
+      assert.ok(!block.includes('<<'), `no heredoc in the skill's bash commands:\n${block}`);
+    }
+    const bash = blocks.join('\n');
+    assert.doesNotMatch(bash, /--input\s+-(\s|$)/m, 'the review payload comes from a FILE, not stdin');
+    assert.doesNotMatch(bash, /--body\s+"/, 'the no-concerns summary uses --body-file, not an inline --body');
+    assert.match(bash, /--input \/tmp\/[\w.-]+\.json/, 'step 5 posts a file payload');
+    assert.match(bash, /--body-file \/tmp\/[\w.-]+\.md/, 'step 6 posts a file body');
+    // And no command is a compound the allowlist could not match either.
+    for (const cmd of bashCommands()) {
+      assert.ok(!cmd.includes('&&'), `no && compound in the skill's commands: ${cmd}`);
+      assert.ok(!cmd.startsWith('cd '), `the session starts at the repo root — no cd prefix: ${cmd}`);
+    }
   });
 });
 

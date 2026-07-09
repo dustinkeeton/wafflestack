@@ -13,6 +13,7 @@ requires:
     - skills/clean-up
     - skills/git-workflow
     - skills/github-project-management
+    - skills/qa
     - skills/adversarial-review
     - skills/pr-response
     - skills/audit
@@ -60,7 +61,7 @@ prerequisites:
     level: recommend
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle-manual-review'"
     items: [skills/autopilot]
-    description: Hold label autopilot applies to the follow-up issue it files when the review loop can't converge or the /audit gate hard-blocks a PR on unresolved Critical/High findings (default autopilot.holdLabel); it excludes hold-labeled issues from automatic scope, so this must pre-exist.
+    description: Hold label autopilot applies to the follow-up issue it files when the QA gate or the review loop can't converge or the /audit gate hard-blocks a PR on unresolved Critical/High findings (default autopilot.holdLabel); it excludes hold-labeled issues from automatic scope, so this must pre-exist.
   - kind: setting
     name: allow-auto-merge
     level: recommend
@@ -72,12 +73,13 @@ setup: |-
   with `autoMerge.label` (default `waffle-auto-merged`); it must pre-exist in the repo —
     gh label create "waffle-auto-merged" --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
 
-  **Review-loop / audit-gate hold label.** When autopilot's opt-in review loop can't converge
-  within `autopilot.maxReviewRounds` — or its opt-in `/audit` gate (`autopilot.auditStep`)
-  hard-blocks a PR on unresolved Critical/High findings — it files a follow-up issue labeled
-  `autopilot.holdLabel` (default `waffle-manual-review`) and thereafter excludes hold-labeled
-  issues from automatic scope (all-open / a label / a milestone) so a human triages them by
-  number; it must pre-exist —
+  **QA-gate / review-loop / audit-gate hold label.** When autopilot's opt-in QA gate
+  (`autopilot.qaLoop`) can't converge within `autopilot.maxQaRounds`, its opt-in review loop
+  can't converge within `autopilot.maxReviewRounds` — or its opt-in `/audit` gate
+  (`autopilot.auditStep`) hard-blocks a PR on unresolved Critical/High findings — it files a
+  follow-up issue labeled `autopilot.holdLabel` (default `waffle-manual-review`) and
+  thereafter excludes hold-labeled issues from automatic scope (all-open / a label / a
+  milestone) so a human triages them by number; it must pre-exist —
     gh label create "waffle-manual-review" --color D93F0B --description "Held for human triage — autopilot skips this issue until it is actioned by number"
 config:
   project.name:
@@ -311,11 +313,39 @@ config:
       PR for a human) and files an autopilot.holdLabel-labeled follow-up issue capturing the last
       adversarial-review findings so the remaining work isn't lost. Raise it as the pr-response
       rubric matures — more rounds buy more quality once each round is trustworthy. Default 2.
+  autopilot.qaLoop:
+    required: false
+    default: false
+    description: >-
+      Per-run consent for the autopilot qa → pr-response functional-QA loop — whether an autopilot
+      run QAs each PR after it goes green (ahead of the review loop, the audit gate, and arming),
+      checking the change against the linked issue's intent/acceptance criteria and its test
+      coverage the way `/qa` and `/pr-response` do by hand. INDEPENDENT of autopilot.autoMerge,
+      autopilot.reviewLoop, and autopilot.auditStep: any combination may be on. When true, autopilot
+      withholds auto-merge arming from the delegate run, waits for each PR to go green, then loops
+      up to autopilot.maxQaRounds rounds of `qa <PR#>` → `pr-response <PR#> --yes`, converging when
+      a round implements 0 findings; it arms auto-merge itself afterward only if that was also
+      consented AND the review loop and audit gate are both off — otherwise the last enabled gate
+      arms. Consent is captured fresh every invocation and is NEVER sticky — no carry-over from a
+      prior run, never read from a checkpoint or memory. Default false — no QA gate, behavior
+      unchanged.
+  autopilot.maxQaRounds:
+    required: false
+    default: 2
+    description: >-
+      Hard cap on the number of qa → pr-response rounds the QA gate runs per PR before giving up on
+      convergence (only consulted when autopilot.qaLoop is on). A round that implements 0 findings
+      converges and breaks early; reaching the cap without converging is a safety bound, NOT a merge
+      blocker — autopilot proceeds (arms if consented and the QA gate is the last gate that is on,
+      else defers to the later gates or leaves the PR for a human) and files an
+      autopilot.holdLabel-labeled follow-up issue capturing the last QA findings so the remaining
+      work isn't lost. Default 2.
   autopilot.holdLabel:
     required: false
     default: waffle-manual-review
     description: >-
-      Label autopilot applies to the follow-up issue it files when the review loop exhausts
+      Label autopilot applies to the follow-up issue it files when the QA gate exhausts
+      autopilot.maxQaRounds without converging (autopilot.qaLoop), when the review loop exhausts
       autopilot.maxReviewRounds without converging, OR when the /audit gate hard-blocks a PR on
       unresolved Critical/High findings (autopilot.auditStep). It marks the issue as held for
       human triage: autopilot's scope resolution EXCLUDES hold-labeled issues from every automatic
