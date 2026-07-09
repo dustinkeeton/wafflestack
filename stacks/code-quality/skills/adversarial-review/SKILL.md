@@ -166,9 +166,8 @@ default to the current branch's PR), the review posts to the PR, and the structu
 manufacture blockers to look diligent, and "no holes found" is a legitimate result to hand
 back.
 
-> **Auto-invocation on PR-green (planned, opt-in).** A future opt-in workflow in the
-> `github-workflow` stack can dispatch the CI harness to run this skill automatically the
-> moment a PR's required checks go green (firing once per green transition, not on every
-> check re-run). That trigger is **not shipped yet** — it depends on the CI-harness dispatch
-> fix tracked in issue #133. Until then, this skill is invoked manually (`/adversarial-review
+> **Auto-invocation on PR-green (opt-in).** An opt-in workflow in the `github-workflow` stack
+> can dispatch the CI harness to run this skill automatically the moment a PR's required checks
+> go green (firing once per green transition, not on every check re-run). It's opt-in — enable
+> it in that stack to arm it. Until you do, this skill is invoked manually (`/adversarial-review
 > <PR#>`) or by an agent, and is independently useful without the trigger.

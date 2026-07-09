@@ -9,7 +9,7 @@ skills: [tdd, codebase-architecture, adversarial-review]
 config:
   project.longName:
     required: true
-    description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+    description: Full prose project descriptor, e.g. "the Acme web service" or "the Acme CLI".
   project.testCmd:
     required: false
     default: npm test
@@ -25,10 +25,10 @@ config:
     description: Verbatim body of the "TDD Workflow for New Features" section — the project's feature-specific TDD recipes.
   arch.settingsType:
     required: true
-    description: Name of the project's unified settings type, e.g. "SynapseSettings".
+    description: Name of the project's unified settings type, e.g. "AppSettings" or "ProjectConfig".
   arch.depExceptions:
     required: true
-    description: Documented inter-module dependency exception(s) allowed by the architecture, e.g. "VideoModule → AudioModule (documented exception)".
+    description: Documented inter-module dependency exception(s) allowed by the architecture, e.g. "ModuleA → ModuleB (documented one-way exception)", or "none" if the architecture allows no exceptions.
 setup: |-
   **Adversarial review.** The `adversarial-review` skill drives the `gh` CLI against the
   current repo's pull requests — verify `gh auth status` succeeds and the repo has a GitHub
@@ -46,6 +46,7 @@ setup: |-
   gates a committed, green PR just before merge. Agents can be granted it via their
   frontmatter `skills:` list to gate a PR an auto-merge flow would otherwise merge unchecked.
 
-  A companion opt-in workflow that auto-runs this skill the moment a PR turns green is planned
-  in the `github-workflow` stack but **not shipped yet** — it depends on the CI-harness
-  dispatch fix (issue #133). Until then, invoke the skill manually or from an agent.
+  A companion **opt-in** workflow in the `github-workflow` stack can auto-run this skill the
+  moment a PR's checks turn green, so green PRs get gated without a manual step. It's opt-in —
+  enable it in that stack to arm it; until then, invoke the skill manually
+  (`/adversarial-review <PR#>`) or from an agent.
