@@ -19,7 +19,7 @@ import { computeListModel, formatListTable, selectableChoices, STATUS } from '..
 import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
-import { agentAvatarSvg } from '../lib/waffledocs.mjs';
+import { agentAvatarSvg, agentFlavor } from '../lib/waffledocs.mjs';
 import {
   loadProjectConfig,
   migrateLegacyDotfiles,
@@ -4750,8 +4750,9 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
       2,
       'captain badged on /ship and /recon',
     );
-    // The hover ID card carries the agent's name, one-line description and skill count.
+    // The hover ID card carries the agent's name, its syrup-flavor tag, description and skill count.
     assert.match(cheat, /<span class="wd-idcard-name">captain<\/span>/);
+    assert.match(cheat, new RegExp(`<span class="wd-idcard-flavor">${agentFlavor('captain')}</span>`));
     assert.match(cheat, /<span class="wd-idcard-count">2 skills<\/span>/);
     assert.match(cheat, /class="wd-agents"/);
     // scout holds no skills → it is badged on nothing and never linked from the cheat sheet.
@@ -4812,6 +4813,33 @@ describe('agentAvatarSvg (deterministic per-agent waffle avatar)', () => {
     const urls = svg.match(/https?:\/\/[^\s"')]+/g) || [];
     for (const url of urls) assert.match(url, /^http:\/\/www\.w3\.org\b/, `only the SVG xmlns allowed, got ${url}`);
     assert.doesNotMatch(svg, /\bsrc\s*=/);
+  });
+
+  test('uses the wafflebot 96×96 geometry and toggles SMIL animation', () => {
+    const svg = agentAvatarSvg('captain', 2);
+    assert.match(svg, /viewBox="0 0 96 96"/);
+    assert.match(svg, /<animate\b/, 'animated by default');
+    assert.doesNotMatch(agentAvatarSvg('captain', 2, { animated: false }), /<animate\b/, 'no SMIL when animated:false');
+  });
+
+  test('uid prefixes clip-path ids so repeated avatars coexist on one page', () => {
+    const a = agentAvatarSvg('captain', 2, { uid: 'x-mini' });
+    const b = agentAvatarSvg('captain', 2, { uid: 'x-card' });
+    assert.match(a, /id="x-mini-eye0"/);
+    assert.match(b, /id="x-card-eye0"/);
+    assert.notEqual(a, b, 'different uids ⇒ different clip ids ⇒ different strings');
+    // Default uid is the name slug, keeping the isolated function byte-stable.
+    assert.match(agentAvatarSvg('captain', 2), /id="agent-captain-eye0"/);
+  });
+
+  test('agentFlavor is a stable syrup name, and it varies across the roster', () => {
+    const known = new Set(['maple', 'caramel', 'berry', 'grape', 'blueberry', 'matcha']);
+    assert.equal(agentFlavor('captain'), agentFlavor('captain'), 'deterministic');
+    for (const nm of ['captain', 'scout', 'docs-agent', 'harness-architect']) {
+      assert.ok(known.has(agentFlavor(nm)), `known flavor for ${nm}, got ${agentFlavor(nm)}`);
+    }
+    const roster = ['captain', 'scout', 'docs-agent', 'docs-human', 'harness-architect', 'general-purpose', 'Explore', 'Plan'];
+    assert.ok(new Set(roster.map(agentFlavor)).size >= 3, 'flavors vary across the roster');
   });
 });
 

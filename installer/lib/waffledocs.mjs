@@ -228,44 +228,66 @@ function waffleGlyphSvg(px) {
 // swoosh of orange syrup on top like a hairdo, and two pockets darkened as eyes. The skill
 // count freckles the remaining pockets (capped at 7 = 9 pockets − 2 eyes).
 
-const AV_OUTLINE = '#5B2B0E'; // brand cocoa — the waffle's edge line
-const AV_EYE = '#2A1608'; // darkest pocket — the eyes
+// Brand cocoa is the default outline/ink; dark skins override it for legibility.
+const AV_INK_DEFAULT = '#5B2B0E';
+const AV_CREAM = '#FFF3DC'; // the eyes' sclera + the antenna bead
 
-// Skin tones cluster around the GOLDEN anchor; each carries a matched darker `pocket` (empty
-// squares) and `freckle` (skill squares) shade so the waffle reads as one baked piece.
+// Number formatter — integers stay bare, else 2 decimals trimmed. Keeps computed eye/syrup
+// coordinates byte-stable across hosts (ported from the wafflebot reference generator).
+const f2 = (n) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
+
+// Skin "batter" tones, light → charcoal. Each carries its own `ink` and a matched
+// `pocketLight` (empty squares) / `pocketDark` (skill squares) shade — precomputed from
+// shade(fill, 0.90 | 0.80) so the table is literal and byte-stable. Charcoal is hand-tuned so
+// its outline and pupils stay legible dark-on-dark.
 const AV_SKINS = [
-  { fill: GOLDEN, pocket: '#E3AE3E', freckle: '#B87A24' },
-  { fill: '#F0BD46', pocket: '#DBA636', freckle: '#AE7020' },
-  { fill: '#F7CE63', pocket: '#E6B94E', freckle: '#BE8130' },
-  { fill: '#EAB94A', pocket: '#D6A338', freckle: '#A96C1E' },
-  { fill: '#F3C74F', pocket: '#E0A93A', freckle: '#B37622' },
-  { fill: '#F8D06A', pocket: '#E8BC55', freckle: '#C08834' },
+  { fill: '#F7D98B', ink: AV_INK_DEFAULT, pocketLight: '#DEC37D', pocketDark: '#C6AE6F' }, // pale
+  { fill: GOLDEN, ink: AV_INK_DEFAULT, pocketLight: '#DDB34A', pocketDark: '#C49F42' }, // classic
+  { fill: '#E4A94A', ink: AV_INK_DEFAULT, pocketLight: '#CD9843', pocketDark: '#B6873B' }, // honey
+  { fill: '#C98A3C', ink: AV_INK_DEFAULT, pocketLight: '#B57C36', pocketDark: '#A16E30' }, // toasted
+  { fill: '#8A5A26', ink: AV_INK_DEFAULT, pocketLight: '#7C5122', pocketDark: '#6E481E' }, // cocoa
+  { fill: '#4A3A55', ink: '#2A2036', pocketLight: '#5A4769', pocketDark: '#352A40' }, // charcoal
 ];
 
-// Syrup "hair" — shape and colour variants around the SYRUP anchor. Each path is a swoosh
-// that sits across the top of the head (drawn before the body so the body clips its base).
-const AV_SYRUP_COLORS = [SYRUP, '#E67E12', '#F59A34', '#D9750F', '#EE8418'];
-const AV_HAIR_PATHS = [
-  'M14 30 C10 12 34 5 52 9 C70 13 90 9 86 28 C77 19 66 21 55 19 C39 16 22 19 14 30 Z',
-  'M17 29 C13 9 41 3 55 11 C65 16 76 7 83 25 C73 21 63 22 55 20 C41 17 26 17 17 29 Z',
-  'M14 27 C19 9 46 6 63 11 C74 14 81 10 86 25 C71 22 59 24 47 22 C34 19 22 18 14 27 Z',
-  'M15 30 C11 13 33 6 50 8 C64 10 74 6 82 16 C86 21 84 27 84 29 C78 21 66 21 55 19 C40 16 23 19 15 30 Z',
+// Syrup "hair" flavors — one distinct color each; the `name` doubles as the ID-card flavor tag.
+const AV_SYRUPS = [
+  { name: 'maple', color: SYRUP },
+  { name: 'caramel', color: '#F0641D' },
+  { name: 'berry', color: '#C9699E' },
+  { name: 'grape', color: '#6B4E9E' },
+  { name: 'blueberry', color: '#4E92CC' },
+  { name: 'matcha', color: '#35A878' },
 ];
 
-// Eye "expressions" — which two of the nine pockets are the eyes. Each pair is a within-row
-// couple with a gap, so the face reads as a face whichever row it lands on.
-const AV_EXPRESSIONS = [
-  [0, 2],
-  [3, 5],
-  [6, 8],
-  [0, 1],
-  [1, 2],
-  [3, 4],
-];
+// Syrup drip styles — subtle drip length / which side runs longer (ported STY).
+const AV_DRIPS = {
+  classic: { sL: 41, sR: 33, side: 'L' },
+  even: { sL: 38, sR: 36, side: 'L' },
+  mirror: { sL: 33, sR: 41, side: 'R' },
+  left: { sL: 45, sR: 34, side: 'L' },
+  right: { sL: 34, sR: 45, side: 'R' },
+};
+const AV_DRIP_KEYS = ['classic', 'even', 'mirror', 'left', 'right'];
 
-// Pocket grid geometry (viewBox 0 0 100 100), matching the body rect below.
-const AV_COLS = [25, 43.5, 62];
-const AV_ROWS = [33, 51.5, 70];
+// Eye expressions — mood set by lids + pupils. Each is a per-eye preset (ported EX):
+// [topLid, botLid, tilt, pupilDx, pupilDy, pupilScale]. Exactly two eyes are always present.
+const AV_EXPRESSIONS = {
+  neutral: { L: [0, 0, 0, 0, 0, 1], R: [0, 0, 0, 0, 0, 1] },
+  curious: { L: [0, 0, 0, 0, -1.7, 1.18], R: [0, 0, 0, 0, -1.7, 1.18] },
+  tired: { L: [0.5, 0, -0.9, 0, 0.8, 0.95], R: [0.5, 0, -0.9, 0, 0.8, 0.95] },
+  sleepy: { L: [0.62, 0.06, -0.5, 0, 1.1, 0.85], R: [0.62, 0.06, -0.5, 0, 1.1, 0.85] },
+  focused: { L: [0.32, 0.32, 0, 0, 0, 0.85], R: [0.32, 0.32, 0, 0, 0, 0.85] },
+  determined: { L: [0.36, 0, 1.4, 0, 0.4, 1], R: [0.36, 0, 1.4, 0, 0.4, 1] },
+  skeptical: { L: [0.5, 0, -0.3, 1, 0.4, 0.95], R: [0.18, 0, -0.3, 1, 0.4, 0.95] },
+  sad: { L: [0.2, 0, -1.5, 0, -1, 1.05], R: [0.2, 0, -1.5, 0, -1, 1.05] },
+  wide: { L: [0, 0, 0, 0, 0, 1.28], R: [0, 0, 0, 0, 0, 1.28] },
+  wink: { L: [0.92, 0, -0.4, 0, 0.6, 0.55], R: [0, 0, 0, 0, 0, 1] },
+};
+const AV_EXPR_KEYS = ['neutral', 'curious', 'tired', 'sleepy', 'focused', 'determined', 'skeptical', 'sad', 'wide', 'wink'];
+
+// The 7 non-eye pocket cells (viewBox 0 0 96 96), row-major [x, y]; each pocket is 14×14. The
+// two eyes are fixed at the middle row's left/right cells, so exactly two eyes always render.
+const AV_CELLS = [[20, 20], [41, 20], [62, 20], [41, 41], [20, 62], [41, 62], [62, 62]];
 
 // FNV-1a — a tiny, stable, dependency-free string hash. Deterministic across runs/hosts.
 function avHash(name) {
@@ -312,49 +334,145 @@ function agentAnchorId(name) {
 }
 
 /**
- * Deterministic waffle avatar for an agent, as a self-contained inline SVG string. Every trait
- * (skin tone, syrup hair shape/colour, eye expression, freckle positions) is derived from
- * `name`; `skillCount` (clamped to 0..7) sets how many non-eye pockets are darkened as skill
- * squares. Pure — same inputs ⇒ identical string. `www.w3.org` is the SVG namespace, not a fetch.
+ * The deterministic trait selection for an agent, drawn from the name hash in one fixed order
+ * (skin → syrup → drip → expression → pocket-darken order). Single source of truth, so the
+ * avatar and its ID-card flavor tag can never disagree. LOAD-BEARING: reordering these draws, or
+ * adding/removing one, changes every avatar and every lock hash.
  */
-export function agentAvatarSvg(name, skillCount = 0, { px = 40, className = '' } = {}) {
+function agentTraits(name) {
   const rng = avRng(avHash(name));
   const skin = AV_SKINS[Math.floor(rng() * AV_SKINS.length)];
-  const hair = AV_HAIR_PATHS[Math.floor(rng() * AV_HAIR_PATHS.length)];
-  const syrup = AV_SYRUP_COLORS[Math.floor(rng() * AV_SYRUP_COLORS.length)];
-  const eyes = AV_EXPRESSIONS[Math.floor(rng() * AV_EXPRESSIONS.length)];
+  const syrup = AV_SYRUPS[Math.floor(rng() * AV_SYRUPS.length)];
+  const drip = AV_DRIP_KEYS[Math.floor(rng() * AV_DRIP_KEYS.length)];
+  const expression = AV_EXPR_KEYS[Math.floor(rng() * AV_EXPR_KEYS.length)];
+  const darkOrder = avShuffle([0, 1, 2, 3, 4, 5, 6], rng); // priority order for which pockets darken
+  return { skin, syrup, drip, expression, darkOrder };
+}
+
+/** The agent's syrup-flavor name (e.g. 'maple', 'grape') — the ID-card identity tag. */
+export function agentFlavor(name) {
+  return agentTraits(name).syrup.name;
+}
+
+// One eye, clipped to its rounded cell: a cream sclera (the countable `wd-av-eye` hook) + pupil +
+// glint, with skin-colored lids setting the mood; when animated, a blink rect and a look-around
+// glance. Ported from the wafflebot reference `eye()`. `side`: -1 left, +1 right (tilt direction).
+function avEye(idx, side, cx, cellX, p, ink, cream, skin, uid, animated, begin) {
+  const cellY = 41, cell = 14, cy = 48, erx = 4.5;
+  const t = p[0], b = p[1], tilt = p[2], dx = p[3], dy = p[4], r = p[5];
+  const x0 = cellX - 1.6, x1 = cellX + cell + 1.6;
+  const tp = tilt * 2.2, base = cellY + t * cell;
+  const yInner = base + tp, yOuter = base - tp;
+  const yL = side < 0 ? yOuter : yInner, yR = side < 0 ? yInner : yOuter;
+  const yb = cellY + cell - b * cell;
+  const pr = 3.4 * r, px = cx + dx, py = cy + dy;
+  const gx = px + pr * 0.42, gy = py - pr * 0.42, gr = pr * 0.34;
+  const clip = `${uid}-eye${idx}`;
+  const glance = animated
+    ? `<animateTransform attributeName="transform" type="translate" begin="${begin}" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.28;0.34;0.52;0.58;1" keySplines="0 0 1 1;0.4 0 0.4 1;0 0 1 1;0.4 0 0.4 1;0 0 1 1" values="0 0;0 0;2.2 0;2.2 0;0 0;0 0"/>`
+    : '';
+  const blink = animated
+    ? `<rect x="${f2(cellX)}" y="${cellY}" width="${cell}" height="0" fill="${skin}"><animate attributeName="height" begin="${begin}" dur="6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.92;0.955;0.99;1" keySplines="0 0 1 1;0.5 0 1 1;0 0 0.5 1;0 0 1 1" values="0;0;${cell};0;0"/></rect>`
+    : '';
+  const topLid = t > 0.001
+    ? `<path d="M${f2(x0)} ${f2(cellY - 1.6)} L${f2(x1)} ${f2(cellY - 1.6)} L${f2(x1)} ${f2(yR)} L${f2(x0)} ${f2(yL)} Z" fill="${skin}"/>`
+      + `<path d="M${f2(x0)} ${f2(yL)} L${f2(x1)} ${f2(yR)}" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`
+    : '';
+  const botLid = b > 0.001
+    ? `<path d="M${f2(x0)} ${f2(cellY + cell + 1.6)} L${f2(x1)} ${f2(cellY + cell + 1.6)} L${f2(x1)} ${f2(yb)} L${f2(x0)} ${f2(yb)} Z" fill="${skin}"/>`
+      + `<path d="M${f2(x0)} ${f2(yb)} L${f2(x1)} ${f2(yb)}" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`
+    : '';
+  return `<clipPath id="${clip}"><rect x="${f2(cellX)}" y="${cellY}" width="${cell}" height="${cell}" rx="${erx}"/></clipPath>`
+    + `<g clip-path="url(#${clip})">`
+    + `<rect class="wd-av-eye" x="${f2(cellX)}" y="${cellY}" width="${cell}" height="${cell}" rx="${erx}" fill="${cream}"/>`
+    + `<g><circle cx="${f2(px)}" cy="${f2(py)}" r="${f2(pr)}" fill="${ink}"/>`
+    + `<circle cx="${f2(gx)}" cy="${f2(gy)}" r="${f2(gr)}" fill="${cream}"/>${glance}</g>`
+    + topLid + botLid + blink + '</g>';
+}
+
+// The syrup "hair" blob + its drip, drawn ON TOP of the eyes like bangs. Static: a resting bead.
+// Animated: the 9s drip — a bead swells at the active drip's tip, falls, then the drip recoils
+// past rest with an overshoot before settling. Ported from the wafflebot reference `syrupGroup()`.
+function avSyrup(dripKey, syrup, ink, uid, animated, begin, recoil) {
+  const s = AV_DRIPS[dripKey] || AV_DRIPS.classic, sL = s.sL, sR = s.sR, tL = sL + 5, tR = sR + 5;
+  const pathFor = (dL, dR) =>
+    `M34 8 H62 Q72 8 72 16 Q72 24 62 24 H60 V${sR + dR} Q60 ${tR + dR} 55.5 ${tR + dR} Q51 ${tR + dR} 51 ${sR + dR}`
+    + ` V24 H43 V${sL + dL} Q43 ${tL + dL} 38.5 ${tL + dL} Q34 ${tL + dL} 34 ${sL + dL} V24 Q24 24 24 16 Q24 8 34 8 Z`;
+  const baseD = pathFor(0, 0);
+  const dropCx = s.side === 'R' ? 55.5 : 38.5;
+  const activeTip = s.side === 'R' ? tR : tL, dropBaseY = activeTip + 8;
+  if (!animated) {
+    return `<g><path d="${baseD}" fill="${syrup}" stroke="${ink}" stroke-width="5" stroke-linejoin="round"/>`
+      + `<circle cx="${dropCx}" cy="${f2(dropBaseY)}" r="4" fill="${syrup}" stroke="${ink}" stroke-width="4"/></g>`;
+  }
+  const dl = s.side === 'R'
+    ? { dangle: [-2.5, 4.5], over: [3.5, -2.5], settle: [-0.8, 0.8] }
+    : { dangle: [4.5, -2.5], over: [-2.5, 3.5], settle: [0.8, -0.8] };
+  const vals = [baseD, baseD, baseD, pathFor(dl.dangle[0], dl.dangle[1]), pathFor(dl.over[0], dl.over[1]), pathFor(dl.settle[0], dl.settle[1]), baseD].join(';');
+  const fall = f2(104 - dropBaseY), cX = f2(dropCx - 13);
+  const R = Math.max(0.8, Math.min(4, recoil == null ? 1.8 : recoil)), DUR = 9;
+  const gS = DUR - 1.8 - R, gE = gS + 0.5, fS = gS + 0.9, fE = gS + 1.8, vn = fE + 0.135, oE = fE + 0.35 * R, sE = fE + 0.7 * R;
+  const Ff = (x) => +(x / DUR).toFixed(4);
+  const dkt = `0;${Ff(gS)};${Ff(fS)};${Ff(fE)};${Ff(oE)};${Ff(sE)};1`;
+  const sKt = `0;${Ff(gS)};${Ff(gE)};${Ff(fE)};${Ff(vn)};1`;
+  const tKt = `0;${Ff(gE)};${Ff(fS)};${Ff(fE)};${Ff(vn)};1`;
+  const dks = '0 0 1 1;0 0 1 1;0.3 0 0.6 1;0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1';
+  return '<g>'
+    + `<path fill="${syrup}" stroke="${ink}" stroke-width="5" stroke-linejoin="round" d="${baseD}">`
+    + `<animate attributeName="d" begin="${begin}" dur="9s" repeatCount="indefinite" calcMode="spline" keyTimes="${dkt}" keySplines="${dks}" values="${vals}"/></path>`
+    + `<clipPath id="${uid}-drop"><rect x="${cX}" y="40" width="26" height="56"/></clipPath>`
+    + `<g clip-path="url(#${uid}-drop)"><g transform="translate(${dropCx} ${f2(dropBaseY)})">`
+    + `<circle cx="0" cy="0" r="4" fill="${syrup}" stroke="${ink}" stroke-width="4"/>`
+    + `<animateTransform attributeName="transform" type="translate" additive="sum" begin="${begin}" dur="9s" repeatCount="indefinite" calcMode="spline" keyTimes="${tKt}" keySplines="0 0 1 1;0 0 1 1;0.4 0 1 1;0 0 1 1;0 0 1 1" values="0 0;0 0;0 0;0 ${fall};0 ${fall};0 0"/>`
+    + `<animateTransform attributeName="transform" type="scale" additive="sum" begin="${begin}" dur="9s" repeatCount="indefinite" calcMode="spline" keyTimes="${sKt}" keySplines="0 0 1 1;0.3 0 0.5 1;0 0 1 1;0 0 1 1;0 0 1 1" values="0;0;1;1;0;0"/>`
+    + '</g></g></g>';
+}
+
+/**
+ * Deterministic waffle avatar for an agent, as a self-contained inline SVG string. Every trait
+ * (skin, syrup flavor + drip, eye expression, which pockets darken) is a pure function of `name`
+ * via `agentTraits`; `skillCount` (clamped 0..7) sets how many of the 7 non-eye pockets darken as
+ * skill squares. Exactly two eyes always. Pure — same (name, skillCount, uid) ⇒ identical string.
+ *
+ * `uid` prefixes the clip-path ids so many avatars can coexist on one page; it defaults to the
+ * name slug (keeping the isolated function byte-stable). Callers that render the SAME agent more
+ * than once on a page (the cheat sheet) MUST pass a page-unique uid to avoid id collisions.
+ * `www.w3.org` is the SVG namespace, not a fetch.
+ */
+export function agentAvatarSvg(name, skillCount = 0, { px = 40, className = '', uid, animated = true } = {}) {
+  const { skin, syrup, drip, expression, darkOrder } = agentTraits(name);
+  const id = uid || agentAnchorId(name);
+  const ink = skin.ink;
+  // A per-agent start offset so a grid of avatars doesn't blink/drip in lockstep — still a pure
+  // function of the name, so output stays byte-identical per name.
+  const begin = animated ? `${((avHash(name) % 60) / 10).toFixed(1)}s` : '0s';
 
   const count = Math.max(0, Math.min(Math.trunc(Number(skillCount) || 0), 7));
-  const candidates = [];
-  for (let g = 0; g < 9; g++) if (!eyes.includes(g)) candidates.push(g);
-  const freckles = new Set(avShuffle(candidates, rng).slice(0, count));
+  const darkSet = new Set(darkOrder.slice(0, count));
 
   let pockets = '';
-  for (let g = 0; g < 9; g++) {
-    const x = AV_COLS[g % 3];
-    const y = AV_ROWS[Math.floor(g / 3)];
-    let fill;
-    let cls;
-    if (eyes.includes(g)) {
-      fill = AV_EYE;
-      cls = 'wd-av-eye';
-    } else if (freckles.has(g)) {
-      fill = skin.freckle;
-      cls = 'wd-av-skill';
-    } else {
-      fill = skin.pocket;
-      cls = 'wd-av-pocket';
-    }
-    pockets += `<rect class="${cls}" x="${x}" y="${y}" width="13" height="13" rx="4" fill="${fill}"/>`;
+  for (let k = 0; k < AV_CELLS.length; k++) {
+    const isSkill = darkSet.has(k);
+    pockets += `<rect class="${isSkill ? 'wd-av-skill' : 'wd-av-pocket'}" x="${AV_CELLS[k][0]}" y="${AV_CELLS[k][1]}" width="14" height="14" rx="4.5" fill="${isSkill ? skin.pocketDark : skin.pocketLight}"/>`;
   }
 
+  const p = AV_EXPRESSIONS[expression] || AV_EXPRESSIONS.neutral;
   const extraClass = className ? ` ${className}` : '';
   return (
-    `<svg class="wd-av${extraClass}" width="${px}" height="${px}" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" stroke-linejoin="round">` +
-    `<path d="${hair}" fill="${syrup}" stroke="${AV_OUTLINE}" stroke-width="2"/>` +
-    `<rect x="16" y="24" width="68" height="68" rx="14" fill="${skin.fill}" stroke="${AV_OUTLINE}" stroke-width="3"/>` +
-    pockets +
-    '</svg>'
+    `<svg class="wd-av${extraClass}" width="${px}" height="${px}" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" stroke-linejoin="round">`
+    // antenna (drawn behind the body so it emerges from the top-right corner)
+    + `<g><line x1="63" y1="19" x2="72.5" y2="9.5" stroke="${ink}" stroke-width="5" stroke-linecap="round"/><circle cx="75" cy="7" r="3.6" fill="${AV_CREAM}" stroke="${ink}" stroke-width="3.5"/></g>`
+    // drop shadow
+    + `<rect x="10" y="14" width="76" height="76" rx="20" fill="${ink}"/>`
+    // body
+    + `<rect x="10" y="10" width="76" height="76" rx="20" fill="${skin.fill}" stroke="${ink}" stroke-width="7"/>`
+    // pockets
+    + pockets
+    // eyes (drawn under the syrup so the "hair" can fall over them)
+    + `<g>${avEye(0, -1, 27, 20, p.L, ink, AV_CREAM, skin.fill, id, animated, begin)}${avEye(1, 1, 69, 62, p.R, ink, AV_CREAM, skin.fill, id, animated, begin)}</g>`
+    // syrup / "hair" — on top
+    + avSyrup(drip, syrup.color, ink, id, animated, begin, 1.8)
+    + '</svg>'
   );
 }
 
@@ -490,9 +608,9 @@ body {
   left: 50%;
   bottom: calc(100% + 9px);
   z-index: 20;
-  width: 244px;
+  width: 264px;
   display: flex;
-  gap: 11px;
+  gap: 12px;
   padding: 12px 13px;
   background: var(--chip-bg);
   border: 1px solid var(--rule);
@@ -511,10 +629,11 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 .wd-idcard-av { flex: none; line-height: 0; }
-.wd-idcard-av .wd-av { border-radius: 9px; }
+.wd-idcard-av .wd-av { border-radius: 12px; }
 .wd-idcard-body { flex: 1; min-width: 0; }
 .wd-idcard-name { display: block; font-family: var(--mono); font-weight: 700; font-size: 14px; color: var(--heading); }
-.wd-idcard-desc { display: block; margin: 4px 0 7px; font-size: 12.5px; line-height: 1.4; color: var(--text); }
+.wd-idcard-flavor { display: inline-block; margin: 5px 0 0; padding: 1px 8px; border-radius: 999px; background: var(--tag-bg); font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--tag-text); }
+.wd-idcard-desc { display: block; margin: 7px 0 7px; font-size: 12.5px; line-height: 1.4; color: var(--text); }
 .wd-idcard-count { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px; color: var(--accent); }`;
 
 /**
@@ -587,25 +706,32 @@ ${rows.map(rowHtml).join('\n')}
  * as a small de-emphasised waffle that reveals a CSS-only "ID card" on hover/focus and links
  * through to that agent's row on team.html. Empty string when no agent holds the skill.
  */
-function agentAvatarsHtml(agentNames, agentByName) {
+function agentAvatarsHtml(agentNames, agentByName, skillRef = '') {
   if (!agentNames || !agentNames.length) return '';
   const chips = agentNames
     .map((name) => {
       const agent = agentByName.get(name);
       if (!agent) return '';
       const n = agent.skills.length;
+      const anchor = agentAnchorId(agent.name);
+      // One agent can appear under several skills on a page, each drawing two avatars; a
+      // page-unique uid per placement keeps their clip-path ids from colliding.
+      const base = skillRef ? `${anchor}-${skillRef}` : anchor;
+      const uidMini = `${base}-mini`;
+      const uidCard = `${base}-card`;
       const card =
         '<span class="wd-idcard" role="tooltip">' +
-        `<span class="wd-idcard-av">${agentAvatarSvg(agent.name, n, { px: 46 })}</span>` +
+        `<span class="wd-idcard-av">${agentAvatarSvg(agent.name, n, { px: 56, uid: uidCard })}</span>` +
         '<span class="wd-idcard-body">' +
         `<span class="wd-idcard-name">${esc(agent.name)}</span>` +
+        `<span class="wd-idcard-flavor">${esc(agentFlavor(agent.name))}</span>` +
         `<span class="wd-idcard-desc">${esc(oneLiner(agent.description, 120))}</span>` +
         `<span class="wd-idcard-count">${n} skill${n === 1 ? '' : 's'}</span>` +
         '</span>' +
         '</span>';
       return (
-        `<a class="wd-mini" href="team.html#${esc(agentAnchorId(agent.name))}" aria-label="${esc(agent.name)}">` +
-        agentAvatarSvg(agent.name, n, { px: 26 }) +
+        `<a class="wd-mini" href="team.html#${esc(anchor)}" aria-label="${esc(agent.name)}">` +
+        agentAvatarSvg(agent.name, n, { px: 26, uid: uidMini }) +
         card +
         '</a>'
       );
@@ -621,7 +747,7 @@ function cheatsheetHtml(commands, toolkitName, { agentsByRef, agentByName } = {}
     primary: `/${c.name}`,
     hint: c.argumentHint || '',
     secondary: oneLiner(c.description, 200),
-    extra: agentAvatarsHtml(byRef.get(c.ref), byName),
+    extra: agentAvatarsHtml(byRef.get(c.ref), byName, c.ref),
   }));
   return htmlDoc({
     eyebrow: toolkitName,
