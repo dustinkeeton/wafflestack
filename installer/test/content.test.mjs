@@ -482,6 +482,14 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     assert.match(md, /\+review\[:N\]/);
   });
 
+  test('N is validated: positive integer only; malformed/zero reverts to unspecified + ask', () => {
+    assert.match(md, /`N` must be a positive integer \(`N >= 1`\)/);
+    // A zero/negative/non-numeric count never starts a loop — the flag is treated as
+    // unspecified (consent and cap both) and routed to the contract's AskUserQuestion.
+    assert.match(md, /treat that flag as \*\*unspecified\*\*/);
+    assert.match(md, /never start a zero-round loop and never guess a cap/);
+  });
+
   test('bare flags keep the rendered defaults; the caps are per-run and never sticky', () => {
     assert.match(md, /Bare `\+review` keeps the rendered default/);
     assert.match(md, /Bare `\+qa` keeps the rendered default/);
