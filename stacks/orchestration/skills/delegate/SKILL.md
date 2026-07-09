@@ -144,6 +144,8 @@ Delegate exactly the board's Status = "Todo" open issues. Three lookups, in orde
    ' -f owner="$OWNER" --jq 'first(.data.user.projectsV2.nodes[] | select(.title | test("{{project.name}}"; "i")) | .id) // empty')
    ```
 
+   For an **organization-owned** repo, replace `user(login: $owner)` with `organization(login: $owner)` — the same caveat `github-project-board` documents. It is not optional here: against an org owner the `user` query resolves to a `null` account node and the `--jq` filter errors (a **failed** lookup, not an empty one), so without the org variant a `todo-column` run on an org repo can never find its board.
+
    `PROJECT_ID` empty **and the query succeeded** → **no board**: fall back to `all-open`, stated explicitly per above. Empty because the lookup **failed** → stop and report (the failed-lookup rule above).
 
 2. Find the Status field and its "Todo" option — the Board Setup fields query, extracting both IDs (a `todo-column` run reuses these in Board Setup rather than re-querying):

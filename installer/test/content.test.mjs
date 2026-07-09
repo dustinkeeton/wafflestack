@@ -215,6 +215,9 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     // so a transient error can never widen an unattended batch run.
     assert.match(md, /stop the run and report the error/);
     assert.match(md, /a transient failure must never widen/);
+    // Org-owned repos need the organization(login:) query variant, or the board
+    // lookup fails on every run and todo-column can never fire.
+    assert.match(md, /organization\(login: \$owner\)/);
     // The Todo set is resolved from the board via the project-items GraphQL query.
     assert.match(md, /fieldValues/);
   });
