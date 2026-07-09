@@ -498,7 +498,10 @@ git:
 ```
 
 can reference keys kept in the gitignored `.waffle/waffle.local.yaml`. Unresolvable nested
-placeholders pass through verbatim. Avoid config key names that collide with literal
+placeholders pass through verbatim. (`git.botName` / `git.botEmail` are since declared
+first-class in the github-workflow stack, with placeholder defaults — so *those two* now fall
+back to their defaults rather than passing through. The undeclared-path expansion above is what
+makes any *genuinely* undeclared overlay key work.) Avoid config key names that collide with literal
 template syntax you embed in values (e.g. don't declare a `secrets.*` namespace).
 
 ### Item-name collisions

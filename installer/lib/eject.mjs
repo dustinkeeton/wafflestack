@@ -160,7 +160,9 @@ config:
 #  project:
 #    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:
-#    botEmail: bot@example.com
+#    botName: Wafflebot          # bot identity for automated commits (github-workflow)
+#    botEmail: bot@example.com   # account-specific -> .waffle/waffle.local.yaml
+#    signingKey: ""              # GPG key ID / SSH pubkey path (never private key material)
 # Account-specific values belong in .waffle/waffle.local.yaml (gitignore it).
 `;
 

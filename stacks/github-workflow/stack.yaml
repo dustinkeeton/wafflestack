@@ -704,9 +704,12 @@ setup: |-
   up to it, always asking before it creates or mutates. Milestones are optional — the issue
   skill skips them when none match.
 
-  **Git.** Make sure the configured `git.worktreesDir` is gitignored. If the project
-  commits under a bot identity, set `git.identitySection` / `git.cmd` /
-  `git.coAuthorTrailer`, keeping account-specific values in .waffle/waffle.local.yaml.
+  **Git.** Make sure the configured `git.worktreesDir` is gitignored. If the project commits
+  under a bot identity, set `git.botName` in the committed .waffle/waffle.yaml and keep the
+  account-specific `git.botEmail` / `git.signingKey` in the gitignored
+  .waffle/waffle.local.yaml; `git.agentIdentities` holds per-agent overrides (its entries may
+  be split across the two files — they deep-merge). Then point `git.identitySection` /
+  `git.cmd` / `git.coAuthorTrailer` at those keys via `{{...}}` nested substitution.
 config:
   git.identitySection:
     required: false
@@ -733,6 +736,40 @@ config:
     description: >-
       Attribution trailer appended to agent-made commits and PR bodies. Override
       for bot identities, e.g. "Co-Authored-By: {{harness.assistantName}} <bot@example.com>".
+  git.botName:
+    required: false
+    default: Wafflebot
+    pattern: "[^\\r\\n'\"]+"
+    description: >-
+      Bot committer name for automated commits (git user.name). Placeholder default; a project
+      that commits under a bot identity overrides it in the committed .waffle/waffle.yaml and
+      points git.cmd / git.identitySection at it via {{git.botName}}. Because it is a declared
+      key, an unset value now falls back to this placeholder instead of passing through verbatim.
+  git.botEmail:
+    required: false
+    default: wafflebot@users.noreply.github.com
+    pattern: "[^\\s@'\"]+@[^\\s@'\"]+"
+    description: >-
+      Bot committer email (git user.email). Placeholder default; account-specific, so the real
+      value belongs in the gitignored .waffle/waffle.local.yaml (nested substitution resolves it
+      from committed values such as git.cmd).
+  git.signingKey:
+    required: false
+    default: ""
+    pattern: "[^\\r\\n'\"]*"
+    description: >-
+      Signing key identifier for bot commits — a GPG key ID or an SSH public-key path, NEVER
+      private key material (it renders into committed files). Empty (the default) means commits
+      are not signed with a dedicated bot key. Keep the real value in .waffle/waffle.local.yaml.
+  git.agentIdentities:
+    required: false
+    default: {}
+    description: >-
+      Map of per-agent virtualized identities that override the main bot identity, keyed by agent
+      name: { <agent>: { botName, botEmail, signingKey? } }. Empty (the default) means every agent
+      commits as the main git.botName / git.botEmail identity. Entries may be split across the
+      committed config (names) and the gitignored local overlay (emails/keys) — the two deep-merge,
+      local winning per key.
   git.worktreesDir:
     required: false
     default: .claude/worktrees

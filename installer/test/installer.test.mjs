@@ -1464,6 +1464,77 @@ describe('github-workflow: project.name first-run (#216)', () => {
   });
 });
 
+// #154: the github-workflow stack declares first-class GitHub identity keys (git.botName,
+// git.botEmail, git.signingKey, git.agentIdentities) with placeholder defaults. These drive the
+// REAL stack: they prove the defaults render, that the layering precedence
+// (local overlay > committed config: > stack default:) holds through makeResolver + deepMerge,
+// that the map key renders as a YAML block, and that the declared patterns fail the render loudly.
+describe('github-workflow: identity config schema (#154)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const SKILL = '.claude/skills/git-workflow/SKILL.md';
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-154-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+  const base = 'targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: Ident154\n';
+
+  test('I1 placeholder defaults render when the project sets no git.* identity', () => {
+    write(cwd, '.waffle/waffle.yaml', base);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /Name \(`git\.botName`\): `Wafflebot`/);
+    assert.match(skill, /Email \(`git\.botEmail`\): `wafflebot@users\.noreply\.github\.com`/);
+    // empty signingKey default renders as an empty quoted value, not a stray placeholder
+    assert.match(skill, /Signing key \(`git\.signingKey`\): "" —/);
+    assert.doesNotMatch(skill, /\{\{git\./, 'no identity placeholder survives the render');
+    // agentIdentities default {} renders as an empty YAML map inside the fence
+    assert.match(skill, /```yaml\n\{\}\n```/);
+  });
+
+  test('I2 precedence: local overlay > committed config: > stack default', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: CommittedBot\n    botEmail: committed@example.com\n`);
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n    signingKey: ABC123\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    // committed beats the stack default
+    assert.match(skill, /Name \(`git\.botName`\): `CommittedBot`/);
+    // local overlay beats the committed value (deepMerge, per key)
+    assert.match(skill, /Email \(`git\.botEmail`\): `local@example\.com`/);
+    assert.doesNotMatch(skill, /committed@example\.com/);
+    // local overlay beats the (empty) stack default
+    assert.match(skill, /Signing key \(`git\.signingKey`\): "ABC123" —/);
+  });
+
+  test('I3 git.agentIdentities renders as a YAML block; entries deep-merge across both files', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    agentIdentities:\n      security-auditor:\n        botName: SecBot\n`);
+    // the local overlay supplies the account-specific half of the SAME agent's entry
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    agentIdentities:\n      security-auditor:\n        botEmail: sec@example.com\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /security-auditor:/);
+    assert.match(skill, /botName: SecBot/);
+    assert.match(skill, /botEmail: sec@example\.com/);
+  });
+
+  test('I4 declared patterns fail the render loudly on an unsafe identity value', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botEmail: not an email\n`);
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /git\.botEmail/);
+    assert.match(result.errors.join('\n'), /pattern/);
+    // a failed render is non-destructive
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false);
+  });
+});
+
 // #39: the github-workflow stack also ships the DETERMINISTIC release hook — a files/ payload
 // (waffle-release-hook.yml) plus the `release` skill, wired by a files/-keyed requires: edge.
 // Tag-on-merge is a plain contents:write Actions job: NO Claude dispatch, NO API spend. These

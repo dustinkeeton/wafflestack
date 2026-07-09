@@ -10,6 +10,26 @@ user-invocable: false
 
 {{git.identitySection}}
 
+### Bot identity (config)
+
+Reference data resolved from config — the Identity section above governs whether a bot identity
+is actually in effect.
+
+- Name (`git.botName`): `{{git.botName}}`
+- Email (`git.botEmail`): `{{git.botEmail}}`
+- Signing key (`git.signingKey`): "{{git.signingKey}}" — empty means no dedicated bot signing key
+- Per-agent identities (`git.agentIdentities`; `{}` means every agent uses the main identity):
+
+```yaml
+{{git.agentIdentities}}
+```
+
+These ship placeholder defaults. A project that opts into a bot identity overrides the name in the
+committed `.waffle/waffle.yaml` and the email / signing key in the gitignored
+`.waffle/waffle.local.yaml` — nested `{{...}}` substitution lets committed values such as `git.cmd`
+reference the overlay's keys. Never put private key material in `git.signingKey`: it is a key ID or
+a public-key path, and it renders into committed files.
+
 ## Branch Strategy
 
 ### Main is protected

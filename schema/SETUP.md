@@ -122,7 +122,12 @@ Walk the config schema of every enabled stack (from the inventory):
 - **Layering**: shared values go in the committed `.waffle/waffle.yaml` under `config:`;
   account-specific values (bot emails, board IDs, tokens' owners) go in
   `.waffle/waffle.local.yaml`, which must be gitignored. A committed value may reference
-  a local-overlay key with `{{...}}` nested substitution.
+  a local-overlay key with `{{...}}` nested substitution. The github-workflow stack's identity
+  keys are the worked example: `git.botName` is shared (committed `config:`), while
+  `git.botEmail` and `git.signingKey` are account-specific (local overlay) — and a single
+  `git.agentIdentities` entry may be split across both files, since the two deep-merge per key
+  (local wins). `git.signingKey` is a GPG key ID or an SSH public-key path, never private key
+  material — config values render into committed files.
 - Only keys declared in a stack's config schema are substituted — do not invent keys.
 
 ## 4. External prerequisites — walk the block (required)

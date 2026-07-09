@@ -32,6 +32,21 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **First-class GitHub identity config keys (#154, `github-workflow`).** `git.botName`,
+  `git.botEmail`, `git.signingKey`, and `git.agentIdentities` are now declared in the stack's
+  `config:` schema with placeholder defaults, validated `pattern:`s (name/email/key are shell-
+  and YAML-unsafe-char free), and a rendered "Bot identity (config)" reference block in the
+  `git-workflow` skill. This is the foundation the rest of the identity model (#153) builds on.
+  Layering is unchanged: put the shared `git.botName` in the committed `.waffle/waffle.yaml`
+  and the account-specific `git.botEmail` / `git.signingKey` in the gitignored
+  `.waffle/waffle.local.yaml`; `git.agentIdentities` entries may straddle both (they deep-merge,
+  local winning per key). `git.signingKey` takes a GPG key ID or SSH public-key path — never
+  private key material, since config values render into committed files.
+  **Consumer note:** `git.botName` / `git.botEmail` were previously *undeclared* dotted paths that
+  only resolved through nested substitution. Now that they are declared, a value like
+  `git.cmd: git -c user.email={{git.botEmail}}` that references them *without* defining them
+  resolves to the placeholder default (`wafflebot@users.noreply.github.com`) instead of passing
+  the `{{git.botEmail}}` text through verbatim. Define them if you reference them.
 - **`todo-column` board scope for `delegate.defaultScope` (#206, `orchestration`).** A third
   default-scope value alongside `current-milestone` and `all-open`: delegate **exactly the open
   issues in the project board's Status = "Todo" column**, resolved via the
