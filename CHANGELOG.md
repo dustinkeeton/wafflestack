@@ -32,6 +32,23 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Per-run round caps for autopilot's gate loops — `+qa:N` / `+review:N` (#230,
+  `orchestration`).** The QA-gate and review-loop consent flags may now carry an optional round
+  count using the same colon syntax as `milestone:<name>`: `+review:3` consents to the review
+  loop AND caps it at 3 rounds for this run; `+qa:1` does the same for the QA gate. Bare `+qa` /
+  `+review` keep the rendered defaults (`autopilot.maxQaRounds` / `autopilot.maxReviewRounds`,
+  both default 2), and when consent is captured interactively via `AskUserQuestion` the round
+  count is captured in the same exchange. The effective caps follow the same per-run,
+  never-sticky rule as the consents (this invocation only — the rendered defaults govern every
+  future run), are restated in the recorded mandate and the end-of-run report, and bound the
+  loops everywhere the rendered caps applied before (loop bound, cap-reached handling, guardrails,
+  failure handling); cap-reached behavior is unchanged (proceed + `autopilot.holdLabel`
+  follow-up). The audit gate's error-retry bound stays hardcoded ("retry once") — it is failure
+  handling, not a quality loop, so there is no `+audit:N`.
+  - **Consumer impact:** additive, prompt-only. **No new config keys** — the existing
+    `autopilot.maxQaRounds` / `autopilot.maxReviewRounds` keys are reframed as render-time
+    defaults, overridable per run. A plain re-render picks it up; behavior is unchanged unless an
+    invocation passes `+qa:N` / `+review:N`.
 - **`/qa` skill + opt-in autopilot QA gate (#228, `code-quality` + `orchestration`).** The
   functional sibling of `adversarial-review`: `/qa <PR#>` checks a **green PR against its linked
   issue's intent** — it reads the diff plus the issue's acceptance criteria, best-effort runs

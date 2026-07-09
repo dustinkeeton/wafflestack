@@ -463,6 +463,67 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
   });
 });
 
+// #230: per-run round caps for the two bounded gate loops. The consent flags may carry an
+// optional round count (`+qa:N` / `+review:N`, colon syntax matching `milestone:<name>`);
+// bare flags keep the rendered defaults. Each assertion pins a load-bearing piece — the
+// argument-hint advertising the colon forms, the rendered-default fallback, the never-sticky
+// rule extended to the caps, the loops bounded by the run-effective cap (with the rendered
+// default still reading correctly beside the override), the same-exchange AskUserQuestion
+// capture, and the cap restated in the recorded mandate and the run report — so a
+// meaning-breaking edit fails CI instead of shipping silently.
+describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
+  let md;
+  before(() => {
+    md = readSkill('autopilot');
+  });
+
+  test('argument-hint advertises the optional colon-count forms', () => {
+    assert.match(md, /\+qa\[:N\]/);
+    assert.match(md, /\+review\[:N\]/);
+  });
+
+  test('the colon form does double duty: consent AND cap in one flag', () => {
+    // Rewording `+review:N` to cap-only (consent captured elsewhere) must fail CI —
+    // an unattended run's consent semantics hang on this sentence.
+    assert.match(md, /consents to the loop AND caps it at/);
+  });
+
+  test('N is validated: positive integer only; malformed/zero reverts to unspecified + ask', () => {
+    assert.match(md, /`N` must be a positive integer \(`N >= 1`\)/);
+    // A zero/negative/non-numeric count never starts a loop — the flag is treated as
+    // unspecified (consent and cap both) and routed to the contract's AskUserQuestion.
+    assert.match(md, /treat that flag as \*\*unspecified\*\*/);
+    assert.match(md, /never start a zero-round loop and never guess a cap/);
+  });
+
+  test('bare flags keep the rendered defaults; the caps are per-run and never sticky', () => {
+    assert.match(md, /Bare `\+review` keeps the rendered default/);
+    assert.match(md, /Bare `\+qa` keeps the rendered default/);
+    assert.match(md, /applies to this invocation only/);
+    // The never-sticky guardrail now covers the caps too.
+    assert.match(md, /per-run round caps \(`\+qa:N`, `\+review:N`\) follow the same rule/);
+  });
+
+  test('both loops are bounded by the run-effective cap, not a raw rendered literal', () => {
+    assert.match(md, /Loop up to the run's effective QA cap/);
+    assert.match(md, /Loop up to the run's effective review cap/);
+    // The rendered default still reads correctly next to the override (placeholder → 2).
+    assert.match(md, /run's effective QA cap \(default `2`\)/);
+    assert.match(md, /run's effective review cap \(default `2`\)/);
+  });
+
+  test('interactive capture takes the round count in the same AskUserQuestion exchange', () => {
+    assert.match(md, /capture the round count in the same exchange/);
+  });
+
+  test('the effective cap is part of the recorded mandate and the run report', () => {
+    // Mandate record at the top of the run…
+    assert.match(md, /with its effective round cap/);
+    // …and the end-of-run report restates it.
+    assert.match(md, /QA-gate consent with its effective cap \+ review-loop consent with its effective cap/);
+  });
+});
+
 // #228: the qa skill itself — the functional sibling of adversarial-review. These pin the
 // posting mechanics (one review, file payload, single-line commands — the #188 allowlist
 // discipline) and the marker contract: the qa marker is its own, and the adversarial-review

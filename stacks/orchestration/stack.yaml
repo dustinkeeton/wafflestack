@@ -313,6 +313,9 @@ config:
       PR for a human) and files an autopilot.holdLabel-labeled follow-up issue capturing the last
       adversarial-review findings so the remaining work isn't lost. Raise it as the pr-response
       rubric matures — more rounds buy more quality once each round is trustworthy. Default 2.
+      This is the render-time DEFAULT: a single run may override it with `+review:N` in the
+      autopilot invocation (captured alongside the consent, per-run, never sticky — this rendered
+      value governs every run that doesn't say otherwise).
   autopilot.qaLoop:
     required: false
     default: false
@@ -339,7 +342,9 @@ config:
       blocker — autopilot proceeds (arms if consented and the QA gate is the last gate that is on,
       else defers to the later gates or leaves the PR for a human) and files an
       autopilot.holdLabel-labeled follow-up issue capturing the last QA findings so the remaining
-      work isn't lost. Default 2.
+      work isn't lost. Default 2. This is the render-time DEFAULT: a single run may override it
+      with `+qa:N` in the autopilot invocation (captured alongside the consent, per-run, never
+      sticky — this rendered value governs every run that doesn't say otherwise).
   autopilot.holdLabel:
     required: false
     default: waffle-manual-review
