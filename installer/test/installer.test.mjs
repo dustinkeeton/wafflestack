@@ -5367,6 +5367,272 @@ describe('prerequisites: schema + doctor gate (#129)', () => {
   });
 });
 
+// #195: the pr-response hook — the consuming half of pr-green. It dispatches the paid harness on a
+// submitted adversarial review, and unlike every other review-time hook it COMMITS (contents: write).
+// Two guards carry the whole design, and both are load-bearing enough to pin in a test:
+//
+//   (1) FORK-HEAD. `pull_request_review` runs in base-repo context (this repo's secrets, a write
+//       token) even for a fork's PR, so checking out a fork head and handing it to an agent holding
+//       contents: write is arbitrary code execution + secret exfiltration. Gated at job level.
+//   (2) LOOP BOUND, PER PR — NOT per head SHA. pr-green dedups per head commit, so it re-reviews
+//       every new SHA; each fix this hook pushes mints one. A per-SHA bound here would therefore
+//       cycle forever (review → fix → new SHA → review → …), each fire locally correct. The bound
+//       must skip on ANY marked reply on the PR, whatever SHA it was posted against, and it is
+//       fail-closed: an unverifiable bound must never authorize a paid, committing run.
+//
+// These drive THE ACTUAL shipped github-workflow stack, and execute the rendered gate/guard scripts
+// against a fake `gh` the way the Actions runner would. jq/bash drive them; skip if unavailable.
+describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-pr-response-hook.yml';
+  const REF = `files/${REL}`;
+  const hasShell = spawnSync('jq', ['--version']).status === 0 && spawnSync('bash', ['-c', 'true']).status === 0;
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-pr-response-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const renderHook = () => {
+    write(cwd, '.waffle/waffle.yaml', `targets: [claude]\ninclude: [${REF}]\nconfig:\n  project:\n    name: PrResponseProj\n`);
+    const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    return YAML.parse(read(cwd, REL));
+  };
+  const stepNamed = (doc, name) => doc.jobs['pr-response'].steps.find((s) => s.name === name);
+
+  // A fake `gh` on PATH, so the rendered scripts' API calls are driven, not mocked away. FAKE_GH
+  // picks the response: a marked reply, an unmarked one, none, or a hard request failure.
+  const installFakeGh = () => {
+    const bin = path.join(cwd, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const gh = path.join(bin, 'gh');
+    fs.writeFileSync(gh, [
+      '#!/usr/bin/env bash',
+      'case "${FAKE_GH:-empty}" in',
+      `  delivered) printf '%s' '[{"id":1,"body":"<!-- waffle-pr-response -->\\nverdict table"}]' ;;`,
+      `  unmarked)  printf '%s' '[{"id":1,"body":"LGTM, ship it"}]' ;;`,
+      `  empty)     printf '%s' '[]' ;;`,
+      '  error)     echo "gh: HTTP 502" >&2; exit 1 ;;',
+      'esac',
+    ].join('\n'));
+    fs.chmodSync(gh, 0o755);
+    return bin;
+  };
+
+  // Run a rendered `run:` script under bash with the fake gh first on PATH.
+  const runScript = (script, env) => {
+    const bin = installFakeGh();
+    const sf = path.join(cwd, 'script.sh');
+    fs.writeFileSync(sf, script);
+    const res = spawnSync('bash', [sf], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        GITHUB_REPOSITORY: 'o/r',
+        GH_TOKEN: 'x',
+        RUNNER_TEMP: cwd,
+        ...env,
+      },
+    });
+    return { code: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
+  };
+
+  // Drive the gate step: PR facts via env, outputs/summary to scratch files.
+  const runGate = (doc, { fakeGh = 'empty', state = 'open', draft = 'false', authorType = 'User' } = {}) => {
+    const outFile = path.join(cwd, 'gh_output');
+    const sumFile = path.join(cwd, 'gh_summary');
+    fs.writeFileSync(outFile, '');
+    fs.writeFileSync(sumFile, '');
+    const r = runScript(stepNamed(doc, 'Gate the response').run, {
+      FAKE_GH: fakeGh,
+      GITHUB_OUTPUT: outFile,
+      GITHUB_STEP_SUMMARY: sumFile,
+      PR_NUMBER: '7',
+      PR_STATE: state,
+      PR_DRAFT: draft,
+      PR_AUTHOR_TYPE: authorType,
+    });
+    return { ...r, outputs: fs.readFileSync(outFile, 'utf8') };
+  };
+
+  // Drive the Check-harness-result guard against a sample execution log.
+  const B = (command, extra = {}) => ({ tool_name: 'Bash', tool_input: { command, ...extra } });
+  const RESULT = (denials, result = '') => [{ type: 'result', result, permission_denials: denials }];
+  const runGuard = (doc, log, fakeGh) => {
+    const lf = path.join(cwd, 'log.json');
+    fs.writeFileSync(lf, JSON.stringify(log));
+    return runScript(stepNamed(doc, 'Check harness result').run, { FAKE_GH: fakeGh, EXECUTION_FILE: lf, PR_NUMBER: '7' });
+  };
+
+  test('R1 per-item install pulls the skill closure; trigger, permissions and allowlist are pinned', () => {
+    const doc = renderHook();
+    const wf = read(cwd, REL);
+
+    // (a) files → skill → skill closure: the workflow pulled pr-response AND the git-workflow skill
+    // it requires (proof the files/-keyed requires edge resolves), but not the label-hook chain.
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/pr-response/SKILL.md')), 'pr-response skill pulled by the workflow');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/git-workflow/SKILL.md')), 'git-workflow pulled transitively');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/issue/SKILL.md')), false, 'label-hook-only closure not pulled');
+
+    // (b) every placeholder substituted, and the file is lock-tracked (managed, not project-owned)
+    assert.doesNotMatch(wf, /\{\{\s*prResponse\./);
+    assert.doesNotMatch(wf, /\{\{\s*project\./);
+    assert.doesNotMatch(wf, /\{\{\s*harness\./);
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.ok(lock.files[REL], 'workflow is lock-tracked');
+
+    // (c) trigger surface: submitted reviews only. Widening this re-opens the loop analysis.
+    assert.deepEqual(doc.on ?? doc[true], { pull_request_review: { types: ['submitted'] } });
+
+    // (d) permissions are EXACTLY contents: write + pull-requests: write. contents: write is what
+    // makes the fork-head guard non-negotiable; no issues: write (the Defer path cannot file).
+    assert.deepEqual(doc.jobs['pr-response'].permissions, { contents: 'write', 'pull-requests': 'write' });
+
+    // (e) allowlist covers the whole pr-response → git-workflow chain. Write is load-bearing: a
+    // multi-line reply body must reach `gh` through a file (#188), and only Write can create one.
+    const args = doc.jobs['pr-response'].steps.find((s) => s.with && 'claude_args' in s.with).with.claude_args;
+    assert.match(args, /^--allowedTools '/, `claude_args opens with the baked allowlist: ${args}`);
+    for (const tool of ['Edit', 'Write', 'Bash(git:*)', 'Bash(gh pr:*)', 'Bash(gh api:*)', 'Bash(gh repo view:*)']) {
+      assert.ok(args.includes(tool), `allowlist covers ${tool}`);
+    }
+    for (const cmd of ['npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm test', 'npm run build']) {
+      assert.ok(args.includes(`Bash(${cmd}:*)`), `allowlist covers pre-flight: ${cmd}`);
+    }
+    // the job must NOT be able to open issues — the skill's Defer path is prompt-disabled instead
+    assert.ok(!args.includes('gh issue'), `no gh issue scope: ${args}`);
+    // empty prResponse.claudeArgs folds to nothing — the value ends at the allowlist's closing quote
+    assert.ok(args.endsWith("'"), `no trailing junk when claudeArgs is empty: ${args}`);
+
+    // (f) the execution log is preserved under its own artifact name
+    assert.equal(stepNamed(doc, 'Upload harness execution log').with.name, 'claude-execution-log-pr-response');
+  });
+
+  test('R2 GUARD 1 — the fork-head gate is in the job `if:`, before any checkout', () => {
+    const doc = renderHook();
+    const job = doc.jobs['pr-response'];
+    const cond = job.if.replace(/\s+/g, ' ');
+
+    // the security boundary itself: same-repo head, evaluated before a runner is claimed
+    assert.match(cond, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+    // scoped to marker-carrying reviews, and never to its own marker (self-trigger)
+    assert.match(cond, /contains\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
+    assert.match(cond, /!contains\(github\.event\.review\.body, '<!-- waffle-pr-response -->'\)/);
+
+    // the checkout is a step, so it can only run once the job-level `if:` admitted the event —
+    // pin that it is gated on the gate step too, and that nothing checks out ahead of the gate.
+    const names = job.steps.map((s) => s.name);
+    assert.equal(names[0], 'Gate the response', 'the gate runs first');
+    const checkout = stepNamed(doc, 'Check out the PR head branch');
+    assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/, 'checkout is SHA-pinned');
+    assert.equal(checkout.if, "steps.gate.outputs.should_respond == 'true'");
+
+    // untrusted review content never reaches a shell: the gate passes PR facts by env, not body
+    const gate = stepNamed(doc, 'Gate the response');
+    assert.ok(!/review\.body/.test(gate.run), 'review body never enters the gate script');
+    for (const key of ['PR_NUMBER', 'PR_STATE', 'PR_DRAFT', 'PR_AUTHOR_TYPE']) {
+      assert.ok(key in gate.env, `gate passes ${key} through env`);
+    }
+    assert.ok(!/\$\{\{/.test(gate.run), 'no ${{ }} expansion is spliced into the gate script body');
+  });
+
+  test('R3 GUARD 2 — the loop bound is PER PR, never keyed to a head SHA', () => {
+    const doc = renderHook();
+    const gate = stepNamed(doc, 'Gate the response').run;
+
+    // it counts marked comments on the PR itself…
+    assert.match(gate, /issues\/\$\{N\}\/comments/, 'gate queries the PR conversation comments');
+    assert.match(gate, /waffle-pr-response/, 'gate counts the pr-response marker');
+    // …and must NOT narrow that count by head commit — the per-SHA shape pr-green uses would loop
+    // here, because pr-green mints a fresh review for every SHA this hook pushes.
+    assert.ok(!/commit_id/.test(gate), 'the loop bound must not be keyed per head SHA');
+    assert.ok(!/HEAD_SHA/.test(gate), 'the loop bound must not reference a head SHA at all');
+    // fail-closed: an unparseable/absent count is treated as "a reply exists" (skip), not as zero
+    assert.match(gate, /\|\| echo 1/, 'jq failure defaults the marked-comment count to 1 (skip)');
+    assert.match(gate, /API_ERROR/, 'a failed comment listing skips rather than dispatching');
+  });
+
+  test('R4 the gate dispatches only for an open, non-draft, human PR with no prior reply', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+
+    // the happy path: a marker-carrying review on a clean PR
+    const ok = runGate(doc, { fakeGh: 'empty' });
+    assert.equal(ok.code, 0, ok.out);
+    assert.match(ok.outputs, /should_respond=true/, `expected dispatch: ${ok.out}`);
+    assert.match(ok.outputs, /pr_number=7/);
+
+    // an unmarked comment on the PR is not a prior reply — still dispatches
+    const unmarked = runGate(doc, { fakeGh: 'unmarked' });
+    assert.match(unmarked.outputs, /should_respond=true/, `an unmarked comment must not bound: ${unmarked.out}`);
+
+    // THE LOOP BOUND: a marked reply already on the PR stops the next dispatch dead, whatever SHA
+    // it was posted against — this is the single fact that keeps pr-green ↔ pr-response finite.
+    const bounded = runGate(doc, { fakeGh: 'delivered' });
+    assert.equal(bounded.code, 0, bounded.out);
+    assert.match(bounded.outputs, /should_respond=false/, `a prior reply must bound the loop: ${bounded.out}`);
+    assert.match(bounded.out, /already carries an automated pr-response reply/);
+
+    // fail-closed: if the bound cannot be verified, no paid committing run is authorized
+    const errored = runGate(doc, { fakeGh: 'error' });
+    assert.equal(errored.code, 0, errored.out);
+    assert.match(errored.outputs, /should_respond=false/, `an API error must skip, not dispatch: ${errored.out}`);
+    assert.match(errored.out, /fail-closed/);
+
+    // scope skips, as pr-green does
+    for (const [label, opts] of [
+      ['draft', { draft: 'true' }],
+      ['bot-authored', { authorType: 'Bot' }],
+      ['closed', { state: 'closed' }],
+    ]) {
+      const r = runGate(doc, opts);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.outputs, /should_respond=false/, `${label} PR must skip: ${r.out}`);
+    }
+  });
+
+  test('R5 the harness-result guard verifies delivery against the API and fails closed', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+
+    // (1) a sandbox escape is ALWAYS red — never downgraded, not even by a delivered reply
+    const esc = runGuard(doc, RESULT([B('ls -la', { dangerouslyDisableSandbox: true })]), 'delivered');
+    assert.equal(esc.code, 1, `sandbox escape must red even when delivered: ${esc.out}`);
+    assert.match(esc.out, /::error/);
+
+    // (2) a hard (delivery) denial with no marked reply on the PR reds the run
+    const blocked = runGuard(doc, RESULT([{ tool_name: 'Edit', tool_input: {} }, B('git push')]), 'empty');
+    assert.equal(blocked.code, 1, `blocked delivery must red: ${blocked.out}`);
+    assert.match(blocked.out, /did NOT post/);
+
+    // (3) the same denials, but the reply IS on the PR ⇒ they provably blocked nothing: warn, green
+    const delivered = runGuard(doc, RESULT([B('git log --oneline')]), 'delivered');
+    assert.equal(delivered.code, 0, `a delivered run must not red on a read-only git denial: ${delivered.out}`);
+    assert.match(delivered.out, /::warning/);
+    assert.doesNotMatch(delivered.out, /::error/);
+
+    // (4) fail-closed: an API error is never read as proof of delivery
+    const apiDown = runGuard(doc, RESULT([B('git push')]), 'error');
+    assert.equal(apiDown.code, 1, `an unverifiable delivery must red: ${apiDown.out}`);
+
+    // (5) read-only denials alone warn but never fail
+    const soft = runGuard(doc, RESULT([B("grep -rn 'x' src/"), B('ls foo')]), 'delivered');
+    assert.equal(soft.code, 0, `read-only denials must not red: ${soft.out}`);
+    assert.match(soft.out, /::warning/);
+    assert.doesNotMatch(soft.out, /::error/);
+
+    // (6) a clean, delivered run is green and silent
+    const clean = runGuard(doc, RESULT([], 'responded to 4 findings'), 'delivered');
+    assert.equal(clean.code, 0, clean.out);
+    assert.doesNotMatch(clean.out, /::warning|::error/, `a delivered clean run says nothing: ${clean.out}`);
+
+    // (7) a clean run that delivered NOTHING warns (silent no-op) but does not red
+    const noop = runGuard(doc, RESULT([], 'responded to 4 findings'), 'empty');
+    assert.equal(noop.code, 0, noop.out);
+    assert.match(noop.out, /may have silently no-op'd/);
+  });
+});
+
 function read(cwd, rel) {
   return fs.readFileSync(path.join(cwd, rel), 'utf8');
 }

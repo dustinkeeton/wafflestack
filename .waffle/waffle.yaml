@@ -38,6 +38,14 @@ include:
   # actually fire (shipping the workflow does not set those).
   - files/.github/workflows/waffle-pr-green-hook.yml
   - code-quality/skills/adversarial-review
+  # The PR-response hook (#195) — the consuming half of pr-green, opt-in syrup, ARMED here: when an
+  # adversarial review lands on a PR, it dispatches the harness to run the pr-response skill, apply
+  # the fixes it accepts, and post one rubric-scored reply. It holds contents: write (it commits), so
+  # it is the heaviest waffle in the stack. Its rendered workflow is committed (like hygiene/pr-green
+  # — a pull_request_review hook only ever fires the default-branch copy). Bounded to ONE automated
+  # response per PR, regardless of head SHA: pr-green re-reviews every new SHA, so a per-SHA bound
+  # would loop. Runtime still needs ANTHROPIC_API_KEY + WAFFLE_HYGIENE_TOKEN (both already set here).
+  - files/.github/workflows/waffle-pr-response-hook.yml
 config:
   project:
     name: wafflestack

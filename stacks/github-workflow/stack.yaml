@@ -9,6 +9,7 @@ files:
   - .github/workflows/waffle-post-merge-hook.yml
   - .github/workflows/waffle-evals.yml
   - .github/workflows/waffle-pr-green-hook.yml
+  - .github/workflows/waffle-pr-response-hook.yml
 # optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting; the release-hook and post-merge-hook workflows each hold `contents: write` (to push
@@ -21,7 +22,10 @@ files:
 # contents/pull-requests write, while the read-only evals job bills for the metered LLM tier on
 # every nightly fire. The pr-green-hook workflow is opt-in on the same footing as hygiene: it
 # dispatches the paid harness (adversarial-review) on every green PR and holds pull-requests: write
-# to post the review, so enabling the stack must not silently arm per-PR API spend.
+# to post the review, so enabling the stack must not silently arm per-PR API spend. The
+# pr-response-hook workflow is the heaviest of the lot: it dispatches the paid harness on every
+# adversarial review AND holds contents: write to commit the fixes it accepts, so it is opt-in twice
+# over — for the spend and for the write.
 optIn:
   - files/.github/workflows/waffle-label-hook.yml
   - files/.github/workflows/waffle-hygiene.yml
@@ -29,6 +33,7 @@ optIn:
   - files/.github/workflows/waffle-post-merge-hook.yml
   - files/.github/workflows/waffle-evals.yml
   - files/.github/workflows/waffle-pr-green-hook.yml
+  - files/.github/workflows/waffle-pr-response-hook.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
@@ -44,7 +49,8 @@ optIn:
 # branch/worktree, prune) — so the pair arrives together. The pr-response skill applies the
 # fixes it accepts (branch/commit/push, pre-flight), so it needs git-workflow. It deliberately
 # does NOT require code-quality's adversarial-review: it triages findings from any reviewer,
-# human or bot, and is useful with no review bot installed at all.
+# human or bot, and is useful with no review bot installed at all. The pr-response-hook workflow
+# dispatches that skill, so installing the workflow pulls it (and, transitively, git-workflow).
 requires:
   skills/label-hook:
     - skills/issue
@@ -63,6 +69,8 @@ requires:
     - skills/clean-up
   skills/pr-response:
     - skills/git-workflow
+  files/.github/workflows/waffle-pr-response-hook.yml:
+    - skills/pr-response
 # Typed external prerequisites (#47/#129). ONLY the three tool-presence probes are `require`
 # (they fail `doctor`): a `command -v` binary check for node/git/gh is certain to pass in every
 # environment doctor runs — the CI runner and local dev alike. Everything environment-specific
@@ -615,6 +623,66 @@ setup: |-
   `eject: [files/.github/workflows/waffle-pr-green-hook.yml]` (the eject releases the file as
   project-owned rather than deleting it).
 
+  **PR-response hook (opt-in syrup).** This stack also carries
+  `.github/workflows/waffle-pr-response-hook.yml`, the consuming half of the pr-green hook: when an
+  adversarial review is submitted on a pull request, it dispatches the Claude harness to run the
+  **pr-response** skill — score each finding on the rubric (severity · validity · effort/risk ·
+  alignment), apply the fixes it accepts, and post one reply carrying the verdict table. Unlike
+  pr-green it **commits**: the job holds `contents: write` as well as `pull-requests: write`. It is
+  therefore opt-in twice over (for the per-review API spend and for the write scope): enabling the
+  stack does NOT render it. Pour it explicitly —
+  `wafflestack install files/.github/workflows/waffle-pr-response-hook.yml` — or keep an existing
+  install via its lock entry. Its `requires:` edge pulls the `pr-response` skill (and, through it,
+  `git-workflow`), so no separate skill install is needed.
+  **Trigger and scope.** It keys on `pull_request_review: [submitted]`, narrowed to reviews whose
+  body carries the `<!-- waffle-adversarial-review -->` marker that pr-green's dispatch embeds. v1
+  answers the review **bot** only — a human review is answered by running `/pr-response` by hand.
+  That is a deliberate scope limit: auto-dispatching a paid, committing harness at every human
+  comment is a cost and trust surface nobody asked for.
+  **Fork-head guard (security boundary).** `pull_request_review` runs in **base-repo context** — it
+  gets this repo's secrets and a write-scoped token even for a fork's PR. Checking out a fork head
+  and handing it to an agent holding `contents: write` would be arbitrary code execution plus secret
+  exfiltration. The job-level `if:` therefore requires
+  `github.event.pull_request.head.repo.full_name == github.repository`. Never relax it to a label or
+  an author association; the checkout must never happen for a fork head. Consequence: **fork PRs get
+  no automated response** — answer them by running `/pr-response` locally after reading the diff.
+  **Loop bound — per PR, not per head commit.** pr-green's dedup is keyed per head SHA, so it cannot
+  bound this cycle: review → response commits a fix → new head SHA → CI green → pr-green posts a
+  *new* review (new SHA, no marker) → response again. The bound lives in this workflow and is
+  **per PR**: it skips when ANY `<!-- waffle-pr-response -->` comment already exists on the PR,
+  whatever SHA it was posted against — one automated response per pull request, ever. A later round
+  of findings is a human's call (run `/pr-response` by hand; it updates the same marked comment in
+  place). The gate also skips a review whose own body carries that marker (self-trigger), plus draft
+  and bot-authored PRs, and it is **fail-closed**: if it cannot list the PR's comments it declines to
+  dispatch. Do not "optimize" the guard back to per-SHA — that reintroduces an unbounded paid loop in
+  which every individual fire looks locally correct.
+  **What the harness may do (baked-in allowlist).** `claude_args` ships a default
+  `--allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh repo view:*)'` plus
+  the four `project.*` pre-flight commands the skill runs before pushing. `Write` is load-bearing
+  beyond editing files: a reply body is multi-line, and a multi-line command (heredoc, embedded-
+  newline `--body`) matches no `Bash()` pattern, so the body must reach `gh` through a file. The job
+  grants **no `issues: write`** and no `gh issue` scope, so it cannot file the skill's *Defer*
+  follow-ups — the dispatch prompt tells it to record those verdicts in the reply and leave the
+  filing to a human. Append cost-control or allowlist-widening flags via `prResponse.claudeArgs` (the
+  CLI unions repeated `--allowedTools`). A **`Check harness result`** step (`always()`) reads the
+  execution log as DATA (jq) and classifies denials: a sandbox-escape attempt is always red; a
+  blocked edit/git/gh call reds the run **unless** the marked reply is verifiably on the PR (asked of
+  the API, fail-closed); read-only denials warn. The log uploads as the
+  **`claude-execution-log-pr-response`** artifact.
+  **Opt-ins to arm it.** It stays inert until (1) the `ANTHROPIC_API_KEY` secret is set (with the
+  user's go-ahead — `gh secret set ANTHROPIC_API_KEY`; the same secret the hygiene/pr-green hooks
+  bill); (2) the `pr-response` skill is rendered and committed under `.claude/skills/` (the
+  `requires:` edge does this on install); and (3) a token carrying **`contents: write` +
+  `pull-requests: write`** is available. The default `GITHUB_TOKEN` has both, but a push made with it
+  does **not** trigger new workflow runs — the PR would sit green against a stale SHA — so set
+  `WAFFLE_HYGIENE_TOKEN` to a PAT/GitHub App token so the pushed fixes re-run the PR's required
+  checks. (That PAT is also what makes the pr-green ↔ pr-response cycle live; the per-PR loop bound
+  above is what stops it.) `project.installCmd` runs before the paid dispatch so the pre-flight has
+  its dependencies. Pushing the workflow file needs the `workflow` credential scope. To stop managing
+  it, drop the `files/.github/workflows/waffle-pr-response-hook.yml` entry from `include:` or
+  `eject: [files/.github/workflows/waffle-pr-response-hook.yml]` (the eject releases the file as
+  project-owned rather than deleting it).
+
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
   `issue.inferenceLabel` lifecycle label. Applying a label that doesn't exist makes
@@ -895,6 +963,25 @@ config:
       `${{` (enforced at render by the pattern above; single quotes are allowed). Security-sensitive:
       an unvalidated passthrough to the harness CLI — flags here can widen the harness's authority,
       so set only what you understand and trust.
+  prResponse.claudeArgs:
+    required: false
+    default: ""
+    pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
+    description: >-
+      Extra CLI arguments APPENDED to the dispatched harness's claude_args in
+      .github/workflows/waffle-pr-response-hook.yml — e.g. "--max-turns 40" or
+      "--model claude-sonnet-4-5" for cost control on the per-review response. Empty by default.
+      Unlike a bare passthrough, these are folded onto the END of a baked-in default
+      `--allowedTools '…'` (which lets the headless run read the findings, apply the fixes it
+      accepts, commit/push them, and post one reply — see the setup note), so they EXTEND a working
+      allowlist rather than being the harness's only args. To widen the allowlist, append your own
+      `--allowedTools '<patterns>'` here: the Claude CLI takes `--allowedTools` as a repeatable list
+      and unions the occurrences, so yours adds to the default instead of replacing it
+      (`--max-turns`/`--model` are unaffected — the variadic stops at the next flag). Rendered into a
+      YAML block scalar, so it must not contain double quotes, backslashes, newlines, or `${{`
+      (enforced at render by the pattern above; single quotes are allowed). Security-sensitive: an
+      unvalidated passthrough to the harness CLI — flags here can widen the authority of a job that
+      already holds `contents: write`, so set only what you understand and trust.
   evals.cron:
     required: false
     default: "0 8 * * *"
