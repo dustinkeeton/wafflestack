@@ -44,6 +44,33 @@ is what you reach for across a breaking one.
   `clean-up` convention).
   - **Consumer impact:** additive. Enabling `github-workflow` renders one new file,
     `.claude/skills/pr-response/SKILL.md`; `render` picks it up. **No new config keys.**
+- **`waffle-pr-response-hook` workflow — auto-answer an adversarial review (#195,
+  `github-workflow`, opt-in syrup).** On `pull_request_review: [submitted]`, gated to reviews
+  carrying the `<!-- waffle-adversarial-review -->` marker, it dispatches the harness to run
+  `/pr-response` against the PR: score the findings, apply the accepted fixes, push them to the PR
+  branch, and post one marked reply. It closes the loop `waffle-pr-green-hook` opens. Unlike
+  pr-green it **commits** — the job holds `contents: write` + `pull-requests: write` — so two guards
+  carry the design:
+  - **Fork-head guard.** `pull_request_review` runs in *base-repo* context (this repo's secrets, a
+    write token) even for a fork's PR, so the job-level `if:` requires
+    `github.event.pull_request.head.repo.full_name == github.repository`. Fork PRs get no automated
+    response; answer them by running `/pr-response` locally.
+  - **Loop bound, per PR — not per head SHA.** pr-green dedups per head commit, so it re-reviews
+    every new SHA, and every fix this hook pushes mints one; a per-SHA bound here would cycle
+    forever. The gate skips when **any** `<!-- waffle-pr-response -->` comment already exists on the
+    PR, and is fail-closed (an unverifiable bound never authorizes a paid, committing run). One
+    automated response per pull request, ever.
+
+  Delivery is verified against the API (a marked reply on the PR), not guessed from the harness's
+  free-form output; a sandbox-escape attempt is always red. The execution log uploads as
+  `claude-execution-log-pr-response`.
+  - **Consumer impact:** additive and inert by default — the workflow is **opt-in syrup**, so
+    enabling `github-workflow` does not render it. Pour it with
+    `wafflestack install files/.github/workflows/waffle-pr-response-hook.yml` (its `requires:` edge
+    pulls the `pr-response` skill). **One new config key**, `prResponse.claudeArgs` (optional,
+    defaults to `""`, same injection-guarded shape as `prGreen.claudeArgs`). Arming it needs the
+    `ANTHROPIC_API_KEY` secret and a `contents` + `pull-requests` write token — prefer a PAT in
+    `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Fixed
 - **`waffle-post-merge-hook` — broaden the undeletable-branch warning.** The `else`-branch
