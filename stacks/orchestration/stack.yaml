@@ -176,9 +176,12 @@ config:
     default: current-milestone
     description: >-
       What `/delegate` with no arguments delegates: `current-milestone` (the
-      earliest-due open milestone, for repos that plan with milestones) or
+      earliest-due open milestone, for repos that plan with milestones),
       `all-open` (every open issue, guarded by the confirmation gate — for
-      repos that don't use milestones).
+      repos that don't use milestones), or `todo-column` (the open issues in
+      the project board's "Todo" Status column; a missing board or missing
+      Todo option falls back to `all-open`, stated explicitly in the plan —
+      never silently — while an empty Todo column stops instead of widening).
   delegate.extraPreflight:
     required: false
     default: ""
@@ -234,7 +237,7 @@ config:
     description: >-
       Opt-in non-interactive batch mode for unattended runs (the autopilot backlog
       runner). When true AND the invoker supplied explicit scope (an issue list, a
-      milestone, a label, a keyword, or the all-open default), the Phase 3 confirmation
+      milestone, a label, a keyword, or the all-open / todo-column defaults), the Phase 3 confirmation
       gate is skipped: explicit scope stands in for the human accepting the plan, and the
       plan that would have been shown is logged instead so the run stays auditable. An
       ambiguous classification falls back to the safest choice — serial execution in the

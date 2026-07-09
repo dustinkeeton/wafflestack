@@ -202,6 +202,18 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /confirmedVia: "batch-scope"/);
   });
 
+  test('todo-column scope: board Todo set, explicit all-open fallback, empty column stops', () => {
+    // The third defaultScope value delegates exactly the board's Status="Todo" issues.
+    assert.match(md, /`todo-column`/);
+    // A missing board / missing Todo option falls back to all-open — explicitly, never silently.
+    assert.match(md, /falling back to all-open/);
+    assert.match(md, /explicit, never silent/);
+    // An empty-but-present Todo column is "nothing to delegate", never a widened scope.
+    assert.match(md, /NOT a fallback/);
+    // The Todo set is resolved from the board via the project-items GraphQL query.
+    assert.match(md, /fieldValues/);
+  });
+
   test('run-memory doc is hard-capped and gated by memory.mjs', () => {
     assert.match(md, /Hard cap:\*\* `4096` bytes/);
     assert.match(md, /memory\.mjs --file .*--max-bytes 4096/);
