@@ -14,6 +14,26 @@ Use the project's standard git config — do not override `user.name` / `user.em
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
+### Bot identity (config)
+
+Reference data resolved from config — the Identity section above governs whether a bot identity
+is actually in effect.
+
+- Name (`git.botName`): `Wafflebot`
+- Email (`git.botEmail`): `wafflebot@users.noreply.github.com`
+- Signing key (`git.signingKey`): "" — empty means no dedicated bot signing key
+- Per-agent identities (`git.agentIdentities`; `{}` means every agent uses the main identity):
+
+```yaml
+{}
+```
+
+These ship placeholder defaults. A project that opts into a bot identity overrides the name in the
+committed `.waffle/waffle.yaml` and the email / signing key in the gitignored
+`.waffle/waffle.local.yaml` — nested `{{...}}` substitution lets committed values such as `git.cmd`
+reference the overlay's keys. Never put private key material in `git.signingKey`: it is a key ID or
+a public-key path, and it renders into committed files.
+
 ## Branch Strategy
 
 ### Main is protected

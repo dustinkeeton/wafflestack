@@ -32,6 +32,32 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **First-class GitHub identity config keys (#154, `github-workflow`).** `git.botName`,
+  `git.botEmail`, `git.signingKey`, and `git.agentIdentities` are now declared in the stack's
+  `config:` schema with placeholder defaults, and a rendered "Bot identity (config)" reference
+  block in the `git-workflow` skill. This is the foundation the rest of the identity model (#153)
+  builds on. Layering is unchanged: put the shared `git.botName` in the committed
+  `.waffle/waffle.yaml` and the account-specific `git.botEmail` / `git.signingKey` in the
+  gitignored `.waffle/waffle.local.yaml`; `git.agentIdentities` entries may straddle both (they
+  deep-merge, local winning per key). `git.signingKey` takes a GPG key ID or SSH public-key path —
+  never private key material, since config values render into committed files.
+  **What the `pattern:`s guarantee.** `git.botName` / `git.botEmail` / `git.signingKey` are guarded
+  by **allowlist** patterns: each value must be drawn from an explicit safe character set (letters,
+  digits and a short punctuation set; `botEmail` additionally requires a TLD), and each carries the
+  `^(?!.*\$\{\{)` guard the stack's other patterns use, so a `${{ … }}` cannot ride through the
+  renderer verbatim. Shell metacharacters (`` ` ``, `$`, `;`, `|`, `&`, `\`), quotes, newlines and
+  leading/trailing whitespace are all rejected — a violating value fails the render loudly rather
+  than corrupting the shell word `git.cmd` splices it into. `git.agentIdentities` is **not** guarded:
+  a `pattern:` applies to string scalars only, so that map's shape and its `botName`/`botEmail`/
+  `signingKey` leaves are unvalidated until #155 enforces them.
+  **Consumer note:** all four keys were previously *undeclared* dotted paths that only resolved
+  through nested substitution. Now that they are declared, a value like
+  `git.cmd: git -c user.email={{git.botEmail}}` that references them *without* defining them
+  resolves to the placeholder default (`wafflebot@users.noreply.github.com`) instead of passing the
+  `{{git.botEmail}}` text through verbatim. Watch `git.signingKey` in particular: its default is the
+  **empty string**, so an undefined-but-referenced `{{git.signingKey}}` now renders
+  `git -c user.signingkey= …` — a silent, run-time-only failure, where before it left the obviously
+  broken literal `{{git.signingKey}}` in the output. Define them if you reference them.
 - **`todo-column` board scope for `delegate.defaultScope` (#206, `orchestration`).** A third
   default-scope value alongside `current-milestone` and `all-open`: delegate **exactly the open
   issues in the project board's Status = "Todo" column**, resolved via the
