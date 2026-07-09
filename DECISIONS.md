@@ -9,6 +9,151 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-08: External third-party stacks — pull a stack from a pinned git source (#88, #124–#127)
+
+**Context**: Every stack had to live inside this toolkit. A team that wanted to ship its own
+agents and skills through the same render / lock / `doctor` pipeline had no way in — it would
+have to fork wafflestack or hand-roll its own copier.
+
+**Decision**: A `stacks:` entry can now be **either** a bare built-in name **or** a
+`{ name, source, ref }` mapping that points at a third-party source — a git URL (pinned to a
+**required** `ref`) or a local filesystem path. At render, external sources are resolved (a git
+source is fetched at the pinned ref into a content-addressed cache; a local path is read in place)
+and merged into one registry alongside the built-ins, so a **single render / lock / `doctor`
+pipeline handles built-in and external stacks alike**. A new module (`installer/lib/sources.mjs`)
+does the resolution; a new author's guide (`schema/AUTHORING-EXTERNAL-STACKS.md`) documents the
+source side.
+
+Safeguards that come with the trust boundary:
+
+- **Provenance in the lock** — external files are recorded under a `sources` block (source, ref,
+  resolved commit, files). `doctor` attributes any drift to its source, and `upgrade` re-resolves
+  each pin and reports commit moves.
+- **Validation before any write** — `render` lint-validates every external stack before writing a
+  byte (#126), and pouring external opt-in syrup emits an extra acknowledgement warning.
+- **Security hardening** — a git `source` or `ref` beginning with `-` is rejected (an
+  argument-injection guard), belt-and-braces with a `--` end-of-options marker at the git call.
+- **Name collisions** across sources are a hard error naming both.
+
+**Alternatives considered**: A plugin / npm-dependency model — rejected: the whole point is the
+shadcn-style copy-in, and a package dependency would reintroduce exactly the `postinstall`
+machinery wafflestack avoids. Trusting external content unchecked — rejected: external stacks get
+the same `validate` lint as built-ins plus a syrup-tier confirmation, because their content lands
+in the consumer's repo just like a built-in's.
+
+**Impact**: Adds `installer/lib/sources.mjs` and the owner-voiced `schema/AUTHORING-EXTERNAL-STACKS.md`.
+Consumers can now mix third-party stacks into `stacks:`. Purely additive — a repo using only
+built-in names is unaffected; `list` and `setup` still operate on the built-in surface only.
+
+---
+
+## 2026-07-08: Typed `prerequisites:` ships — declared, checked at `doctor`, surfaced at setup (#129/#130/#131)
+
+**Context**: The 2026-07-07 design entry below (#47) fixed the *shape* of a declarative
+`prerequisites:` block but shipped **no code** — it split the work into follow-ups #129/#130/#131.
+Those have now landed. This entry records the implementation; the #47 entry stands as the original
+design rationale (append-only history — it is not rewritten).
+
+**Decision (as shipped)**:
+
+- **Declare (#129)** — a stack's `stack.yaml` can carry a typed `prerequisites:` list. Each entry
+  names a **kind** (`tool` | `secret` | `scope` | `label` | `setting` | `service` | `env`), the
+  thing needed, a human `description`, a deterministic **`check`** (a shell command; exit 0 =
+  satisfied), a **`level`** (`require` | `recommend`), and an optional **`items:`** list scoping it
+  to specific waffles (like `requires:`). New module `installer/lib/prerequisites.mjs`.
+- **Check (#129)** — `doctor` runs each **selected** entry's check and **exits 1** on an unmet
+  `require` (a `recommend` only reports), so any repo running the shipped `waffle-doctor` CI gate
+  now verifies prerequisites on the same run. `render` additionally warns for the cheaply-probed
+  kinds (`tool` / `env`). The legacy `env:` map is subsumed as the `env` kind, **read-compatibly** —
+  nothing must migrate.
+- **Surface (#130)** — the whole block is listed per stack in the `setup` inventory and
+  `schema/SETUP.md`, so the agent-driven install can put the "create these labels? set this secret?"
+  questions to the user.
+- **Inject the harness (#131)** — the CI dispatcher the shipped workflows call is now parameterized
+  behind three reserved `harness.*` scalars (`harness.actionRef` / `harness.actionVersion` /
+  `harness.apiKeySecret`), each injection-guarded at render, so a consumer can repin or repoint the
+  action without ejecting the workflow.
+
+**Seeding**: the `github-workflow` and `orchestration` stacks are seeded from the #47 inventory —
+only `command -v` tool probes (node / git / gh) are `require`; every secret / scope / label /
+setting / service is `recommend` (reports, never fails), so a correctly-set-up repo stays green.
+
+**Alternatives considered**: Recorded in the #47 design entry below and unchanged — a TTY
+postinstall prompt, auto-provisioning prerequisites for the user, and magic inference from skill
+content were all rejected there and remain rejected. Interactive TTY installers stay deliberately
+deferred.
+
+**Impact**: Adds `installer/lib/prerequisites.mjs`; `doctor` and `render` gain a prerequisite pass
+and `validate` lints the block. Additive with **no re-render diff** — the block renders into no
+file — but `doctor` now checks the selected stacks' declared prerequisites, so an unmet `require`
+fails the check.
+
+---
+
+## 2026-07-08: code-quality grows two skills and goes project-agnostic — adversarial-review and dry (#112/#116/#117/#180)
+
+**Context**: The `code-quality` stack shipped two practice skills (`tdd`, `codebase-architecture`)
+and carried a few project-specific assumptions. Two gaps: nothing pressure-tested a green PR
+*before* merge, and there was no disciplined de-duplication playbook.
+
+**Decision**:
+
+- **`adversarial-review` (#112)** — a config-free `/adversarial-review <PR#>` skill that reviews a
+  finished, **CI-green** PR from a deliberately hostile reviewer's seat (correctness edge cases,
+  error handling, test depth, API/naming, simplification) and posts an **honest-severity** review
+  (blocker / should-fix / nit) back on the PR. Severity stays honest — "no holes found" is a valid
+  outcome. Distinct from the built-in `/code-review`, which reviews the author's *uncommitted*
+  working diff before commit; this one gates a *committed, green* PR just before merge.
+- **PR-green auto-trigger (#180)** — the `github-workflow` stack ships a companion opt-in syrup
+  workflow (`waffle-pr-green-hook.yml`) that dispatches the harness to run `adversarial-review` the
+  moment a PR's required checks go green (once per green transition, deduped by a review marker).
+  The skill it runs lives in `code-quality`, so a consumer can render **just that one skill** (a
+  qualified `code-quality/skills/adversarial-review` ref) alongside the workflow without enabling
+  the whole stack. This repo now dogfoods both.
+- **`dry` (#116)** — a `/dry <path>` skill that removes *genuine* duplication under the
+  **rule-of-three** and **semantic-sameness** guardrails, abstracting only where a shared seam is
+  warranted. Both user-invocable and agent-granted.
+- **Project-agnostic (#117)** — the stack's remaining project-specific assumptions (test command,
+  tiers, module map, settings type) became config, so `code-quality` now drops cleanly into any
+  project.
+
+**Alternatives considered**: Folding `adversarial-review` into the built-in `/code-review` —
+rejected: the two review different artifacts at different moments (uncommitted diff vs. committed
+green PR). A find-and-replace de-dup pass — rejected: DRY is a judgment call, so `dry` ships
+guardrails (rule of three, semantic sameness) rather than mechanically fusing every similar-looking
+pair.
+
+**Impact**: `code-quality` now has **4 skills** (total skill count **30 → 32**). Neither new skill
+adds config keys or syrup; the PR-green hook is opt-in syrup in `github-workflow`. Additive — a repo
+that doesn't enable `code-quality` (or install the qualified skill) is unaffected.
+
+---
+
+## 2026-07-08: A `list` CLI command — see installed vs. available, and multi-select to update (#119)
+
+**Context**: A consumer had no quick way to see the whole toolkit surface against what its repo
+actually has installed. Answering "what's out of date?" or "what could I add?" meant reading the
+lock by hand.
+
+**Decision**: Add a ninth CLI command, **`list`**. By default it prints an aligned, agent/CI-safe
+plain-text table of every stack and item, each classified **installed & current** / **out of date**
+/ **not installed** (ANSI color only on a TTY; `--no-color` opts out). With **`--interactive`** (a
+real TTY on both ends) it drives a keypress **multi-select** — out-of-date items pre-checked — that
+installs/updates the chosen refs and then renders. It takes no refs and, like `setup`, operates on
+the built-in surface only (an external `source:` stack lists as a selection error). New module
+`installer/lib/list.mjs`.
+
+**Alternatives considered**: Making `list` part of `setup` — rejected: `setup` prints the install
+playbook + inventory; `list` answers a different question (per-item install state) and adds an
+interactive apply path. A prompt-only command — rejected: the default must stay non-interactive and
+parseable for agents and CI; the interactive multi-select is an opt-in that degrades to the table
+without a TTY.
+
+**Impact**: CLI command count **8 → 9**; new module `installer/lib/list.mjs`. Purely additive — a
+read-only reporter by default, with an opt-in interactive apply path. No config, no migration.
+
+---
+
 ## 2026-07-08: Opt-in autonomous merging — the autopilot backlog runner (#100/#101)
 
 **Context**: Every primitive for an autonomous agency loop already existed. `/issue` writes
