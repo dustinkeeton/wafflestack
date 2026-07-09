@@ -52,7 +52,7 @@ Never work on `main`. Create the bump branch (per `git-workflow`):
 
 ```bash
 git checkout main && git pull
-git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io checkout -b chore/bump-X.Y.Z
+git checkout -b chore/bump-X.Y.Z
 ```
 
 ## 3. Apply the bump
@@ -90,13 +90,13 @@ Run the full checklist from `git-workflow`; do not open the PR if any fail:
 ## 5. Commit, push, open the labeled PR
 
 ```bash
-git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
+git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
 chore: bump to X.Y.Z
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )" <explicit paths — package.json, package-lock.json, CHANGELOG.md, and each versionFiles path>
-git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io push -u origin chore/bump-X.Y.Z
+git push -u origin chore/bump-X.Y.Z
 ```
 
 Open the PR against `main`. The body must carry the **consumer-impact notes** for this

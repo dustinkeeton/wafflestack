@@ -537,12 +537,12 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - npm pack --dry-run
    - `npm run validate` passes after any stack/manifest edit
 - If `stacks/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
-4. Commit your work following the git-workflow skill — end every commit message with `Co-Authored-By: Claude <noreply@anthropic.com>`. Commit everything **locally**; do not push yet.
+4. Commit your work following the git-workflow skill — commit with `git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit` (that is where the project's bot identity, if any, is applied) and end every commit message with `Co-Authored-By: Claude <noreply@anthropic.com>`. Commit everything **locally**; do not push yet.
 5. Push and open the PR — but first check the approval gate. The gate is ON when `delegate.approveBeforePush` is `true`; for this run it is **`false`**.
    - **Gate off (`false`, the default):** push and open the PR yourself, exactly as usual —
-     - Push: git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io push -u origin {branch-name}
+     - Push: git push -u origin {branch-name}
      - Create a PR: gh pr create --title "{type}: {short description}" --body "..." targeting main.
-   - **Gate on (`true`):** do NOT run `git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io push` or `gh pr create`. Stop at the local commit and hand an approval summary to the orchestrator — branch `{branch-name}`, target issue #{number}, diffstat (`git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io diff --stat origin/main...HEAD`), and commit list (`git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io log --oneline origin/main..HEAD`):
+   - **Gate on (`true`):** do NOT run `git push` or `gh pr create`. Stop at the local commit and hand an approval summary to the orchestrator — branch `{branch-name}`, target issue #{number}, diffstat (`git diff --stat origin/main...HEAD`), and commit list (`git log --oneline origin/main..HEAD`):
      - If you have SendMessage, send that summary to `team-lead` and WAIT for an explicit approval reply. On approval, push and open the PR as above. On rejection, leave the worktree exactly as-is (committed, unpushed) and report the rejection — never push.
      - If you lack messaging tools, STOP after committing without pushing, and make the approval summary your final message. The orchestrator inspects your worktree, collects approval, and completes or withholds the push itself.
 6. Arm auto-merge — opt-in, and only when a PR was actually opened. Auto-merge is ON when `delegate.autoMerge` is `true`; for this run it is **`false`**.
