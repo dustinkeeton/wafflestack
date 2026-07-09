@@ -31,6 +31,12 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Fixed
+- **`waffle-post-merge-hook` — broaden the undeletable-branch warning.** The `else`-branch
+  `::warning` (and its matching comments) now name a transient API error (5xx / rate-limit / network)
+  alongside "protected" and "missing `contents: write`", since that branch also fires when the ref
+  still exists after a flaky delete. Message-only; no behavior change (#189 review nit).
+
 ## [0.11.0] - 2026-07-08
 
 ### Consumer impact

@@ -16,7 +16,7 @@
 # the same-repo gate skips it (and the base repo's read-only fork token could not delete it
 # anyway) — and never the default branch. An already-deleted head (GitHub's native
 # auto-delete-head-branches beat us to it) is treated as success, and a branch that cannot be
-# deleted but still exists (protected, or Actions denied `contents: write`) is a WARNING, not a
+# deleted but still exists (protected, missing perms, or a transient API error) is a WARNING, not a
 # failed run: a lingering branch is a hygiene miss, not a delivery failure, so it never reds a
 # clean merge. Prerequisite (see the stack setup note): Actions allowed `contents: write`.
 name: waffle-post-merge-hook
@@ -58,11 +58,11 @@ jobs:
           # Delete the head ref via the REST API (no checkout needed). Three outcomes:
           #   1. DELETE succeeds        -> branch removed, note the prune signal.
           #   2. DELETE fails + ref gone -> GitHub's native auto-delete already removed it (fine).
-          #   3. DELETE fails + ref left -> protected branch or missing perms: warn, do not fail.
+          #   3. DELETE fails + ref left -> protected, missing perms, or transient API error: warn, don't fail.
           if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" >/dev/null 2>&1; then
             echo "🧇 waffle-post-merge-hook: deleted remote branch \`${BRANCH}\` (PR #${PR_NUMBER}). Run \`git fetch --prune\` locally — or the clean-up skill's \`git --yes\` — to drop the stale origin/${BRANCH} tracking ref." | tee -a "$GITHUB_STEP_SUMMARY"
           elif ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" >/dev/null 2>&1; then
             echo "🧇 waffle-post-merge-hook: remote branch \`${BRANCH}\` was already gone (GitHub native auto-delete beat us to it) — nothing to delete. Prune locally to drop any stale origin/${BRANCH} ref." | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning title=waffle-post-merge-hook::Could not delete remote branch '${BRANCH}' (PR #${PR_NUMBER}) though it still exists — it may be protected, or Actions may lack contents: write. Delete it by hand if you want it gone; this hygiene hook does not fail the run over a lingering branch."
+            echo "::warning title=waffle-post-merge-hook::Could not delete remote branch '${BRANCH}' (PR #${PR_NUMBER}) though it still exists — it may be protected, missing perms (Actions lacking contents: write), or a transient API error (5xx / rate-limit / network). Delete it by hand if you want it gone; this hygiene hook does not fail the run over a lingering branch."
           fi
