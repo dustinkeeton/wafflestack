@@ -31,11 +31,42 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **`/pr-response` skill — rubric-scored PR review triage (#194, `github-workflow`).** The consuming
+  side of `adversarial-review`: resolve a PR, read every review + review comment, score each finding
+  0–3 on four dimensions (Severity · Validity · Effort/Risk · Alignment), and record an
+  **Implement (≥8) / Defer (4–7) / Decline (≤3)** verdict with its score and a one-line reason.
+  Accepted fixes are applied per `git-workflow`; one reply carrying a `<!-- waffle-pr-response -->`
+  dedup marker summarizes the verdict table and is updated in place on re-runs. Two rules override
+  the arithmetic: a **confirmed blocker is always Implement**, a **false positive is always
+  Decline**. Because the recorded scores are the calibration dataset, the skill documents *how to
+  recalibrate* its own thresholds. Agent callers pass `--yes` to skip the confirmation gate (the
+  `clean-up` convention).
+  - **Consumer impact:** additive. Enabling `github-workflow` renders one new file,
+    `.claude/skills/pr-response/SKILL.md`; `render` picks it up. **No new config keys.**
+
 ### Fixed
 - **`waffle-post-merge-hook` — broaden the undeletable-branch warning.** The `else`-branch
   `::warning` (and its matching comments) now name a transient API error (5xx / rate-limit / network)
   alongside "protected" and "missing `contents: write`", since that branch also fires when the ref
   still exists after a flaky delete. Message-only; no behavior change (#189 review nit).
+- **PR-green hook could never post its review (#188, `github-workflow` + `code-quality`).** The
+  `waffle-pr-green-hook` dispatch prompt asks the harness for single-program commands so the CI
+  allowlist can match them, while `adversarial-review` instructed a `gh api … --input - <<'EOF'`
+  **heredoc**. A multi-line command never matches a `Bash(gh api:*)` prefix, so on the hook's first
+  live run every delivery call was denied and the completed review was thrown away. Three changes:
+  `adversarial-review` now stages its payload with `Write` and posts single-line
+  (`gh api … --input <file>` / `gh pr review … --body-file <file>`) and emits the
+  `<!-- waffle-adversarial-review -->` marker itself rather than relying on the workflow prompt to
+  inject it; the hook's allowlist gains `Write` (mandatory — a multi-line review body needs a file,
+  and nothing else could create one) plus read-only `git log`/`diff`/`show`/`status`; and the
+  `Check harness result` guard now **verifies delivery against the API** — it asks GitHub whether a
+  marker-carrying review exists on the head commit — instead of guessing from the harness's
+  free-form final text. A denied read-only call no longer reds a run that demonstrably posted, and
+  a run that did *not* post still fails. Sandbox escapes remain unconditionally red, never
+  downgraded. Fail-closed: an API error is never read as proof of delivery.
+  - **Consumer impact:** re-render. Nothing to configure; `Bash(git:*)` is deliberately still
+    excluded, as the job holds `contents: read` only.
 
 ## [0.11.0] - 2026-07-08
 
