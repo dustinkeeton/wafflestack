@@ -13,6 +13,9 @@ requires:
     - skills/clean-up
     - skills/git-workflow
     - skills/github-project-management
+    - skills/adversarial-review
+    - skills/pr-response
+    - skills/issue
   skills/docs:
     - skills/docs-agent
     - skills/docs-human
@@ -51,6 +54,12 @@ prerequisites:
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle-auto-merged'"
     items: [skills/delegate, skills/autopilot]
     description: Paper-trail label delegate/autopilot apply after arming auto-merge (default autoMerge.label); must pre-exist.
+  - kind: label
+    name: waffle-manual-review
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle-manual-review'"
+    items: [skills/autopilot]
+    description: Hold label autopilot applies to the follow-up issue it files when the review loop can't converge (default autopilot.holdLabel); it excludes hold-labeled issues from automatic scope, so this must pre-exist.
   - kind: setting
     name: allow-auto-merge
     level: recommend
@@ -61,6 +70,12 @@ setup: |-
   **Auto-merge paper-trail label.** When delegate/autopilot arm auto-merge, they label the PR
   with `autoMerge.label` (default `waffle-auto-merged`); it must pre-exist in the repo —
     gh label create "waffle-auto-merged" --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
+
+  **Review-loop hold label.** When autopilot's opt-in review loop can't converge within
+  `autopilot.maxReviewRounds`, it files a follow-up issue labeled `autopilot.holdLabel`
+  (default `waffle-manual-review`) and thereafter excludes hold-labeled issues from automatic
+  scope (all-open / a label / a milestone) so a human triages them by number; it must pre-exist —
+    gh label create "waffle-manual-review" --color D93F0B --description "Held for human triage — autopilot skips this issue until it is actioned by number"
 config:
   project.name:
     required: true
@@ -267,6 +282,42 @@ config:
       plan file per issue (`issue-<N>.md`), which the fresh implementer context then
       receives in its prompt as a brief. Defaults under the worktrees dir so it inherits
       the same gitignore — these are throwaway run artifacts, not committed.
+  autopilot.reviewLoop:
+    required: false
+    default: false
+    description: >-
+      Per-run consent for the autopilot adversarial-review → pr-response loop — whether an
+      autopilot run reviews each PR after it goes green (and before it is armed or left for a
+      human) the way `/adversarial-review` and `/pr-response` do by hand. INDEPENDENT of
+      autopilot.autoMerge: the loop can run on a PR that will then be armed OR on one left for
+      human review (cleaning it up first). When true, autopilot withholds auto-merge arming from
+      the delegate run, waits for each PR to go green, then loops up to autopilot.maxReviewRounds
+      rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging when a round
+      implements 0 findings, and arms auto-merge itself afterward if that was also consented.
+      Consent is captured fresh every invocation and is NEVER sticky — no carry-over from a prior
+      run, never read from a checkpoint or memory. Default false — no review loop, behavior
+      unchanged.
+  autopilot.maxReviewRounds:
+    required: false
+    default: 2
+    description: >-
+      Hard cap on the number of adversarial-review → pr-response rounds the review loop runs per
+      PR before giving up on convergence (only consulted when autopilot.reviewLoop is on). A round
+      that implements 0 findings converges and breaks early; reaching the cap without converging is
+      a safety bound, NOT a merge blocker — autopilot proceeds (arms if consented, else leaves the
+      PR for a human) and files an autopilot.holdLabel-labeled follow-up issue capturing the last
+      adversarial-review findings so the remaining work isn't lost. Raise it as the pr-response
+      rubric matures — more rounds buy more quality once each round is trustworthy. Default 2.
+  autopilot.holdLabel:
+    required: false
+    default: waffle-manual-review
+    description: >-
+      Label autopilot applies to the follow-up issue it files when the review loop exhausts
+      autopilot.maxReviewRounds without converging. It marks the issue as held for human triage:
+      autopilot's scope resolution EXCLUDES hold-labeled issues from every automatic scope form
+      (all-open, a label, or a milestone) — only naming the issue explicitly by #N re-actions it.
+      Must pre-exist in the repo — `gh issue edit --add-label` will not create it. Default
+      waffle-manual-review.
   docs.auditChecklist:
     required: false
     description: >-

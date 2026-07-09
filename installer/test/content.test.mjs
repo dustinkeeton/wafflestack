@@ -273,6 +273,67 @@ describe('autopilot skill: instantiation contract, handoff, and guardrails', () 
   });
 });
 
+// #220: the opt-in adversarial-review → pr-response review loop. Each assertion pins a
+// load-bearing piece of the gate — its separate per-run consent, the deferred arming that
+// keeps a green PR from merging before review, the wait-green → review → respond → converge
+// loop, the "cap is not a merge blocker" escape hatch with its hold-labeled follow-up, and
+// the failure bounds — so a meaning-breaking edit fails CI instead of shipping silently.
+describe('autopilot skill: opt-in adversarial-review → pr-response review loop (#220)', () => {
+  let md;
+  before(() => {
+    md = readSkill('autopilot');
+  });
+
+  test('review-loop consent is a separate per-run opt-in, default OFF, +review flag', () => {
+    // A THIRD instantiation-contract item, distinct from auto-merge consent.
+    assert.match(md, /Review-loop consent/);
+    assert.match(md, /separate from auto-merge, default OFF/);
+    // A single-run flag opts it in, mirroring +automerge.
+    assert.match(md, /\+review/);
+    // Independent of auto-merge — neither consent implies the other.
+    assert.match(md, /Independent of auto-merge consent/);
+    // Never sticky — both consents reset to off each run.
+    assert.match(md, /consents — auto-merge and the review loop — are off unless explicitly opted in/);
+  });
+
+  test('auto-merge arming is deferred out of the delegate run when the loop is on', () => {
+    // Step 3 withholds arming from delegate so a green PR cannot merge before it is reviewed.
+    assert.match(md, /withholds arming from delegate/);
+    assert.match(md, /a merged PR it cannot fix/);
+    // Step 4 skips the arm check because the PR is intentionally not armed yet.
+    assert.match(md, /not armed yet/);
+  });
+
+  test('the loop: wait-green then adversarial-review then pr-response --yes, converge on 0 implemented', () => {
+    assert.match(md, /adversarial-review <pr>/);
+    assert.match(md, /pr-response <pr> --yes/);
+    // Convergence is the 0-implemented terminal signal read from pr-response's return.
+    assert.match(md, /A round that implements \*\*0 findings\*\* is the terminal signal/);
+    // adversarial-review is a post-green gate — re-waited between rounds that pushed fixes.
+    assert.match(md, /re-wait for green/);
+  });
+
+  test('cap reached is a safety bound, not a merge blocker: proceed + hold-labeled follow-up', () => {
+    assert.match(md, /safety cap, not a merge blocker/);
+    // The follow-up captures the last adversarial-review findings and carries the hold label.
+    assert.match(md, /last adversarial-review findings/);
+    assert.match(md, /--add-label "waffle-manual-review"/);
+  });
+
+  test('hold-labeled issues are out of automatic scope, released only by an explicit #N', () => {
+    assert.match(md, /Hold-labeled issues are out of automatic scope/);
+    assert.match(md, /excluded from every automatic scope form/);
+    assert.match(md, /names it explicitly by/);
+  });
+
+  test('failure handling: a red round stops-and-reports; skill errors are bounded, never loop forever', () => {
+    assert.match(md, /on a red PR and never arm a red PR/);
+    // A skill error is one failed round, retried once, then stop — bounded by maxReviewRounds.
+    assert.match(md, /one failed round, not a signal to keep looping/);
+    assert.match(md, /bounds the loop regardless, so it can never spin/);
+  });
+});
+
 describe('issue skill: required template sections', () => {
   let md;
   before(() => {

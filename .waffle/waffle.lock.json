@@ -27,7 +27,7 @@
     ".claude/agents/task-planner.md": "d3eef1631c6a4227f6bf9528220006ea682fa53b12849cd0428e9cb5c8e72a63",
     ".claude/skills/adversarial-review/SKILL.md": "7daf3b810f2378e9631b9e61b268f3b4f450c3a2c2da8904c8f1c18614f74af7",
     ".claude/skills/audit/SKILL.md": "b2bef15b62f987ab87c4d5122233823e1e0a8d5432d479aa2923b13da76dae97",
-    ".claude/skills/autopilot/SKILL.md": "c9b179925adc44ba534000a1f036651a35a92d78e42d77203e4afd3a2dfa7c6b",
+    ".claude/skills/autopilot/SKILL.md": "ee884b059f0b18ff9ca478073a30453e99e3732ca96588a503a71ee1420717e9",
     ".claude/skills/clean-up/scripts/clean_up.sh": "7df01756bdb73a60bf3dfa9e000f0331a8e531049994be5ee6d280f1617b4630",
     ".claude/skills/clean-up/SKILL.md": "ee64023ca7b115e37fc1bab25e5012560773a1695e45e6d84aa6c5fe3ceee2da",
     ".claude/skills/delegate/checkpoint.mjs": "f1f306fca41b54140956fe8bf61615c806751b046f2b3c1dfe23bfb8f3b3d4f2",
@@ -61,8 +61,8 @@
     ".github/workflows/waffle-pr-green-hook.yml": "17ab76f33baf0a5478ba126eafcc7c29646cd8fc9c0d95649a6b3dc0e90ebf5e",
     ".github/workflows/waffle-pr-response-hook.yml": "d0ce2339b70e75921a8180e9aef4601d1a2e5b70cd34ba7ff37ca6d67764fe59",
     ".github/workflows/waffle-release-hook.yml": "f78b5d85d7d98d1d85d5f2d58cf5742452ed4f3ef285c6222f07b494a6e7c208",
-    ".waffle/cheatsheet.html": "57fd5770cf8325682f657c1475be37162e10113176723e2e60d916aa45baebfc",
-    ".waffle/CHEATSHEET.md": "2b524d01d479e314dc16ae25442a2cb86fef0cde8ea7693e9b1ed37dfbea482e",
+    ".waffle/cheatsheet.html": "c2f5dca3a8628503178ee63248d0d4f87bad56fcba39392beb3b7ab57129556f",
+    ".waffle/CHEATSHEET.md": "a142148e418de81efce62a6b1debb0cba5836dad1aa8a25f71c2aec37dc9eaab",
     ".waffle/team.html": "80109e846b3201f98684501e2cf502dcc02f44c5047d3d5d5be7e4db642dc04b",
     ".waffle/TEAM.md": "e0f45f17dfb9f862a18511910a21c1b16a505cf54b54ace2e7d9b14f2e88ad29"
   }
