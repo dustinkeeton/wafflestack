@@ -160,10 +160,15 @@ config:
 #  project:
 #    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:
-#    botName: Wafflebot          # bot identity for automated commits (github-workflow)
-#    botEmail: bot@example.com   # account-specific -> .waffle/waffle.local.yaml
-#    signingKey: ""              # GPG key ID / SSH pubkey path (never private key material)
-# Account-specific values belong in .waffle/waffle.local.yaml (gitignore it).
+#    botName: Wafflebot        # bot identity for automated commits (github-workflow)
+#
+# Account-specific values belong in .waffle/waffle.local.yaml (gitignore it) — NOT here.
+# That file takes the same shape; uncomment these there, never in this committed file:
+#
+#  config:
+#    git:
+#      botEmail: bot@example.com   # account-specific
+#      signingKey: ""              # GPG key ID / SSH pubkey path (never private key material)
 `;
 
 export function init({ cwd }) {
