@@ -40,7 +40,7 @@ is what you reach for across a breaking one.
   dedup marker `<!-- waffle-qa -->` — deliberately distinct from adversarial-review's, so the
   pr-green dedup guard and the pr-response hook never mistake one gate's post for the other's.
   "No QA concerns" is a valid outcome; the skill reports only (`pr-response` is the applying
-  half). Autopilot composes it as a **fifth instantiation-contract consent** (`+qa` /
+  half). Autopilot composes it as a **fifth instantiation-contract entry (fourth consent)** (`+qa` /
   `autopilot.qaLoop`, per-run, never sticky, default OFF): a new Step 5 between PR verification
   and the review loop that loops `qa <pr>` → `pr-response <pr> --yes` up to
   `autopilot.maxQaRounds` rounds (0 findings implemented = converged; cap reached = safety cap,
