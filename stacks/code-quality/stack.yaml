@@ -2,10 +2,12 @@ name: code-quality
 description: >-
   Cross-cutting code-quality practice skills — TDD (red-green-refactor
   discipline, test priority tiers, boundary mocking), codebase-architecture
-  (module boundaries, coding conventions), and adversarial-review (hostile
-  post-green PR review that pokes holes before merge). Stack-agnostic: the test
-  command, tier tables, module map, and settings type are project config.
-skills: [tdd, codebase-architecture, adversarial-review]
+  (module boundaries, coding conventions), adversarial-review (hostile
+  post-green PR review that pokes holes before merge), and dry (disciplined
+  de-duplication under the rule of three and semantic-sameness guardrails).
+  Stack-agnostic: the test command, tier tables, module map, and settings type
+  are project config.
+skills: [tdd, codebase-architecture, adversarial-review, dry]
 config:
   project.longName:
     required: true
