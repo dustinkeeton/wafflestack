@@ -28,6 +28,16 @@ include:
   # auto-tagged on merge; its rendered workflow is likewise committed (see .gitignore). The
   # Claude-dispatched label-hook workflow stays gitignored/uninstalled.
   - files/.github/workflows/waffle-release-hook.yml
+  # The PR-green adversarial-review hook (#112) — opt-in syrup, ARMED here: on every green PR it
+  # dispatches the harness to run the adversarial-review skill and post a hostile pre-merge review
+  # (once per green transition, deduped by review marker). Its rendered workflow is committed (like
+  # hygiene/release-hook, not gitignored like label-hook). The skill it runs lives in the
+  # code-quality stack (not enabled here), so the qualified ref below renders JUST that skill into
+  # .claude/skills/adversarial-review/ — it is config-free, pulling no code-quality config keys or
+  # sibling skills. Runtime still needs the ANTHROPIC_API_KEY secret + a PR review-write token to
+  # actually fire (shipping the workflow does not set those).
+  - files/.github/workflows/waffle-pr-green-hook.yml
+  - code-quality/skills/adversarial-review
 config:
   project:
     name: wafflestack

@@ -8,6 +8,7 @@ files:
   - .github/workflows/waffle-release-hook.yml
   - .github/workflows/waffle-post-merge-hook.yml
   - .github/workflows/waffle-evals.yml
+  - .github/workflows/waffle-pr-green-hook.yml
 # optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting; the release-hook and post-merge-hook workflows each hold `contents: write` (to push
@@ -18,13 +19,16 @@ files:
 # render. The hygiene and evals workflows are opt-in syrup for the same reason and then some:
 # each spends real API money on a schedule — the hygiene job additionally holds
 # contents/pull-requests write, while the read-only evals job bills for the metered LLM tier on
-# every nightly fire.
+# every nightly fire. The pr-green-hook workflow is opt-in on the same footing as hygiene: it
+# dispatches the paid harness (adversarial-review) on every green PR and holds pull-requests: write
+# to post the review, so enabling the stack must not silently arm per-PR API spend.
 optIn:
   - files/.github/workflows/waffle-label-hook.yml
   - files/.github/workflows/waffle-hygiene.yml
   - files/.github/workflows/waffle-release-hook.yml
   - files/.github/workflows/waffle-post-merge-hook.yml
   - files/.github/workflows/waffle-evals.yml
+  - files/.github/workflows/waffle-pr-green-hook.yml
 # Per-item dependency edges: installing a keyed item pulls its listed refs into the
 # render closure. The label-hook workflow needs its companion skill, which in turn
 # needs the issue + git-workflow skills it delegates to — so a per-item install of
@@ -83,8 +87,8 @@ prerequisites:
     name: jq
     level: recommend
     check: command -v jq
-    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml]
-    description: jq parses the harness execution log in the label-hook/hygiene workflows' Check-harness-result step.
+    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-pr-green-hook.yml]
+    description: jq parses the harness execution log (and, in the pr-green hook, the PR/check/review JSON) in the label-hook/hygiene/pr-green workflows' steps.
   - kind: scope
     name: gh-auth
     level: recommend
@@ -100,14 +104,14 @@ prerequisites:
     name: workflow
     level: recommend
     check: "gh auth status 2>&1 | grep -qw workflow"
-    items: [files/.github/workflows/waffle-doctor.yml, files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-release-hook.yml, files/.github/workflows/waffle-post-merge-hook.yml, files/.github/workflows/waffle-evals.yml]
+    items: [files/.github/workflows/waffle-doctor.yml, files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-release-hook.yml, files/.github/workflows/waffle-post-merge-hook.yml, files/.github/workflows/waffle-evals.yml, files/.github/workflows/waffle-pr-green-hook.yml]
     description: The gh `workflow` credential scope — required to push any file under .github/workflows/.
   - kind: secret
     name: ANTHROPIC_API_KEY
     level: recommend
     check: "gh secret list 2>/dev/null | grep -q '^ANTHROPIC_API_KEY'"
-    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-evals.yml]
-    description: Repo Actions secret billing the label-hook / hygiene / evals runs. Set with `gh secret set ANTHROPIC_API_KEY`.
+    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-evals.yml, files/.github/workflows/waffle-pr-green-hook.yml]
+    description: Repo Actions secret billing the label-hook / hygiene / evals / pr-green runs. Set with `gh secret set ANTHROPIC_API_KEY`.
   - kind: secret
     name: WAFFLE_HYGIENE_TOKEN
     level: recommend
@@ -527,6 +531,64 @@ setup: |-
   `eject: [files/.github/workflows/waffle-evals.yml]` (the eject releases the file as
   project-owned rather than deleting it).
 
+  **PR-green hook (opt-in syrup).** This stack also carries
+  `.github/workflows/waffle-pr-green-hook.yml`, which dispatches the Claude harness to run the
+  **adversarial-review** skill against a pull request the moment its required checks go green — a
+  hostile post-green review that pokes holes (correctness edge cases, error handling, test depth,
+  API/naming, simplification) and posts them back as a single PR review before merge. Like the
+  hygiene hook it spends real API money — once per green PR — so it is **opt-in syrup**: enabling
+  the stack does NOT render it. Pour it explicitly —
+  `wafflestack install files/.github/workflows/waffle-pr-green-hook.yml` — or keep an existing
+  install via its lock entry.
+  **The skill is a separate install.** The `adversarial-review` skill lives in the **code-quality**
+  stack, not here, and the workflow runs `.claude/skills/adversarial-review/SKILL.md`, so that
+  skill must be rendered into this repo. It is config-free (no keys, no sibling skills), so install
+  just it alongside the workflow: add `code-quality/skills/adversarial-review` to your selection
+  (`wafflestack install code-quality/skills/adversarial-review`) without enabling the whole
+  code-quality stack. After render, confirm `.claude/skills/adversarial-review/SKILL.md` exists.
+  **Trigger — workflow_run, and which workflows it watches.** GitHub does NOT emit
+  `check_suite`/`check_run` events for check suites it creates itself (anti-recursion), and
+  `status` fires only for the legacy Commit-Statuses API — so for a repo whose required checks are
+  GitHub Actions (the usual case), neither would ever fire. The hook therefore keys on
+  `workflow_run: completed` for the workflows named in `prGreen.watchWorkflows` (default
+  `waffle-doctor`, the drift gate every consumer renders). Because `workflow_run` fires per
+  workflow, the job re-confirms the FULL check rollup is green before dispatching, so listing only
+  a subset never green-lights early; but a required check whose workflow is NOT listed can't
+  *trigger* a re-evaluation, so add every required-check workflow name (comma-separated) if the
+  repo gates on more than the doctor. Note `workflow_run` (like `schedule`) only fires for the
+  copy of the workflow on the **default branch** — this is why the render is committed, not
+  gitignored like the label hook.
+  **Idempotency + anti-loop.** Before any paid dispatch the job resolves the open PR whose head is
+  the completed run's commit and targets the default branch, then skips: draft PRs, bot-authored
+  PRs (a bot's own PR is not reviewed), fork-head PRs (a fork's green checks must not spend this
+  repo's budget — the `workflow_run` token is read/write even for forks, so this gate is the
+  guard), a PR that isn't fully green yet, and — the dedup — a head commit that already carries an
+  adversarial review (detected by a stable `<!-- waffle-adversarial-review -->` marker the dispatch
+  prompt tells the harness to embed, matched against the review's `commit_id`). So a re-run of
+  checks on an already-reviewed head posts no duplicate, while a new commit (new head SHA, no
+  marker) is reviewed afresh — once per green transition. The review posts findings only (no
+  commits, no file edits), so it can't itself retrigger CI.
+  **What the harness may do (baked-in allowlist).** The workflow's `claude_args` ships a default
+  `--allowedTools 'Bash(gh pr:*),Bash(gh api:*),Bash(gh repo:*)'` — enough for the skill to read
+  the PR (`gh pr diff`/`gh pr view`), read surrounding source (`gh repo view`/`gh api`, plus the
+  harness's ungated Read/Grep over the checked-out head), and post exactly one review
+  (`gh api …/pulls/N/reviews` or `gh pr review`). No git and no Edit/Write: the job holds no
+  `contents: write`. Append cost-control or allowlist-widening flags via `prGreen.claudeArgs` (the
+  CLI unions repeated `--allowedTools`). A **`Check harness result`** step (`always()`) reads the
+  execution log as DATA (jq) and fails the job on a sandbox-escape attempt or a denied gh/git call
+  (the review may not have posted); the log is uploaded as the **`claude-execution-log-pr-green`**
+  artifact for debugging.
+  **Opt-ins to arm it.** It stays inert until (1) the `ANTHROPIC_API_KEY` secret is set (with the
+  user's go-ahead — `gh secret set ANTHROPIC_API_KEY`; the same secret the hygiene/label hooks
+  bill); (2) the `adversarial-review` skill is rendered and committed (above); and (3) a token with
+  **pull-request review-write** scope is available — the default `GITHUB_TOKEN` already carries the
+  `pull-requests: write` this job grants, so no PAT is required; `WAFFLE_HYGIENE_TOKEN` is an
+  optional override only to attribute the review to that identity instead of github-actions[bot].
+  Pushing the workflow file needs the `workflow` credential scope. To stop managing it, drop the
+  `files/.github/workflows/waffle-pr-green-hook.yml` entry from `include:` or
+  `eject: [files/.github/workflows/waffle-pr-green-hook.yml]` (the eject releases the file as
+  project-owned rather than deleting it).
+
   **Labels.** The issue skill applies the type labels and priority labels from the
   `issue.typeLabels` / `issue.priorityLabels` tables (defaults under config keys) plus the
   `issue.inferenceLabel` lifecycle label. Applying a label that doesn't exist makes
@@ -769,6 +831,44 @@ config:
       backslashes, newlines, or `${{` (enforced at render by the pattern above; single quotes
       are allowed). Security-sensitive: an unvalidated passthrough to the harness CLI — flags
       here can widen the harness's authority, so set only what you understand and trust.
+  prGreen.watchWorkflows:
+    required: false
+    default: "waffle-doctor"
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9 ,._/-]+$'
+    description: >-
+      Comma-separated list of workflow NAMES whose completion triggers the PR-green adversarial
+      review (.github/workflows/waffle-pr-green-hook.yml). Rendered verbatim into the workflow's
+      `on: workflow_run: workflows: [ … ]` flow sequence, so e.g. "waffle-doctor, CI" becomes
+      `[waffle-doctor, CI]`. The pr-green hook uses `workflow_run` (not `check_suite`/`status`,
+      which never fire for GitHub-Actions-produced checks), so it must name the Actions workflows
+      that constitute the repo's required checks. Default "waffle-doctor" — the drift gate every
+      github-workflow consumer renders — covers a repo whose only required check is the doctor;
+      add each additional required-check workflow's name so a slower check finishing last still
+      fires a re-evaluation (the job re-confirms the full rollup is green either way, so extra
+      names never cause a premature or duplicate review). Rendered into a single-quoted YAML
+      scalar spliced into a flow sequence, so it is restricted to a workflow-name charset
+      (letters, digits, spaces, and `, . _ / -`) and must be non-empty — the pattern rejects
+      quotes, brackets, `${{`, and newlines so no value can break out of or subvert the sequence,
+      and a bad value fails the render loudly. A workflow whose name contains a comma or bracket
+      cannot be listed here (rare — rename it or eject the workflow to hand-edit the trigger).
+  prGreen.claudeArgs:
+    required: false
+    default: ""
+    pattern: '^(?!.*\$\{\{)[^"\\\r\n]*$'
+    description: >-
+      Extra CLI arguments APPENDED to the dispatched harness's claude_args in
+      .github/workflows/waffle-pr-green-hook.yml — e.g. "--max-turns 30" or
+      "--model claude-sonnet-4-5" for cost control on the per-PR review. Empty by default. Unlike a
+      bare passthrough, these are folded onto the END of a baked-in default `--allowedTools '…'`
+      (which lets the headless run read the PR and post one review — see the setup note), so they
+      EXTEND a working allowlist rather than being the harness's only args. To widen the allowlist,
+      append your own `--allowedTools '<patterns>'` here: the Claude CLI takes `--allowedTools` as a
+      repeatable list and unions the occurrences, so yours adds to the default instead of replacing
+      it (`--max-turns`/`--model` are unaffected — the variadic stops at the next flag). Rendered
+      into a YAML block scalar, so it must not contain double quotes, backslashes, newlines, or
+      `${{` (enforced at render by the pattern above; single quotes are allowed). Security-sensitive:
+      an unvalidated passthrough to the harness CLI — flags here can widen the harness's authority,
+      so set only what you understand and trust.
   evals.cron:
     required: false
     default: "0 8 * * *"
