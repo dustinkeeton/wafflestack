@@ -1,11 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
-import { placeholderKeys, compilePattern } from './template.mjs';
+import { placeholderKeys, compilePattern, entryPatternProblem } from './template.mjs';
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
 import { HARNESS_BUILTINS, HARNESS_PATTERNS } from './project.mjs';
+
+const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Allowlist for an agent's `identity.displayName` (#156) — deliberately the SAME shape as the
+ * `git.botName` pattern declared by the github-workflow stack, because the value lands in the
+ * same place: inside the double quotes of `-c user.name="…"` in an agent-executed shell command.
+ * Letters, digits, `.` `_` `-` `[` `]`, single interior spaces. No quote, `$`, backtick or `\`.
+ */
+const DISPLAY_NAME_RE = compilePattern('(?!.*\\$\\{\\{)[A-Za-z0-9._\\[\\]-]+(?: [A-Za-z0-9._\\[\\]-]+)*');
 
 /** Toolkit-developer lint. Returns a list of problems (empty = clean). */
 export function validateToolkit(rootDir) {
@@ -106,6 +116,31 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           problems.push(`${ctx}: agent ${agent.name} skill "${skillName}" is ambiguous across stacks (${where})`);
         }
       }
+      // Optional `identity:` block (#156) — the agent's virtualized git author. `displayName`
+      // lands inside the double quotes of `-c user.name="…"` in a shell command the delegate
+      // orchestrator hands a spawned agent, so it is the same injection surface as `git.botName`
+      // and carries the same allowlist. This is a trust-boundary check: external stacks flow
+      // through `validateExternalStacks` at render, so a third-party agent cannot smuggle a
+      // quote-breaking display name into an agent-executed command.
+      const identity = agent.data.identity;
+      if (identity !== undefined) {
+        if (!isPlainObject(identity)) {
+          problems.push(`${ctx}: agent ${agent.name} \`identity\` must be a map with a \`displayName\``);
+        } else {
+          for (const k of Object.keys(identity)) {
+            if (k !== 'displayName') {
+              problems.push(`${ctx}: agent ${agent.name} identity has unknown key "${k}" (only \`displayName\` is defined)`);
+            }
+          }
+          const displayName = identity.displayName;
+          if (typeof displayName !== 'string' || !DISPLAY_NAME_RE.test(displayName)) {
+            problems.push(
+              `${ctx}: agent ${agent.name} identity.displayName ${JSON.stringify(displayName ?? null)} ` +
+                `does not match the allowed shape (letters, digits, ". _ - [ ]", single interior spaces)`,
+            );
+          }
+        }
+      }
       // Both the body and the frontmatter description are substituted at render time.
       for (const k of placeholderKeys(agent.body)) usedKeys.add(k);
       for (const k of placeholderKeys(agent.data.description ?? '')) usedKeys.add(k);
@@ -161,16 +196,42 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     // and a static string default must satisfy its own pattern (nested/non-string defaults
     // resolve at render, so skip them here).
     for (const [key, spec] of Object.entries(stack.config)) {
-      if (typeof spec?.pattern !== 'string') continue;
-      let re;
-      try {
-        re = compilePattern(spec.pattern);
-      } catch (err) {
-        problems.push(`${ctx}: config key ${key} has an invalid pattern: ${err.message}`);
-        continue;
+      if (typeof spec?.pattern === 'string') {
+        let re;
+        try {
+          re = compilePattern(spec.pattern);
+          if (typeof spec.default === 'string' && !spec.default.includes('{{') && !re.test(spec.default)) {
+            problems.push(`${ctx}: config key ${key} default "${spec.default}" does not match its declared pattern`);
+          }
+        } catch (err) {
+          problems.push(`${ctx}: config key ${key} has an invalid pattern: ${err.message}`);
+        }
       }
-      if (typeof spec.default === 'string' && !spec.default.includes('{{') && !re.test(spec.default)) {
-        problems.push(`${ctx}: config key ${key} default "${spec.default}" does not match its declared pattern`);
+      // `entryPatterns:` (#156) — the map-valued sibling of `pattern:`. Each leaf's regex must
+      // compile (render fails loudly otherwise, so a broken guard can never ship unenforced),
+      // and a static `default:` map must satisfy its own guard, exactly as a string default must.
+      const entryPatterns = spec?.entryPatterns;
+      if (entryPatterns !== undefined) {
+        if (!isPlainObject(entryPatterns)) {
+          problems.push(`${ctx}: config key ${key} \`entryPatterns\` must be a map of leaf name → pattern`);
+          continue;
+        }
+        const compiled = new Map();
+        for (const [leaf, pattern] of Object.entries(entryPatterns)) {
+          if (typeof pattern !== 'string') {
+            problems.push(`${ctx}: config key ${key} entryPattern for "${leaf}" must be a string`);
+            continue;
+          }
+          try {
+            compiled.set(leaf, [compilePattern(pattern)]);
+          } catch (err) {
+            problems.push(`${ctx}: config key ${key} has an invalid entryPattern for "${leaf}": ${err.message}`);
+          }
+        }
+        if (spec.default !== undefined) {
+          const problem = entryPatternProblem({ entryPatterns: new Map([[key, compiled]]) }, key, spec.default);
+          if (problem) problems.push(`${ctx}: config key ${key} default ${problem}`);
+        }
       }
     }
 

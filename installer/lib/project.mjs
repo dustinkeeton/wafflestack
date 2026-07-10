@@ -389,6 +389,9 @@ export const HARNESS_BUILTINS = {
   // Where rendered skills live from that target's point of view, for content that
   // references skill files by path ("read {{harness.skillsDir}}/x/SKILL.md").
   skillsDir: { claude: '.claude/skills', codex: '.agents/skills', 'agents-dir': '.agents/skills' },
+  // Where rendered agent definitions live from that target's point of view, for content that
+  // reads an agent's frontmatter by path (the delegate skill reads `identity.displayName`).
+  agentsDir: { claude: '.claude/agents', codex: '.codex/agents', 'agents-dir': '.agents/agents' },
   // CI workflow dispatcher (#131). The rendered GitHub-workflow files splice one pinned
   // action into their `uses:` / `with:` lines; these built-ins are its default identity, so a
   // consumer can pin a different version, repoint the ref, or rename the API-key secret via

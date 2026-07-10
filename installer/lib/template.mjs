@@ -33,7 +33,7 @@ const MAX_SUBSTITUTION_DEPTH = 4;
  * placeholders pass through silently: only the canonical source text is policed for
  * missing values, values are trusted as authored.
  */
-export function substitute(text, resolve, declared, errors, context, patterns) {
+export function substitute(text, resolve, declared, errors, context, guards) {
   return text.replace(PLACEHOLDER, (match, key) => {
     if (!declared.has(key) && !key.startsWith('harness.')) return match;
     const v = resolve(key);
@@ -41,14 +41,22 @@ export function substitute(text, resolve, declared, errors, context, patterns) {
       errors.push(`${context}: missing config value for {{${key}}}`);
       return match;
     }
-    const value = expandNested(formatValue(v), resolve, 1, patterns, errors, context);
+    // Structured (map-valued) guards run on the RAW value, before `formatValue` flattens it
+    // into a YAML block — once it is text, the entry/leaf structure a guard polices is gone.
+    const entryProblem = entryPatternProblem(guards, key, v);
+    if (entryProblem) {
+      errors.push(`${context}: config value for {{${key}}} ${entryProblem}`);
+      return match;
+    }
+    const value = expandNested(formatValue(v), resolve, 1, guards, errors, context);
     // Optional render-time value validation: a declared `pattern:` must fully match the
     // fully-expanded value that actually lands in the output. Textual substitution cannot
     // know its target context (a YAML scalar, a workflow `if:` expression, a shell word),
     // so escaping is impossible in general — a pattern makes an unsafe value fail loudly at
-    // render instead of silently corrupting the output. `patterns` is a Map<key, RegExp[]>
-    // spanning every stack in the toolkit, and a guarded value must satisfy every pattern.
-    if (violatesPattern(patterns, key, value)) {
+    // render instead of silently corrupting the output. `guards.patterns` is a Map<key,
+    // RegExp[]> spanning every stack in the toolkit, and a guarded value must satisfy every
+    // pattern.
+    if (violatesPattern(guards, key, value)) {
       errors.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
       return match;
     }
@@ -56,29 +64,70 @@ export function substitute(text, resolve, declared, errors, context, patterns) {
   });
 }
 
-/** True when `key` carries pattern guards and `value` fails any of them. */
-function violatesPattern(patterns, key, value) {
-  const res = patterns?.get(key);
+/** True when `key` carries scalar pattern guards and `value` fails any of them. */
+function violatesPattern(guards, key, value) {
+  const res = guards?.patterns?.get(key);
   return Boolean(res) && !res.every((re) => re.test(value));
 }
 
+const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
 /**
- * Expand placeholders appearing *inside* a substituted value. `patterns` is enforced here
+ * Validate a map-valued config key against its declared `entryPatterns:` (#156).
+ *
+ * `pattern:` guards string scalars only — so before this, a map key like `git.agentIdentities`
+ * carried its leaves (`botName` / `botEmail` / `signingKey`) straight into a rendered,
+ * agent-executed shell command with none of the sibling scalar guards applied. `entryPatterns`
+ * closes that: the key declares the leaf shape of ONE entry, and every entry in the map must
+ * satisfy it. An unknown leaf is an error rather than a passthrough — a typoed `botEmial:` must
+ * not ride along unguarded beside the leaf it was meant to be.
+ *
+ * `guards.entryPatterns` is a Map<key, Map<leaf, RegExp[]>>, unioned toolkit-wide exactly like
+ * the scalar patterns (a leaf guarded in two stacks must satisfy both). Returns a problem
+ * string, or null when clean.
+ */
+export function entryPatternProblem(guards, key, value) {
+  const leaves = guards?.entryPatterns?.get(key);
+  if (!leaves) return null;
+  const allowed = [...leaves.keys()].join(', ');
+  if (!isPlainObject(value)) return `must be a map of entries (it declares entryPatterns: ${allowed})`;
+  for (const [entry, body] of Object.entries(value)) {
+    if (!isPlainObject(body)) return `entry "${entry}" must be a map of: ${allowed}`;
+    for (const [leaf, leafValue] of Object.entries(body)) {
+      const res = leaves.get(leaf);
+      if (!res) return `entry "${entry}" has unknown key "${leaf}" (allowed: ${allowed})`;
+      if (typeof leafValue !== 'string') return `entry "${entry}" key "${leaf}" must be a string`;
+      if (!res.every((re) => re.test(leafValue))) {
+        return `entry "${entry}" key "${leaf}" does not match its declared pattern`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Expand placeholders appearing *inside* a substituted value. `guards` are enforced here
  * too: a guarded key reached only through composition (`git.cmd: git -c
  * user.email={{git.botEmail}}`) is exactly the case a pattern exists to police, and it never
  * appears as a top-level placeholder in the canonical text. Validating only at the top level
  * would make the guard an accident of whether some other item happens to reference the key
  * directly — and compiling the guards per stack (fixed in #155's review) made it an accident
  * of which stack happened to be installed. A violating nested value pushes an error and leaves
- * its placeholder in place — the render fails, same as the top-level path.
+ * its placeholder in place — the render fails, same as the top-level path. Entry patterns are
+ * checked here for the same reason: a map key composed into another value must not dodge them.
  */
-function expandNested(text, resolve, depth, patterns, errors, context) {
+function expandNested(text, resolve, depth, guards, errors, context) {
   if (depth >= MAX_SUBSTITUTION_DEPTH) return text;
   return text.replace(PLACEHOLDER, (match, key) => {
     const v = resolve(key);
     if (v === undefined) return match;
-    const value = expandNested(formatValue(v), resolve, depth + 1, patterns, errors, context);
-    if (violatesPattern(patterns, key, value)) {
+    const entryProblem = entryPatternProblem(guards, key, v);
+    if (entryProblem) {
+      errors?.push(`${context}: config value for {{${key}}} ${entryProblem}`);
+      return match;
+    }
+    const value = expandNested(formatValue(v), resolve, depth + 1, guards, errors, context);
+    if (violatesPattern(guards, key, value)) {
       errors?.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
       return match;
     }
