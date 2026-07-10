@@ -691,6 +691,111 @@ describe('CI workflow identity (#160)', () => {
   });
 });
 
+// -----------------------------------------------------------------------------
+// #227 — per-PR token spend + global counter badge. The four Claude-dispatching
+// workflows each end in a "Record token spend" step that jq-extracts usage/cost from
+// the existing execution log and folds it into ONE marker-keyed comment; the post-merge
+// hook rolls merged PRs' totals into the shields endpoint JSON on the waffle-telemetry
+// branch. These pins read the TEMPLATE sources (same posture as the identity suite):
+// the invariants are per-step, and the absences pinned (no red-capable telemetry, no
+// sibling-marker collision, no checkout/local git in the counter) are absences in the
+// source.
+// -----------------------------------------------------------------------------
+describe('token spend telemetry (#227)', () => {
+  const wfSource = (name) => fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, name), 'utf8');
+  const DISPATCHING = [
+    'waffle-label-hook.yml',
+    'waffle-hygiene.yml',
+    'waffle-pr-green-hook.yml',
+    'waffle-pr-response-hook.yml',
+  ];
+  // Slice each "Record token spend" step: from its `- name:` to the next step's `- name:`
+  // (or EOF — the step is last in every job). Slicing is what lets the collision pin hold
+  // over the pr-response template, whose OTHER steps legitimately carry its own marker.
+  const tokenSteps = (wf) => {
+    const anchor = '- name: Record token spend';
+    const steps = [];
+    let at = wf.indexOf(anchor);
+    while (at !== -1) {
+      const next = wf.indexOf('- name:', at + anchor.length);
+      steps.push(next === -1 ? wf.slice(at) : wf.slice(at, next));
+      at = wf.indexOf(anchor, at + anchor.length);
+    }
+    return steps;
+  };
+
+  for (const name of DISPATCHING) {
+    test(`${name} records token spend without being able to red the run`, () => {
+      const steps = tokenSteps(wfSource(name));
+      // One step per dispatching job: label-hook has two (enrich + implement).
+      const expected = name === 'waffle-label-hook.yml' ? 2 : 1;
+      assert.equal(steps.length, expected, `expected ${expected} Record token spend step(s), got ${steps.length}`);
+      for (const step of steps) {
+        // The one comment per thread is keyed on this literal marker.
+        assert.match(step, /<!-- waffle-token-count -->/);
+        // …and the accumulation is keyed per run in the machine-readable data line.
+        assert.match(step, /waffle-token-data/);
+        // The extraction reads the result's usage/cost fields (the evals.mjs precedent:
+        // input+output are the headline; cache fields are recorded, not counted).
+        assert.match(step, /total_cost_usd/);
+        assert.match(step, /usage\.input_tokens/);
+        // Telemetry can never red a run: continue-on-error is the hard backstop, and
+        // always() keeps recording the spend of a run whose harness/checks failed.
+        assert.match(step, /continue-on-error: true/);
+        assert.match(step, /if: always\(\)/);
+      }
+    });
+
+    test(`${name}'s token step cannot collide with the sibling hooks' markers`, () => {
+      const steps = tokenSteps(wfSource(name));
+      assert.ok(steps.length > 0, 'no Record token spend step found');
+      for (const step of steps) {
+        // Load-bearing: waffle-pr-response-hook keys its LOOP BOUND and delivery check on
+        // the substring `waffle-pr-response` appearing in ANY comment on the PR, and
+        // waffle-pr-green-hook dedups reviews on `waffle-adversarial-review`. Nothing the
+        // token step could put in its comment — hook labels, prose, warnings — may contain
+        // either literal, or a token comment would cap the response loop / fake a review.
+        assert.doesNotMatch(step, /waffle-pr-response/);
+        assert.doesNotMatch(step, /waffle-adversarial-review/);
+        // The row's hook label is a short word, never a waffle-* workflow name.
+        const hook = step.match(/^\s*HOOK: (\S+)\s*$/m);
+        assert.ok(hook, 'HOOK env not found in the token step');
+        assert.match(hook[1], /^(enrich|implement|hygiene|review|response)$/);
+      }
+    });
+  }
+
+  test('the post-merge hook rolls merged PRs into the telemetry-branch counter via pure gh api', () => {
+    const wf = wfSource('waffle-post-merge-hook.yml');
+    const at = wf.indexOf('- name: Update global token counter');
+    assert.ok(at !== -1, 'Update global token counter step not found');
+    const step = wf.slice(at);
+    // The counter lives on the dedicated unprotected branch, NOT the default branch: a
+    // fresh API commit to a protected default branch is rejected by its required status
+    // checks (the doctor gate), and a non-default-branch push triggers no workflows, so
+    // the counter never touches CI or the lock.
+    assert.match(step, /waffle-telemetry/);
+    assert.match(step, /\.waffle\/telemetry\/tokens\.json/);
+    // tokens.json IS the shields endpoint JSON (top-level endpoint keys; waffle nest).
+    assert.match(step, /schemaVersion/);
+    // Per-PR dedup: a hook re-run or a lost-race retry never double-counts.
+    assert.match(step, /\.waffle\.prs \| has\(\$pr\)/);
+    // Bounded optimistic-concurrency retry around the sha-conditional PUT.
+    assert.match(step, /while \[ "\$attempt" -le 5 \]/);
+    // Telemetry never fails the merge cleanup.
+    assert.match(step, /continue-on-error: true/);
+    // Reading the merged PR's comments needs pull-requests: read on the job.
+    const perms = wf.match(/permissions:\n(?:\s+[a-z-]+: (?:read|write)\n)+/);
+    assert.ok(perms, 'permissions block not found');
+    assert.match(perms[0], /pull-requests: read/);
+    // Identity-neutral by construction (#160): the counter commit is made via the Git
+    // Data / Contents API under the job token — never a checkout, never a local git
+    // commit (the identity suite's regexes sweep the rest of this file automatically).
+    assert.doesNotMatch(wf, /actions\/checkout/);
+    assert.doesNotMatch(stripYamlComments(wf), /git commit/);
+  });
+});
+
 describe('autopilot skill: instantiation contract, handoff, and guardrails', () => {
   let md;
   before(() => {
