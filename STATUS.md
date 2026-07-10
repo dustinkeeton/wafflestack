@@ -5,7 +5,7 @@
 
 - **Version**: v0.11.0 (pre-1.0 — the file contract can still change between minor
   releases). See Current focus for what this release adds.
-- **Last updated**: 2026-07-08
+- **Last updated**: 2026-07-10
 - **Health**: 🟢 tests 363/363 (62 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
@@ -29,11 +29,12 @@ Totals: 14 agents and 32 skills across the 9 stacks.
 
 ## Installer & CLI
 
-The `wafflestack` CLI (17 pipeline modules under `installer/lib/`) is complete and
-tested. All 9 commands work:
+The `wafflestack` CLI (18 pipeline modules under `installer/lib/`) is complete and
+tested. All 10 commands work:
 
-`init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` · `eject` · `validate`
+`init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` · `eject` · `avatars` · `validate`
 
+- `avatars <sync|status>` (new, #285) is the owner-side Gravatar pipeline (see Current focus).
 - `list` (new, #119) reports every stack/item as installed & current / out of date / not
   installed; `--interactive` drives a multi-select that installs the chosen refs and renders.
 - `install <ref…>` records a stack or a single item (`agents/`, `skills/`, or a
@@ -44,7 +45,13 @@ tested. All 9 commands work:
 
 ## Current focus
 
-All shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
+**Unreleased (CHANGELOG `[Unreleased]`):** Programmatic Gravatar avatar pipeline (#285) — owner-side
+`avatars sync`/`status` (token from `WAFFLE_GRAVATAR_TOKEN`) automate per-agent avatar registration;
+`status` exits 1 on roster drift. The **default `git.botEmail` flips** to the subaddressable
+`bot@wafflenet.io`, so a project on defaults gets per-agent `bot+<slug>@…` emails and avatars on
+GitHub with zero setup. Trade-offs + manual verify-remainder: [DECISIONS.md](DECISIONS.md#2026-07-10).
+
+Shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 
 - **External third-party stacks (new, #88/#124–#127).** A `stacks:` entry can now be a
   `{name, source, ref}` mapping pointing at a third-party git (pinned ref) or local source.
@@ -87,6 +94,7 @@ All shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 | `yaml` | ^2.4.5 | The only runtime dependency (parsing manifests/config) |
 | `git` | any | All git operations |
 | `gh` (GitHub CLI) | authenticated | Required only by the `github-workflow` stack |
+| SVG rasterizer + `WAFFLE_GRAVATAR_TOKEN` | optional | Owner-side only, for `avatars sync`: any of `rsvg-convert` / ImageMagick / `npx svgexport`, plus an owner OAuth2 token |
 
 ## Verify it yourself
 

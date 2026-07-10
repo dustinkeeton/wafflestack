@@ -154,6 +154,27 @@ An opt-in config flag (`delegate.approveBeforePush`) adds a human gate on top:
 agents commit locally and stop, and nothing is pushed or PR'd until you approve
 each branch; a rejection stays local and is recorded in the checkpoint.
 
+### Agent identity and avatars
+
+When a project opts into a managed bot identity (by setting `git.botName` /
+`git.botEmail` and pointing `git.cmd` at them), each spawned agent commits under its
+**own derived email** — the bot's base address plus-addressed with the agent's slug
+(`bot+<slug>@…`). Each agent also has a **deterministic avatar** (a waffle glyph whose
+color is a pure function of the agent's name and skill count). GitHub picks a commit's
+avatar from its author email's Gravatar, so those per-agent emails can carry per-agent
+avatars.
+
+The default `git.botEmail` is the toolkit-owned, subaddressable **`bot@wafflenet.io`**,
+and the toolkit owner pre-registers every agent's avatar on Gravatar with **`wafflestack
+avatars sync`**. The upshot: a project **on defaults gets per-agent avatars on GitHub with
+zero setup**. The trade-offs — a toolkit-domain author email unless overridden, and avatars
+*or* a verified sub-agent badge but not both — are recorded in
+[DECISIONS.md](DECISIONS.md#2026-07-10). A consumer that overrides `git.botEmail` re-runs
+`avatars sync` against its own domain and Gravatar account; `avatars status` reports any
+installed agent whose address hasn't been registered. Adding and verifying a new address on
+Gravatar stays a manual web step — Gravatar has no API for it. `.waffle/AVATARS.md`
+(generated) lists every agent's avatar file and exact commit email.
+
 ### Targets (harnesses)
 
 A **target** is a coding assistant you render for. Three are supported:
@@ -201,12 +222,13 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
+| `avatars <sync\|status>` | Owner-side Gravatar pipeline: register each agent's deterministic avatar for its verified commit email (`sync`), or report roster drift without writing (`status`, exit 1 on drift). Owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`. |
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 
-Under the hood, `installer/lib/` holds 17 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 18 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
-the lock, check prerequisites, etc.). The full function-level registry is in the
-root `AGENTS.md`.
+the lock, check prerequisites, sync agent avatars, etc.). The full function-level
+registry is in the root `AGENTS.md`.
 
 ## How the pieces interact
 

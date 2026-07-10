@@ -9,6 +9,68 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-10: A programmatic Gravatar pipeline for per-agent avatars, and a default bot-email flip (#285)
+
+**Context**: Each spawned agent commits under a deterministic per-agent email
+(`bot+<slug>@…`, plus-addressed off the bot's base) and has a deterministic avatar SVG
+(a pure function of its name + granted-skill count). GitHub shows a commit's avatar from
+its author email's Gravatar — so per-agent avatars are *possible*, but only if someone
+registers each avatar on Gravatar for each address. That was a **manual, error-prone web
+chore** documented in `.waffle/AVATARS.md`: upload a PNG, set its rating, assign it to the
+address, repeat for every agent, and keep it in sync as the roster changes. Nothing checked
+whether it had drifted.
+
+**Decision**: Ship an **owner-side CLI pipeline** that automates the registration, and flip
+the default bot email so a consumer on defaults inherits the result for free.
+
+- **`wafflestack avatars sync`** — enumerates the installed agent roster with its derived
+  commit emails (the *same* derivation the `AVATARS.md` manifest prints, now via a shared
+  `waffledocs.mjs#collectAgentAvatars`, so pipeline and manifest never drift), rasterizes each
+  avatar SVG → 512px **G-rated** PNG, and for every email **already verified** on the Gravatar
+  account uploads and assigns it over the Gravatar v3 REST API. Idempotent — a re-run recovers.
+- **`wafflestack avatars status`** — probes without writing and reports **roster drift** (an
+  installed agent whose address is unregistered), **exiting non-zero** so CI/scripts can gate.
+- **Address add/verify stays manual** — Gravatar exposes **no API to add or verify a new
+  email**, so an unverified address is reported as a "verify at gravatar.com, then re-run"
+  remainder. This is the one tolerated manual step; the toolkit is feasibility-honest about it
+  rather than pretending to automate what the API can't.
+- **Token is env-only** — the owner-only OAuth2 token is read from `WAFFLE_GRAVATAR_TOKEN` at
+  runtime; it is **never a flag and never rendered into a committed file**.
+- **Default `git.botEmail` flips** from the `wafflebot@users.noreply.github.com` placeholder to
+  the toolkit-owned, subaddressable **`bot@wafflenet.io`**. A project on defaults now gets
+  distinct per-agent `bot+<slug>@…` author emails and — once the toolkit owner has run `avatars
+  sync` — per-agent avatars on GitHub, with **zero consumer setup**. A consumer that overrides
+  `git.botEmail` re-runs the same command against its own domain and Gravatar account.
+
+**Alternatives considered**:
+
+- **Keep the manual `AVATARS.md` procedure.** Rejected — it doesn't scale with the roster and
+  silently drifts; nothing verified it was current.
+- **A native SVG-rasterizer dependency.** Rejected — heavy for one owner-side command. The
+  rasterizer shells out to whichever converter the machine has (`rsvg-convert`, ImageMagick
+  `magick`/`convert`, or a zero-install `npx svgexport`) behind an injected function, and fails
+  clearly when none is found. Both the HTTP client and the rasterizer are **injected**, so
+  `npm test` mocks them and makes no network or native calls.
+- **Auto-add/verify emails via the API.** Not possible — Gravatar has no such endpoint; hence
+  the honest manual remainder.
+- **Keep the old noreply default.** Rejected — it can't subaddress, so agents can't get
+  distinct addresses (or avatars); they'd differ by name only.
+
+**Trade-off (recorded honestly)**: default commits now carry a **toolkit-domain author email**
+(`bot@wafflenet.io`) unless a project overrides it, and the old noreply default's "Verified
+badge for free" property is forfeited on defaults — a subaddressable base gets **avatars XOR a
+verified sub-agent commit**, and the default deliberately prefers avatars + no badge. A repo
+that sets its own `git.botEmail` is unaffected. **No migration** — `render` picks up the new
+default; a repo that commits its render and leaned on the old default will see a re-render diff.
+
+**Impact**: New CLI command `avatars` (command count **9 → 10**) and new module
+`installer/lib/avatars-sync.mjs` (**17 → 18** pipeline modules); `waffledocs.mjs` gains the
+shared `collectAgentAvatars` enumeration. `.waffle/AVATARS.md` regenerates to describe the
+pipeline instead of the manual procedure. Additive apart from the default-email flip, which is
+a consumer-facing default change with no migration step.
+
+---
+
 ## 2026-07-09: docs-system's default machine-doc shape becomes layout-adaptive, not `src/`-feature-assuming (#217)
 
 **Context**: The `docs-system` stack's `docs.machineDocSpec` / `docs.machineDocSet` defaults — the
