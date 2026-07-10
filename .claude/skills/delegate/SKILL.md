@@ -307,6 +307,40 @@ node .claude/skills/delegate/checkpoint.mjs --file .claude/worktrees/.delegate/<
 
 The validator enforces that every issue is assigned exactly once, branch names are well-formed, worktree presence matches group mode (parallel ⇒ has a path, serial ⇒ null), and — when set — `confirmedVia` requires `confirmed: true` (a recorded confirmation source can't sit atop an unconfirmed plan).
 
+### Identity preflight (deterministic gate)
+
+The plan is settled and nothing has happened yet: no board writes, no worktrees, no agents. This is the last moment at which a misconfigured git identity is free to fix. **Verify it now, with a script — not by eye.**
+
+**Validator:** `.claude/skills/delegate/identity.mjs` — dependency-free, same idiom as `checkpoint.mjs`. Run it with the agent slugs taken **from the `plan` checkpoint's assignments** (the single source of truth — never re-derive them):
+
+```bash
+node .claude/skills/delegate/identity.mjs \
+  --git-cmd 'git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io' \
+  --agents-dir '.claude/agents' \
+  --agents '<comma-separated agent slugs from the plan checkpoint assignments>' \
+  <<'WAFFLE_AGENT_IDENTITIES'
+{}
+WAFFLE_AGENT_IDENTITIES
+```
+
+The `--git-cmd` value is single-quoted, and every composable identity key is guard-rejected on quotes at render time, so the rendered literal is safe. (If a hand-edited `git.cmd` ever puts a literal `'` in there, the shell — not this gate — is what breaks; re-render rather than patch the quoting.)
+
+**What it proves, per tier.** There is no runtime probe for "a human is driving", and none is needed: the tier boundary is *which rendered command a commit routes through*, and that is fully static.
+
+- **Human tier** — every git invocation outside the skill's rendered identity-bearing commands (push, diff, log, and a bare `git.cmd`). Human runs stay on the human identity **because nothing rendered ever overrides it**, not because the gate detected a human.
+- **Main-agent tier** — the orchestrator's own commits route through the resolved `git.cmd`. The gate proves that command is coherent.
+- **Sub-agent tier** — each spawned agent's commits route through `{agent-git-cmd}` (see **Per-agent commit identity**). The gate proves that derivation is feasible and coherent for **every planned agent**, before any agent exists.
+
+The preflight **validates configuration, not runtime process identity**: it proves the right identity *will* apply to each tier's commits, not who is at the keyboard.
+
+**Reading the result:**
+
+- **`ERROR:` (exit 1) — STOP the run and report the validator output verbatim.** Do not enter Board Setup; do not spawn anything. **This holds in batch mode too**: for an unattended run the safe move on an incoherent identity is *not* proceeding under the ambient one — that silent default is exactly what this gate exists to kill. Never improvise an identity.
+- **`WARN:` (exit 0) — proceed, but surface it.** Interactively, show the WARN lines with the verdict. **In batch mode, append them to the logged plan** so the run stays auditable. Warnings are expressed intent that cannot take effect — a per-agent identity map that is inert without the opt-in, a per-agent `signingKey` under a non-signing recipe, a key whose shape contradicts the pinned `gpg.format`.
+- **`NOTE:` (exit 0) — informational, nothing to do.** A bare `git.cmd` reports `no bot identity configured` and passes: that is a **legitimate documented state, not a misconfiguration**, and the gate must never nag the no-opt-in path.
+
+The gate is **stateless** — it writes nothing to the checkpoint. Like `{agent-git-cmd}`, its verdict is a pure function of the resolved config and the plan's agent list, so on resume you simply re-run it; it cannot go stale. Identity warnings worth keeping end up in the Phase 5 `report.notes` free text.
+
 ## Board Setup
 
 Before execution begins, discover the project board metadata for kanban sync. This is best-effort — if the project or status options are not found, log a warning and skip all board updates. A `todo-column` run already discovered `PROJECT_ID`, `STATUS_FIELD_ID`, `IN_PROGRESS_OPTION_ID`, and `IN_REVIEW_OPTION_ID` while resolving the Todo column in Phase 1 — reuse those values instead of re-running steps 2–3's queries.
@@ -499,7 +533,7 @@ Agent(
 
 ### Per-agent commit identity
 
-Every spawned agent commits under **its own git author**, so two agents in the same run produce distinct attribution instead of a byte-identical trailer. You compute that author **at spawn time**, per agent, and bake it into the prompt as `{agent-git-cmd}`. Do **not** write it into the plan checkpoint — the checkpoint schema is closed (`additionalProperties: false`), and this value is a pure function of the two inputs below, so re-derivation at spawn time cannot drift.
+Every spawned agent commits under **its own git author**, so two agents in the same run produce distinct attribution instead of a byte-identical trailer. The **Identity preflight** at the end of Phase 3 already proved this derivation feasible for every planned agent; what follows is the derivation it validated. You compute that author **at spawn time**, per agent, and bake it into the prompt as `{agent-git-cmd}`. Do **not** write it into the plan checkpoint — the checkpoint schema is closed (`additionalProperties: false`), and this value is a pure function of the two inputs below, so re-derivation at spawn time cannot drift.
 
 The **base command** — this project's resolved `git.cmd`, and the source of the base name and email:
 
@@ -736,6 +770,7 @@ TeamDelete(team_name: "delegate-{timestamp}")
 ## Error Handling
 
 - **Checkpoint validation failure** — `checkpoint.mjs` exited non-zero. **Stop at that phase boundary.** Report the validator's error verbatim; do not enter the next phase or improvise the missing/mismatched state. Fix the checkpoint (or re-run the phase that wrote it) and re-validate before continuing. The checkpoint also survives an interruption: on resume, re-validate the last-written phase to find where the run left off.
+- **Identity preflight failure** — `identity.mjs` exited non-zero. **Stop before Board Setup**, report the validator output verbatim, and never improvise an identity or fall back to the ambient one. This holds in batch mode as well as interactively. Fix the identity configuration (`git.cmd`, `git.agentIdentities`), re-render, and re-run the preflight before continuing.
 - **Build failure** — stop the chain, report to the user, do not create a PR for the failing agent's work
 - **Agent cannot complete** — add a comment to the GitHub issue via `gh issue comment {N} --body "..."` explaining what was attempted and what blocked completion, then move on to the next issue
 - **Worktree conflict** — fall back to serial execution in the main working directory, report the conflict
