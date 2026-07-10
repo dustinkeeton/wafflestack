@@ -737,6 +737,11 @@ setup: |-
   `git.cmd` opted in, a spawned agent's identity is *derived* by default (its display name, and
   `git.botEmail` plus-addressed with `+<agent-slug>`), so the map is only for overriding that.
   A repo committing its render must commit the entries it wants, or doctor drifts.
+  Note the interaction with the noreply address recommended just above: `users.noreply.github.com`
+  routes only the `<id>+<username>@` shape and cannot subaddress, so the delegate skill uses such
+  a base **verbatim** rather than appending a second `+` segment that would resolve nowhere. Same
+  for any base whose local part already carries a `+`. Agents then differ by *name*, not address;
+  give one its own address with an explicit `git.agentIdentities[<agent>].botEmail`.
   (4) **Signing is separate — and `git.cmd` does NOT disable it.** Do not add
   `{{git.signingKey}}` to `git.cmd` unless you have set it: the empty default renders
   `git -c user.signingkey= …`, which git rejects at run time. Just as important, `git.cmd`
@@ -842,19 +847,28 @@ config:
     # the leaves land in the same places: an unquoted/quoted shell word of the per-agent git
     # command the delegate skill hands a spawned agent. Guards compile toolkit-wide, so these
     # bind wherever the key is referenced — orchestration included.
+    # `signingKey` takes `+`, not the sibling scalar's `*`: the scalar tolerates empty because
+    # empty is its meaningful default ("no dedicated bot key"), but here the leaf is OPTIONAL —
+    # omitting it already means "no override". An explicit `signingKey: ""` is *present*, so rule
+    # 3 appends `-c user.signingkey=` with no value, which git rejects at the agent's first
+    # commit. Fail at render instead. Keep in lockstep with stacks/orchestration/stack.yaml: a
+    # key guarded twice must satisfy both, so a one-sided change silently shifts the guard.
     entryPatterns:
       botName: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
       botEmail: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
-      signingKey: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]*$'
+      signingKey: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]+$'
     description: >-
       Map of per-agent virtualized identities that override the derived per-agent identity, keyed
       by agent name — shape { <agent>: { botName, botEmail, signingKey? } }, shape-validated at
       render via entryPatterns (unknown leaf keys and unsafe values fail the render). Consumed by
       the delegate skill, which derives each spawned agent's git author from the resolved git.cmd
       (display name from the agent's `identity.displayName` frontmatter, email = the bot email
-      plus-addressed with `+<agent-slug>`) and applies this map OVER that default, per field —
+      plus-addressed with `+<agent-slug>`, or the bot email verbatim when it cannot subaddress —
+      a `*.noreply.github.com` domain, or a local part that already carries a `+`) and applies
+      this map OVER that default, per field —
       botName replaces the name, botEmail replaces the email verbatim (no plus-addressing on top),
-      signingKey adds `-c user.signingkey=`. Empty (the default) means every agent uses the
+      signingKey adds `-c user.signingkey=` (it must be non-empty; omit it to add nothing).
+      Empty (the default) means every agent uses the
       derived default. INERT WITHOUT THE OPT-IN: a bare `git.cmd` means no bot identity is
       configured, so no agent is virtualized and this map does nothing — git.cmd is the single
       opt-in switch, and the toolkit never clobbers a human's git config. Entries may be split

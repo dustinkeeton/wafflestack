@@ -42,10 +42,19 @@ is what you reach for across a breaking one.
   per field. **The opt-in is unchanged and singular:** a bare `git.cmd` means no bot identity is
   configured, so nothing is virtualized and the map is inert — the toolkit still never clobbers a
   human's git config. Two honest caveats, stated in the skill: attribution is per agent *type*, not
-  per spawn (two parallel `lead-engineer`s share an author); and a plus-addressed alias is a distinct
+  per spawn (two parallel `lead-engineer`s share an author); a plus-addressed alias is a distinct
   email to GitHub, so such commits do not link to the bot account unless the alias is registered
-  there. Also new: `harness.agentsDir` (the agent-definitions path per target, sibling of
-  `harness.skillsDir`), so the derivation rule reads agent frontmatter without hardcoding `.claude/`.
+  there; and a base email that **cannot** subaddress — a `*.noreply.github.com` domain, or a local
+  part that already carries a `+` (GitHub's canonical `<id>+<user>@users.noreply.github.com`) — is
+  used **verbatim** rather than mangled into an address that routes nowhere, so those agents differ
+  by display name only. The `claude:` frontmatter passthrough may not shadow a reserved key
+  (`name`/`description`/`skills`/`identity`); `validate` and the external-stack gate reject it, so
+  an unvalidated `identity` cannot be hoisted over the validated one. Also new: `harness.agentsDir`
+  (the Markdown agent-definitions path per target, sibling of `harness.skillsDir`), so the derivation
+  rule reads agent frontmatter without hardcoding `.claude/`. Both path built-ins are now
+  injection-guarded, and codex points at `.agents/agents` (its own render is TOML, which carries no
+  `identity`) so codex and agents-dir keep the identical `harness.*` values that `renderSkill`'s
+  shared-output dedupe relies on.
   **Consumer note:** a repo that commits its render must re-render to pick up the new agent
   frontmatter and the rewritten delegate skill.
 - **`entryPatterns:` — render-time shape validation for map-valued config keys (#156).** The
@@ -53,7 +62,9 @@ is what you reach for across a breaking one.
   (`botName`/`botEmail`/`signingKey` for `git.agentIdentities`) and every entry in the resolved value
   must satisfy it: each entry a map, each leaf key declared (an **unknown leaf fails the render**, so
   a typoed `botEmial:` cannot ride along unguarded), each leaf value a string fully matching its
-  regex. Enforced at both the top-level and nested substitution paths, and compiled **toolkit-wide**
+  regex. An explicit `signingKey: ""` fails the render — the leaf is optional, so empty carries no
+  information and would only render the `-c user.signingkey=` that git rejects at run time.
+  Enforced at both the top-level and nested substitution paths, and compiled **toolkit-wide**
   like `pattern:`, so the guard travels with the key rather than with whichever stack happens to be
   installed. This closes the hole #154 documented: `git.agentIdentities` leaves now land in an
   agent-executed shell command, and a value like `botEmail: "$(id)@x.com"` — which rendered cleanly

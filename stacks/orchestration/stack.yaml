@@ -130,14 +130,17 @@ config:
     entryPatterns:
       botName: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
       botEmail: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
-      signingKey: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]*$'
+      signingKey: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]+$'
     description: >-
       Per-agent virtualized git identities (same key as the github-workflow stack), consumed by
       the delegate skill's "Per-agent commit identity" section: each spawned agent commits under
       its own author, derived from the resolved git.cmd (display name from the agent's
       `identity.displayName` frontmatter; email = the bot email plus-addressed with
-      `+<agent-slug>`). An entry here overrides that derived default per field — botName replaces
-      the name, botEmail replaces the email verbatim, signingKey appends `-c user.signingkey=`.
+      `+<agent-slug>`, or used verbatim when the base cannot subaddress — a
+      `*.noreply.github.com` domain, or a local part that already carries a `+`). An entry here
+      overrides that derived default per field — botName replaces
+      the name, botEmail replaces the email verbatim, signingKey appends `-c user.signingkey=`
+      (non-empty; omit the leaf to add nothing).
       Empty (the default) means every agent uses the derived default. INERT WITHOUT THE OPT-IN: a
       bare `git.cmd` means no bot identity is configured, so nothing is virtualized and this map
       does nothing. Shape-validated at render (unknown leaf keys and unsafe values fail loudly).

@@ -510,6 +510,11 @@ Derive `{agent-git-cmd}` for an agent with slug `<agent-slug>`:
 2. Otherwise derive the agent's defaults:
    - **Display name** — read `identity.displayName` from the rendered agent definition at `{{harness.agentsDir}}/<agent-slug>.md`. If the file or the field is absent (`general-purpose`, for instance, is a harness built-in with no definition file), title-case the slug: `lead-engineer` → `Lead Engineer`.
    - **Email** — take the `user.email=` value out of the base command and insert `+<agent-slug>` immediately before the `@`: `bot@wafflenet.io` → `bot+lead-engineer@wafflenet.io`.
+     **Unless the base cannot subaddress** — then use it **verbatim**, no `+` inserted. It cannot subaddress when *either*:
+     - its domain is `users.noreply.github.com` (or any `*.noreply.github.com`) — that domain routes only the `<id>+<username>@` shape, so a second `+` segment resolves to nothing at all; or
+     - its local part **already contains a `+`** (`12345+wafflebot@…`, `bot+ci@…`) — the tag is already spent; appending another does not yield "the base, tagged".
+
+     This matters because the github-workflow stack's own setup text recommends a noreply base. In that case every agent shares one email and attribution rides on the **display name** alone; give an agent its own address with an explicit `git.agentIdentities[<agent-slug>].botEmail` entry (rule 3), which is applied verbatim.
 3. Apply `git.agentIdentities[<agent-slug>]` **over those defaults, per field**: `botName` replaces the display name; `botEmail` replaces the email **verbatim** (an explicit override is exact — do not plus-address on top of it); `signingKey`, when present, additionally appends `-c user.signingkey=<key>` to the command.
 4. `{agent-git-cmd}` = **the base command with the `user.name=` value swapped for the (always double-quoted) display name and the `user.email=` value swapped for the virtualized email.** Swap the values in place; do not rebuild the command from scratch — everything else the project put in `git.cmd` (a `-c commit.gpgsign=false`, say) must survive.
 
@@ -517,6 +522,7 @@ Two caveats, so nothing is over-claimed:
 
 - **Attribution is per agent *type*, not per spawn.** Two parallel instances of the same agent share one identity — `issue-3-lead-engineer` and `issue-7-lead-engineer` both commit as `Lead Engineer`. Two *different* agents are distinct, which is the guarantee.
 - **A plus-addressed email is a distinct address to GitHub.** Commits authored under `bot+<slug>@domain` do not link to the bot's GitHub account (no avatar, no profile) unless that exact alias is registered there. Plus-addressing buys per-agent attribution and mail filtering, not account linkage.
+- **A noreply base gets no per-agent email at all.** Per rule 2, `*@users.noreply.github.com` (and any base whose local part already carries a `+`) is used verbatim rather than mangled into an address that routes nowhere. Agents still commit under distinct **names**; distinct *addresses* need explicit `git.agentIdentities` entries.
 
 `{{git.coAuthorTrailer}}` is unchanged by any of this: with per-agent authors, the trailer's job is crediting the harness.
 

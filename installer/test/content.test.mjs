@@ -261,6 +261,20 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
       assert.match(md, /title-case the slug/);
     });
 
+    // A base that cannot subaddress must NOT be plus-addressed. `users.noreply.github.com` routes
+    // only the `<id>+<username>@` shape — and it is the base the github-workflow stack's own setup
+    // text recommends for a render-committing repo, so following both documents used to yield an
+    // author address that resolves nowhere, with no error anywhere.
+    test('a base email that cannot subaddress is used verbatim, not mangled', () => {
+      assert.match(md, /\*\*Unless the base cannot subaddress\*\*/);
+      assert.match(md, /users\.noreply\.github\.com/);
+      assert.match(md, /local part \*\*already contains a `\+`\*\*/);
+      assert.match(md, /verbatim\*\*, no `\+` inserted/);
+      // ...and the honest consequence is stated, with the escape hatch.
+      assert.match(md, /attribution rides on the \*\*display name\*\* alone/);
+      assert.match(md, /git\.agentIdentities\[<agent-slug>\]\.botEmail/);
+    });
+
     test('git.agentIdentities overrides the derived default per field, botEmail verbatim', () => {
       assert.match(md, /over those defaults, per field/);
       assert.match(md, /replaces the email \*\*verbatim\*\*/);
@@ -270,9 +284,10 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
       assert.match(md, /do not rebuild the command from scratch/);
     });
 
-    test('the two honesty caveats are stated: per-type attribution, no GitHub account linkage', () => {
+    test('the honesty caveats are stated: per-type attribution, no account linkage, noreply base', () => {
       assert.match(md, /per agent \*type\*, not per spawn/);
       assert.match(md, /do not link to the bot's GitHub account/);
+      assert.match(md, /A noreply base gets no per-agent email at all/);
     });
 
     test('identity is computed at spawn time, never written to the closed checkpoint schema', () => {
