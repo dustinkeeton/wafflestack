@@ -571,7 +571,7 @@ Four caveats, so nothing is over-claimed:
 - **A noreply base gets no per-agent email at all.** Per rule 2, `*@users.noreply.github.com` (and any base whose local part already carries a `+`) is used verbatim rather than mangled into an address that routes nowhere. Agents still commit under distinct **names**; distinct *addresses* need explicit `git.agentIdentities` entries.
 - **Sub-agent commits are unverified by design.** Under the canonical `commit.gpgsign=false` recipe they are unsigned and GitHub shows **no badge** (a neutral state — signing with a key GitHub cannot check would instead show the yellow "Unverified"). **Where the bot email subaddresses** (the `bot+<slug>@…` shape), making them "Verified" means registering each alias on the bot's GitHub account, which **relinks every agent to one profile and one avatar**: there, per-agent avatars and verified sub-agent commits are mutually exclusive, and this toolkit recommends the avatars. On a **noreply base** — the toolkit's default `git.botEmail`, and the previous caveat's case — the trade-off does not arise: rule 2 gives every agent the bot's email verbatim, so there is no alias to register and no per-agent avatar to lose, and under a signing recipe those commits are Verified already. A repo with **required signatures** branch protection cannot use plus-addressed sub-agent authors at all.
 
-`Co-Authored-By: Claude <noreply@anthropic.com>` is unchanged by any of this: with per-agent authors, the trailer's job is crediting the harness.
+`Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>` is unchanged by any of this: with per-agent authors, the trailer's job is crediting the harness.
 
 ### Agent prompt template
 
@@ -613,7 +613,7 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - npm pack --dry-run
    - `npm run validate` passes after any stack/manifest edit
 - If `stacks/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
-4. Commit your work following the git-workflow skill — commit with `{agent-git-cmd} commit` (that is where your own agent identity, if this project configures one, is applied) and end every commit message with `Co-Authored-By: Claude <noreply@anthropic.com>`. Commit everything **locally**; do not push yet.
+4. Commit your work following the git-workflow skill — commit with `{agent-git-cmd} commit` (that is where your own agent identity, if this project configures one, is applied) and end every commit message with `Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>`. Commit everything **locally**; do not push yet.
 5. Push and open the PR — but first check the approval gate. The gate is ON when `delegate.approveBeforePush` is `true`; for this run it is **`false`**.
    - **Gate off (`false`, the default):** push and open the PR yourself, exactly as usual —
      - Push: git push -u origin {branch-name}

@@ -93,7 +93,7 @@ Run the full checklist from `git-workflow`; do not open the PR if any fail:
 git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
 chore: bump to X.Y.Z
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 EOF
 )" <explicit paths — package.json, package-lock.json, CHANGELOG.md, and each versionFiles path>
 git push -u origin chore/bump-X.Y.Z
@@ -115,7 +115,7 @@ gh pr create --base main --title "chore: bump to X.Y.Z" --body "$(cat <<'EOF'
 Labeled `waffle:release` — merging this PR triggers `waffle-release-hook`, which
 pushes the lightweight tag on the merge commit. No tag is pushed from this PR.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 EOF
 )"
 ```
