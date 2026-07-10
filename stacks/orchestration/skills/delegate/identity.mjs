@@ -32,8 +32,10 @@
 //
 // Findings print one per line, prefixed ERROR: / WARN: / NOTE:.
 //   ERROR — incoherent config: it will break, hang, or misattribute a cryptographic
-//           identity. Exit 1. The caller must STOP the run and report verbatim; it must
-//           never improvise an identity or fall back to the ambient one.
+//           identity — including an identity-bearing command that leaves the signing posture
+//           unpinned, which is the #158 bug class above. Exit 1. The caller must STOP the run
+//           and report verbatim; it must never improvise an identity or fall back to the
+//           ambient one.
 //   WARN  — coherent, but expressed intent that cannot take effect, or almost certainly
 //           not what the user meant. Logged; the run proceeds.
 //   NOTE  — informational. A bare git.cmd is a NOTE, never an error: "no bot identity" is
@@ -87,11 +89,12 @@ function readStdin() {
 // ---------------------------------------------------------------------------
 // git.cmd tokenizer
 //
-// The rendered command is a flat prefix — `git` followed by `-c key=value` pairs (and
-// possibly other flags). Double quotes group a spaced value; single quotes cannot appear
-// (every guarded identity leaf rejects quotes, and the caller wraps the whole command in
-// single quotes). An unterminated quote, or a stray bare word, means the value was never
-// quoted in the first place and git would word-split it — that is an ERROR, not a guess.
+// The rendered command is a flat prefix — `git` followed by `-c key=value` pairs (and possibly
+// other flags). Double quotes group a spaced value. Single quotes are NOT handled: `git.cmd` is
+// trusted project config with no render-time `pattern:` guard, so a single quote in it breaks the
+// caller's `--git-cmd '…'` shell literal before this tokenizer ever runs — see SKILL.md's
+// "Identity preflight". An unterminated double quote, or a stray bare word, means the value was
+// never quoted in the first place and git would word-split it — that is an ERROR, not a guess.
 // ---------------------------------------------------------------------------
 
 function tokenize(cmd) {
@@ -164,6 +167,11 @@ function parseGitCmd(cmd, errors) {
   return config;
 }
 
+// git's boolean vocabulary (`git config --bool`). A `-c key` with no `=` is `true`, which
+// parseGitCmd already normalises. Anything outside this set is not "false" — it is a value git
+// rejects at commit time, which is a different (and louder) finding than "signing is off".
+const GIT_BOOLEANS = ['true', 'false', 'yes', 'no', 'on', 'off', '1', '0'];
+const isBoolean = (v) => v !== undefined && GIT_BOOLEANS.includes(String(v).toLowerCase());
 const isTrue = (v) => v !== undefined && ['true', 'yes', 'on', '1'].includes(String(v).toLowerCase());
 
 // ---------------------------------------------------------------------------
@@ -174,10 +182,11 @@ const isTrue = (v) => v !== undefined && ['true', 'yes', 'on', '1'].includes(Str
 // two-space-indented `botName` / `botEmail` / `signingKey` scalar leaves. Nothing richer
 // is in scope (checkpoint.mjs's hand-rolled JSON-Schema subset is the same precedent).
 //
-// The subset is SOUND because every leaf value is guarded by an entryPattern charset that
-// excludes ":" and quotes — so a leaf value can never contain a key/value separator and
-// confuse the split. Anything this parser does not recognise throws, and the caller turns
-// that into an ERROR verdict: a parse surprise is fail-safe, never a silent skip.
+// The subset is SOUND because the split is on the FIRST colon, which is always the key/value
+// separator: a leaf name is one of three literals, none containing a colon. Colons *inside* a
+// value are therefore harmless — and they do occur (the signingKey charset admits ":", as in
+// git's own `key::ssh-ed25519 …` form). Anything this parser does not recognise throws, and the
+// caller turns that into an ERROR verdict: a parse surprise is fail-safe, never a silent skip.
 // ---------------------------------------------------------------------------
 
 function unquote(s) {
@@ -311,6 +320,22 @@ function main() {
   if (config.has('user.signingkey') && signingKey === '') {
     errors.push('git.cmd sets an EMPTY user.signingkey — git rejects it only at commit time, so this fails silently until an agent tries to commit');
   }
+  if (config.has('commit.gpgsign') && !isBoolean(gpgsign)) {
+    errors.push(
+      `git.cmd sets commit.gpgsign=${JSON.stringify(gpgsign)}, which is not a git boolean (${GIT_BOOLEANS.join('|')}, or valueless ⇒ true) — git rejects it only at commit time, so this fails silently until an agent tries to commit`,
+    );
+  }
+  // The #158 bug class this gate exists to kill: an identity-bearing command that never pins the
+  // signing posture leaves it AMBIENT. On a machine whose ~/.gitconfig sets commit.gpgsign=true,
+  // every bot commit is then signed with the human's key — or hangs a non-interactive agent on a
+  // prompting signer. The recipe owns the posture (see git.cmd's description in stack.yaml): pin
+  // it false for the canonical unsigned bot, or true alongside user.signingkey + gpg.format.
+  // A BARE git.cmd is exempt — no identity is claimed, so there is no posture to own.
+  if (name !== undefined && email !== undefined && !config.has('commit.gpgsign')) {
+    errors.push(
+      'git.cmd pins an identity but leaves commit.gpgsign AMBIENT — the recipe owns the signing posture, and an unpinned one signs bot-authored commits with whatever key the ambient config names (or hangs a non-interactive agent on a prompting signer). Pin it: `-c commit.gpgsign=false` for an unsigned bot, or `-c commit.gpgsign=true` with user.signingkey and gpg.format for a signing one',
+    );
+  }
   if (isTrue(gpgsign)) {
     if (!signingKey) {
       errors.push('git.cmd sets commit.gpgsign=true without user.signingkey — the signer picks a key from the ambient config, so bot commits get signed with whatever key the human has');
@@ -387,20 +412,26 @@ function main() {
     }
   }
 
-  if (config.has('commit.gpgsign') && !config.has('tag.gpgsign')) {
+  // Only a base that actually ENABLES signing has expressed a tag-signing intent to leave
+  // dangling. The canonical `commit.gpgsign=false` recipe never asked for signed tags, so a WARN
+  // there surfaces nothing and only teaches readers to skim past WARN lines.
+  if (isTrue(gpgsign) && !config.has('tag.gpgsign')) {
     warns.push(
-      'git.cmd pins commit.gpgsign but leaves tag.gpgSign ambient — delegate agents never tag, so this is advisory, but a `git tag -s` elsewhere still rides the ambient signing config',
+      'git.cmd pins commit.gpgsign=true but leaves tag.gpgSign ambient — delegate agents never tag, so this is advisory, but a `git tag -s` elsewhere still rides the ambient signing config',
     );
   }
 
-  // A map entry for an agent that exists but is not in this run is fine and silent. An
-  // entry that matches neither a definition file nor a planned agent is a typo'd slug.
+  // A map entry for an agent that exists but is not in this run is fine and silent. An entry that
+  // matches neither a definition file nor a planned agent is PROBABLY a typo'd slug — but a
+  // harness built-in has no definition file either, so absence is not proof. When the definition
+  // set is unknowable (no --agents-dir, or an unreadable one) we say nothing at all: same policy
+  // as hasDisplayName below, which also fails open rather than assert on missing evidence.
   const onDisk = agentSlugsOnDisk(args.agentsDir);
-  for (const slug of Object.keys(identities)) {
-    const known = planned.includes(slug) || (onDisk ? onDisk.has(slug) : false);
-    if (!known) {
+  if (onDisk) {
+    for (const slug of Object.keys(identities)) {
+      if (planned.includes(slug) || onDisk.has(slug)) continue;
       warns.push(
-        `git.agentIdentities."${slug}" matches no agent definition and no agent planned in this run — likely a typo'd slug; the entry will never apply`,
+        `git.agentIdentities."${slug}" matches no agent definition and no agent planned in this run — likely a typo'd slug; if it is a harness built-in (which has no definition file), the entry applies only on a run that plans it`,
       );
     }
   }
@@ -427,7 +458,16 @@ function main() {
     process.exit(1);
   }
 
-  const mainTier = bare ? 'ambient (human)' : `${name} <${email}> (${isTrue(gpgsign) ? `signed, gpg.format=${gpgFormat}` : 'unsigned'})`;
+  // Tri-state, never binary: `unsigned` is a claim about the config, so it may only be printed
+  // when the config actually says so. The AMBIENT arm is unreachable while an unpinned posture is
+  // an ERROR above — it stands so that downgrading that taxonomy can never silently resurrect a
+  // verdict line that guesses in the reassuring direction.
+  const posture = isTrue(gpgsign)
+    ? `signed, gpg.format=${gpgFormat}`
+    : gpgsign === undefined
+      ? 'signing posture AMBIENT (commit.gpgsign unpinned)'
+      : 'unsigned';
+  const mainTier = bare ? 'ambient (human)' : `${name} <${email}> (${posture})`;
   const subTier = bare
     ? 'ambient (no virtualization)'
     : canSubaddress(email ?? '')

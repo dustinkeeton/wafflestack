@@ -314,7 +314,7 @@ node {{harness.skillsDir}}/delegate/identity.mjs \
 WAFFLE_AGENT_IDENTITIES
 ```
 
-The `--git-cmd` value is single-quoted, and every composable identity key is guard-rejected on quotes at render time, so the rendered literal is safe. (If a hand-edited `git.cmd` ever puts a literal `'` in there, the shell — not this gate — is what breaks; re-render rather than patch the quoting.)
+The `--git-cmd` value is single-quoted. **`git.cmd` itself declares no `pattern:` in any stack, so it carries no render-time guard** — it is trusted project config, and a literal `'` in it breaks this shell literal (as it already breaks the commit instruction that interpolates the same value). The quote guards apply to the identity keys composed *inside* it — `git.botName`, `git.botEmail`, `git.signingKey` — not to the container. Keep `git.cmd` free of `'`, `` ` ``, `$`, `;`, `&` and `|`; the gate parses it, it does not sanitize it.
 
 **What it proves, per tier.** There is no runtime probe for "a human is driving", and none is needed: the tier boundary is *which rendered command a commit routes through*, and that is fully static.
 
@@ -326,7 +326,7 @@ The preflight **validates configuration, not runtime process identity**: it prov
 
 **Reading the result:**
 
-- **`ERROR:` (exit 1) — STOP the run and report the validator output verbatim.** Do not enter Board Setup; do not spawn anything. **This holds in batch mode too**: for an unattended run the safe move on an incoherent identity is *not* proceeding under the ambient one — that silent default is exactly what this gate exists to kill. Never improvise an identity.
+- **`ERROR:` (exit 1) — STOP the run and report the validator output verbatim.** Do not enter Board Setup; do not spawn anything. **This holds in batch mode too**: for an unattended run the safe move on an incoherent identity is *not* proceeding under the ambient one — that silent default is exactly what this gate exists to kill. Never improvise an identity. Errors include half an identity, an unresolved placeholder, a non-boolean `commit.gpgsign`, an unparseable override map, and — the #158 bug class itself — an identity-bearing `git.cmd` that leaves `commit.gpgsign` **unpinned**, whose posture would otherwise fall back to the human's ambient signing config.
 - **`WARN:` (exit 0) — proceed, but surface it.** Interactively, show the WARN lines with the verdict. **In batch mode, append them to the logged plan** so the run stays auditable. Warnings are expressed intent that cannot take effect — a per-agent identity map that is inert without the opt-in, a per-agent `signingKey` under a non-signing recipe, a key whose shape contradicts the pinned `gpg.format`.
 - **`NOTE:` (exit 0) — informational, nothing to do.** A bare `git.cmd` reports `no bot identity configured` and passes: that is a **legitimate documented state, not a misconfiguration**, and the gate must never nag the no-opt-in path.
 
