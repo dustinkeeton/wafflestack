@@ -504,6 +504,12 @@ describe('harness.* CI dispatcher pin + injection guards (#131)', () => {
         r.errors.some((e) => e.includes(key) && /does not match its declared pattern/.test(e)),
         JSON.stringify(r.errors),
       );
+      // #244 F1: harness.* guards are seeded by the engine, not declared by a stack — the
+      // rejection must say so, same provenance contract as the stack-declared guards.
+      assert.ok(
+        r.errors.some((e) => e.includes(key) && e.includes('declared by the reserved harness guards')),
+        `the rejection names the reserved-harness source: ${JSON.stringify(r.errors)}`,
+      );
     };
     // a ${{ }} in the pinned version would be expanded by GitHub Actions (e.g. secret exfil)
     rejects(['config:', '  harness:', '    actionVersion: "${{ secrets.X }}"'], 'harness.actionVersion');
