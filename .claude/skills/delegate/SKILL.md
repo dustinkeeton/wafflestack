@@ -315,7 +315,7 @@ The plan is settled and nothing has happened yet: no board writes, no worktrees,
 
 ```bash
 node .claude/skills/delegate/identity.mjs \
-  --git-cmd 'git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io' \
+  --git-cmd 'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io' \
   --agents-dir '.claude/agents' \
   --agents '<comma-separated agent slugs from the plan checkpoint assignments>' \
   <<'WAFFLE_AGENT_IDENTITIES'
@@ -538,7 +538,7 @@ Every spawned agent commits under **its own git author**, so two agents in the s
 The **base command** — this project's resolved `git.cmd`, and the source of the base name and email:
 
 ```bash
-git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io
+git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io
 ```
 
 The **consumer overrides** — this project's resolved `git.agentIdentities` (`{}` means no overrides; every agent uses the derived default):
@@ -562,7 +562,7 @@ Derive `{agent-git-cmd}` for an agent with slug `<agent-slug>`:
 3. Apply `git.agentIdentities[<agent-slug>]` **over those defaults, per field**: `botName` replaces the display name; `botEmail` replaces the email **verbatim** (an explicit override is exact — do not plus-address on top of it); `signingKey`, when present, additionally appends `-c user.signingkey=<key>` to the command.
 4. `{agent-git-cmd}` = **the base command with the `user.name=` value swapped for the (always double-quoted) display name and the `user.email=` value swapped for the virtualized email.** Swap the values in place; do not rebuild the command from scratch — everything else the project put in `git.cmd` (a `-c commit.gpgsign=false`, say) must survive.
 
-**The signing resolution rule: the recipe owns the posture, keys own key selection.** `git.cmd` decides *whether and how* commits are signed — for the bot and for every agent derived from it (rule 4 preserves its flags verbatim). A per-agent `signingKey` (rule 3) appends `-c user.signingkey=<key>` **after** those flags, and git's last-wins `-c` semantics make it the effective key **when the base recipe signs**. Under the canonical `-c commit.gpgsign=false` recipe a per-agent key is **deliberately inert** — one map leaf must not silently overturn a project-wide "do not sign". If a spawned agent's commit **hangs or fails on a signing prompt**, that is a *config* problem: stop and surface it to the human. Never add `-c commit.gpgsign=false` (or any other posture flag) to a commit yourself.
+**The signing resolution rule: the recipe owns the posture, keys own key selection.** `git.cmd` decides *whether and how* commits are signed — for the bot and for every agent derived from it (rule 4 preserves its flags verbatim). A per-agent `signingKey` (rule 3) appends `-c user.signingkey=<key>` **after** those flags, and git's last-wins `-c` semantics make it the effective key **when the base recipe signs**. Under the canonical `-c commit.gpgsign=false` recipe a per-agent key is **deliberately inert** — one map leaf must not silently overturn a project-wide "do not sign". When the base *does* sign, a per-agent key inherits the base's pinned `gpg.format` — it selects a key for *that* signer, so its shape must match: a GPG-shaped key id under `gpg.format=ssh` (or a key path under `openpgp`) fails every commit by that one agent at its first signature. The identity gate WARNs on a shape mismatch (a heuristic — the signer is the authority); fix the key or the base recipe, never with per-agent posture flags. If a spawned agent's commit **hangs or fails on a signing prompt**, that is a *config* problem: stop and surface it to the human. Never add `-c commit.gpgsign=false` (or any other posture flag) to a commit yourself.
 
 Four caveats, so nothing is over-claimed:
 

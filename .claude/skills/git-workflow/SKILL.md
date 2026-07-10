@@ -13,7 +13,7 @@ below inject it via `-c` flags (`git.cmd`), so the machine's ambient `user.name`
 `user.email` is never what lands on an agent commit. Identity-free commands (`push`,
 `checkout`, `diff`, `log`) stay a bare `git`. Human commits made outside these examples
 keep the developer's own config and sign normally. **Signing:** `git.cmd` pins
-`commit.gpgsign=false`, so agent commits here are deliberately unsigned and carry no
+`commit.gpgsign=false` (and `tag.gpgSign=false`), so agent commits here are deliberately unsigned and carry no
 GitHub verification badge — intentional, not accidental. That posture is the recipe's,
 not the machine's: never add or remove signing flags per-invocation. Every agent-made
 commit must still end with:
@@ -54,12 +54,12 @@ and an annotated `tag` if you add one. `checkout`, `push`, `diff` and `log` reco
 they stay a bare `git`. In this project `git.cmd` resolves to:
 
 ```bash
-git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io
+git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io
 ```
 
 If that is a bare `git`, no bot identity is in effect and agent commits use the machine's own git
 config. To opt in, set `git.cmd` to
-`git -c commit.gpgsign=false -c user.name="…" -c user.email=…` referencing the two identity keys
+`git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="…" -c user.email=…` referencing the two identity keys
 with nested `{{...}}` substitution — quoting `user.name` (it may contain spaces) and setting
 **both** keys explicitly in project config rather than relying on their stack defaults. See the
 stack's setup note for the exact recipes and the layering rules.
@@ -139,7 +139,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ### Example
 
 ```bash
-git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
+git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
 feat: add data-export command
 
 Three-phase flow: collect eligible records, confirm with the user,

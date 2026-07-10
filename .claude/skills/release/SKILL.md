@@ -90,7 +90,7 @@ Run the full checklist from `git-workflow`; do not open the PR if any fail:
 ## 5. Commit, push, open the labeled PR
 
 ```bash
-git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
+git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "$(cat <<'EOF'
 chore: bump to X.Y.Z
 
 Co-Authored-By: Claude <noreply@anthropic.com>
