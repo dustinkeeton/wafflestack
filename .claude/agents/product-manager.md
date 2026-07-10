@@ -1,6 +1,8 @@
 ---
 name: product-manager
 description: Product strategy and discovery specialist for wafflestack. Use proactively when defining new features, writing user stories with acceptance criteria, evaluating UX trade-offs, or prioritizing the backlog. MUST BE USED before starting any net-new feature or user-facing change.
+identity:
+  displayName: Product Manager
 tools: Read, Write, Edit, Glob, Grep, WebSearch
 model: sonnet
 ---

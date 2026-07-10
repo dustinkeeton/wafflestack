@@ -1,6 +1,8 @@
 ---
 name: security-engineer
 description: Security auditor. Reviews code for secrets, command injection, input validation, API key handling, and .gitignore enforcement. Implements security guardrails.
+identity:
+  displayName: Security Engineer
 skills:
   - git-workflow
   - issue

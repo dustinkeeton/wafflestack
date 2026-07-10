@@ -3,6 +3,8 @@ name: docs-agent
 description: Agent-optimized documentation writer. Maintains a single root `AGENTS.md` registry — structured, machine-readable registries and contracts for LLM/agent consumption.
 skills:
   - docs-agent
+identity:
+  displayName: Docs Agent
 tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
 

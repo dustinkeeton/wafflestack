@@ -1,6 +1,8 @@
 ---
 name: harness-architect
 description: Expert in designing and building agent harnesses — agent/skill/tool decomposition, subagent teams, hooks, MCP servers, slash-command UX, and multi-harness portability.
+identity:
+  displayName: Harness Architect
 skills:
   - git-workflow
   - issue

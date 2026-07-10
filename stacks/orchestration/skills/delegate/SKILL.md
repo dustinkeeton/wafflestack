@@ -488,9 +488,47 @@ Agent(
 
 **Silent specialists** — a specialist agent only has the tools its definition grants. Agents without `SendMessage`/`TaskUpdate` finish silently: never wait on a report-back from them. After each agent completes, verify its work directly (branch pushed? PR opened? `gh pr list --head {branch-name}`) and do the task/board bookkeeping yourself.
 
+### Per-agent commit identity
+
+Every spawned agent commits under **its own git author**, so two agents in the same run produce distinct attribution instead of a byte-identical trailer. You compute that author **at spawn time**, per agent, and bake it into the prompt as `{agent-git-cmd}`. Do **not** write it into the plan checkpoint — the checkpoint schema is closed (`additionalProperties: false`), and this value is a pure function of the two inputs below, so re-derivation at spawn time cannot drift.
+
+The **base command** — this project's resolved `git.cmd`, and the source of the base name and email:
+
+```bash
+{{git.cmd}}
+```
+
+The **consumer overrides** — this project's resolved `git.agentIdentities` (`{}` means no overrides; every agent uses the derived default):
+
+```yaml
+{{git.agentIdentities}}
+```
+
+Derive `{agent-git-cmd}` for an agent with slug `<agent-slug>`:
+
+1. **If the base command is a bare `git`** (or sets no `user.email`), this project has **not** opted into a bot identity. Then `{agent-git-cmd}` is the base command **verbatim — no virtualization**, and `git.agentIdentities` is inert. The toolkit **never clobbers** a human's git config; `git.cmd` is the single opt-in switch and there is no second one. Stop here.
+2. Otherwise derive the agent's defaults:
+   - **Display name** — read `identity.displayName` from the rendered agent definition at `{{harness.agentsDir}}/<agent-slug>.md`. If the file or the field is absent (`general-purpose`, for instance, is a harness built-in with no definition file), title-case the slug: `lead-engineer` → `Lead Engineer`.
+   - **Email** — take the `user.email=` value out of the base command and insert `+<agent-slug>` immediately before the `@`: `bot@wafflenet.io` → `bot+lead-engineer@wafflenet.io`.
+     **Unless the base cannot subaddress** — then use it **verbatim**, no `+` inserted. It cannot subaddress when *either*:
+     - its domain is `users.noreply.github.com` (or any `*.noreply.github.com`) — that domain routes only the `<id>+<username>@` shape, so a second `+` segment resolves to nothing at all; or
+     - its local part **already contains a `+`** (`12345+wafflebot@…`, `bot+ci@…`) — the tag is already spent; appending another does not yield "the base, tagged".
+
+     This matters because the github-workflow stack's own setup text recommends a noreply base. In that case every agent shares one email and attribution rides on the **display name** alone; give an agent its own address with an explicit `git.agentIdentities[<agent-slug>].botEmail` entry (rule 3), which is applied verbatim.
+3. Apply `git.agentIdentities[<agent-slug>]` **over those defaults, per field**: `botName` replaces the display name; `botEmail` replaces the email **verbatim** (an explicit override is exact — do not plus-address on top of it); `signingKey`, when present, additionally appends `-c user.signingkey=<key>` to the command.
+4. `{agent-git-cmd}` = **the base command with the `user.name=` value swapped for the (always double-quoted) display name and the `user.email=` value swapped for the virtualized email.** Swap the values in place; do not rebuild the command from scratch — everything else the project put in `git.cmd` (a `-c commit.gpgsign=false`, say) must survive.
+
+Two caveats, so nothing is over-claimed:
+
+- **Attribution is per agent *type*, not per spawn.** Two parallel instances of the same agent share one identity — `issue-3-lead-engineer` and `issue-7-lead-engineer` both commit as `Lead Engineer`. Two *different* agents are distinct, which is the guarantee.
+- **A plus-addressed email is a distinct address to GitHub.** Commits authored under `bot+<slug>@domain` do not link to the bot's GitHub account (no avatar, no profile) unless that exact alias is registered there. Plus-addressing buys per-agent attribution and mail filtering, not account linkage.
+- **A noreply base gets no per-agent email at all.** Per rule 2, `*@users.noreply.github.com` (and any base whose local part already carries a `+`) is used verbatim rather than mangled into an address that routes nowhere. Agents still commit under distinct **names**; distinct *addresses* need explicit `git.agentIdentities` entries.
+
+`{{git.coAuthorTrailer}}` is unchanged by any of this: with per-agent authors, the trailer's job is crediting the harness.
+
 ### Agent prompt template
 
-Each spawned agent receives this prompt. Its load-bearing fields — `{number}`, `{branch-name}`, and `{worktree_path}` — come from this issue's entry in the `plan` checkpoint (the single source of truth), not from re-derivation. For **parallel groups**, fill in `{worktree_path}` with the checkpoint's `worktree` value (the absolute path provisioned for this issue). For **serial groups / single-issue fast path**, omit the "Working directory" section — the agent works in the main checkout and creates its branch there per the git-workflow skill.
+Each spawned agent receives this prompt. Its load-bearing fields — `{number}`, `{branch-name}`, and `{worktree_path}` — come from this issue's entry in the `plan` checkpoint (the single source of truth), not from re-derivation; `{agent-git-cmd}` is computed at spawn time per "Per-agent commit identity" above. For **parallel groups**, fill in `{worktree_path}` with the checkpoint's `worktree` value (the absolute path provisioned for this issue). For **serial groups / single-issue fast path**, omit the "Working directory" section — the agent works in the main checkout and creates its branch there per the git-workflow skill.
 
 **Inject only this issue's relevant memory.** From the run-memory doc loaded in Phase 2, select the entries whose **Area** matches this issue's classified area (plus any that name this issue number in their **Since**), and paste just those into the "Repo notes from prior runs" section below. Do **not** dump the whole doc into every agent — an agent gets only what pertains to its issue. If no entry matches, omit the section entirely.
 
@@ -527,7 +565,7 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - {{project.testCmd}}
    - {{project.buildCmd}}
    {{delegate.extraPreflight}}
-4. Commit your work following the git-workflow skill — commit with `{{git.cmd}} commit` (that is where the project's bot identity, if any, is applied) and end every commit message with `{{git.coAuthorTrailer}}`. Commit everything **locally**; do not push yet.
+4. Commit your work following the git-workflow skill — commit with `{agent-git-cmd} commit` (that is where your own agent identity, if this project configures one, is applied) and end every commit message with `{{git.coAuthorTrailer}}`. Commit everything **locally**; do not push yet.
 5. Push and open the PR — but first check the approval gate. The gate is ON when `delegate.approveBeforePush` is `true`; for this run it is **`{{delegate.approveBeforePush}}`**.
    - **Gate off (`false`, the default):** push and open the PR yourself, exactly as usual —
      - Push: git push -u origin {branch-name}

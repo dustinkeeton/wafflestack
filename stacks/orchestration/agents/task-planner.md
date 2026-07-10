@@ -1,6 +1,8 @@
 ---
 name: task-planner
 description: Sprint planning and task-tracking specialist for {{project.name}}. Use proactively to break a feature into tasks, set up dependencies, claim/assign work, and produce status updates. MUST BE USED at the start of any multi-step initiative or when the user asks "what's next" / "where are we".
+identity:
+  displayName: Task Planner
 skills:
   - github-project-management
   - issue

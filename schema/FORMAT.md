@@ -47,7 +47,14 @@ requires:                            # optional per-item dependency declarations
 config:                              # template keys this stack may reference
   git.botEmail:
     required: true
+    pattern: '^\S+@\S+\.\S+$'        # optional: regex the resolved STRING value must fully match
     description: Committer email used for automated commits.
+  git.agentIdentities:
+    required: false
+    default: {}
+    entryPatterns:                   # optional: leaf guards for a MAP value's entries
+      botEmail: '^\S+@\S+\.\S+$'
+    description: Per-agent overrides; each entry is a map of the leaves declared above.
   project.buildCmd:
     required: false
     default: npm run build
@@ -79,6 +86,13 @@ required key. Use it for values spliced into a structured context — a workflow
 expression, a YAML scalar, a shell word — where an unescaped quote, newline, or `${{ }}`
 would corrupt or subvert the output: textual substitution can't escape for a context it
 doesn't know, so the pattern makes a bad value loud at render instead of silently wrong.
+
+A **map-valued** key declares **`entryPatterns:`** instead — a `<leaf>: <regex>` map describing
+the shape of *one entry*, applied to every entry in the value (`git.agentIdentities` is the
+worked example). Each entry must be a map; each of its keys must be a declared leaf (an unknown
+leaf fails the render, so a typo can't ride along unguarded); each leaf value must be a string
+fully matching its regex. Same enforcement points as `pattern:` — top-level and nested
+substitution — and the same toolkit-wide union: a leaf guarded by two stacks must satisfy both.
 
 `requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
 skill telling the reader to "see the `github-project-management` skill"). Each key is an
@@ -142,25 +156,56 @@ name: architect
 description: One-line description (used verbatim by every harness).
 skills:            # skill names this agent should be granted / pointed at
   - codebase-architecture
+identity:          # optional — this agent's virtualized git author (see below)
+  displayName: Architect
 claude:            # passthrough keys emitted only in the Claude render
   allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
 ```
+
+The `claude:` block is for **Claude-only** keys the toolkit has no vocabulary for
+(`allowed-tools`, `model`). It may **not** shadow a reserved key — `name`, `description`,
+`skills`, `identity` — each of which has a first-class home above. `validate` (and the
+external-stack gate at render) rejects `claude.identity` and its siblings, and the renderer
+strips them: otherwise a passthrough copy would be hoisted *over* the validated field, and the
+`identity.displayName` allowlist below — a trust boundary, not a lint — could be bypassed by
+declaring the value one level down.
 
 The body is the agent's instructions. It may reference declared config keys as
 `{{dotted.key}}`. The frontmatter `description` is also substituted (per target, like the
 body) — it is the one frontmatter field that carries prose; all other frontmatter passes
 through verbatim.
 
+**`identity.displayName`** is the human-readable git author name for commits this agent
+makes. The agent's own `name` slug doubles as the email alias, so no email field lives in
+frontmatter: when a project opts into a bot identity (`git.cmd` — see the github-workflow
+stack), the `delegate` skill derives each spawned agent's author as
+`<displayName> <botEmail plus-addressed with +<name>>` — `bot@x.com` → `bot+architect@x.com`.
+The field is **optional**: an agent without one falls back to a title-cased slug
+(`lead-engineer` → `Lead Engineer`), which is why the shipped agents whose slugs title-case
+badly (`qa-engineer`, `ux-designer`, `devops-engineer`) all declare it. `git.agentIdentities`
+overrides the derived result per field. `displayName` is validated (`validate`, and the
+external-stack gate at render) against the same allowlist as `git.botName` — letters, digits,
+`.` `_` `-` `[` `]`, single interior spaces — because it lands inside the double quotes of an
+agent-executed `git -c user.name="…"`.
+
+Two caveats worth stating where implementers will read them: attribution is per agent
+**type**, not per spawn (two parallel `lead-engineer` instances share one author); and a
+plus-addressed alias is a **distinct email to GitHub**, so such commits do not link to the
+bot's GitHub account unless that exact alias is registered there. Plus-addressing buys
+attribution and mail filtering, not account linkage. And a base email that **cannot** subaddress
+— a `*.noreply.github.com` domain, or a local part that already carries a `+` — is used verbatim
+rather than mangled: those agents differ by display name only.
+
 Renders to:
 - **claude** → `.claude/agents/<name>.md` — frontmatter `name`, `description`, `skills`,
-  plus every key under `claude:` hoisted to the top level; body as-is.
+  `identity`, plus every key under `claude:` hoisted to the top level; body as-is.
 - **codex** → `.codex/agents/<name>.toml` — `name`, `description`,
   `developer_instructions` = body (skill access is conveyed in body prose; the
-  `skills:`/`claude:` frontmatter has no TOML equivalent).
+  `skills:`/`identity:`/`claude:` frontmatter has no TOML equivalent, so it is dropped).
 - **agents-dir** → `.agents/agents/<name>.md` — harness-neutral Markdown: frontmatter
-  `name`, `description`, and the neutral `skills:` grant-pointer, then the body. The
-  Claude-only `claude:` passthrough block is dropped (it has no cross-tool meaning).
+  `name`, `description`, the neutral `skills:` grant-pointer and `identity:`, then the body.
+  The Claude-only `claude:` passthrough block is dropped (it has no cross-tool meaning).
 
 ## Skill definition (`skills/<name>/SKILL.md`)
 
@@ -511,8 +556,10 @@ undeclared-path expansion above is what makes any *genuinely* undeclared overlay
 A declared `pattern:` is enforced on the fully-expanded value **wherever the key is substituted —
 including nested composition**. `git.cmd: git -c user.email={{git.botEmail}}` validates
 `git.botEmail` against its pattern even though the canonical text never names that key at top
-level. Patterns apply to string scalars only: a key whose value is a map or a list (e.g.
-`git.agentIdentities`) is not shape-checked, and its leaves do not inherit any sibling's pattern.
+level. `pattern:` applies to string scalars only; a key whose value is a **map** declares
+**`entryPatterns:`** to guard its entries' leaves (`git.agentIdentities` does). Leaves never
+*inherit* a sibling scalar's pattern — `entryPatterns` restates it deliberately. A **list**-valued
+key is still unguarded by either.
 
 Avoid config key names that collide with literal template syntax you embed in values (e.g. don't
 declare a `secrets.*` namespace).
@@ -554,6 +601,14 @@ per-harness differences — chiefly authorship attribution — without duplicati
 | `harness.assistantName` | `Claude` | `Codex` | `Codex` |
 | `harness.attributionPath` | `claude-code` | `Codex` | `Codex` |
 | `harness.skillsDir` | `.claude/skills` | `.agents/skills` | `.agents/skills` |
+| `harness.agentsDir` | `.claude/agents` | `.agents/agents` | `.agents/agents` |
+
+`harness.agentsDir` names the **Markdown** agent definitions, which is what content reading an
+agent's frontmatter by path (`identity.displayName`) needs. codex therefore points at
+`.agents/agents` rather than the `.codex/agents/<name>.toml` it emits — the TOML has no shape for
+`identity`. A **codex-only** render emits no such Markdown at all, and consumers must fall back
+(the `delegate` skill title-cases the slug). codex and agents-dir must keep identical `harness.*`
+values: the shared `.agents/skills/<name>` render is deduped on that premise.
 
 A project can override any sub-key under `config.harness.<sub>` — either a scalar (applied
 to every target) or a per-target map, e.g.:
@@ -569,6 +624,10 @@ config:
 
 Because substitution runs once per target, the same `{{harness.*}}` placeholder can render
 differently in `.claude/…` vs `.codex/…` / `.agents/…` from a single canonical source.
+
+`skillsDir` and `agentsDir` are **injection-guarded** (`^[A-Za-z0-9._/-]+$`): both splice into
+instructions an agent then acts on — `read {{harness.agentsDir}}/<slug>.md` — so an override
+carrying a space, quote, `$`, or newline fails the render rather than reshaping the instruction.
 
 The namespace also carries three **target-independent** keys that pin the CI workflow
 dispatcher, so a consumer can repin or repoint the harness action without ejecting the

@@ -240,6 +240,66 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
     assert.match(md, /memory\.mjs --file .*--max-bytes 4096/);
     assert.match(md, /never raise the cap to dodge pruning/i);
   });
+
+  // #156: the per-agent identity derivation is PROMPT-level — it lives in this skill's text and
+  // is executed by the orchestrator at spawn time, so these phrases are the mechanism. Losing any
+  // of them silently reverts per-agent attribution or, worse, the no-clobber invariant.
+  describe('per-agent commit identity (#156)', () => {
+    test('a bare git.cmd short-circuits: no virtualization, never clobber the human', () => {
+      assert.match(md, /### Per-agent commit identity/);
+      assert.match(md, /no virtualization/);
+      assert.match(md, /never clobbers\*\* a human's git config/);
+      assert.match(md, /`git\.cmd` is the single opt-in switch/);
+      assert.match(md, /`git\.agentIdentities` is inert/);
+    });
+
+    test('the derivation rule: displayName from frontmatter, +<agent-slug> before the @', () => {
+      assert.match(md, /identity\.displayName/);
+      assert.match(md, /insert `\+<agent-slug>` immediately before the `@`/);
+      assert.match(md, /bot\+lead-engineer@wafflenet\.io/);
+      // Fallback for an agent with no definition file (e.g. general-purpose).
+      assert.match(md, /title-case the slug/);
+    });
+
+    // A base that cannot subaddress must NOT be plus-addressed. `users.noreply.github.com` routes
+    // only the `<id>+<username>@` shape — and it is the base the github-workflow stack's own setup
+    // text recommends for a render-committing repo, so following both documents used to yield an
+    // author address that resolves nowhere, with no error anywhere.
+    test('a base email that cannot subaddress is used verbatim, not mangled', () => {
+      assert.match(md, /\*\*Unless the base cannot subaddress\*\*/);
+      assert.match(md, /users\.noreply\.github\.com/);
+      assert.match(md, /local part \*\*already contains a `\+`\*\*/);
+      assert.match(md, /verbatim\*\*, no `\+` inserted/);
+      // ...and the honest consequence is stated, with the escape hatch.
+      assert.match(md, /attribution rides on the \*\*display name\*\* alone/);
+      assert.match(md, /git\.agentIdentities\[<agent-slug>\]\.botEmail/);
+    });
+
+    test('git.agentIdentities overrides the derived default per field, botEmail verbatim', () => {
+      assert.match(md, /over those defaults, per field/);
+      assert.match(md, /replaces the email \*\*verbatim\*\*/);
+      assert.match(md, /do not plus-address on top of it/);
+      assert.match(md, /user\.signingkey/);
+      // Value-swap, not rebuild — a `-c commit.gpgsign=false` in git.cmd must survive.
+      assert.match(md, /do not rebuild the command from scratch/);
+    });
+
+    test('the honesty caveats are stated: per-type attribution, no account linkage, noreply base', () => {
+      assert.match(md, /per agent \*type\*, not per spawn/);
+      assert.match(md, /do not link to the bot's GitHub account/);
+      assert.match(md, /A noreply base gets no per-agent email at all/);
+    });
+
+    test('identity is computed at spawn time, never written to the closed checkpoint schema', () => {
+      assert.match(md, /at spawn time/);
+      assert.match(md, /additionalProperties.*false/);
+    });
+
+    test('the agent prompt template commits under {agent-git-cmd}, not the render-time literal', () => {
+      assert.match(md, /commit with `\{agent-git-cmd\} commit`/);
+      assert.doesNotMatch(md, /commit with `git -c /, 'the render-time literal is gone from the template');
+    });
+  });
 });
 
 describe('autopilot skill: instantiation contract, handoff, and guardrails', () => {

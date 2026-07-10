@@ -1,6 +1,8 @@
 ---
 name: mobile-architect
 description: Expo / React Native architecture specialist for {{project.name}}. Designs app structure, navigation, UI-layer choices, native configuration, and build/release setup for iOS and Android.
+identity:
+  displayName: Mobile Architect
 skills:
   - expo-ui
   - expo-app-dev

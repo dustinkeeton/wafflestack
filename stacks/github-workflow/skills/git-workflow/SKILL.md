@@ -18,7 +18,11 @@ is actually in effect.
 - Name (`git.botName`): `{{git.botName}}`
 - Email (`git.botEmail`): `{{git.botEmail}}`
 - Signing key (`git.signingKey`): "{{git.signingKey}}" — empty means no dedicated bot signing key
-- Per-agent identities (`git.agentIdentities`; `{}` means every agent uses the main identity):
+- Per-agent identities (`git.agentIdentities`) — **overrides only.** When a bot identity is in
+  effect, an agent spawned by the `delegate` skill commits under a *derived* identity by default
+  (its `identity.displayName`, and the bot email plus-addressed as `bot+<agent-slug>@…`); an entry
+  here replaces that per field. The derivation rule lives in the `delegate` skill's "Per-agent
+  commit identity" section — that is its canonical definition. `{}` (below) means no overrides:
 
 ```yaml
 {{git.agentIdentities}}

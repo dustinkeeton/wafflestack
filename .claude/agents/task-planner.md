@@ -4,6 +4,8 @@ description: Sprint planning and task-tracking specialist for wafflestack. Use p
 skills:
   - github-project-management
   - issue
+identity:
+  displayName: Task Planner
 tools: TaskCreate, TaskUpdate, TaskList, TaskGet, Read, Glob, Grep, Bash
 model: haiku
 ---

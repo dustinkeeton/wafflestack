@@ -33,9 +33,9 @@ const CHEATSHEET_HTML = path.join('.waffle', 'cheatsheet.html');
 const TEAM_MD = path.join('.waffle', 'TEAM.md');
 const TEAM_HTML = path.join('.waffle', 'team.html');
 
-// Description substitution never enforces `pattern:` guards (those police config values
-// spliced into structured contexts, not prose) — pass an empty map.
-const NO_PATTERNS = new Map();
+// Description substitution never enforces `pattern:`/`entryPatterns:` guards (those police
+// config values spliced into structured contexts, not prose) — pass empty guards.
+const NO_GUARDS = { patterns: new Map(), entryPatterns: new Map() };
 
 /**
  * A skill is a slash command unless it explicitly opts out with `user-invocable: false`.
@@ -61,7 +61,7 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
     return resolvers.get(stack.name);
   };
   const sub = (stack, text, ctx) =>
-    substitute(String(text ?? ''), resolverFor(stack), stack.declared, errors, ctx, NO_PATTERNS).trim();
+    substitute(String(text ?? ''), resolverFor(stack), stack.declared, errors, ctx, NO_GUARDS).trim();
 
   const commands = [];
   const agents = [];

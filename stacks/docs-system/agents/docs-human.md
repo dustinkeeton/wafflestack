@@ -1,6 +1,8 @@
 ---
 name: docs-human
 description: Human-readable documentation writer. Maintains {{docs.humanDocSet}} — scannable, plain-language docs derived from the machine docs for human readers.
+identity:
+  displayName: Docs Human
 skills:
   - docs-human
 claude:

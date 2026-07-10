@@ -1,6 +1,8 @@
 ---
 name: lead-engineer
 description: Senior architect for the {{project.name}} codebase. Use proactively for architecture decisions, API/module design, code review of non-trivial changes, refactors, and cross-cutting technical concerns. MUST BE USED before introducing new dependencies, new top-level directories, or new abstractions.
+identity:
+  displayName: Lead Engineer
 claude:
   tools: Read, Edit, Write, Bash, Glob, Grep, Agent
   model: opus

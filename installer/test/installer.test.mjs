@@ -28,6 +28,7 @@ import {
   recommendedGitignoreEntries,
   normalizeStackEntries,
   classifyStackSource,
+  HARNESS_BUILTINS,
 } from '../lib/project.mjs';
 
 describe('template', () => {
@@ -1585,19 +1586,75 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.match(skill, /git -c user\.email=ci@example\.com -c user\.name=CIBot/);
   });
 
-  test('I7 git.agentIdentities is UNVALIDATED — its leaves bypass the sibling patterns (documented, pinned)', () => {
-    // Guardrail, not an endorsement: `pattern:` guards string scalars only, so a leaf value that
-    // git.botEmail's own pattern rejects sails through under agentIdentities. The key description
-    // and the CHANGELOG say so explicitly; #155 is where the shape gets enforced. If a future
-    // change starts validating these leaves, this test fails and BOTH docs must be updated.
+  // I7 (flipped in #156). It used to pin the OPPOSITE: `pattern:` guards string scalars only, so a
+  // leaf value that git.botEmail's own pattern rejects sailed through under agentIdentities. #156
+  // makes the delegate skill splice those leaves into an agent-executed shell command, so the hole
+  // is closed by `entryPatterns:` — the map-valued sibling of `pattern:`. The same value that used
+  // to render must now fail the render. Reverting entryPatterns turns this red.
+  test('I7 git.agentIdentities leaves ARE guarded — an entry that fails the botEmail shape kills the render', () => {
     write(
       cwd,
       '.waffle/waffle.yaml',
       `${base}  git:\n    agentIdentities:\n      rogue:\n        botEmail: "$(id)@x.com"\n`,
     );
     const result = render();
-    assert.equal(result.ok, true, 'leaves are not pattern-checked today (see #155)');
-    assert.deepEqual(parseIdentityFence(read(cwd, SKILL)), { rogue: { botEmail: '$(id)@x.com' } });
+    assert.equal(result.ok, false, 'command substitution must not reach an agent-executed shell word');
+    const errs = result.errors.join('\n');
+    assert.match(errs, /git\.agentIdentities/, 'the error names the offending key');
+    assert.match(errs, /rogue/, '...and the offending entry');
+    assert.match(errs, /pattern/);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
+  });
+
+  // The `signingKey` leaf takes `+`, not the sibling scalar's `*`. Empty is meaningful for the
+  // scalar ("no dedicated bot key") but not here: the leaf is optional, so `signingKey: ""` is
+  // *present* and rule 3 appends `-c user.signingkey=` with no value — which git rejects at the
+  // agent's first commit. Fail at render instead of at run time.
+  test('I7a an empty signingKey override fails the render rather than rendering `-c user.signingkey=`', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    agentIdentities:\n      docs-agent:\n        signingKey: ""\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, false, 'an explicit empty signingKey is a footgun, not a no-op');
+    const errs = result.errors.join('\n');
+    assert.match(errs, /git\.agentIdentities/);
+    assert.match(errs, /signingKey/);
+  });
+
+  test('I7b an unknown leaf key under an entry fails the render (a typo cannot ride along unguarded)', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    agentIdentities:\n      docs-agent:\n        botEmial: bot@x.com\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, false, 'an unknown leaf is an error, not a passthrough');
+    assert.match(result.errors.join('\n'), /unknown key "botEmial"/);
+  });
+
+  test('I7c a malformed entry (scalar, not a map) fails the render', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    agentIdentities:\n      docs-agent: bot@x.com\n`);
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /entry "docs-agent" must be a map/);
+  });
+
+  test('I7d a plus-addressed email — the shape #156 derives — satisfies the botEmail guard', () => {
+    // The derivation rule inserts `+<agent-slug>` before the `@`. Slugs are [a-z0-9-] and the
+    // botEmail allowlist admits `+` and `-`, so the derived address passes its own guard. If the
+    // allowlist ever tightens, per-agent identities break silently — this pins it.
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    agentIdentities:\n      lead-engineer:\n        botName: Lead Engineer\n        botEmail: bot+lead-engineer@wafflenet.io\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.deepEqual(parseIdentityFence(read(cwd, SKILL)), {
+      'lead-engineer': { botName: 'Lead Engineer', botEmail: 'bot+lead-engineer@wafflenet.io' },
+    });
   });
 });
 
@@ -1709,11 +1766,30 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     const delegate = read(cwd, DELEGATE_SKILL);
-    // The spawned agent's COMMIT carries the identity (the only command that records one)...
-    assert.match(delegate, /git -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit/);
+    // #156 moved the spawned agent's commit off the render-time literal onto `{agent-git-cmd}`,
+    // a run-time field the orchestrator fills per agent. So the resolved identity now lands in
+    // the "Per-agent commit identity" base-command fence — the source the derivation reads — and
+    // the prompt template's commit step names the derived field instead.
+    assert.match(delegate, /^git -c user\.name="Wafflebot" -c user\.email=bot@example\.com$/m,
+      'the base-command fence carries the resolved identity');
+    assert.match(delegate, /commit with `\{agent-git-cmd\} commit`/,
+      'the prompt template commits under the per-agent identity');
     // ...and its push does not.
     assert.match(delegate, /- Push: git push -u origin \{branch-name\}/);
     assert.doesNotMatch(delegate, /\{\{git\./, 'no identity placeholder survives the render');
+  });
+
+  // #156: the no-clobber invariant, restated for the per-agent layer. With a bare `git.cmd` the
+  // repo has opted into nothing, so the delegate skill must instruct the orchestrator to skip
+  // virtualization entirely rather than invent an identity out of the agent slug.
+  test('W3b a bare git.cmd renders the never-virtualize short-circuit into the delegate skill', () => {
+    write(cwd, '.waffle/waffle.yaml', orchBase());
+    assert.equal(render().ok, true);
+    const delegate = read(cwd, DELEGATE_SKILL);
+    assert.match(delegate, /^git$/m, 'the base-command fence shows a bare git');
+    assert.match(delegate, /no virtualization/, 'and says so');
+    assert.match(delegate, /never clobbers/);
+    assert.match(delegate, /`git\.agentIdentities` is inert/);
   });
 
   test('W4 leaning on the STACK DEFAULTS instead of project values leaks a literal placeholder cross-stack', () => {
@@ -1801,6 +1877,217 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     const result = render();
     assert.equal(result.ok, false, 'a quote-breaking botName must never reach a shell word');
     assert.match(JSON.stringify(result.errors), /git\.botName/);
+  });
+});
+
+// #156: per-agent virtualized identities. Two halves are testable here — the `identity:`
+// frontmatter passthrough (a per-target render decision) and the `entryPatterns:` guard on
+// `git.agentIdentities` (a trust-boundary decision). The DERIVATION itself is prompt-level: it
+// lives in the delegate skill's rendered text, pinned by content.test.mjs and the W-series above.
+describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  const writeAgent = (frontmatter) =>
+    write(toolkitRoot, 'stacks/demo/agents/lead-engineer.md', ['---', ...frontmatter, '---', '', 'Body.', ''].join('\n'));
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-156-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-156-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: x\nstacks: [demo]\n');
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [lead-engineer]\n');
+    writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: Lead Engineer']);
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = (targets = 'claude') => {
+    write(cwd, '.waffle/waffle.yaml', `targets: [${targets}]\nstacks: [demo]\nconfig: {}\n`);
+    return renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  test('the claude render carries the identity block through to the agent frontmatter', () => {
+    assert.equal(render().ok, true);
+    const { data } = parseFrontmatter(read(cwd, '.claude/agents/lead-engineer.md'));
+    assert.deepEqual(data.identity, { displayName: 'Lead Engineer' });
+    // The delegate orchestrator reads this file by path at spawn time; harness.agentsDir names it.
+    assert.equal(data.name, 'lead-engineer');
+  });
+
+  test('the agents-dir render carries it too; the codex TOML drops it and still parses', () => {
+    assert.equal(render('claude, codex, agents-dir').ok, true);
+    const { data } = parseFrontmatter(read(cwd, '.agents/agents/lead-engineer.md'));
+    assert.deepEqual(data.identity, { displayName: 'Lead Engineer' });
+    const toml = read(cwd, '.codex/agents/lead-engineer.toml');
+    assert.doesNotMatch(toml, /identity/, 'TOML has no shape for it');
+    assert.match(toml, /^name = "lead-engineer"$/m);
+    assert.match(toml, /^description = "Leads\."$/m);
+  });
+
+  test('an agent WITHOUT identity renders byte-identical to the pre-#156 shape', () => {
+    writeAgent(['name: lead-engineer', 'description: Leads.']);
+    assert.equal(render().ok, true);
+    const { data } = parseFrontmatter(read(cwd, '.claude/agents/lead-engineer.md'));
+    assert.equal('identity' in data, false, 'no empty identity key is emitted');
+    assert.deepEqual(Object.keys(data), ['name', 'description']);
+  });
+
+  test('harness.agentsDir resolves per target', () => {
+    write(toolkitRoot, 'stacks/demo/agents/lead-engineer.md',
+      ['---', 'name: lead-engineer', 'description: Leads.', '---', '', 'Read {{harness.agentsDir}}/x.md.', ''].join('\n'));
+    assert.equal(render('claude, agents-dir').ok, true);
+    assert.match(read(cwd, '.claude/agents/lead-engineer.md'), /Read \.claude\/agents\/x\.md\./);
+    assert.match(read(cwd, '.agents/agents/lead-engineer.md'), /Read \.agents\/agents\/x\.md\./);
+  });
+
+  // Not the builtin table asserted against itself: `harness.agentsDir` must name the directory
+  // `renderAgent` actually emits a Markdown definition into — the file whose `identity.displayName`
+  // the delegate rule reads. Codex emits only `.codex/agents/<name>.toml`, which drops `identity`,
+  // so codex names `.agents/agents` and a codex-only render legitimately has no such file.
+  test('harness.agentsDir names the dir the Markdown agent definition is actually emitted to', () => {
+    assert.equal(render('claude, codex, agents-dir').ok, true);
+    for (const [target, dir] of Object.entries(HARNESS_BUILTINS.agentsDir)) {
+      if (target === 'codex') continue; // codex emits TOML elsewhere; it borrows agents-dir's path
+      assert.ok(fs.existsSync(path.join(cwd, dir, 'lead-engineer.md')), `${target}: no agent md under ${dir}`);
+    }
+    assert.ok(!fs.existsSync(path.join(cwd, '.codex/agents/lead-engineer.md')), 'codex emits no .md — do not point at it');
+  });
+
+  // `renderSkill` dedupes the shared `.agents/skills/<name>` output across codex and agents-dir on
+  // the explicit premise that their `harness.*` built-ins are identical. Divergence would make one
+  // shared file's content depend on which OTHER targets are enabled (addDir: first target wins).
+  test('codex and agents-dir harness built-ins are identical — renderSkill dedupe depends on it', () => {
+    for (const [sub, builtin] of Object.entries(HARNESS_BUILTINS)) {
+      if (!builtin || typeof builtin !== 'object') continue; // target-independent scalar
+      assert.equal(builtin.codex, builtin['agents-dir'], `harness.${sub} diverges between codex and agents-dir`);
+    }
+  });
+
+  test('a harness.agentsDir override carrying a shell metacharacter fails the render', () => {
+    write(toolkitRoot, 'stacks/demo/agents/lead-engineer.md',
+      ['---', 'name: lead-engineer', 'description: Leads.', '---', '', 'Read {{harness.agentsDir}}/x.md.', ''].join('\n'));
+    write(cwd, '.waffle/waffle.yaml',
+      'targets: [claude]\nstacks: [demo]\nconfig:\n  harness:\n    agentsDir: \'.claude/agents"; id; echo "\'\n');
+    const result = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(result.ok, false);
+    assert.match(JSON.stringify(result.errors), /harness\.agentsDir/);
+  });
+
+  // The blocker from #245's review. `claude:` hoists its keys to the top level of the Claude
+  // render, so before this it could overwrite the `identity:` block validateStack had just
+  // checked — smuggling a quote-breaking displayName into an agent-executed `git -c user.name=`.
+  test('validate rejects an `identity` smuggled in under the `claude:` passthrough', () => {
+    writeAgent([
+      'name: lead-engineer', 'description: Leads.',
+      'claude:', '  identity:', '    displayName: \'Evil"; id; echo "\'',
+    ]);
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /claude\.identity/.test(p) && /reserved/.test(p)), JSON.stringify(problems));
+  });
+
+  for (const key of ['name', 'description', 'skills']) {
+    test(`validate rejects the reserved key "${key}" under the \`claude:\` passthrough`, () => {
+      writeAgent(['name: lead-engineer', 'description: Leads.', 'claude:', `  ${key}: whatever`]);
+      const problems = validateToolkit(toolkitRoot);
+      assert.ok(problems.some((p) => p.includes(`claude.${key}`)), JSON.stringify(problems));
+    });
+  }
+
+  test('the external-stack gate rejects a `claude.identity` too, and the renderer strips it', () => {
+    writeAgent([
+      'name: lead-engineer', 'description: Leads.',
+      'identity:', '  displayName: Lead Engineer',
+      'claude:', '  model: opus', '  identity:', '    displayName: \'Evil"; id\'',
+    ]);
+    const toolkit = loadToolkit(toolkitRoot);
+    toolkit.stacks.get('demo').provenance = { source: 'https://example.com/x.git', ref: 'v1' };
+    assert.ok(validateExternalStacks(toolkit).some((p) => /claude\.identity/.test(p)));
+    // Defense in depth: even if the gate were bypassed, the validated block wins and the
+    // Claude-only key still passes through.
+    assert.equal(render().ok, true);
+    const { data } = parseFrontmatter(read(cwd, '.claude/agents/lead-engineer.md'));
+    assert.deepEqual(data.identity, { displayName: 'Lead Engineer' });
+    assert.equal(data.model, 'opus');
+  });
+
+  test('validate rejects a non-map `claude:` passthrough', () => {
+    writeAgent(['name: lead-engineer', 'description: Leads.', 'claude: opus']);
+    assert.ok(validateToolkit(toolkitRoot).some((p) => /`claude` must be a map/.test(p)));
+  });
+
+  // The trust boundary. `displayName` lands inside the double quotes of an agent-executed
+  // `git -c user.name="…"`, so it carries git.botName's allowlist — enforced by `validate` for
+  // the toolkit's own stacks and by `validateExternalStacks` at render for third-party ones.
+  for (const [frontmatter, why] of [
+    [['identity:', '  displayName: \'Evil"; id; echo "\''], 'quote-breaking name escapes the shell word'],
+    [['identity:', '  displayName: Bot`Name'], 'backtick is command substitution'],
+    [['identity:', '  displayName: "${{ secrets.LEAK }}"'], 'a ${{ }} expression survives the renderer verbatim'],
+    [['identity:', '  displayName: Bad', '  email: sneak@x.com'], 'unknown key — email is derived, never declared'],
+    [['identity: Lead Engineer'], 'identity must be a map, not a scalar'],
+    [['identity:', '  displayName: 42'], 'displayName must be a string'],
+  ]) {
+    test(`validate rejects a malformed identity: ${why}`, () => {
+      writeAgent(['name: lead-engineer', 'description: Leads.', ...frontmatter]);
+      const problems = validateToolkit(toolkitRoot);
+      assert.ok(problems.length > 0, `expected a problem for: ${why}`);
+      assert.match(problems.join('\n'), /identity/);
+    });
+  }
+
+  test('validate accepts a clean displayName', () => {
+    writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: QA Engineer']);
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('the external-stack gate rejects a malformed identity too', () => {
+    writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: \'Evil"; id\'']);
+    const toolkit = loadToolkit(toolkitRoot);
+    // Stamp provenance so the stack looks external to the gate — the same shape
+    // `loadToolkitWithSources` attaches.
+    toolkit.stacks.get('demo').provenance = { source: 'https://example.com/x.git', ref: 'v1' };
+    const problems = validateExternalStacks(toolkit);
+    assert.ok(problems.some((p) => /identity\.displayName/.test(p) && /example\.com/.test(p)), JSON.stringify(problems));
+  });
+
+  test('entryPatterns regexes must compile, and a default map must satisfy its own guard', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', [
+      'name: demo',
+      'description: Demo.',
+      'agents: [lead-engineer]',
+      'config:',
+      '  demo.map:',
+      '    required: false',
+      '    default: {}',
+      '    entryPatterns:',
+      '      leaf: "[unclosed"',
+      '    description: x',
+      '',
+    ].join('\n'));
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /invalid entryPattern for "leaf"/.test(p)), JSON.stringify(problems));
+  });
+
+  test('a default map that violates its own entryPatterns is a validate problem', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', [
+      'name: demo',
+      'description: Demo.',
+      'agents: [lead-engineer]',
+      'config:',
+      '  demo.map:',
+      '    required: false',
+      '    default:',
+      '      a:',
+      '        leaf: "!!bad"',
+      '    entryPatterns:',
+      '      leaf: "[a-z]+"',
+      '    description: x',
+      '',
+    ].join('\n'));
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /demo\.map default entry "a" key "leaf"/.test(p)), JSON.stringify(problems));
   });
 });
 

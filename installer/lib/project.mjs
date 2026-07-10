@@ -389,6 +389,22 @@ export const HARNESS_BUILTINS = {
   // Where rendered skills live from that target's point of view, for content that
   // references skill files by path ("read {{harness.skillsDir}}/x/SKILL.md").
   skillsDir: { claude: '.claude/skills', codex: '.agents/skills', 'agents-dir': '.agents/skills' },
+  // Where rendered agent definitions live from that target's point of view, for content that
+  // reads an agent's frontmatter by path (the delegate skill reads `identity.displayName`).
+  //
+  // codex points at `.agents/agents`, NOT the `.codex/agents/<name>.toml` its own renderAgent
+  // branch emits, for two reasons (#156 review):
+  //   1. The TOML carries no `identity` — `agentToml` drops it, there being no shape for it. A
+  //      codex-only render therefore has NO file anywhere that answers `identity.displayName`,
+  //      and the consuming rule's documented fallback (title-case the slug) is the honest answer.
+  //      Naming `.codex/agents` would only point the reader at a `.md` that never exists.
+  //   2. `renderSkill` dedupes the shared `.agents/skills/<name>` output across codex and
+  //      agents-dir on the premise that their `harness.*` built-ins are IDENTICAL — one shared
+  //      file, one unambiguous render. A divergent `agentsDir` would make that file's content
+  //      depend on which *other* targets happen to be enabled. Keep the two in lockstep.
+  // So: codex + agents-dir → the path exists and carries the field; codex alone → the path is
+  // absent and the fallback fires, explicitly rather than by accident.
+  agentsDir: { claude: '.claude/agents', codex: '.agents/agents', 'agents-dir': '.agents/agents' },
   // CI workflow dispatcher (#131). The rendered GitHub-workflow files splice one pinned
   // action into their `uses:` / `with:` lines; these built-ins are its default identity, so a
   // consumer can pin a different version, repoint the ref, or rename the API-key secret via
@@ -402,14 +418,22 @@ export const HARNESS_BUILTINS = {
 };
 
 /**
- * Injection-guard patterns for the reserved `harness.*` keys that render into CI workflow
- * files (#131) — the same discipline stack config applies to its other workflow-spliced keys
+ * Injection-guard patterns for the reserved `harness.*` keys that render into CI workflow files
+ * (#131) or into instructions an agent executes (#156) — the same discipline stack config
+ * applies to its other workflow-spliced keys
  * (reject `${{`, quotes, newlines), but attached to the reserved namespace rather than a
  * stack's `config:`. Enforced at render (render.mjs seeds these into the pattern map so every
  * splice is validated) and checked by `validate` (the built-in defaults must satisfy them).
  * Keyed by sub-key; a `harness.<sub>` with no entry here is unguarded, as before.
  */
 export const HARNESS_PATTERNS = {
+  // Directory paths spliced into content an agent then *executes against* — `read
+  // {{harness.agentsDir}}/<slug>.md` in the delegate skill's identity-derivation rule, and the
+  // sibling `skillsDir` in skill-reference prose. Both are documented `config.harness.*`
+  // consumer overrides, so guard them as relative repo paths: no spaces, quotes, `$`, `${{`,
+  // backticks, `..`-smuggling shell metacharacters, or newlines.
+  agentsDir: '^[A-Za-z0-9._/-]+$',
+  skillsDir: '^[A-Za-z0-9._/-]+$',
   // `owner/repo[/path]` action slug spliced bare into `uses:`. Strict slug — no `@` (the
   // template supplies it), spaces, quotes, `#`, `${{`, or newlines that could mangle the
   // `uses:` line or inject an expression.

@@ -120,6 +120,30 @@ config:
     required: false
     default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
     description: Attribution trailer spawned agents must end commits with (same as the github-workflow stack key).
+  git.agentIdentities:
+    required: false
+    default: {}
+    # Identical entryPatterns to the github-workflow stack's declaration (#156). Guards are
+    # compiled toolkit-wide and a key guarded twice must satisfy BOTH, so these must not drift:
+    # any divergence silently tightens the effective guard. The delegate skill is this key's
+    # consumer, and it renders here whether or not github-workflow is installed.
+    entryPatterns:
+      botName: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
+      botEmail: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+      signingKey: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]+$'
+    description: >-
+      Per-agent virtualized git identities (same key as the github-workflow stack), consumed by
+      the delegate skill's "Per-agent commit identity" section: each spawned agent commits under
+      its own author, derived from the resolved git.cmd (display name from the agent's
+      `identity.displayName` frontmatter; email = the bot email plus-addressed with
+      `+<agent-slug>`, or used verbatim when the base cannot subaddress — a
+      `*.noreply.github.com` domain, or a local part that already carries a `+`). An entry here
+      overrides that derived default per field — botName replaces
+      the name, botEmail replaces the email verbatim, signingKey appends `-c user.signingkey=`
+      (non-empty; omit the leaf to add nothing).
+      Empty (the default) means every agent uses the derived default. INERT WITHOUT THE OPT-IN: a
+      bare `git.cmd` means no bot identity is configured, so nothing is virtualized and this map
+      does nothing. Shape-validated at render (unknown leaf keys and unsafe values fail loudly).
   git.worktreesDir:
     required: false
     default: .claude/worktrees

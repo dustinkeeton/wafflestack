@@ -1,6 +1,8 @@
 ---
 name: plugin-architect
 description: Obsidian plugin architecture specialist. Designs plugin structure, settings, commands, UI components, and build configuration.
+identity:
+  displayName: Plugin Architect
 skills:
   - obsidian-plugin-dev
   - tdd

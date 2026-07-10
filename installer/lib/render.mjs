@@ -10,7 +10,7 @@ import { substitute, placeholderKeys, compilePattern } from './template.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
-import { validateExternalStacks } from './validate.mjs';
+import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import { applicablePrerequisites, evaluatePrerequisites, formatPrereq, RENDER_PROBE_KINDS } from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
@@ -172,7 +172,7 @@ export function renderProject({
   // Compile every `pattern:` guard the toolkit declares ONCE, across all stacks, then enforce
   // them at every substitution site below (render-time value validation for config values).
   // Toolkit-wide, not per-stack: see compilePatterns.
-  const patterns = compilePatterns(toolkit, errors);
+  const guards = compilePatterns(toolkit, errors);
 
   for (const [stackName, { stack, items }] of groups) {
     // One resolver per enabled target — the reserved `harness.*` keys resolve
@@ -195,9 +195,9 @@ export function renderProject({
     }
 
     for (const { kind, item } of items) {
-      if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, patterns });
-      else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, patterns });
-      else renderFiles({ file: item, stack, resolve: primaryResolver, emit, errors, patterns });
+      if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, guards });
+      else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, guards });
+      else renderFiles({ file: item, stack, resolve: primaryResolver, emit, errors, guards });
     }
     // Env prerequisites still warn when any item from this stack renders.
     checkEnvPrerequisites({ stack, project, cwd, warnings });
@@ -303,20 +303,31 @@ export function renderProject({
   return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed, sources };
 }
 
-function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, patterns }) {
+function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, guards }) {
   const context = `${stack.name}/agents/${agent.name}`;
   const extPath = path.join(EXTENSIONS_DIR, 'agents', `${agent.name}.md`);
   // Body and description are substituted per target so `harness.*` resolves to that
   // target's identity (description is the one frontmatter field carrying prose).
   const bodyFor = (target) =>
-    appendExtension(substitute(agent.body, resolvers[target], stack.declared, errors, context, patterns), cwd, extPath);
+    appendExtension(substitute(agent.body, resolvers[target], stack.declared, errors, context, guards), cwd, extPath);
   const descriptionFor = (target) =>
-    substitute(agent.data.description ?? '', resolvers[target], stack.declared, errors, context, patterns);
+    substitute(agent.data.description ?? '', resolvers[target], stack.declared, errors, context, guards);
 
   if (project.targets.includes('claude')) {
     const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('claude') };
     if (agent.data.skills) fm.skills = agent.data.skills;
-    Object.assign(fm, agent.data.claude ?? {});
+    // `identity:` (#156) — the agent's virtualized git author, read at spawn time by the
+    // delegate orchestrator off the rendered agent file. Harnesses that don't know the field
+    // ignore it (Claude Code identifies an agent by name/description), so passing it through
+    // is safe; codex's TOML has no shape for it and drops it.
+    if (agent.data.identity) fm.identity = agent.data.identity;
+    // The `claude:` passthrough may not shadow a reserved key. `validateStack` rejects that for
+    // toolkit and (via `validateExternalStacks`, above) external stacks alike; stripping here is
+    // defense in depth, so a validated `identity` can never be overwritten by an unvalidated one
+    // hoisted out of `claude:` — that pathway would bypass DISPLAY_NAME_RE entirely.
+    for (const [k, v] of Object.entries(agent.data.claude ?? {})) {
+      if (!RESERVED_AGENT_KEYS.includes(k)) fm[k] = v;
+    }
     emit(
       path.join('.claude', 'agents', `${agent.name}.md`),
       stringifyFrontmatter(fm, bodyFor('claude')),
@@ -337,6 +348,7 @@ function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, patt
     // AGENTS.md-ecosystem tool. Skills already land in the sibling `.agents/skills/`.
     const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('agents-dir') };
     if (agent.data.skills) fm.skills = agent.data.skills;
+    if (agent.data.identity) fm.identity = agent.data.identity;
     emit(
       path.join('.agents', 'agents', `${agent.name}.md`),
       stringifyFrontmatter(fm, bodyFor('agents-dir')),
@@ -365,12 +377,14 @@ function tomlMultilineString(s) {
   return `"""\n${escaped}"""`;
 }
 
-function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, patterns }) {
+function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guards }) {
   // Map each output dir → the target identity to substitute it with. Codex and agents-dir
   // both consume skills from the cross-tool `.agents/skills` convention (per OpenAI's docs,
   // Codex scans `.agents/skills` from the cwd up to the repo root), so they share one output
   // dir — deduped here (first target wins) to avoid emitting the same path twice. Their
-  // `harness.*` built-ins are identical, so the shared render is unambiguous.
+  // `harness.*` built-ins are identical, so the shared render is unambiguous. That premise is
+  // load-bearing (a divergent built-in would make this file's content depend on which *other*
+  // targets are enabled) and pinned by a test — see HARNESS_BUILTINS' `agentsDir` note.
   const skillDirs = new Map(); // dir -> target identity
   const addDir = (dir, target) => { if (!skillDirs.has(dir)) skillDirs.set(dir, target); };
   if (project.targets.includes('claude')) addDir(path.join('.claude', 'skills', skill.name), 'claude');
@@ -389,7 +403,7 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, patt
       // Substitute per target: `.claude/skills` uses the claude identity, `.agents/skills`
       // the agents-dir/codex (Codex) identity — they diverge only where `harness.*` is used.
       for (const [dir, target] of skillDirs) {
-        let content = substitute(raw, resolvers[target], stack.declared, errors, context, patterns);
+        let content = substitute(raw, resolvers[target], stack.declared, errors, context, guards);
         if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
         emit(path.join(dir, rel), content, itemContext);
       }
@@ -407,14 +421,14 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, patt
  * byte-for-byte. The rel path doubles as the cross-stack conflict key, so two enabled
  * stacks emitting the same path fail loudly, exactly like same-named skills.
  */
-function renderFiles({ file, stack, resolve, emit, errors, patterns }) {
+function renderFiles({ file, stack, resolve, emit, errors, guards }) {
   const context = `${stack.name}/files/${file.name}`;
   if (file.binary) {
     emit(file.name, fs.readFileSync(file.path), context);
     return;
   }
   const raw = fs.readFileSync(file.path, 'utf8');
-  emit(file.name, substitute(raw, resolve, stack.declared, errors, context, patterns), context);
+  emit(file.name, substitute(raw, resolve, stack.declared, errors, context, guards), context);
 }
 
 function appendExtension(body, cwd, relPath) {
@@ -513,13 +527,25 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
  *
  * A key declared with a pattern in more than one stack must satisfy ALL of them — the strictest
  * reading, and the only one that cannot be weakened by adding a stack.
+ *
+ * The same collection runs for `entryPatterns:` (#156), the map-valued sibling of `pattern:`:
+ * `Map<key, Map<leaf, RegExp[]>>`, unioned toolkit-wide on the same reasoning. Returns the pair
+ * as a `guards` object, which is what `substitute()` takes.
  */
 function compilePatterns(toolkit, errors) {
-  const map = new Map();
+  const patterns = new Map();
+  const entryPatterns = new Map();
   const add = (key, re) => {
-    const existing = map.get(key);
+    const existing = patterns.get(key);
     if (existing) existing.push(re);
-    else map.set(key, [re]);
+    else patterns.set(key, [re]);
+  };
+  const addEntry = (key, leaf, re) => {
+    let leaves = entryPatterns.get(key);
+    if (!leaves) entryPatterns.set(key, (leaves = new Map()));
+    const existing = leaves.get(leaf);
+    if (existing) existing.push(re);
+    else leaves.set(leaf, [re]);
   };
   // Reserved `harness.*` injection guards (#131) — always enforced, never declared in a
   // stack's config. Seed them first; a stack's own `config:` patterns cannot collide because
@@ -533,15 +559,27 @@ function compilePatterns(toolkit, errors) {
   }
   for (const [stackName, stack] of toolkit.stacks) {
     for (const [key, spec] of Object.entries(stack.config ?? {})) {
-      if (typeof spec?.pattern !== 'string') continue;
-      try {
-        add(key, compilePattern(spec.pattern));
-      } catch (err) {
-        errors.push(`stack "${stackName}" config key ${key} has an invalid pattern: ${err.message}`);
+      if (typeof spec?.pattern === 'string') {
+        try {
+          add(key, compilePattern(spec.pattern));
+        } catch (err) {
+          errors.push(`stack "${stackName}" config key ${key} has an invalid pattern: ${err.message}`);
+        }
+      }
+      for (const [leaf, pattern] of Object.entries(spec?.entryPatterns ?? {})) {
+        if (typeof pattern !== 'string') {
+          errors.push(`stack "${stackName}" config key ${key} entryPattern ${leaf} is not a string`);
+          continue;
+        }
+        try {
+          addEntry(key, leaf, compilePattern(pattern));
+        } catch (err) {
+          errors.push(`stack "${stackName}" config key ${key} has an invalid entryPattern for ${leaf}: ${err.message}`);
+        }
       }
     }
   }
-  return map;
+  return { patterns, entryPatterns };
 }
 
 /** Placeholder keys referenced by a set of selected items' source content. */
