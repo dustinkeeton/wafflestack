@@ -290,6 +290,33 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
       assert.match(md, /A noreply base gets no per-agent email at all/);
     });
 
+    // #158. The resolution rule the whole three-tier model rests on: git.cmd decides the signing
+    // POSTURE (for the bot and every agent derived from it); a per-agent signingKey only SELECTS
+    // a key, appended last. Drop the "inert" clause and one map leaf silently overturns a
+    // project-wide "do not sign".
+    test('the signing resolution rule: recipe owns posture, per-agent key selects and is inert under gpgsign=false', () => {
+      assert.match(md, /the recipe owns the posture, keys own key selection/i);
+      assert.match(md, /last-wins/);
+      assert.match(md, /when the base recipe signs/);
+      assert.match(md, /commit\.gpgsign=false` recipe a per-agent key is \*\*deliberately inert\*\*/);
+    });
+
+    // A hung signing prompt is a config problem, not a licence to bypass signing ad hoc.
+    test('a signing stall is surfaced, never worked around by the agent', () => {
+      assert.match(md, /hangs or fails on a signing prompt/);
+      assert.match(md, /stop and surface it/);
+      assert.match(md, /Never add `-c commit\.gpgsign=false`/);
+    });
+
+    // The Verified/Unverified status must be intentional and documented — including the honest
+    // trade-off against the per-agent avatars (#157).
+    test('sub-agent commits are documented as unverified by design, with the avatars trade-off', () => {
+      assert.match(md, /Sub-agent commits are unverified by design/);
+      assert.match(md, /no badge/);
+      assert.match(md, /relinks every agent to one profile and one avatar/);
+      assert.match(md, /required signatures/);
+    });
+
     test('identity is computed at spawn time, never written to the closed checkpoint schema', () => {
       assert.match(md, /at spawn time/);
       assert.match(md, /additionalProperties.*false/);
@@ -299,6 +326,69 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
       assert.match(md, /commit with `\{agent-git-cmd\} commit`/);
       assert.doesNotMatch(md, /commit with `git -c /, 'the render-time literal is gone from the template');
     });
+  });
+});
+
+// #158. The three-tier signing model is prose — in the rendered git-workflow skill (what agents
+// read) and in the github-workflow setup note (what a human installing the stack reads). These pin
+// the load-bearing claims: the posture lives in `git.cmd`, agents never deviate from it
+// per-invocation, and the Verified/Unverified outcome is stated rather than stumbled into.
+describe('git-workflow skill: the three-tier signing model (#158)', () => {
+  const md = readSkill('git-workflow');
+
+  test('all three tiers are named, with the resolved git.cmd as the posture', () => {
+    assert.match(md, /## Signing model/);
+    assert.match(md, /the resolved `git\.cmd` above is this project's signing posture/);
+    assert.match(md, /\*\*Human\*\* — machine git config/);
+    assert.match(md, /The toolkit configures no signing for humans/);
+    assert.match(md, /\*\*Bot and agents\*\* — whatever `git\.cmd` pins/);
+    assert.match(md, /\*\*Per-agent keys\*\*/);
+  });
+
+  test('the unsigned-vs-Unverified distinction and the non-prompting-signer precondition are stated', () => {
+    assert.match(md, /deliberately unsigned\* and carry \*\*no badge\*\*/);
+    assert.match(md, /"Unverified"/);
+    assert.match(md, /\*\*non-prompting\*\* signer/);
+  });
+
+  test('per-agent signingKey selects a key; it never enables signing', () => {
+    assert.match(md, /It \*\*selects\*\* a key; it \*\*enables\*\* nothing/);
+    assert.match(md, /never flips a project-wide "do not sign"/);
+  });
+
+  test('the guardrail forbids per-invocation deviation in EITHER direction', () => {
+    assert.match(md, /Never deviate from the resolved `git\.cmd` per-invocation/);
+    assert.match(md, /Do not add\s+`-c commit\.gpgsign=false` because a signing prompt hung/);
+    assert.match(md, /never deviate from it per-invocation,\s+in either direction/);
+  });
+});
+
+describe('github-workflow setup note: the signing recipes and verification matrix (#158)', () => {
+  const stack = fs.readFileSync(
+    path.join(REPO_ROOT, 'stacks', 'github-workflow', 'stack.yaml'),
+    'utf8',
+  );
+
+  test('recipe A (gpgsign=false) is the canonical opt-in recipe', () => {
+    assert.match(stack, /cmd: git -c commit\.gpgsign=false -c user\.name="\{\{git\.botName\}\}"/);
+    assert.match(stack, /the recipe owns the posture, keys own key selection/i);
+  });
+
+  test('recipes B and C are documented upgrades with a non-prompting-signer precondition', () => {
+    assert.match(stack, /# Recipe B \(SSH signing\)/);
+    assert.match(stack, /-c gpg\.format=ssh -c user\.signingkey=\{\{git\.signingKey\}\}/);
+    assert.match(stack, /# Recipe C \(GPG signing\)/);
+    assert.match(stack, /\*\*a non-prompting signer\*\*/);
+  });
+
+  test('the verification matrix distinguishes "no badge" from "Unverified" and names the avatars trade-off', () => {
+    assert.match(stack, /unsigned commit gets no badge at all/);
+    assert.match(stack, /Per-agent avatars XOR verified sub-agent commits/);
+    assert.match(stack, /required signatures\*\* branch protection/);
+  });
+
+  test('the stale "#158" placeholder is gone from the setup note', () => {
+    assert.doesNotMatch(stack, /a `git\.sign` tri-state rather than a hand-assembled `cmd`\) is #158/);
   });
 });
 

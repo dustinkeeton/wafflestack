@@ -31,6 +31,47 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **A defined signing model for bot and agent authors (#158, closes the #153 epic's last gap).**
+  The toolkit configured no signing, so `git.cmd` — which overrides the identity and *nothing else* —
+  left `commit.gpgsign` ambient. On a signing machine that meant a bot-authored commit signed with
+  the **human's** key (GitHub says "Verified", vouched by the human), and a *prompting* signer
+  (1Password's SSH agent, a passphrase-guarded GPG key) hung the non-interactive agent commit
+  outright. Both are strictly worse than an unsigned commit. Resolved as **prose, not a new engine
+  key**: `git.cmd` already *is* the composed-flags surface, so the model is a resolution rule plus
+  three named recipes.
+  **The rule: the recipe owns the signing posture; keys own key selection.** `git.cmd` decides
+  whether and how commits are signed, for the bot and every agent derived from it; a per-agent
+  `git.agentIdentities[<agent>].signingKey` appends `-c user.signingkey=` *after* the base flags, so
+  git's last-wins `-c` semantics make it the effective key **only when the base recipe signs**. Under
+  the canonical recipe it is **deliberately inert** — one map leaf never overturns a project-wide
+  "do not sign".
+  **The canonical opt-in recipe now pins the posture** (recipe A, deliberately unsigned):
+  `git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` — a
+  no-op where nothing signs, and prevention of both failure modes where something does. Recipes
+  **B** (SSH: `commit.gpgsign=true` + pinned `gpg.format=ssh` + `user.signingkey`) and **C** (GPG)
+  are documented upgrades that *reference* `git.signingKey`, which is why that key stays out of the
+  default recipe (its empty default would render `git -c user.signingkey=`, which git rejects at run
+  time). Both require a **non-prompting signer**; the surrounding plumbing (`gpg.ssh.program`,
+  allowed-signers, pinentry) is named as a machine concern, not prescribed.
+  **Verified status is now intentional and documented.** An unsigned commit shows **no badge**
+  (neutral); a signed-but-unverifiable one shows the yellow **"Unverified"** — so recipe A yields
+  cleaner history than signing with a key GitHub cannot check. A verification matrix in the
+  github-workflow setup note covers all three tiers, including the honest trade-off with #157:
+  making sub-agent commits Verified means registering each `bot+<slug>@…` alias on the bot account,
+  which relinks every agent to one profile and one avatar — **per-agent avatars XOR verified
+  sub-agent commits** — and a repo with **required signatures** branch protection cannot use
+  plus-addressed sub-agent authors at all.
+  **The non-interactive stall is closed at the guardrail, not by bypassing signing.** The rendered
+  `git.cmd` *is* the project's explicit, committed, reviewable posture: the git-workflow skill now
+  forbids deviating from it per-invocation **in either direction**, and the delegate skill instructs
+  a spawned agent whose commit hangs on a signing prompt to **stop and surface it** rather than add
+  `-c commit.gpgsign=false` itself.
+  **Consumer impact: none — no config keys added or removed, no engine change, `git.cmd`'s bare
+  default untouched.** Re-render picks up the reworded git-workflow / delegate skills. Projects
+  already on a bot identity should add `-c commit.gpgsign=false` to their `git.cmd` (or adopt recipe
+  B/C); the old recipe still renders, it just leaves the posture ambient.
+
 ### Added
 - **Per-agent avatars on GitHub commit views (#157, builds on #156).** Each agent now has a distinct
   avatar wherever its identity shows up — including GitHub. `render` emits one **static**,
