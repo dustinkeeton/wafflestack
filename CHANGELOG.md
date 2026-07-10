@@ -32,6 +32,15 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **entryPattern validation now reports every malformed entry/leaf in one pass (#246, deferred
+  F5 from #245's review).** `entryPatternProblems` (né `entryPatternProblem`) walks the whole
+  map-valued config value instead of short-circuiting on the first bad entry, so a
+  `git.agentIdentities` map with three independent mistakes surfaces all three errors in one
+  render/validate run instead of one per fix-and-retry cycle. Each individual message is
+  byte-identical to before; only the multiplicity changed. Also renames the internal
+  `compilePatterns` to `compileGuards` — it returns the `{ patterns, entryPatterns }` guards
+  object, not a patterns Map. **Consumer impact:** error-output only; no config, schema, or
+  rendered-file change, no re-render needed.
 - **CI workflow identity aligned with the identity model (#160).** CI attribution was decided
   entirely by whichever token created the event, and the relationship was documented nowhere.
   The fix is deliberately *not* a `git config user.*` step in the workflows: `git.botName` /

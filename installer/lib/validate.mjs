@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, makeGuard, entryPatternProblem } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems } from './template.mjs';
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
@@ -290,7 +290,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
             continue;
           }
           try {
-            // The guard-record shape entryPatternProblem consumes (see makeGuard): the self-check
+            // The guard-record shape entryPatternProblems consumes (see makeGuard): the self-check
             // rejection then names this stack as the declarer, same as a render-time rejection.
             compiled.set(leaf, [makeGuard(pattern, `stack "${stack.name}"`)]);
           } catch (err) {
@@ -298,8 +298,9 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           }
         }
         if (spec.default !== undefined) {
-          const problem = entryPatternProblem({ entryPatterns: new Map([[key, compiled]]) }, key, spec.default);
-          if (problem) problems.push(`${ctx}: config key ${key} default ${problem}`);
+          for (const problem of entryPatternProblems({ entryPatterns: new Map([[key, compiled]]) }, key, spec.default)) {
+            problems.push(`${ctx}: config key ${key} default ${problem}`);
+          }
         }
       }
     }

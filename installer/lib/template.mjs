@@ -43,9 +43,9 @@ export function substitute(text, resolve, declared, errors, context, guards) {
     }
     // Structured (map-valued) guards run on the RAW value, before `formatValue` flattens it
     // into a YAML block — once it is text, the entry/leaf structure a guard polices is gone.
-    const entryProblem = entryPatternProblem(guards, key, v);
-    if (entryProblem) {
-      errors.push(`${context}: config value for {{${key}}} ${entryProblem}`);
+    const entryProblems = entryPatternProblems(guards, key, v);
+    if (entryProblems.length) {
+      errors.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
     const value = expandNested(formatValue(v), resolve, 1, guards, errors, context);
@@ -70,7 +70,7 @@ export function substitute(text, resolve, declared, errors, context, guards) {
  * `re` is the full-match RegExp, `pattern` the raw authored string (what the author wrote,
  * not the `^(?:…)$`-wrapped source), `source` a prose name for the declarer (`stack
  * "github-workflow"`, or `the reserved harness guards`). One constructor so every producer
- * (render's compilePatterns, validate's default self-check) builds the same shape a
+ * (render's compileGuards, validate's default self-check) builds the same shape a
  * rejection message can then cite (#244 F1). Throws on an invalid regex, like compilePattern.
  */
 export function makeGuard(pattern, source) {
@@ -79,7 +79,7 @@ export function makeGuard(pattern, source) {
 
 /**
  * The single implementation of the failing-guard filter — both the scalar path
- * (`failingGuards`) and the entryPatterns path (`entryPatternProblem`) ride it, so "never
+ * (`failingGuards`) and the entryPatterns path (`entryPatternProblems`) ride it, so "never
  * name a guard the value satisfies" cannot hold on one path and silently break on the other.
  */
 const failingOf = (guardList, value) => guardList.filter((g) => !g.re.test(value));
@@ -128,26 +128,38 @@ const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArr
  *
  * `guards.entryPatterns` is a Map<key, Map<leaf, guard[]>> of makeGuard records, unioned
  * toolkit-wide exactly like the scalar patterns (a leaf guarded in two stacks must satisfy
- * both). Returns a problem string, or null when clean.
+ * both). Returns EVERY problem found — one string per malformed entry/leaf, walked in full
+ * rather than short-circuiting on the first, so a map with three broken entries surfaces all
+ * three in one render (#246). `[]` when clean or unguarded.
  */
-export function entryPatternProblem(guards, key, value) {
+export function entryPatternProblems(guards, key, value) {
   const leaves = guards?.entryPatterns?.get(key);
-  if (!leaves) return null;
+  if (!leaves) return [];
   const allowed = [...leaves.keys()].join(', ');
-  if (!isPlainObject(value)) return `must be a map of entries (it declares entryPatterns: ${allowed})`;
+  if (!isPlainObject(value)) return [`must be a map of entries (it declares entryPatterns: ${allowed})`];
+  const problems = [];
   for (const [entry, body] of Object.entries(value)) {
-    if (!isPlainObject(body)) return `entry "${entry}" must be a map of: ${allowed}`;
+    if (!isPlainObject(body)) {
+      problems.push(`entry "${entry}" must be a map of: ${allowed}`);
+      continue;
+    }
     for (const [leaf, leafValue] of Object.entries(body)) {
       const res = leaves.get(leaf);
-      if (!res) return `entry "${entry}" has unknown key "${leaf}" (allowed: ${allowed})`;
-      if (typeof leafValue !== 'string') return `entry "${entry}" key "${leaf}" must be a string`;
+      if (!res) {
+        problems.push(`entry "${entry}" has unknown key "${leaf}" (allowed: ${allowed})`);
+        continue;
+      }
+      if (typeof leafValue !== 'string') {
+        problems.push(`entry "${entry}" key "${leaf}" must be a string`);
+        continue;
+      }
       const failing = failingOf(res, leafValue);
       if (failing.length) {
-        return `entry "${entry}" key "${leaf}" does not match its declared pattern ${describeGuards(failing)}`;
+        problems.push(`entry "${entry}" key "${leaf}" does not match its declared pattern ${describeGuards(failing)}`);
       }
     }
   }
-  return null;
+  return problems;
 }
 
 /**
@@ -166,9 +178,9 @@ function expandNested(text, resolve, depth, guards, errors, context) {
   return text.replace(PLACEHOLDER, (match, key) => {
     const v = resolve(key);
     if (v === undefined) return match;
-    const entryProblem = entryPatternProblem(guards, key, v);
-    if (entryProblem) {
-      errors?.push(`${context}: config value for {{${key}}} ${entryProblem}`);
+    const entryProblems = entryPatternProblems(guards, key, v);
+    if (entryProblems.length) {
+      errors?.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
     const value = expandNested(formatValue(v), resolve, depth + 1, guards, errors, context);
