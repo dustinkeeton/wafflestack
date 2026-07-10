@@ -54,20 +54,46 @@ export function substitute(text, resolve, declared, errors, context, guards) {
     // know its target context (a YAML scalar, a workflow `if:` expression, a shell word),
     // so escaping is impossible in general — a pattern makes an unsafe value fail loudly at
     // render instead of silently corrupting the output. `guards.patterns` is a Map<key,
-    // RegExp[]> spanning every stack in the toolkit, and a guarded value must satisfy every
-    // pattern.
-    if (violatesPattern(guards, key, value)) {
-      errors.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
+    // guard[]> (see makeGuard) spanning every stack in the toolkit, and a guarded value must
+    // satisfy every pattern.
+    const failing = failingGuards(guards, key, value);
+    if (failing.length) {
+      errors.push(patternFailure(context, key, failing));
       return match;
     }
     return value;
   });
 }
 
-/** True when `key` carries scalar pattern guards and `value` fails any of them. */
-function violatesPattern(guards, key, value) {
-  const res = guards?.patterns?.get(key);
-  return Boolean(res) && !res.every((re) => re.test(value));
+/**
+ * Compile a raw `pattern:` string into the guard record the render-time maps carry:
+ * `re` is the full-match RegExp, `pattern` the raw authored string (what the author wrote,
+ * not the `^(?:…)$`-wrapped source), `source` a prose name for the declarer (`stack
+ * "github-workflow"`, or `the reserved harness guards`). One constructor so every producer
+ * (render's compilePatterns, validate's default self-check) builds the same shape a
+ * rejection message can then cite (#244 F1). Throws on an invalid regex, like compilePattern.
+ */
+export function makeGuard(pattern, source) {
+  return { re: compilePattern(pattern), pattern, source };
+}
+
+/** The scalar pattern guards on `key` that `value` fails — empty when unguarded or passing. */
+function failingGuards(guards, key, value) {
+  const gs = guards?.patterns?.get(key);
+  if (!gs) return [];
+  return gs.filter((g) => !g.re.test(value));
+}
+
+/**
+ * A rejection must be actionable: guards are unioned toolkit-wide, so the stack that vetoed a
+ * value may not even be installed — name the FAILING pattern(s) and their declaring stack(s),
+ * and never the guards the value satisfies (#244 F1). The `does not match its declared
+ * pattern` prefix is a stable contract several tests pin by regex; only details follow it.
+ */
+const describeGuards = (failing) => failing.map((g) => `${g.pattern} (declared by ${g.source})`).join('; ');
+
+function patternFailure(context, key, failing) {
+  return `${context}: config value for {{${key}}} does not match its declared pattern ${describeGuards(failing)}`;
 }
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -82,9 +108,9 @@ const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArr
  * satisfy it. An unknown leaf is an error rather than a passthrough — a typoed `botEmial:` must
  * not ride along unguarded beside the leaf it was meant to be.
  *
- * `guards.entryPatterns` is a Map<key, Map<leaf, RegExp[]>>, unioned toolkit-wide exactly like
- * the scalar patterns (a leaf guarded in two stacks must satisfy both). Returns a problem
- * string, or null when clean.
+ * `guards.entryPatterns` is a Map<key, Map<leaf, guard[]>> of makeGuard records, unioned
+ * toolkit-wide exactly like the scalar patterns (a leaf guarded in two stacks must satisfy
+ * both). Returns a problem string, or null when clean.
  */
 export function entryPatternProblem(guards, key, value) {
   const leaves = guards?.entryPatterns?.get(key);
@@ -97,8 +123,9 @@ export function entryPatternProblem(guards, key, value) {
       const res = leaves.get(leaf);
       if (!res) return `entry "${entry}" has unknown key "${leaf}" (allowed: ${allowed})`;
       if (typeof leafValue !== 'string') return `entry "${entry}" key "${leaf}" must be a string`;
-      if (!res.every((re) => re.test(leafValue))) {
-        return `entry "${entry}" key "${leaf}" does not match its declared pattern`;
+      const failing = res.filter((g) => !g.re.test(leafValue));
+      if (failing.length) {
+        return `entry "${entry}" key "${leaf}" does not match its declared pattern ${describeGuards(failing)}`;
       }
     }
   }
@@ -127,8 +154,9 @@ function expandNested(text, resolve, depth, guards, errors, context) {
       return match;
     }
     const value = expandNested(formatValue(v), resolve, depth + 1, guards, errors, context);
-    if (violatesPattern(guards, key, value)) {
-      errors?.push(`${context}: config value for {{${key}}} does not match its declared pattern`);
+    const failing = failingGuards(guards, key, value);
+    if (failing.length) {
+      errors?.push(patternFailure(context, key, failing));
       return match;
     }
     return value;
