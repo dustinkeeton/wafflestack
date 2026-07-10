@@ -908,6 +908,20 @@ config:
   git.cmd:
     required: false
     default: git
+    # Allowlist for a value spliced verbatim into shell command literals — the git-workflow and
+    # release commit instructions, and the delegate skill's single-quoted `--git-cmd '…'`
+    # preflight. The guard tests the EXPANDED value per render site, and an orchestration-side
+    # nested miss survives as a literal `{{git.botName}}` (pinned by W4), so whole `{{key}}`
+    # tokens must pass alongside resolved text — the token charset mirrors PLACEHOLDER in
+    # template.mjs. `"` is STRUCTURAL, not a free character: quotes only match as a balanced
+    # `"…"` run (which may hold `{{key}}` tokens), so an unbalanced quote — which would pair
+    # across the splice and silently corrupt the rendered command example — fails the render.
+    # `%` is admitted beyond #254's permit list because a guard-passing botEmail
+    # (its own pattern admits `%`) resolves INTO this value. `$` is rejected everywhere — a
+    # wafflestack placeholder never contains one, so this subsumes the siblings' `(?!.*\$\{\{)`
+    # idiom and kills `${{ … }}` outright. `+` not `*`: an empty git.cmd renders broken command
+    # examples. Keep byte-identical with stacks/orchestration/stack.yaml — lockstep test (#254).
+    pattern: '^(?:[A-Za-z0-9 =._/~+:@%\[\]-]|"(?:[A-Za-z0-9 =._/~+:@%\[\]-]|\{\{[A-Za-z][\w.-]*\}\})*"|\{\{[A-Za-z][\w.-]*\}\})+$'
     description: >-
       The git invocation used in the command examples that WRITE a committer identity — commit,
       and an annotated tag if one is ever added. Identity-free commands (checkout, push, diff,

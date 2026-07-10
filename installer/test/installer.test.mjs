@@ -2015,6 +2015,149 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   });
 });
 
+// #254: `git.cmd` is spliced verbatim into shell command literals in rendered skill text — the
+// git-workflow/release commit instructions and the delegate preflight's `--git-cmd '{{git.cmd}}'`.
+// The identity-key guards protect what composes INTO the container, not the container itself:
+// before this pattern, a plain waffle.yaml value carrying a single quote rendered every file with
+// no error. The guard tests the EXPANDED value per render site, so the pattern must admit both
+// resolved recipes AND whole `{{key}}` tokens — an orchestration-side nested miss survives
+// verbatim (W4 above), and rejecting `{{…}}` would break every orchestration-only recipe install.
+describe('git.cmd pattern guard (#254)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-254-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+  const base = 'targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: Guard254\n';
+  const PAYLOAD_YAML = `    cmd: "git -c user.name=Bot' ; touch /tmp/PWNED ; '"\n`;
+
+  /** orchestration alone, with every key it marks `required: true` (mirrors #155's orchBase). */
+  const orchBase = () => [
+    'targets: [claude]',
+    'stacks: [orchestration]',
+    'config:',
+    '  project:',
+    '    name: Guard254',
+    '    longName: the Guard254 project',
+    '  pm:',
+    '    brief: You are the PM.',
+    '    principles: "- Ship small."',
+    '    handoffs: "- Everything else -> general-purpose"',
+    '  roster:',
+    '    specialistTable: "| Agent | Responsibility |"',
+    '    classificationTable: "| Signal | Agent |"',
+    '    labelFallback: "| Label | Agent |"',
+    '    rootFiles: package.json',
+    '    sharedModule: lib/',
+    '    moduleDependencies: none',
+    '  audit:',
+    '    complianceLabel: Integrity',
+    '    complianceFrontmatterLabel: integrity',
+    '    complianceTaskLabel: Integrity check',
+    '    complianceAgentName: integrity',
+    '    complianceDescription: Validates the thing.',
+    '    compliancePrompt: Run the checks.',
+    '',
+  ].join('\n');
+
+  test('the #254 acceptance payload — a quote-breaking git.cmd — fails the render, non-destructively', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n${PAYLOAD_YAML}`);
+    const result = render();
+    assert.equal(result.ok, false, 'a single quote in git.cmd must never reach a shell literal');
+    const errs = result.errors.join('\n');
+    assert.match(errs, /config value for \{\{git\.cmd\}\} does not match its declared pattern/);
+    // Byte-identical guards group their declarers under one pattern (I7's precedent) — matching
+    // BOTH stack names here pins the dual declaration on real shipped data, the union the #244
+    // fixture keeps honest.
+    assert.match(errs, /declared by stack "github-workflow"; stack "orchestration"/);
+    // Guard errors bail before the tree is touched: no renders, no lock.
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'a failed render writes no lock');
+  });
+
+  test('the payload fails with NO github-workflow stack installed (guards are toolkit-wide)', () => {
+    // Mirrors W5b: the guard travels with the KEY, not with whichever stack happens to be present.
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n${PAYLOAD_YAML}`);
+    const result = render();
+    assert.equal(result.ok, false, 'the guard must not depend on github-workflow being installed');
+    assert.match(JSON.stringify(result.errors), /git\.cmd/);
+  });
+
+  // AC: the three setup-note recipes pass byte-for-byte. The spaced botName exercises the
+  // double-quoted RESOLVED form the guard actually sees on a github-workflow render (W7/W7b
+  // cover A/B incidentally; this pins C and the criterion explicitly).
+  test('setup-note recipes A, B and C all pass the guard', () => {
+    const RECIPES = {
+      A: 'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
+      B: 'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
+      C: 'git -c commit.gpgsign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
+    };
+    for (const [name, recipe] of Object.entries(RECIPES)) {
+      write(
+        cwd,
+        '.waffle/waffle.yaml',
+        `${base}  git:\n    botName: Waffle Bot\n    botEmail: bot@example.com\n    signingKey: ABC123\n    cmd: ${recipe}\n`,
+      );
+      const result = render();
+      assert.equal(result.ok, true, `recipe ${name}: ${JSON.stringify(result.errors)}`);
+    }
+  });
+
+  test('each shell metacharacter (and the empty string) is individually rejected', () => {
+    // One value per metacharacter (I5 style), so a pattern edit that readmits any single one
+    // goes red on its own line. `$` is rejected everywhere — no `(?!.*\$\{\{)` carve-out — so
+    // `$(id)` and `${{ … }}` fail on the same rule. JSON.stringify emits a valid YAML
+    // double-quoted scalar, which keeps the backslash and newline cases unambiguous.
+    const bads = [
+      "git -c user.name='Bot'", // the headline character: `'` alone, no other metachar masking it
+      'git `id`',
+      'git $(id)',
+      'git ${{ secrets.X }}',
+      'git; id',
+      'git | id',
+      'git & id',
+      'git < /tmp/f',
+      'git > /tmp/f',
+      'git \\ x',
+      'git \r x',
+      'git \n x',
+      'git -c user.name="Bot', // `"` is structural: an unbalanced quote pairs ACROSS the splice
+      'git "a" "b', // ...even when balanced pairs precede it in the value
+      '', // `+` not `*`: an empty git.cmd renders broken command examples
+    ];
+    for (const bad of bads) {
+      write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    cmd: ${JSON.stringify(bad)}\n`);
+      const result = render();
+      assert.equal(result.ok, false, `${JSON.stringify(bad)} must fail the guard`);
+      assert.match(JSON.stringify(result.errors), /git\.cmd/, `${JSON.stringify(bad)} must name git.cmd`);
+    }
+  });
+
+  test('the guard tests the EXPANDED value — a quote smuggled through an unguarded nested key fails', () => {
+    // The design's load-bearing claim: `pattern:` guards evaluate AFTER nested expansion, per
+    // render site. `project.name` declares no pattern, and expandNested resolves it inside
+    // git.cmd — so the payload's `'` arrives only post-expansion; the authored cmd value itself
+    // passes the pattern via the `{{key}}` token alternative. A refactor that evaluates guards
+    // against the raw pre-expansion value keeps every other test in this describe green while
+    // re-opening #254 through composition with any unguarded key; this one goes red.
+    const poisoned = [
+      'targets: [claude]',
+      'stacks: [github-workflow]',
+      'config:',
+      '  project:',
+      `    name: "Bot' ; touch /tmp/PWNED ; '"`,
+      '  git:',
+      '    cmd: git -c user.name={{project.name}}',
+      '',
+    ].join('\n');
+    write(cwd, '.waffle/waffle.yaml', poisoned);
+    const result = render();
+    assert.equal(result.ok, false, 'the smuggled quote must fail the guard post-expansion');
+    assert.match(result.errors.join('\n'), /config value for \{\{git\.cmd\}\} does not match its declared pattern/);
+  });
+});
+
 // #156: per-agent virtualized identities. Two halves are testable here — the `identity:`
 // frontmatter passthrough (a per-target render decision) and the `entryPatterns:` guard on
 // `git.agentIdentities` (a trust-boundary decision). The DERIVATION itself is prompt-level: it
@@ -2385,6 +2528,8 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
 // A third semantically-identical copy lives in stacks/orchestration/skills/delegate/identity.mjs
 // LEAF_PATTERNS (regex literals, different escaping) — out of byte-equality's reach,
 // deliberately not pinned here.
+// #254 added a scalar twin with the identical hazard: `git.cmd` declares the same allowlist
+// `pattern:` in the same two stacks, so its byte-equality is pinned here alongside.
 describe('git.agentIdentities entryPatterns lockstep (#247)', () => {
   test('the github-workflow and orchestration declarations are deep-equal (and non-empty)', () => {
     const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -2395,6 +2540,17 @@ describe('git.agentIdentities entryPatterns lockstep (#247)', () => {
     assert.ok(gw && Object.keys(gw).length > 0, 'github-workflow declares no entryPatterns');
     // The exact leaf list is NOT pinned here — only that the two copies never drift apart.
     assert.deepEqual(gw, patternsOf('orchestration'));
+  });
+
+  test('the git.cmd pattern declarations are byte-identical (and non-empty) (#254)', () => {
+    const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+    const toolkit = loadToolkit(repoRoot);
+    const patternOf = (name) => toolkit.stacks.get(name).config['git.cmd'].pattern;
+    const gw = patternOf('github-workflow');
+    // equal(undefined, undefined) would pass if both declarations were deleted — assert existence.
+    assert.ok(typeof gw === 'string' && gw.length > 0, 'github-workflow declares no git.cmd pattern');
+    // The regex itself is NOT pinned here — only that the two copies never drift apart.
+    assert.equal(gw, patternOf('orchestration'));
   });
 });
 
