@@ -1,6 +1,8 @@
 ---
 name: qa-engineer
 description: Test strategy and implementation specialist for {{project.name}}. Use proactively after a feature lands, when a bug is reported, or to write a test plan for upcoming work. MUST BE USED to add tests after any non-trivial implementation.
+identity:
+  displayName: QA Engineer
 claude:
   tools: Read, Edit, Write, Bash, Glob, Grep
   model: sonnet

@@ -1,6 +1,8 @@
 ---
 name: docs-agent
 description: Agent-optimized documentation writer. Maintains {{docs.machineDocSet}} — structured, machine-readable registries and contracts for LLM/agent consumption.
+identity:
+  displayName: Docs Agent
 skills:
   - docs-agent
 claude:

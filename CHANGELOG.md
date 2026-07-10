@@ -32,6 +32,34 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Per-agent virtualized git identities (#156, `orchestration` + `github-workflow`).** Every agent
+  spawned by the `delegate` skill used to commit under the same identity with a byte-identical
+  `Co-Authored-By` trailer — two different agents produced indistinguishable attribution. Agents now
+  carry an optional `identity: { displayName }` frontmatter block (documented in `schema/FORMAT.md`,
+  declared on all 14 shipped agents), and the delegate skill derives each spawned agent's git author
+  at spawn time: the display name, plus the bot email **plus-addressed** with the agent's own slug
+  (`bot@x.com` → `bot+lead-engineer@x.com`). `git.agentIdentities` overrides that derived default
+  per field. **The opt-in is unchanged and singular:** a bare `git.cmd` means no bot identity is
+  configured, so nothing is virtualized and the map is inert — the toolkit still never clobbers a
+  human's git config. Two honest caveats, stated in the skill: attribution is per agent *type*, not
+  per spawn (two parallel `lead-engineer`s share an author); and a plus-addressed alias is a distinct
+  email to GitHub, so such commits do not link to the bot account unless the alias is registered
+  there. Also new: `harness.agentsDir` (the agent-definitions path per target, sibling of
+  `harness.skillsDir`), so the derivation rule reads agent frontmatter without hardcoding `.claude/`.
+  **Consumer note:** a repo that commits its render must re-render to pick up the new agent
+  frontmatter and the rewritten delegate skill.
+- **`entryPatterns:` — render-time shape validation for map-valued config keys (#156).** The
+  map-valued sibling of `pattern:`. A key declares the leaf shape of one entry
+  (`botName`/`botEmail`/`signingKey` for `git.agentIdentities`) and every entry in the resolved value
+  must satisfy it: each entry a map, each leaf key declared (an **unknown leaf fails the render**, so
+  a typoed `botEmial:` cannot ride along unguarded), each leaf value a string fully matching its
+  regex. Enforced at both the top-level and nested substitution paths, and compiled **toolkit-wide**
+  like `pattern:`, so the guard travels with the key rather than with whichever stack happens to be
+  installed. This closes the hole #154 documented: `git.agentIdentities` leaves now land in an
+  agent-executed shell command, and a value like `botEmail: "$(id)@x.com"` — which rendered cleanly
+  before — now fails the render loudly. An agent's `identity.displayName` is guarded at the same
+  trust boundary (`validate`, and `validateExternalStacks` at render for third-party stacks) against
+  the same allowlist as `git.botName`, since it lands inside the quotes of `-c user.name="…"`.
 - **The main bot identity is now wired through `git.cmd` (#155, `github-workflow`).** #154 declared
   the identity keys; nothing consumed them. A project now opts into a managed bot identity with one
   config line — `cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` — which
@@ -84,9 +112,8 @@ is what you reach for across a breaking one.
   `^(?!.*\$\{\{)` guard the stack's other patterns use, so a `${{ … }}` cannot ride through the
   renderer verbatim. Shell metacharacters (`` ` ``, `$`, `;`, `|`, `&`, `\`), quotes, newlines and
   leading/trailing whitespace are all rejected — a violating value fails the render loudly rather
-  than corrupting the shell word `git.cmd` splices it into. `git.agentIdentities` is **not** guarded:
-  a `pattern:` applies to string scalars only, so that map's shape and its `botName`/`botEmail`/
-  `signingKey` leaves are unvalidated until #155 enforces them.
+  than corrupting the shell word `git.cmd` splices it into. `git.agentIdentities` is a map, so a
+  `pattern:` (string scalars only) could not guard it — #156 closes that with `entryPatterns:`.
   **Consumer note:** all four keys were previously *undeclared* dotted paths that only resolved
   through nested substitution. Now that they are declared, a value like
   `git.cmd: git -c user.email={{git.botEmail}}` that references them *without* defining them

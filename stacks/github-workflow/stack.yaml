@@ -733,7 +733,10 @@ setup: |-
   in fresh `git worktree` checkouts, where gitignored files do not exist) must commit `botEmail`
   too — otherwise the render differs per machine and the doctor drift gate goes red. Use a
   public noreply-style address when you do. `git.agentIdentities` holds per-agent overrides and
-  may itself be split across the two files (they deep-merge).
+  may itself be split across the two files (they deep-merge) — but you rarely need entries: with
+  `git.cmd` opted in, a spawned agent's identity is *derived* by default (its display name, and
+  `git.botEmail` plus-addressed with `+<agent-slug>`), so the map is only for overriding that.
+  A repo committing its render must commit the entries it wants, or doctor drifts.
   (4) **Signing is separate — and `git.cmd` does NOT disable it.** Do not add
   `{{git.signingKey}}` to `git.cmd` unless you have set it: the empty default renders
   `git -c user.signingkey= …`, which git rejects at run time. Just as important, `git.cmd`
@@ -832,16 +835,32 @@ config:
   git.agentIdentities:
     required: false
     default: {}
+    # Shape guard (#156). `pattern:` polices string scalars; `entryPatterns:` polices the leaves
+    # of a map value — every entry must be a map whose keys are exactly these three (an unknown
+    # leaf is an error, so a typoed `botEmial:` cannot ride along unguarded) and whose values
+    # each fully match. The patterns are byte-identical to the sibling scalar keys above because
+    # the leaves land in the same places: an unquoted/quoted shell word of the per-agent git
+    # command the delegate skill hands a spawned agent. Guards compile toolkit-wide, so these
+    # bind wherever the key is referenced — orchestration included.
+    entryPatterns:
+      botName: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
+      botEmail: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+      signingKey: '^(?!.*\$\{\{)[A-Za-z0-9._/~+:-]*$'
     description: >-
-      Map of per-agent virtualized identities that override the main bot identity, keyed by agent
-      name — the intended shape is { <agent>: { botName, botEmail, signingKey? } }. Empty (the
-      default) means every agent commits as the main git.botName / git.botEmail identity. Entries
-      may be split across the committed config (names) and the gitignored local overlay
-      (emails/keys) — the two deep-merge, local winning per key. UNVALIDATED: a
-      `pattern:` guards only string scalars, so this map's shape is not checked and its
-      botName/botEmail/signingKey leaves do NOT inherit the sibling patterns above. Treat entries
-      as free-form until the consumer (#156) enforces the shape. #155 wires only the MAIN bot
-      identity through git.cmd; nothing reads this map yet.
+      Map of per-agent virtualized identities that override the derived per-agent identity, keyed
+      by agent name — shape { <agent>: { botName, botEmail, signingKey? } }, shape-validated at
+      render via entryPatterns (unknown leaf keys and unsafe values fail the render). Consumed by
+      the delegate skill, which derives each spawned agent's git author from the resolved git.cmd
+      (display name from the agent's `identity.displayName` frontmatter, email = the bot email
+      plus-addressed with `+<agent-slug>`) and applies this map OVER that default, per field —
+      botName replaces the name, botEmail replaces the email verbatim (no plus-addressing on top),
+      signingKey adds `-c user.signingkey=`. Empty (the default) means every agent uses the
+      derived default. INERT WITHOUT THE OPT-IN: a bare `git.cmd` means no bot identity is
+      configured, so no agent is virtualized and this map does nothing — git.cmd is the single
+      opt-in switch, and the toolkit never clobbers a human's git config. Entries may be split
+      across the committed config (names) and the gitignored local overlay (emails/keys) — the two
+      deep-merge, local winning per key; a repo that COMMITS its render must commit any entry it
+      wants, or the doctor drift gate goes red (same rule as botEmail).
   git.worktreesDir:
     required: false
     default: .claude/worktrees

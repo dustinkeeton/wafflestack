@@ -126,7 +126,8 @@ Walk the config schema of every enabled stack (from the inventory):
   keys are the worked example: `git.botName` is shared (committed `config:`), while
   `git.botEmail` and `git.signingKey` are account-specific (local overlay) — and a single
   `git.agentIdentities` entry may be split across both files, since the two deep-merge per key
-  (local wins). `git.signingKey` is a GPG key ID or an SSH public-key path, never private key
+  (local wins) — its entries are shape-validated at render (`entryPatterns:`), and you rarely need
+  any: with the opt-in below, each spawned agent's identity is *derived* by default. `git.signingKey` is a GPG key ID or an SSH public-key path, never private key
   material — config values render into committed files. Setting the identity values does not by
   itself change any command: the bot-identity **opt-in** is pointing `git.cmd` at them —
   `cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` (quote `user.name`;

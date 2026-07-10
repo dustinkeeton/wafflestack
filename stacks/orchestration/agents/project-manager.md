@@ -1,6 +1,8 @@
 ---
 name: project-manager
 description: Project coordinator that reads the GitHub backlog, assigns issues to specialist agents, orchestrates parallel and serial execution, and creates new issues when gaps are found
+identity:
+  displayName: Project Manager
 skills:
   - delegate
   - git-workflow

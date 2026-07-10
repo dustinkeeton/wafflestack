@@ -1,6 +1,8 @@
 ---
 name: data-engineer
 description: Owns the data layer for {{project.name}} — ingestion, normalization, caching, and the analytical insights derived from it. Use proactively when adding a new data source, modifying fetch/cache logic, designing data schemas, or building any new analytical insight. MUST BE USED for any change under the data or insights modules.
+identity:
+  displayName: Data Engineer
 claude:
   tools: Read, Edit, Write, Bash, Glob, Grep, WebFetch, WebSearch
   model: sonnet

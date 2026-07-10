@@ -1,6 +1,8 @@
 ---
 name: devops-engineer
 description: CI/CD, deployment, and dependency-management specialist for {{project.name}}. Use proactively when configuring builds, GitHub Actions, deploy targets, upgrading dependencies, or troubleshooting build/lint/type-check failures. MUST BE USED for changes to build configuration, package manifests, or CI workflows.
+identity:
+  displayName: DevOps Engineer
 claude:
   tools: Read, Edit, Write, Bash, Glob, Grep
   model: sonnet
