@@ -7,6 +7,8 @@ skills:
   - github-project-management
   - github-project-board
   - issue
+identity:
+  displayName: Project Manager
 tools: Read, Glob, Grep, Bash, Agent
 ---
 

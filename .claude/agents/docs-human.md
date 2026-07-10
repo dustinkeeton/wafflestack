@@ -3,6 +3,8 @@ name: docs-human
 description: Human-readable documentation writer. Maintains `DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root — scannable, plain-language docs derived from the machine docs for human readers.
 skills:
   - docs-human
+identity:
+  displayName: Docs Human
 tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
 

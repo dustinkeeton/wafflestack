@@ -4,6 +4,8 @@ description: Expert in designing and building agent harnesses — agent/skill/to
 skills:
   - git-workflow
   - issue
+identity:
+  displayName: Harness Architect
 tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, Agent
 ---
 
