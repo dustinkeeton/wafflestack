@@ -51,7 +51,7 @@ done
 case "$method $url" in
   "GET "*"/issues/"*"/comments") cat "$STATE/comments.json" 2>/dev/null || echo '[]' ;;
   "PATCH "*"/issues/comments/"*) cp "$input" "$STATE/patch-body.json"; printf '%s\\n' "$url" > "$STATE/patch-url.txt"; echo '{}' ;;
-  "POST "*"/issues/"*"/comments") cp "$input" "$STATE/post-body.json"; echo '{}' ;;
+  "POST "*"/issues/"*"/comments") cp "$input" "$STATE/post-body.json"; printf '%s\\n' "$url" > "$STATE/post-url.txt"; echo '{}' ;;
   "GET "*"/git/ref/heads/"*) if [ -f "$STATE/ref-exists" ]; then echo '{"object":{"sha":"seedsha"}}'; else exit 1; fi ;;
   "POST "*"/git/blobs") cp "$input" "$STATE/blob-body.json"; if [ "$jqf" = ".sha" ]; then echo "blobsha"; else echo '{"sha":"blobsha"}'; fi ;;
   "POST "*"/git/trees") cp "$input" "$STATE/tree-body.json"; if [ "$jqf" = ".sha" ]; then echo "treesha"; else echo '{"sha":"treesha"}'; fi ;;
@@ -67,6 +67,8 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   let cwd; // rendered consumer fixture
   let stubDir; // stubbed gh + sleep on PATH
   let recordScript; // pr-green's "Record token spend" run script
+  let hygieneScript; // hygiene's variant — target resolved from the result's PR URL
+  let implementScript; // label-hook implement's variant — PR URL with fallback to the issue
   let counterScript; // post-merge's "Update global token counter" run script
 
   const stepRun = (file, jobName, stepName) => {
@@ -86,6 +88,8 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
         'stacks: []',
         'include:',
         '  - files/.github/workflows/waffle-pr-green-hook.yml',
+        '  - files/.github/workflows/waffle-hygiene.yml',
+        '  - files/.github/workflows/waffle-label-hook.yml',
         '  - files/.github/workflows/waffle-post-merge-hook.yml',
         'config:',
         '  project:',
@@ -96,6 +100,8 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
     assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
     recordScript = stepRun('waffle-pr-green-hook.yml', 'adversarial-review', 'Record token spend');
+    hygieneScript = stepRun('waffle-hygiene.yml', 'hygiene', 'Record token spend');
+    implementScript = stepRun('waffle-label-hook.yml', 'implement', 'Record token spend');
     counterScript = stepRun('waffle-post-merge-hook.yml', 'cleanup', 'Update global token counter');
 
     stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telemetry-stub-'));
@@ -258,6 +264,78 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
       assert.ok(!fs.existsSync(path.join(state, 'post-body.json')), 'must not POST');
       assert.ok(!fs.existsSync(path.join(state, 'patch-body.json')), 'must not PATCH');
     }
+  });
+
+  // ---- target resolution: the hygiene / implement variants --------------------
+  // pr-green's target arrives pre-resolved via TARGET_PR; these two resolve it from
+  // the result's final text — a PR URL grep SCOPED TO THIS REPO (a cross-repo link
+  // must never redirect the comment), with implement falling back to the labeled
+  // issue. Executed here so the scoping can't be silently dropped.
+
+  const recordVariant = (script, state, { runKey, log, comments, extraEnv = {} }) => {
+    fs.writeFileSync(path.join(state, 'comments.json'), JSON.stringify(comments));
+    return runStep(script, state, {
+      EXECUTION_FILE: log,
+      RUN_KEY: runKey,
+      RUN_URL: `https://example.test/runs/${runKey}`,
+      ...extraEnv,
+    });
+  };
+
+  test('hygiene targets the same-repo PR URL in the result text', () => {
+    const state = mkState();
+    const res = recordVariant(hygieneScript, state, {
+      runKey: '300.1',
+      log: writeLog(state, { ...RUN_A, finalText: 'Opened https://github.com/octo/waffles/pull/55 (auto-merge armed).' }),
+      comments: [],
+      extraEnv: { HOOK: 'hygiene' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(fs.readFileSync(path.join(state, 'post-url.txt'), 'utf8'), /issues\/55\/comments/);
+    assert.equal(parseDataLine(readBody(state, 'post-body.json')).runs['300.1'].hook, 'hygiene');
+  });
+
+  test('hygiene skips on a cross-repo-only PR URL and on no URL at all', () => {
+    for (const finalText of [
+      'Reviewed https://github.com/other/repo/pull/9 upstream.', // cross-repo: must NOT redirect
+      'No drift found; nothing to do.', // no PR opened
+    ]) {
+      const state = mkState();
+      const res = recordVariant(hygieneScript, state, {
+        runKey: '301.1',
+        log: writeLog(state, { ...RUN_A, finalText }),
+        comments: [],
+        extraEnv: { HOOK: 'hygiene' },
+      });
+      assert.equal(res.status, 0, res.stderr);
+      assert.ok(!fs.existsSync(path.join(state, 'post-body.json')), `must not POST for: ${finalText}`);
+      assert.ok(!fs.existsSync(path.join(state, 'patch-body.json')), `must not PATCH for: ${finalText}`);
+      assert.match(fs.readFileSync(path.join(state, 'summary.md'), 'utf8'), /no PR URL/);
+    }
+  });
+
+  test('implement prefers the same-repo PR URL and falls back to the labeled issue', () => {
+    // URL present ⇒ the PR wins over the issue fallback.
+    let state = mkState();
+    let res = recordVariant(implementScript, state, {
+      runKey: '400.1',
+      log: writeLog(state, { ...RUN_A, finalText: 'PR: https://github.com/octo/waffles/pull/88' }),
+      comments: [],
+      extraEnv: { HOOK: 'implement', TARGET_ISSUE: '77' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(fs.readFileSync(path.join(state, 'post-url.txt'), 'utf8'), /issues\/88\/comments/);
+    // No same-repo URL (cross-repo only) ⇒ the labeled issue.
+    state = mkState();
+    res = recordVariant(implementScript, state, {
+      runKey: '401.1',
+      log: writeLog(state, { ...RUN_A, finalText: 'Blocked; see https://github.com/other/repo/pull/9.' }),
+      comments: [],
+      extraEnv: { HOOK: 'implement', TARGET_ISSUE: '77' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(fs.readFileSync(path.join(state, 'post-url.txt'), 'utf8'), /issues\/77\/comments/);
+    assert.equal(parseDataLine(readBody(state, 'post-body.json')).runs['401.1'].hook, 'implement');
   });
 
   // ---- the post-merge counter ------------------------------------------------
