@@ -47,9 +47,8 @@ is what you reach for across a breaking one.
   have carried the bot identity since #155, with nothing further to configure; a repo on a bare
   `git.cmd` commits as **`claude[bot]`**, not as the runner. The note also splits the two
   precedences the toolkit must avoid: a `git config user.*` step *loses* to `git -c` (but
-  clobbers a bare repo), while a `GIT_COMMITTER_*` env var *beats* it.
-  Making the *PR*
-  show the bot requires the PAT to belong to the bot account; the toolkit cannot configure that.
+  clobbers a bare repo), while a `GIT_COMMITTER_*` env var *beats* it. Making the *PR* show the
+  bot requires the PAT to belong to the bot account; the toolkit cannot configure that.
   One behavioral change: **`waffle-label-hook`'s implement job now dispatches with
   `github_token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}`**, matching hygiene and
   pr-response — so implement PRs are authored by the same account as hygiene PRs and trigger the
