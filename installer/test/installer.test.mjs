@@ -2315,14 +2315,17 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [\'evil"; id\']\n');
     write(toolkitRoot, 'stacks/demo/agents/evil"; id.md', ['---', 'description: Evil.', '---', '', 'Body.', ''].join('\n'));
   };
+  // `"` is an illegal filename character on NTFS, so the fixture itself cannot be written on a
+  // Windows checkout (#260 review F4). CI is ubuntu; skip rather than fail the whole suite there.
+  const evilFilenameOpts = { skip: process.platform === 'win32' && 'NTFS forbids `"` in filenames' };
 
-  test('validate rejects a quote-breaking agent slug even with NO identity block (#247)', () => {
+  test('validate rejects a quote-breaking agent slug even with NO identity block (#247)', evilFilenameOpts, () => {
     writeEvilSlugStack();
     const problems = validateToolkit(toolkitRoot);
     assert.ok(problems.some((p) => /allowed slug shape/.test(p)), JSON.stringify(problems));
   });
 
-  test('the external-stack gate rejects the quote-breaking slug too, naming the source (#247)', () => {
+  test('the external-stack gate rejects the quote-breaking slug too, naming the source (#247)', evilFilenameOpts, () => {
     writeEvilSlugStack();
     const toolkit = loadToolkit(toolkitRoot);
     toolkit.stacks.get('demo').provenance = { source: 'https://example.com/x.git', ref: 'v1' };
@@ -2334,6 +2337,37 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [gpt-4.1_helper]\n');
     write(toolkitRoot, 'stacks/demo/agents/gpt-4.1_helper.md', ['---', 'description: Helps.', '---', '', 'Body.', ''].join('\n'));
     assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  // #260 review F3: separator-only slugs title-case to an empty/whitespace user.name — git's
+  // "Author identity unknown" failure at the agent's first commit. The lookahead closes the class.
+  for (const slug of ['---', '...', '___']) {
+    test(`validate rejects the separator-only slug "${slug}" (#260 review)`, () => {
+      write(toolkitRoot, 'stacks/demo/stack.yaml', `name: demo\ndescription: Demo.\nagents: ['${slug}']\n`);
+      write(toolkitRoot, `stacks/demo/agents/${slug}.md`, ['---', 'description: Dashes.', '---', '', 'Body.', ''].join('\n'));
+      const problems = validateToolkit(toolkitRoot);
+      assert.ok(problems.some((p) => /allowed slug shape/.test(p)), JSON.stringify(problems));
+    });
+  }
+
+  // #260 review F2: the slug used to be dereferenced as a path BEFORE any guard ran — loadStack
+  // read `agents/<slug>.md` at load, so a traversal entry read a file OUTSIDE the toolkit root
+  // and a missing target surfaced as a raw ENOENT naming the traversed path. Now `loadStack`
+  // rejects separators/dot-segments before the first path.join (the posture `files:` entries
+  // always had), and both validate entry points surface the curated load error.
+  test('a traversal agents: entry fails at LOAD with a curated error, never dereferenced as a path (#260 review)', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [\'../../../../etc/passwd\']\n');
+    const problems = validateToolkit(toolkitRoot);
+    assert.equal(problems.length, 1, JSON.stringify(problems));
+    assert.match(problems[0], /agents entry "\.\.\/\.\.\/\.\.\/\.\.\/etc\/passwd" must be a bare name with no path separators/);
+    assert.doesNotMatch(problems[0], /ENOENT/, 'the path must never be dereferenced');
+  });
+
+  test('a traversal skills: entry fails at LOAD the same way (#260 review)', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [lead-engineer]\nskills: [\'../../../../tmp\']\n');
+    const problems = validateToolkit(toolkitRoot);
+    assert.equal(problems.length, 1, JSON.stringify(problems));
+    assert.match(problems[0], /skills entry "\.\.\/\.\.\/\.\.\/\.\.\/tmp" must be a bare name with no path separators/);
   });
 });
 

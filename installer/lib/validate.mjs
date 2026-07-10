@@ -24,8 +24,11 @@ const DISPLAY_NAME_RE = compilePattern('(?!.*\\$\\{\\{)[A-Za-z0-9._\\[\\]-]+(?: 
  * `-c user.email=bot+<slug>@…`, and as the title-cased `-c user.name="…"` fallback when
  * `identity.displayName` is absent — precisely the case where DISPLAY_NAME_RE never runs.
  * Stricter than DISPLAY_NAME_RE (it is a filename): letters, digits, `.` `_` `-`, no spaces.
+ * The lookahead requires at least one letter or digit (#247 review): a separator-only slug
+ * (`---`, `...`, `___`) title-cases to an empty/whitespace user.name — git's "Author identity
+ * unknown" failure at the agent's first commit, uncaught on the derived path.
  */
-const AGENT_SLUG_RE = compilePattern('[A-Za-z0-9._-]+');
+const AGENT_SLUG_RE = compilePattern('(?=.*[A-Za-z0-9])[A-Za-z0-9._-]+');
 
 /**
  * Allowlist for an agent's `identity.avatar` (#157) — a *reference* to the agent's avatar image:
@@ -152,7 +155,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       if (typeof agent.name !== 'string' || !AGENT_SLUG_RE.test(agent.name)) {
         problems.push(
           `${ctx}: agent ${JSON.stringify(agent.name ?? null)} name does not match the allowed slug shape ` +
-            `(letters, digits, ". _ -") — the slug is a filename and lands in an agent-executed git command ` +
+            `(letters, digits, ". _ -", at least one letter or digit) — the slug is a filename and lands in an agent-executed git command ` +
             `(-c user.email=bot+<slug>@…, and as the title-cased user.name fallback when identity.displayName is absent)`,
         );
       }

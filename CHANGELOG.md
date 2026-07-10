@@ -353,14 +353,21 @@ is what you reach for across a breaking one.
   for third-party stacks), but the agent slug beside it — the agent's filename — was checked
   nowhere, despite reaching the command always (as the `bot+<slug>@…` plus-address) and, when
   `displayName` is absent, as the title-cased `user.name` fallback that the displayName allowlist
-  never sees. `validateStack` now rejects any agent whose name falls outside `[A-Za-z0-9._-]+`,
-  unconditionally (not gated on an `identity:` block), closing the asymmetry for both the
-  toolkit's own `validate` and the external-stack render gate. Separately, the byte-identical
-  `git.agentIdentities.entryPatterns` declarations in `github-workflow` and `orchestration` are
-  now pinned deep-equal by a test (a one-sided edit fails CI instead of silently weakening the
-  guard in single-stack installs), and the orchestration lockstep comment now names the loosening
-  hazard, not just the tightening one. **Consumer impact:** validate-time errors only — every
-  shipped slug already conforms; no config, schema, or rendered-file change, no re-render needed.
+  never sees. `validateStack` now rejects any agent whose name falls outside `[A-Za-z0-9._-]+`
+  (with at least one letter or digit — a separator-only slug like `---` title-cases to an empty
+  `user.name`), unconditionally (not gated on an `identity:` block), closing the asymmetry for
+  both the toolkit's own `validate` and the external-stack render gate. Per the PR #260 review,
+  `loadStack` also rejects `agents:`/`skills:` manifest entries carrying path separators or dot
+  segments *before* the first `path.join` — previously a traversal entry like `../../secret` was
+  dereferenced as a path at load, reading outside the toolkit root before any guard ran (`files:`
+  entries always had this load-time check; agent/skill names now do too). Separately, the
+  byte-identical `git.agentIdentities.entryPatterns` declarations in `github-workflow` and
+  `orchestration` are now pinned deep-equal by a test, so a one-sided edit fails the test suite
+  instead of silently weakening the guard in single-stack installs (note the pin binds where the
+  suite runs — locally and in any consumer's checks; the toolkit's own merge path currently gates
+  on `doctor` only), and the orchestration lockstep comment now names the loosening hazard, not
+  just the tightening one. **Consumer impact:** validate/load-time errors only — every shipped
+  slug already conforms; no config, schema, or rendered-file change, no re-render needed.
 - **Pattern-guard rejections now name the declaring stack and the failing pattern (#244, engine).**
   `pattern:` / `entryPatterns:` guards are unioned toolkit-wide (deliberately — the guard travels
   with the KEY; see the #155-review entry below), which meant a stack the project never installs

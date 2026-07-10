@@ -100,14 +100,29 @@ function loadStack(name, dir) {
   const config = manifest.config ?? {};
   const declared = new Set(Object.keys(config));
 
-  const agents = (manifest.agents ?? []).map((agentName) => {
+  // A manifest `agents:`/`skills:` entry is a bare name used verbatim as a path segment under
+  // the stack dir. Reject separators and the dot segments BEFORE the first path.join, so a
+  // traversal entry like `../../secret` is never dereferenced outside the toolkit root at load
+  // time — the same load-time posture `files:` entries get below (#247 review). Fine-grained
+  // slug shape is validateStack's job (AGENT_SLUG_RE); this only stops a name acting as a path.
+  const bareName = (kind, entry) => {
+    const n = String(entry);
+    if (/[\\/]/.test(n) || n === '.' || n === '..') {
+      throw new Error(`stack ${name}: ${kind} entry "${n}" must be a bare name with no path separators`);
+    }
+    return n;
+  };
+
+  const agents = (manifest.agents ?? []).map((entry) => {
+    const agentName = bareName('agents', entry);
     const file = path.join(dir, 'agents', `${agentName}.md`);
     const raw = fs.readFileSync(file, 'utf8');
     const { data, body } = parseFrontmatter(raw);
     return { kind: 'agent', name: agentName, file, data, body };
   });
 
-  const skills = (manifest.skills ?? []).map((skillName) => {
+  const skills = (manifest.skills ?? []).map((entry) => {
+    const skillName = bareName('skills', entry);
     const skillDir = path.join(dir, 'skills', skillName);
     const files = fs
       .readdirSync(skillDir, { recursive: true, withFileTypes: true })
