@@ -500,21 +500,42 @@ const stripYamlComments = (yaml) =>
     .filter((line) => !/^\s*#/.test(line))
     .join('\n');
 
+// Derived, never enumerated: the identity-neutrality invariant must hold for EVERY
+// workflow the stack ships, so the list is read off disk. A hardcoded enumeration of a
+// for-all invariant is the bug — it silently exempts whatever is added next.
+const WAFFLE_WORKFLOW_DIR = path.join(
+  REPO_ROOT,
+  'stacks',
+  'github-workflow',
+  'files',
+  '.github',
+  'workflows',
+);
+const ALL_WAFFLE_WORKFLOWS = fs
+  .readdirSync(WAFFLE_WORKFLOW_DIR)
+  .filter((f) => f.endsWith('.yml'))
+  .sort();
+
 describe('CI workflow identity (#160)', () => {
-  const wfSource = (name) =>
-    fs.readFileSync(
-      path.join(REPO_ROOT, 'stacks', 'github-workflow', 'files', '.github', 'workflows', name),
-      'utf8',
-    );
-  // The three workflows whose harness makes commits.
+  const wfSource = (name) => fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, name), 'utf8');
+  // The three workflows whose harness makes commits. (Enumerated on purpose: this list
+  // drives the PROSE pins, and only these three carry the design note.)
   const COMMITTING = [
     'waffle-hygiene.yml',
     'waffle-label-hook.yml',
     'waffle-pr-response-hook.yml',
   ];
-  // Every waffle workflow must stay identity-neutral, release-hook included — it pushes
-  // the tag, and a `git config user.*` there would be just as much of a clobber.
-  const IDENTITY_NEUTRAL = [...COMMITTING, 'waffle-release-hook.yml'];
+  // …but identity-neutrality binds every workflow the stack ships, dispatchers included:
+  // `waffle-pr-green-hook.yml` dispatches the harness too, and a `use_commit_signing: true`
+  // there would change commit identity outright.
+  const IDENTITY_NEUTRAL = ALL_WAFFLE_WORKFLOWS;
+
+  test('the identity pins cover every workflow the stack ships', () => {
+    // Guards the guard: if a workflow lands and this list is filtered/stale, fail here.
+    assert.ok(IDENTITY_NEUTRAL.length >= 8, `expected ≥8 workflows, got ${IDENTITY_NEUTRAL.length}`);
+    for (const name of COMMITTING) assert.ok(IDENTITY_NEUTRAL.includes(name), `${name} missing`);
+    assert.ok(IDENTITY_NEUTRAL.includes('waffle-pr-green-hook.yml'));
+  });
 
   for (const name of IDENTITY_NEUTRAL) {
     test(`${name} adds no git identity of its own`, () => {
@@ -549,15 +570,38 @@ describe('CI workflow identity (#160)', () => {
       // The comment must name the dispatcher's default identity and the precedence that
       // makes `git.cmd` load-bearing — not claim the runner's ambient identity survives.
       assert.match(wf, /claude\[bot\]/);
-      assert.doesNotMatch(wf, /ambient git\s*\n?\s*#?\s*identity/);
+      // The comment must not claim the bare default is the RUNNER's identity, in any
+      // phrasing — "the runner's ambient identity", "ambient git identity", reflowed or
+      // not. Pin the substantive token inside the identity sentence, not a brittle
+      // word-for-word string.
+      assert.doesNotMatch(wf, /ambient/i);
     });
   }
 
-  test('the label-hook implement job dispatches with the same token fallback as hygiene', () => {
+  // The token fallback is this PR's ONLY behavioral change, and its whole point is WHICH
+  // job holds the PAT. Slice the file at the job boundaries so the pin can tell implement
+  // from enrich: a whole-file match is satisfied by the PAT sitting on the wrong job.
+  const labelHookJobs = (wf) => {
+    const enrichAt = wf.indexOf('\n  enrich:');
+    const implementAt = wf.indexOf('\n  implement:');
+    assert.ok(enrichAt !== -1 && implementAt !== -1, 'label-hook job anchors not found');
+    assert.ok(enrichAt < implementAt, 'expected enrich to precede implement');
+    return { enrich: wf.slice(enrichAt, implementAt), implement: wf.slice(implementAt) };
+  };
+
+  test('the label-hook implement job — and ONLY it — carries the PAT fallback', () => {
     const wf = wfSource('waffle-label-hook.yml');
-    assert.match(wf, /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/);
-    // Enrich makes no commits and opens no PR — it stays on the job-scoped github.token.
-    const tokens = wf.match(/github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN/g) || [];
+    const { enrich, implement } = labelHookJobs(wf);
+    assert.match(
+      implement,
+      /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/,
+    );
+    // The load-bearing half. Enrich fires on `issues: [labeled]` with an attacker-authorable
+    // body spliced into the prompt; it makes no commits and opens no PR, so it must never
+    // hold the PAT — not under this name, not under any `github_token:` at all.
+    assert.doesNotMatch(enrich, /github_token:/);
+    // …and the PAT appears exactly once in the file, on that one job.
+    const tokens = wf.match(/secrets\.WAFFLE_HYGIENE_TOKEN/g) || [];
     assert.equal(tokens.length, 1, `expected the PAT fallback on implement only, got ${tokens.length}`);
   });
 
@@ -583,7 +627,11 @@ describe('CI workflow identity (#160)', () => {
     // ambient identity (stock runners have none). Naming the wrong default here misleads every
     // consumer who never opts in, which is most of them.
     assert.match(stack, /`claude\[bot\]` — the dispatcher's own `bot_name` \/ `bot_id` defaults/);
-    assert.doesNotMatch(stack, /the runner's \*\*ambient\*\* git identity/);
+    // Forbid the wrong claim in ANY phrasing — "the runner's **ambient** git identity",
+    // "the runner's ambient identity", reflowed across lines. Matching a bolded, exact
+    // word sequence would evade on a reword. (The note may still say the runner carries
+    // "no ambient identity at all" — that is the opposite claim, and true.)
+    assert.doesNotMatch(stack, /the runner's\s+(\*\*)?ambient(\*\*)?(\s+git)?\s+identity/);
     // …and `git.cmd` is load-bearing because `git -c` outranks that REPO-LOCAL config.
     assert.match(stack, /Why `git\.cmd` is load-bearing/);
     assert.match(stack, /\*\*repo-local\*\*, and\s+`git -c user\.name=…` outranks repo-local config/);
@@ -608,7 +656,10 @@ describe('CI workflow identity (#160)', () => {
     assert.match(stack, /`configureGitAuth`[\s\S]{0,400}`\.git\/config`/);
     // The recommendation, stated as such: App token or repo-scoped fine-grained PAT.
     assert.match(stack, /GitHub App installation token or a fine-grained PAT scoped to this\s+repository only/);
-    assert.match(stack, /never a classic one|classic PAT/);
+    // Pin the RECOMMENDATION, not the incidental phrase. An alternation with `classic PAT`
+    // is satisfied by "With a **classic** PAT, applying a label is…" further down, so the
+    // prescriptive half could be deleted and this stays green.
+    assert.match(stack, /never a classic one/);
   });
 
   test('WAFFLE_HYGIENE_TOKEN is declared a prerequisite of every workflow that uses it', () => {
@@ -1123,10 +1174,21 @@ describe('label-hook workflow (rendered in-test): dispatch gates', () => {
     assert.equal(secret.length, 2, `expected the ANTHROPIC_API_KEY secret on both jobs, got ${secret.length}`);
   });
 
-  test('the implement job carries the WAFFLE_HYGIENE_TOKEN fallback (#160)', () => {
+  test('the implement job — and ONLY it — carries the WAFFLE_HYGIENE_TOKEN fallback (#160)', () => {
     // PR authorship consistency with hygiene: with the secret set the implement PR is
     // authored by that account and triggers required CI; unset, it falls back unchanged.
-    assert.match(workflow, /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/);
+    // Anchored to the job: a whole-file match would greenlight the PAT on `enrich`, whose
+    // trigger splices an attacker-authorable issue body into the harness prompt.
+    const enrichAt = workflow.indexOf('\n  enrich:');
+    const implementAt = workflow.indexOf('\n  implement:');
+    assert.ok(enrichAt !== -1 && enrichAt < implementAt, 'rendered job anchors not found');
+    const enrich = workflow.slice(enrichAt, implementAt);
+    const implement = workflow.slice(implementAt);
+    assert.match(
+      implement,
+      /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/,
+    );
+    assert.doesNotMatch(enrich, /github_token:/);
   });
 
   test('renders no TOOLKIT bot identity into a project that never opted in (#160)', () => {
@@ -1144,16 +1206,13 @@ describe('label-hook workflow (rendered in-test): dispatch gates', () => {
   });
 });
 
-// Coverage parity (#160): the source-payload pins above run over all four waffle workflows,
-// so the rendered pins must too — otherwise a recursive `{{git.identitySection}}` leak (whose
-// stack default embeds `{{git.botName}}`) would only be caught for hygiene and label-hook.
+// Coverage parity (#160): the source-payload pins above run over EVERY waffle workflow the
+// stack ships (derived from disk, not enumerated), so the rendered pins must too — otherwise a
+// recursive `{{git.identitySection}}` leak (whose stack default embeds `{{git.botName}}`) is
+// only caught on the handful someone remembered to list. `waffle-pr-green-hook.yml` dispatches
+// the harness exactly like the three that commit; it was outside "the whole class" until now.
 describe('every waffle workflow (rendered in-test): no toolkit bot identity (#160)', () => {
-  const WORKFLOWS = [
-    'waffle-hygiene.yml',
-    'waffle-label-hook.yml',
-    'waffle-pr-response-hook.yml',
-    'waffle-release-hook.yml',
-  ];
+  const WORKFLOWS = ALL_WAFFLE_WORKFLOWS;
   let cwd;
 
   beforeEach(() => {
