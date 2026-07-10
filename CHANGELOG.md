@@ -341,12 +341,16 @@ is what you reach for across a breaking one.
   `pattern:` / `entryPatterns:` guards are unioned toolkit-wide (deliberately — the guard travels
   with the KEY; see the #155-review entry below), which meant a stack the project never installs
   could veto a config value with an error naming neither the stack nor the regex. Rejections now
-  append `<pattern> (declared by stack "<name>")` for every guard the value fails — failing guards
-  only, never ones it satisfies — and the reserved `harness.*` guards identify themselves. The
-  multi-stack AND ("a key guarded by more than one stack must satisfy all of its patterns") was
-  previously untested on the scalar path since no shipped scalar key is dual-declared; a two-stack
-  fixture test now pins it (the `entryPatterns` twin is already live: `git.agentIdentities` is
-  declared identically by `github-workflow` and `orchestration`). The #155 entry's "no behavior
+  append `` `<pattern>` (declared by stack "<name>") `` for every guard the value fails — failing
+  guards only, never ones it satisfies, on both the scalar and `entryPatterns` paths (one shared
+  filter serves both) — and the reserved `harness.*` guards identify themselves. The pattern is
+  backtick-delimited (shipped regexes end in spaces and groups that would otherwise abut the
+  attribution), and identical patterns declared by several stacks are grouped, printed once with
+  their sources joined. The multi-stack AND ("a key guarded by more than one stack must satisfy
+  all of its patterns") was previously untested since no shipped key is dual-declared with
+  differing regexes; a two-stack fixture test now pins it on both paths (the byte-identical
+  `entryPatterns` dual-declaration is live: `git.agentIdentities` in `github-workflow` and
+  `orchestration`). The #155 entry's "no behavior
   change" consumer-impact claim is corrected in place to the narrowed-contract statement it should
   have made. **Consumer impact:** error messages only — no config or schema change, no re-render
   needed.

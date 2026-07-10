@@ -77,11 +77,17 @@ export function makeGuard(pattern, source) {
   return { re: compilePattern(pattern), pattern, source };
 }
 
+/**
+ * The single implementation of the failing-guard filter — both the scalar path
+ * (`failingGuards`) and the entryPatterns path (`entryPatternProblem`) ride it, so "never
+ * name a guard the value satisfies" cannot hold on one path and silently break on the other.
+ */
+const failingOf = (guardList, value) => guardList.filter((g) => !g.re.test(value));
+
 /** The scalar pattern guards on `key` that `value` fails — empty when unguarded or passing. */
 function failingGuards(guards, key, value) {
   const gs = guards?.patterns?.get(key);
-  if (!gs) return [];
-  return gs.filter((g) => !g.re.test(value));
+  return gs ? failingOf(gs, value) : [];
 }
 
 /**
@@ -89,8 +95,20 @@ function failingGuards(guards, key, value) {
  * value may not even be installed — name the FAILING pattern(s) and their declaring stack(s),
  * and never the guards the value satisfies (#244 F1). The `does not match its declared
  * pattern` prefix is a stable contract several tests pin by regex; only details follow it.
+ * The pattern is backtick-wrapped because shipped regexes contain spaces and trailing groups
+ * that would otherwise abut the attribution ambiguously, and identical patterns from several
+ * declarers (the live `git.agentIdentities` case — byte-identical in two stacks) are grouped
+ * under one pattern with their sources joined, rather than printed once per declarer.
  */
-const describeGuards = (failing) => failing.map((g) => `${g.pattern} (declared by ${g.source})`).join('; ');
+const describeGuards = (failing) => {
+  const byPattern = new Map();
+  for (const g of failing) {
+    const sources = byPattern.get(g.pattern);
+    if (sources) sources.push(g.source);
+    else byPattern.set(g.pattern, [g.source]);
+  }
+  return [...byPattern].map(([pattern, sources]) => `\`${pattern}\` (declared by ${sources.join('; ')})`).join('; ');
+};
 
 function patternFailure(context, key, failing) {
   return `${context}: config value for {{${key}}} does not match its declared pattern ${describeGuards(failing)}`;
@@ -123,7 +141,7 @@ export function entryPatternProblem(guards, key, value) {
       const res = leaves.get(leaf);
       if (!res) return `entry "${entry}" has unknown key "${leaf}" (allowed: ${allowed})`;
       if (typeof leafValue !== 'string') return `entry "${entry}" key "${leaf}" must be a string`;
-      const failing = res.filter((g) => !g.re.test(leafValue));
+      const failing = failingOf(res, leafValue);
       if (failing.length) {
         return `entry "${entry}" key "${leaf}" does not match its declared pattern ${describeGuards(failing)}`;
       }

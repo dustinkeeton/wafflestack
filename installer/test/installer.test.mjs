@@ -1611,8 +1611,9 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.match(errs, /pattern/);
     // #244 F1: the entry-guard rejection names its declarer too. git.agentIdentities declares
     // byte-identical entryPatterns in BOTH github-workflow and orchestration, so both guards
-    // fail here — pin only that at least one declaring stack is named, not the join order.
-    assert.match(errs, /declared by stack "(github-workflow|orchestration)"/, 'the rejection names a declaring stack');
+    // fail here — and identical patterns are GROUPED, printed once with the sources joined
+    // (#256 review nit), not once per declarer. Order follows toolkit.yaml's stacks list.
+    assert.match(errs, /declared by stack "github-workflow"; stack "orchestration"/, 'identical patterns group their declarers');
     assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
   });
 
@@ -3707,11 +3708,19 @@ describe('pattern guards from two stacks AND together (#244)', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-and-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-and-'));
     write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: and\nstacks: [alpha, beta]\n');
+    // Both the scalar `pattern:` (demo.key) and the map-valued `entryPatterns:` (demo.map) are
+    // dual-declared with DIFFERENT regexes. The shipped dual-declaration (git.agentIdentities)
+    // is byte-identical in both stacks, so its guards always fail together — it can never prove
+    // "failing guards only" on either path; different regexes can.
     write(toolkitRoot, 'stacks/alpha/stack.yaml',
-      ['name: alpha', 'description: Alpha.', 'skills: [s]', 'config:', '  demo.key:', "    pattern: '[a-z]+'", ''].join('\n'));
-    write(toolkitRoot, 'stacks/alpha/skills/s/SKILL.md', '---\nname: s\ndescription: S.\n---\n\nValue {{demo.key}}.\n');
+      ['name: alpha', 'description: Alpha.', 'skills: [s]', 'config:',
+        '  demo.key:', "    pattern: '[a-z]+'",
+        '  demo.map:', '    default: {}', '    entryPatterns:', "      leaf: '[a-z]+'", ''].join('\n'));
+    write(toolkitRoot, 'stacks/alpha/skills/s/SKILL.md', '---\nname: s\ndescription: S.\n---\n\nValue {{demo.key}}. Map {{demo.map}}.\n');
     write(toolkitRoot, 'stacks/beta/stack.yaml',
-      ['name: beta', 'description: Beta.', 'config:', '  demo.key:', "    pattern: '.{1,3}'", ''].join('\n'));
+      ['name: beta', 'description: Beta.', 'config:',
+        '  demo.key:', "    pattern: '.{1,3}'",
+        '  demo.map:', '    entryPatterns:', "      leaf: '.{1,3}'", ''].join('\n'));
   });
 
   afterEach(() => {
@@ -3736,7 +3745,7 @@ describe('pattern guards from two stacks AND together (#244)', () => {
     const errs = r.errors.join('\n');
     assert.match(errs, /demo\.key/);
     assert.match(errs, /does not match its declared pattern/);
-    assert.match(errs, /\.\{1,3\} \(declared by stack "beta"\)/, 'names the failing pattern and its declarer');
+    assert.match(errs, /`\.\{1,3\}` \(declared by stack "beta"\)/, 'names the failing pattern (backtick-delimited) and its declarer');
     assert.doesNotMatch(errs, /declared by stack "alpha"/, 'a guard the value satisfies is never named');
   });
 
@@ -3746,6 +3755,31 @@ describe('pattern guards from two stacks AND together (#244)', () => {
     const errs = r.errors.join('\n');
     assert.match(errs, /declared by stack "alpha"/);
     assert.match(errs, /declared by stack "beta"/);
+  });
+
+  // #256 review (should-fix): the same two properties on the entryPatterns path, which has its
+  // own consumer (entryPatternProblem). Both paths now share one failing-guard filter
+  // (failingOf, template.mjs) — restore an inline filter that passes `res` unfiltered to the
+  // message and the leaf-passing-one-stack test below goes red.
+  const renderMap = (leafValue) => {
+    write(cwd, '.waffle/waffle.yaml',
+      `targets: [claude]\nstacks: [alpha]\nconfig:\n  demo:\n    key: abc\n    map:\n      e:\n        leaf: ${JSON.stringify(leafValue)}\n`);
+    return renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  test('an entryPatterns leaf satisfying BOTH stacks\' guards renders', () => {
+    const r = renderMap('ab'); // [a-z]+ and .{1,3}
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+  });
+
+  test('an entryPatterns leaf passing the installed stack\'s guard but failing the uninstalled stack\'s fails, naming only the guard that fired', () => {
+    const r = renderMap('abcd'); // matches alpha's [a-z]+, exceeds beta's .{1,3}
+    assert.equal(r.ok, false, 'entry guards union toolkit-wide too');
+    const errs = r.errors.join('\n');
+    assert.match(errs, /demo\.map/);
+    assert.match(errs, /entry "e" key "leaf" does not match its declared pattern/);
+    assert.match(errs, /`\.\{1,3\}` \(declared by stack "beta"\)/, 'names the failing pattern and its declarer');
+    assert.doesNotMatch(errs, /declared by stack "alpha"/, 'a satisfied entry guard is never named');
   });
 });
 
