@@ -12,11 +12,11 @@ This project commits agent work under the managed bot identity — the `commit` 
 below inject it via `-c` flags (`git.cmd`), so the machine's ambient `user.name` /
 `user.email` is never what lands on an agent commit. Identity-free commands (`push`,
 `checkout`, `diff`, `log`) stay a bare `git`. Human commits made outside these examples
-keep the developer's own config. **Signing:** `git.cmd` pins `commit.gpgsign=false`, so
-agent commits here are deliberately unsigned and carry no GitHub verification badge —
-intentional, not accidental. That posture is the recipe's, not the machine's: never add
-or remove signing flags per-invocation. Human commits made outside these examples sign
-normally. Every agent-made commit must still end with:
+keep the developer's own config and sign normally. **Signing:** `git.cmd` pins
+`commit.gpgsign=false`, so agent commits here are deliberately unsigned and carry no
+GitHub verification badge — intentional, not accidental. That posture is the recipe's,
+not the machine's: never add or remove signing flags per-invocation. Every agent-made
+commit must still end with:
 
 ```
 Co-Authored-By: Claude <noreply@anthropic.com>
@@ -66,8 +66,9 @@ stack's setup note for the exact recipes and the layering rules.
 
 ### Signing model
 
-Signing has three tiers, and **the resolved `git.cmd` above is this project's signing posture** —
-explicit, committed, reviewable:
+Signing has three tiers. When `git.cmd` above is **not** a bare `git`, the resolved command **is**
+this project's signing posture — explicit, committed, reviewable. A bare `git` pins no posture: the
+machine's own config governs, exactly as it does for humans.
 
 1. **Human** — machine git config. The toolkit configures no signing for humans; your own key and
    account produce GitHub's "Verified" badge exactly as they always did.
@@ -84,6 +85,10 @@ Never deviate from the resolved `git.cmd` per-invocation — in **either** direc
 `-c commit.gpgsign=false` because a signing prompt hung (that is a machine/config problem: stop and
 surface it), and do not sign when the recipe says not to. Changing the posture means changing
 `git.cmd` in config, with the human's say-so.
+
+The asymmetry matters: where `git.cmd` is a bare `git` it pins nothing, so ambient signing is simply
+the human's own config doing its job — nothing to deviate from. Where the project **has** opted in,
+ambient signing is the bug this model exists to eliminate.
 
 ## Branch Strategy
 
