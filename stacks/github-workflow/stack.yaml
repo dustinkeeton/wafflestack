@@ -764,7 +764,10 @@ setup: |-
     but the first `git tag -a` would otherwise ride the ambient config or hang on a prompting
     signer. Two documented upgrades, for a bot that should really sign —
     each *references* `git.signingKey`, which is why that key is never in the default recipe (the
-    empty default would render `git -c user.signingkey= …`, which git rejects at run time):
+    empty default would render `git -c user.signingkey= …`, and git rejects an empty signingkey
+    **only when it signs** — under B/C the first commit fails loudly, while a non-signing command
+    carries the empty flag silently; either way a key the recipe does not sign with is dead
+    config, so recipe A simply has none):
 
         # Recipe B (SSH signing)
         cmd: git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
@@ -983,7 +986,9 @@ config:
       private key material (it renders into committed files). Empty (the default) means commits
       are not signed with a dedicated bot key. Keep the real value in .waffle/waffle.local.yaml.
       Note the empty default is a *silent* fallback: a git.cmd referencing {{git.signingKey}}
-      without defining it renders `git -c user.signingkey= …`, which git rejects at run time.
+      without defining it renders `git -c user.signingkey= …`, which git rejects **only when the
+      command actually signs** — recipes B/C fail at the agent's first commit; a non-signing
+      command exits 0 and the empty flag rides along unnoticed.
       This key is APPLIED only by referencing it from a signing git.cmd (setup-note recipe B for
       SSH, C for GPG); it enables nothing on its own, and both recipes require a NON-PROMPTING
       signer or every agent commit hangs. See the setup note's signing model.

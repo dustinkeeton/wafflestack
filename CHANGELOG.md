@@ -88,8 +88,9 @@ is what you reach for across a breaking one.
   no-op where nothing signs, and prevention of both failure modes where something does. Recipes
   **B** (SSH: `commit.gpgsign=true` + pinned `gpg.format=ssh` + `user.signingkey`) and **C** (GPG)
   are documented upgrades that *reference* `git.signingKey`, which is why that key stays out of the
-  default recipe (its empty default would render `git -c user.signingkey=`, which git rejects at run
-  time). Both require a **non-prompting signer**; the surrounding plumbing (`gpg.ssh.program`,
+  default recipe (its empty default would render `git -c user.signingkey=`, which git rejects only
+  when the command signs — loudly under B/C, silently tolerated under a non-signing recipe). Both
+  require a **non-prompting signer**; the surrounding plumbing (`gpg.ssh.program`,
   allowed-signers, pinentry) is named as a machine concern, not prescribed.
   **Verified status is now intentional and documented.** An unsigned commit shows **no badge**
   (neutral); a signed-but-unverifiable one shows the yellow **"Unverified"** — so recipe A yields
