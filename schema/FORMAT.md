@@ -156,8 +156,9 @@ name: architect
 description: One-line description (used verbatim by every harness).
 skills:            # skill names this agent should be granted / pointed at
   - codebase-architecture
-identity:          # optional — this agent's virtualized git author (see below)
+identity:          # optional — this agent's virtualized git author + avatar (see below)
   displayName: Architect
+  avatar: .waffle/avatars/architect.svg   # optional — defaults to exactly this generated path
 claude:            # passthrough keys emitted only in the Claude render
   allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
@@ -196,6 +197,17 @@ bot's GitHub account unless that exact alias is registered there. Plus-addressin
 attribution and mail filtering, not account linkage. And a base email that **cannot** subaddress
 — a `*.noreply.github.com` domain, or a local part that already carries a `+` — is used verbatim
 rather than mangled: those agents differ by display name only.
+
+**`identity.avatar`** is the agent's avatar **reference** — a repo-relative path or an `https://`
+URL. It is optional, and defaults to `.waffle/avatars/<name>.svg`: the deterministic waffle SVG
+that `render` emits for every installed agent. Because a plus-addressed alias belongs to no GitHub
+account, GitHub renders that address's **Gravatar** on commit views — so registering one Gravatar
+per agent email is what puts a distinct face on each agent's commits. That registration is manual
+and external; the generated `.waffle/AVATARS.md` lists each agent's avatar file, its exact commit
+email, and the procedure. Like `displayName`, the value is validated against an allowlist: either an
+`https://` URL, or a repo-relative path (`segment/segment/…`) with no leading `/`, no `//`, no other
+scheme (`file:`, `data:`, `javascript:`), no percent-encoding, and no `..` traversal — it is a
+reference the toolkit renders into frontmatter and Markdown, never something it fetches or uploads.
 
 Renders to:
 - **claude** → `.claude/agents/<name>.md` — frontmatter `name`, `description`, `skills`,
