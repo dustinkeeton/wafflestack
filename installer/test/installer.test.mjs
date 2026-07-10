@@ -1671,23 +1671,28 @@ describe('github-workflow: identity config schema (#154)', () => {
   // #246 (deferred from #245's review, F5): entryPatternProblems walks the WHOLE map instead of
   // short-circuiting on the first bad entry — a config with three independent mistakes surfaces
   // all three in one render, not one per fix-and-retry cycle. The three entries hit three
-  // distinct branches (failing guard / unknown leaf / non-map entry). Restore the early return
-  // and this drops to one error.
+  // distinct branches (failing guard / unknown leaf / non-map entry), and rogue1 carries TWO bad
+  // leaves (adversarial review on #258): the contract is per-LEAF, so multiplicity must hold
+  // within one entry, not only across entries — cap the leaf loop at one problem per entry
+  // (each `continue` → `break`) and the botName assertion goes red. `botName: 42` is also the
+  // suite's only end-to-end hit on the non-string-leaf branch. Restore the early return and
+  // this drops to one error.
   test('I7e a map with several malformed entries reports EVERY problem in one pass', () => {
     write(
       cwd,
       '.waffle/waffle.yaml',
-      `${base}  git:\n    agentIdentities:\n      rogue1:\n        botEmail: "$(id)@x.com"\n      rogue2:\n        botEmial: "x@y.io"\n      rogue3: scalar\n`,
+      `${base}  git:\n    agentIdentities:\n      rogue1:\n        botEmail: "$(id)@x.com"\n        botName: 42\n      rogue2:\n        botEmial: "x@y.io"\n      rogue3: scalar\n`,
     );
     const result = render();
     assert.equal(result.ok, false);
     const errs = result.errors.join('\n');
     assert.match(errs, /entry "rogue1" key "botEmail" does not match its declared pattern/);
+    assert.match(errs, /entry "rogue1" key "botName" must be a string/);
     assert.match(errs, /entry "rogue2" has unknown key "botEmial"/);
     assert.match(errs, /entry "rogue3" must be a map/);
     // Multiplicity, not just presence: each problem is its own error line for the one key.
     const identityErrors = result.errors.filter((e) => e.includes('git.agentIdentities'));
-    assert.ok(identityErrors.length >= 3, JSON.stringify(identityErrors));
+    assert.ok(identityErrors.length >= 4, JSON.stringify(identityErrors));
   });
 
   // #246 (QA round-2 nit on #258): the non-map TOP-LEVEL value branch — a scalar where the
