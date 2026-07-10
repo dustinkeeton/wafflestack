@@ -129,8 +129,8 @@ prerequisites:
     name: WAFFLE_HYGIENE_TOKEN
     level: recommend
     check: "gh secret list 2>/dev/null | grep -q '^WAFFLE_HYGIENE_TOKEN'"
-    items: [files/.github/workflows/waffle-hygiene.yml]
-    description: PAT/App-token secret so the hygiene PR triggers CI and can auto-merge (falls back to GITHUB_TOKEN when unset).
+    items: [files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-pr-response-hook.yml]
+    description: PAT/App-token secret so the PRs and pushes the harness makes (hygiene, label-hook implement, pr-response) trigger CI and carry that account's authorship rather than github-actions[bot]; hygiene also needs it for auto-merge to fire. Falls back to GITHUB_TOKEN when unset.
   - kind: secret
     name: WAFFLE_RELEASE_TOKEN
     level: recommend
@@ -824,6 +824,40 @@ setup: |-
   rather have the trailer name the bot can point it at `{{git.botName}} <{{git.botEmail}}>`.
   Enforcement is prompt-level: agents follow the rendered examples, the same as every other
   git-workflow convention.
+
+  **CI identity — token vs. git config.** In CI two *different* identities are in play, decided
+  by two different mechanisms. Conflating them is the usual source of "why does the bot's PR say
+  github-actions[bot]?".
+
+  | | **Event identity** — who opened the PR, posted the comment, pushed the tag | **Commit identity** — the author/committer on the commit objects |
+  |---|---|---|
+  | Decided by | the **token** the job hands the harness / `actions/checkout` | the resolved **`git.cmd`** recipe in the committed, rendered git-workflow skill |
+  | Configured with | `WAFFLE_HYGIENE_TOKEN` (hygiene, label-hook implement, pr-response), `WAFFLE_RELEASE_TOKEN` (release-hook); default `github.token` when unset | `git.botName` / `git.botEmail` + `git.cmd` (the single opt-in) |
+  | Unset / bare default | `github-actions[bot]`, and the event triggers **no** other workflow (GitHub's anti-recursion rule) | the runner's **ambient** git identity — the toolkit imposes nothing |
+
+  Consequences worth internalizing:
+
+  - **The workflows deliberately pin no git identity.** No `waffle-*` workflow sets `git config
+    user.name` / `user.email` or a `GIT_AUTHOR_*` / `GIT_COMMITTER_*` env var, and none should.
+    The no-clobber rule extends to CI: a repo on a bare `git.cmd` has not opted into a bot
+    identity, and its CI commits must keep the runner's ambient one. Hard-coding the identity in
+    a workflow would also *win* over the recipe (env beats `git -c`), silently overriding both
+    `git.cmd` and any per-agent `git.agentIdentities` entry.
+  - **Opt in once and CI follows.** Because the harness commits by executing the rendered
+    `git.cmd` from the *committed* skills — a prerequisite for every hook — an opted-in repo's
+    CI commits already carry the bot's name and email. There is nothing further to configure.
+  - **Event identity cannot be configured by the toolkit at all.** To make the PR/tag show the
+    bot, the PAT (or GitHub App installation token) in the secret must *belong to the bot
+    account*. A PAT minted from your own account opens PRs as you, no matter what `git.cmd`
+    says — the commits inside will still be the bot's.
+  - **Blast radius of the PAT.** With `WAFFLE_HYGIENE_TOKEN` set, a human applying the
+    `waffle:implement` label dispatches a run acting with that token's permissions rather than
+    the narrowly job-scoped `GITHUB_TOKEN`. That is the price of PRs that trigger required CI;
+    branch protection remains the backstop. Leave the secret unset and every hook falls back to
+    `github.token`, unchanged.
+  - **The release tag carries no identity of its own.** `waffle-release-hook` pushes a
+    *lightweight* tag, which stores no tagger name/email — so on the release path the pushing
+    token is the only identity there is.
 config:
   git.identitySection:
     required: false

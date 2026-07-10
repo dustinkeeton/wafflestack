@@ -45,6 +45,15 @@ jobs:
       - name: Install project dependencies
         run: |
           {{project.installCmd}}
+      # Identity-neutral by design: no step here sets `git config user.*` or a GIT_AUTHOR_* /
+      # GIT_COMMITTER_* env var. Committer identity on the commits this harness makes comes from
+      # the resolved `git.cmd` recipe carried by the repo's committed, rendered git-workflow skill
+      # — the single opt-in. A repo that left `git.cmd` bare keeps the runner's ambient git
+      # identity; the toolkit never imposes a bot identity on CI, exactly as it never clobbers a
+      # human's local one. (Pinning an identity here would also lose to GIT_COMMITTER_* env
+      # precedence and silently override the recipe.) The two identities are separate: the token
+      # below decides the EVENT identity (who authors the PR), `git.cmd` decides the COMMIT
+      # identity. See "CI identity — token vs. git config" in the setup note.
       - name: Dispatch harness (hygiene)
         id: harness
         uses: {{harness.actionRef}}@{{harness.actionVersion}}

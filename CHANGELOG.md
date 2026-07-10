@@ -32,6 +32,28 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **CI workflow identity aligned with the identity model (#160).** CI attribution was decided
+  entirely by whichever token created the event, and the relationship was documented nowhere.
+  The fix is deliberately *not* a `git config user.*` step in the workflows: `git.botName` /
+  `git.botEmail` carry placeholder defaults, so pinning an identity in a workflow would impose a
+  fake bot on every consumer who never opted in — and a `GIT_COMMITTER_*` env var would silently
+  beat the `git.cmd` recipe besides. **The no-clobber rule extends to CI.**
+  The model, now written down in the github-workflow setup note as **"CI identity — token vs. git
+  config"**: the *event* identity (PR/comment/tag author) is decided by the **token**
+  (`WAFFLE_HYGIENE_TOKEN` / `WAFFLE_RELEASE_TOKEN`, else `github.token` → `github-actions[bot]`,
+  which triggers no further workflows); the *commit* identity is decided by the resolved
+  **`git.cmd`** in the committed, rendered git-workflow skill — so an opted-in repo's CI commits
+  have carried the bot identity since #155, with nothing further to configure. Making the *PR*
+  show the bot requires the PAT to belong to the bot account; the toolkit cannot configure that.
+  One behavioral change: **`waffle-label-hook`'s implement job now dispatches with
+  `github_token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}`**, matching hygiene and
+  pr-response — so implement PRs are authored by the same account as hygiene PRs and trigger the
+  repo's required CI. **Consumer impact:** no-op for repos without the secret. Repos that *have*
+  it should note the blast radius, now flagged in the setup note — a human applying
+  `waffle:implement` dispatches a run acting with the PAT's permissions rather than the job-scoped
+  `GITHUB_TOKEN` (branch protection remains the backstop). The harness-driven workflows carry
+  identity-neutrality design comments, and the release hook's lightweight tag (which stores no
+  tagger identity at all) is pinned by test against an `-a`/`-m` upgrade.
 - **A defined signing model for bot and agent authors (#158, closes the #153 epic's last gap).**
   The toolkit configured no signing, so `git.cmd` — which overrides the identity and *nothing else* —
   left `commit.gpgsign` ambient. On a signing machine that meant a bot-authored commit signed with

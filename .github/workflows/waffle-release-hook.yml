@@ -76,7 +76,11 @@ jobs:
             echo "Tag $TAG already exists on origin — nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # Lightweight tag (no -a/-m) on the merge commit; no committer identity needed.
+          # Lightweight tag (no -a/-m) on the merge commit; no committer identity needed — a
+          # lightweight tag is a bare ref to the commit and stores no tagger name/email at all.
+          # So the ONLY identity on the release path is the pushing token above (it decides who
+          # the tag-push EVENT is attributed to). Keep it lightweight: switching to `-a`/`-m`
+          # would make git demand a tagger identity this identity-neutral workflow does not set.
           git tag "$TAG" "$SHA"
           git push origin "refs/tags/$TAG"
           echo "🧇 waffle-release-hook: pushed lightweight tag \`$TAG\` on merge commit \`$SHA\` (PR #$PR_NUMBER)." | tee -a "$GITHUB_STEP_SUMMARY"
