@@ -323,7 +323,7 @@ node .claude/skills/delegate/identity.mjs \
 WAFFLE_AGENT_IDENTITIES
 ```
 
-The `--git-cmd` value is single-quoted. **`git.cmd` itself declares no `pattern:` in any stack, so it carries no render-time guard** — it is trusted project config, and a literal `'` in it breaks this shell literal (as it already breaks the commit instruction that interpolates the same value). The quote guards apply to the identity keys composed *inside* it — `git.botName`, `git.botEmail`, `git.signingKey` — not to the container. Keep `git.cmd` free of `'`, `` ` ``, `$`, `;`, `&` and `|`; the gate parses it, it does not sanitize it.
+The `--git-cmd` value is single-quoted. **`git.cmd` declares an allowlist `pattern:` in both the orchestration and github-workflow stacks (#254), so a value carrying `'`, `` ` ``, `$`, `;`, `&`, `|`, `<`, `>`, `\` or a newline fails the render** — the tokenizer's no-single-quote assumption is enforced at render time, not merely assumed, and this shell literal cannot be broken by a rendered value. The quote guards on the identity keys composed *inside* it — `git.botName`, `git.botEmail`, `git.signingKey` — still apply on top. The gate parses the command, it does not sanitize it; the render guard is what makes that parse safe.
 
 **What it proves, per tier.** There is no runtime probe for "a human is driving", and none is needed: the tier boundary is *which rendered command a commit routes through*, and that is fully static.
 

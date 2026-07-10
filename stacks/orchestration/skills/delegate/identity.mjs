@@ -90,11 +90,14 @@ function readStdin() {
 // git.cmd tokenizer
 //
 // The rendered command is a flat prefix — `git` followed by `-c key=value` pairs (and possibly
-// other flags). Double quotes group a spaced value. Single quotes are NOT handled: `git.cmd` is
-// trusted project config with no render-time `pattern:` guard, so a single quote in it breaks the
-// caller's `--git-cmd '…'` shell literal before this tokenizer ever runs — see SKILL.md's
-// "Identity preflight". An unterminated double quote, or a stray bare word, means the value was
-// never quoted in the first place and git would word-split it — that is an ERROR, not a guess.
+// other flags). Double quotes group a spaced value. Single quotes are NOT handled — and cannot
+// reach this tokenizer through a render: `git.cmd` declares an allowlist `pattern:` in both
+// stacks (#254) that rejects `'`, backtick, `$`, `;`, `&`, `|`, `<`, `>`, `\` and newlines at
+// render time, so the caller's `--git-cmd '…'` shell literal holds by construction — see
+// SKILL.md's "Identity preflight". (A hand-run invocation can still pass anything; a `'` is then
+// just an ordinary character to this tokenizer.) An unterminated double quote, or a stray bare
+// word, means the value was never quoted in the first place and git would word-split it — that
+// is an ERROR, not a guess.
 // ---------------------------------------------------------------------------
 
 function tokenize(cmd) {
