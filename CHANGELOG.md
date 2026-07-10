@@ -346,6 +346,32 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Fixed
+- **Four identity/avatar guard findings from the PR #248 fresh pass (#249, follow-up to
+  #157/#248).** All four sit on the #156/#157 identity surface; two are trust-boundary
+  hardenings of the same guard-and-consumer-drift class #247 tracks. **F1:** `withIdentity`
+  interpolated the display name and email into `String.replace` **replacement strings**, where
+  `$&`/`$1`/`` $` `` re-expand — a `$&`-bearing email duplicated the `-c user.email` flag, so
+  the smoke test committed under a different address than the manifest advertises. Both swaps
+  now use replacement *functions*, immune regardless of value (latent, not reachable through
+  validated config today: the `botEmail` guard excludes `$` — but the swap must be safe on its
+  own). **F2:** with **every** agent's email overridden via `git.agentIdentities`, the AVATARS.md
+  registration section still claimed the "derived addresses above land in" the base inbox — over
+  an empty derived set, with a sign-in step naming an inbox no agent commits under; exactly the
+  state the shared-address caveat's own remedy produces. The copy now distinguishes three states
+  (no overrides and some overrides render byte-identically to before; all-overridden gets honest
+  copy: every address is verbatim, each verified at the inbox that receives its mail). **F3:** a
+  literal raw NUL byte in `waffledocs.mjs` made ripgrep classify the file as binary and silently
+  skip it — every `rg` over `installer/lib/` missed the file. Now the two-character `\0` escape
+  (identical runtime string), plus a control-byte lint in `validateToolkit` that scans
+  `installer/` and `stacks/` text sources (`.mjs/.md/.yaml/.yml/.json`) for control bytes other
+  than tab/LF/CR, so the regression class fails `npm run validate`. **F4:** `IDENTITY_AVATAR_RE`'s
+  URL alternative admitted `@`, so a userinfo authority (`https://good.tld@evil.tld/x.png` —
+  displayed host ≠ fetch host) passed the guard its own comment enumerates as strict. The class
+  now excludes `@` entirely (deliberate tightening: also blocks `@` in URL paths; nothing in the
+  avatar contract needs it), and the rejection message names the new rule. **Consumer impact:**
+  none in practice — no config, schema, or rendered-file change; no re-render needed (verified:
+  the lock is byte-stable across a re-render). A pre-existing `identity.avatar` URL carrying `@`
+  would newly fail validate — which is the point.
 - **The agent slug is now guarded at the identity trust boundary, and the duplicated
   `entryPatterns` are pinned in lockstep (#247, follow-up to #156/#245).** The delegate skill
   splices TWO values into the same agent-executed `git -c user.name="…" -c user.email=…` command:
