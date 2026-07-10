@@ -401,9 +401,11 @@ config:
       else defers to the later gates or leaves the PR for a human), runs one fresh qa pass (outside
       the cap, no pr-response follows it) purely as the brief's source, and files an
       autopilot.holdLabel-labeled follow-up issue from THOSE findings so the remaining work isn't
-      lost — a clean fresh pass skips the follow-up (it is the convergence evidence). Default 2. This is the render-time DEFAULT: a single run may override it
-      with `+qa:N` in the autopilot invocation (captured alongside the consent, per-run, never
-      sticky — this rendered value governs every run that doesn't say otherwise).
+      lost — a clean fresh pass skips the follow-up (it is the convergence evidence), and when the
+      review loop is also on the filing defers to it (its rounds triage the fresh-pass findings).
+      Default 2. This is the render-time DEFAULT: a single run may override it with `+qa:N` in the
+      autopilot invocation (captured alongside the consent, per-run, never sticky — this rendered
+      value governs every run that doesn't say otherwise).
   autopilot.holdLabel:
     required: false
     default: waffle-manual-review
