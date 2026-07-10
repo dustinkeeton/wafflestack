@@ -8,9 +8,9 @@ const PLACEHOLDER = /(?<!\$)\{\{\s*([A-Za-z][\w.-]*)\s*\}\}/g;
 
 /**
  * A substituted value may itself contain placeholders (a config default like
- * `Co-Authored-By: {{harness.assistantName}} <...>`, or a project value composed
- * from other config keys). Those are expanded in follow-up passes, capped so a
- * self- or mutually-referential value can't loop forever.
+ * `Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>`, or a project value
+ * composed from other config keys). Those are expanded in follow-up passes, capped
+ * so a self- or mutually-referential value can't loop forever.
  */
 const MAX_SUBSTITUTION_DEPTH = 4;
 

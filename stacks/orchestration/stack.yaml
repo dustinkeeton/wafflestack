@@ -125,8 +125,25 @@ config:
       since #254 git.cmd itself is guarded by its own allowlist pattern as well.
   git.coAuthorTrailer:
     required: false
-    default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
-    description: Attribution trailer spawned agents must end commits with (same as the github-workflow stack key).
+    # Default credits the consuming repo's OWNER via nested substitution (git.ownerName /
+    # git.ownerEmail), so this stack MUST declare those two keys too — otherwise the nested
+    # placeholders render literally here. Keep the default byte-identical with the github-workflow
+    # stack — lockstep test (#284).
+    default: "Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>"
+    description: Attribution trailer spawned agents must end commits with (same as the github-workflow stack key); the default credits the consuming repo's owner.
+  git.ownerName:
+    required: false
+    # Byte-identical twin of the github-workflow stack's declaration (same landing class — a markdown
+    # code span in the rendered trailer); pattern and default are pinned equal by the lockstep test (#284).
+    default: Repository Owner
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
+    description: Display name credited in the default git.coAuthorTrailer (same key as the github-workflow stack) — the consuming repo's owner. Declared here so orchestration can resolve the nested owner trailer even when github-workflow is not installed.
+  git.ownerEmail:
+    required: false
+    # Byte-identical twin of the github-workflow stack's declaration; pinned equal by the lockstep test (#284).
+    default: owner@users.noreply.github.com
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+    description: Email credited in the default git.coAuthorTrailer (same key as the github-workflow stack) — must be a verified email on the owner's GitHub account to earn contribution-graph credit; the ID+user@users.noreply.github.com form works for privacy.
   git.agentIdentities:
     required: false
     default: {}
