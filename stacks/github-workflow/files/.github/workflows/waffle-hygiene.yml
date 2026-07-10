@@ -210,6 +210,11 @@ jobs:
       # harness or checks failed (it still billed). A missing log, a result-less log (the
       # invalid-API-key shape), zero usage, or a failed API call all skip with a note
       # instead of failing.
+      # Known create-race window: two hooks' token steps finishing at once on the same
+      # thread can each see "no existing comment" and POST their own (GitHub has no
+      # conditional create); every later reader takes the OLDEST marked comment, so the
+      # loser's rows are undercounted — never double-counted. Accepted: best-effort
+      # telemetry, not billing.
       - name: Record token spend
         if: always()
         continue-on-error: true

@@ -522,7 +522,11 @@ setup: |-
   every tick — while a non-default branch triggers no workflows at all. The update is
   **idempotent per PR** (the `prs` map short-circuits a re-run or lost-race retry — never a
   double count) and **never fails the run**: a missing comment, zero recorded spend, or an
-  exhausted retry is a summary note or warning. The counter captures AUTOMATED runs only —
+  exhausted retry is a summary note or warning. One known window: two hooks' token steps
+  finishing at once on the same PR can each create a marker comment (GitHub has no
+  conditional create for comments); every later reader — this counter included — takes the
+  oldest, so the losing comment's rows are undercounted, never double-counted (accepted for
+  best-effort telemetry). The counter captures AUTOMATED runs only —
   local interactive sessions (often the bulk of a PR's real spend) are a documented v1 gap
   tracked as a follow-up. Do not point `doctor`/the lock at the telemetry branch or file; it is
   runtime state, not managed render output.
