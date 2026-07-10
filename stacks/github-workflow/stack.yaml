@@ -787,7 +787,8 @@ setup: |-
     skill value-swaps the identity into the base command and leaves everything else standing, so a
     spawned agent inherits whatever posture `git.cmd` set. `git.agentIdentities[<agent>].signingKey`
     appends `-c user.signingkey=<key>` *after* the base flags, and git's last-wins `-c` semantics
-    make it the effective key **when the base recipe signs**. Under recipe A it is deliberately
+    make it the effective key **when the base recipe signs** — and its shape must match the
+    recipe's pinned `gpg.format` (see `git.agentIdentities`). Under recipe A it is deliberately
     inert: one map leaf does not silently overturn a project-wide "do not sign".
 
   What GitHub shows, honestly — note that an **unsigned commit gets no badge at all** (neutral),
@@ -1027,7 +1028,12 @@ config:
       to add nothing). That leaf SELECTS a key, it does not ENABLE signing: git's last-wins `-c`
       semantics make it effective only when the base recipe already signs, so under the canonical
       `commit.gpgsign=false` recipe it is deliberately inert — a per-agent leaf never overturns a
-      project-wide "do not sign". Empty (the default) means every agent uses the
+      project-wide "do not sign". When the base recipe DOES sign, the leaf's key must match the
+      base's pinned gpg.format — the leaf selects a key for the signer the base already chose,
+      and no cross-field validation reconciles them: a GPG-shaped key id under recipe B's
+      gpg.format=ssh (or an SSH key path under recipe C's openpgp) makes every commit by that one
+      agent fail at its first signature. The delegate identity preflight surfaces a shape mismatch
+      as a WARN. Empty (the default) means every agent uses the
       derived default. INERT WITHOUT THE OPT-IN: a bare `git.cmd` means no bot identity is
       configured, so no agent is virtualized and this map does nothing — git.cmd is the single
       opt-in switch, and the toolkit never clobbers a human's git config. Entries may be split

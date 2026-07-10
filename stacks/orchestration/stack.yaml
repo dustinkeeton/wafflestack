@@ -154,7 +154,12 @@ config:
       AFTER the base flags (non-empty; omit the leaf to add nothing). signingKey SELECTS a key, it
       does not ENABLE signing: git's last-wins `-c` semantics make it effective only when the base
       git.cmd already signs, so under the canonical `commit.gpgsign=false` recipe it is deliberately
-      inert. The recipe owns the signing posture for the bot and every agent derived from it.
+      inert. When the base recipe DOES sign, the leaf's key must match the
+      base's pinned gpg.format — the leaf selects a key for the signer the base already chose,
+      and no cross-field validation reconciles them: a GPG-shaped key id under recipe B's
+      gpg.format=ssh (or an SSH key path under recipe C's openpgp) makes every commit by that one
+      agent fail at its first signature. The delegate identity preflight surfaces a shape mismatch
+      as a WARN. The recipe owns the signing posture for the bot and every agent derived from it.
       Empty (the default) means every agent uses the derived default. INERT WITHOUT THE OPT-IN: a
       bare `git.cmd` means no bot identity is configured, so nothing is virtualized and this map
       does nothing. Shape-validated at render (unknown leaf keys and unsafe values fail loudly).
