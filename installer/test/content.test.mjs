@@ -762,8 +762,14 @@ describe('autopilot skill: instantiation contract, handoff, and guardrails', () 
 // the failure bounds — so a meaning-breaking edit fails CI instead of shipping silently.
 describe('autopilot skill: opt-in adversarial-review → pr-response review loop (#220)', () => {
   let md;
+  let reviewStep;
   before(() => {
     md = readSkill('autopilot');
+    // The review loop's own step body, so phrases shared with the QA gate (the fresh
+    // evidence pass's cap+1 bound, the clean-pass file-nothing branch) are asserted inside
+    // the RIGHT step — Step 5 contains identical copies that would otherwise satisfy them.
+    reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    assert.ok(reviewStep.length > 0, 'Step 6 is the review → respond loop');
   });
 
   test('review-loop consent is a separate per-run opt-in, default OFF, +review flag', () => {
@@ -796,17 +802,17 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
   });
 
   test('cap reached is a safety bound, not a merge blocker: fresh evidence pass sources the follow-up', () => {
-    assert.match(md, /safety cap, not a merge blocker/);
+    assert.match(reviewStep, /safety cap, not a merge blocker/);
     // The escape hatch runs ONE fresh adversarial-review pass outside the loop as the brief's
     // sole source — evidence, not another fix round: no pr-response follows it, cap+1 bounded.
-    assert.match(md, /run `adversarial-review <pr>` \*\*once more, outside the loop\*\*/);
-    assert.match(md, /No `pr-response` follows it/);
-    assert.match(md, /cap\+1/);
+    assert.match(reviewStep, /run `adversarial-review <pr>` \*\*once more, outside the loop\*\*/);
+    assert.match(reviewStep, /No `pr-response` follows it/);
+    assert.match(reviewStep, /cap\+1/);
     // A clean fresh pass skips the filing entirely — it IS the convergence evidence — and the
-    // stale last-round brief (#234) is gone.
-    assert.match(md, /file nothing/);
+    // stale last-round brief (#234) is gone (whole-document, deliberately: no echo anywhere).
+    assert.match(reviewStep, /file nothing/);
     assert.doesNotMatch(md, /last adversarial-review findings/);
-    assert.match(md, /--add-label "waffle-manual-review"/);
+    assert.match(reviewStep, /--add-label "waffle-manual-review"/);
   });
 
   test('hold-labeled issues are out of automatic scope, released only by an explicit #N', () => {
