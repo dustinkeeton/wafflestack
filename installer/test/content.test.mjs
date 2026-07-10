@@ -327,6 +327,68 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
       assert.doesNotMatch(md, /commit with `git -c /, 'the render-time literal is gone from the template');
     });
   });
+
+  // #159: delegate gates its plan and its pushes, but never its IDENTITY — a misconfigured one
+  // silently fell back to the ambient config. The gate is a script, not a prose checklist, and
+  // the prose below is the policy layered over its exit code. Losing any of these phrases turns
+  // the gate back into something an orchestrator can improvise past.
+  describe('identity preflight (#159)', () => {
+    test('the gate is a deterministic script, run after the plan checkpoint and before any side effect', () => {
+      assert.match(md, /### Identity preflight \(deterministic gate\)/);
+      assert.match(md, /identity\.mjs \\\n\s+--git-cmd/);
+      assert.match(md, /--agents '<comma-separated agent slugs from the plan checkpoint assignments>'/);
+      assert.match(md, /WAFFLE_AGENT_IDENTITIES/);
+      // Verify it now, with a script — not by eye.
+      assert.match(md, /not by eye/);
+    });
+
+    test('an ERROR stops the run — in batch mode too — and never falls back to the ambient identity', () => {
+      assert.match(md, /\*\*`ERROR:` \(exit 1\) — STOP the run and report the validator output verbatim\.\*\*/);
+      assert.match(md, /This holds in batch mode too/);
+      assert.match(md, /Never improvise an identity/);
+      // ...and the Error Handling list names it as its own failure mode.
+      assert.match(md, /\*\*Identity preflight failure\*\* — `identity\.mjs` exited non-zero/);
+    });
+
+    test('a WARN proceeds but is surfaced — logged into the plan in batch mode', () => {
+      assert.match(md, /\*\*`WARN:` \(exit 0\) — proceed, but surface it\.\*\*/);
+      assert.match(md, /In batch mode, append them to the logged plan\*\* so the run stays auditable/);
+    });
+
+    test('a bare git.cmd is a NOTE: a legitimate documented state, not a misconfiguration', () => {
+      assert.match(md, /`NOTE:` \(exit 0\) — informational/);
+      assert.match(md, /legitimate documented state, not a misconfiguration/);
+      assert.match(md, /must never nag the no-opt-in path/);
+    });
+
+    test('the three tiers are restated, with the honesty clause about what is checkable', () => {
+      assert.match(md, /Human runs stay on the human identity \*\*because nothing rendered ever overrides it\*\*/);
+      assert.match(md, /the orchestrator's own commits route through the resolved `git\.cmd`/);
+      assert.match(md, /before any agent exists/);
+      assert.match(md, /\*\*validates configuration, not runtime process identity\*\*/);
+    });
+
+    test('the gate is stateless — it writes nothing to the closed checkpoint schema', () => {
+      assert.match(md, /The gate is \*\*stateless\*\* — it writes nothing to the checkpoint/);
+      assert.match(md, /pure function of the resolved config and the plan's agent list/);
+      assert.match(md, /on resume you simply re-run it/);
+    });
+
+    test('the per-agent identity section points back at the gate that proved the derivation feasible', () => {
+      assert.match(md, /Identity preflight\*\* at the end of Phase 3 already proved this derivation feasible/);
+    });
+  });
+});
+
+// #159: autopilot runs delegate's phases unchanged, so the preflight comes for free — but the
+// composition must be explicit, or a reader assumes only the checkpoint gate survives batch mode.
+describe('autopilot skill: the identity preflight composes (#159)', () => {
+  test('the delegate-validation failure mode names the identity preflight', () => {
+    assert.match(
+      readSkill('autopilot'),
+      /\*\*Delegate checkpoint or identity-preflight validation failed\*\* → delegate already stops at that phase boundary/,
+    );
+  });
 });
 
 // #158. The three-tier signing model is prose — in the rendered git-workflow skill (what agents
