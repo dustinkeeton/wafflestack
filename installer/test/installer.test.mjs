@@ -1689,6 +1689,18 @@ describe('github-workflow: identity config schema (#154)', () => {
     const identityErrors = result.errors.filter((e) => e.includes('git.agentIdentities'));
     assert.ok(identityErrors.length >= 3, JSON.stringify(identityErrors));
   });
+
+  // #246 (QA round-2 nit on #258): the non-map TOP-LEVEL value branch — a scalar where the
+  // guarded map itself should be (I7c's scalar is an *entry*, one level down). The branch
+  // returns a single-element array, there being no entries to walk; mutate it to `return []`
+  // and a scalar value for an entryPatterns-guarded key skips the guard entirely (fail-open) —
+  // this is the pin that catches that.
+  test('I7f a scalar where the guarded map itself should be fails the render', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    agentIdentities: scalar\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'a non-map value for an entryPatterns key must not skip the guard');
+    assert.match(result.errors.join('\n'), /\{\{git\.agentIdentities\}\} must be a map of entries \(it declares entryPatterns:/);
+  });
 });
 
 // #155: wiring the MAIN bot identity through git.cmd. #154 declared the identity keys; nothing
