@@ -28,7 +28,7 @@
     ".claude/agents/task-planner.md": "ca2886b9662b0eab369c6bb4440d90c4d76690bbb7250f3be69adc3ac00c864e",
     ".claude/skills/adversarial-review/SKILL.md": "093bfceadba40d952d5ba0841bf0c738d0bdf01ef8b34071ea5e27e6df111476",
     ".claude/skills/audit/SKILL.md": "6f6c670c4ad2f72695bd4ef46fa8b3b8bf9e55c116441cf5724bb3d00d74b100",
-    ".claude/skills/autopilot/SKILL.md": "cf59daf210284d77bcbd47d5fb74ddc5cc9ae3a068a7340aea9f8b95c6f099e2",
+    ".claude/skills/autopilot/SKILL.md": "e4dec11a41ec44d519f34e4f076284025852c5a9578a23c303851fa471332e3b",
     ".claude/skills/clean-up/scripts/clean_up.sh": "7df01756bdb73a60bf3dfa9e000f0331a8e531049994be5ee6d280f1617b4630",
     ".claude/skills/clean-up/SKILL.md": "ee64023ca7b115e37fc1bab25e5012560773a1695e45e6d84aa6c5fe3ceee2da",
     ".claude/skills/delegate/checkpoint.mjs": "f1f306fca41b54140956fe8bf61615c806751b046f2b3c1dfe23bfb8f3b3d4f2",
