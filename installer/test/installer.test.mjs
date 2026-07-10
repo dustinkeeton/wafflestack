@@ -1667,6 +1667,45 @@ describe('github-workflow: identity config schema (#154)', () => {
       'lead-engineer': { botName: 'Lead Engineer', botEmail: 'bot+lead-engineer@wafflenet.io' },
     });
   });
+
+  // #246 (deferred from #245's review, F5): entryPatternProblems walks the WHOLE map instead of
+  // short-circuiting on the first bad entry — a config with three independent mistakes surfaces
+  // all three in one render, not one per fix-and-retry cycle. The three entries hit three
+  // distinct branches (failing guard / unknown leaf / non-map entry), and rogue1 carries TWO bad
+  // leaves (adversarial review on #258): the contract is per-LEAF, so multiplicity must hold
+  // within one entry, not only across entries — cap the leaf loop at one problem per entry
+  // (each `continue` → `break`) and the botName assertion goes red. `botName: 42` is also the
+  // suite's only end-to-end hit on the non-string-leaf branch. Restore the early return and
+  // this drops to one error.
+  test('I7e a map with several malformed entries reports EVERY problem in one pass', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    agentIdentities:\n      rogue1:\n        botEmail: "$(id)@x.com"\n        botName: 42\n      rogue2:\n        botEmial: "x@y.io"\n      rogue3: scalar\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, false);
+    const errs = result.errors.join('\n');
+    assert.match(errs, /entry "rogue1" key "botEmail" does not match its declared pattern/);
+    assert.match(errs, /entry "rogue1" key "botName" must be a string/);
+    assert.match(errs, /entry "rogue2" has unknown key "botEmial"/);
+    assert.match(errs, /entry "rogue3" must be a map/);
+    // Multiplicity, not just presence: each problem is its own error line for the one key.
+    const identityErrors = result.errors.filter((e) => e.includes('git.agentIdentities'));
+    assert.ok(identityErrors.length >= 4, JSON.stringify(identityErrors));
+  });
+
+  // #246 (QA round-2 nit on #258): the non-map TOP-LEVEL value branch — a scalar where the
+  // guarded map itself should be (I7c's scalar is an *entry*, one level down). The branch
+  // returns a single-element array, there being no entries to walk; mutate it to `return []`
+  // and a scalar value for an entryPatterns-guarded key skips the guard entirely (fail-open) —
+  // this is the pin that catches that.
+  test('I7f a scalar where the guarded map itself should be fails the render', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    agentIdentities: scalar\n`);
+    const result = render();
+    assert.equal(result.ok, false, 'a non-map value for an entryPatterns key must not skip the guard');
+    assert.match(result.errors.join('\n'), /\{\{git\.agentIdentities\}\} must be a map of entries \(it declares entryPatterns:/);
+  });
 });
 
 // #155: wiring the MAIN bot identity through git.cmd. #154 declared the identity keys; nothing
@@ -1931,7 +1970,7 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   // project value straight into an agent-executed shell command in delegate/SKILL.md, while the
   // identical value was rejected the moment github-workflow was co-installed. The guard was an
   // accident of which stack happened to be present. Patterns are now compiled toolkit-wide, so a
-  // key's guard travels with the KEY. Revert compilePatterns to per-stack and both of these go red.
+  // key's guard travels with the KEY. Revert compileGuards to per-stack and both of these go red.
   test('W5b botEmail command substitution is rejected with NO github-workflow stack installed', () => {
     write(cwd, '.waffle/waffle.yaml', `${orchBase('orchestration')}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${RECIPE}\n`);
     const result = render();
@@ -2241,6 +2280,31 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     const problems = validateToolkit(toolkitRoot);
     assert.ok(problems.some((p) => /demo\.map default entry "a" key "leaf"/.test(p)), JSON.stringify(problems));
   });
+
+  // #246: the self-check rides entryPatternProblems' collect-everything contract too — a default
+  // map with two violating entries reports both, not just the first.
+  test('a default map with TWO violating entries reports both in one validate pass', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', [
+      'name: demo',
+      'description: Demo.',
+      'agents: [lead-engineer]',
+      'config:',
+      '  demo.map:',
+      '    required: false',
+      '    default:',
+      '      a:',
+      '        leaf: "!!bad"',
+      '      b:',
+      '        leaf: "9also-bad"',
+      '    entryPatterns:',
+      '      leaf: "[a-z]+"',
+      '    description: x',
+      '',
+    ].join('\n'));
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /demo\.map default entry "a" key "leaf"/.test(p)), JSON.stringify(problems));
+    assert.ok(problems.some((p) => /demo\.map default entry "b" key "leaf"/.test(p)), JSON.stringify(problems));
+  });
 });
 
 // #154 review: a declared `pattern:` must be enforced on the NESTED composition path, not only
@@ -2276,6 +2340,11 @@ describe('render: a pattern is enforced through nested composition (#154 review)
       '    required: false',
       '    default: git -c user.email={{id.email}}',
       '    description: Composes id.email. Declares no pattern of its own.',
+      '  id.map:',
+      '    required: false',
+      '    entryPatterns:',
+      '      leaf: "[a-z]+"',
+      '    description: Guarded map, reachable only through composition (N5).',
       '',
     ].join('\n'));
     // The skill body references ONLY id.cmd — id.email never appears as a top-level placeholder.
@@ -2320,6 +2389,27 @@ describe('render: a pattern is enforced through nested composition (#154 review)
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, SKILL), /git -c user\.email=ok@example\.com/);
+  });
+
+  // #246 (QA nit on #258): entryPatternProblems' collect-everything contract is spread at THREE
+  // call sites; I7e pins `substitute` and a validate test pins the self-check, leaving
+  // `expandNested` — the nested-composition path — as the one spread no test reached. `id.map`
+  // is guarded and reachable ONLY through `id.cmd`'s value, so both problems must surface
+  // through expandNested. Revert its spread to a single push of entryProblems[0] and the
+  // entry-"b" assertion goes red — that is the regression this pins.
+  test('N5 a guarded map reachable only through composition reports EVERY bad entry', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  id:\n    cmd: "deploy {{id.map}}"\n    map:\n      a:\n        leaf: "!!bad"\n      b:\n        leaf: "9also-bad"\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, false, 'the nested-only guarded map must fail the render');
+    const errs = result.errors.join('\n');
+    assert.match(errs, /\{\{id\.map\}\} entry "a" key "leaf" does not match its declared pattern/);
+    assert.match(errs, /\{\{id\.map\}\} entry "b" key "leaf" does not match its declared pattern/);
+    // Multiplicity through the nested path, not just presence.
+    assert.ok(result.errors.filter((e) => e.includes('id.map')).length >= 2, JSON.stringify(result.errors));
   });
 });
 
@@ -3691,7 +3781,7 @@ describe('config value pattern: render-time validation (#27 hardening)', () => {
   });
 });
 
-// #244 F2: the multi-pattern AND. `compilePatterns` unions `pattern:` guards toolkit-wide and a
+// #244 F2: the multi-pattern AND. `compileGuards` unions `pattern:` guards toolkit-wide and a
 // key declared with a pattern in MORE than one stack must satisfy every one — but no shipped
 // scalar key is dual-declared yet (the `entryPatterns` twin is: `git.agentIdentities`, in both
 // github-workflow and orchestration), so this fixture is what keeps the branch honest. Two stacks
@@ -3758,7 +3848,7 @@ describe('pattern guards from two stacks AND together (#244)', () => {
   });
 
   // #256 review (should-fix): the same two properties on the entryPatterns path, which has its
-  // own consumer (entryPatternProblem). Both paths now share one failing-guard filter
+  // own consumer (entryPatternProblems). Both paths now share one failing-guard filter
   // (failingOf, template.mjs) — restore an inline filter that passes `res` unfiltered to the
   // message and the leaf-passing-one-stack test below goes red.
   const renderMap = (leafValue) => {

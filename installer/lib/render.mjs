@@ -171,8 +171,8 @@ export function renderProject({
 
   // Compile every `pattern:` guard the toolkit declares ONCE, across all stacks, then enforce
   // them at every substitution site below (render-time value validation for config values).
-  // Toolkit-wide, not per-stack: see compilePatterns.
-  const guards = compilePatterns(toolkit, errors);
+  // Toolkit-wide, not per-stack: see compileGuards.
+  const guards = compileGuards(toolkit, errors);
 
   for (const [stackName, { stack, items }] of groups) {
     // One resolver per enabled target — the reserved `harness.*` keys resolve
@@ -542,7 +542,7 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
  * `Map<key, Map<leaf, guard[]>>`, unioned toolkit-wide on the same reasoning. Returns the pair
  * as a `guards` object, which is what `substitute()` takes.
  */
-function compilePatterns(toolkit, errors) {
+function compileGuards(toolkit, errors) {
   const patterns = new Map();
   const entryPatterns = new Map();
   const add = (key, guard) => {
