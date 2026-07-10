@@ -210,10 +210,12 @@ jobs:
       # harness or checks failed (it still billed). A missing log, a result-less log (the
       # invalid-API-key shape), zero usage, or a failed API call all skip with a note
       # instead of failing.
-      # Known create-race window: two hooks' token steps finishing at once on the same
-      # thread can each see "no existing comment" and POST their own (GitHub has no
-      # conditional create); every later reader takes the OLDEST marked comment, so the
-      # loser's rows are undercounted — never double-counted. Accepted: best-effort
+      # Known race windows (one undercount class — never a double count): (1) CREATE — two
+      # hooks' token steps finishing at once on the same thread can each see "no existing
+      # comment" and POST their own (GitHub has no conditional create); every later reader
+      # takes the OLDEST marked comment, so the loser's rows are orphaned. (2) UPDATE — two
+      # steps PATCHing the same comment at once each read the same base run map, and the
+      # loser's row is silently dropped (that run never re-records). Accepted: best-effort
       # telemetry, not billing.
       - name: Record token spend
         if: always()
@@ -237,15 +239,19 @@ jobs:
           if [ -z "$row" ]; then echo "🧇 token spend: malformed result message — nothing to record."; exit 0; fi
           if [ "$(printf '%s' "$row" | jq '.in + .out' 2>/dev/null || echo 0)" = "0" ]; then echo "🧇 token spend: zero recorded usage (an invalid-API-key run dies before spending) — nothing to record."; exit 0; fi
           # Target: the PR this run opened — the URL in the result's final text, scoped to
-          # THIS repo so a cross-repo link can never redirect the comment.
+          # THIS repo so a cross-repo link can never redirect the comment (dots in the repo
+          # name are ERE-escaped so the match stays exact).
           final="$(printf '%s' "$result" | jq -r '.result // ""' 2>/dev/null || true)"
-          pr_url="$(printf '%s' "$final" | grep -oE "https://github\.com/${GITHUB_REPOSITORY}/pull/[0-9]+" | head -n1 || true)"
+          safe_repo="${GITHUB_REPOSITORY//./\\.}"
+          pr_url="$(printf '%s' "$final" | grep -oE "https://github\.com/${safe_repo}/pull/[0-9]+" | head -n1 || true)"
           N="${pr_url##*/}"
           if [ -z "$N" ]; then echo "🧇 token spend: run reported no PR URL (e.g. no drift) — no thread to attach the spend to." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           # Create-or-update the one marker-keyed comment (same read idiom as the gate steps:
-          # the comment list is DATA, parsed with jq, never eval'd).
+          # the comment list is DATA, parsed with jq, never eval'd). --paginate emits one
+          # array PER PAGE and jq runs once per array, so `first` is per-page — head -n1
+          # collapses the stream to the one OLDEST marked comment.
           comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${N}/comments" --paginate 2>/dev/null || echo '[]')"
-          existing="$(printf '%s' "$comments" | jq -c '[ .[] | select((.body // "") | contains("<!-- waffle-token-count -->")) ] | first // empty' 2>/dev/null || true)"
+          existing="$(printf '%s' "$comments" | jq -c '[ .[] | select((.body // "") | contains("<!-- waffle-token-count -->")) ] | first // empty' 2>/dev/null | head -n1 || true)"
           data='{}'
           if [ -n "$existing" ]; then
             line="$(printf '%s' "$existing" | jq -r '.body // ""' | grep -m1 '^<!-- waffle-token-data ' || true)"
