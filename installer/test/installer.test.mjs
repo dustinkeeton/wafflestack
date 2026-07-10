@@ -1603,6 +1603,10 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.match(errs, /git\.agentIdentities/, 'the error names the offending key');
     assert.match(errs, /rogue/, '...and the offending entry');
     assert.match(errs, /pattern/);
+    // #244 F1: the entry-guard rejection names its declarer too. git.agentIdentities declares
+    // byte-identical entryPatterns in BOTH github-workflow and orchestration, so both guards
+    // fail here — pin only that at least one declaring stack is named, not the join order.
+    assert.match(errs, /declared by stack "(github-workflow|orchestration)"/, 'the rejection names a declaring stack');
     assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
   });
 
@@ -1851,6 +1855,12 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     // installed. W5b/W5c carry the general claim — see the note there.
     assert.equal(result.ok, false, 'command substitution must not reach an unquoted shell word');
     assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+    // #244 F1: guards are unioned toolkit-wide, so a stack outside the selection can veto a
+    // value — the rejection must be legible without reading toolkit source. It names the
+    // failing pattern and the stack that declared it.
+    const errs = result.errors.join('\n');
+    assert.match(errs, /declared by stack "github-workflow"/, 'the rejection names the declaring stack');
+    assert.ok(errs.includes('[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+'), 'the rejection shows the authored botEmail pattern');
   });
 
   // #155 review (should-fix): `git.cmd` overrides the identity and NOTHING else — ambient
@@ -3671,6 +3681,65 @@ describe('config value pattern: render-time validation (#27 hardening)', () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+// #244 F2: the multi-pattern AND. `compilePatterns` unions `pattern:` guards toolkit-wide and a
+// key declared with a pattern in MORE than one stack must satisfy every one — but no shipped
+// scalar key is dual-declared yet (the `entryPatterns` twin is: `git.agentIdentities`, in both
+// github-workflow and orchestration), so this fixture is what keeps the branch honest. Two stacks
+// guard the same key with DIFFERENT regexes; only one stack is installed. A value passing the
+// installed stack's guard but failing the other's must fail the render — and the rejection must
+// name ONLY the guard that fired (#244 F1), never one the value satisfies. #254 dual-declares a
+// `git.cmd` pattern on real data and relies on exactly this union; delete the AND accumulation
+// and these go red.
+describe('pattern guards from two stacks AND together (#244)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-and-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-and-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: and\nstacks: [alpha, beta]\n');
+    write(toolkitRoot, 'stacks/alpha/stack.yaml',
+      ['name: alpha', 'description: Alpha.', 'skills: [s]', 'config:', '  demo.key:', "    pattern: '[a-z]+'", ''].join('\n'));
+    write(toolkitRoot, 'stacks/alpha/skills/s/SKILL.md', '---\nname: s\ndescription: S.\n---\n\nValue {{demo.key}}.\n');
+    write(toolkitRoot, 'stacks/beta/stack.yaml',
+      ['name: beta', 'description: Beta.', 'config:', '  demo.key:', "    pattern: '.{1,3}'", ''].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = (value) => {
+    write(cwd, '.waffle/waffle.yaml', `targets: [claude]\nstacks: [alpha]\nconfig:\n  demo:\n    key: ${JSON.stringify(value)}\n`);
+    return renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  test('a value satisfying BOTH stacks\' patterns renders', () => {
+    const r = render('abc'); // [a-z]+ and .{1,3}
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.match(read(cwd, '.claude/skills/s/SKILL.md'), /Value abc\./);
+  });
+
+  test('a value passing the installed stack\'s guard but failing the uninstalled stack\'s fails, naming only the guard that fired', () => {
+    const r = render('abcd'); // matches alpha's [a-z]+, exceeds beta's .{1,3}
+    assert.equal(r.ok, false, 'guards union toolkit-wide: beta vetoes even though only alpha is installed');
+    const errs = r.errors.join('\n');
+    assert.match(errs, /demo\.key/);
+    assert.match(errs, /does not match its declared pattern/);
+    assert.match(errs, /\.\{1,3\} \(declared by stack "beta"\)/, 'names the failing pattern and its declarer');
+    assert.doesNotMatch(errs, /declared by stack "alpha"/, 'a guard the value satisfies is never named');
+  });
+
+  test('a value failing both patterns names both declaring stacks', () => {
+    const r = render('ABCD'); // uppercase fails alpha, 4 chars fails beta
+    assert.equal(r.ok, false);
+    const errs = r.errors.join('\n');
+    assert.match(errs, /declared by stack "alpha"/);
+    assert.match(errs, /declared by stack "beta"/);
   });
 });
 
