@@ -141,10 +141,10 @@ try {
       // its already-verified commit email; `avatars status` reports drift without writing anything.
       const sub = args[0] ?? 'sync';
       if (!['sync', 'status'].includes(sub)) fail(`usage: wafflestack avatars <sync|status> [--cwd DIR]`);
-      const { runAvatarsSync } = await import('./lib/avatars-sync.mjs');
+      const { runAvatarsSync, avatarsExitCode } = await import('./lib/avatars-sync.mjs');
       const result = await runAvatarsSync({ toolkitRoot, cwd, mode: sub, log: console.log });
       // `status` is a check: a drifted (unregistered) address exits non-zero so CI/scripts can gate.
-      process.exit(sub === 'status' && result.pending.length ? 1 : 0);
+      process.exit(avatarsExitCode({ mode: sub, pending: result.pending }));
       break;
     }
     case 'validate': {

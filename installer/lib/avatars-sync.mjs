@@ -102,6 +102,16 @@ export async function syncAvatars({ agents, token, http, rasterize, log = () => 
 }
 
 /**
+ * The exit code for an `avatars` run — the drift gate for #285. `status` is a check: a non-empty
+ * `pending` remainder (addresses drifted off the account) exits non-zero so CI/scripts can fail on
+ * drift; `sync` and a clean `status` exit 0. Pure so the gate is unit-testable without driving the
+ * process (a flipped ternary here would otherwise ship green — see the CLI in `cli.mjs`).
+ */
+export function avatarsExitCode({ mode, pending }) {
+  return mode === 'status' && (pending?.length ?? 0) > 0 ? 1 : 0;
+}
+
+/**
  * The avatar rows for the selection installed in `cwd`, each paired with its rendered 512px SVG —
  * exactly the rows the rendered `.waffle/AVATARS.md` describes, so the addresses this pipeline
  * registers match the manifest byte-for-byte.
@@ -238,7 +248,8 @@ export async function runAvatarsSync({
     );
     return { synced: [], pending: [], skipped: rows, mode };
   }
-  // status mode never rasterizes or uploads, so it needs no token and no rasterizer.
+  // status mode never rasterizes or uploads, so it needs no rasterizer — but it still needs a
+  // token: the associated-email probe is authenticated, so `syncAvatars` throws NO_TOKEN without one.
   const client = http ?? makeGravatarHttp();
   const raster = rasterize ?? (mode === 'status' ? null : makeShellRasterizer());
   return syncAvatars({ agents: rows, token, http: client, rasterize: raster, log, mode });

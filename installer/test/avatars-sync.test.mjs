@@ -5,6 +5,7 @@ import {
   emailHash,
   syncAvatars,
   makeGravatarHttp,
+  avatarsExitCode,
   TOKEN_ENV,
   GRAVATAR_BASE,
 } from '../lib/avatars-sync.mjs';
@@ -159,5 +160,100 @@ describe('avatars-sync: makeGravatarHttp (fetch shape, mocked fetch)', () => {
   test('a non-404 error surfaces as a thrown error rather than a silent skip', async () => {
     const http = makeGravatarHttp(async () => jsonRes(500, { error: 'boom' }));
     await assert.rejects(() => http.getAssociatedEmail({ token: 't', emailHash: 'abc' }), /500/);
+  });
+
+  // The three write methods carry the real mutation logic (query params, snake/camel id extraction,
+  // JSON bodies). Without these a wrong field name would ship green and only fail against the live
+  // API. Each case mirrors the probe tests: assert the fetch shape, and that a non-2xx throws.
+  test('uploadAvatar POSTs multipart to the avatars endpoint with the select query params', async () => {
+    let seen;
+    const http = makeGravatarHttp(async (url, opts) => {
+      seen = { url, opts };
+      return jsonRes(200, { image_id: 'img-xyz' });
+    });
+    const out = await http.uploadAvatar({ token: 'secret', emailHash: 'deadbeef', image: Buffer.from('PNG') });
+    assert.equal(out.imageId, 'img-xyz', 'reads the snake_case image_id the API returns');
+    assert.equal(seen.url, `${GRAVATAR_BASE}/me/avatars?selected_email_hash=deadbeef&select_avatar=true`);
+    assert.equal(seen.opts.method, 'POST');
+    assert.equal(seen.opts.headers.Authorization, 'Bearer secret');
+    assert.ok(seen.opts.body instanceof FormData, 'multipart form body');
+  });
+
+  test('uploadAvatar also accepts the camelCase imageId, and throws when the id is missing', async () => {
+    const camel = makeGravatarHttp(async () => jsonRes(200, { imageId: 'img-camel' }));
+    assert.equal((await camel.uploadAvatar({ token: 't', emailHash: 'h', image: Buffer.from('x') })).imageId, 'img-camel');
+
+    const noId = makeGravatarHttp(async () => jsonRes(200, {}));
+    await assert.rejects(() => noId.uploadAvatar({ token: 't', emailHash: 'h', image: Buffer.from('x') }), /no imageId/);
+  });
+
+  test('uploadAvatar surfaces a non-2xx as a thrown error', async () => {
+    const http = makeGravatarHttp(async () => jsonRes(413, { error: 'too big' }));
+    await assert.rejects(() => http.uploadAvatar({ token: 't', emailHash: 'h', image: Buffer.from('x') }), /413/);
+  });
+
+  test('setRating PATCHes a JSON {rating} body to the per-image endpoint', async () => {
+    let seen;
+    const http = makeGravatarHttp(async (url, opts) => {
+      seen = { url, opts };
+      return jsonRes(200, {});
+    });
+    await http.setRating({ token: 'secret', imageId: 'img-1', rating: 'G' });
+    assert.equal(seen.url, `${GRAVATAR_BASE}/me/avatars/img-1`);
+    assert.equal(seen.opts.method, 'PATCH');
+    assert.equal(seen.opts.headers.Authorization, 'Bearer secret');
+    assert.equal(seen.opts.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(seen.opts.body), { rating: 'G' });
+  });
+
+  test('setRating surfaces a non-2xx as a thrown error', async () => {
+    const http = makeGravatarHttp(async () => jsonRes(422, { error: 'bad rating' }));
+    await assert.rejects(() => http.setRating({ token: 't', imageId: 'img-1', rating: 'G' }), /422/);
+  });
+
+  test('associateAvatarEmail POSTs a JSON {email_hash} body to the image email endpoint', async () => {
+    let seen;
+    const http = makeGravatarHttp(async (url, opts) => {
+      seen = { url, opts };
+      return jsonRes(200, {});
+    });
+    await http.associateAvatarEmail({ token: 'secret', imageId: 'img-1', emailHash: 'deadbeef' });
+    assert.equal(seen.url, `${GRAVATAR_BASE}/me/avatars/img-1/email`);
+    assert.equal(seen.opts.method, 'POST');
+    assert.equal(seen.opts.headers.Authorization, 'Bearer secret');
+    assert.equal(seen.opts.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(seen.opts.body), { email_hash: 'deadbeef' });
+  });
+
+  test('associateAvatarEmail surfaces a non-2xx as a thrown error', async () => {
+    const http = makeGravatarHttp(async () => jsonRes(404, { error: 'no such image' }));
+    await assert.rejects(
+      () => http.associateAvatarEmail({ token: 't', imageId: 'img-1', emailHash: 'h' }),
+      /404/,
+    );
+  });
+});
+
+describe('avatars-sync: avatarsExitCode (the #285 drift gate)', () => {
+  test('status with a non-empty pending remainder exits non-zero so CI can gate on drift', () => {
+    assert.equal(avatarsExitCode({ mode: 'status', pending: [{ name: 'scout' }] }), 1);
+  });
+
+  test('status with no drift exits 0', () => {
+    assert.equal(avatarsExitCode({ mode: 'status', pending: [] }), 0);
+  });
+
+  test('sync never gates on the pending remainder — it exits 0 even with pending addresses', () => {
+    assert.equal(avatarsExitCode({ mode: 'sync', pending: [{ name: 'scout' }] }), 0);
+  });
+
+  test('the engine result feeds the gate: a drifted status run maps to a non-zero exit', async () => {
+    // End-to-end: run the engine in status mode against a roster with an unverified address, then
+    // map its result through the same helper the CLI uses. Pins the gate against a flipped ternary
+    // or a mis-shaped `pending`.
+    const http = mockHttp({ associated: (hash) => hash === emailHash('bot+captain@wafflenet.io') });
+    const result = await syncAvatars({ agents: AGENTS, token: 'tok', http, rasterize: rasterizeStub, mode: 'status' });
+    assert.ok(result.pending.length > 0, 'scout drifted → pending remainder');
+    assert.equal(avatarsExitCode({ mode: 'status', pending: result.pending }), 1);
   });
 });
