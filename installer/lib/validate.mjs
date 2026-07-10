@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, entryPatternProblem } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblem } from './template.mjs';
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
@@ -290,7 +290,9 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
             continue;
           }
           try {
-            compiled.set(leaf, [compilePattern(pattern)]);
+            // The guard-record shape entryPatternProblem consumes (see makeGuard): the self-check
+            // rejection then names this stack as the declarer, same as a render-time rejection.
+            compiled.set(leaf, [makeGuard(pattern, `stack "${stack.name}"`)]);
           } catch (err) {
             problems.push(`${ctx}: config key ${key} has an invalid entryPattern for "${leaf}": ${err.message}`);
           }

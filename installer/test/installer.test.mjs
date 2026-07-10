@@ -504,6 +504,12 @@ describe('harness.* CI dispatcher pin + injection guards (#131)', () => {
         r.errors.some((e) => e.includes(key) && /does not match its declared pattern/.test(e)),
         JSON.stringify(r.errors),
       );
+      // #244 F1: harness.* guards are seeded by the engine, not declared by a stack — the
+      // rejection must say so, same provenance contract as the stack-declared guards.
+      assert.ok(
+        r.errors.some((e) => e.includes(key) && e.includes('declared by the reserved harness guards')),
+        `the rejection names the reserved-harness source: ${JSON.stringify(r.errors)}`,
+      );
     };
     // a ${{ }} in the pinned version would be expanded by GitHub Actions (e.g. secret exfil)
     rejects(['config:', '  harness:', '    actionVersion: "${{ secrets.X }}"'], 'harness.actionVersion');
@@ -1603,6 +1609,11 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.match(errs, /git\.agentIdentities/, 'the error names the offending key');
     assert.match(errs, /rogue/, '...and the offending entry');
     assert.match(errs, /pattern/);
+    // #244 F1: the entry-guard rejection names its declarer too. git.agentIdentities declares
+    // byte-identical entryPatterns in BOTH github-workflow and orchestration, so both guards
+    // fail here — and identical patterns are GROUPED, printed once with the sources joined
+    // (#256 review nit), not once per declarer. Order follows toolkit.yaml's stacks list.
+    assert.match(errs, /declared by stack "github-workflow"; stack "orchestration"/, 'identical patterns group their declarers');
     assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
   });
 
@@ -1851,6 +1862,12 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     // installed. W5b/W5c carry the general claim — see the note there.
     assert.equal(result.ok, false, 'command substitution must not reach an unquoted shell word');
     assert.match(JSON.stringify(result.errors), /git\.botEmail/);
+    // #244 F1: guards are unioned toolkit-wide, so a stack outside the selection can veto a
+    // value — the rejection must be legible without reading toolkit source. It names the
+    // failing pattern and the stack that declared it.
+    const errs = result.errors.join('\n');
+    assert.match(errs, /declared by stack "github-workflow"/, 'the rejection names the declaring stack');
+    assert.ok(errs.includes('[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+'), 'the rejection shows the authored botEmail pattern');
   });
 
   // #155 review (should-fix): `git.cmd` overrides the identity and NOTHING else — ambient
@@ -3671,6 +3688,98 @@ describe('config value pattern: render-time validation (#27 hardening)', () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+// #244 F2: the multi-pattern AND. `compilePatterns` unions `pattern:` guards toolkit-wide and a
+// key declared with a pattern in MORE than one stack must satisfy every one — but no shipped
+// scalar key is dual-declared yet (the `entryPatterns` twin is: `git.agentIdentities`, in both
+// github-workflow and orchestration), so this fixture is what keeps the branch honest. Two stacks
+// guard the same key with DIFFERENT regexes; only one stack is installed. A value passing the
+// installed stack's guard but failing the other's must fail the render — and the rejection must
+// name ONLY the guard that fired (#244 F1), never one the value satisfies. #254 dual-declares a
+// `git.cmd` pattern on real data and relies on exactly this union; delete the AND accumulation
+// and these go red.
+describe('pattern guards from two stacks AND together (#244)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-and-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-and-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: and\nstacks: [alpha, beta]\n');
+    // Both the scalar `pattern:` (demo.key) and the map-valued `entryPatterns:` (demo.map) are
+    // dual-declared with DIFFERENT regexes. The shipped dual-declaration (git.agentIdentities)
+    // is byte-identical in both stacks, so its guards always fail together — it can never prove
+    // "failing guards only" on either path; different regexes can.
+    write(toolkitRoot, 'stacks/alpha/stack.yaml',
+      ['name: alpha', 'description: Alpha.', 'skills: [s]', 'config:',
+        '  demo.key:', "    pattern: '[a-z]+'",
+        '  demo.map:', '    default: {}', '    entryPatterns:', "      leaf: '[a-z]+'", ''].join('\n'));
+    write(toolkitRoot, 'stacks/alpha/skills/s/SKILL.md', '---\nname: s\ndescription: S.\n---\n\nValue {{demo.key}}. Map {{demo.map}}.\n');
+    write(toolkitRoot, 'stacks/beta/stack.yaml',
+      ['name: beta', 'description: Beta.', 'config:',
+        '  demo.key:', "    pattern: '.{1,3}'",
+        '  demo.map:', '    entryPatterns:', "      leaf: '.{1,3}'", ''].join('\n'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = (value) => {
+    write(cwd, '.waffle/waffle.yaml', `targets: [claude]\nstacks: [alpha]\nconfig:\n  demo:\n    key: ${JSON.stringify(value)}\n`);
+    return renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  test('a value satisfying BOTH stacks\' patterns renders', () => {
+    const r = render('abc'); // [a-z]+ and .{1,3}
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.match(read(cwd, '.claude/skills/s/SKILL.md'), /Value abc\./);
+  });
+
+  test('a value passing the installed stack\'s guard but failing the uninstalled stack\'s fails, naming only the guard that fired', () => {
+    const r = render('abcd'); // matches alpha's [a-z]+, exceeds beta's .{1,3}
+    assert.equal(r.ok, false, 'guards union toolkit-wide: beta vetoes even though only alpha is installed');
+    const errs = r.errors.join('\n');
+    assert.match(errs, /demo\.key/);
+    assert.match(errs, /does not match its declared pattern/);
+    assert.match(errs, /`\.\{1,3\}` \(declared by stack "beta"\)/, 'names the failing pattern (backtick-delimited) and its declarer');
+    assert.doesNotMatch(errs, /declared by stack "alpha"/, 'a guard the value satisfies is never named');
+  });
+
+  test('a value failing both patterns names both declaring stacks', () => {
+    const r = render('ABCD'); // uppercase fails alpha, 4 chars fails beta
+    assert.equal(r.ok, false);
+    const errs = r.errors.join('\n');
+    assert.match(errs, /declared by stack "alpha"/);
+    assert.match(errs, /declared by stack "beta"/);
+  });
+
+  // #256 review (should-fix): the same two properties on the entryPatterns path, which has its
+  // own consumer (entryPatternProblem). Both paths now share one failing-guard filter
+  // (failingOf, template.mjs) — restore an inline filter that passes `res` unfiltered to the
+  // message and the leaf-passing-one-stack test below goes red.
+  const renderMap = (leafValue) => {
+    write(cwd, '.waffle/waffle.yaml',
+      `targets: [claude]\nstacks: [alpha]\nconfig:\n  demo:\n    key: abc\n    map:\n      e:\n        leaf: ${JSON.stringify(leafValue)}\n`);
+    return renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  test('an entryPatterns leaf satisfying BOTH stacks\' guards renders', () => {
+    const r = renderMap('ab'); // [a-z]+ and .{1,3}
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+  });
+
+  test('an entryPatterns leaf passing the installed stack\'s guard but failing the uninstalled stack\'s fails, naming only the guard that fired', () => {
+    const r = renderMap('abcd'); // matches alpha's [a-z]+, exceeds beta's .{1,3}
+    assert.equal(r.ok, false, 'entry guards union toolkit-wide too');
+    const errs = r.errors.join('\n');
+    assert.match(errs, /demo\.map/);
+    assert.match(errs, /entry "e" key "leaf" does not match its declared pattern/);
+    assert.match(errs, /`\.\{1,3\}` \(declared by stack "beta"\)/, 'names the failing pattern and its declarer');
+    assert.doesNotMatch(errs, /declared by stack "alpha"/, 'a satisfied entry guard is never named');
   });
 });
 

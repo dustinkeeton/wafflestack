@@ -6,7 +6,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys, compilePattern } from './template.mjs';
+import { substitute, placeholderKeys, makeGuard } from './template.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
@@ -511,10 +511,12 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
 }
 
 /**
- * Compile every `pattern:` declared anywhere in the toolkit into a Map<key, RegExp[]> for
- * render-time value validation. A pattern that fails to compile is a toolkit-authoring
- * bug (validate reports it precisely) — here we fail the render loudly rather than
- * silently skip the check, so a broken guard can never ship unenforced.
+ * Compile every `pattern:` declared anywhere in the toolkit into a Map<key, guard[]> for
+ * render-time value validation — each guard a makeGuard record carrying the RegExp, the raw
+ * authored pattern, and its declaring source, so a rejection can name the guard that fired
+ * (#244 F1). A pattern that fails to compile is a toolkit-authoring bug (validate reports it
+ * precisely) — here we fail the render loudly rather than silently skip the check, so a
+ * broken guard can never ship unenforced.
  *
  * The map spans **every** stack, not just the selected ones (#155 review). A guard is a
  * property of the config KEY, not of which stack happens to be installed. `git.cmd` is
@@ -523,45 +525,54 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
  * install splicing an unvalidated `botEmail: "$(id)@x.com"` straight into an agent-executed
  * shell command, while the identical value was rejected once `github-workflow` was co-installed.
  * That is the same "accident of what else happens to be present" failure mode `expandNested`'s
- * doc comment (template.mjs) says the nested-enforcement path exists to prevent.
+ * doc comment (template.mjs) says the nested-enforcement path exists to prevent. W5b/W5c pin
+ * that independence. The flip side — a stack the project never installs can veto its value —
+ * is why the guard records carry provenance: the error names the failing pattern and its
+ * declaring stack, so the veto is legible even when the declarer is outside the selection.
  *
  * A key declared with a pattern in more than one stack must satisfy ALL of them — the strictest
- * reading, and the only one that cannot be weakened by adding a stack.
+ * reading, and the only one that cannot be weakened by installing another stack. No shipped
+ * scalar key is dual-declared today, so the AND is pinned by a two-stack fixture test
+ * ("pattern guards from two stacks AND together", #244 F2) rather than by shipped data; its
+ * `entryPatterns` twin IS live on shipped data (`git.agentIdentities` declares byte-identical
+ * entryPatterns in both `github-workflow` and `orchestration`), and #254 adds a dual-declared
+ * `git.cmd` pattern relying on exactly this union.
  *
  * The same collection runs for `entryPatterns:` (#156), the map-valued sibling of `pattern:`:
- * `Map<key, Map<leaf, RegExp[]>>`, unioned toolkit-wide on the same reasoning. Returns the pair
+ * `Map<key, Map<leaf, guard[]>>`, unioned toolkit-wide on the same reasoning. Returns the pair
  * as a `guards` object, which is what `substitute()` takes.
  */
 function compilePatterns(toolkit, errors) {
   const patterns = new Map();
   const entryPatterns = new Map();
-  const add = (key, re) => {
+  const add = (key, guard) => {
     const existing = patterns.get(key);
-    if (existing) existing.push(re);
-    else patterns.set(key, [re]);
+    if (existing) existing.push(guard);
+    else patterns.set(key, [guard]);
   };
-  const addEntry = (key, leaf, re) => {
+  const addEntry = (key, leaf, guard) => {
     let leaves = entryPatterns.get(key);
     if (!leaves) entryPatterns.set(key, (leaves = new Map()));
     const existing = leaves.get(leaf);
-    if (existing) existing.push(re);
-    else leaves.set(leaf, [re]);
+    if (existing) existing.push(guard);
+    else leaves.set(leaf, [guard]);
   };
   // Reserved `harness.*` injection guards (#131) — always enforced, never declared in a
   // stack's config. Seed them first; a stack's own `config:` patterns cannot collide because
   // `harness.*` is never a declarable config key.
   for (const [sub, pattern] of Object.entries(HARNESS_PATTERNS)) {
     try {
-      add(`harness.${sub}`, compilePattern(pattern));
+      add(`harness.${sub}`, makeGuard(pattern, 'the reserved harness guards'));
     } catch (err) {
       errors.push(`reserved harness.${sub} has an invalid pattern: ${err.message}`);
     }
   }
   for (const [stackName, stack] of toolkit.stacks) {
     for (const [key, spec] of Object.entries(stack.config ?? {})) {
+      const source = `stack "${stackName}"`;
       if (typeof spec?.pattern === 'string') {
         try {
-          add(key, compilePattern(spec.pattern));
+          add(key, makeGuard(spec.pattern, source));
         } catch (err) {
           errors.push(`stack "${stackName}" config key ${key} has an invalid pattern: ${err.message}`);
         }
@@ -572,7 +583,7 @@ function compilePatterns(toolkit, errors) {
           continue;
         }
         try {
-          addEntry(key, leaf, compilePattern(pattern));
+          addEntry(key, leaf, makeGuard(pattern, source));
         } catch (err) {
           errors.push(`stack "${stackName}" config key ${key} has an invalid entryPattern for ${leaf}: ${err.message}`);
         }
