@@ -19,13 +19,25 @@ const DISPLAY_NAME_RE = compilePattern('(?!.*\\$\\{\\{)[A-Za-z0-9._\\[\\]-]+(?: 
 
 /**
  * Allowlist for an agent's `identity.avatar` (#157) — a *reference* to the agent's avatar image:
- * a repo-relative path (`.waffle/avatars/scout.svg`) or an `https://` URL. Today it lands in YAML
- * frontmatter and a generated Markdown table, neither of which is a shell word — but it is guarded
- * in the same trust-boundary style as its `displayName` sibling, because a consumer may yet splice
- * it somewhere hotter (an `<img src>`, a `curl`). No whitespace, quotes, backtick, `\`, `$`, `${{`;
- * no `..` traversal. `^(?!…)` guards are the same sibling-injection lookaheads used elsewhere.
+ * a repo-relative path (`.waffle/avatars/scout.svg`) or an `https://` URL, and nothing else. It is
+ * guarded in the same trust-boundary style as its `displayName` sibling, because a consumer may
+ * splice it somewhere hotter than the YAML frontmatter and Markdown table it lands in today (an
+ * `<img src>`, a `curl`).
+ *
+ * The union enforces the documented contract rather than gesturing at it (#248 review). A single
+ * permissive character class admitting `:` and `%` accepted `javascript:alert`, `data:…`,
+ * `file:///etc/passwd`, `http://evil.tld/x`, the protocol-relative `//evil.tld/x`, the absolute
+ * `/etc/passwd`, and `%2e%2e%2f`-encoded traversal that the `(?!.*\.\.)` lookahead cannot see.
+ * So:
+ *   - the URL alternative requires a literal `https://` prefix — no other scheme parses;
+ *   - the path alternative is `segment(/segment)*` over a class WITHOUT `:`, `%`, or an empty
+ *     segment, which rejects every scheme, the leading `/`, the `//` authority form, and any
+ *     percent-encoding (so encoded dots cannot smuggle traversal past the `..` lookahead).
+ * `..` stays blocked in both by the lookahead. `(?!.*\$\{\{)` is the usual sibling-injection guard.
  */
-const IDENTITY_AVATAR_RE = compilePattern('(?!.*\\$\\{\\{)(?!.*\\.\\.)[A-Za-z0-9._~:/?#@!&=+*%-]+');
+const IDENTITY_AVATAR_RE = compilePattern(
+  '(?!.*\\$\\{\\{)(?!.*\\.\\.)(?:https://[A-Za-z0-9._~/?#@!&=+*%-]+|[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)',
+);
 
 const IDENTITY_KEYS = ['displayName', 'avatar'];
 
@@ -171,8 +183,8 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           if (avatar !== undefined && (typeof avatar !== 'string' || !IDENTITY_AVATAR_RE.test(avatar))) {
             problems.push(
               `${ctx}: agent ${agent.name} identity.avatar ${JSON.stringify(avatar ?? null)} ` +
-                `does not match the allowed shape (a repo-relative path or https:// URL — no whitespace, ` +
-                `quotes, backtick, "\\", "$", or "..")`,
+                `does not match the allowed shape (an https:// URL, or a repo-relative path — no leading ` +
+                `"/", no "//", no other scheme, no percent-encoding, no ".." traversal)`,
             );
           }
         }

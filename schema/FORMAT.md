@@ -204,9 +204,10 @@ that `render` emits for every installed agent. Because a plus-addressed alias be
 account, GitHub renders that address's **Gravatar** on commit views — so registering one Gravatar
 per agent email is what puts a distinct face on each agent's commits. That registration is manual
 and external; the generated `.waffle/AVATARS.md` lists each agent's avatar file, its exact commit
-email, and the procedure. Like `displayName`, the value is validated against an allowlist (no
-whitespace, quotes, backtick, `\`, `$`, or `..`) — it is a reference the toolkit renders into
-frontmatter and Markdown, never something it fetches or uploads.
+email, and the procedure. Like `displayName`, the value is validated against an allowlist: either an
+`https://` URL, or a repo-relative path (`segment/segment/…`) with no leading `/`, no `//`, no other
+scheme (`file:`, `data:`, `javascript:`), no percent-encoding, and no `..` traversal — it is a
+reference the toolkit renders into frontmatter and Markdown, never something it fetches or uploads.
 
 Renders to:
 - **claude** → `.claude/agents/<name>.md` — frontmatter `name`, `description`, `skills`,

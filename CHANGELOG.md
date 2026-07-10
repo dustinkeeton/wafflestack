@@ -41,8 +41,9 @@ is what you reach for across a breaking one.
   kept in lockstep with the delegate skill's prose rules and pinned by tests to the documented
   examples. Both flow through `emit()`, so they are lock-tracked, doctor-drift-checked, and pruned
   when a selection drops every agent. The `identity:` block gains an optional **`avatar`** key (a
-  repo-relative path or `https://` URL, allowlisted in the same trust-boundary style as
-  `displayName`; absent means the generated default), which renders through to `.claude/agents/*.md`
+  repo-relative path or `https://` URL — the allowlist admits those two shapes and nothing else: no
+  other scheme, no leading `/`, no `//` authority, no percent-encoding, no `..`; absent means the
+  generated default), which renders through to `.claude/agents/*.md`
   and `.agents/agents/*.md`. **The mechanism, stated honestly:** GitHub picks a commit avatar from the
   author email — an account's avatar if the email is registered there, otherwise that email's
   **Gravatar**, otherwise the gray Octocat. Because the derived `bot+<agent>@…` aliases belong to no
