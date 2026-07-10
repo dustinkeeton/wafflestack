@@ -767,10 +767,12 @@ setup: |-
         cmd: git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
         # Recipe C (GPG signing)
-        cmd: git -c commit.gpgsign=true -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
-    Pin `gpg.format` in recipe B rather than inheriting it — the key is explicit, so the format must
-    be too (git ≥ 2.34). Recipe B/C have one hard precondition: **a non-prompting signer** (an
+    Pin `gpg.format` in **both** recipes rather than inheriting it — the key is explicit, so the
+    format must be too (git ≥ 2.34). An inherited format is the same bug class one layer down: a
+    machine with `gpg.format = ssh` in its config would hand recipe C's GPG key id to git's *SSH*
+    signer, and every agent commit fails on an unusable key. Recipe B/C have one hard precondition: **a non-prompting signer** (an
     unencrypted key file, a non-interactive agent, a passphrase-free GPG key or loopback pinentry).
     A prompting signer hangs every agent commit. The rest of the plumbing — `gpg.ssh.program`,
     allowed-signers files, pinentry mode — is a *machine* concern the toolkit inherits and does not
@@ -791,12 +793,18 @@ setup: |-
   | Human | **Verified** (own key + account) | already is; the toolkit never touches it |
   | Main bot, recipe A | **no badge** (unsigned, deliberate) | n/a — nothing is claimed |
   | Main bot, recipe B/C | **"Unverified"** unless registered | yes: a real bot GitHub account with `git.signingKey` added as a signing key **and** `git.botEmail` verified on it |
-  | Sub-agent (`bot+<slug>@…`) | **no badge** under A; **"Unverified"** under B/C | only by verifying each alias on the bot account — which **relinks every agent to one profile and one avatar**. Per-agent avatars XOR verified sub-agent commits; prefer avatars + no badge |
+  | Sub-agent (`bot+<slug>@…`, subaddressable base only) | **no badge** under A; **"Unverified"** under B/C | only by verifying each alias on the bot account — which **relinks every agent to one profile and one avatar**. Per-agent avatars XOR verified sub-agent commits; prefer avatars + no badge |
+  | Sub-agent (noreply base — the **default**) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | already is, with zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address. No per-agent avatar exists to forfeit |
+
+  The XOR in the first sub-agent row is real **only when the base email can subaddress**. On the
+  default `wafflebot@users.noreply.github.com` there is no `bot+<slug>@…` author at all, so a
+  noreply-based project is not choosing between avatars and verification — see rule (5).
 
   One gotcha: a repo with **required signatures** branch protection rejects unsigned commits at
   push, forcing recipe B/C plus registered keys — and plus-addressed sub-agent authors cannot
-  satisfy it without collapsing back onto the bot account. Such a repo should not virtualize
-  sub-agent identities at all.
+  satisfy it without collapsing back onto the bot account. Such a repo cannot use **plus-addressed**
+  sub-agent authors; on a noreply base it virtualizes sub-agent *names* as usual and its commits
+  verify.
 
   Whichever recipe you pick, the resolved `git.cmd` **is** this project's signing posture — explicit,
   committed, reviewable. Enforcement is prompt-level: agents follow the rendered examples, and must
