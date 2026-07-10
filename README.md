@@ -6,7 +6,6 @@
 <p align="center">
   <a href="https://github.com/sponsors/dustinkeeton"><img src="https://img.shields.io/badge/Sponsor-GitHub-F08A1D?logo=githubsponsors&logoColor=F5C752&labelColor=241204" alt="Sponsor on GitHub"></a>
   <a href="https://buymeacoffee.com/dustinkeeton"><img src="https://img.shields.io/badge/Support-Buy%20Me%20a%20Coffee-F08A1D?logo=buymeacoffee&logoColor=F5C752&labelColor=241204" alt="Support on Buy Me a Coffee"></a>
-  <a href="https://github.com/dustinkeeton/wafflestack/blob/waffle-telemetry/.waffle/telemetry/tokens.json"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdustinkeeton%2Fwafflestack%2Fwaffle-telemetry%2F.waffle%2Ftelemetry%2Ftokens.json" alt="Claude token spend (automated runs)"></a>
 </p>
 
 ---
@@ -205,8 +204,10 @@ Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guideline
 © 2026 Dustin Keeton. Licensed under the [Apache License, Version 2.0](LICENSE).
 
 ---
-
+<p align="center">
+    <a href="https://github.com/dustinkeeton/wafflestack/blob/waffle-telemetry/.waffle/telemetry/tokens.json"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdustinkeeton%2Fwafflestack%2Fwaffle-telemetry%2F.waffle%2Ftelemetry%2Ftokens.json" alt="Claude token spend (automated runs)"></a>
+</p>
 <p align="center">
   <img src="assets/wafflestack-flat.svg" width="24" alt=""><br>
-  A <strong>WaffleWorks</strong> project — controlled fun, one waffle at a time.
+  A <strong>WaffleWorks</strong> project
 </p>
