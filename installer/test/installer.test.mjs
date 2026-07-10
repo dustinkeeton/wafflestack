@@ -1792,6 +1792,45 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     assert.match(delegate, /`git\.agentIdentities` is inert/);
   });
 
+  // #159: the identity preflight is a script copied VERBATIM into the skill dir (no placeholder
+  // substitution reaches it), so the SKILL.md's rendered invocation is the only thing that carries
+  // the resolved config to it. If that invocation renders wrong, the gate validates the wrong
+  // command — or nothing at all. W8/W8b pin the two halves: the `--git-cmd` literal and the
+  // heredoc payload.
+  test('W8 the delegate skill renders the resolved recipe into the identity-preflight invocation', () => {
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const delegate = read(cwd, DELEGATE_SKILL);
+    // The whole recipe sits inside the single quotes — the quoted `user.name` survives intact.
+    assert.match(delegate, new RegExp(`^  --git-cmd '${escapeRe('git -c user.name="Wafflebot" -c user.email=bot@example.com')}' \\\\$`, 'm'));
+    assert.match(delegate, /^  --agents-dir '\.claude\/agents' \\$/m);
+    // With no overrides configured, the heredoc carries the empty map.
+    assert.match(delegate, /<<'WAFFLE_AGENT_IDENTITIES'\n\{\}\nWAFFLE_AGENT_IDENTITIES/);
+    // And the script it invokes actually shipped beside the skill.
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/delegate/identity.mjs')), true);
+  });
+
+  test('W8b agentIdentities renders into the preflight heredoc as a YAML map', () => {
+    const identities = [
+      '  git:',
+      '    botName: Wafflebot',
+      '    botEmail: bot@example.com',
+      `    cmd: ${RECIPE}`,
+      '    agentIdentities:',
+      '      lead-engineer:',
+      '        botName: Lead Engineer',
+      '        botEmail: lead@example.com',
+    ].join('\n');
+    write(cwd, '.waffle/waffle.yaml', `${orchBase()}${identities}\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const delegate = read(cwd, DELEGATE_SKILL);
+    // Two consumers render the same map: the preflight heredoc and the derivation's YAML fence.
+    assert.match(delegate, /<<'WAFFLE_AGENT_IDENTITIES'\nlead-engineer:\n  botName: Lead Engineer\n  botEmail: lead@example\.com\nWAFFLE_AGENT_IDENTITIES/);
+    assert.doesNotMatch(delegate, /\{\{git\./, 'no identity placeholder survives the render');
+  });
+
   test('W4 leaning on the STACK DEFAULTS instead of project values leaks a literal placeholder cross-stack', () => {
     // This is why the setup note says "set BOTH keys explicitly in project config". github-workflow
     // declares the identity keys, so ITS render resolves them from `default:`. Orchestration does
