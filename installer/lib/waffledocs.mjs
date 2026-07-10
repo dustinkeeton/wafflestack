@@ -126,15 +126,18 @@ const USER_EMAIL_ASSIGN = /((?:^|\s)-c\s+user\.email=)(?:"[^"]*"|'[^']*'|\S+)/;
  * would silently re-enable signing on a repo that turned it off, which on a prompting signer
  * (1Password's SSH agent) blocks the commit and otherwise signs an agent-authored commit with
  * the human's key (#248 review). Only called on a configured `git.cmd` (one carrying a resolved
- * `-c user.email=`); the rebuild is a defensive fallback. `botName`/`botEmail` pattern guards
- * exclude `$` and `` ` ``, so neither value can corrupt the replacement or the shell word.
+ * `-c user.email=`); the rebuild is a defensive fallback. Each swap uses a replacement FUNCTION,
+ * not a replacement string, so `$&`/`$1`/`` $` `` in a value can never re-expand and corrupt the
+ * command (#249 — a `$&`-bearing email once duplicated the `-c user.email` flag). The
+ * `botName`/`botEmail` pattern guards, which exclude `$` and `` ` ``, remain the defense for the
+ * *shell word* itself.
  */
 export function withIdentity(gitCmd, displayName, email) {
   const base = String(gitCmd ?? '').trim() || 'git';
   if (!USER_EMAIL_ASSIGN.test(base)) return `git -c user.name="${displayName}" -c user.email=${email}`;
-  const withEmail = base.replace(USER_EMAIL_ASSIGN, `$1${email}`);
+  const withEmail = base.replace(USER_EMAIL_ASSIGN, (_, p1) => `${p1}${email}`);
   return USER_NAME_ASSIGN.test(withEmail)
-    ? withEmail.replace(USER_NAME_ASSIGN, `$1"${displayName}"`)
+    ? withEmail.replace(USER_NAME_ASSIGN, (_, p1) => `${p1}"${displayName}"`)
     : `${withEmail} -c user.name="${displayName}"`;
 }
 
@@ -285,7 +288,7 @@ function resolveGitIdentity({ project, selection, resolverFor }) {
     // and an unset key stays a literal `{{…}}` rather than resolving to some other stack's default.
     const raw = lookupPath(project.values, 'git.cmd');
     if (typeof raw === 'string') {
-      const resolve = resolverFor({ name: ' project', config: {} });
+      const resolve = resolverFor({ name: '\0project', config: {} });
       cmd = substitute('{{git.cmd}}', resolve, new Set(['git.cmd']), [], 'waffledocs:avatars#git.cmd', NO_GUARDS).trim();
     }
   }
@@ -388,9 +391,16 @@ function avatarsMarkdown(agents, toolkitName, git) {
   // leave a single derived row. Counting rows instead would drop this caveat for a
   // `*.noreply.github.com` base (the base github-workflow's own setup note recommends) and print
   // a registration procedure whose verification mail goes to a domain that accepts none.
+  //
+  // Three registration states (#249): no overrides (every address derives from the base), some
+  // overrides (derived rows plus verbatim `‡` rows), and ALL overridden — `derivedRows` empty, so
+  // `sharedEmail` is vacuously false and the registration gate still opens, but the base-inbox
+  // claim ("addresses above land in `<baseEmail>`") would describe an empty set and an inbox no
+  // agent commits under. `anyDerived` picks the honest copy for that third state.
   const derivedRows = rows.filter((r) => !r.overridden);
   const sharedEmail = configured && derivedRows.some((r) => r.email === git.baseEmail);
   const anyOverridden = rows.some((r) => r.overridden);
+  const anyDerived = derivedRows.length > 0;
 
   const lines = [
     GENERATED_BANNER,
@@ -498,17 +508,45 @@ function avatarsMarkdown(agents, toolkitName, git) {
   }
 
   if (configured && !sharedEmail) {
+    // The lead paragraph and the sign-in steps vary by state (#249): with every address set
+    // verbatim by an override, the plus-address delivery claim and the one-base-account sign-in
+    // step would be lies — no address derives from the base, and its inbox receives none of the
+    // verification mail. The conversion step and the smoke test hold in every state.
+    const registrationLead = !anyDerived
+      ? [
+          'Each address must receive mail for Gravatar to verify it. Every address above is set verbatim by a',
+          `\`git.agentIdentities.<agent>.botEmail\` override — none derive from \`${git.baseEmail}\`, so each must be`,
+          'verified at the inbox that actually receives its mail. Then:',
+        ]
+      : [
+          'Each address must receive mail for Gravatar to verify it. A plus-address delivers to its base inbox on',
+          'any provider that supports subaddressing (Gmail, Fastmail, Proton, most self-hosted setups) — so the',
+          anyOverridden
+            ? // Scope the claim to the DERIVED rows (#248 review): an overridden address is verbatim, in
+              // whatever domain the project named, and lands in an inbox the base account may not own.
+              `derived addresses above land in \`${git.baseEmail}\`, while each ${OVERRIDDEN}-marked address lands in its own` +
+              ' domain and needs its own verification. Then:'
+            : `addresses above all land in \`${git.baseEmail}\`. Then:`,
+        ];
+    const signInSteps = !anyDerived
+      ? [
+          '2. **Sign in to <https://gravatar.com>** with an account that can receive mail at those addresses (use',
+          '   more than one account if the inboxes are separately owned).',
+          '3. **Add each agent\'s commit email** to its account and complete the verification mail.',
+        ]
+      : [
+          // Scope the parenthetical to the derived rows in the mixed state (#262 review): a
+          // separately-owned ‡ inbox is not covered by the base account — the same
+          // claim-over-the-wrong-set class F2 fixed for the all-overridden state.
+          anyOverridden
+            ? '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every derived address).'
+            : '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every agent).',
+          '3. **Add each agent\'s commit email** to that account and complete the verification mail.',
+        ];
     lines.push(
       '## Registering the avatars (manual, one-time)',
       '',
-      'Each address must receive mail for Gravatar to verify it. A plus-address delivers to its base inbox on',
-      'any provider that supports subaddressing (Gmail, Fastmail, Proton, most self-hosted setups) — so the',
-      anyOverridden
-        ? // Scope the claim to the DERIVED rows (#248 review): an overridden address is verbatim, in
-          // whatever domain the project named, and lands in an inbox the base account may not own.
-          `derived addresses above land in \`${git.baseEmail}\`, while each ${OVERRIDDEN}-marked address lands in its own` +
-          ' domain and needs its own verification. Then:'
-        : `addresses above all land in \`${git.baseEmail}\`. Then:`,
+      ...registrationLead,
       '',
       '1. **Convert each avatar to a raster image.** Gravatar accepts PNG/JPG/GIF, not SVG. One line, any one of:',
       '',
@@ -518,8 +556,7 @@ function avatarsMarkdown(agents, toolkitName, git) {
       `   magick -background none ${avatarRef('<agent>')} -resize 512x512 <agent>.png   # ImageMagick`,
       '   ```',
       '',
-      '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every agent).',
-      '3. **Add each agent\'s commit email** to that account and complete the verification mail.',
+      ...signInSteps,
       '4. **Upload that agent\'s PNG** and assign it to that address. Keep the rating at **G** — GitHub only',
       '   displays G-rated images.',
       '',
