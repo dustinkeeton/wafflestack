@@ -123,7 +123,7 @@ carry the literal marker `<!-- waffle-adversarial-review -->` on its own line (s
 ```json
 {
   "event": "COMMENT",
-  "body": "<!-- waffle-adversarial-review -->\n**Adversarial review** — 1 blocker, 2 should-fix, 1 nit.\n\n- **[blocker]** `parseRange` returns the wrong bound for an empty input (see inline).\n- **[should-fix]** No test covers the `null` config path added in `load.ts`.\n- **[should-fix]** `flush()` swallows the write error instead of surfacing it.\n- **[nit]** `tmp2` could reuse the existing `withTempDir` helper.",
+  "body": "<!-- waffle-adversarial-review -->\n**Adversarial review** — 1 blocker, 2 should-fix, 1 nit.\n\n- **[blocker]** `parseRange` returns the wrong bound for an empty input (see inline).\n- **[should-fix]** No test covers the `null` config path added in `load.ts`.\n- **[should-fix]** `flush()` swallows the write error instead of surfacing it.\n- **[nit]** `tmp2` could reuse the existing `withTempDir` helper.\n\n— posted by the adversarial-review bot",
   "comments": [
     { "path": "src/range.ts", "line": 42, "side": "RIGHT",
       "body": "**[blocker]** With `input === \"\"` this returns `[0, -1]`, so every downstream slice is empty. Add an explicit empty-input guard and a test that pins the returned bound." },
@@ -170,6 +170,8 @@ summary to `/tmp/adversarial-review-summary.md`, marker on its own line:
 <!-- waffle-adversarial-review -->
 Adversarial review: no holes found. Checked correctness edge cases, error handling, test depth,
 API/naming, and simplification against the full diff — nothing blocks or should-fix. Solid PR.
+
+— posted by the adversarial-review bot
 ```
 
 Then post it with a single-line command:

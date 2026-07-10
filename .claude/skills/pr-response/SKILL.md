@@ -210,6 +210,8 @@ temp path, not into the repo.
 
 Scored with pr-response rubric **v1** (Severity · Validity · Effort/Risk · Alignment, 0–3 each;
 ≥8 Implement · 4–7 Defer · ≤3 Decline).
+
+— posted by the pr-response bot
 ```
 
 Always name the **rubric version** in the reply. When the thresholds move, old replies must remain
