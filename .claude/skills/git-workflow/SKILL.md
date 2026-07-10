@@ -12,10 +12,11 @@ This project commits agent work under the managed bot identity — the `commit` 
 below inject it via `-c` flags (`git.cmd`), so the machine's ambient `user.name` /
 `user.email` is never what lands on an agent commit. Identity-free commands (`push`,
 `checkout`, `diff`, `log`) stay a bare `git`. Human commits made outside these examples
-keep the developer's own config. Note that `git.cmd` overrides the identity and nothing
-else: ambient `commit.gpgsign` still applies, so a machine with signing on will sign a
-bot-authored commit with the human's key (or block on a prompting agent). Every
-agent-made commit must still end with:
+keep the developer's own config and sign normally. **Signing:** `git.cmd` pins
+`commit.gpgsign=false`, so agent commits here are deliberately unsigned and carry no
+GitHub verification badge — intentional, not accidental. That posture is the recipe's,
+not the machine's: never add or remove signing flags per-invocation. Every agent-made
+commit must still end with:
 
 ```
 Co-Authored-By: Claude <noreply@anthropic.com>
@@ -28,7 +29,9 @@ is actually in effect.
 
 - Name (`git.botName`): `Wafflebot`
 - Email (`git.botEmail`): `bot@wafflenet.io`
-- Signing key (`git.signingKey`): "" — empty means no dedicated bot signing key
+- Signing key (`git.signingKey`): "" — empty means no dedicated bot signing key.
+  It **selects** a key; it **enables** nothing. Signing is enabled only by a `git.cmd` that pins
+  `commit.gpgsign=true` and references this key.
 - Per-agent identities (`git.agentIdentities`) — **overrides only.** When a bot identity is in
   effect, an agent spawned by the `delegate` skill commits under a *derived* identity by default
   (its `identity.displayName`, and the bot email plus-addressed as `bot+<agent-slug>@…`); an entry
@@ -55,10 +58,37 @@ git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet
 ```
 
 If that is a bare `git`, no bot identity is in effect and agent commits use the machine's own git
-config. To opt in, set `git.cmd` to `git -c user.name="…" -c user.email=…` referencing the two
-identity keys with nested `{{...}}` substitution — quoting `user.name` (it may contain spaces) and
-setting **both** keys explicitly in project config rather than relying on their stack defaults. See
-the stack's setup note for the exact recipe and the layering rules.
+config. To opt in, set `git.cmd` to
+`git -c commit.gpgsign=false -c user.name="…" -c user.email=…` referencing the two identity keys
+with nested `{{...}}` substitution — quoting `user.name` (it may contain spaces) and setting
+**both** keys explicitly in project config rather than relying on their stack defaults. See the
+stack's setup note for the exact recipes and the layering rules.
+
+### Signing model
+
+Signing has three tiers. When `git.cmd` above is **not** a bare `git`, the resolved command **is**
+this project's signing posture — explicit, committed, reviewable. A bare `git` pins no posture: the
+machine's own config governs, exactly as it does for humans.
+
+1. **Human** — machine git config. The toolkit configures no signing for humans; your own key and
+   account produce GitHub's "Verified" badge exactly as they always did.
+2. **Bot and agents** — whatever `git.cmd` pins. The canonical recipe pins
+   `commit.gpgsign=false`: bot commits are *deliberately unsigned* and carry **no badge** (which is
+   cleaner than the yellow "Unverified" a key GitHub cannot check would earn). A project that wants
+   a signing bot pins `commit.gpgsign=true` with `user.signingkey` (and `gpg.format=ssh` for an SSH
+   key) — and must use a **non-prompting** signer, or every non-interactive agent commit hangs.
+3. **Per-agent keys** — `git.agentIdentities[<agent>].signingKey` appends `-c user.signingkey=`
+   after the base flags, so it *selects* the key when the base recipe signs and is inert when it
+   does not. A per-agent leaf never flips a project-wide "do not sign".
+
+Never deviate from the resolved `git.cmd` per-invocation — in **either** direction. Do not add
+`-c commit.gpgsign=false` because a signing prompt hung (that is a machine/config problem: stop and
+surface it), and do not sign when the recipe says not to. Changing the posture means changing
+`git.cmd` in config, with the human's say-so.
+
+The asymmetry matters: where `git.cmd` is a bare `git` it pins nothing, so ambient signing is simply
+the human's own config doing its job — nothing to deviate from. Where the project **has** opted in,
+ambient signing is the bug this model exists to eliminate.
 
 ## Branch Strategy
 
@@ -101,7 +131,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - End every commit message with the attribution trailer shown above — agent-made commits must be traceable.
 - Pass commit messages via HEREDOC for proper formatting.
 - Stage specific files by name; avoid `git add -A` / `git add .` (risks committing secrets, generated files, or large artifacts).
-- Never skip hooks (`--no-verify`) or bypass signing unless explicitly asked.
+- Never skip hooks (`--no-verify`) or bypass signing unless explicitly asked. The resolved
+  `git.cmd` **is** the project's explicit signing posture — never deviate from it per-invocation,
+  in either direction, without the human's per-run say-so.
 - Prefer new commits over amending — amending overwrites history.
 
 ### Example

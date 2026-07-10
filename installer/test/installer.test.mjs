@@ -1818,7 +1818,9 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   // `commit.gpgsign` survives, so a signing-enabled machine signs a bot-authored commit with the
   // human's key (or hangs on a prompting agent). Setup-note rule (4) now documents the remedy;
   // this pins that the hardened recipe still satisfies the identity guards and renders clean.
-  // The engine-level signing model (a `git.sign` tri-state) is #158.
+  // #158 resolved the engine-level signing model AGAINST a `git.sign` tri-state: `git.cmd` already
+  // IS the composed-flags surface, so the model lives in prose as recipes A (unsigned, canonical),
+  // B (SSH) and C (GPG). W7 pins recipe A; W7b/W7c pin that recipe B composes and stays guarded.
   test('W7 the gpgsign-hardened recipe renders and still enforces the identity guards', () => {
     const hardened = 'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${hardened}\n`);
@@ -1827,6 +1829,44 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     // The guard still bites through the longer recipe.
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${hardened}\n`);
     assert.equal(render().ok, false, 'gpgsign hardening must not weaken the botEmail guard');
+  });
+
+  // Recipe B (SSH signing): git.signingKey is APPLIED only by a git.cmd that references it. Pins
+  // that nested substitution resolves the key through the composed recipe — the documented upgrade
+  // path actually renders — and that an empty signingKey is NOT silently swallowed here.
+  const RECIPE_B =
+    'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
+
+  test('W7b a recipe-B git.cmd renders the signing key through nested substitution', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    signingKey: ABC123\n    cmd: ${RECIPE_B}\n`,
+    );
+    assert.equal(render().ok, true);
+    assert.match(
+      read(cwd, GIT_SKILL),
+      /^git -c commit\.gpgsign=true -c gpg\.format=ssh -c user\.signingkey=ABC123 -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m,
+    );
+  });
+
+  // The signingKey guard is a config-key guard, applied at validation independently of what
+  // `git.cmd` contains: a bad key never reaches any recipe, so this passes with a bare `git` too
+  // (guards are compiled toolkit-wide — see W5b below). The value lands in an unquoted shell word
+  // of an agent-executed command, so a quote-breaking / substituting value must fail the RENDER.
+  // W7b above is the recipe-coupled test: it pins `-c user.signingkey=ABC123` in the rendered
+  // output, so it goes red if the nested substitution or recipe B itself breaks.
+  test('W7c a signingKey violating its pattern fails the render', () => {
+    for (const bad of ['ABC 123', '$(id)', 'a"b']) {
+      write(
+        cwd,
+        '.waffle/waffle.yaml',
+        `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    signingKey: '${bad.replace(/'/g, "''")}'\n    cmd: ${RECIPE_B}\n`,
+      );
+      const result = render();
+      assert.equal(result.ok, false, `signingKey ${JSON.stringify(bad)} must not reach the recipe`);
+      assert.match(JSON.stringify(result.errors), /git\.signingKey/);
+    }
   });
 
   // #155 review (blocker): the pattern guards were compiled PER STACK, and only github-workflow
@@ -5652,8 +5692,10 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
 
     // #155: the bot-identity opt-in is discoverable at init too — botName alone changes nothing,
     // so the scaffold carries the `cmd:` recipe (quoted user.name) that actually injects it.
+    // #158: and that recipe is recipe A — it pins `commit.gpgsign=false`, because whatever the
+    // recipe does not pin stays ambient. The starter must not re-introduce the ambient-signing bug.
     assert.match(cfg, /#\s*botName: Wafflebot/);
-    assert.match(cfg, /#\s*cmd: git -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/);
+    assert.match(cfg, /#\s*cmd: git -c commit\.gpgsign=false -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/);
   });
 
   test('staleGitignoreEntries flags root .waffle.* lines and stays quiet on .waffle/ paths', () => {

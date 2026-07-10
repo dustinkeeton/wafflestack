@@ -130,9 +130,14 @@ Walk the config schema of every enabled stack (from the inventory):
   any: with the opt-in below, each spawned agent's identity is *derived* by default. `git.signingKey` is a GPG key ID or an SSH public-key path, never private key
   material — config values render into committed files. Setting the identity values does not by
   itself change any command: the bot-identity **opt-in** is pointing `git.cmd` at them —
-  `cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` (quote `user.name`;
-  set both keys explicitly rather than leaning on their stack defaults, which stacks that declare
-  `git.cmd` alone cannot resolve). Left bare, `git.cmd` runs under the developer's own git config.
+  `cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}`
+  (quote `user.name`; set both keys explicitly rather than leaning on their stack defaults, which
+  stacks that declare `git.cmd` alone cannot resolve). Left bare, `git.cmd` runs under the
+  developer's own git config. The recipe owns the **signing posture**: pinning
+  `commit.gpgsign=false` keeps an ambient signing config from signing bot-authored commits with the
+  human's key (or hanging on a prompting signer). For a bot that should really sign, the
+  github-workflow setup note's recipes B (SSH) and C (GPG) reference `git.signingKey` and require a
+  non-prompting signer.
   **Caveat to the layering split:** a repo that commits its rendered output and re-renders in CI
   or in fresh `git worktree` checkouts must commit `git.botEmail` too — a gitignored overlay does
   not exist there, so the value would render differently per machine and trip the doctor drift

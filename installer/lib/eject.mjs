@@ -162,8 +162,11 @@ config:
 #  git:
 #    botName: Wafflebot        # bot identity for automated commits (github-workflow)
 #    botEmail: bot@example.com # REQUIRED whenever cmd references it — see below
-#    cmd: git -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+#    cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 #      # ^ the opt-in: without this, commands run under your own git config. Quote user.name.
+#      #   commit.gpgsign=false is recipe A: the recipe owns the signing posture, and anything
+#      #   it does not pin stays ambient — an unpinned commit.gpgsign would sign bot commits
+#      #   with your key, or hang on a prompting signer. See the stack setup note (recipes A/B/C).
 #      #   cmd: needs BOTH botName and botEmail as real values HERE. Leaning on the
 #      #   github-workflow stack's defaults renders a literal {{git.botEmail}} into other
 #      #   stacks' skills (e.g. orchestration's delegate) — silently, with no render error.
