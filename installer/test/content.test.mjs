@@ -826,6 +826,9 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     // A skill error is one failed round, retried once, then stop — bounded by maxReviewRounds.
     assert.match(md, /one failed round, not a signal to keep looping/);
     assert.match(md, /bounds the loop regardless, so it can never spin/);
+    // The one-retry bound covers the cap hatch's fresh evidence pass too — this Failure-handling
+    // bullet is the OWNING statement of the errors-twice fallback (review-loop side).
+    assert.match(md, /flapping review\. The same one-retry bound covers the escape hatch's fresh evidence pass/);
   });
 });
 
@@ -962,6 +965,12 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     // incomplete QA pass.
     assert.match(md, /a QA pass that never completed/);
     assert.match(md, /never spin on a flapping QA pass/);
+    // The one-retry bound covers the cap hatch's fresh evidence pass too — this Failure-handling
+    // bullet is the OWNING statement of the errors-twice fallback (QA side): file from the LAST
+    // round's findings, with a staleness note, rather than lose the trail.
+    assert.match(md, /flapping QA pass\. The same one-retry bound covers the escape hatch's fresh evidence pass/);
+    assert.match(md, /fall back to filing the follow-up from the \*\*last round's\*\* findings/);
+    assert.match(md, /a possibly-stale hand-off beats losing the trail/);
   });
 });
 
