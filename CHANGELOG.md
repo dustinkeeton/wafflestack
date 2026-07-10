@@ -288,6 +288,15 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **Autopilot codifies the plan-ahead overlap for the next issue's planning context (#276).**
+  The per-issue loop's Step 1 now documents that while PR N is in its gate loops (Steps 5–7)
+  or merge-wait (Step 8), the orchestrator MAY spawn issue N+1's Step 1 planning context
+  early — the planner is read-only and writes only its own gitignored throwaway plan file
+  under `autopilot.planDir`, so it is conflict-free by construction against the in-flight PR.
+  Serial semantics are unchanged: N+1's plan is still handed to a fresh implementer only
+  after Step 8 confirms `MERGED` for a dependent chain, and the plan stays a brief (Step 2's
+  authority language already covers staleness). **Consumer impact:** prose-only change to the
+  autopilot SKILL.md; no config or schema change; consuming repos pick it up on re-render.
 - **The subloop cap escape hatch now briefs from a fresh post-cap review pass (#235).** When
   autopilot's QA gate (Step 5) or review loop (Step 6) exhausts its round cap with the final round
   still implementing fixes, the escape hatch previously filed its hold-labeled `/issue` follow-up
