@@ -365,13 +365,22 @@ function teamMarkdown(agents, toolkitName) {
  * external step, and Gravatar's own upload rules are external-service behaviour. What this file
  * guarantees is that the email/file pairs below are the correct INPUTS to that procedure.
  */
-function avatarsMarkdown(agents, toolkitName, git) {
+/**
+ * The per-agent avatar rows — the deterministic pairing of each agent with the exact commit
+ * email it authors under, its display name, syrup flavor and avatar reference. Shared by
+ * `avatarsMarkdown` (which renders it as a table) and `collectAgentAvatars` (which feeds the
+ * `avatars sync` pipeline), so the addresses the CLI registers on Gravatar match AVATARS.md
+ * byte-for-byte — one derivation, two consumers.
+ */
+function avatarRows(agents, git) {
   const configured = Boolean(git.baseEmail);
-  const rows = agents.map((a) => {
+  return agents.map((a) => {
     const override = (git.overrides ?? {})[a.slug] ?? {};
     const email = configured ? (override.botEmail ?? deriveAgentEmail(git.baseEmail, a.slug)) : null;
     return {
       name: a.name,
+      slug: a.slug,
+      skillCount: a.skills.length,
       displayName: override.botName ?? a.identity?.displayName ?? titleCaseSlug(a.slug),
       // An authored `identity.avatar` wins over the generated default — the identity metadata is
       // the avatar reference; the generated file is only its deterministic default.
@@ -382,6 +391,49 @@ function avatarsMarkdown(agents, toolkitName, git) {
       overridden: Boolean(override.botEmail),
     };
   });
+}
+
+/**
+ * The avatar rows for a computed selection, each paired with its rendered (static, 512px) SVG —
+ * the input the `avatars sync` engine (`avatars-sync.mjs`) uploads to Gravatar. Reuses the same
+ * agent enumeration, git-identity resolution and `avatarRows` derivation the rendered AVATARS.md
+ * uses, so the addresses agree exactly. Returns `{ rows, git }`; `git.baseEmail` is `null` when
+ * the project has not opted into a bot identity (no addresses to register).
+ */
+export function collectAgentAvatars({ toolkit, project, selection }) {
+  const errors = [];
+  const primaryTarget = project.targets[0] ?? 'claude';
+  const resolvers = new Map();
+  const resolverFor = (stack) => {
+    if (!resolvers.has(stack.name)) resolvers.set(stack.name, makeResolver(stack, project.values, primaryTarget));
+    return resolvers.get(stack.name);
+  };
+  const sub = (stack, text, ctx) =>
+    substitute(String(text ?? ''), resolverFor(stack), stack.declared, errors, ctx, NO_GUARDS).trim();
+  const agents = [];
+  for (const { stack, kind, item } of selection.items) {
+    if (kind !== 'agents') continue;
+    agents.push({
+      name: item.data.name ?? item.name,
+      slug: item.name,
+      stackName: stack.name,
+      description: sub(stack, item.data.description, `avatars:agents/${item.name}#description`),
+      skills: Array.isArray(item.data.skills) ? item.data.skills : [],
+      identity: item.data.identity ?? null,
+    });
+  }
+  agents.sort((a, b) => a.name.localeCompare(b.name));
+  const git = resolveGitIdentity({ project, selection, resolverFor });
+  const rows = avatarRows(agents, git).map((r) => ({
+    ...r,
+    svg: `${agentAvatarSvg(r.name, r.skillCount, { px: AVATAR_FILE_PX, animated: false })}\n`,
+  }));
+  return { rows, git };
+}
+
+function avatarsMarkdown(agents, toolkitName, git) {
+  const configured = Boolean(git.baseEmail);
+  const rows = avatarRows(agents, git);
   // A base that cannot subaddress hands every agent the same address (delegate rule 2), so the
   // avatar can only ever be per-*project*, not per-agent, until overrides give agents own emails.
   //
@@ -422,9 +474,10 @@ function avatarsMarkdown(agents, toolkitName, git) {
     '3. Otherwise, the default gray Octocat.',
     '',
     'Each agent commits under its own author email (see the table), and those',
-    'plus-addressed emails belong to no GitHub account — so they land in case 2. **Registering each one',
-    'on Gravatar is a manual, one-time step; nothing in this toolkit performs it, and nothing here can',
-    'verify it.** Until you do, agent commits show the gray default. Note also that GitHub caches the',
+    'plus-addressed emails belong to no GitHub account — so they land in case 2. The toolkit owner',
+    'registers each one on Gravatar with **`wafflestack avatars sync`** (see "Pipeline"); consumers on',
+    'the default `git.botEmail` inherit those owner-registered avatars with zero setup. Until an address',
+    'is registered, that agent\'s commits show the gray default. Note also that GitHub caches the',
     'email→avatar association, so a freshly-registered Gravatar can take a while to appear on existing',
     'commits — verify with a **new** commit (see "Smoke test").',
     '',
@@ -544,11 +597,30 @@ function avatarsMarkdown(agents, toolkitName, git) {
           '3. **Add each agent\'s commit email** to that account and complete the verification mail.',
         ];
     lines.push(
-      '## Registering the avatars (manual, one-time)',
+      '## Pipeline: `wafflestack avatars sync`',
+      '',
+      'The **toolkit owner** runs `wafflestack avatars sync` once per roster change; it renders each avatar',
+      'to a 512px **G-rated** PNG and, for every commit email **already verified on the Gravatar account**,',
+      'uploads and assigns it over the Gravatar REST API. Consumers on the default `git.botEmail` inherit',
+      'those owner-registered avatars for free; a consumer that **overrides** `git.botEmail` re-runs the same',
+      'command against its own domain and Gravatar account. It reads an owner-only OAuth2 access token from',
+      'the `WAFFLE_GRAVATAR_TOKEN` environment variable (never a flag, never a committed file) and fails with',
+      'a clear message when it is unset.',
+      '',
+      '`wafflestack avatars status` lists which installed agents\' addresses are registered and which have',
+      '**drifted** (a newly-added agent, or an address never verified) — a programmatic check, not a hunt for',
+      'gray Octocats.',
+      '',
+      '### The one manual step',
+      '',
+      'Gravatar has **no API to add or verify a new email**, so an address not yet on the account cannot be',
+      'registered automatically — `avatars sync` reports it as a "verify then re-run" remainder. To clear one',
+      'by hand:',
       '',
       ...registrationLead,
       '',
-      '1. **Convert each avatar to a raster image.** Gravatar accepts PNG/JPG/GIF, not SVG. One line, any one of:',
+      '1. **Convert the avatar to a raster image** (only needed for a manual upload — `avatars sync` rasters',
+      '   for you). Gravatar accepts PNG/JPG/GIF, not SVG. One line, any one of:',
       '',
       '   ```bash',
       `   rsvg-convert -w 512 -h 512 ${avatarRef('<agent>')} > <agent>.png    # librsvg`,
@@ -557,8 +629,9 @@ function avatarsMarkdown(agents, toolkitName, git) {
       '   ```',
       '',
       ...signInSteps,
-      '4. **Upload that agent\'s PNG** and assign it to that address. Keep the rating at **G** — GitHub only',
-      '   displays G-rated images.',
+      '4. **Re-run `wafflestack avatars sync`.** Now that the address is verified, the pipeline uploads and',
+      '   assigns the PNG for you (rated **G** — GitHub only displays G-rated images). Or upload it by hand',
+      '   at gravatar.com if you prefer.',
       '',
       '## Smoke test',
       '',

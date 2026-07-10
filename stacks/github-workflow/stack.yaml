@@ -782,7 +782,7 @@ setup: |-
     config:
       git:
         botName: Wafflebot
-        botEmail: wafflebot@users.noreply.github.com
+        botEmail: bot@wafflenet.io
         cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
   Five rules for that recipe:
@@ -799,17 +799,19 @@ setup: |-
   `git.botEmail` / `git.signingKey` are account-specific and belong in the gitignored
   .waffle/waffle.local.yaml. Exception: a repo that COMMITS its render and re-renders in CI (or
   in fresh `git worktree` checkouts, where gitignored files do not exist) must commit `botEmail`
-  too — otherwise the render differs per machine and the doctor drift gate goes red. Use a
-  public noreply-style address when you do. `git.agentIdentities` holds per-agent overrides and
+  too — otherwise the render differs per machine and the doctor drift gate goes red. Use a public,
+  non-private address when you do (the toolkit-owned default `bot@wafflenet.io`, or your own
+  domain — not a personal inbox). `git.agentIdentities` holds per-agent overrides and
   may itself be split across the two files (they deep-merge) — but you rarely need entries: with
   `git.cmd` opted in, a spawned agent's identity is *derived* by default (its display name, and
   `git.botEmail` plus-addressed with `+<agent-slug>`), so the map is only for overriding that.
   A repo committing its render must commit the entries it wants, or doctor drifts.
-  Note the interaction with the noreply address recommended just above: `users.noreply.github.com`
-  routes only the `<id>+<username>@` shape and cannot subaddress, so the delegate skill uses such
-  a base **verbatim** rather than appending a second `+` segment that would resolve nowhere. Same
-  for any base whose local part already carries a `+`. Agents then differ by *name*, not address;
-  give one its own address with an explicit `git.agentIdentities[<agent>].botEmail`.
+  Subaddressability is what makes per-agent avatars possible: the **default** `bot@wafflenet.io`
+  subaddresses, so each agent gets its own `bot+<slug>@…` address and its own Gravatar (rule 5). A
+  `*.noreply.github.com` base — or any base whose local part already carries a `+` — cannot
+  subaddress, so the delegate skill uses it **verbatim** rather than appending a second `+` segment
+  that would resolve nowhere; agents then differ by *name*, not address, and share one avatar. Give
+  one its own address with an explicit `git.agentIdentities[<agent>].botEmail`.
   (4) **Signing: the recipe owns the posture, keys own key selection.** `git.cmd` overrides
   `user.name` / `user.email` and *nothing else*, so anything it does not pin stays ambient —
   including `commit.gpgsign`. Leaving it ambient is the whole bug class: on a signing machine an
@@ -868,12 +870,13 @@ setup: |-
   | Human | **Verified** (own key + account) | already is; the toolkit never touches it |
   | Main bot, recipe A | **no badge** (unsigned, deliberate) | n/a — nothing is claimed |
   | Main bot, recipe B/C | **"Unverified"** unless registered | yes: a real bot GitHub account with `git.signingKey` added as a signing key **and** `git.botEmail` verified on it |
-  | Sub-agent (`bot+<slug>@…`, subaddressable base only) | **no badge** under A; **"Unverified"** under B/C | only by verifying each alias on the bot account — which **relinks every agent to one profile and one avatar**. Per-agent avatars XOR verified sub-agent commits; prefer avatars + no badge |
-  | Sub-agent (noreply base — the **default**) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | under B/C, already is — zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address; under A nothing is signed, so nothing is claimed. No per-agent avatar exists to forfeit either way |
+  | Sub-agent (`bot+<slug>@…`, subaddressable base — the **default**) | **no badge** under A; **"Unverified"** under B/C | only by verifying each alias on the bot account — which **relinks every agent to one profile and one avatar**. Per-agent avatars XOR verified sub-agent commits; the default `bot@wafflenet.io` prefers avatars + no badge |
+  | Sub-agent (noreply base — opt-in override) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | under B/C, already is — zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address; under A nothing is signed, so nothing is claimed. No per-agent avatar exists to forfeit either way |
 
-  The XOR in the first sub-agent row is real **only when the base email can subaddress**. On the
-  default `wafflebot@users.noreply.github.com` there is no `bot+<slug>@…` author at all, so a
-  noreply-based project is not choosing between avatars and verification — see rule (5).
+  The XOR in the first sub-agent row is real **only when the base email can subaddress** — which the
+  default `bot@wafflenet.io` does, so a default project **does** get per-agent avatars (rule 5). A
+  project that overrides `git.botEmail` with a `*.noreply.github.com` base has no `bot+<slug>@…`
+  author at all, so it is not choosing between avatars and verification — see rule (5).
 
   One gotcha: a repo with **required signatures** branch protection rejects unsigned commits at
   push, forcing recipe B/C plus registered keys — and plus-addressed sub-agent authors cannot
@@ -887,11 +890,18 @@ setup: |-
   (5) **Per-agent avatars follow from the per-agent emails.** GitHub picks a commit's avatar from the
   author email: an email on a GitHub account shows that account's one avatar, an email on none shows
   its Gravatar, and otherwise the gray Octocat. So the derived `bot+<agent>@…` addresses take the
-  Gravatar path — register one per agent (manual, one-time) and each agent's commits carry its own
-  face. The generated `.waffle/AVATARS.md` lists every agent's avatar file and exact commit email
-  and walks the procedure; a noreply base forfeits distinct addresses and therefore distinct avatars
-  (agents differ by name only). Never add the aliases as secondary emails on the bot's GitHub
-  account — that relinks all of them to one profile and one avatar.
+  Gravatar path. Because the avatars are deterministic, the **toolkit owner** pre-registers each one
+  on Gravatar against the default `bot@wafflenet.io` with **`wafflestack avatars sync`**, and GitHub
+  then serves per-agent avatars to any consumer on defaults — zero consumer setup. A consumer that
+  overrides `git.botEmail` re-runs the same command against its own domain and Gravatar account;
+  `wafflestack avatars status` reports any installed agent whose address has not been registered
+  (roster drift). The command reads an owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`; Gravatar
+  has no API to add/verify a *new* email, so a not-yet-verified address is reported as a manual
+  "verify then re-run" remainder — the one tolerated manual step. The generated `.waffle/AVATARS.md`
+  lists every agent's avatar file, its exact commit email, and the pipeline. A noreply-base override
+  forfeits distinct addresses and therefore distinct avatars (agents differ by name only). Never add
+  the aliases as secondary emails on the bot's GitHub account — that relinks all of them to one
+  profile and one avatar.
 
   Then set `git.identitySection` to prose that says the bot identity is in effect. Leave
   `git.coAuthorTrailer` alone unless you want to: with a bot identity configured the commit
@@ -1034,16 +1044,22 @@ config:
       (so "github-actions[bot]" and "Wafflebot" pass); shell metacharacters do not.
   git.botEmail:
     required: false
-    default: wafflebot@users.noreply.github.com
+    default: bot@wafflenet.io
     # Allowlist. The old denylist excluded only whitespace, `@` and quotes — and command
     # substitution (`$(id)@x.com`, backticks) contains none of those, while git.cmd places
     # this value in an unquoted shell word. A TLD is required, so `a@b` no longer passes.
     pattern: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
     description: >-
-      Bot committer email (git user.email). Placeholder default; account-specific, so the real
-      value belongs in the gitignored .waffle/waffle.local.yaml (nested substitution resolves it
-      from committed values such as git.cmd). The pattern is an allowlist requiring a TLD; shell
-      metacharacters and command-substitution syntax do not pass.
+      Bot committer email (git user.email). The default is the toolkit-owned, SUBADDRESSABLE base
+      `bot@wafflenet.io` (#285): the delegate skill plus-addresses it per agent (`bot+<slug>@…`),
+      the toolkit owner pre-registers each on Gravatar via `wafflestack avatars sync`, and GitHub
+      then serves per-agent avatars to any consumer on defaults with zero setup. The trade-off:
+      commits carry a toolkit-domain author email unless you override this, and the old
+      noreply-default's "Verified badge for free" property is forfeited on defaults (avatars XOR a
+      verified sub-agent — see the setup note). A project with its own bot account overrides this in
+      the gitignored .waffle/waffle.local.yaml (nested substitution resolves it from committed
+      values such as git.cmd) and re-runs the pipeline against its own domain. The pattern is an
+      allowlist requiring a TLD; shell metacharacters and command-substitution syntax do not pass.
   git.signingKey:
     required: false
     default: ""

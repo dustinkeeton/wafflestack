@@ -32,6 +32,30 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Programmatic Gravatar pipeline for per-agent avatars (#285, builds on #157/#156).** The manual
+  Gravatar registration `.waffle/AVATARS.md` used to document is now a mostly-automated owner-side
+  command. New **`wafflestack avatars sync`** enumerates the installed agent roster with its derived
+  commit emails (the *same* derivation the manifest prints, via a new shared
+  `waffledocs.mjs#collectAgentAvatars`), rasterizes each deterministic avatar SVG→512px **G-rated**
+  PNG, and for every email **already verified** on the Gravatar account uploads and assigns it over
+  the Gravatar v3 REST API. **`wafflestack avatars status`** probes without writing and reports
+  **roster drift** (an installed agent whose address is unregistered), exiting non-zero so CI can
+  gate. Gravatar exposes **no API to add or verify a new email**, so an unverified address is
+  reported as a manual "verify at gravatar.com, then re-run" remainder — the one tolerated manual
+  step. The owner-only OAuth2 token is read from `WAFFLE_GRAVATAR_TOKEN` at runtime (never a flag,
+  never rendered into a committed file); the HTTP client and SVG→PNG rasterizer are **injected**, so
+  the unit suite mocks both and `npm test` makes no network or native calls. `.waffle/AVATARS.md`
+  regenerates to describe the pipeline (owner runs sync; consumers on defaults inherit; overriders
+  re-run against their own domain) instead of the manual procedure, keeping the smoke test and every
+  subaddressability/override caveat branch.
+  **Consumer impact:** the **default `git.botEmail` flips** from the `wafflebot@users.noreply.github.com`
+  placeholder to the toolkit-owned, subaddressable **`bot@wafflenet.io`** — a project **on defaults**
+  now gets distinct per-agent `bot+<slug>@…` author emails (and, once the toolkit owner runs
+  `avatars sync`, per-agent avatars on GitHub) with zero setup. The trade-off: default commits carry
+  a toolkit-domain author email unless overridden, and the old noreply default's "Verified badge for
+  free" property is forfeited on defaults (avatars XOR a verified sub-agent). A repo that sets its own
+  `git.botEmail` is unaffected; a repo that commits its render will see a re-render diff where it
+  leaned on the old default. No migration required — `render` picks it up.
 - **Per-PR token accounting + a global counter badge (#227).** The four Claude-dispatching
   workflows (label-hook enrich/implement, hygiene, pr-green, pr-response) each gain a final
   **`Record token spend`** step: it jq-extracts `usage`/`total_cost_usd` from the existing

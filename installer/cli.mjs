@@ -136,6 +136,17 @@ try {
       process.stdout.write(formatListTable(model, { color }));
       break;
     }
+    case 'avatars': {
+      // Owner-side Gravatar pipeline (#285): `avatars sync` uploads/assigns each agent avatar for
+      // its already-verified commit email; `avatars status` reports drift without writing anything.
+      const sub = args[0] ?? 'sync';
+      if (!['sync', 'status'].includes(sub)) fail(`usage: wafflestack avatars <sync|status> [--cwd DIR]`);
+      const { runAvatarsSync } = await import('./lib/avatars-sync.mjs');
+      const result = await runAvatarsSync({ toolkitRoot, cwd, mode: sub, log: console.log });
+      // `status` is a check: a drifted (unregistered) address exits non-zero so CI/scripts can gate.
+      process.exit(sub === 'status' && result.pending.length ? 1 : 0);
+      break;
+    }
     case 'validate': {
       const problems = validateToolkit(toolkitRoot);
       for (const p of problems) console.error(p);
@@ -151,7 +162,7 @@ try {
           '┣━╋━╋━┫  one batter, every repo',
           '┗━┻━┻━┛',
           '',
-          'usage: wafflestack <init|setup|list|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]',
+          'usage: wafflestack <init|setup|list|install|render|upgrade|doctor|eject|avatars|validate> [refs…] [--cwd DIR]',
         ].join('\n'),
       );
   }

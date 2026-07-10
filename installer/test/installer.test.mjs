@@ -20,6 +20,7 @@ import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequi
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 import { agentAvatarSvg, agentFlavor, extractBaseEmail, deriveAgentEmail, withIdentity } from '../lib/waffledocs.mjs';
+import { enumerateAgentAvatars } from '../lib/avatars-sync.mjs';
 import {
   loadProjectConfig,
   migrateLegacyDotfiles,
@@ -1508,7 +1509,7 @@ describe('github-workflow: identity config schema (#154)', () => {
 
     const skill = read(cwd, SKILL);
     assert.match(skill, /Name \(`git\.botName`\): `Wafflebot`/);
-    assert.match(skill, /Email \(`git\.botEmail`\): `wafflebot@users\.noreply\.github\.com`/);
+    assert.match(skill, /Email \(`git\.botEmail`\): `bot@wafflenet\.io`/);
     // empty signingKey default renders as an empty quoted value, not a stray placeholder
     assert.match(skill, /Signing key \(`git\.signingKey`\): "" —/);
     assert.doesNotMatch(skill, /\{\{git\./, 'no identity placeholder survives the render');
@@ -1890,7 +1891,7 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     write(cwd, '.waffle/waffle.yaml', `${orchBase()}  git:\n    cmd: ${RECIPE}\n`);
     const result = render();
     assert.equal(result.ok, true, 'a nested miss is silent — the render still succeeds');
-    assert.match(read(cwd, GIT_SKILL), /git -c user\.name="Wafflebot" -c user\.email=wafflebot@users\.noreply\.github\.com/);
+    assert.match(read(cwd, GIT_SKILL), /git -c user\.name="Wafflebot" -c user\.email=bot@wafflenet\.io/);
     assert.match(read(cwd, DELEGATE_SKILL), /\{\{git\.botName\}\}/, 'the undeclared key leaks verbatim');
   });
 
@@ -6540,8 +6541,10 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     const md = read(cwd, '.waffle/AVATARS.md');
     assert.match(md, /\| `captain` \| Captain \| \w+ \| `\.waffle\/avatars\/captain\.svg` \| `bot\+captain@wafflenet\.io` \|/);
     assert.match(md, /`bot\+scout@wafflenet\.io`/);
-    // The registration procedure + the honest mechanics, not a promise that avatars appear.
-    assert.match(md, /Registering the avatars \(manual, one-time\)/);
+    // The pipeline + the honest mechanics, not a promise that avatars appear.
+    assert.match(md, /## Pipeline: `wafflestack avatars sync`/);
+    assert.match(md, /wafflestack avatars status/);
+    assert.match(md, /WAFFLE_GRAVATAR_TOKEN/);
     assert.match(md, /gravatar\.com/);
     assert.match(md, /rsvg-convert -w 512 -h 512/);
     assert.match(md, /## Smoke test/);
@@ -6555,6 +6558,28 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.doesNotMatch(md, /\{\{/);
   });
 
+  test('the sync pipeline enumerates the SAME addresses the manifest prints (no drift)', () => {
+    // `collectAgentAvatars` (what `avatars sync` uploads for) and `avatarsMarkdown` (what AVATARS.md
+    // documents) must agree byte-for-byte on the address per agent — they share one derivation.
+    write(cwd, '.waffle/waffle.yaml', identityCfg('bot@wafflenet.io'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    const { rows, git } = enumerateAgentAvatars({ toolkitRoot, cwd });
+    assert.equal(git.baseEmail, 'bot@wafflenet.io');
+    assert.deepEqual(
+      rows.map((r) => [r.name, r.email]).sort(),
+      [
+        ['captain', 'bot+captain@wafflenet.io'],
+        ['scout', 'bot+scout@wafflenet.io'],
+      ],
+    );
+    for (const r of rows) {
+      assert.match(md, new RegExp(`\`${r.email.replace(/[.+]/g, '\\$&')}\``), `${r.email} appears in AVATARS.md`);
+      // The rendered SVG the pipeline would upload matches the on-disk avatar file.
+      assert.equal(r.svg, read(cwd, `.waffle/avatars/${r.name}.svg`));
+    }
+  });
+
   test('a noreply base is used verbatim, and the manifest says every agent shares it', () => {
     write(cwd, '.waffle/waffle.yaml', identityCfg('12345+wafflebot@users.noreply.github.com'));
     assert.equal(render().ok, true);
@@ -6563,8 +6588,8 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.doesNotMatch(md, /\+captain@/, 'no second `+` segment is appended to a noreply base');
     assert.match(md, /\*\*Every agent above shares one address\*\*/);
     assert.match(md, /git\.agentIdentities\.<agent>\.botEmail/);
-    // A shared address cannot yield per-agent avatars, so the per-agent procedure is withheld.
-    assert.doesNotMatch(md, /Registering the avatars/);
+    // A shared address cannot yield per-agent avatars, so the per-agent pipeline is withheld.
+    assert.doesNotMatch(md, /## Pipeline: `wafflestack avatars sync`/);
   });
 
   test('a `git.agentIdentities` override replaces the derived email verbatim', () => {
@@ -6607,8 +6632,8 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     ].join('\n'));
     assert.equal(render().ok, true);
     const md = read(cwd, '.waffle/AVATARS.md');
-    // The procedure still renders, with its pinned anchors.
-    assert.match(md, /Registering the avatars \(manual, one-time\)/);
+    // The pipeline section still renders, with its pinned anchors.
+    assert.match(md, /## Pipeline: `wafflestack avatars sync`/);
     assert.match(md, /gravatar\.com/);
     assert.match(md, /rsvg-convert -w 512 -h 512/);
     assert.match(md, /## Smoke test/);
@@ -6629,7 +6654,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     const md = read(cwd, '.waffle/AVATARS.md');
     assert.match(md, /\*\*No commit emails yet — this project has not opted into a bot identity\.\*\*/);
     assert.doesNotMatch(md, /Commit author email/, 'no email column without a base email');
-    assert.doesNotMatch(md, /Registering the avatars/);
+    assert.doesNotMatch(md, /## Pipeline: `wafflestack avatars sync`/);
     assert.doesNotMatch(md, /## Smoke test/);
     assert.doesNotMatch(md, /@/, 'no address of any kind is claimed');
     // Still names every agent and its avatar file.
@@ -6649,7 +6674,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     // placeholder-bearing string "resolved" (#248 review).
     assert.match(md, /still carries an unresolved placeholder/);
     assert.doesNotMatch(md, /Commit author email/, 'an unresolved placeholder is never printed as an address');
-    assert.doesNotMatch(md, /Registering the avatars/);
+    assert.doesNotMatch(md, /## Pipeline: `wafflestack avatars sync`/);
   });
 
   // ---- #248 review regressions --------------------------------------------------------
@@ -6702,7 +6727,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.equal(render().ok, true);
     const md = read(cwd, '.waffle/AVATARS.md');
     assert.match(md, /\*\*Every agent above shares one address\*\*/);
-    assert.doesNotMatch(md, /Registering the avatars/, 'no Gravatar procedure for an address that receives no mail');
+    assert.doesNotMatch(md, /## Pipeline: `wafflestack avatars sync`/, 'no Gravatar pipeline for an address that receives no mail');
     assert.doesNotMatch(md, /complete the verification mail/);
   });
 
