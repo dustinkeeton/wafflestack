@@ -795,10 +795,17 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.match(md, /re-wait for green/);
   });
 
-  test('cap reached is a safety bound, not a merge blocker: proceed + hold-labeled follow-up', () => {
+  test('cap reached is a safety bound, not a merge blocker: fresh evidence pass sources the follow-up', () => {
     assert.match(md, /safety cap, not a merge blocker/);
-    // The follow-up captures the last adversarial-review findings and carries the hold label.
-    assert.match(md, /last adversarial-review findings/);
+    // The escape hatch runs ONE fresh adversarial-review pass outside the loop as the brief's
+    // sole source — evidence, not another fix round: no pr-response follows it, cap+1 bounded.
+    assert.match(md, /run `adversarial-review <pr>` \*\*once more, outside the loop\*\*/);
+    assert.match(md, /No `pr-response` follows it/);
+    assert.match(md, /cap\+1/);
+    // A clean fresh pass skips the filing entirely — it IS the convergence evidence — and the
+    // stale last-round brief (#234) is gone.
+    assert.match(md, /file nothing/);
+    assert.doesNotMatch(md, /last adversarial-review findings/);
     assert.match(md, /--add-label "waffle-manual-review"/);
   });
 
@@ -928,11 +935,18 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     assert.match(qaStep, /re-wait for green/);
   });
 
-  test('QA cap reached is a safety bound, not a merge blocker: proceed + hold-labeled follow-up', () => {
+  test('QA cap reached is a safety bound, not a merge blocker: fresh evidence pass sources the follow-up', () => {
     assert.match(qaStep, /safety cap, not a merge blocker/);
-    // The follow-up captures the last QA findings and carries the hold label.
-    assert.match(qaStep, /last QA findings/);
+    // The escape hatch runs ONE fresh qa pass outside the loop as the brief's sole source —
+    // evidence, not another fix round: no pr-response follows it, cap+1 bounded.
+    assert.match(qaStep, /run `qa <pr>` \*\*once more, outside the loop\*\*/);
+    assert.match(qaStep, /No `pr-response` follows it/);
+    assert.match(qaStep, /cap\+1/);
+    // A clean fresh pass skips the filing entirely — it IS the convergence evidence.
+    assert.match(qaStep, /file nothing/);
     assert.match(qaStep, /--add-label "waffle-manual-review"/);
+    // The stale last-round brief (#234) is gone everywhere — including Step 5's hook-armed note.
+    assert.doesNotMatch(md, /last QA findings/);
   });
 
   test('failure handling: a red QA round stops-and-reports; qa errors are bounded, never loop forever', () => {

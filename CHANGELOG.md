@@ -269,6 +269,21 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **The subloop cap escape hatch now briefs from a fresh post-cap review pass (#235).** When
+  autopilot's QA gate (Step 5) or review loop (Step 6) exhausts its round cap with the final round
+  still implementing fixes, the escape hatch previously filed its hold-labeled `/issue` follow-up
+  from the **last round's** findings — which that same round's `pr-response --yes` had already
+  fixed, handing a human a stale brief (#234 was a live occurrence). Autopilot now runs one extra
+  `qa` / `adversarial-review` pass (outside the cap, no `pr-response` after it — cap+1 invocations,
+  still strictly bounded) purely as the brief's source: findings → the follow-up is filed from
+  **those** findings; a clean pass → the filing is **skipped** entirely, since a clean pass over
+  the fixed code is the convergence evidence the cap denied the loop. The fresh pass runs
+  **before** arming so an armed PR can't merge mid-pass; if the pass errors twice, the hatch falls
+  back to the last round's findings with a staleness note. The audit gate's escape hatch (Step 7)
+  is a hard block and is unchanged. **Consumer impact:** prose + placeholder-description change
+  only (autopilot SKILL.md and the `autopilot.maxQaRounds` / `autopilot.maxReviewRounds` /
+  `autopilot.holdLabel` descriptions); no config or schema change; consuming repos pick it up on
+  re-render.
 - **entryPattern validation now reports every malformed entry/leaf in one pass (#246, deferred
   F5 from #245's review).** `entryPatternProblems` (né `entryPatternProblem`) walks the whole
   map-valued config value instead of short-circuiting on the first bad entry, so a
