@@ -153,7 +153,7 @@ carry the literal marker `<!-- waffle-qa -->` as its FIRST line (see below):
 ```json
 {
   "event": "COMMENT",
-  "body": "<!-- waffle-qa -->\n**QA** — 1 blocker, 1 should-fix. Acceptance criteria: 2 of 3 met.\n\n- **[blocker]** Issue #12 criterion \"empty input returns an empty list\" is not met — `parseRange(\"\")` still throws (see inline).\n- **[should-fix]** The new `--force` flag has no test that would fail if the flag were ignored.\n\nRan `npm test` (green, 214 passing); exercised the CLI export path by hand — criteria walk below.",
+  "body": "<!-- waffle-qa -->\n**QA** — 1 blocker, 1 should-fix. Acceptance criteria: 2 of 3 met.\n\n- **[blocker]** Issue #12 criterion \"empty input returns an empty list\" is not met — `parseRange(\"\")` still throws (see inline).\n- **[should-fix]** The new `--force` flag has no test that would fail if the flag were ignored.\n\nRan `npm test` (green, 214 passing); exercised the CLI export path by hand — criteria walk below.\n\n— posted by the qa bot",
   "comments": [
     { "path": "src/range.ts", "line": 42, "side": "RIGHT",
       "body": "**[blocker]** Issue #12's first acceptance criterion says empty input returns an empty list; this line still throws on `\"\"`. Exercised directly: `parseRange(\"\")` → TypeError. Fix the guard and add a test pinning the empty-input contract." },
@@ -205,6 +205,8 @@ line, including the criteria walked and what you ran:
 QA: no concerns. All 3 acceptance criteria of #12 verified met; ran the test suite (green)
 and exercised the changed export path directly. The new branch logic is pinned by the two
 tests added in this PR.
+
+— posted by the qa bot
 ```
 
 Then post it with a single-line command:
