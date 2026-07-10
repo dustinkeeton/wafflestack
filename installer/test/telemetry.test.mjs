@@ -173,8 +173,13 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     JSON.parse(fs.readFileSync(path.join(state, which), 'utf8')).body;
 
   // Drives one Record-token-spend execution (pr-green variant: target from TARGET_PR).
+  // `comments` may be a raw string, to reproduce gh api --paginate's stream shape:
+  // one JSON array PER PAGE, concatenated — not one merged array.
   const record = (state, { runKey, log, comments }) => {
-    fs.writeFileSync(path.join(state, 'comments.json'), JSON.stringify(comments));
+    fs.writeFileSync(
+      path.join(state, 'comments.json'),
+      typeof comments === 'string' ? comments : JSON.stringify(comments),
+    );
     return runStep(recordScript, state, {
       EXECUTION_FILE: log,
       HOOK: 'review',
@@ -266,6 +271,28 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     }
   });
 
+  test('cross-page duplicate marker comments: the update targets the one OLDEST comment', () => {
+    // gh api --paginate emits one array PER PAGE and jq runs once per array, so with a
+    // marked comment on each page (the documented create-race, on a 100+-comment thread)
+    // the per-page `first` yields a two-line stream. head -n1 must collapse it to the
+    // oldest comment — otherwise the extracted id is two lines, the PATCH URL embeds a
+    // newline, and the row is dropped on every later run against that thread.
+    const state = mkState();
+    record(state, { runKey: '100.1', log: writeLog(state, RUN_A), comments: [] });
+    const older = readBody(state, 'post-body.json');
+    fs.rmSync(path.join(state, 'post-body.json'));
+    record(state, { runKey: '150.1', log: writeLog(state, RUN_B), comments: [] });
+    const newer = readBody(state, 'post-body.json');
+    const twoPages = `${JSON.stringify([{ id: 7, body: older }])}\n${JSON.stringify([{ id: 9, body: newer }])}`;
+    const res = record(state, { runKey: '200.1', log: writeLog(state, RUN_B), comments: twoPages });
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(fs.existsSync(path.join(state, 'patch-body.json')), 'expected a PATCH');
+    const patchUrl = fs.readFileSync(path.join(state, 'patch-url.txt'), 'utf8').trim();
+    assert.match(patchUrl, /issues\/comments\/7$/); // one clean id — the oldest, no newline
+    const data = parseDataLine(readBody(state, 'patch-body.json'));
+    assert.deepEqual(Object.keys(data.runs).sort(), ['100.1', '200.1']);
+  });
+
   // ---- target resolution: the hygiene / implement variants --------------------
   // pr-green's target arrives pre-resolved via TARGET_PR; these two resolve it from
   // the result's final text — a PR URL grep SCOPED TO THIS REPO (a cross-repo link
@@ -312,6 +339,30 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
       assert.ok(!fs.existsSync(path.join(state, 'patch-body.json')), `must not PATCH for: ${finalText}`);
       assert.match(fs.readFileSync(path.join(state, 'summary.md'), 'utf8'), /no PR URL/);
     }
+  });
+
+  test('a dotted repo name stays an exact match — a near-miss URL never redirects the comment', () => {
+    // Unescaped, the `.` in octo/waffles.js matches any character, so
+    // octo/wafflesXjs/pull/9 would pass the same-repo gate. The escape must not
+    // break the true-positive match either.
+    let state = mkState();
+    let res = recordVariant(hygieneScript, state, {
+      runKey: '310.1',
+      log: writeLog(state, { ...RUN_A, finalText: 'Opened https://github.com/octo/wafflesXjs/pull/9.' }),
+      comments: [],
+      extraEnv: { HOOK: 'hygiene', GITHUB_REPOSITORY: 'octo/waffles.js' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(!fs.existsSync(path.join(state, 'post-body.json')), 'a near-miss URL must not match');
+    state = mkState();
+    res = recordVariant(hygieneScript, state, {
+      runKey: '311.1',
+      log: writeLog(state, { ...RUN_A, finalText: 'Opened https://github.com/octo/waffles.js/pull/12.' }),
+      comments: [],
+      extraEnv: { HOOK: 'hygiene', GITHUB_REPOSITORY: 'octo/waffles.js' },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(fs.readFileSync(path.join(state, 'post-url.txt'), 'utf8'), /repos\/octo\/waffles\.js\/issues\/12\/comments/);
   });
 
   test('implement prefers the same-repo PR URL and falls back to the labeled issue', () => {
@@ -420,5 +471,39 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     assert.equal(ref.ref, 'refs/heads/waffle-telemetry');
     // Zero recorded spend ⇒ no counter write.
     assert.ok(!fs.existsSync(path.join(state, 'put-body.json')), 'zero spend must not PUT');
+  });
+
+  test('exhausted retries warn and exit 0 — bounded at exactly 5 sha-conditional attempts', () => {
+    const scratch = mkState();
+    const body = prComment(scratch);
+    const state = counterState({ comments: [{ id: 7, body }], tokens: SEED });
+    fs.writeFileSync(path.join(state, 'put-fail'), ''); // every PUT loses the write race
+    const res = runStep(counterScript, state, { PR_NUMBER: '42' });
+    assert.equal(res.status, 0, res.stderr); // a missed tick never reds the merge
+    assert.match(res.stdout, /after 5 attempts/);
+    const calls = fs.readFileSync(path.join(state, 'calls.log'), 'utf8').split('\n');
+    const gets = calls.filter(
+      (c) => c.includes('contents/.waffle/telemetry/tokens.json?ref=waffle-telemetry') && !c.includes('--method PUT'),
+    );
+    assert.equal(gets.length, 5, 'one fresh read per attempt');
+    const puts = calls.filter((c) => c.includes('--method PUT'));
+    assert.equal(puts.length, 5, 'one PUT per attempt');
+  });
+
+  test('self-heals when the ref exists but tokens.json is missing — sha-less create PUT', () => {
+    const scratch = mkState();
+    const body = prComment(scratch);
+    // No contents fixture: the GET fails while the ref exists — the wedge case where the
+    // bootstrap (gated on the ref alone) never re-runs. The step must recreate the file
+    // via the Contents-API CREATE form (no sha) instead of warning forever.
+    const state = counterState({ comments: [{ id: 7, body }], tokens: null });
+    const res = runStep(counterScript, state, { PR_NUMBER: '42' });
+    assert.equal(res.status, 0, res.stderr);
+    const put = JSON.parse(fs.readFileSync(path.join(state, 'put-body.json'), 'utf8'));
+    assert.ok(!('sha' in put), 'the create form must carry no sha');
+    assert.equal(put.branch, 'waffle-telemetry');
+    const updated = JSON.parse(Buffer.from(put.content, 'base64').toString('utf8'));
+    assert.equal(updated.waffle.totalTokens, 51192); // rebuilt from the seed + this PR
+    assert.deepEqual(updated.waffle.prs['42'], { tokens: 51192, costUsd: 0.93 });
   });
 });
