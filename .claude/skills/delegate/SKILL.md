@@ -234,18 +234,18 @@ For each issue, determine the best specialist agent using content-based matching
 
 | Signal (keywords / paths) | Agent |
 |---------------------------|-------|
-| installer, CLI, render, doctor, eject, template, `installer/**` | general-purpose |
-| stack, skill, agent definition, config key, `stacks/**`, `schema/**` | general-purpose |
+| installer, CLI, render, doctor, eject, template, `installer/**` | harness-architect |
+| stack, skill, agent definition, config key, `stacks/**`, `schema/**` | harness-architect |
 | docs, AGENTS.md, architecture/status docs | docs-agent (machine) / docs-human (human) |
 
 **Label fallback** — if no keyword match:
 
 | Label | Agent |
 |-------|-------|
-| bug | general-purpose |
-| enhancement | general-purpose |
+| bug | harness-architect |
+| enhancement | harness-architect |
 | documentation | docs-agent |
-| question | general-purpose |
+| question | harness-architect |
 
 After classification, determine the **area** each issue touches — which module or subdirectory, and whether it includes root files (toolkit.yaml, package.json, installer/cli.mjs, schema/FORMAT.md, README.md) or installer/lib/ (render pipeline — every CLI command and test imports it). This drives parallelization.
 

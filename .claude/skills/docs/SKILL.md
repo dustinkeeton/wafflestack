@@ -1,6 +1,6 @@
 ---
 name: docs
-description: Orchestrates documentation updates by spawning the general-purpose, docs-agent, and docs-human agents in sequence. The first pass audits the codebase and reports changes, docs-agent writes machine-readable docs, docs-human writes human-readable docs.
+description: Orchestrates documentation updates by spawning the harness-architect, docs-agent, and docs-human agents in sequence. The first pass audits the codebase and reports changes, docs-agent writes machine-readable docs, docs-human writes human-readable docs.
 user-invocable: true
 ---
 
@@ -10,7 +10,7 @@ When this skill is invoked, run the following pipeline:
 
 ## Step 1: Architecture Audit
 
-Spawn the `general-purpose` agent with this prompt:
+Spawn the `harness-architect` agent with this prompt:
 
 > Audit the current codebase for any changes since the docs were last updated. Read the existing machine docs (a single root `AGENTS.md` registry) and compare against the actual project. Produce a concise **change report** covering:
 >

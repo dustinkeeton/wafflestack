@@ -108,7 +108,7 @@ config:
       - **Stacks are the product.** Every proposal names the stack(s) it touches and keeps one grouping philosophy per stack.
       - **Consumer ergonomics beat toolkit convenience.** Config keys, defaults, and setup notes are user-facing surface — weigh every new required key.
     handoffs: |-
-      - Installer / render / CLI mechanics → general-purpose
+      - Installer / render / CLI mechanics, stack/skill/agent authoring, harness design → harness-architect
       - Machine docs → docs-agent; human docs → docs-human
       - Delivery sequencing and issue routing → project-manager
   docs:
@@ -160,29 +160,34 @@ config:
         `.gitignore` still covers the deliberately-untracked renders (label-hook
         workflow, worktrees, `.waffle/` overview docs)
   roster:
-    # No specialist agent stack is enabled — general-purpose executes the audit
-    # prompts, which carry the full instructions.
-    architectAgent: general-purpose
+    # harness-architect is this repo's specialist for all toolkit work — installer/CLI,
+    # stacks, skills, agent defs, and config keys (the harness-architect stack is enabled,
+    # waffle.yaml:18). docs-agent/docs-human own the machine/human docs. architectAgent runs
+    # the audit-pass-1 / docs-first-pass architecture review, which here IS the installer/stack/
+    # harness architecture, so it routes to harness-architect. securityAgent stays general-purpose:
+    # harness-architect is not a security auditor and no security-engineer is installed.
+    architectAgent: harness-architect
     securityAgent: general-purpose
     specialistTable: |-
       | Agent | Responsibility |
       |-------|----------------|
-      | general-purpose | Installer/CLI work (`installer/**`: JS + tests) and stack/skill authoring (`stacks/**`, `schema/**`: markdown + YAML) |
+      | harness-architect | The toolkit itself: installer/CLI (`installer/**`: JS + tests), stack/skill/agent authoring and config keys (`stacks/**`, `schema/**`: markdown + YAML), the render pipeline, and harness design |
       | docs-agent | Machine docs (root `AGENTS.md` registry) |
       | docs-human | Human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) |
+      | general-purpose | Catch-all for work that fits no specialist above |
     classificationTable: |-
       | Signal (keywords / paths) | Agent |
       |---------------------------|-------|
-      | installer, CLI, render, doctor, eject, template, `installer/**` | general-purpose |
-      | stack, skill, agent definition, config key, `stacks/**`, `schema/**` | general-purpose |
+      | installer, CLI, render, doctor, eject, template, `installer/**` | harness-architect |
+      | stack, skill, agent definition, config key, `stacks/**`, `schema/**` | harness-architect |
       | docs, AGENTS.md, architecture/status docs | docs-agent (machine) / docs-human (human) |
     labelFallback: |-
       | Label | Agent |
       |-------|-------|
-      | bug | general-purpose |
-      | enhancement | general-purpose |
+      | bug | harness-architect |
+      | enhancement | harness-architect |
       | documentation | docs-agent |
-      | question | general-purpose |
+      | question | harness-architect |
     rootFiles: toolkit.yaml, package.json, installer/cli.mjs, schema/FORMAT.md, README.md
     sharedModule: installer/lib/ (render pipeline — every CLI command and test imports it)
     moduleDependencies: stack content depends on installer template semantics —
