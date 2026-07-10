@@ -346,6 +346,25 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Fixed
+- **`git.cmd` now carries its own allowlist `pattern:` in both declaring stacks (#254, deferred
+  F5 from #253's review).** The value is spliced verbatim into shell command literals in rendered
+  skill text — the git-workflow/release commit instructions and the delegate identity preflight's
+  single-quoted `--git-cmd '{{git.cmd}}'` — but the existing quote guards protected only the
+  identity keys composed *inside* it, so a plain `.waffle/waffle.yaml` value like
+  `git -c user.name=Bot' ; touch /tmp/PWNED ; '` rendered every file with no error. Both
+  `stacks/github-workflow/stack.yaml` and `stacks/orchestration/stack.yaml` now declare a
+  byte-identical (lockstep-pinned) pattern: letters, digits, spaces,
+  `"` `=` `.` `_` `/` `~` `+` `:` `@` `%` `[` `]` `-`, and whole `{{key}}` placeholder tokens —
+  the guard tests the *expanded* value per render site, and an orchestration-side nested miss
+  survives as a literal `{{git.botName}}`, which must pass. `'`, backtick, `$` (everywhere,
+  including `${{ … }}`), `;`, `&`, `|`, `<`, `>`, `\`, newlines and the empty string are
+  rejected; the delegate tokenizer's no-single-quote assumption is now enforced at render time,
+  and the SKILL.md preflight note plus the identity.mjs comment say so instead of disclaiming it.
+  **Consumer impact: a narrowed `git.cmd` contract.** The stock recipes A/B/C, the bare default,
+  and every value the setup note documents all pass; a repo whose `git.cmd` uses characters
+  outside the allowlist (env-var prefixes, `$HOME`, parentheses, subshells) now **fails the
+  render** with an error naming the pattern and both declaring stacks — intended tightening, as
+  such values already broke or subverted the rendered shell literals they land in.
 - **Four identity/avatar guard findings from the PR #248 fresh pass (#249, follow-up to
   #157/#248).** All four sit on the #156/#157 identity surface; two are trust-boundary
   hardenings of the same guard-and-consumer-drift class #247 tracks. **F1:** `withIdentity`
