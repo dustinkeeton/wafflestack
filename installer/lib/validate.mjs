@@ -43,13 +43,18 @@ const AGENT_SLUG_RE = compilePattern('(?=.*[A-Za-z0-9])[A-Za-z0-9._-]+');
  * `/etc/passwd`, and `%2e%2e%2f`-encoded traversal that the `(?!.*\.\.)` lookahead cannot see.
  * So:
  *   - the URL alternative requires a literal `https://` prefix — no other scheme parses;
+ *   - the URL alternative's class excludes `@`, so a userinfo authority
+ *     (`https://good.tld@evil.tld/x.png` — displayed host ≠ fetch host) cannot spoof the host a
+ *     reader eyeballs (#249). This also blocks `@` in URL paths (`https://cdn.x/@scope/pkg`) —
+ *     a deliberate tightening; nothing in the avatar contract needs it, and an explicit
+ *     host/path split buys nothing today;
  *   - the path alternative is `segment(/segment)*` over a class WITHOUT `:`, `%`, or an empty
  *     segment, which rejects every scheme, the leading `/`, the `//` authority form, and any
  *     percent-encoding (so encoded dots cannot smuggle traversal past the `..` lookahead).
  * `..` stays blocked in both by the lookahead. `(?!.*\$\{\{)` is the usual sibling-injection guard.
  */
 const IDENTITY_AVATAR_RE = compilePattern(
-  '(?!.*\\$\\{\\{)(?!.*\\.\\.)(?:https://[A-Za-z0-9._~/?#@!&=+*%-]+|[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)',
+  '(?!.*\\$\\{\\{)(?!.*\\.\\.)(?:https://[A-Za-z0-9._~/?#!&=+*%-]+|[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)',
 );
 
 const IDENTITY_KEYS = ['displayName', 'avatar'];
@@ -75,7 +80,46 @@ export function validateToolkit(rootDir) {
   }
   const problems = [];
   problems.push(...validateHarnessBuiltins());
+  problems.push(...validateSourceBytes(rootDir));
   for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
+  return problems;
+}
+
+/** Text extensions the control-byte lint scans; everything else under the roots is skipped. */
+const SOURCE_TEXT_EXTS = new Set(['.mjs', '.md', '.yaml', '.yml', '.json']);
+/** Any control byte other than \t \n \r — the bytes that flip a file to "binary" for ripgrep. */
+const CONTROL_BYTE_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F]/;
+
+/**
+ * Toolkit-source hygiene (#249): a raw control byte in a source file makes ripgrep classify it
+ * as binary and silently skip it (the F3 NUL hid `waffledocs.mjs` from every `rg` search). Scan
+ * the toolkit's own text sources for control bytes other than \t \n \r. Scoped to `installer/`
+ * and `stacks/` under the toolkit root: the real instance was in installer/lib, so a stacks-only
+ * check (the files the validator already walks) would not have caught it — and a full repo
+ * walker (assets, schema, .github) is deliberately NOT added; this is the smallest scan that
+ * covers the real regression surface. Fixture toolkits without these dirs skip cleanly.
+ * Returns problems (empty = clean).
+ */
+export function validateSourceBytes(rootDir) {
+  const problems = [];
+  for (const dir of ['installer', 'stacks']) {
+    const abs = path.join(rootDir, dir);
+    if (!fs.existsSync(abs)) continue;
+    for (const entry of fs.readdirSync(abs, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !SOURCE_TEXT_EXTS.has(path.extname(entry.name))) continue;
+      const file = path.join(entry.parentPath ?? entry.path, entry.name);
+      const text = fs.readFileSync(file, 'utf8');
+      const m = CONTROL_BYTE_RE.exec(text);
+      if (m) {
+        const line = text.slice(0, m.index).split('\n').length;
+        problems.push(
+          `${path.relative(rootDir, file)}:${line} contains a raw control byte ` +
+            `(U+${m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}) — ` +
+            `use an escape sequence; raw control bytes make search tools treat the file as binary`,
+        );
+      }
+    }
+  }
   return problems;
 }
 
@@ -210,7 +254,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
             problems.push(
               `${ctx}: agent ${agent.name} identity.avatar ${JSON.stringify(avatar ?? null)} ` +
                 `does not match the allowed shape (an https:// URL, or a repo-relative path — no leading ` +
-                `"/", no "//", no other scheme, no percent-encoding, no ".." traversal)`,
+                `"/", no "//", no other scheme, no percent-encoding, no "@" userinfo, no ".." traversal)`,
             );
           }
         }
