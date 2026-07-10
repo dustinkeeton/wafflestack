@@ -17,6 +17,17 @@ const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArr
  */
 const DISPLAY_NAME_RE = compilePattern('(?!.*\\$\\{\\{)[A-Za-z0-9._\\[\\]-]+(?: [A-Za-z0-9._\\[\\]-]+)*');
 
+/**
+ * Agent frontmatter keys the renderer owns and the `claude:` passthrough may NOT shadow (#156
+ * review). `claude:` hoists every key it carries to the top level of the Claude render, so an
+ * unpoliced `claude: { identity: { displayName: 'Evil"; id' } }` would overwrite the `identity:`
+ * block that `validateStack` just checked against DISPLAY_NAME_RE — defeating the trust boundary
+ * for exactly the value that lands in an agent-executed `git -c user.name="…"`. The passthrough
+ * exists for Claude-only knobs (`tools`, `model`), not for re-declaring a field with a
+ * first-class, validated home. Enforced here and stripped again in `renderAgent`.
+ */
+export const RESERVED_AGENT_KEYS = Object.freeze(['name', 'description', 'skills', 'identity']);
+
 /** Toolkit-developer lint. Returns a list of problems (empty = clean). */
 export function validateToolkit(rootDir) {
   let toolkit;
@@ -138,6 +149,25 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
               `${ctx}: agent ${agent.name} identity.displayName ${JSON.stringify(displayName ?? null)} ` +
                 `does not match the allowed shape (letters, digits, ". _ - [ ]", single interior spaces)`,
             );
+          }
+        }
+      }
+      // The `claude:` passthrough hoists its keys to the top level of the Claude render, so it
+      // is a second, unvalidated door into the frontmatter the renderer owns. Reserved keys are
+      // rejected outright rather than validated twice: `identity` in particular has a first-class
+      // home whose allowlist is a trust boundary, and a passthrough copy would silently win.
+      const passthrough = agent.data.claude;
+      if (passthrough !== undefined) {
+        if (!isPlainObject(passthrough)) {
+          problems.push(`${ctx}: agent ${agent.name} \`claude\` must be a map of passthrough frontmatter keys`);
+        } else {
+          for (const k of Object.keys(passthrough)) {
+            if (RESERVED_AGENT_KEYS.includes(k)) {
+              problems.push(
+                `${ctx}: agent ${agent.name} \`claude.${k}\` shadows the reserved frontmatter key ` +
+                  `"${k}" — declare it at the top level (the \`claude:\` block is for Claude-only keys)`,
+              );
+            }
           }
         }
       }

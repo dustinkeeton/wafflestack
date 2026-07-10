@@ -163,6 +163,14 @@ claude:            # passthrough keys emitted only in the Claude render
 ---
 ```
 
+The `claude:` block is for **Claude-only** keys the toolkit has no vocabulary for
+(`allowed-tools`, `model`). It may **not** shadow a reserved key — `name`, `description`,
+`skills`, `identity` — each of which has a first-class home above. `validate` (and the
+external-stack gate at render) rejects `claude.identity` and its siblings, and the renderer
+strips them: otherwise a passthrough copy would be hoisted *over* the validated field, and the
+`identity.displayName` allowlist below — a trust boundary, not a lint — could be bypassed by
+declaring the value one level down.
+
 The body is the agent's instructions. It may reference declared config keys as
 `{{dotted.key}}`. The frontmatter `description` is also substituted (per target, like the
 body) — it is the one frontmatter field that carries prose; all other frontmatter passes
@@ -185,7 +193,9 @@ Two caveats worth stating where implementers will read them: attribution is per 
 **type**, not per spawn (two parallel `lead-engineer` instances share one author); and a
 plus-addressed alias is a **distinct email to GitHub**, so such commits do not link to the
 bot's GitHub account unless that exact alias is registered there. Plus-addressing buys
-attribution and mail filtering, not account linkage.
+attribution and mail filtering, not account linkage. And a base email that **cannot** subaddress
+— a `*.noreply.github.com` domain, or a local part that already carries a `+` — is used verbatim
+rather than mangled: those agents differ by display name only.
 
 Renders to:
 - **claude** → `.claude/agents/<name>.md` — frontmatter `name`, `description`, `skills`,
@@ -591,7 +601,14 @@ per-harness differences — chiefly authorship attribution — without duplicati
 | `harness.assistantName` | `Claude` | `Codex` | `Codex` |
 | `harness.attributionPath` | `claude-code` | `Codex` | `Codex` |
 | `harness.skillsDir` | `.claude/skills` | `.agents/skills` | `.agents/skills` |
-| `harness.agentsDir` | `.claude/agents` | `.codex/agents` | `.agents/agents` |
+| `harness.agentsDir` | `.claude/agents` | `.agents/agents` | `.agents/agents` |
+
+`harness.agentsDir` names the **Markdown** agent definitions, which is what content reading an
+agent's frontmatter by path (`identity.displayName`) needs. codex therefore points at
+`.agents/agents` rather than the `.codex/agents/<name>.toml` it emits — the TOML has no shape for
+`identity`. A **codex-only** render emits no such Markdown at all, and consumers must fall back
+(the `delegate` skill title-cases the slug). codex and agents-dir must keep identical `harness.*`
+values: the shared `.agents/skills/<name>` render is deduped on that premise.
 
 A project can override any sub-key under `config.harness.<sub>` — either a scalar (applied
 to every target) or a per-target map, e.g.:
@@ -607,6 +624,10 @@ config:
 
 Because substitution runs once per target, the same `{{harness.*}}` placeholder can render
 differently in `.claude/…` vs `.codex/…` / `.agents/…` from a single canonical source.
+
+`skillsDir` and `agentsDir` are **injection-guarded** (`^[A-Za-z0-9._/-]+$`): both splice into
+instructions an agent then acts on — `read {{harness.agentsDir}}/<slug>.md` — so an override
+carrying a space, quote, `$`, or newline fails the render rather than reshaping the instruction.
 
 The namespace also carries three **target-independent** keys that pin the CI workflow
 dispatcher, so a consumer can repin or repoint the harness action without ejecting the

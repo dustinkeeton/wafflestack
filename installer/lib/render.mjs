@@ -10,7 +10,7 @@ import { substitute, placeholderKeys, compilePattern } from './template.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
-import { validateExternalStacks } from './validate.mjs';
+import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import { applicablePrerequisites, evaluatePrerequisites, formatPrereq, RENDER_PROBE_KINDS } from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
@@ -321,7 +321,13 @@ function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, guar
     // ignore it (Claude Code identifies an agent by name/description), so passing it through
     // is safe; codex's TOML has no shape for it and drops it.
     if (agent.data.identity) fm.identity = agent.data.identity;
-    Object.assign(fm, agent.data.claude ?? {});
+    // The `claude:` passthrough may not shadow a reserved key. `validateStack` rejects that for
+    // toolkit and (via `validateExternalStacks`, above) external stacks alike; stripping here is
+    // defense in depth, so a validated `identity` can never be overwritten by an unvalidated one
+    // hoisted out of `claude:` — that pathway would bypass DISPLAY_NAME_RE entirely.
+    for (const [k, v] of Object.entries(agent.data.claude ?? {})) {
+      if (!RESERVED_AGENT_KEYS.includes(k)) fm[k] = v;
+    }
     emit(
       path.join('.claude', 'agents', `${agent.name}.md`),
       stringifyFrontmatter(fm, bodyFor('claude')),
@@ -376,7 +382,9 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guar
   // both consume skills from the cross-tool `.agents/skills` convention (per OpenAI's docs,
   // Codex scans `.agents/skills` from the cwd up to the repo root), so they share one output
   // dir — deduped here (first target wins) to avoid emitting the same path twice. Their
-  // `harness.*` built-ins are identical, so the shared render is unambiguous.
+  // `harness.*` built-ins are identical, so the shared render is unambiguous. That premise is
+  // load-bearing (a divergent built-in would make this file's content depend on which *other*
+  // targets are enabled) and pinned by a test — see HARNESS_BUILTINS' `agentsDir` note.
   const skillDirs = new Map(); // dir -> target identity
   const addDir = (dir, target) => { if (!skillDirs.has(dir)) skillDirs.set(dir, target); };
   if (project.targets.includes('claude')) addDir(path.join('.claude', 'skills', skill.name), 'claude');
