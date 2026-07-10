@@ -114,7 +114,7 @@ config:
       The git invocation used in the spawned-agent commit instruction (same key as the
       github-workflow stack; the bare default never overrides a human's identity). Identity-free
       commands — push, diff, log — stay a bare git. Projects with a bot identity set it to
-      'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
+      'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
       — the recipe owns the signing posture (an unpinned commit.gpgsign stays ambient and would
       sign bot-authored commits with the human's key, or hang on a prompting signer); a signing bot
       pins commit.gpgsign=true plus user.signingkey instead. This stack does NOT

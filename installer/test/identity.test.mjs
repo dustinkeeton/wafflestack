@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.resolve(HERE, '../../stacks/orchestration/skills/delegate/identity.mjs');
 
-const RECIPE_A = 'git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
+const RECIPE_A =
+  'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
 const RECIPE_B =
   'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey=~/.ssh/id_ed25519.pub -c tag.gpgsign=true -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
 

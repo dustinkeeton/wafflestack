@@ -1917,10 +1917,10 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   // IS the composed-flags surface, so the model lives in prose as recipes A (unsigned, canonical),
   // B (SSH) and C (GPG). W7 pins recipe A; W7b/W7c pin that recipe B composes and stays guarded.
   test('W7 the gpgsign-hardened recipe renders and still enforces the identity guards', () => {
-    const hardened = 'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
+    const hardened = 'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${hardened}\n`);
     assert.equal(render().ok, true);
-    assert.match(read(cwd, GIT_SKILL), /^git -c commit\.gpgsign=false -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m);
+    assert.match(read(cwd, GIT_SKILL), /^git -c commit\.gpgsign=false -c tag\.gpgSign=false -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m);
     // The guard still bites through the longer recipe.
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: "$(id)@x.com"\n    cmd: ${hardened}\n`);
     assert.equal(render().ok, false, 'gpgsign hardening must not weaken the botEmail guard');
@@ -1930,7 +1930,7 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   // that nested substitution resolves the key through the composed recipe — the documented upgrade
   // path actually renders — and that an empty signingKey is NOT silently swallowed here.
   const RECIPE_B =
-    'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
+    'git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}';
 
   test('W7b a recipe-B git.cmd renders the signing key through nested substitution', () => {
     write(
@@ -1941,7 +1941,7 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
     assert.equal(render().ok, true);
     assert.match(
       read(cwd, GIT_SKILL),
-      /^git -c commit\.gpgsign=true -c gpg\.format=ssh -c user\.signingkey=ABC123 -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m,
+      /^git -c commit\.gpgsign=true -c tag\.gpgSign=true -c gpg\.format=ssh -c user\.signingkey=ABC123 -c user\.name="Wafflebot" -c user\.email=bot@example\.com commit -m /m,
     );
   });
 
@@ -2089,9 +2089,9 @@ describe('git.cmd pattern guard (#254)', () => {
   // cover A/B incidentally; this pins C and the criterion explicitly).
   test('setup-note recipes A, B and C all pass the guard', () => {
     const RECIPES = {
-      A: 'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
-      B: 'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
-      C: 'git -c commit.gpgsign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
+      A: 'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
+      B: 'git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
+      C: 'git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}',
     };
     for (const [name, recipe] of Object.entries(RECIPES)) {
       write(
@@ -6239,10 +6239,11 @@ describe('root .waffle.* → .waffle/ move (#43)', () => {
 
     // #155: the bot-identity opt-in is discoverable at init too — botName alone changes nothing,
     // so the scaffold carries the `cmd:` recipe (quoted user.name) that actually injects it.
-    // #158: and that recipe is recipe A — it pins `commit.gpgsign=false`, because whatever the
-    // recipe does not pin stays ambient. The starter must not re-introduce the ambient-signing bug.
+    // #158: and that recipe is recipe A — it pins `commit.gpgsign=false` (and, since #252,
+    // `tag.gpgSign=false`), because whatever the recipe does not pin stays ambient. The starter
+    // must not re-introduce the ambient-signing bug.
     assert.match(cfg, /#\s*botName: Wafflebot/);
-    assert.match(cfg, /#\s*cmd: git -c commit\.gpgsign=false -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/);
+    assert.match(cfg, /#\s*cmd: git -c commit\.gpgsign=false -c tag\.gpgSign=false -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/);
   });
 
   test('staleGitignoreEntries flags root .waffle.* lines and stays quiet on .waffle/ paths', () => {

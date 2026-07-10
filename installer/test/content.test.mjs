@@ -436,7 +436,12 @@ describe('github-workflow setup note: the signing recipes and verification matri
   );
 
   test('recipe A (gpgsign=false) is the canonical opt-in recipe', () => {
-    assert.match(stack, /cmd: git -c commit\.gpgsign=false -c user\.name="\{\{git\.botName\}\}"/);
+    // #252 F1: the tag posture is pinned alongside the commit posture — the adjacency is
+    // deliberate, so the tag pin cannot drift back out of the recipe.
+    assert.match(
+      stack,
+      /cmd: git -c commit\.gpgsign=false -c tag\.gpgSign=false -c user\.name="\{\{git\.botName\}\}"/,
+    );
     assert.match(stack, /the recipe owns the posture, keys own key selection/i);
   });
 
@@ -448,13 +453,15 @@ describe('github-workflow setup note: the signing recipes and verification matri
     const eject = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'lib', 'eject.mjs'), 'utf8');
     assert.match(
       eject,
-      /#    cmd: git -c commit\.gpgsign=false -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/,
+      /#    cmd: git -c commit\.gpgsign=false -c tag\.gpgSign=false -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/,
     );
   });
 
   test('recipes B and C are documented upgrades with a non-prompting-signer precondition', () => {
     assert.match(stack, /# Recipe B \(SSH signing\)/);
     assert.match(stack, /-c gpg\.format=ssh -c user\.signingkey=\{\{git\.signingKey\}\}/);
+    // #252 F1: a signing bot signs its tags too, explicitly — B/C pin tag.gpgSign=true.
+    assert.match(stack, /-c commit\.gpgsign=true -c tag\.gpgSign=true/);
     assert.match(stack, /# Recipe C \(GPG signing\)/);
     // Both recipes pin gpg.format: an inherited format hands the key to the wrong signer.
     // Deleting `-c gpg.format=...` from either recipe must fail here.

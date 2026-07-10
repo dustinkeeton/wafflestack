@@ -715,7 +715,7 @@ setup: |-
       git:
         botName: Wafflebot
         botEmail: wafflebot@users.noreply.github.com
-        cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
   Five rules for that recipe:
   (1) **Quote `user.name`.** `git.botName` admits single interior spaces (`Waffle Bot` is a
@@ -756,18 +756,21 @@ setup: |-
     own account, GitHub "Verified". The toolkit configures no signing for humans, ever.
   - **Main-bot tier — the recipe. Recipe A (canonical, deliberately unsigned):**
 
-        cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
     `-c commit.gpgsign=false` is a no-op on a machine that does not sign, and on one that does it
-    prevents both failure modes above. Two documented upgrades, for a bot that should really sign —
+    prevents both failure modes above. `-c tag.gpgSign=false` closes the same class for the
+    annotated tag the description scopes in — the release hook's lightweight tag is never signed,
+    but the first `git tag -a` would otherwise ride the ambient config or hang on a prompting
+    signer. Two documented upgrades, for a bot that should really sign —
     each *references* `git.signingKey`, which is why that key is never in the default recipe (the
     empty default would render `git -c user.signingkey= …`, which git rejects at run time):
 
         # Recipe B (SSH signing)
-        cmd: git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
         # Recipe C (GPG signing)
-        cmd: git -c commit.gpgsign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
     Pin `gpg.format` in **both** recipes rather than inheriting it — the key is explicit, so the
     format must be too (git ≥ 2.34). An inherited format is the same bug class one layer down: a
@@ -927,7 +930,7 @@ config:
       and an annotated tag if one is ever added. Identity-free commands (checkout, push, diff,
       log) stay a bare git. The bare default never overrides a human's user.name / user.email.
       Setting this to the canonical recipe IS the bot-identity opt-in:
-      'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
+      'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
       — quote user.name (botName admits interior spaces) and set BOTH identity keys in project
       config rather than relying on their stack defaults, which stacks that declare only git.cmd
       cannot resolve. THE RECIPE OWNS THE SIGNING POSTURE: git.cmd overrides the identity and
