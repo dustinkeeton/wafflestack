@@ -801,7 +801,7 @@ setup: |-
   | Main bot, recipe A | **no badge** (unsigned, deliberate) | n/a — nothing is claimed |
   | Main bot, recipe B/C | **"Unverified"** unless registered | yes: a real bot GitHub account with `git.signingKey` added as a signing key **and** `git.botEmail` verified on it |
   | Sub-agent (`bot+<slug>@…`, subaddressable base only) | **no badge** under A; **"Unverified"** under B/C | only by verifying each alias on the bot account — which **relinks every agent to one profile and one avatar**. Per-agent avatars XOR verified sub-agent commits; prefer avatars + no badge |
-  | Sub-agent (noreply base — the **default**) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | already is, with zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address. No per-agent avatar exists to forfeit |
+  | Sub-agent (noreply base — the **default**) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | under B/C, already is — zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address; under A nothing is signed, so nothing is claimed. No per-agent avatar exists to forfeit either way |
 
   The XOR in the first sub-agent row is real **only when the base email can subaddress**. On the
   default `wafflebot@users.noreply.github.com` there is no `bot+<slug>@…` author at all, so a
