@@ -358,20 +358,26 @@ is what you reach for across a breaking one.
   registration section still claimed the "derived addresses above land in" the base inbox — over
   an empty derived set, with a sign-in step naming an inbox no agent commits under; exactly the
   state the shared-address caveat's own remedy produces. The copy now distinguishes three states
-  (no overrides and some overrides render byte-identically to before; all-overridden gets honest
-  copy: every address is verbatim, each verified at the inbox that receives its mail). **F3:** a
+  (no overrides renders byte-identically to before; the mixed state scopes its sign-in
+  parenthetical to "every derived address" — per the PR #262 review, a separately-owned `‡`
+  inbox is not covered by the base account; all-overridden gets honest copy: every address is
+  verbatim, each verified at the inbox that receives its mail). **F3:** a
   literal raw NUL byte in `waffledocs.mjs` made ripgrep classify the file as binary and silently
   skip it — every `rg` over `installer/lib/` missed the file. Now the two-character `\0` escape
   (identical runtime string), plus a control-byte lint in `validateToolkit` that scans
-  `installer/` and `stacks/` text sources (`.mjs/.md/.yaml/.yml/.json`) for control bytes other
+  `installer/` and `stacks/` text sources (`.mjs/.md/.yaml/.yml/.json/.sh` — `.sh` added per the
+  PR #262 review; the scanned roots ship one shell script) for control bytes other
   than tab/LF/CR, so the regression class fails `npm run validate`. **F4:** `IDENTITY_AVATAR_RE`'s
   URL alternative admitted `@`, so a userinfo authority (`https://good.tld@evil.tld/x.png` —
   displayed host ≠ fetch host) passed the guard its own comment enumerates as strict. The class
   now excludes `@` entirely (deliberate tightening: also blocks `@` in URL paths; nothing in the
-  avatar contract needs it), and the rejection message names the new rule. **Consumer impact:**
-  none in practice — no config, schema, or rendered-file change; no re-render needed (verified:
-  the lock is byte-stable across a re-render). A pre-existing `identity.avatar` URL carrying `@`
-  would newly fail validate — which is the point.
+  avatar contract needs it), a `(?!.*%40)` lookahead closes the percent-encoded form the class's
+  own `%` would otherwise smuggle through (#262 review), and the rejection message names the new
+  rule. **Consumer impact:** no config or schema change. Rendered-file change only for a project
+  in the mixed-overrides state (one reworded AVATARS.md line — re-render at leisure); every other
+  state, including this repo's, renders byte-identically (verified: the lock is byte-stable
+  across a re-render). A pre-existing `identity.avatar` URL carrying `@` or `%40` would newly
+  fail validate — which is the point.
 - **The agent slug is now guarded at the identity trust boundary, and the duplicated
   `entryPatterns` are pinned in lockstep (#247, follow-up to #156/#245).** The delegate skill
   splices TWO values into the same agent-executed `git -c user.name="…" -c user.email=…` command:

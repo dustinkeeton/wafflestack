@@ -535,7 +535,12 @@ function avatarsMarkdown(agents, toolkitName, git) {
           '3. **Add each agent\'s commit email** to its account and complete the verification mail.',
         ]
       : [
-          '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every agent).',
+          // Scope the parenthetical to the derived rows in the mixed state (#262 review): a
+          // separately-owned ‡ inbox is not covered by the base account — the same
+          // claim-over-the-wrong-set class F2 fixed for the all-overridden state.
+          anyOverridden
+            ? '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every derived address).'
+            : '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every agent).',
           '3. **Add each agent\'s commit email** to that account and complete the verification mail.',
         ];
     lines.push(

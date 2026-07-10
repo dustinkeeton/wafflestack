@@ -2210,6 +2210,8 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     // #249: `@` was in the URL class, so the displayed host (`good.tld`) differed from the
     // fetch host (`evil.tld`). The class now excludes `@` entirely — userinfo AND paths.
     ['https://good.tld@evil.tld/x.png', 'a userinfo authority spoofs the displayed host'],
+    // #262 review: the URL class keeps `%`, so the encoded form needs its own lookahead.
+    ['https://good.tld%40evil.tld/x.png', 'a percent-encoded userinfo authority smuggles past the @ ban'],
   ]) {
     test(`validate rejects identity.avatar: ${why}`, () => {
       writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: Lead Engineer', `  avatar: ${value}`]);
@@ -2427,6 +2429,16 @@ describe('validateSourceBytes control-byte lint (#249)', () => {
     assert.equal(problems.length, 1, JSON.stringify(problems));
     assert.match(problems[0], /installer[\\/]lib[\\/]x\.mjs:2/);
     assert.match(problems[0], /U\+000B/);
+  });
+
+  test('a shell script is a scanned text source (#262 review)', () => {
+    // The scanned roots ship exactly one .sh today (clean-up's clean_up.sh) — a NUL there
+    // reproduced the F3 failure mode while the extension list missed it.
+    write(toolkitRoot, 'stacks/demo/skills/tidy/scripts/tidy.sh', '#!/usr/bin/env bash\necho "x\0y"\n');
+    const problems = validateSourceBytes(toolkitRoot);
+    assert.equal(problems.length, 1, JSON.stringify(problems));
+    assert.match(problems[0], /tidy\.sh:2/);
+    assert.match(problems[0], /U\+0000/);
   });
 
   test('non-source extensions and absent dirs are skipped', () => {
@@ -6379,6 +6391,7 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.match(md, /GitHub caches the email→avatar association/);
     // #249 F2: with no overrides, the base-inbox claim covers every address — pin that copy.
     assert.match(md, /addresses above all land in `bot@wafflenet\.io`/);
+    assert.match(md, /one account covers every agent/);
     // The anti-recommendation: never add the aliases to the bot's GitHub account.
     assert.match(md, /\*\*Do not\*\* add these plus-addresses as secondary emails/);
     // Nothing unresolved leaked through.
@@ -6414,6 +6427,10 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.match(md, /‡ set verbatim by a `git\.agentIdentities\.<agent>\.botEmail` override\./);
     // #249 F2: the base-inbox claim is scoped to the DERIVED rows in the mixed state — pin it.
     assert.match(md, /derived addresses above land in `bot@wafflenet\.io`/);
+    // #262 review: the sign-in parenthetical is scoped to the derived rows too — a separately
+    // owned ‡ inbox is not covered by the base account.
+    assert.match(md, /one account covers every derived address/);
+    assert.doesNotMatch(md, /one account covers every agent/);
   });
 
   test('with every agent overridden, the registration section drops the base-inbox claim (#249)', () => {

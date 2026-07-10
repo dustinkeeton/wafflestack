@@ -47,14 +47,17 @@ const AGENT_SLUG_RE = compilePattern('(?=.*[A-Za-z0-9])[A-Za-z0-9._-]+');
  *     (`https://good.tld@evil.tld/x.png` — displayed host ≠ fetch host) cannot spoof the host a
  *     reader eyeballs (#249). This also blocks `@` in URL paths (`https://cdn.x/@scope/pkg`) —
  *     a deliberate tightening; nothing in the avatar contract needs it, and an explicit
- *     host/path split buys nothing today;
+ *     host/path split buys nothing today. The URL class keeps `%`, so the encoded form needs its
+ *     own `(?!.*%40)` lookahead (#262 review) — the path alternative bans `%` precisely because
+ *     encoding smuggles characters past lookaheads, and the same logic holds here (the WHATWG
+ *     parser rejects `%40` in a host, but the guard must not lean on the consumer's parser);
  *   - the path alternative is `segment(/segment)*` over a class WITHOUT `:`, `%`, or an empty
  *     segment, which rejects every scheme, the leading `/`, the `//` authority form, and any
  *     percent-encoding (so encoded dots cannot smuggle traversal past the `..` lookahead).
  * `..` stays blocked in both by the lookahead. `(?!.*\$\{\{)` is the usual sibling-injection guard.
  */
 const IDENTITY_AVATAR_RE = compilePattern(
-  '(?!.*\\$\\{\\{)(?!.*\\.\\.)(?:https://[A-Za-z0-9._~/?#!&=+*%-]+|[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)',
+  '(?!.*\\$\\{\\{)(?!.*\\.\\.)(?!.*%40)(?:https://[A-Za-z0-9._~/?#!&=+*%-]+|[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)',
 );
 
 const IDENTITY_KEYS = ['displayName', 'avatar'];
@@ -86,7 +89,7 @@ export function validateToolkit(rootDir) {
 }
 
 /** Text extensions the control-byte lint scans; everything else under the roots is skipped. */
-const SOURCE_TEXT_EXTS = new Set(['.mjs', '.md', '.yaml', '.yml', '.json']);
+const SOURCE_TEXT_EXTS = new Set(['.mjs', '.md', '.yaml', '.yml', '.json', '.sh']);
 /** Any control byte other than \t \n \r — the bytes that flip a file to "binary" for ripgrep. */
 const CONTROL_BYTE_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F]/;
 
