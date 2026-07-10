@@ -2110,6 +2110,7 @@ describe('git.cmd pattern guard (#254)', () => {
     // `$(id)` and `${{ … }}` fail on the same rule. JSON.stringify emits a valid YAML
     // double-quoted scalar, which keeps the backslash and newline cases unambiguous.
     const bads = [
+      "git -c user.name='Bot'", // the headline character: `'` alone, no other metachar masking it
       'git `id`',
       'git $(id)',
       'git ${{ secrets.X }}',
@@ -2119,6 +2120,7 @@ describe('git.cmd pattern guard (#254)', () => {
       'git < /tmp/f',
       'git > /tmp/f',
       'git \\ x',
+      'git \r x',
       'git \n x',
       '', // `+` not `*`: an empty git.cmd renders broken command examples
     ];
