@@ -127,6 +127,10 @@ function tokenize(cmd) {
  */
 function parseGitCmd(cmd, errors) {
   const config = new Map();
+  // Keys whose last occurrence carried no `=`. git reads those as the literal string "true",
+  // which is a valid value for a flag and a broken one for an identity — the caller needs to
+  // tell `-c user.name` (⇒ "true") apart from `-c user.name=true`.
+  const valueless = new Set();
 
   if (/\{\{[^}]*\}\}/.test(cmd)) {
     errors.push(
@@ -137,11 +141,11 @@ function parseGitCmd(cmd, errors) {
   const { tokens, error } = tokenize(cmd);
   if (error) {
     errors.push(`git.cmd has ${error} — a spaced value must be double-quoted or git will word-split it`);
-    return config;
+    return { config, valueless };
   }
   if (!tokens.length || tokens[0] !== 'git') {
     errors.push(`git.cmd must start with "git" (got ${JSON.stringify(tokens[0] ?? '')})`);
-    return config;
+    return { config, valueless };
   }
 
   for (let i = 1; i < tokens.length; i++) {
@@ -155,6 +159,8 @@ function parseGitCmd(cmd, errors) {
       const eq = pair.indexOf('=');
       const key = (eq === -1 ? pair : pair.slice(0, eq)).toLowerCase();
       const value = eq === -1 ? 'true' : pair.slice(eq + 1);
+      if (eq === -1) valueless.add(key);
+      else valueless.delete(key); // last wins, for the valueless flag as for the value
       config.set(key, value);
     } else if (t.startsWith('-')) {
       // An unknown flag is tolerated: this script polices identity, not git's whole CLI.
@@ -164,7 +170,7 @@ function parseGitCmd(cmd, errors) {
       );
     }
   }
-  return config;
+  return { config, valueless };
 }
 
 // git's boolean vocabulary (`git config --bool`). A `-c key` with no `=` is `true`, which
@@ -184,9 +190,9 @@ const isTrue = (v) => v !== undefined && ['true', 'yes', 'on', '1'].includes(Str
 //
 // The subset is SOUND because the split is on the FIRST colon, which is always the key/value
 // separator: a leaf name is one of three literals, none containing a colon. Colons *inside* a
-// value are therefore harmless — and they do occur (the signingKey charset admits ":", as in
-// git's own `key::ssh-ed25519 …` form). Anything this parser does not recognise throws, and the
-// caller turns that into an ERROR verdict: a parse surprise is fail-safe, never a silent skip.
+// value are therefore harmless — and they do occur, since the signingKey charset admits ":".
+// Anything this parser does not recognise throws, and the caller turns that into an ERROR
+// verdict: a parse surprise is fail-safe, never a silent skip.
 // ---------------------------------------------------------------------------
 
 function unquote(s) {
@@ -301,7 +307,7 @@ function main() {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const config = parseGitCmd(args.gitCmd, errors);
+  const { config, valueless } = parseGitCmd(args.gitCmd, errors);
 
   // --- main-agent tier: is the resolved command coherent? ---------------------
 
@@ -311,11 +317,38 @@ function main() {
   const gpgsign = config.get('commit.gpgsign');
   const gpgFormat = config.get('gpg.format');
 
+  // Tri-state, never binary: `unsigned` is a claim about the config, so it may only be printed when
+  // the config actually says so. The AMBIENT arm is unreachable while an unpinned posture is an
+  // ERROR below — it stands so that downgrading that taxonomy can never silently resurrect a
+  // verdict line that guesses in the reassuring direction.
+  const posture = isTrue(gpgsign)
+    ? `signed, gpg.format=${gpgFormat}`
+    : gpgsign === undefined
+      ? 'signing posture AMBIENT (commit.gpgsign unpinned)'
+      : 'unsigned';
+
   if (name !== undefined && email === undefined) {
     errors.push('git.cmd sets user.name but not user.email — half an identity; the missing half falls back to the ambient config');
   }
   if (email !== undefined && name === undefined) {
     errors.push('git.cmd sets user.email but not user.name — half an identity; the missing half falls back to the ambient config');
+  }
+  // PRESENCE IS NOT A VALUE. The two checks above ask only whether each half of the identity was
+  // set at all; `-c user.name=` and a valueless `-c user.name` both satisfy them and both produce a
+  // broken author. Same class as the empty user.signingkey below — git only objects at commit time
+  // (or, worse, does not object at all), so the gate has to object now.
+  //   -c user.name=          → `git commit` dies: "Author identity unknown"
+  //   -c user.email=         → git commits happily, authored `<>`: no attribution at all
+  //   -c user.name           → no `=`, so git reads the literal "true": commits authored by "true"
+  if (config.get('user.name') === '') {
+    errors.push('git.cmd sets an EMPTY user.name — git refuses the commit ("Author identity unknown"), and only at commit time, so this fails silently until an agent tries to commit');
+  } else if (valueless.has('user.name')) {
+    errors.push('git.cmd sets a valueless -c user.name — git reads a -c with no "=" as the literal value "true", so every bot commit would be authored by "true"');
+  }
+  if (config.get('user.email') === '') {
+    errors.push('git.cmd sets an EMPTY user.email — git does not reject it: every bot commit is authored as "<>", with no attribution at all');
+  } else if (valueless.has('user.email')) {
+    errors.push('git.cmd sets a valueless -c user.email — git reads a -c with no "=" as the literal value "true", so every bot commit would be authored as "<true>"');
   }
   if (config.has('user.signingkey') && signingKey === '') {
     errors.push('git.cmd sets an EMPTY user.signingkey — git rejects it only at commit time, so this fails silently until an agent tries to commit');
@@ -376,10 +409,20 @@ function main() {
   // there, so nothing below can virtualize anything.
   const bare = name === undefined && email === undefined;
 
+  // ...but "no identity" is not "no configuration". A base may pin the signing posture and the key
+  // without pinning a name or an email, and rule 4 hands those flags verbatim to every tier. Such a
+  // command is bare of IDENTITY and anything but inert, so the NOTE must not say "nothing to verify"
+  // and the verdict must not drop the posture the lines above just computed.
+  const postureOnly = bare && ['commit.gpgsign', 'user.signingkey', 'gpg.format', 'tag.gpgsign'].some((k) => config.has(k));
+
   if (!baseIsCoherent) {
     // no derived findings — see baseIsCoherent above
   } else if (bare) {
-    notes.push('no bot identity configured — all tiers run under the ambient (human) identity, by design; nothing to verify');
+    notes.push(
+      postureOnly
+        ? `no bot identity configured — all tiers run under the ambient (human) identity, by design; the base still pins the signing posture (${posture}), which applies to every commit routed through it, sub-agents included`
+        : 'no bot identity configured — all tiers run under the ambient (human) identity, by design; nothing to verify',
+    );
     if (Object.keys(identities).length) {
       warns.push(
         `git.agentIdentities has ${Object.keys(identities).length} entr(y/ies) but git.cmd is bare — the map is INERT WITHOUT THE OPT-IN: no agent identity will be applied`,
@@ -398,7 +441,7 @@ function main() {
       if (!entry.signingKey) continue;
       if (gpgsign !== undefined && !isTrue(gpgsign)) {
         warns.push(
-          `git.agentIdentities."${slug}".signingKey is set under a commit.gpgsign=false base — it SELECTS a key, it does not ENABLE signing, so it is deliberately inert: do not expect signed sub-agent commits`,
+          `git.agentIdentities."${slug}".signingKey is set under a commit.gpgsign=${gpgsign} base — it SELECTS a key, it does not ENABLE signing, so it is deliberately inert: do not expect signed sub-agent commits`,
         );
       } else if (isTrue(gpgsign) && gpgFormat === 'ssh' && looksLikeKeyId(entry.signingKey)) {
         warns.push(
@@ -409,6 +452,21 @@ function main() {
           `git.agentIdentities."${slug}".signingKey looks like a key path (${entry.signingKey}) but the base pins gpg.format=openpgp — the OpenPGP signer expects a key id`,
         );
       }
+    }
+  }
+
+  // The same key-shape-vs-gpg.format heuristic the per-agent leaves get above, pointed at the key
+  // every signing repo actually sets: the base one. A per-agent signingKey leaf is the rare case.
+  // WARN, never ERROR — a key shape is a heuristic, and the signer is the real authority.
+  if (isTrue(gpgsign) && signingKey) {
+    if (gpgFormat === 'ssh' && looksLikeKeyId(signingKey)) {
+      warns.push(
+        `git.cmd's user.signingkey looks like an OpenPGP key id (${signingKey}) but the base pins gpg.format=ssh — the ssh signer will be handed a value it cannot use`,
+      );
+    } else if (gpgFormat === 'openpgp' && looksLikePath(signingKey)) {
+      warns.push(
+        `git.cmd's user.signingkey looks like a key path (${signingKey}) but the base pins gpg.format=openpgp — the OpenPGP signer expects a key id`,
+      );
     }
   }
 
@@ -458,16 +516,13 @@ function main() {
     process.exit(1);
   }
 
-  // Tri-state, never binary: `unsigned` is a claim about the config, so it may only be printed
-  // when the config actually says so. The AMBIENT arm is unreachable while an unpinned posture is
-  // an ERROR above — it stands so that downgrading that taxonomy can never silently resurrect a
-  // verdict line that guesses in the reassuring direction.
-  const posture = isTrue(gpgsign)
-    ? `signed, gpg.format=${gpgFormat}`
-    : gpgsign === undefined
-      ? 'signing posture AMBIENT (commit.gpgsign unpinned)'
-      : 'unsigned';
-  const mainTier = bare ? 'ambient (human)' : `${name} <${email}> (${posture})`;
+  // The bare arm reports the ambient identity — but never at the cost of the posture: a base that
+  // pins signing without pinning a name still governs every commit routed through it.
+  const mainTier = bare
+    ? postureOnly
+      ? `ambient (human), ${posture}`
+      : 'ambient (human)'
+    : `${name} <${email}> (${posture})`;
   const subTier = bare
     ? 'ambient (no virtualization)'
     : canSubaddress(email ?? '')

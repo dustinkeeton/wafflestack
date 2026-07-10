@@ -65,6 +65,16 @@ describe('identity preflight: the passing tiers', () => {
     assert.doesNotMatch(r.all, /^(ERROR|WARN):/m, 'the documented no-clobber path must not nag');
   });
 
+  test('an identity-bare base that still pins a posture is not inert — the NOTE and verdict say so', () => {
+    // `bare` means "no name and no email", not "no configuration": this command forces a signing
+    // key onto every commit routed through it, sub-agents included (rule 4 preserves the flags).
+    const r = run({ gitCmd: 'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey=~/.ssh/k.pub -c tag.gpgsign=true' });
+    assert.equal(r.code, 0, r.all);
+    assert.match(r.out, /main-bot = ambient \(human\), signed, gpg\.format=ssh/);
+    assert.match(r.out, /the base still pins the signing posture \(signed, gpg\.format=ssh\)/);
+    assert.doesNotMatch(r.out, /nothing to verify/, 'a posture-only base has plenty to verify');
+  });
+
   test('a signing recipe reports the pinned format in the verdict', () => {
     const r = run({ gitCmd: RECIPE_B });
     assert.equal(r.code, 0, r.all);
@@ -122,6 +132,24 @@ describe('identity preflight: ERROR class — the run stops', () => {
       gitCmd: 'git -c commit.gpgsign=false -c user.name="B" -c user.email=b@x.io -c',
       match: /ends with a dangling -c/,
     },
+    // Presence is not a value. Each of these sets both halves of the identity, so the
+    // half-an-identity checks pass — and each produces a broken author at commit time.
+    'an empty user.name — git refuses the commit': {
+      gitCmd: 'git -c user.name= -c user.email=bot@x.io -c commit.gpgsign=false',
+      match: /EMPTY user\.name/,
+    },
+    'an empty user.email — git authors every commit as <>': {
+      gitCmd: 'git -c user.name="Bot" -c user.email= -c commit.gpgsign=false',
+      match: /EMPTY user\.email/,
+    },
+    'a valueless -c user.name is git\'s literal "true", not a name': {
+      gitCmd: 'git -c user.name -c user.email=b@x.io -c commit.gpgsign=false',
+      match: /valueless -c user\.name/,
+    },
+    'a valueless -c user.email is git\'s literal "true", not an address': {
+      gitCmd: 'git -c user.email -c user.name="Bot" -c commit.gpgsign=false',
+      match: /valueless -c user\.email/,
+    },
   };
 
   for (const [label, { gitCmd, match }] of Object.entries(cases)) {
@@ -173,6 +201,26 @@ describe('identity preflight: ERROR class — the run stops', () => {
     assert.doesNotMatch(r.all, /preflight PASSED/);
   });
 
+  test('a valueless -c is not an error once a later -c gives the key a value (last wins)', () => {
+    const r = run({ gitCmd: 'git -c user.name -c user.name="Bot" -c user.email=b@x.io -c commit.gpgsign=false' });
+    assert.equal(r.code, 0, r.all);
+    assert.match(r.out, /main-bot = Bot <b@x\.io> \(unsigned\)/);
+  });
+
+  test('an identity with no usable value never reaches the verdict line', () => {
+    // The gate must not reassure with a blank name, a `<>` address, or an author called "true".
+    for (const gitCmd of [
+      'git -c user.name= -c user.email=bot@x.io -c commit.gpgsign=false',
+      'git -c user.name="Bot" -c user.email= -c commit.gpgsign=false',
+      'git -c user.name -c user.email=b@x.io -c commit.gpgsign=false',
+    ]) {
+      const r = run({ gitCmd });
+      assert.equal(r.code, 1, r.all);
+      assert.doesNotMatch(r.all, /preflight PASSED/, gitCmd);
+      assert.doesNotMatch(r.all, /identity: main-bot =/, gitCmd);
+    }
+  });
+
   test('a broken base command suppresses derived findings — the base error IS the report', () => {
     const r = run({ gitCmd: 'git -c user.name="B"' });
     assert.equal(r.code, 1);
@@ -191,6 +239,30 @@ describe('identity preflight: WARN class — surfaced, run proceeds', () => {
     const r = run({ gitCmd: RECIPE_A, identities: 'lead-engineer:\n  signingKey: ABCDEF1234567890\n' });
     assert.equal(r.code, 0, r.all);
     assert.match(r.out, /WARN: .*SELECTS a key, it does not ENABLE signing/);
+  });
+
+  test("the inert-key WARN names the base's actual commit.gpgsign value, not a hardcoded false", () => {
+    const r = run({
+      gitCmd: RECIPE_A.replace('commit.gpgsign=false', 'commit.gpgsign=off'),
+      identities: 'lead-engineer:\n  signingKey: ABCDEF1234567890\n',
+    });
+    assert.equal(r.code, 0, r.all);
+    assert.match(r.out, /under a commit\.gpgsign=off base/);
+    assert.doesNotMatch(r.out, /commit\.gpgsign=false/, 'a value the config does not contain must not appear');
+  });
+
+  test('the base user.signingkey gets the same key-shape check as the per-agent leaves', () => {
+    // The base key is the one every signing repo sets; the per-agent leaf is the rare case.
+    const keyIdUnderSsh = run({ gitCmd: RECIPE_B.replace('~/.ssh/id_ed25519.pub', 'DEADBEEF12345678') });
+    assert.equal(keyIdUnderSsh.code, 0, keyIdUnderSsh.all);
+    assert.match(keyIdUnderSsh.out, /WARN: git\.cmd's user\.signingkey looks like an OpenPGP key id .* pins gpg\.format=ssh/);
+
+    const pathUnderOpenpgp = run({ gitCmd: RECIPE_B.replace('gpg.format=ssh', 'gpg.format=openpgp') });
+    assert.equal(pathUnderOpenpgp.code, 0, pathUnderOpenpgp.all);
+    assert.match(pathUnderOpenpgp.out, /WARN: git\.cmd's user\.signingkey looks like a key path .* pins gpg\.format=openpgp/);
+
+    // ...and the coherent recipe stays quiet.
+    assert.doesNotMatch(run({ gitCmd: RECIPE_B }).out, /git\.cmd's user\.signingkey/);
   });
 
   test('a hex key id under gpg.format=ssh is a format contradiction (WARN, never ERROR)', () => {
