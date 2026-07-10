@@ -179,6 +179,7 @@ export function agentFlavor(name)                      // → deterministic per-
 export function agentAvatarSvg(name, skillCount = 0, opts) // → inline wafflebot avatar SVG for team.html (#161)
 export function extractBaseEmail(gitCmd)               // → the `-c user.email=` value of a resolved git.cmd, else null (no bot identity / unresolved placeholder) (#157)
 export function deriveAgentEmail(baseEmail, slug)      // → base plus-addressed with +<slug>, or verbatim when it cannot subaddress (*.noreply.github.com, local part already has `+`); null base → null (#157)
+export function withIdentity(gitCmd, displayName, email) // → git.cmd with `-c user.name=`/`-c user.email=` swapped in place, every other flag preserved (delegate rule 4) (#157)
 
 // list.mjs
 export const STATUS                                    // { CURRENT:'current', OUTDATED:'outdated', NOT_INSTALLED:'not-installed' }

@@ -63,7 +63,7 @@
     ".github/workflows/waffle-pr-green-hook.yml": "17ab76f33baf0a5478ba126eafcc7c29646cd8fc9c0d95649a6b3dc0e90ebf5e",
     ".github/workflows/waffle-pr-response-hook.yml": "d0ce2339b70e75921a8180e9aef4601d1a2e5b70cd34ba7ff37ca6d67764fe59",
     ".github/workflows/waffle-release-hook.yml": "f78b5d85d7d98d1d85d5f2d58cf5742452ed4f3ef285c6222f07b494a6e7c208",
-    ".waffle/AVATARS.md": "7bfd7902775ebb3ecba0b18fe973da112f8305695ad898f2860c93c73d3ae349",
+    ".waffle/AVATARS.md": "57808adc720a11ef4a2d0dec2c2debb14a5ce16d3cb01f82bdf4d99ffc5503c5",
     ".waffle/avatars/docs-agent.svg": "0bb1a850f82b0e40ea35602c8092cb7ac372839ac5754cf4aeb8fff220c77a56",
     ".waffle/avatars/docs-human.svg": "77f2bbbf74d36ab128d4302b572308675c2cb85d73a247d9c6232f18744f19b4",
     ".waffle/avatars/harness-architect.svg": "eeaa80eddc8d53a5ed8c1db6bc11b4f8edcd74a68e0188781fda6b8791401f9b",
