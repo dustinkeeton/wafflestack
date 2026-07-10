@@ -143,8 +143,9 @@ try {
       if (!['sync', 'status'].includes(sub)) fail(`usage: wafflestack avatars <sync|status> [--cwd DIR]`);
       const { runAvatarsSync, avatarsExitCode } = await import('./lib/avatars-sync.mjs');
       const result = await runAvatarsSync({ toolkitRoot, cwd, mode: sub, log: console.log });
-      // `status` is a check: a drifted (unregistered) address exits non-zero so CI/scripts can gate.
-      process.exit(avatarsExitCode({ mode: sub, pending: result.pending }));
+      // `status` is a check: a drifted (unregistered) address exits non-zero so CI/scripts can gate;
+      // any per-agent failure remainder also exits non-zero so a partial `sync` never looks clean.
+      process.exit(avatarsExitCode({ mode: sub, pending: result.pending, failed: result.failed }));
       break;
     }
     case 'validate': {

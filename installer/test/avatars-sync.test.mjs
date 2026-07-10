@@ -6,6 +6,7 @@ import {
   syncAvatars,
   makeGravatarHttp,
   avatarsExitCode,
+  RASTERIZERS,
   TOKEN_ENV,
   GRAVATAR_BASE,
 } from '../lib/avatars-sync.mjs';
@@ -125,6 +126,41 @@ describe('avatars-sync: syncAvatars engine', () => {
     assert.ok(http.calls.every(([m]) => m === 'getAssociatedEmail'), 'status makes only probes');
     assert.deepEqual(result.synced.map((a) => a.name), ['captain'], 'registered');
     assert.deepEqual(result.pending.map((a) => a.name), ['scout'], 'drifted');
+  });
+
+  test('a per-agent error is isolated: the roster completes and the failure lands in `failed[]`', async () => {
+    // A transient error on agent k of n (a 429/500 mid-roster) must not abort the rest of the run.
+    // Here captain's upload throws; scout must still be probed, uploaded, and synced, and captain
+    // must surface in `failed[]` (not swallowed, not aborting the loop).
+    const captainHash = emailHash('bot+captain@wafflenet.io');
+    const base = mockHttp({ associated: () => true });
+    const http = {
+      calls: base.calls,
+      getAssociatedEmail: base.getAssociatedEmail,
+      async uploadAvatar(argsIn) {
+        if (argsIn.emailHash === captainHash) throw new Error('429 rate limited');
+        return base.uploadAvatar(argsIn);
+      },
+      setRating: base.setRating,
+      associateAvatarEmail: base.associateAvatarEmail,
+    };
+    const result = await syncAvatars({ agents: AGENTS, token: 'tok', http, rasterize: rasterizeStub });
+
+    assert.deepEqual(result.synced.map((a) => a.name), ['scout'], 'the later agent still synced');
+    assert.deepEqual(result.failed.map((f) => f.agent.name), ['captain'], 'captain collected as failed');
+    assert.match(result.failed[0].error, /429/, 'the error message is retained for the retry report');
+    // scout was reached despite captain throwing earlier in the loop.
+    assert.ok(http.calls.some(([m, a]) => m === 'uploadAvatar' && a.hash === emailHash('bot+scout@wafflenet.io')));
+  });
+
+  test('a NO_TOKEN error is run-wide and not caught as a per-agent failure', async () => {
+    // NO_TOKEN is thrown before the loop, so a missing token aborts the whole run rather than
+    // degrading into a `failed[]` remainder — the isolation only swallows per-agent API errors.
+    const http = mockHttp();
+    await assert.rejects(
+      () => syncAvatars({ agents: AGENTS, token: '', http, rasterize: rasterizeStub }),
+      (err) => err.code === 'NO_TOKEN',
+    );
   });
 });
 
@@ -255,5 +291,36 @@ describe('avatars-sync: avatarsExitCode (the #285 drift gate)', () => {
     const result = await syncAvatars({ agents: AGENTS, token: 'tok', http, rasterize: rasterizeStub, mode: 'status' });
     assert.ok(result.pending.length > 0, 'scout drifted → pending remainder');
     assert.equal(avatarsExitCode({ mode: 'status', pending: result.pending }), 1);
+  });
+
+  test('any `failed` remainder exits non-zero in every mode — a partial sync never looks clean', () => {
+    assert.equal(avatarsExitCode({ mode: 'sync', pending: [], failed: [{ agent: { name: 'scout' } }] }), 1);
+    assert.equal(avatarsExitCode({ mode: 'status', pending: [], failed: [{ agent: { name: 'scout' } }] }), 1);
+    // No failures → the pending-only gate is unchanged (back-compat with callers passing no `failed`).
+    assert.equal(avatarsExitCode({ mode: 'sync', pending: [{ name: 'scout' }] }), 0);
+  });
+});
+
+describe('avatars-sync: RASTERIZERS (SVG→PNG converter table)', () => {
+  const byCmd = (cmd) => RASTERIZERS.find((r) => r.cmd === cmd);
+
+  test('documents the zero-install npx svgexport path AVATARS.md advertises', () => {
+    const npx = byCmd('npx');
+    assert.ok(npx, 'an npx entry exists so a stock Node box (no librsvg/ImageMagick) can self-serve');
+    assert.deepEqual(npx.args('in.svg', 'out.png'), ['--yes', 'svgexport', 'in.svg', 'out.png', '512:512']);
+  });
+
+  test('supports ImageMagick 6 (`convert`) as well as 7 (`magick`)', () => {
+    assert.ok(byCmd('convert'), 'IM6-only hosts expose `convert`, not `magick`');
+    assert.ok(byCmd('magick'), 'IM7 hosts expose `magick`');
+  });
+
+  test('the ImageMagick paths set -density so the SVG rasterizes at target size, not upscaled', () => {
+    for (const cmd of ['magick', 'convert']) {
+      const a = byCmd(cmd).args('in.svg', 'out.png');
+      const i = a.indexOf('-density');
+      assert.ok(i >= 0 && a[i + 1] === '512', `${cmd} prepends -density 512`);
+      assert.ok(i < a.indexOf('in.svg'), `${cmd} -density precedes the input (it sets rasterization DPI)`);
+    }
   });
 });

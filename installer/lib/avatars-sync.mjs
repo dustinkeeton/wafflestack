@@ -60,28 +60,38 @@ export async function syncAvatars({ agents, token, http, rasterize, log = () => 
   const synced = [];
   const pending = [];
   const skipped = [];
+  const failed = [];
   for (const agent of agents) {
     // No opted-in bot identity (or a shared/verbatim address with no email): nothing to register.
     if (!agent.email) {
       skipped.push(agent);
       continue;
     }
-    const hash = emailHash(agent.email);
-    const { associated } = await http.getAssociatedEmail({ token, emailHash: hash });
-    if (!associated) {
-      pending.push(agent);
-      continue;
-    }
-    if (mode === 'status') {
+    try {
+      const hash = emailHash(agent.email);
+      const { associated } = await http.getAssociatedEmail({ token, emailHash: hash });
+      if (!associated) {
+        pending.push(agent);
+        continue;
+      }
+      if (mode === 'status') {
+        synced.push(agent);
+        continue;
+      }
+      const png = await rasterize(agent.svg);
+      const { imageId } = await http.uploadAvatar({ token, emailHash: hash, image: png });
+      await http.setRating({ token, imageId, rating: 'G' });
+      await http.associateAvatarEmail({ token, imageId, emailHash: hash });
       synced.push(agent);
-      continue;
+      log(`  ✓ ${agent.name} → ${agent.email}`);
+    } catch (err) {
+      // Per-agent error isolation: a transient Gravatar error (429 rate-limit, 500) on one agent
+      // must not abort the rest of the roster. Collect it into a `failed[]` remainder to retry —
+      // idempotency means a re-run recovers. NO_TOKEN is a run-wide misconfiguration (and is thrown
+      // before this loop), never per-agent, so it is not caught here.
+      failed.push({ agent, error: err?.message ?? String(err) });
+      log(`  ✗ ${agent.name} → ${agent.email}: ${err?.message ?? err}`);
     }
-    const png = await rasterize(agent.svg);
-    const { imageId } = await http.uploadAvatar({ token, emailHash: hash, image: png });
-    await http.setRating({ token, imageId, rating: 'G' });
-    await http.associateAvatarEmail({ token, imageId, emailHash: hash });
-    synced.push(agent);
-    log(`  ✓ ${agent.name} → ${agent.email}`);
   }
 
   if (mode === 'status') {
@@ -98,16 +108,26 @@ export async function syncAvatars({ agents, token, http, rasterize, log = () => 
     );
     for (const a of pending) log(`  • ${a.name} → ${a.email}`);
   }
-  return { synced, pending, skipped, mode };
+  if (failed.length) {
+    log(
+      `failed — ${failed.length} agent(s) errored (transient API/network) and were skipped; ` +
+        're-run `wafflestack avatars sync` to retry them:',
+    );
+    for (const f of failed) log(`  • ${f.agent.name} → ${f.agent.email}: ${f.error}`);
+  }
+  return { synced, pending, skipped, failed, mode };
 }
 
 /**
- * The exit code for an `avatars` run — the drift gate for #285. `status` is a check: a non-empty
- * `pending` remainder (addresses drifted off the account) exits non-zero so CI/scripts can fail on
- * drift; `sync` and a clean `status` exit 0. Pure so the gate is unit-testable without driving the
- * process (a flipped ternary here would otherwise ship green — see the CLI in `cli.mjs`).
+ * The exit code for an `avatars` run — the drift gate for #285. Any `failed` remainder (agents that
+ * errored mid-run) exits non-zero in every mode, so a partially-failed `sync` never looks clean to
+ * CI. Otherwise `status` is a check: a non-empty `pending` remainder (addresses drifted off the
+ * account) exits non-zero so CI/scripts can fail on drift; `sync` and a clean `status` exit 0. Pure
+ * so the gate is unit-testable without driving the process (a flipped ternary here would otherwise
+ * ship green — see the CLI in `cli.mjs`).
  */
-export function avatarsExitCode({ mode, pending }) {
+export function avatarsExitCode({ mode, pending, failed }) {
+  if ((failed?.length ?? 0) > 0) return 1;
   return mode === 'status' && (pending?.length ?? 0) > 0 ? 1 : 0;
 }
 
@@ -186,9 +206,17 @@ export function makeGravatarHttp(fetchImpl = globalThis.fetch) {
 // SVG→PNG through whichever converter the machine has — the same trio AVATARS.md documents. No
 // pure-JS rasterizer is a toolkit dependency (a native dep is heavy for one owner-side command),
 // so shell out behind this injected function and fail clearly when none is installed.
-const RASTERIZERS = [
+export const RASTERIZERS = [
   { cmd: 'rsvg-convert', args: (svg, png) => ['-w', '512', '-h', '512', '-o', png, svg] },
-  { cmd: 'magick', args: (svg, png) => ['-background', 'none', svg, '-resize', '512x512', png] },
+  // ImageMagick 7 (`magick`) and 6 (`convert`, no `magick` binary) share the arg vector. `-density
+  // 512` rasterizes the SVG at target resolution up front — without it IM rasterizes at its default
+  // ~96 DPI and then upscales to 512, giving a visibly softer PNG than the rsvg path.
+  { cmd: 'magick', args: (svg, png) => ['-density', '512', '-background', 'none', svg, '-resize', '512x512', png] },
+  { cmd: 'convert', args: (svg, png) => ['-density', '512', '-background', 'none', svg, '-resize', '512x512', png] },
+  // Zero-install fallback: wafflestack is a Node CLI, so `npx` is guaranteed present. `--yes` fetches
+  // svgexport on demand — the "node, no install" converter .waffle/AVATARS.md documents. Probed via
+  // `npx --version` (that `npx` exists), not by installing svgexport just to detect it.
+  { cmd: 'npx', args: (svg, png) => ['--yes', 'svgexport', svg, png, '512:512'] },
 ];
 
 function detectRasterizer() {
@@ -208,7 +236,8 @@ export function makeShellRasterizer() {
   const tool = detectRasterizer();
   if (!tool) {
     throw new Error(
-      'no SVG rasterizer found — install one of: rsvg-convert (librsvg) or magick (ImageMagick), ' +
+      'no SVG rasterizer found — install one of: rsvg-convert (librsvg), magick/convert (ImageMagick), ' +
+        'or ensure `npx` is on PATH for the zero-install `npx --yes svgexport` path; ' +
         'or upload the PNGs by hand per .waffle/AVATARS.md',
     );
   }
