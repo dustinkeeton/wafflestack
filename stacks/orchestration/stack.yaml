@@ -109,7 +109,7 @@ config:
     default: git
     # Byte-identical twin of the github-workflow stack's declaration — see the rationale there;
     # the lockstep test (#254) pins the pair, same hazard as the entryPatterns twin (#247).
-    pattern: '^(?:[A-Za-z0-9 "=._/~+:@%\[\]-]|\{\{[A-Za-z][\w.-]*\}\})+$'
+    pattern: '^(?:[A-Za-z0-9 =._/~+:@%\[\]-]|"(?:[A-Za-z0-9 =._/~+:@%\[\]-]|\{\{[A-Za-z][\w.-]*\}\})*"|\{\{[A-Za-z][\w.-]*\}\})+$'
     description: >-
       The git invocation used in the spawned-agent commit instruction (same key as the
       github-workflow stack; the bare default never overrides a human's identity). Identity-free

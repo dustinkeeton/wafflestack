@@ -354,10 +354,14 @@ is what you reach for across a breaking one.
   `git -c user.name=Bot' ; touch /tmp/PWNED ; '` rendered every file with no error. Both
   `stacks/github-workflow/stack.yaml` and `stacks/orchestration/stack.yaml` now declare a
   byte-identical (lockstep-pinned) pattern: letters, digits, spaces,
-  `"` `=` `.` `_` `/` `~` `+` `:` `@` `%` `[` `]` `-`, and whole `{{key}}` placeholder tokens —
-  the guard tests the *expanded* value per render site, and an orchestration-side nested miss
+  `=` `.` `_` `/` `~` `+` `:` `@` `%` `[` `]` `-`, balanced `"…"` runs (`"` is structural, not a
+  free character — an unbalanced quote would pair across the splice and silently corrupt the
+  rendered command example), and whole `{{key}}` placeholder tokens — the guard tests the
+  *expanded* value per render site (pinned through an unguarded nested key), and an
+  orchestration-side nested miss
   survives as a literal `{{git.botName}}`, which must pass. `'`, backtick, `$` (everywhere,
-  including `${{ … }}`), `;`, `&`, `|`, `<`, `>`, `\`, newlines and the empty string are
+  including `${{ … }}`), `;`, `&`, `|`, `<`, `>`, `\`, newlines, unbalanced quotes and the
+  empty string are
   rejected; the delegate tokenizer's no-single-quote assumption is now enforced at render time,
   and the SKILL.md preflight note plus the identity.mjs comment say so instead of disclaiming it.
   **Consumer impact: a narrowed `git.cmd` contract.** The stock recipes A/B/C, the bare default,

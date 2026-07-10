@@ -2122,6 +2122,8 @@ describe('git.cmd pattern guard (#254)', () => {
       'git \\ x',
       'git \r x',
       'git \n x',
+      'git -c user.name="Bot', // `"` is structural: an unbalanced quote pairs ACROSS the splice
+      'git "a" "b', // ...even when balanced pairs precede it in the value
       '', // `+` not `*`: an empty git.cmd renders broken command examples
     ];
     for (const bad of bads) {
@@ -2130,6 +2132,29 @@ describe('git.cmd pattern guard (#254)', () => {
       assert.equal(result.ok, false, `${JSON.stringify(bad)} must fail the guard`);
       assert.match(JSON.stringify(result.errors), /git\.cmd/, `${JSON.stringify(bad)} must name git.cmd`);
     }
+  });
+
+  test('the guard tests the EXPANDED value — a quote smuggled through an unguarded nested key fails', () => {
+    // The design's load-bearing claim: `pattern:` guards evaluate AFTER nested expansion, per
+    // render site. `project.name` declares no pattern, and expandNested resolves it inside
+    // git.cmd — so the payload's `'` arrives only post-expansion; the authored cmd value itself
+    // passes the pattern via the `{{key}}` token alternative. A refactor that evaluates guards
+    // against the raw pre-expansion value keeps every other test in this describe green while
+    // re-opening #254 through composition with any unguarded key; this one goes red.
+    const poisoned = [
+      'targets: [claude]',
+      'stacks: [github-workflow]',
+      'config:',
+      '  project:',
+      `    name: "Bot' ; touch /tmp/PWNED ; '"`,
+      '  git:',
+      '    cmd: git -c user.name={{project.name}}',
+      '',
+    ].join('\n');
+    write(cwd, '.waffle/waffle.yaml', poisoned);
+    const result = render();
+    assert.equal(result.ok, false, 'the smuggled quote must fail the guard post-expansion');
+    assert.match(result.errors.join('\n'), /config value for \{\{git\.cmd\}\} does not match its declared pattern/);
   });
 });
 
