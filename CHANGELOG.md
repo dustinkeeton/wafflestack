@@ -32,6 +32,25 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Per-PR token accounting + a global counter badge (#227).** The four Claude-dispatching
+  workflows (label-hook enrich/implement, hygiene, pr-green, pr-response) each gain a final
+  **`Record token spend`** step: it jq-extracts `usage`/`total_cost_usd` from the existing
+  execution log and folds it into ONE marker-keyed comment (`<!-- waffle-token-count -->`) on
+  the run's PR (implement/hygiene resolve it from the result's PR URL; enrich posts on the
+  issue) — one row per `run_id.run_attempt`, totals always recomputed from the full run map,
+  and the step can never red a run (`always()` + `continue-on-error` + an exit-0-only script
+  that skips missing/malformed/zero-usage logs, the invalid-API-key shape included). On merge,
+  `waffle-post-merge-hook` (new step, plus `pull-requests: read`) sums the comment's
+  machine-readable data line into `.waffle/telemetry/tokens.json` on the orphan
+  **`waffle-telemetry`** branch — the file doubles as a shields.io endpoint-badge JSON — via
+  pure `gh api` (orphan bootstrap through the Git Data API, sha-conditional PUT with bounded
+  retry, per-PR dedup map; no checkout, no local git, so the #160 identity-neutrality holds by
+  construction). Setup notes document the counter, the consumer badge line, and per-hook
+  token-spend subsections; the jq prerequisite now also lists the pr-response/post-merge
+  workflows (drive-by fix); this repo's README gains the badge. Content tests pin the step's
+  presence/harmlessness, the sibling-marker collision guard (a token comment must never
+  contain another hook's marker substring), and the post-merge counter invariants. Local
+  interactive-session spend is a documented v1 gap tracked as a follow-up spike issue.
 - **Per-agent avatars on GitHub commit views (#157, builds on #156).** Each agent now has a distinct
   avatar wherever its identity shows up — including GitHub. `render` emits one **static**,
   deterministic waffle SVG per installed agent to `.waffle/avatars/<agent>.svg` (the same name-seeded

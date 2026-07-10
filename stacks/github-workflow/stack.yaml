@@ -13,7 +13,7 @@ files:
 # optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting; the release-hook and post-merge-hook workflows each hold `contents: write` (to push
-# a tag / delete the merged head branch). All have a footprint bigger than enabling the stack
+# a tag / delete the merged head branch and tick the token counter). All have a footprint bigger than enabling the stack
 # should silently imply, so all are opt-in — enabling this stack does NOT render them. Install
 # one explicitly (`wafflestack install files/.github/workflows/waffle-release-hook.yml`) or keep
 # an existing install via its lock entry. The doctor workflow is read-only and stays a default
@@ -100,8 +100,8 @@ prerequisites:
     name: jq
     level: recommend
     check: command -v jq
-    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-pr-green-hook.yml]
-    description: jq parses the harness execution log (and, in the pr-green hook, the PR/check/review JSON) in the label-hook/hygiene/pr-green workflows' steps.
+    items: [files/.github/workflows/waffle-label-hook.yml, files/.github/workflows/waffle-hygiene.yml, files/.github/workflows/waffle-pr-green-hook.yml, files/.github/workflows/waffle-pr-response-hook.yml, files/.github/workflows/waffle-post-merge-hook.yml]
+    description: jq parses the harness execution log and the token-spend JSON (and, in the pr-green hook, the PR/check/review JSON) in the label-hook/hygiene/pr-green/pr-response/post-merge workflows' steps.
   - kind: scope
     name: gh-auth
     level: recommend
@@ -291,6 +291,16 @@ setup: |-
   detail (it also lives at `$RUNNER_TEMP/claude-execution-output.json` on the runner, the action's
   `execution_file` output), and — if you accept the log exposure — rerun with `show_full_output: true`
   or in Actions debug mode for the full transcript.
+  **Token spend accounting (#227).** Each job ends with a **`Record token spend`** step
+  (`always()` + `continue-on-error: true`, exit-0-only script): it jq-extracts `usage` and
+  `total_cost_usd` from the same execution log and creates-or-updates ONE marker-keyed
+  comment (`<!-- waffle-token-count -->`) — one row per `run_id.run_attempt`, totals always
+  recomputed from the full run map, so retries and repeat dispatches never double-count. The
+  implement job targets the PR the run opened (falling back to the labeled issue); enrich
+  always posts on the issue, and issue-only rows are informational — only rows on a merged
+  PR roll into the global counter (see the post-merge hook's counter + badge section). A
+  missing/malformed log or a zero-usage run (e.g. a dead API key) skips silently; the step
+  can never red the job.
   Every dispatch calls the Anthropic API — **it spends real money** — so the
   hook stays inert until you complete the opt-ins: (1) create the trigger labels, e.g.
     gh label create "waffle:enrich"    --color 5319E7 --description "Dispatch the CI harness to enrich this issue"
@@ -393,6 +403,14 @@ setup: |-
   `claude-execution-log` artifact (it also lives at `$RUNNER_TEMP/claude-execution-output.json` on
   the runner, the action's `execution_file` output), and — accepting the exposure — rerun with
   `show_full_output: true` or in Actions debug mode for the full transcript.
+  **Token spend accounting (#227).** The job ends with a **`Record token spend`** step
+  (`always()` + `continue-on-error: true`, exit-0-only script): it jq-extracts `usage` and
+  `total_cost_usd` from the same execution log and creates-or-updates ONE marker-keyed
+  comment (`<!-- waffle-token-count -->`) on the PR the run opened — one row per
+  `run_id.run_attempt`, totals always recomputed, never double-counted. A run that opened no
+  PR (e.g. "no drift"), a missing/malformed log, or a zero-usage run skips with a summary
+  note; the step can never red the job. Rows on a merged PR roll into the global counter +
+  badge via the post-merge hook (see its section).
   **Cost — a scheduled trigger spends real money on a timer.** Every fire calls the Anthropic
   API whether or not there is drift to fix; unlike the label hook (paid per human label) this
   bills itself **daily** with no human in the loop. Rein it in with `hygiene.claudeArgs`
@@ -469,8 +487,8 @@ setup: |-
   **Post-merge hook (opt-in syrup).** This stack also carries
   `.github/workflows/waffle-post-merge-hook.yml`, the remote-side half of post-merge hygiene. Like
   the release hook it shares the `pull_request: types: [closed]` + `merged == true` trigger shape
-  and is **deterministic — a plain `contents: write` Actions job, no Claude dispatch, no API
-  spend**; enabling the stack does NOT render it. Pour it only on request:
+  and is **deterministic — a plain Actions job (`contents: write` + `pull-requests: read`), no
+  Claude dispatch, no API spend**; enabling the stack does NOT render it. Pour it only on request:
   `wafflestack install files/.github/workflows/waffle-post-merge-hook.yml` renders it and pulls its
   `clean-up` companion skill; a repo already tracking the path keeps it on re-render. Once merged, a
   PR whose head branch lives in THIS repo (fork heads are skipped) and is not the default branch has
@@ -482,14 +500,41 @@ setup: |-
   may write contents (Settings → Actions → General → Workflow permissions not locked to read-only;
   `gh api repos/{owner}/{repo}/actions/permissions/workflow`), and keep branch protection on the
   default branch. It needs no repo secret and no label — it fires on every merged same-repo PR.
-  **This is the ONLY post-merge action that belongs in CI.** The rest of the post-merge flow stays a
-  **local-agent step by design** (see the git-workflow "After a PR merges" section and the
+  **Global token counter + badge (#227).** The hook's second step, `Update global token counter`,
+  reads the merged PR's `<!-- waffle-token-count -->` comment (maintained by the dispatching
+  hooks' `Record token spend` steps — see those sections), sums its machine-readable per-run
+  data line (the visible table is never parsed), and folds the total into
+  `.waffle/telemetry/tokens.json` on the dedicated **`waffle-telemetry`** branch. That file IS a
+  shields.io **endpoint-badge JSON** — `schemaVersion`/`label`/`message`/`color` at top level,
+  with the accumulating totals (`totalTokens`/`inputTokens`/`outputTokens`/`totalCostUsd`, a
+  per-PR `prs` dedup map, `updatedAt`) nested under a `waffle` key shields ignores — so wiring
+  the badge is one README line (replace OWNER/REPO):
+    <a href="https://github.com/OWNER/REPO/blob/waffle-telemetry/.waffle/telemetry/tokens.json"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FOWNER%2FREPO%2Fwaffle-telemetry%2F.waffle%2Ftelemetry%2Ftokens.json" alt="Claude token spend (automated runs)"></a>
+  The badge reads "invalid" until the first post-merge run bootstraps the branch (any merged PR
+  does it, even at zero recorded spend). Everything happens through the GitHub API — the branch
+  is bootstrapped as an ORPHAN ref via the Git Data API and each tick is a sha-conditional
+  Contents-API PUT with a bounded retry — so there is no checkout, no local git, and no
+  identity config: the counter commits author as the job token (github-actions[bot] by
+  default), keeping the workflow identity-neutral (#160) by construction. Why a dedicated
+  unprotected branch and not the default branch: a fresh API commit to a protected default
+  branch is rejected by its required status checks (the doctor gate), it would add a commit per
+  merge to main's history, and a lock-managed counter file would red the doctor drift gate on
+  every tick — while a non-default branch triggers no workflows at all. The update is
+  **idempotent per PR** (the `prs` map short-circuits a re-run or lost-race retry — never a
+  double count) and **never fails the run**: a missing comment, zero recorded spend, or an
+  exhausted retry is a summary note or warning. The counter captures AUTOMATED runs only —
+  local interactive sessions (often the bulk of a PR's real spend) are a documented v1 gap
+  tracked as a follow-up. Do not point `doctor`/the lock at the telemetry branch or file; it is
+  runtime state, not managed render output.
+  **These are the ONLY post-merge actions that belong in CI.** The rest of the post-merge flow
+  stays a **local-agent step by design** (see the git-workflow "After a PR merges" section and the
   `clean-up` skill): a CI job can't reach a developer's machine to delete the merged *local* branch
   and worktree, and **board/issue verification is kept local on purpose** — it costs zero API budget
   and the agent that just merged already has the context to reconcile a linked issue's board Status
   to Done. Routing board checks through a Claude-dispatch CI job (label-hook style) would spend real
   money per merge for drift the local agent fixes for free, so the hook deliberately does remote
-  branch hygiene only. Pushing the workflow file needs the `workflow` credential scope; eject/
+  branch hygiene and the deterministic counter tick only. Pushing the workflow file needs the
+  `workflow` credential scope; eject/
   uninstall exactly like the label hook, swapping the filename.
 
   **Evals workflow (opt-in syrup).** This stack also carries
@@ -612,6 +657,14 @@ setup: |-
   injected by the dispatch prompt — a manual `/adversarial-review` posts a marked, dedup-protected
   review too. The full execution log is uploaded as the **`claude-execution-log-pr-green`** artifact
   for debugging.
+  **Token spend accounting (#227).** The job ends with a **`Record token spend`** step
+  (`always()` + gated on the same should_review + `continue-on-error: true`, exit-0-only
+  script): it jq-extracts `usage` and `total_cost_usd` from the same execution log and
+  creates-or-updates ONE marker-keyed comment (`<!-- waffle-token-count -->`) on the reviewed
+  PR — one row per `run_id.run_attempt` (hook label `review`), totals always recomputed,
+  never double-counted. A missing/malformed log or a zero-usage run skips silently; the step
+  can never red the job. Rows on a merged PR roll into the global counter + badge via the
+  post-merge hook (see its section).
   **Opt-ins to arm it.** It stays inert until (1) the `ANTHROPIC_API_KEY` secret is set (with the
   user's go-ahead — `gh secret set ANTHROPIC_API_KEY`; the same secret the hygiene/label hooks
   bill); (2) the `adversarial-review` skill is rendered and committed (above); and (3) a token with
@@ -669,6 +722,15 @@ setup: |-
   blocked edit/git/gh call reds the run **unless** the marked reply is verifiably on the PR (asked of
   the API, fail-closed); read-only denials warn. The log uploads as the
   **`claude-execution-log-pr-response`** artifact.
+  **Token spend accounting (#227).** The job ends with a **`Record token spend`** step
+  (`always()` + gated on the same should_respond + `continue-on-error: true`, exit-0-only
+  script): it jq-extracts `usage` and `total_cost_usd` from the same execution log and
+  creates-or-updates ONE marker-keyed comment (`<!-- waffle-token-count -->`) on the
+  responded-to PR — one row per `run_id.run_attempt` (hook label `response` — deliberately
+  short, so the comment never contains this hook's own marker substring and cannot trip the
+  loop bound), totals always recomputed, never double-counted. A missing/malformed log or a
+  zero-usage run skips silently; the step can never red the job. Rows on a merged PR roll
+  into the global counter + badge via the post-merge hook (see its section).
   **Opt-ins to arm it.** It stays inert until (1) the `ANTHROPIC_API_KEY` secret is set (with the
   user's go-ahead — `gh secret set ANTHROPIC_API_KEY`; the same secret the hygiene/pr-green hooks
   bill); (2) the `pr-response` skill is rendered and committed under `.claude/skills/` (the
