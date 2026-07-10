@@ -1543,6 +1543,37 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.doesNotMatch(skill, /noreply@anthropic\.com/);
   });
 
+  // #291 review F1: git.ownerName is a real person's display name and lands only in inert splice
+  // sites (a backtick code span, single-quoted heredoc bodies), so its allowlist is name-appropriate,
+  // NOT botName's ASCII-only class. A legitimate owner named O'Brien / José / Müller / Nguyễn must
+  // render, not hit a red doctor gate on their own name. Tighten the class back to ASCII-only and
+  // this goes red.
+  test("I1d #291: an owner name with an apostrophe and accented Latin letters renders", () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ownerName: José O'Brien-Müller\n    ownerEmail: 123+jose@users.noreply.github.com\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /Co-authored-by: José O'Brien-Müller <123\+jose@users\.noreply\.github\.com>/);
+    assert.doesNotMatch(skill, /\{\{git\.owner/, 'no owner placeholder survives the render');
+  });
+
+  // #291 review F2: the two owner keys carry independent placeholder defaults, so a HALF-configured
+  // repo (name set, email unset) renders a trailer that LOOKS configured — a real display name — but
+  // credits nobody, because the email is the untouched placeholder. The render succeeds silently. This
+  // pins that documented footgun so the half-set path is exercised, not just the both-set (I1b) and
+  // neither-set (I1c) paths. Setup-note guidance ("set both or neither") is the only guard.
+  test('I1e #291: a half-configured owner (name set, email unset) renders name + placeholder email', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ownerName: Dustin Keeton\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    // the real name shows, but the email is still the inert placeholder default — credits nobody
+    assert.match(skill, /Co-authored-by: Dustin Keeton <owner@users\.noreply\.github\.com>/);
+    assert.doesNotMatch(skill, /\{\{git\.owner/, 'no owner placeholder survives the render');
+  });
+
   test('I2 precedence: local overlay > committed config: > stack default', () => {
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: CommittedBot\n    botEmail: committed@example.com\n`);
     write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n    signingKey: ABC123\n');

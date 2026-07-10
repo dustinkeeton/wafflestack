@@ -133,10 +133,13 @@ config:
     description: Attribution trailer spawned agents must end commits with (same as the github-workflow stack key); the default credits the consuming repo's owner.
   git.ownerName:
     required: false
-    # Byte-identical twin of the github-workflow stack's declaration (same landing class — a markdown
-    # code span in the rendered trailer); pattern and default are pinned equal by the lockstep test (#284).
+    # Byte-identical twin of the github-workflow stack's declaration (same inert landing sites — a
+    # backtick code span and single-quoted heredoc bodies in the rendered trailer — so the allowlist
+    # is name-appropriate: apostrophe + common Latin/accented letters, NOT botName's ASCII-only class;
+    # see that stack for the full rationale). Pattern and default are pinned equal by the lockstep
+    # test (#284).
     default: Repository Owner
-    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._''\u00C0-\u024F\u1E00-\u1EFF\[\]-]+(?: [A-Za-z0-9._''\u00C0-\u024F\u1E00-\u1EFF\[\]-]+)*$'
     description: Display name credited in the default git.coAuthorTrailer (same key as the github-workflow stack) — the consuming repo's owner. Declared here so orchestration can resolve the nested owner trailer even when github-workflow is not installed.
   git.ownerEmail:
     required: false
