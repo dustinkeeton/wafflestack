@@ -984,8 +984,9 @@ config:
     # empty is its meaningful default ("no dedicated bot key"), but here the leaf is OPTIONAL —
     # omitting it already means "no override". An explicit `signingKey: ""` is *present*, so rule
     # 3 appends `-c user.signingkey=` with no value, which git rejects at the agent's first
-    # commit. Fail at render instead. Keep in lockstep with stacks/orchestration/stack.yaml: a
-    # key guarded twice must satisfy both, so a one-sided change silently shifts the guard.
+    # commit. Fail at render instead. Keep in lockstep with stacks/orchestration/stack.yaml
+    # (pinned by the deep-equal lockstep test, #247): a key guarded twice must satisfy both,
+    # so a one-sided change silently shifts the guard.
     entryPatterns:
       botName: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
       botEmail: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'

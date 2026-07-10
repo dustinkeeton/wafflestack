@@ -2305,6 +2305,58 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     assert.ok(problems.some((p) => /demo\.map default entry "a" key "leaf"/.test(p)), JSON.stringify(problems));
     assert.ok(problems.some((p) => /demo\.map default entry "b" key "leaf"/.test(p)), JSON.stringify(problems));
   });
+
+  // #247 — the OTHER operand of the guarded command. The slug (the agent's filename) reaches
+  // the same agent-executed git command by two delegate-derivation paths: always as the
+  // plus-address in `-c user.email=bot+<slug>@…`, and title-cased into `-c user.name="…"`
+  // when identity.displayName is absent. Absent displayName means DISPLAY_NAME_RE never runs,
+  // so the slug guard must be unconditional — these agents declare NO identity block at all.
+  const writeEvilSlugStack = () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [\'evil"; id\']\n');
+    write(toolkitRoot, 'stacks/demo/agents/evil"; id.md', ['---', 'description: Evil.', '---', '', 'Body.', ''].join('\n'));
+  };
+
+  test('validate rejects a quote-breaking agent slug even with NO identity block (#247)', () => {
+    writeEvilSlugStack();
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /allowed slug shape/.test(p)), JSON.stringify(problems));
+  });
+
+  test('the external-stack gate rejects the quote-breaking slug too, naming the source (#247)', () => {
+    writeEvilSlugStack();
+    const toolkit = loadToolkit(toolkitRoot);
+    toolkit.stacks.get('demo').provenance = { source: 'https://example.com/x.git', ref: 'v1' };
+    const problems = validateExternalStacks(toolkit);
+    assert.ok(problems.some((p) => /allowed slug shape/.test(p) && /example\.com/.test(p)), JSON.stringify(problems));
+  });
+
+  test('validate accepts a slug exercising the full legal class — "." and "_" stay legal (#247)', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\nagents: [gpt-4.1_helper]\n');
+    write(toolkitRoot, 'stacks/demo/agents/gpt-4.1_helper.md', ['---', 'description: Helps.', '---', '', 'Body.', ''].join('\n'));
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+});
+
+// #247 — `git.agentIdentities.entryPatterns` is deliberately declared in TWO stacks (each is
+// installable without the other; the delegate skill consumes the key either way). Guards compile
+// toolkit-wide, so within this toolkit a divergence merely over-tightens — the twin still binds.
+// The hazard is one level up: in a toolkit where only ONE copy loads (a single-stack external
+// redistribution of orchestration, or a fork that trims the registry), a loosened copy IS the
+// entire guard and nothing fails. Pin byte-equality so a one-sided edit fails here instead.
+// A third semantically-identical copy lives in stacks/orchestration/skills/delegate/identity.mjs
+// LEAF_PATTERNS (regex literals, different escaping) — out of byte-equality's reach,
+// deliberately not pinned here.
+describe('git.agentIdentities entryPatterns lockstep (#247)', () => {
+  test('the github-workflow and orchestration declarations are deep-equal (and non-empty)', () => {
+    const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+    const toolkit = loadToolkit(repoRoot);
+    const patternsOf = (name) => toolkit.stacks.get(name).config['git.agentIdentities'].entryPatterns;
+    const gw = patternsOf('github-workflow');
+    // deepEqual({}, {}) would pass if both declarations were deleted — the guard must exist.
+    assert.ok(gw && Object.keys(gw).length > 0, 'github-workflow declares no entryPatterns');
+    // The exact leaf list is NOT pinned here — only that the two copies never drift apart.
+    assert.deepEqual(gw, patternsOf('orchestration'));
+  });
 });
 
 // #154 review: a declared `pattern:` must be enforced on the NESTED composition path, not only
