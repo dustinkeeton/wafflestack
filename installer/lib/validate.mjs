@@ -18,6 +18,19 @@ const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArr
 const DISPLAY_NAME_RE = compilePattern('(?!.*\\$\\{\\{)[A-Za-z0-9._\\[\\]-]+(?: [A-Za-z0-9._\\[\\]-]+)*');
 
 /**
+ * Allowlist for the agent slug itself (#247) — the `agents:` manifest entry, which is also the
+ * agent's filename (`agents/<slug>.md`). The slug reaches the SAME agent-executed git command
+ * `displayName` is guarded for, by two delegate-derivation paths: always as the plus-address in
+ * `-c user.email=bot+<slug>@…`, and as the title-cased `-c user.name="…"` fallback when
+ * `identity.displayName` is absent — precisely the case where DISPLAY_NAME_RE never runs.
+ * Stricter than DISPLAY_NAME_RE (it is a filename): letters, digits, `.` `_` `-`, no spaces.
+ * The lookahead requires at least one letter or digit (#247 review): a separator-only slug
+ * (`---`, `...`, `___`) title-cases to an empty/whitespace user.name — git's "Author identity
+ * unknown" failure at the agent's first commit, uncaught on the derived path.
+ */
+const AGENT_SLUG_RE = compilePattern('(?=.*[A-Za-z0-9])[A-Za-z0-9._-]+');
+
+/**
  * Allowlist for an agent's `identity.avatar` (#157) — a *reference* to the agent's avatar image:
  * a repo-relative path (`.waffle/avatars/scout.svg`) or an `https://` URL, and nothing else. It is
  * guarded in the same trust-boundary style as its `displayName` sibling, because a consumer may
@@ -135,6 +148,17 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
 
     const usedKeys = new Set();
     for (const agent of stack.agents) {
+      // Trust-boundary check, deliberately UNCONDITIONAL (not gated on an `identity:` block):
+      // the dangerous case is exactly an agent with NO identity — the delegate skill then
+      // title-cases the slug into `-c user.name="…"`, and it always plus-addresses the slug
+      // into `-c user.email=`. See AGENT_SLUG_RE.
+      if (typeof agent.name !== 'string' || !AGENT_SLUG_RE.test(agent.name)) {
+        problems.push(
+          `${ctx}: agent ${JSON.stringify(agent.name ?? null)} name does not match the allowed slug shape ` +
+            `(letters, digits, ". _ -", at least one letter or digit) — the slug is a filename and lands in an agent-executed git command ` +
+            `(-c user.email=bot+<slug>@…, and as the title-cased user.name fallback when identity.displayName is absent)`,
+        );
+      }
       if (!agent.data.description) problems.push(`${ctx}: agent ${agent.name} missing frontmatter description`);
       if (agent.data.name && agent.data.name !== agent.name) {
         problems.push(`${ctx}: agent ${agent.name} frontmatter name "${agent.data.name}" mismatches filename`);
@@ -157,7 +181,9 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       // surface as `git.botName` and carries the same allowlist; `avatar` is guarded in the same
       // style (see IDENTITY_AVATAR_RE). This is a trust-boundary check: external stacks flow
       // through `validateExternalStacks` at render, so a third-party agent cannot smuggle a
-      // quote-breaking display name into an agent-executed command.
+      // quote-breaking display name into an agent-executed command. The other operand of that
+      // command — the agent slug — is enforced unconditionally at the top of this loop (#247),
+      // because it reaches the command even when this whole block is skipped.
       const identity = agent.data.identity;
       if (identity !== undefined) {
         if (!isPlainObject(identity)) {

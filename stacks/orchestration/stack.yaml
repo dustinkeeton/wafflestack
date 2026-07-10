@@ -126,10 +126,14 @@ config:
   git.agentIdentities:
     required: false
     default: {}
-    # Identical entryPatterns to the github-workflow stack's declaration (#156). Guards are
-    # compiled toolkit-wide and a key guarded twice must satisfy BOTH, so these must not drift:
-    # any divergence silently tightens the effective guard. The delegate skill is this key's
-    # consumer, and it renders here whether or not github-workflow is installed.
+    # Identical entryPatterns to the github-workflow stack's declaration (#156); byte-equality
+    # is pinned by the deep-equal lockstep test (#247). Within THIS toolkit, guards compile
+    # across every registry stack regardless of selection and a key guarded twice must satisfy
+    # BOTH, so a one-sided edit here can only tighten — the twin still binds. The loosening
+    # hazard is one level up: in any toolkit where only ONE copy loads (a single-stack external
+    # redistribution of orchestration, or a fork that trims the registry), a loosened copy IS
+    # the entire guard and nothing fails. The delegate skill is this key's consumer, and it
+    # renders here whether or not github-workflow is installed.
     entryPatterns:
       botName: '^(?!.*\$\{\{)[A-Za-z0-9._\[\]-]+(?: [A-Za-z0-9._\[\]-]+)*$'
       botEmail: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
