@@ -473,6 +473,208 @@ describe('github-workflow setup note: the signing recipes and verification matri
   });
 });
 
+// -----------------------------------------------------------------------------
+// #160 — CI workflow identity. Two identities, two mechanisms: the TOKEN decides the
+// event identity (PR/comment/tag author), the rendered `git.cmd` recipe decides the
+// commit identity. The workflows must add NO identity of their own: `git.botName` /
+// `git.botEmail` carry placeholder defaults, so any `git config user.*` step (or a
+// literal `{{git.…}}` even inside a comment — files/ payloads are substituted) would
+// impose a fake bot identity on a consumer who never opted in. These assertions read
+// the SOURCE payloads, because the absence being pinned is an absence in the source.
+//
+// What these DON'T claim: that no git identity is configured in the run. The pinned
+// dispatcher runs `git config user.name "claude[bot]"` (repo-local) on every dispatch,
+// and `git -c` outranks that — which is exactly what makes `git.cmd` the single opt-in.
+// So the load-bearing invariant is that no workflow touches the dispatcher's identity
+// inputs (`bot_name` / `bot_id` / `use_commit_signing` / `ssh_signing_key`); pin that,
+// not just the absence of a `git config` string in the YAML.
+//
+// The `git config` / GIT_COMMITTER_* absences are pinned over the workflow's CODE, with
+// full-line `#` comments stripped: the comments necessarily *name* the very strings the
+// steps must not run (that is what makes them useful documentation), and a pin that
+// forbids saying `git config user.name` is a pin on prose, not on behavior.
+// -----------------------------------------------------------------------------
+const stripYamlComments = (yaml) =>
+  yaml
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+
+// Derived, never enumerated: the identity-neutrality invariant must hold for EVERY
+// workflow the stack ships, so the list is read off disk. A hardcoded enumeration of a
+// for-all invariant is the bug — it silently exempts whatever is added next.
+const WAFFLE_WORKFLOW_DIR = path.join(
+  REPO_ROOT,
+  'stacks',
+  'github-workflow',
+  'files',
+  '.github',
+  'workflows',
+);
+const ALL_WAFFLE_WORKFLOWS = fs
+  .readdirSync(WAFFLE_WORKFLOW_DIR)
+  .filter((f) => f.endsWith('.yml'))
+  .sort();
+
+describe('CI workflow identity (#160)', () => {
+  const wfSource = (name) => fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, name), 'utf8');
+  // The three workflows whose harness makes commits. (Enumerated on purpose: this list
+  // drives the PROSE pins, and only these three carry the design note.)
+  const COMMITTING = [
+    'waffle-hygiene.yml',
+    'waffle-label-hook.yml',
+    'waffle-pr-response-hook.yml',
+  ];
+  // …but identity-neutrality binds every workflow the stack ships, dispatchers included:
+  // `waffle-pr-green-hook.yml` dispatches the harness too, and a `use_commit_signing: true`
+  // there would change commit identity outright.
+  const IDENTITY_NEUTRAL = ALL_WAFFLE_WORKFLOWS;
+
+  test('the identity pins cover every workflow the stack ships', () => {
+    // Guards the guard: if a workflow lands and this list is filtered/stale, fail here.
+    assert.ok(IDENTITY_NEUTRAL.length >= 8, `expected ≥8 workflows, got ${IDENTITY_NEUTRAL.length}`);
+    for (const name of COMMITTING) assert.ok(IDENTITY_NEUTRAL.includes(name), `${name} missing`);
+    assert.ok(IDENTITY_NEUTRAL.includes('waffle-pr-green-hook.yml'));
+  });
+
+  for (const name of IDENTITY_NEUTRAL) {
+    test(`${name} adds no git identity of its own`, () => {
+      const wf = stripYamlComments(wfSource(name));
+      // No workflow step may configure a committer identity: the committed rendered
+      // git.cmd recipe is the single opt-in. A `git config user.*` step would lose to
+      // `git -c` on an opted-in repo but clobber a bare one; a GIT_COMMITTER_* env var
+      // beats `git -c` and would override the recipe outright. Neither is allowed.
+      assert.doesNotMatch(wf, /git\s+config\s+(--\S+\s+)?user\.(name|email)/);
+      assert.doesNotMatch(wf, /GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)/);
+      // The real, behavioral invariant (see the block comment): no workflow may
+      // reconfigure the dispatcher's git-identity inputs. THIS is what a bumped
+      // `bot_name` default or a stray `use_commit_signing: true` would trip.
+      assert.doesNotMatch(wf, /^\s*(bot_name|bot_id|use_commit_signing|ssh_signing_key)\s*:/m);
+    });
+
+    test(`${name} leaks no {{git.*}} placeholder`, () => {
+      const wf = wfSource(name);
+      // A literal {{git.botName}} here — even in a comment — would be substituted at
+      // render and leak the stack's placeholder default into every consumer's CI. And
+      // substitute() recurses into values (MAX_SUBSTITUTION_DEPTH), so {{git.identitySection}}
+      // and {{git.coAuthorTrailer}} leak `Wafflebot` transitively. Close the whole class.
+      assert.doesNotMatch(wf, /\{\{\s*git\./);
+    });
+  }
+
+  for (const name of COMMITTING) {
+    test(`${name} states the identity-neutrality design`, () => {
+      const wf = wfSource(name);
+      assert.match(wf, /Identity-neutral by design/);
+      assert.match(wf, /CI identity — token vs\. git config/);
+      // The comment must name the dispatcher's default identity and the precedence that
+      // makes `git.cmd` load-bearing — not claim the runner's ambient identity survives.
+      assert.match(wf, /claude\[bot\]/);
+      // The comment must not claim the bare default is the RUNNER's identity, in any
+      // phrasing — "the runner's ambient identity", "ambient git identity", reflowed or
+      // not. Pin the substantive token inside the identity sentence, not a brittle
+      // word-for-word string.
+      assert.doesNotMatch(wf, /ambient/i);
+    });
+  }
+
+  // The token fallback is this PR's ONLY behavioral change, and its whole point is WHICH
+  // job holds the PAT. Slice the file at the job boundaries so the pin can tell implement
+  // from enrich: a whole-file match is satisfied by the PAT sitting on the wrong job.
+  const labelHookJobs = (wf) => {
+    const enrichAt = wf.indexOf('\n  enrich:');
+    const implementAt = wf.indexOf('\n  implement:');
+    assert.ok(enrichAt !== -1 && implementAt !== -1, 'label-hook job anchors not found');
+    assert.ok(enrichAt < implementAt, 'expected enrich to precede implement');
+    return { enrich: wf.slice(enrichAt, implementAt), implement: wf.slice(implementAt) };
+  };
+
+  test('the label-hook implement job — and ONLY it — carries the PAT fallback', () => {
+    const wf = wfSource('waffle-label-hook.yml');
+    const { enrich, implement } = labelHookJobs(wf);
+    assert.match(
+      implement,
+      /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/,
+    );
+    // The load-bearing half. Enrich fires on `issues: [labeled]` with an attacker-authorable
+    // body spliced into the prompt; it makes no commits and opens no PR, so it must never
+    // hold the PAT — not under this name, not under any `github_token:` at all.
+    assert.doesNotMatch(enrich, /github_token:/);
+    // …and the PAT appears exactly once in the file, on that one job.
+    const tokens = wf.match(/secrets\.WAFFLE_HYGIENE_TOKEN/g) || [];
+    assert.equal(tokens.length, 1, `expected the PAT fallback on implement only, got ${tokens.length}`);
+  });
+
+  test('the release hook still pushes a LIGHTWEIGHT tag (no tagger identity to set)', () => {
+    const wf = wfSource('waffle-release-hook.yml');
+    assert.match(wf, /git tag "\$TAG" "\$SHA"/);
+    // `git tag -a`/`-m` would demand a tagger identity this identity-neutral workflow
+    // does not set — the run would fail, or worse, tag as the ambient runner user.
+    assert.doesNotMatch(wf, /git tag\s+(-a|-m|-s)\b/);
+    assert.doesNotMatch(wf, /git\s+config\s+(--\S+\s+)?user\.(name|email)/);
+  });
+
+  test('the setup note documents the token↔identity relationship as a model', () => {
+    const stack = fs.readFileSync(
+      path.join(REPO_ROOT, 'stacks', 'github-workflow', 'stack.yaml'),
+      'utf8',
+    );
+    assert.match(stack, /\*\*CI identity — token vs\. git config\.\*\*/);
+    assert.match(stack, /\*\*Event identity\*\*/);
+    assert.match(stack, /\*\*Commit identity\*\*/);
+    assert.match(stack, /The workflows pin no git identity, but the run is not identity-free/);
+    // The bare default is claude[bot] — the dispatcher's bot_name/bot_id — NOT the runner's
+    // ambient identity (stock runners have none). Naming the wrong default here misleads every
+    // consumer who never opts in, which is most of them.
+    assert.match(stack, /`claude\[bot\]` — the dispatcher's own `bot_name` \/ `bot_id` defaults/);
+    // Forbid the wrong claim in ANY phrasing — "the runner's **ambient** git identity",
+    // "the runner's ambient identity", reflowed across lines. Matching a bolded, exact
+    // word sequence would evade on a reword. (The note may still say the runner carries
+    // "no ambient identity at all" — that is the opposite claim, and true.)
+    assert.doesNotMatch(stack, /the runner's\s+(\*\*)?ambient(\*\*)?(\s+git)?\s+identity/);
+    // …and `git.cmd` is load-bearing because `git -c` outranks that REPO-LOCAL config.
+    assert.match(stack, /Why `git\.cmd` is load-bearing/);
+    assert.match(stack, /\*\*repo-local\*\*, and\s+`git -c user\.name=…` outranks repo-local config/);
+    // The two mechanisms have OPPOSITE precedence; the note must not weld them together.
+    assert.match(stack, /Two mechanisms, opposite precedence/);
+    assert.match(stack, /`GIT_COMMITTER_NAME` \/ `GIT_COMMITTER_EMAIL` \(env\) → `git -c user\.name=…`/);
+    // The toolkit cannot make the PR show the bot — the PAT must BE the bot's.
+    assert.match(stack, /must \*belong to the bot\s+account\*/);
+    assert.match(stack, /\*\*Blast radius of the PAT/);
+  });
+
+  test('the blast-radius note names the three facts and recommends a scoped token', () => {
+    const stack = fs.readFileSync(
+      path.join(REPO_ROOT, 'stacks', 'github-workflow', 'stack.yaml'),
+      'utf8',
+    );
+    // 1. `permissions:` scopes github.token only — it does not bound a run holding the PAT.
+    assert.match(stack, /`permissions:` block no longer describes the run's\s+authority/);
+    // 2. Untrusted input: the issue body anyone can author reaches the harness prompt.
+    assert.match(stack, /\*\*issue body\*\* — which anyone can author — is spliced into the harness prompt/);
+    // 3. The token is materialized on disk by the dispatcher's configureGitAuth.
+    assert.match(stack, /`configureGitAuth`[\s\S]{0,400}`\.git\/config`/);
+    // The recommendation, stated as such: App token or repo-scoped fine-grained PAT.
+    assert.match(stack, /GitHub App installation token or a fine-grained PAT scoped to this\s+repository only/);
+    // Pin the RECOMMENDATION, not the incidental phrase. An alternation with `classic PAT`
+    // is satisfied by "With a **classic** PAT, applying a label is…" further down, so the
+    // prescriptive half could be deleted and this stays green.
+    assert.match(stack, /never a classic one/);
+  });
+
+  test('WAFFLE_HYGIENE_TOKEN is declared a prerequisite of every workflow that uses it', () => {
+    const stack = fs.readFileSync(
+      path.join(REPO_ROOT, 'stacks', 'github-workflow', 'stack.yaml'),
+      'utf8',
+    );
+    const entry = stack.match(/name: WAFFLE_HYGIENE_TOKEN[\s\S]{0,600}?description: [^\n]*/);
+    assert.ok(entry, 'WAFFLE_HYGIENE_TOKEN prerequisite entry not found');
+    for (const wf of ['waffle-hygiene.yml', 'waffle-label-hook.yml', 'waffle-pr-response-hook.yml']) {
+      assert.match(entry[0], new RegExp(`files/\\.github/workflows/${wf.replace(/\./g, '\\.')}`));
+    }
+  });
+});
+
 describe('autopilot skill: instantiation contract, handoff, and guardrails', () => {
   let md;
   before(() => {
@@ -971,6 +1173,87 @@ describe('label-hook workflow (rendered in-test): dispatch gates', () => {
     const secret = workflow.match(/anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/g) || [];
     assert.equal(secret.length, 2, `expected the ANTHROPIC_API_KEY secret on both jobs, got ${secret.length}`);
   });
+
+  test('the implement job — and ONLY it — carries the WAFFLE_HYGIENE_TOKEN fallback (#160)', () => {
+    // PR authorship consistency with hygiene: with the secret set the implement PR is
+    // authored by that account and triggers required CI; unset, it falls back unchanged.
+    // Anchored to the job: a whole-file match would greenlight the PAT on `enrich`, whose
+    // trigger splices an attacker-authorable issue body into the harness prompt.
+    const enrichAt = workflow.indexOf('\n  enrich:');
+    const implementAt = workflow.indexOf('\n  implement:');
+    assert.ok(enrichAt !== -1 && enrichAt < implementAt, 'rendered job anchors not found');
+    const enrich = workflow.slice(enrichAt, implementAt);
+    const implement = workflow.slice(implementAt);
+    assert.match(
+      implement,
+      /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/,
+    );
+    assert.doesNotMatch(enrich, /github_token:/);
+  });
+
+  test('renders no TOOLKIT bot identity into a project that never opted in (#160)', () => {
+    // This fixture sets no git.* config, so git.botName/botEmail hold their stack
+    // DEFAULTS. If a workflow ever referenced them, those defaults would render here and
+    // impose a fake bot identity on every non-opted-in consumer's CI. They must not appear.
+    // (The commits this workflow's dispatcher makes on such a repo are authored by
+    // claude[bot] — the dispatcher's default, which `git.cmd` overrides. Not this pin's job.)
+    assert.doesNotMatch(workflow, /Wafflebot/);
+    assert.doesNotMatch(workflow, /wafflebot@users\.noreply\.github\.com/);
+    const code = stripYamlComments(workflow);
+    assert.doesNotMatch(code, /git\s+config\s+(--\S+\s+)?user\.(name|email)/);
+    assert.doesNotMatch(code, /GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)/);
+    assert.doesNotMatch(code, /^\s*(bot_name|bot_id|use_commit_signing|ssh_signing_key)\s*:/m);
+  });
+});
+
+// Coverage parity (#160): the source-payload pins above run over EVERY waffle workflow the
+// stack ships (derived from disk, not enumerated), so the rendered pins must too — otherwise a
+// recursive `{{git.identitySection}}` leak (whose stack default embeds `{{git.botName}}`) is
+// only caught on the handful someone remembered to list. `waffle-pr-green-hook.yml` dispatches
+// the harness exactly like the three that commit; it was outside "the whole class" until now.
+describe('every waffle workflow (rendered in-test): no toolkit bot identity (#160)', () => {
+  const WORKFLOWS = ALL_WAFFLE_WORKFLOWS;
+  let cwd;
+
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-identity-'));
+    fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.waffle', 'waffle.yaml'),
+      [
+        'targets: [claude]',
+        'stacks: []',
+        'include:',
+        ...WORKFLOWS.map((w) => `  - files/.github/workflows/${w}`),
+        'config:',
+        '  project:',
+        '    name: EvalFixture',
+        '',
+      ].join('\n'),
+    );
+    const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+    assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+  });
+
+  afterEach(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  for (const name of WORKFLOWS) {
+    test(`${name} renders no bot identity for a project that never opted in`, () => {
+      const workflow = fs.readFileSync(path.join(cwd, '.github', 'workflows', name), 'utf8');
+      // The fixture has no git opt-in, so git.botName/botEmail hold their stack defaults.
+      // Nothing — not a `{{git.botName}}` reference, not a `{{git.identitySection}}` that
+      // recursively expands into one — may drag them into a consumer's committed workflow.
+      assert.doesNotMatch(workflow, /Wafflebot/);
+      assert.doesNotMatch(workflow, /wafflebot@users\.noreply\.github\.com/);
+      assert.doesNotMatch(workflow, /bot@wafflenet\.io/);
+      const code = stripYamlComments(workflow);
+      assert.doesNotMatch(code, /git\s+config\s+(--\S+\s+)?user\.(name|email)/);
+      assert.doesNotMatch(code, /GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)/);
+      assert.doesNotMatch(code, /^\s*(bot_name|bot_id|use_commit_signing|ssh_signing_key)\s*:/m);
+    });
+  }
 });
 
 describe('hygiene workflow (rendered in-test): dispatcher pin (#131)', () => {
@@ -1013,6 +1296,17 @@ describe('hygiene workflow (rendered in-test): dispatcher pin (#131)', () => {
       /uses: anthropics\/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1\.0\.162/,
     );
     assert.match(workflow, /anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
+  });
+
+  test('renders no TOOLKIT bot identity into a project that never opted in (#160)', () => {
+    // Same no-clobber pin as the label-hook suite: the fixture has no git opt-in, so the
+    // stack's placeholder bot defaults must be nowhere in the workflow a consumer commits.
+    assert.doesNotMatch(workflow, /Wafflebot/);
+    assert.doesNotMatch(workflow, /wafflebot@users\.noreply\.github\.com/);
+    const code = stripYamlComments(workflow);
+    assert.doesNotMatch(code, /git\s+config\s+(--\S+\s+)?user\.(name|email)/);
+    assert.doesNotMatch(code, /GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)/);
+    assert.doesNotMatch(code, /^\s*(bot_name|bot_id|use_commit_signing|ssh_signing_key)\s*:/m);
   });
 });
 

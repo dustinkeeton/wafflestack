@@ -32,6 +32,34 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **CI workflow identity aligned with the identity model (#160).** CI attribution was decided
+  entirely by whichever token created the event, and the relationship was documented nowhere.
+  The fix is deliberately *not* a `git config user.*` step in the workflows: `git.botName` /
+  `git.botEmail` carry placeholder defaults, so pinning an identity in a workflow would impose a
+  fake bot on every consumer who never opted in. **The no-clobber rule extends to CI.**
+  The model, now written down in the github-workflow setup note as **"CI identity — token vs. git
+  config"**: the *event* identity (PR/comment/tag author) is decided by the **token**
+  (`WAFFLE_HYGIENE_TOKEN` / `WAFFLE_RELEASE_TOKEN`, else `github.token` → `github-actions[bot]`,
+  which triggers no further workflows); the *commit* identity is decided by the resolved
+  **`git.cmd`** in the committed, rendered git-workflow skill — which wins because `git -c`
+  outranks the **repo-local** config the pinned dispatcher writes on every run (`git config
+  user.name "claude[bot]"`, its `bot_name`/`bot_id` defaults). So an opted-in repo's CI commits
+  have carried the bot identity since #155, with nothing further to configure; a repo on a bare
+  `git.cmd` commits as **`claude[bot]`**, not as the runner. The note also splits the two
+  precedences the toolkit must avoid: a `git config user.*` step *loses* to `git -c` (but
+  clobbers a bare repo), while a `GIT_COMMITTER_*` env var *beats* it. Making the *PR* show the
+  bot requires the PAT to belong to the bot account; the toolkit cannot configure that.
+  One behavioral change: **`waffle-label-hook`'s implement job now dispatches with
+  `github_token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}`**, matching hygiene and
+  pr-response — so implement PRs are authored by the same account as hygiene PRs and trigger the
+  repo's required CI. **Consumer impact:** no-op for repos without the secret. Repos that *have*
+  it should read the blast-radius note, now spelled out in the setup note — with the secret set the
+  job's `permissions:` block no longer bounds the run (it scopes `github.token` only), the
+  attacker-authored issue body reaches the harness prompt, and the dispatcher writes the token into
+  `.git/config`. Use a GitHub App installation token or a **repo-scoped fine-grained PAT**; a
+  classic PAT turns applying a label into an account-wide escalation. The harness-driven workflows carry
+  identity-neutrality design comments, and the release hook's lightweight tag (which stores no
+  tagger identity at all) is pinned by test against an `-a`/`-m` upgrade.
 - **A defined signing model for bot and agent authors (#158, closes the #153 epic's last gap).**
   The toolkit configured no signing, so `git.cmd` — which overrides the identity and *nothing else* —
   left `commit.gpgsign` ambient. On a signing machine that meant a bot-authored commit signed with

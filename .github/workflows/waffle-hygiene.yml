@@ -45,6 +45,19 @@ jobs:
       - name: Install project dependencies
         run: |
           npm install
+      # Identity-neutral by design: no step here sets `git config user.*`, a GIT_AUTHOR_* /
+      # GIT_COMMITTER_* env var, or the dispatcher's bot_name / bot_id / use_commit_signing
+      # inputs. Committer identity on the commits this harness makes comes from the resolved
+      # `git.cmd` recipe carried by the repo's committed, rendered git-workflow skill — the
+      # single opt-in. It sticks because `git -c user.name=…` outranks the REPO-LOCAL config the
+      # pinned dispatcher writes on every run (`git config user.name "claude[bot]"`, from its
+      # bot_name/bot_id defaults). So: opted-in repo commits as its bot; bare-`git.cmd` repo
+      # commits as claude[bot]. The toolkit adds no identity of its own, exactly as it never
+      # clobbers a human's local one. (A `git config user.*` step here would LOSE to an opted-in
+      # `git.cmd` yet clobber a bare one; a GIT_COMMITTER_* env var BEATS `git -c` and would
+      # silently override the recipe. Opposite precedence, both wrong.) The two identities are
+      # separate: the token below decides the EVENT identity (who authors the PR), `git.cmd`
+      # decides the COMMIT identity. See "CI identity — token vs. git config" in the setup note.
       - name: Dispatch harness (hygiene)
         id: harness
         uses: anthropics/claude-code-action@6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162
