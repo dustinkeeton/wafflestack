@@ -196,13 +196,21 @@ is what you reach for across a breaking one.
   attributes the vouching to the human), and a prompting signer blocks the non-interactive commit.
   Setup-note rule (4) now says so and gives the remedy — `-c commit.gpgsign=false` when the bot holds
   no `signingKey`, which this repo's own `git.cmd` now uses. A real signing model is #158.
-  **Consumer impact: no behavior change.** No command default changed and no key became required.
-  A re-render leaves every rendered git command byte-identical (`release/SKILL.md` is unchanged for
-  a default consumer); `git-workflow/SKILL.md` gains the opt-in prose and a resolved-`git.cmd`
-  block, so `render` rewrites that one file. Adopting the bot identity is an explicit opt-in; the
-  `wafflestack init` scaffold and `schema/SETUP.md` now show the recipe. Enforcement is prompt-level
-  (agents follow the rendered examples) — #159/#160 harden it. This toolkit repo dogfoods the opt-in
-  and now commits agent work as `Wafflebot <bot@wafflenet.io>`.
+  **Consumer impact: no default changed, but the `git.cmd` accepted-value contract narrowed**
+  (claim corrected by #244 — this passage originally said "no behavior change"). No command default
+  changed and no key became required; a *default* consumer re-renders byte-identically
+  (`release/SKILL.md` is unchanged), except that `git-workflow/SKILL.md` gains the opt-in prose and
+  a resolved-`git.cmd` block, so `render` rewrites that one file. A consumer who had **already set
+  `git.cmd`**, however, now has the identity values composed into it validated against their
+  declaring stack's `pattern:` guards, unioned toolkit-wide — so a pre-existing recipe whose
+  `git.botName` / `git.botEmail` / `git.signingKey` values carry `${{ … }}`, quotes, or shell
+  metacharacters newly **fails `render`** where it previously rendered silently. **Migration:**
+  bring the value into the allowlisted shape the error names (it cites the failing pattern and its
+  declaring stack), or stop composing that key into `git.cmd` — the failure is the guard working,
+  not a regression. Adopting the bot identity is an explicit opt-in; the `wafflestack init`
+  scaffold and `schema/SETUP.md` now show the recipe. Enforcement is prompt-level (agents follow
+  the rendered examples) — #159/#160 harden it. This toolkit repo dogfoods the opt-in and now
+  commits agent work as `Wafflebot <bot@wafflenet.io>`.
 - **First-class GitHub identity config keys (#154, `github-workflow`).** `git.botName`,
   `git.botEmail`, `git.signingKey`, and `git.agentIdentities` are now declared in the stack's
   `config:` schema with placeholder defaults, and a rendered "Bot identity (config)" reference
@@ -329,6 +337,19 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Fixed
+- **Pattern-guard rejections now name the declaring stack and the failing pattern (#244, engine).**
+  `pattern:` / `entryPatterns:` guards are unioned toolkit-wide (deliberately — the guard travels
+  with the KEY; see the #155-review entry below), which meant a stack the project never installs
+  could veto a config value with an error naming neither the stack nor the regex. Rejections now
+  append `<pattern> (declared by stack "<name>")` for every guard the value fails — failing guards
+  only, never ones it satisfies — and the reserved `harness.*` guards identify themselves. The
+  multi-stack AND ("a key guarded by more than one stack must satisfy all of its patterns") was
+  previously untested on the scalar path since no shipped scalar key is dual-declared; a two-stack
+  fixture test now pins it (the `entryPatterns` twin is already live: `git.agentIdentities` is
+  declared identically by `github-workflow` and `orchestration`). The #155 entry's "no behavior
+  change" consumer-impact claim is corrected in place to the narrowed-contract statement it should
+  have made. **Consumer impact:** error messages only — no config or schema change, no re-render
+  needed.
 - **Config `pattern:` guards are compiled toolkit-wide, not per stack (#155 review, security).**
   `render` compiled each stack's `pattern:` guards while rendering *that stack's* items, so a guard
   only applied where its declaring stack happened to be installed. Only `github-workflow` declares
