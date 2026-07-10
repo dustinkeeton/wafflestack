@@ -762,8 +762,14 @@ describe('autopilot skill: instantiation contract, handoff, and guardrails', () 
 // the failure bounds — so a meaning-breaking edit fails CI instead of shipping silently.
 describe('autopilot skill: opt-in adversarial-review → pr-response review loop (#220)', () => {
   let md;
+  let reviewStep;
   before(() => {
     md = readSkill('autopilot');
+    // The review loop's own step body, so phrases shared with the QA gate (the fresh
+    // evidence pass's cap+1 bound, the clean-pass file-nothing branch) are asserted inside
+    // the RIGHT step — Step 5 contains identical copies that would otherwise satisfy them.
+    reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    assert.ok(reviewStep.length > 0, 'Step 6 is the review → respond loop');
   });
 
   test('review-loop consent is a separate per-run opt-in, default OFF, +review flag', () => {
@@ -795,11 +801,18 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.match(md, /re-wait for green/);
   });
 
-  test('cap reached is a safety bound, not a merge blocker: proceed + hold-labeled follow-up', () => {
-    assert.match(md, /safety cap, not a merge blocker/);
-    // The follow-up captures the last adversarial-review findings and carries the hold label.
-    assert.match(md, /last adversarial-review findings/);
-    assert.match(md, /--add-label "waffle-manual-review"/);
+  test('cap reached is a safety bound, not a merge blocker: fresh evidence pass sources the follow-up', () => {
+    assert.match(reviewStep, /safety cap, not a merge blocker/);
+    // The escape hatch runs ONE fresh adversarial-review pass outside the loop as the brief's
+    // sole source — evidence, not another fix round: no pr-response follows it, cap+1 bounded.
+    assert.match(reviewStep, /run `adversarial-review <pr>` \*\*once more, outside the loop\*\*/);
+    assert.match(reviewStep, /No `pr-response` follows it/);
+    assert.match(reviewStep, /cap\+1/);
+    // A clean fresh pass skips the filing entirely — it IS the convergence evidence — and the
+    // stale last-round brief (#234) is gone (whole-document, deliberately: no echo anywhere).
+    assert.match(reviewStep, /file nothing/);
+    assert.doesNotMatch(md, /last adversarial-review findings/);
+    assert.match(reviewStep, /--add-label "waffle-manual-review"/);
   });
 
   test('hold-labeled issues are out of automatic scope, released only by an explicit #N', () => {
@@ -813,6 +826,9 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     // A skill error is one failed round, retried once, then stop — bounded by maxReviewRounds.
     assert.match(md, /one failed round, not a signal to keep looping/);
     assert.match(md, /bounds the loop regardless, so it can never spin/);
+    // The one-retry bound covers the cap hatch's fresh evidence pass too — this Failure-handling
+    // bullet is the OWNING statement of the errors-twice fallback (review-loop side).
+    assert.match(md, /flapping review\. The same one-retry bound covers the escape hatch's fresh evidence pass/);
   });
 });
 
@@ -928,11 +944,18 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     assert.match(qaStep, /re-wait for green/);
   });
 
-  test('QA cap reached is a safety bound, not a merge blocker: proceed + hold-labeled follow-up', () => {
+  test('QA cap reached is a safety bound, not a merge blocker: fresh evidence pass sources the follow-up', () => {
     assert.match(qaStep, /safety cap, not a merge blocker/);
-    // The follow-up captures the last QA findings and carries the hold label.
-    assert.match(qaStep, /last QA findings/);
+    // The escape hatch runs ONE fresh qa pass outside the loop as the brief's sole source —
+    // evidence, not another fix round: no pr-response follows it, cap+1 bounded.
+    assert.match(qaStep, /run `qa <pr>` \*\*once more, outside the loop\*\*/);
+    assert.match(qaStep, /No `pr-response` follows it/);
+    assert.match(qaStep, /cap\+1/);
+    // A clean fresh pass skips the filing entirely — it IS the convergence evidence.
+    assert.match(qaStep, /file nothing/);
     assert.match(qaStep, /--add-label "waffle-manual-review"/);
+    // The stale last-round brief (#234) is gone everywhere — including Step 5's hook-armed note.
+    assert.doesNotMatch(md, /last QA findings/);
   });
 
   test('failure handling: a red QA round stops-and-reports; qa errors are bounded, never loop forever', () => {
@@ -942,6 +965,12 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     // incomplete QA pass.
     assert.match(md, /a QA pass that never completed/);
     assert.match(md, /never spin on a flapping QA pass/);
+    // The one-retry bound covers the cap hatch's fresh evidence pass too — this Failure-handling
+    // bullet is the OWNING statement of the errors-twice fallback (QA side): file from the LAST
+    // round's findings, with a staleness note, rather than lose the trail.
+    assert.match(md, /flapping QA pass\. The same one-retry bound covers the escape hatch's fresh evidence pass/);
+    assert.match(md, /fall back to filing the follow-up from the \*\*last round's\*\* findings/);
+    assert.match(md, /a possibly-stale hand-off beats losing the trail/);
   });
 });
 
