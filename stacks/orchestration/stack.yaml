@@ -117,7 +117,7 @@ config:
       'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
       — the recipe owns the signing posture (an unpinned commit.gpgsign stays ambient and would
       sign bot-authored commits with the human's key, or hang on a prompting signer); a signing bot
-      pins commit.gpgsign=true plus user.signingkey instead. This stack does NOT
+      pins commit.gpgsign=true, tag.gpgSign=true, gpg.format and user.signingkey instead. This stack does NOT
       declare those identity keys, so they must be set as real values in project config — a
       recipe leaning on the github-workflow stack's defaults renders them literally here.
       Their pattern guards still apply: guards are compiled toolkit-wide, so a command
