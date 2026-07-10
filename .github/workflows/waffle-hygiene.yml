@@ -193,3 +193,83 @@ jobs:
           else
             echo "::warning title=waffle-hygiene::Run reported neither a PR URL nor an explicit \"no drift\"/\"skipped\" outcome; it may have silently no-op'd. Review the run log or rerun in debug mode (heuristic — the harness's final text is free-form)."
           fi
+      # Per-run token accounting (#227). Extract usage/cost from the same execution log the
+      # check step reads and fold it into ONE marker-keyed comment on the PR this run opened
+      # (the same URL evidence the delivery check reads; a run that opened no PR — e.g. "no
+      # drift" — has no thread to attach the spend to and skips with a summary note) —
+      # created on the first recorded run, updated in place after that. One row per run
+      # (keyed run_id.run_attempt in the machine-readable waffle-token-data line) and the
+      # totals are always recomputed from the full runs map — never incremented in place —
+      # so a step retry replaces its own row and a later hook's run on the same PR adds one;
+      # a double count is structurally impossible. The table is a pure render of the data
+      # line; downstream (the post-merge counter) reads ONLY the data line. HOOK is
+      # deliberately a short label: sibling hooks match their own markers as substrings over
+      # ALL comments on a thread, so this comment must never contain another hook's marker
+      # text. Telemetry must never red the job: continue-on-error is the hard backstop, the
+      # script only ever exits 0, and always() keeps recording the spend of a run whose
+      # harness or checks failed (it still billed). A missing log, a result-less log (the
+      # invalid-API-key shape), zero usage, or a failed API call all skip with a note
+      # instead of failing.
+      # Known race windows (one undercount class — never a double count): (1) CREATE — two
+      # hooks' token steps finishing at once on the same thread can each see "no existing
+      # comment" and POST their own (GitHub has no conditional create); every later reader
+      # takes the OLDEST marked comment, so the loser's rows are orphaned. (2) UPDATE — two
+      # steps PATCHing the same comment at once each read the same base run map, and the
+      # loser's row is silently dropped (that run never re-records). Accepted: best-effort
+      # telemetry, not billing.
+      - name: Record token spend
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTION_FILE: ${{ steps.harness.outputs.execution_file }}
+          HOOK: hygiene
+          RUN_KEY: ${{ github.run_id }}.${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -o pipefail
+          file="${EXECUTION_FILE:-}"
+          if [ -z "$file" ] || [ ! -f "$file" ]; then
+            file="${RUNNER_TEMP}/claude-execution-output.json"
+          fi
+          if [ ! -f "$file" ]; then echo "🧇 token spend: no execution log — nothing to record."; exit 0; fi
+          result="$(jq -c 'map(select(.type == "result")) | last' "$file" 2>/dev/null || true)"
+          if [ -z "$result" ] || [ "$result" = "null" ]; then echo "🧇 token spend: no result message — nothing to record."; exit 0; fi
+          row="$(printf '%s' "$result" | jq -c --arg hook "$HOOK" --arg key "$RUN_KEY" --arg url "$RUN_URL" '{key: $key, hook: $hook, url: $url, turns: (.num_turns // 0), in: (.usage.input_tokens // 0), out: (.usage.output_tokens // 0), cacheCreate: (.usage.cache_creation_input_tokens // 0), cacheRead: (.usage.cache_read_input_tokens // 0), costUsd: (.total_cost_usd // 0), ms: (.duration_ms // 0)}' 2>/dev/null || true)"
+          if [ -z "$row" ]; then echo "🧇 token spend: malformed result message — nothing to record."; exit 0; fi
+          if [ "$(printf '%s' "$row" | jq '.in + .out' 2>/dev/null || echo 0)" = "0" ]; then echo "🧇 token spend: zero recorded usage (an invalid-API-key run dies before spending) — nothing to record."; exit 0; fi
+          # Target: the PR this run opened — the URL in the result's final text, scoped to
+          # THIS repo so a cross-repo link can never redirect the comment (dots in the repo
+          # name are ERE-escaped so the match stays exact).
+          final="$(printf '%s' "$result" | jq -r '.result // ""' 2>/dev/null || true)"
+          safe_repo="${GITHUB_REPOSITORY//./\\.}"
+          pr_url="$(printf '%s' "$final" | grep -oE "https://github\.com/${safe_repo}/pull/[0-9]+" | head -n1 || true)"
+          N="${pr_url##*/}"
+          if [ -z "$N" ]; then echo "🧇 token spend: run reported no PR URL (e.g. no drift) — no thread to attach the spend to." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          # Create-or-update the one marker-keyed comment (same read idiom as the gate steps:
+          # the comment list is DATA, parsed with jq, never eval'd). --paginate emits one
+          # array PER PAGE and jq runs once per array, so `first` is per-page — head -n1
+          # collapses the stream to the one OLDEST marked comment.
+          comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${N}/comments" --paginate 2>/dev/null || echo '[]')"
+          existing="$(printf '%s' "$comments" | jq -c '[ .[] | select((.body // "") | contains("<!-- waffle-token-count -->")) ] | first // empty' 2>/dev/null | head -n1 || true)"
+          data='{}'
+          if [ -n "$existing" ]; then
+            line="$(printf '%s' "$existing" | jq -r '.body // ""' | grep -m1 '^<!-- waffle-token-data ' || true)"
+            data="$(printf '%s' "$line" | sed -e 's/^<!-- waffle-token-data //' -e 's/ -->[[:space:]]*$//')"
+            printf '%s' "$data" | jq -e '.runs' >/dev/null 2>&1 || data='{}'
+          fi
+          merged="$(jq -cn --argjson data "$data" --argjson row "$row" '{runs: (($data.runs // {}) + {($row.key): $row})}' 2>/dev/null || true)"
+          if [ -z "$merged" ]; then echo "🧇 token spend: could not merge the run rows — nothing to record."; exit 0; fi
+          printf '%s' "$merged" | jq -r 'def commas: tostring | explode | reverse | implode | gsub("(?<a>[0-9]{3})(?=[0-9])"; "\(.a),") | explode | reverse | implode; def usd: (. * 100 | round) as $c | "\($c / 100 | floor).\(($c % 100) as $r | (if $r < 10 then "0" else "" end) + ($r | tostring))"; (.runs | to_entries | sort_by(.key) | map(.value)) as $rows | "<!-- waffle-token-count -->", "🧇 **Claude token spend** (automated harness runs only — local sessions are not captured; only rows on a merged PR roll into the global counter)", "", "| run | hook | turns | input | output | cache read | cost |", "|-----|------|-------|-------|--------|------------|------|", ($rows[] | "| [\(.key)](\(.url)) | \(.hook) | \(.turns) | \(.in | commas) | \(.out | commas) | \(.cacheRead | commas) | $\(.costUsd | usd) |"), "| **total** | | | **\(([$rows[].in] | add) | commas)** | **\(([$rows[].out] | add) | commas)** | **\(([$rows[].cacheRead] | add) | commas)** | **$\(([$rows[].costUsd] | add) | usd)** |", "<!-- waffle-token-data \(tojson) -->"' > "$RUNNER_TEMP/token-comment.md" 2>/dev/null || { echo "🧇 token spend: could not render the comment body — nothing to record."; exit 0; }
+          jq -n --rawfile body "$RUNNER_TEMP/token-comment.md" '{body: $body}' > "$RUNNER_TEMP/token-payload.json"
+          if [ -n "$existing" ]; then
+            id="$(printf '%s' "$existing" | jq -r '.id')"
+            verb=PATCH; target="repos/${GITHUB_REPOSITORY}/issues/comments/${id}"
+          else
+            verb=POST; target="repos/${GITHUB_REPOSITORY}/issues/${N}/comments"
+          fi
+          if gh api --method "$verb" "$target" --input "$RUNNER_TEMP/token-payload.json" >/dev/null 2>&1; then
+            echo "🧇 token spend: recorded run ${RUN_KEY} (${HOOK}) on #${N}." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=token spend (${HOOK})::Could not create-or-update the token-count comment on #${N}; the row for run ${RUN_KEY} was dropped (non-fatal — telemetry never fails the job)."
+          fi

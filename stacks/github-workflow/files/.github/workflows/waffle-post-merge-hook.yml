@@ -1,16 +1,21 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
-# Post-merge hook: when a pull request is MERGED, delete its (same-repo) head branch on the
-# remote so nothing lingers after the merge, and emit a prune signal in the run summary so
-# local clones know a `git fetch --prune` will drop the now-stale origin/* tracking ref.
-# Deterministic — a plain Actions job with `contents: write`, NO Claude dispatch and NO API
+# Post-merge hook: when a pull request is MERGED, do the two remote-side chores that follow —
+# delete its (same-repo) head branch so nothing lingers after the merge (emitting a prune
+# signal in the run summary so local clones know a `git fetch --prune` will drop the now-stale
+# origin/* tracking ref), and fold the PR's recorded token spend (#227) into the global
+# counter JSON on the dedicated `waffle-telemetry` branch — the shields.io endpoint file
+# behind the README badge. Deterministic — a plain Actions job, NO Claude dispatch and NO API
 # spend (unlike the sibling waffle-label-hook), same trigger shape as waffle-release-hook.
+# Both writes go through the GitHub API only (no checkout, no local git), so the job stays
+# identity-neutral: the counter commits author as the job token's identity.
 #
 # This is the REMOTE half of post-merge hygiene. The LOCAL half — deleting the merged local
 # branch + worktree and pruning — stays the merging agent's job via the `clean-up` skill
 # (`clean-up git --yes`), because a CI job cannot reach a developer's machine. Board/issue
 # reconciliation is likewise a local-agent step (see the clean-up + git-workflow skills), NOT
 # done here: keeping it local costs zero API budget and lets the agent that just merged fix
-# board drift in place — this job stays scoped to remote-only branch hygiene on purpose.
+# board drift in place — this job stays scoped to remote-only hygiene (branch delete +
+# counter tick) on purpose.
 #
 # Safety: only a branch in THIS repo is ever touched — a fork PR's head lives on the fork, so
 # the same-repo gate skips it (and the base repo's read-only fork token could not delete it
@@ -41,9 +46,13 @@ jobs:
       github.event.pull_request.head.ref != github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Least privilege: the only write this job performs is deleting a branch ref.
+    # Least privilege: contents: write covers the two writes this job performs (deleting a
+    # branch ref; committing the counter tick on the telemetry branch via the Contents/Git
+    # Data API); pull-requests: read lets it list the merged PR's comments to find the
+    # recorded token spend.
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - name: Delete the merged head branch
         env:
@@ -66,3 +75,124 @@ jobs:
           else
             echo "::warning title=waffle-post-merge-hook::Could not delete remote branch '${BRANCH}' (PR #${PR_NUMBER}) though it still exists — it may be protected, missing perms (Actions lacking contents: write), or a transient API error (5xx / rate-limit / network). Delete it by hand if you want it gone; this hygiene hook does not fail the run over a lingering branch."
           fi
+      # Global token counter (#227). Sum the merged PR's recorded token spend — the
+      # machine-readable waffle-token-data line inside the <!-- waffle-token-count --> comment
+      # the dispatching hooks maintain (the table is never parsed) — and fold it into
+      # .waffle/telemetry/tokens.json on the dedicated `waffle-telemetry` branch. That file IS
+      # the shields.io endpoint-badge JSON (schemaVersion/label/message/color at top level;
+      # the accumulating totals nest under `waffle`, which shields ignores).
+      #
+      # Why a dedicated unprotected branch, not main: a fresh API commit to a protected
+      # default branch is rejected by required status checks (this repo's doctor gate), it
+      # would spam main's history with a commit per merge, and a lock-managed counter would
+      # red the doctor drift gate on every tick. A non-default branch triggers no workflows
+      # (doctor fires on push to main + PRs only), so no `[skip ci]` is needed either.
+      #
+      # Identity-neutral by construction (#160): everything is pure `gh api` — the branch is
+      # bootstrapped as an ORPHAN ref via the Git Data API (blob → tree → no-parent commit →
+      # ref) and each tick is a sha-conditional Contents-API PUT, so there is no checkout, no
+      # local git, and no identity config; the commits author as the token identity
+      # (github-actions[bot] under github.token). The sha-conditional PUT plus a bounded
+      # retry handles the real race (per-PR concurrency groups do NOT serialize two different
+      # PRs' post-merge runs), and the per-PR entry in `waffle.prs` makes the update
+      # idempotent — a hook re-run or a lost-race retry never double-counts (`has($pr)` short-
+      # circuits). Telemetry never fails the merge cleanup: continue-on-error is the hard
+      # backstop and the script only ever exits 0 — an exhausted retry or a failed read is a
+      # warning (a missed counter tick is a hygiene miss, not a delivery failure), and a PR
+      # with no recorded spend (the common case while an API key is dead: every run dies at
+      # turn 1 with zero usage) still bootstraps the branch so the badge resolves, then adds
+      # nothing.
+      - name: Update global token counter
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          TBRANCH="waffle-telemetry"
+          TPATH=".waffle/telemetry/tokens.json"
+          seed='{"schemaVersion":1,"label":"claude tokens","message":"0","color":"F08A1D","labelColor":"241204","waffle":{"totalTokens":0,"inputTokens":0,"outputTokens":0,"totalCostUsd":0,"prs":{},"updatedAt":""}}'
+          # (1) Sum the PR's recorded runs from the marker comment's data line. No comment,
+          #     no data line, or malformed JSON all mean zero recorded spend (never an error).
+          comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate 2>/dev/null || echo '[]')"
+          line="$(printf '%s' "$comments" | jq -r '[ .[] | select((.body // "") | contains("<!-- waffle-token-count -->")) ] | (first // empty) | .body // ""' 2>/dev/null | grep -m1 '^<!-- waffle-token-data ' || true)"
+          data='{}'
+          if [ -n "$line" ]; then data="$(printf '%s' "$line" | sed -e 's/^<!-- waffle-token-data //' -e 's/ -->[[:space:]]*$//')"; fi
+          printf '%s' "$data" | jq -e '.runs' >/dev/null 2>&1 || data='{}'
+          totals="$(printf '%s' "$data" | jq -c '{in: ([.runs[]?.in] | add // 0), out: ([.runs[]?.out] | add // 0), cost: ([.runs[]?.costUsd] | add // 0)}' 2>/dev/null || echo '{"in":0,"out":0,"cost":0}')"
+          pr_total="$(printf '%s' "$totals" | jq '.in + .out' 2>/dev/null || echo 0)"
+          case "$pr_total" in ''|*[!0-9]*) pr_total=0 ;; esac
+          # (2) Bootstrap the orphan telemetry branch when it does not exist yet. Request
+          #     bodies go through scratch files + --input (repo convention — no heredocs);
+          #     author/committer are omitted so the commit carries the token identity. A lost
+          #     creation race (the ref POST 422s because a concurrent run won) falls through
+          #     to the re-check, which now sees the winner's ref.
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${TBRANCH}" >/dev/null 2>&1; then
+            printf '%s' "$seed" | jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.waffle.updatedAt = $now | {content: (tojson | @base64), encoding: "base64"}' > "$RUNNER_TEMP/tk-blob.json" 2>/dev/null || true
+            blob="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input "$RUNNER_TEMP/tk-blob.json" --jq .sha 2>/dev/null || true)"
+            tree=""
+            if [ -n "$blob" ]; then
+              jq -n --arg sha "$blob" --arg path "$TPATH" '{tree: [{path: $path, mode: "100644", type: "blob", sha: $sha}]}' > "$RUNNER_TEMP/tk-tree.json"
+              tree="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/trees" --input "$RUNNER_TEMP/tk-tree.json" --jq .sha 2>/dev/null || true)"
+            fi
+            commit=""
+            if [ -n "$tree" ]; then
+              jq -n --arg tree "$tree" '{message: "chore(telemetry): seed the global token counter", tree: $tree, parents: []}' > "$RUNNER_TEMP/tk-commit.json"
+              commit="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" --input "$RUNNER_TEMP/tk-commit.json" --jq .sha 2>/dev/null || true)"
+            fi
+            if [ -n "$commit" ]; then
+              jq -n --arg sha "$commit" --arg ref "refs/heads/${TBRANCH}" '{ref: $ref, sha: $sha}' > "$RUNNER_TEMP/tk-ref.json"
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" --input "$RUNNER_TEMP/tk-ref.json" >/dev/null 2>&1 || true
+            fi
+            if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${TBRANCH}" >/dev/null 2>&1; then
+              echo "::warning title=waffle-post-merge-hook::Could not bootstrap the ${TBRANCH} branch (missing contents: write, or a transient API error) — the global token counter was not updated for PR #${PR_NUMBER}. A later merge retries the bootstrap; a missed counter tick never fails the run."
+              exit 0
+            fi
+          fi
+          # (3) Nothing recorded on this PR — nothing to add. (The bootstrap above already
+          #     ran, so even a zero-spend merge seeds the badge file on first use.)
+          if [ "$pr_total" -eq 0 ]; then
+            echo "🧇 waffle-post-merge-hook: PR #${PR_NUMBER} has no recorded token spend — global counter unchanged." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # (4) Optimistic-concurrency update: GET content + sha, dedup on waffle.prs, PUT
+          #     conditioned on that sha. A 409/422 means a concurrent merge's run won the
+          #     write race — re-GET and retry, bounded; the dedup makes any retry idempotent.
+          #     An empty sha means the ref exists but the FILE is absent or unreadable (deleted
+          #     from the branch, pushed over, or a pre-existing consumer branch of the same
+          #     name — the bootstrap above gates on the ref only, so it never re-runs here).
+          #     Self-heal instead of wedging every future merge: fall through with the seed and
+          #     PUT in the sha-less CREATE form; if the file actually exists (a transient read
+          #     error), the create form 422s and the loop retries against a fresh read.
+          attempt=1
+          while [ "$attempt" -le 5 ]; do
+            resp="$(gh api "repos/${GITHUB_REPOSITORY}/contents/${TPATH}?ref=${TBRANCH}" 2>/dev/null || true)"
+            sha="$(printf '%s' "$resp" | jq -r '.sha // empty' 2>/dev/null || true)"
+            current="$(printf '%s' "$resp" | jq -r '.content // "" | gsub("\\s"; "") | @base64d' 2>/dev/null || true)"
+            if [ -z "$sha" ]; then current=""; fi
+            printf '%s' "$current" | jq -e '.waffle' >/dev/null 2>&1 || current="$seed"
+            if [ "$(printf '%s' "$current" | jq --arg pr "$PR_NUMBER" '.waffle.prs | has($pr)' 2>/dev/null || echo error)" = "true" ]; then
+              echo "🧇 waffle-post-merge-hook: PR #${PR_NUMBER} is already in the global token counter — nothing to add (idempotent re-run)." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            new="$(printf '%s' "$current" | jq -c --arg pr "$PR_NUMBER" --argjson t "$totals" 'def human: if . >= 1000000 then (((. / 100000) | floor) / 10 | tostring) + "M" elif . >= 1000 then (((. / 100) | floor) / 10 | tostring) + "k" else tostring end; .waffle.inputTokens = ((.waffle.inputTokens // 0) + $t.in) | .waffle.outputTokens = ((.waffle.outputTokens // 0) + $t.out) | .waffle.totalTokens = (.waffle.inputTokens + .waffle.outputTokens) | .waffle.totalCostUsd = ((((.waffle.totalCostUsd // 0) + $t.cost) * 100 | round) / 100) | .waffle.prs[$pr] = {tokens: ($t.in + $t.out), costUsd: ((($t.cost * 100) | round) / 100)} | .waffle.updatedAt = (now | todate) | .message = (.waffle.totalTokens | human)' 2>/dev/null || true)"
+            if [ -z "$new" ]; then
+              echo "::warning title=waffle-post-merge-hook::Could not compute the updated counter JSON — the global token counter was not updated for PR #${PR_NUMBER} (non-fatal)."
+              exit 0
+            fi
+            b64="$(printf '%s' "$new" | jq -r 'tojson | @base64' 2>/dev/null || true)"
+            if [ -z "$b64" ]; then
+              echo "::warning title=waffle-post-merge-hook::Could not encode the updated counter JSON — the global token counter was not updated for PR #${PR_NUMBER} (non-fatal)."
+              exit 0
+            fi
+            jq -n --arg msg "chore(telemetry): +${pr_total} tokens for PR #${PR_NUMBER}" --arg content "$b64" --arg sha "$sha" --arg branch "$TBRANCH" '{message: $msg, content: $content, branch: $branch} + (if $sha != "" then {sha: $sha} else {} end)' > "$RUNNER_TEMP/tk-put.json"
+            if gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/${TPATH}" --input "$RUNNER_TEMP/tk-put.json" >/dev/null 2>&1; then
+              echo "🧇 waffle-post-merge-hook: global token counter +${pr_total} tokens for PR #${PR_NUMBER} (badge JSON on ${TBRANCH})." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep $(( attempt * 2 ))
+            attempt=$(( attempt + 1 ))
+          done
+          echo "::warning title=waffle-post-merge-hook::Could not update the global token counter for PR #${PR_NUMBER} after 5 attempts (a concurrent merge kept winning the write race, or a transient API error) — a missed counter tick is a hygiene miss, not a delivery failure, so this never reds a clean merge."
+          exit 0
