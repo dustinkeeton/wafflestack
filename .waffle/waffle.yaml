@@ -56,6 +56,13 @@ config:
     # non-prompting signer, and would forfeit the per-agent avatars (#157).
     botName: Wafflebot
     botEmail: bot@wafflenet.io
+    # Interim until #284 (owner-credited trailer default): credit the repo owner, not the
+    # harness, so agent commits that reach main count toward the owner's contribution graph
+    # (GitHub credits verified co-author emails on default-branch commits; this repo merges
+    # with merge commits, so branch commits land on main intact). Replaced by
+    # git.ownerName/ownerEmail once #284 ships. Hardcoding a person here is fine — this is
+    # THIS repo's committed config, not a toolkit default (same rationale as botEmail above).
+    coAuthorTrailer: "Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>"
     cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
     identitySection: |-
       This project commits agent work under the managed bot identity — the `commit` examples

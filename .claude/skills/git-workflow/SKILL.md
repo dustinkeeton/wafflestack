@@ -19,7 +19,7 @@ not the machine's: never add or remove signing flags per-invocation. Every agent
 commit must still end with:
 
 ```
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 ```
 
 ### Bot identity (config)
@@ -121,7 +121,7 @@ git checkout -b feat/my-feature
 
 <optional body — why, not what>
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 ```
 
 **Types:** `feat`, `fix`, `refactor`, `chore`, `test`, `docs`
@@ -145,7 +145,7 @@ feat: add data-export command
 Three-phase flow: collect eligible records, confirm with the user,
 then write the export with cancellation support.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 EOF
 )"
 ```
@@ -172,7 +172,7 @@ gh pr create --title "feat: short title" --body "$(cat <<'EOF'
 - [ ] Tests pass (`npm test`)
 - [ ] Build passes (`npm run validate && npm pack --dry-run`)
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 EOF
 )"
 ```
