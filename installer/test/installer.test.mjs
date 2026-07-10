@@ -2104,7 +2104,7 @@ describe('git.cmd pattern guard (#254)', () => {
     }
   });
 
-  test('each shell metacharacter is individually rejected', () => {
+  test('each shell metacharacter (and the empty string) is individually rejected', () => {
     // One value per metacharacter (I5 style), so a pattern edit that readmits any single one
     // goes red on its own line. `$` is rejected everywhere — no `(?!.*\$\{\{)` carve-out — so
     // `$(id)` and `${{ … }}` fail on the same rule. JSON.stringify emits a valid YAML
@@ -2120,6 +2120,7 @@ describe('git.cmd pattern guard (#254)', () => {
       'git > /tmp/f',
       'git \\ x',
       'git \n x',
+      '', // `+` not `*`: an empty git.cmd renders broken command examples
     ];
     for (const bad of bads) {
       write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    cmd: ${JSON.stringify(bad)}\n`);
