@@ -715,7 +715,7 @@ setup: |-
       git:
         botName: Wafflebot
         botEmail: wafflebot@users.noreply.github.com
-        cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
   Five rules for that recipe:
   (1) **Quote `user.name`.** `git.botName` admits single interior spaces (`Waffle Bot` is a
@@ -756,18 +756,24 @@ setup: |-
     own account, GitHub "Verified". The toolkit configures no signing for humans, ever.
   - **Main-bot tier — the recipe. Recipe A (canonical, deliberately unsigned):**
 
-        cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
     `-c commit.gpgsign=false` is a no-op on a machine that does not sign, and on one that does it
-    prevents both failure modes above. Two documented upgrades, for a bot that should really sign —
+    prevents both failure modes above. `-c tag.gpgSign=false` closes the same class for the
+    annotated tag the description scopes in — the release hook's lightweight tag is never signed,
+    but the first `git tag -a` would otherwise ride the ambient config or hang on a prompting
+    signer. Two documented upgrades, for a bot that should really sign —
     each *references* `git.signingKey`, which is why that key is never in the default recipe (the
-    empty default would render `git -c user.signingkey= …`, which git rejects at run time):
+    empty default would render `git -c user.signingkey= …`, and git rejects an empty signingkey
+    **only when it signs** — under B/C the first commit fails loudly, while a non-signing command
+    carries the empty flag silently; either way a key the recipe does not sign with is dead
+    config, so recipe A simply has none):
 
         # Recipe B (SSH signing)
-        cmd: git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=ssh -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
         # Recipe C (GPG signing)
-        cmd: git -c commit.gpgsign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+        cmd: git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=openpgp -c user.signingkey={{git.signingKey}} -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
 
     Pin `gpg.format` in **both** recipes rather than inheriting it — the key is explicit, so the
     format must be too (git ≥ 2.34). An inherited format is the same bug class one layer down: a
@@ -781,7 +787,8 @@ setup: |-
     skill value-swaps the identity into the base command and leaves everything else standing, so a
     spawned agent inherits whatever posture `git.cmd` set. `git.agentIdentities[<agent>].signingKey`
     appends `-c user.signingkey=<key>` *after* the base flags, and git's last-wins `-c` semantics
-    make it the effective key **when the base recipe signs**. Under recipe A it is deliberately
+    make it the effective key **when the base recipe signs** — and its shape must match the
+    recipe's pinned `gpg.format` (see `git.agentIdentities`). Under recipe A it is deliberately
     inert: one map leaf does not silently overturn a project-wide "do not sign".
 
   What GitHub shows, honestly — note that an **unsigned commit gets no badge at all** (neutral),
@@ -794,7 +801,7 @@ setup: |-
   | Main bot, recipe A | **no badge** (unsigned, deliberate) | n/a — nothing is claimed |
   | Main bot, recipe B/C | **"Unverified"** unless registered | yes: a real bot GitHub account with `git.signingKey` added as a signing key **and** `git.botEmail` verified on it |
   | Sub-agent (`bot+<slug>@…`, subaddressable base only) | **no badge** under A; **"Unverified"** under B/C | only by verifying each alias on the bot account — which **relinks every agent to one profile and one avatar**. Per-agent avatars XOR verified sub-agent commits; prefer avatars + no badge |
-  | Sub-agent (noreply base — the **default**) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | already is, with zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address. No per-agent avatar exists to forfeit |
+  | Sub-agent (noreply base — the **default**) | **no badge** under A; **Verified** under B/C once the bot's own email is registered | under B/C, already is — zero alias registration: rule (2) uses the base email verbatim, so sub-agent commits are authored under the bot's verified address; under A nothing is signed, so nothing is claimed. No per-agent avatar exists to forfeit either way |
 
   The XOR in the first sub-agent row is real **only when the base email can subaddress**. On the
   default `wafflebot@users.noreply.github.com` there is no `bot+<slug>@…` author at all, so a
@@ -927,7 +934,7 @@ config:
       and an annotated tag if one is ever added. Identity-free commands (checkout, push, diff,
       log) stay a bare git. The bare default never overrides a human's user.name / user.email.
       Setting this to the canonical recipe IS the bot-identity opt-in:
-      'git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
+      'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}'
       — quote user.name (botName admits interior spaces) and set BOTH identity keys in project
       config rather than relying on their stack defaults, which stacks that declare only git.cmd
       cannot resolve. THE RECIPE OWNS THE SIGNING POSTURE: git.cmd overrides the identity and
@@ -980,7 +987,9 @@ config:
       private key material (it renders into committed files). Empty (the default) means commits
       are not signed with a dedicated bot key. Keep the real value in .waffle/waffle.local.yaml.
       Note the empty default is a *silent* fallback: a git.cmd referencing {{git.signingKey}}
-      without defining it renders `git -c user.signingkey= …`, which git rejects at run time.
+      without defining it renders `git -c user.signingkey= …`, which git rejects **only when the
+      command actually signs** — recipes B/C fail at the agent's first commit; a non-signing
+      command exits 0 and the empty flag rides along unnoticed.
       This key is APPLIED only by referencing it from a signing git.cmd (setup-note recipe B for
       SSH, C for GPG); it enables nothing on its own, and both recipes require a NON-PROMPTING
       signer or every agent commit hangs. See the setup note's signing model.
@@ -1019,7 +1028,12 @@ config:
       to add nothing). That leaf SELECTS a key, it does not ENABLE signing: git's last-wins `-c`
       semantics make it effective only when the base recipe already signs, so under the canonical
       `commit.gpgsign=false` recipe it is deliberately inert — a per-agent leaf never overturns a
-      project-wide "do not sign". Empty (the default) means every agent uses the
+      project-wide "do not sign". When the base recipe DOES sign, the leaf's key must match the
+      base's pinned gpg.format — the leaf selects a key for the signer the base already chose,
+      and no cross-field validation reconciles them: a GPG-shaped key id under recipe B's
+      gpg.format=ssh (or an SSH key path under recipe C's openpgp) makes every commit by that one
+      agent fail at its first signature. The delegate identity preflight surfaces a shape mismatch
+      as a WARN. Empty (the default) means every agent uses the
       derived default. INERT WITHOUT THE OPT-IN: a bare `git.cmd` means no bot identity is
       configured, so no agent is virtualized and this map does nothing — git.cmd is the single
       opt-in switch, and the toolkit never clobbers a human's git config. Entries may be split

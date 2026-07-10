@@ -561,7 +561,8 @@ placeholders pass through verbatim.
 first-class in the github-workflow stack, with placeholder defaults — so **all four** now fall back
 to their defaults rather than passing through. Mind `git.signingKey`: its default is the **empty
 string**, so referencing `{{git.signingKey}}` without defining it renders
-`git -c user.signingkey= …` — a silent failure that git only rejects at run time — where an
+`git -c user.signingkey= …` — a silent failure that git surfaces only when the command actually
+signs, and under a non-signing recipe never at all — where an
 undeclared key would have left the obviously broken literal `{{git.signingKey}}` behind. The
 undeclared-path expansion above is what makes any *genuinely* undeclared overlay key work.)
 

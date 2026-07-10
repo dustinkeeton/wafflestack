@@ -47,7 +47,7 @@ they stay a bare `git`. In this project `git.cmd` resolves to:
 
 If that is a bare `git`, no bot identity is in effect and agent commits use the machine's own git
 config. To opt in, set `git.cmd` to
-`git -c commit.gpgsign=false -c user.name="…" -c user.email=…` referencing the two identity keys
+`git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="…" -c user.email=…` referencing the two identity keys
 with nested `{{...}}` substitution — quoting `user.name` (it may contain spaces) and setting
 **both** keys explicitly in project config rather than relying on their stack defaults. See the
 stack's setup note for the exact recipes and the layering rules.

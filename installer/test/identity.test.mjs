@@ -16,9 +16,14 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.resolve(HERE, '../../stacks/orchestration/skills/delegate/identity.mjs');
 
-const RECIPE_A = 'git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
+const RECIPE_A =
+  'git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
+// The canonical camelCase `tag.gpgSign` (and flag order) is deliberate: the gate's checks are
+// lowercase (`postureOnly`, the ambient-tag WARN), so running the recipe as shipped pins
+// parseGitCmd's key lowercasing — dropping the `.toLowerCase()` makes the WARN fire spuriously
+// on every canonical recipe-B/C consumer, and this fixture goes red with it (#252 review).
 const RECIPE_B =
-  'git -c commit.gpgsign=true -c gpg.format=ssh -c user.signingkey=~/.ssh/id_ed25519.pub -c tag.gpgsign=true -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
+  'git -c commit.gpgsign=true -c tag.gpgSign=true -c gpg.format=ssh -c user.signingkey=~/.ssh/id_ed25519.pub -c user.name="Wafflebot" -c user.email=bot@wafflenet.io';
 
 let agentsDir;
 
@@ -279,7 +284,7 @@ describe('identity preflight: WARN class — surfaced, run proceeds', () => {
   });
 
   test('a signing base that leaves tag.gpgSign ambient is advisory; a non-signing one has nothing to surface', () => {
-    const signingNoTag = RECIPE_B.replace(' -c tag.gpgsign=true', '');
+    const signingNoTag = RECIPE_B.replace(' -c tag.gpgSign=true', '');
     const r = run({ gitCmd: signingNoTag });
     assert.equal(r.code, 0, r.all);
     assert.match(r.out, /WARN: .*leaves tag\.gpgSign ambient/);

@@ -45,24 +45,25 @@ config:
     # overlay-held botEmail would render the placeholder there and red the doctor drift gate.
     # bot@wafflenet.io is already public in this repo's history; nothing is leaked.
     # `user.name` is quoted because git.botName admits interior spaces.
-    # `commit.gpgsign=false` is setup-note **recipe A** (#158): the recipe owns the signing
-    # posture. git.cmd overrides the identity and nothing else, so an ambient
-    # `commit.gpgsign = true` would sign a Wafflebot-authored commit with the developer's own
-    # key — and a prompting signer (1Password's SSH agent) hangs the non-interactive commit.
+    # `commit.gpgsign=false` is setup-note **recipe A** (#158, tag posture pinned by #252):
+    # the recipe owns the signing posture. git.cmd overrides the identity and nothing else, so
+    # an ambient `commit.gpgsign = true` would sign a Wafflebot-authored commit with the
+    # developer's own key — and a prompting signer (1Password's SSH agent) hangs the
+    # non-interactive commit. `tag.gpgSign=false` closes the same class for annotated tags.
     # This repo's posture is therefore: agent commits are deliberately unsigned (no GitHub
     # badge, which is intentional and cleaner than an "Unverified" one). Wafflebot holds no
     # signingKey; adopting recipe B/C would require a bot account with a registered key and a
     # non-prompting signer, and would forfeit the per-agent avatars (#157).
     botName: Wafflebot
     botEmail: bot@wafflenet.io
-    cmd: git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+    cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
     identitySection: |-
       This project commits agent work under the managed bot identity — the `commit` examples
       below inject it via `-c` flags (`git.cmd`), so the machine's ambient `user.name` /
       `user.email` is never what lands on an agent commit. Identity-free commands (`push`,
       `checkout`, `diff`, `log`) stay a bare `git`. Human commits made outside these examples
       keep the developer's own config and sign normally. **Signing:** `git.cmd` pins
-      `commit.gpgsign=false`, so agent commits here are deliberately unsigned and carry no
+      `commit.gpgsign=false` (and `tag.gpgSign=false`), so agent commits here are deliberately unsigned and carry no
       GitHub verification badge — intentional, not accidental. That posture is the recipe's,
       not the machine's: never add or remove signing flags per-invocation. Every agent-made
       commit must still end with:

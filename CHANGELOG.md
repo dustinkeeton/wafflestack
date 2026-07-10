@@ -31,84 +31,6 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
-### Changed
-- **entryPattern validation now reports every malformed entry/leaf in one pass (#246, deferred
-  F5 from #245's review).** `entryPatternProblems` (né `entryPatternProblem`) walks the whole
-  map-valued config value instead of short-circuiting on the first bad entry, so a
-  `git.agentIdentities` map with three independent mistakes surfaces all three errors in one
-  render/validate run instead of one per fix-and-retry cycle. Each individual message is
-  byte-identical to before; only the multiplicity changed. Also renames the internal
-  `compilePatterns` to `compileGuards` — it returns the `{ patterns, entryPatterns }` guards
-  object, not a patterns Map. **Consumer impact:** error-output only; no config, schema, or
-  rendered-file change, no re-render needed.
-- **CI workflow identity aligned with the identity model (#160).** CI attribution was decided
-  entirely by whichever token created the event, and the relationship was documented nowhere.
-  The fix is deliberately *not* a `git config user.*` step in the workflows: `git.botName` /
-  `git.botEmail` carry placeholder defaults, so pinning an identity in a workflow would impose a
-  fake bot on every consumer who never opted in. **The no-clobber rule extends to CI.**
-  The model, now written down in the github-workflow setup note as **"CI identity — token vs. git
-  config"**: the *event* identity (PR/comment/tag author) is decided by the **token**
-  (`WAFFLE_HYGIENE_TOKEN` / `WAFFLE_RELEASE_TOKEN`, else `github.token` → `github-actions[bot]`,
-  which triggers no further workflows); the *commit* identity is decided by the resolved
-  **`git.cmd`** in the committed, rendered git-workflow skill — which wins because `git -c`
-  outranks the **repo-local** config the pinned dispatcher writes on every run (`git config
-  user.name "claude[bot]"`, its `bot_name`/`bot_id` defaults). So an opted-in repo's CI commits
-  have carried the bot identity since #155, with nothing further to configure; a repo on a bare
-  `git.cmd` commits as **`claude[bot]`**, not as the runner. The note also splits the two
-  precedences the toolkit must avoid: a `git config user.*` step *loses* to `git -c` (but
-  clobbers a bare repo), while a `GIT_COMMITTER_*` env var *beats* it. Making the *PR* show the
-  bot requires the PAT to belong to the bot account; the toolkit cannot configure that.
-  One behavioral change: **`waffle-label-hook`'s implement job now dispatches with
-  `github_token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}`**, matching hygiene and
-  pr-response — so implement PRs are authored by the same account as hygiene PRs and trigger the
-  repo's required CI. **Consumer impact:** no-op for repos without the secret. Repos that *have*
-  it should read the blast-radius note, now spelled out in the setup note — with the secret set the
-  job's `permissions:` block no longer bounds the run (it scopes `github.token` only), the
-  attacker-authored issue body reaches the harness prompt, and the dispatcher writes the token into
-  `.git/config`. Use a GitHub App installation token or a **repo-scoped fine-grained PAT**; a
-  classic PAT turns applying a label into an account-wide escalation. The harness-driven workflows carry
-  identity-neutrality design comments, and the release hook's lightweight tag (which stores no
-  tagger identity at all) is pinned by test against an `-a`/`-m` upgrade.
-- **A defined signing model for bot and agent authors (#158, closes the #153 epic's last gap).**
-  The toolkit configured no signing, so `git.cmd` — which overrides the identity and *nothing else* —
-  left `commit.gpgsign` ambient. On a signing machine that meant a bot-authored commit signed with
-  the **human's** key (GitHub says "Verified", vouched by the human), and a *prompting* signer
-  (1Password's SSH agent, a passphrase-guarded GPG key) hung the non-interactive agent commit
-  outright. Both are strictly worse than an unsigned commit. Resolved as **prose, not a new engine
-  key**: `git.cmd` already *is* the composed-flags surface, so the model is a resolution rule plus
-  three named recipes.
-  **The rule: the recipe owns the signing posture; keys own key selection.** `git.cmd` decides
-  whether and how commits are signed, for the bot and every agent derived from it; a per-agent
-  `git.agentIdentities[<agent>].signingKey` appends `-c user.signingkey=` *after* the base flags, so
-  git's last-wins `-c` semantics make it the effective key **only when the base recipe signs**. Under
-  the canonical recipe it is **deliberately inert** — one map leaf never overturns a project-wide
-  "do not sign".
-  **The canonical opt-in recipe now pins the posture** (recipe A, deliberately unsigned):
-  `git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` — a
-  no-op where nothing signs, and prevention of both failure modes where something does. Recipes
-  **B** (SSH: `commit.gpgsign=true` + pinned `gpg.format=ssh` + `user.signingkey`) and **C** (GPG)
-  are documented upgrades that *reference* `git.signingKey`, which is why that key stays out of the
-  default recipe (its empty default would render `git -c user.signingkey=`, which git rejects at run
-  time). Both require a **non-prompting signer**; the surrounding plumbing (`gpg.ssh.program`,
-  allowed-signers, pinentry) is named as a machine concern, not prescribed.
-  **Verified status is now intentional and documented.** An unsigned commit shows **no badge**
-  (neutral); a signed-but-unverifiable one shows the yellow **"Unverified"** — so recipe A yields
-  cleaner history than signing with a key GitHub cannot check. A verification matrix in the
-  github-workflow setup note covers all three tiers, including the honest trade-off with #157:
-  making sub-agent commits Verified means registering each `bot+<slug>@…` alias on the bot account,
-  which relinks every agent to one profile and one avatar — **per-agent avatars XOR verified
-  sub-agent commits** — and a repo with **required signatures** branch protection cannot use
-  plus-addressed sub-agent authors at all.
-  **The non-interactive stall is closed at the guardrail, not by bypassing signing.** The rendered
-  `git.cmd` *is* the project's explicit, committed, reviewable posture: the git-workflow skill now
-  forbids deviating from it per-invocation **in either direction**, and the delegate skill instructs
-  a spawned agent whose commit hangs on a signing prompt to **stop and surface it** rather than add
-  `-c commit.gpgsign=false` itself.
-  **Consumer impact: none — no config keys added or removed, no engine change, `git.cmd`'s bare
-  default untouched.** Re-render picks up the reworded git-workflow / delegate skills. Projects
-  already on a bot identity should add `-c commit.gpgsign=false` to their `git.cmd` (or adopt recipe
-  B/C); the old recipe still renders, it just leaves the posture ambient.
-
 ### Added
 - **Per-agent avatars on GitHub commit views (#157, builds on #156).** Each agent now has a distinct
   avatar wherever its identity shows up — including GitHub. `render` emits one **static**,
@@ -167,7 +89,8 @@ is what you reach for across a breaking one.
   must satisfy it: each entry a map, each leaf key declared (an **unknown leaf fails the render**, so
   a typoed `botEmial:` cannot ride along unguarded), each leaf value a string fully matching its
   regex. An explicit `signingKey: ""` fails the render — the leaf is optional, so empty carries no
-  information and would only render the `-c user.signingkey=` that git rejects at run time.
+  information and would only render a `-c user.signingkey=` that git rejects only when the command
+  signs (a non-signing recipe carries the empty flag silently).
   Enforced at both the top-level and nested substitution paths, and compiled **toolkit-wide**
   like `pattern:`, so the guard travels with the key rather than with whichever stack happens to be
   installed. This closes the hole #154 documented: `git.agentIdentities` leaves now land in an
@@ -345,7 +268,104 @@ is what you reach for across a breaking one.
     `ANTHROPIC_API_KEY` secret and a `contents` + `pull-requests` write token — prefer a PAT in
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
+### Changed
+- **entryPattern validation now reports every malformed entry/leaf in one pass (#246, deferred
+  F5 from #245's review).** `entryPatternProblems` (né `entryPatternProblem`) walks the whole
+  map-valued config value instead of short-circuiting on the first bad entry, so a
+  `git.agentIdentities` map with three independent mistakes surfaces all three errors in one
+  render/validate run instead of one per fix-and-retry cycle. Each individual message is
+  byte-identical to before; only the multiplicity changed. Also renames the internal
+  `compilePatterns` to `compileGuards` — it returns the `{ patterns, entryPatterns }` guards
+  object, not a patterns Map. **Consumer impact:** error-output only; no config, schema, or
+  rendered-file change, no re-render needed.
+- **CI workflow identity aligned with the identity model (#160).** CI attribution was decided
+  entirely by whichever token created the event, and the relationship was documented nowhere.
+  The fix is deliberately *not* a `git config user.*` step in the workflows: `git.botName` /
+  `git.botEmail` carry placeholder defaults, so pinning an identity in a workflow would impose a
+  fake bot on every consumer who never opted in. **The no-clobber rule extends to CI.**
+  The model, now written down in the github-workflow setup note as **"CI identity — token vs. git
+  config"**: the *event* identity (PR/comment/tag author) is decided by the **token**
+  (`WAFFLE_HYGIENE_TOKEN` / `WAFFLE_RELEASE_TOKEN`, else `github.token` → `github-actions[bot]`,
+  which triggers no further workflows); the *commit* identity is decided by the resolved
+  **`git.cmd`** in the committed, rendered git-workflow skill — which wins because `git -c`
+  outranks the **repo-local** config the pinned dispatcher writes on every run (`git config
+  user.name "claude[bot]"`, its `bot_name`/`bot_id` defaults). So an opted-in repo's CI commits
+  have carried the bot identity since #155, with nothing further to configure; a repo on a bare
+  `git.cmd` commits as **`claude[bot]`**, not as the runner. The note also splits the two
+  precedences the toolkit must avoid: a `git config user.*` step *loses* to `git -c` (but
+  clobbers a bare repo), while a `GIT_COMMITTER_*` env var *beats* it. Making the *PR* show the
+  bot requires the PAT to belong to the bot account; the toolkit cannot configure that.
+  One behavioral change: **`waffle-label-hook`'s implement job now dispatches with
+  `github_token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}`**, matching hygiene and
+  pr-response — so implement PRs are authored by the same account as hygiene PRs and trigger the
+  repo's required CI. **Consumer impact:** no-op for repos without the secret. Repos that *have*
+  it should read the blast-radius note, now spelled out in the setup note — with the secret set the
+  job's `permissions:` block no longer bounds the run (it scopes `github.token` only), the
+  attacker-authored issue body reaches the harness prompt, and the dispatcher writes the token into
+  `.git/config`. Use a GitHub App installation token or a **repo-scoped fine-grained PAT**; a
+  classic PAT turns applying a label into an account-wide escalation. The harness-driven workflows carry
+  identity-neutrality design comments, and the release hook's lightweight tag (which stores no
+  tagger identity at all) is pinned by test against an `-a`/`-m` upgrade.
+- **A defined signing model for bot and agent authors (#158, closes the #153 epic's last gap).**
+  The toolkit configured no signing, so `git.cmd` — which overrides the identity and *nothing else* —
+  left `commit.gpgsign` ambient. On a signing machine that meant a bot-authored commit signed with
+  the **human's** key (GitHub says "Verified", vouched by the human), and a *prompting* signer
+  (1Password's SSH agent, a passphrase-guarded GPG key) hung the non-interactive agent commit
+  outright. Both are strictly worse than an unsigned commit. Resolved as **prose, not a new engine
+  key**: `git.cmd` already *is* the composed-flags surface, so the model is a resolution rule plus
+  three named recipes.
+  **The rule: the recipe owns the signing posture; keys own key selection.** `git.cmd` decides
+  whether and how commits are signed, for the bot and every agent derived from it; a per-agent
+  `git.agentIdentities[<agent>].signingKey` appends `-c user.signingkey=` *after* the base flags, so
+  git's last-wins `-c` semantics make it the effective key **only when the base recipe signs**. Under
+  the canonical recipe it is **deliberately inert** — one map leaf never overturns a project-wide
+  "do not sign".
+  **The canonical opt-in recipe now pins the posture** (recipe A, deliberately unsigned):
+  `git -c commit.gpgsign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}` — a
+  no-op where nothing signs, and prevention of both failure modes where something does. Recipes
+  **B** (SSH: `commit.gpgsign=true` + pinned `gpg.format=ssh` + `user.signingkey`) and **C** (GPG)
+  are documented upgrades that *reference* `git.signingKey`, which is why that key stays out of the
+  default recipe (its empty default would render `git -c user.signingkey=`, which git rejects only
+  when the command signs — loudly under B/C, silently tolerated under a non-signing recipe). Both
+  require a **non-prompting signer**; the surrounding plumbing (`gpg.ssh.program`,
+  allowed-signers, pinentry) is named as a machine concern, not prescribed.
+  **Verified status is now intentional and documented.** An unsigned commit shows **no badge**
+  (neutral); a signed-but-unverifiable one shows the yellow **"Unverified"** — so recipe A yields
+  cleaner history than signing with a key GitHub cannot check. A verification matrix in the
+  github-workflow setup note covers all three tiers, including the honest trade-off with #157:
+  making sub-agent commits Verified means registering each `bot+<slug>@…` alias on the bot account,
+  which relinks every agent to one profile and one avatar — **per-agent avatars XOR verified
+  sub-agent commits** — and a repo with **required signatures** branch protection cannot use
+  plus-addressed sub-agent authors at all.
+  **The non-interactive stall is closed at the guardrail, not by bypassing signing.** The rendered
+  `git.cmd` *is* the project's explicit, committed, reviewable posture: the git-workflow skill now
+  forbids deviating from it per-invocation **in either direction**, and the delegate skill instructs
+  a spawned agent whose commit hangs on a signing prompt to **stop and surface it** rather than add
+  `-c commit.gpgsign=false` itself.
+  **Consumer impact: none — no config keys added or removed, no engine change, `git.cmd`'s bare
+  default untouched.** Re-render picks up the reworded git-workflow / delegate skills. Projects
+  already on a bot identity should add `-c commit.gpgsign=false` to their `git.cmd` (or adopt recipe
+  B/C); the old recipe still renders, it just leaves the posture ambient.
+
 ### Fixed
+- **Five fresh-pass findings from the PR #250 signing model (#252, follow-up to #158).** Recipes
+  A/B/C now pin the tag posture — `tag.gpgSign=false` (A) / `tag.gpgSign=true` (B/C) — everywhere
+  they are quoted: the setup note, both stacks' `git.cmd` descriptions, the git-workflow skill's
+  opt-in fence, the `wafflestack init` scaffold, `schema/SETUP.md`, and this repo's own config
+  (`git.cmd`'s description scopes in an annotated tag; the recipe now owns that posture too
+  instead of leaving it ambient). The "git rejects an empty signingkey" claim is corrected to its
+  true conditional form in all three places it shipped — git rejects it only when the command
+  signs, loudly under B/C, silently tolerated under a non-signing recipe. The per-agent
+  `signingKey` ↔ pinned `gpg.format` constraint is now documented at the key (both stacks'
+  `git.agentIdentities` descriptions) and in the delegate skill's signing-resolution rule — a key
+  whose shape contradicts the base's pinned format fails that one agent's every commit at its
+  first signature; the identity gate WARNs on the mismatch. The `[Unreleased]` section order is
+  fixed to Added → Changed → Fixed, and the verification matrix's noreply row now answers
+  "Verified attainable?" per tier instead of silently assuming B/C.
+  **Consumer impact: guidance/recipe text only** — no engine change, no schema change; old
+  recipes still render (the #254 pattern admits both old and new forms). Projects on a bot
+  identity should add `-c tag.gpgSign=false` (A) or `-c tag.gpgSign=true` (B/C) to their
+  `git.cmd`; a re-render picks up the reworded git-workflow/delegate skills.
 - **`git.cmd` now carries its own allowlist `pattern:` in both declaring stacks (#254, deferred
   F5 from #253's review).** The value is spliced verbatim into shell command literals in rendered
   skill text — the git-workflow/release commit instructions and the delegate identity preflight's
