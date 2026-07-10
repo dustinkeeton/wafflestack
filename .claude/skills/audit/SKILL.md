@@ -11,7 +11,7 @@ Run the full audit pipeline in consecutive order. Each agent audits the codebase
 
 ## Chain Order
 
-1. **general-purpose** — Audit and improve codebase structure (module patterns, file organization, naming, dependency rules, import paths)
+1. **harness-architect** — Audit and improve codebase structure (module patterns, file organization, naming, dependency rules, import paths)
 2. **general-purpose** (pass 1) — Full security audit per the security-audit skill checklist
 3. **general-purpose** (Toolkit integrity) — Validates manifests, placeholders, tests, and render/lock integrity (validate + test + render + doctor).
 4. **docs-agent** — Create/update the machine docs (a single root `AGENTS.md` registry) optimized for LLM consumption
@@ -43,7 +43,7 @@ For each step, spawn the agent into the team, wait for completion, then proceed:
 
 ```
 Agent(
-  subagent_type: "general-purpose",
+  subagent_type: "harness-architect",
   team_name: "audit-{timestamp}",
   name: "architecture-pass",
   prompt: <architecture prompt>
@@ -175,7 +175,7 @@ After all agents complete, present:
 
 | # | Agent | Findings | Fixes Applied |
 |---|-------|----------|---------------|
-| 1 | general-purpose | N issues | brief list |
+| 1 | harness-architect | N issues | brief list |
 | 2 | general-purpose (pass 1) | N issues | brief list |
 | 3 | general-purpose (Toolkit integrity) | N issues | brief list or "clean" |
 | 4 | docs-agent | N files created/updated | file list |

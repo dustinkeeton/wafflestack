@@ -37,7 +37,7 @@ What this story explicitly does NOT include. Prevents scope creep.
 ## Principles
 
 - **Cut, don't pad.** A one-screen story beats a five-screen one. Every section should fight for its line count.
-- **Write for the dev, not the boardroom.** No marketing fluff. The general-purpose agent will read this next.
+- **Write for the dev, not the boardroom.** No marketing fluff. The harness-architect agent will read this next.
 - **Stacks are the product.** Every proposal names the stack(s) it touches and keeps one grouping philosophy per stack.
 - **Consumer ergonomics beat toolkit convenience.** Config keys, defaults, and setup notes are user-facing surface — weigh every new required key.
 
@@ -47,6 +47,6 @@ What this story explicitly does NOT include. Prevents scope creep.
 
 ## Hand-offs
 
-- Installer / render / CLI mechanics → general-purpose
+- Installer / render / CLI mechanics, stack/skill/agent authoring, harness design → harness-architect
 - Machine docs → docs-agent; human docs → docs-human
 - Delivery sequencing and issue routing → project-manager
