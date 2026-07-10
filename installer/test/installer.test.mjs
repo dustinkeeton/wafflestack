@@ -11,7 +11,7 @@ import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath, sha256, 
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject, installRefs, init } from '../lib/eject.mjs';
-import { validateToolkit, validateExternalStacks } from '../lib/validate.mjs';
+import { validateToolkit, validateExternalStacks, validateSourceBytes } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, itemOutputMatcher } from '../lib/refs.mjs';
@@ -2207,6 +2207,9 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     ['file:///etc/passwd', 'a file:// URL reads the local disk'],
     ['data:image/svg+xml', 'a data: URL carries inline, unvetted markup'],
     ['.waffle//avatars/x.svg', 'an empty path segment'],
+    // #249: `@` was in the URL class, so the displayed host (`good.tld`) differed from the
+    // fetch host (`evil.tld`). The class now excludes `@` entirely — userinfo AND paths.
+    ['https://good.tld@evil.tld/x.png', 'a userinfo authority spoofs the displayed host'],
   ]) {
     test(`validate rejects identity.avatar: ${why}`, () => {
       writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: Lead Engineer', `  avatar: ${value}`]);
@@ -2390,6 +2393,58 @@ describe('git.agentIdentities entryPatterns lockstep (#247)', () => {
     assert.ok(gw && Object.keys(gw).length > 0, 'github-workflow declares no entryPatterns');
     // The exact leaf list is NOT pinned here — only that the two copies never drift apart.
     assert.deepEqual(gw, patternsOf('orchestration'));
+  });
+});
+
+// #249 F3: a raw control byte in a toolkit source file makes ripgrep classify it as binary and
+// silently skip it — a literal NUL in waffledocs.mjs hid the file from every `rg` search. The
+// control-byte lint runs inside `validateToolkit`, so a regression fails `npm run validate`.
+describe('validateSourceBytes control-byte lint (#249)', () => {
+  let toolkitRoot;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-249-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: x\nstacks: [demo]\n');
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+  });
+
+  test('a raw NUL byte in a stack source is reported with its path and line', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', 'name: demo\ndescription: Demo.\n# x\0y\n');
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(
+      problems.some((p) => /raw control byte/.test(p) && /stack\.yaml:3/.test(p) && /U\+0000/.test(p)),
+      JSON.stringify(problems),
+    );
+  });
+
+  test('a non-NUL control byte (vertical tab) is also caught; \\t \\n \\r are not', () => {
+    write(toolkitRoot, 'installer/lib/x.mjs', 'const a = 1;\t// tab is fine\nconst b = "\x0B";\n');
+    const problems = validateSourceBytes(toolkitRoot);
+    assert.equal(problems.length, 1, JSON.stringify(problems));
+    assert.match(problems[0], /installer[\\/]lib[\\/]x\.mjs:2/);
+    assert.match(problems[0], /U\+000B/);
+  });
+
+  test('non-source extensions and absent dirs are skipped', () => {
+    write(toolkitRoot, 'stacks/demo/assets/logo.bin', 'binary\0blob');
+    assert.deepEqual(validateSourceBytes(toolkitRoot), []);
+    // A fixture toolkit with neither installer/ nor stacks/ under it skips cleanly.
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-249b-'));
+    try {
+      assert.deepEqual(validateSourceBytes(bare), []);
+    } finally {
+      fs.rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
+  test('the real repo carries no control bytes in its installer/ and stacks/ sources', () => {
+    // The F3 NUL at waffledocs.mjs:288 (now the `\0` escape) is what this pins against return.
+    const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+    assert.deepEqual(validateSourceBytes(repoRoot), []);
   });
 });
 
@@ -6322,6 +6377,8 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.match(md, /rsvg-convert -w 512 -h 512/);
     assert.match(md, /## Smoke test/);
     assert.match(md, /GitHub caches the email→avatar association/);
+    // #249 F2: with no overrides, the base-inbox claim covers every address — pin that copy.
+    assert.match(md, /addresses above all land in `bot@wafflenet\.io`/);
     // The anti-recommendation: never add the aliases to the bot's GitHub account.
     assert.match(md, /\*\*Do not\*\* add these plus-addresses as secondary emails/);
     // Nothing unresolved leaked through.
@@ -6354,6 +6411,42 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.match(md, /`bot\+captain@wafflenet\.io`/, 'un-overridden agent still derives');
     assert.match(md, /\| `scout` \| Scout Bot \| \w+ \| `\.waffle\/avatars\/scout\.svg` \| `scout@wafflenet\.io` ‡ \|/);
     assert.doesNotMatch(md, /bot\+scout@/, 'an explicit override is exact — never plus-addressed on top');
+    assert.match(md, /‡ set verbatim by a `git\.agentIdentities\.<agent>\.botEmail` override\./);
+    // #249 F2: the base-inbox claim is scoped to the DERIVED rows in the mixed state — pin it.
+    assert.match(md, /derived addresses above land in `bot@wafflenet\.io`/);
+  });
+
+  test('with every agent overridden, the registration section drops the base-inbox claim (#249)', () => {
+    // The exact state the shared-address caveat's own remedy produces: a user reads "give one its
+    // own address with an explicit override" and applies it to ALL agents. `derivedRows` is empty,
+    // `sharedEmail` vacuously false — the section must still render (the conversion + Gravatar +
+    // smoke-test procedure holds), but the copy must not claim addresses land in a base inbox no
+    // agent commits under, nor tell the reader to sign in with the base address.
+    write(cwd, '.waffle/waffle.yaml', [
+      identityCfg('bot@wafflenet.io').trimEnd(),
+      '    agentIdentities:',
+      '      captain:',
+      '        botEmail: captain@crew.example',
+      '      scout:',
+      '        botEmail: scout@fleet.example',
+      '',
+    ].join('\n'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    // The procedure still renders, with its pinned anchors.
+    assert.match(md, /Registering the avatars \(manual, one-time\)/);
+    assert.match(md, /gravatar\.com/);
+    assert.match(md, /rsvg-convert -w 512 -h 512/);
+    assert.match(md, /## Smoke test/);
+    // No base-inbox claim, no base-address sign-in step.
+    assert.doesNotMatch(md, /land in `bot@wafflenet\.io`/);
+    assert.doesNotMatch(md, /with the base address/);
+    // The honest replacement copy.
+    assert.match(md, /none derive from `bot@wafflenet\.io`/);
+    assert.match(md, /verified at the inbox that actually receives its mail/);
+    // Both overrides appear verbatim with the ‡ marker, and the legend explains it.
+    assert.match(md, /`captain@crew\.example` ‡/);
+    assert.match(md, /`scout@fleet\.example` ‡/);
     assert.match(md, /‡ set verbatim by a `git\.agentIdentities\.<agent>\.botEmail` override\./);
   });
 
@@ -6564,6 +6657,22 @@ describe('per-agent commit-email derivation (#157, lockstep with the delegate sk
     // Defensive fallback: a command with no identity at all (never reached — `configured` gates it).
     assert.equal(withIdentity('git', 'Scout', 'new@x.io'), 'git -c user.name="Scout" -c user.email=new@x.io');
     assert.equal(withIdentity(null, 'Scout', 'new@x.io'), 'git -c user.name="Scout" -c user.email=new@x.io');
+  });
+
+  // #249 F1: values must never `$`-expand in the replacement — a `$&`-bearing email once
+  // duplicated the `-c user.email` flag (git takes the last one, so the smoke test committed
+  // under a different address than the manifest's table advertises). Latent, not reachable
+  // through validated config today (the botEmail guard excludes `$`), but exactly the
+  // guard-and-consumer-drift class #247 tracks — the swap must be safe on its own.
+  test('withIdentity round-trips `$`-bearing values verbatim (no replacement-string expansion)', () => {
+    const out = withIdentity(
+      'git -c commit.gpgsign=false -c user.name="Wafflebot" -c user.email=bot@x.io',
+      'A$&B$1',
+      'a$&b$`c@x.io',
+    );
+    assert.equal(out, 'git -c commit.gpgsign=false -c user.name="A$&B$1" -c user.email=a$&b$`c@x.io');
+    assert.equal((out.match(/-c user\.email=/g) || []).length, 1, 'exactly one email flag');
+    assert.equal((out.match(/-c user\.name=/g) || []).length, 1, 'exactly one name flag');
   });
 });
 
