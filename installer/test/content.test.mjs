@@ -469,6 +469,15 @@ describe('github-workflow setup note: the signing recipes and verification matri
     assert.match(stack, /\*\*a non-prompting signer\*\*/);
   });
 
+  // #252 F2 regression pin: git rejects an empty user.signingkey only when the command actually
+  // signs — under recipe A the commit exits 0. The old unconditional "rejects at run time" claim
+  // was false for the canonical recipe and must not drift back into the setup note or the
+  // git.signingKey description.
+  test('the empty-signingkey claim stays conditional (#252 F2)', () => {
+    assert.doesNotMatch(stack, /which git rejects at run\s+time/);
+    assert.match(stack, /git rejects an empty signingkey\s+\*\*only when it signs\*\*/);
+  });
+
   test('the verification matrix distinguishes "no badge" from "Unverified" and names the avatars trade-off', () => {
     assert.match(stack, /unsigned commit gets no badge at all/);
     assert.match(stack, /Per-agent avatars XOR verified sub-agent commits/);
