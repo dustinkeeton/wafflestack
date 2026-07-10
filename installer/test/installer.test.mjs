@@ -2323,6 +2323,11 @@ describe('render: a pattern is enforced through nested composition (#154 review)
       '    required: false',
       '    default: git -c user.email={{id.email}}',
       '    description: Composes id.email. Declares no pattern of its own.',
+      '  id.map:',
+      '    required: false',
+      '    entryPatterns:',
+      '      leaf: "[a-z]+"',
+      '    description: Guarded map, reachable only through composition (N5).',
       '',
     ].join('\n'));
     // The skill body references ONLY id.cmd — id.email never appears as a top-level placeholder.
@@ -2367,6 +2372,27 @@ describe('render: a pattern is enforced through nested composition (#154 review)
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.match(read(cwd, SKILL), /git -c user\.email=ok@example\.com/);
+  });
+
+  // #246 (QA nit on #258): entryPatternProblems' collect-everything contract is spread at THREE
+  // call sites; I7e pins `substitute` and a validate test pins the self-check, leaving
+  // `expandNested` — the nested-composition path — as the one spread no test reached. `id.map`
+  // is guarded and reachable ONLY through `id.cmd`'s value, so both problems must surface
+  // through expandNested. Revert its spread to a single push of entryProblems[0] and the
+  // entry-"b" assertion goes red — that is the regression this pins.
+  test('N5 a guarded map reachable only through composition reports EVERY bad entry', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      `${base}  id:\n    cmd: "deploy {{id.map}}"\n    map:\n      a:\n        leaf: "!!bad"\n      b:\n        leaf: "9also-bad"\n`,
+    );
+    const result = render();
+    assert.equal(result.ok, false, 'the nested-only guarded map must fail the render');
+    const errs = result.errors.join('\n');
+    assert.match(errs, /\{\{id\.map\}\} entry "a" key "leaf" does not match its declared pattern/);
+    assert.match(errs, /\{\{id\.map\}\} entry "b" key "leaf" does not match its declared pattern/);
+    // Multiplicity through the nested path, not just presence.
+    assert.ok(result.errors.filter((e) => e.includes('id.map')).length >= 2, JSON.stringify(result.errors));
   });
 });
 
