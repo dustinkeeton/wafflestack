@@ -23,7 +23,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFrontmatter } from './util.mjs';
+import { parseFrontmatter, lookupPath } from './util.mjs';
 import { substitute } from './template.mjs';
 import { makeResolver } from './project.mjs';
 import { resolveAgentSkill } from './refs.mjs';
@@ -32,6 +32,15 @@ const CHEATSHEET_MD = path.join('.waffle', 'CHEATSHEET.md');
 const CHEATSHEET_HTML = path.join('.waffle', 'cheatsheet.html');
 const TEAM_MD = path.join('.waffle', 'TEAM.md');
 const TEAM_HTML = path.join('.waffle', 'team.html');
+const AVATARS_MD = path.join('.waffle', 'AVATARS.md');
+const AVATARS_DIR = path.join('.waffle', 'avatars');
+
+/** Rendered avatar file for an agent — the default `identity.avatar` when none is authored. */
+const avatarRel = (name) => path.join(AVATARS_DIR, `${name}.svg`);
+
+// Standalone avatar files are sized for a Gravatar upload (Gravatar serves down from the
+// source), not for the 26–56px inline uses on the HTML one-pagers.
+const AVATAR_FILE_PX = 512;
 
 // Description substitution never enforces `pattern:`/`entryPatterns:` guards (those police
 // config values spliced into structured contexts, not prose) — pass empty guards.
@@ -44,6 +53,66 @@ const NO_GUARDS = { patterns: new Map(), entryPatterns: new Map() };
  */
 function isUserInvocable(data) {
   return data['user-invocable'] !== false;
+}
+
+// ---- Per-agent commit-email derivation --------------------------------------------------
+//
+// KEEP IN LOCKSTEP with `stacks/orchestration/skills/delegate/SKILL.md` → "Per-agent commit
+// identity", rules 1–3, and with the github-workflow stack's setup note. The delegate
+// orchestrator derives an agent's git author from prose at spawn time; these helpers derive the
+// same address here so `.waffle/AVATARS.md` can name the EXACT email a human must register on
+// Gravatar. Two derivations of one rule is the maintenance hazard — a change on either side is a
+// change on both, and `installer/test/installer.test.mjs` pins the three documented examples.
+
+/** A resolved `user.email=` value, in the shapes `git.cmd` can legally carry it. */
+const USER_EMAIL_RE = /(?:^|\s)-c\s+user\.email=(?:"([^"]*)"|'([^']*)'|(\S+))/;
+/** Conservative address check — an unresolved `{{git.botEmail}}` must never pass as an email. */
+const EMAIL_SHAPE_RE = /^[^\s@{}"'`]+@[^\s@{}"'`]+\.[^\s@{}"'`]+$/;
+
+/**
+ * The base committer email a project's resolved `git.cmd` sets, or `null` when it sets none —
+ * rule 1: a bare `git` (or any command without `-c user.email=`) means the project has NOT opted
+ * into a bot identity, so nothing is virtualized. An unresolved placeholder (a `git.cmd`
+ * referencing a `{{git.botEmail}}` no selected stack declares) yields `null` too: the manifest
+ * must say "not configured" rather than print a literal `{{…}}` as an address to register.
+ */
+export function extractBaseEmail(gitCmd) {
+  const m = USER_EMAIL_RE.exec(String(gitCmd ?? ''));
+  if (!m) return null;
+  const value = m[1] ?? m[2] ?? m[3] ?? '';
+  return EMAIL_SHAPE_RE.test(value) ? value : null;
+}
+
+/**
+ * The commit email an agent with slug `slug` will author under, given the project's base email —
+ * rule 2: `+<slug>` is inserted immediately before the `@` (`bot@wafflenet.io` →
+ * `bot+lead-engineer@wafflenet.io`), UNLESS the base cannot subaddress, in which case it is used
+ * **verbatim**. It cannot subaddress when either:
+ *   - the domain is `*.noreply.github.com` — that domain routes only the `<id>+<username>@`
+ *     shape, so a second `+` segment resolves to nothing at all; or
+ *   - the local part already carries a `+` (`12345+wafflebot@…`, `bot+ci@…`) — the tag is spent.
+ * Returns `null` for a null base (no bot identity). An explicit
+ * `git.agentIdentities[slug].botEmail` override is applied verbatim by the CALLER (rule 3) — it
+ * never flows through here.
+ */
+export function deriveAgentEmail(baseEmail, slug) {
+  if (!baseEmail) return null;
+  const at = baseEmail.lastIndexOf('@');
+  if (at <= 0) return baseEmail;
+  const local = baseEmail.slice(0, at);
+  const domain = baseEmail.slice(at + 1);
+  if (/(^|\.)noreply\.github\.com$/i.test(domain)) return baseEmail;
+  if (local.includes('+')) return baseEmail;
+  return `${local}+${slug}@${domain}`;
+}
+
+/** `lead-engineer` → `Lead Engineer`. The display-name default when no `identity.displayName`. */
+function titleCaseSlug(slug) {
+  return String(slug)
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 /**
@@ -83,11 +152,18 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
     } else if (kind === 'agents') {
       agents.push({
         name: item.data.name ?? item.name,
+        // The agent's SLUG — its definition filename, which is the key the delegate orchestrator
+        // plus-addresses with and `git.agentIdentities` is keyed by. `validateStack` pins
+        // `data.name` to the filename when both exist, so today they agree; keep them separate
+        // anyway, because the identity derivation is defined on the slug.
+        slug: item.name,
         // `stackName` is retained so agent `skills:` refs resolve preferring their own stack
         // (matching render's own resolution) when building the cheatsheet reverse map.
         stackName: stack.name,
         description: sub(stack, item.data.description, `waffledocs:agents/${item.name}#description`),
         skills: Array.isArray(item.data.skills) ? item.data.skills : [],
+        // The validated `identity:` block (#156/#157), passed through by `renderAgent` verbatim.
+        identity: item.data.identity ?? null,
       });
     }
   }
@@ -120,8 +196,51 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
   if (agents.length) {
     docs.push({ rel: TEAM_MD, content: teamMarkdown(agents, toolkit.name) });
     docs.push({ rel: TEAM_HTML, content: teamHtml(agents, toolkit.name) });
+    // Per-agent avatar files (#157) — one static SVG each, plus the manifest pairing every file
+    // with the exact commit email to register on Gravatar. Emitted through the same `emit()`
+    // choke point as the docs above, so they are lock-tracked, drift-checked and pruned when a
+    // later selection drops every agent.
+    for (const a of agents) {
+      docs.push({ rel: avatarRel(a.name), content: `${agentAvatarSvg(a.name, a.skills.length, { px: AVATAR_FILE_PX, animated: false })}\n` });
+    }
+    docs.push({ rel: AVATARS_MD, content: avatarsMarkdown(agents, toolkit.name, resolveGitIdentity({ project, selection, resolverFor })) });
   }
   return docs;
+}
+
+/**
+ * The project's resolved bot-identity inputs, exactly as the delegate orchestrator sees them at
+ * spawn time: the substituted `git.cmd` and the `git.agentIdentities` override map.
+ *
+ * `git.cmd` is resolved through the SAME resolver render uses — the first selected stack (in
+ * stable alphabetical order) that declares the key, so nested `{{git.botEmail}}` expands from
+ * project config exactly as it does in that stack's rendered skills. A stack that declares
+ * `git.cmd` but not the identity keys leaves an unresolvable `{{git.botEmail}}` verbatim (the
+ * documented rule-2 hazard) — `extractBaseEmail` then reports "no bot identity", which is the
+ * honest reading: no address to register. Substitution errors are swallowed into a throwaway
+ * array: this is a *report* of the project's config, and a literal placeholder here must not
+ * fail the render that the skills themselves render fine under.
+ */
+function resolveGitIdentity({ project, selection, resolverFor }) {
+  const stacks = [...new Map(selection.items.map(({ stack }) => [stack.name, stack])).values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  const gitStack = stacks.find((s) => s.config?.['git.cmd'] !== undefined);
+  let cmd = null;
+  if (gitStack) {
+    cmd = substitute('{{git.cmd}}', resolverFor(gitStack), new Set(['git.cmd']), [], 'waffledocs:avatars#git.cmd', NO_GUARDS).trim();
+  } else {
+    // No selected stack declares `git.cmd`; a project may still set the value. Nothing nested to
+    // expand in that case — no stack defaults are in play to expand it against.
+    const raw = lookupPath(project.values, 'git.cmd');
+    if (typeof raw === 'string') cmd = raw.trim();
+  }
+  const overrides = lookupPath(project.values, 'git.agentIdentities');
+  return {
+    cmd,
+    baseEmail: extractBaseEmail(cmd),
+    overrides: overrides && typeof overrides === 'object' && !Array.isArray(overrides) ? overrides : {},
+  };
 }
 
 const GENERATED_BANNER =
@@ -176,6 +295,175 @@ function teamMarkdown(agents, toolkitName) {
     lines.push('');
   }
   lines.push(`_${agents.length} agent${agents.length === 1 ? '' : 's'} · generated — do not edit._`, '');
+  return lines.join('\n');
+}
+
+/**
+ * `.waffle/AVATARS.md` (#157) — the reproducibility artifact for per-agent avatars on GitHub
+ * commit views. It pairs each agent's generated avatar file with the EXACT commit email that
+ * agent authors under, and spells out the manual Gravatar procedure that makes GitHub render it.
+ *
+ * It deliberately never claims avatars appear on their own. GitHub renders a Gravatar for a
+ * commit email that belongs to no GitHub account; registering that email on Gravatar is a manual,
+ * external step, and Gravatar's own upload rules are external-service behaviour. What this file
+ * guarantees is that the email/file pairs below are the correct INPUTS to that procedure.
+ */
+function avatarsMarkdown(agents, toolkitName, git) {
+  const configured = Boolean(git.baseEmail);
+  const rows = agents.map((a) => {
+    const override = (git.overrides ?? {})[a.slug] ?? {};
+    const email = configured ? (override.botEmail ?? deriveAgentEmail(git.baseEmail, a.slug)) : null;
+    return {
+      name: a.name,
+      displayName: override.botName ?? a.identity?.displayName ?? titleCaseSlug(a.slug),
+      // An authored `identity.avatar` wins over the generated default — the identity metadata is
+      // the avatar reference; the generated file is only its deterministic default.
+      avatar: a.identity?.avatar ?? avatarRel(a.name),
+      authored: Boolean(a.identity?.avatar),
+      flavor: agentFlavor(a.name),
+      email,
+      overridden: Boolean(override.botEmail),
+    };
+  });
+  // A base that cannot subaddress hands every agent the same address (delegate rule 2), so the
+  // avatar can only ever be per-*project*, not per-agent, until overrides give agents own emails.
+  const derived = rows.filter((r) => !r.overridden).map((r) => r.email);
+  const sharedEmail = configured && derived.length > 1 && new Set(derived).size === 1;
+
+  const lines = [
+    GENERATED_BANNER,
+    '',
+    '# Agent avatars',
+    '',
+    `A distinct avatar per installed **${toolkitName}** agent, for the places an agent's identity shows up:`,
+    'the `.waffle/team.html` roster, and — via the procedure below — **GitHub commit views**.',
+    'Regenerated on every `wafflestack render`.',
+    '',
+    '## How GitHub picks a commit avatar',
+    '',
+    'GitHub resolves a commit avatar from the commit **author email**, not from anything in the commit',
+    'message or the repo:',
+    '',
+    '1. If the email is registered on a GitHub account, that account\'s single avatar is shown, and the',
+    '   commit links to the profile.',
+    '2. Otherwise, if the email has a **Gravatar**, GitHub shows the Gravatar.',
+    '3. Otherwise, the default gray Octocat.',
+    '',
+    'Each agent commits under its own author email (see the table), and those',
+    'plus-addressed emails belong to no GitHub account — so they land in case 2. **Registering each one',
+    'on Gravatar is a manual, one-time step; nothing in this toolkit performs it, and nothing here can',
+    'verify it.** Until you do, agent commits show the gray default. Note also that GitHub caches the',
+    'email→avatar association, so a freshly-registered Gravatar can take a while to appear on existing',
+    'commits — verify with a **new** commit (see "Smoke test").',
+    '',
+    '> **Do not** add these plus-addresses as secondary emails on the bot\'s GitHub account. That links',
+    '> every agent\'s commits to that one account and shows its one avatar for all of them — the exact',
+    '> opposite of per-agent distinction. Leave them unregistered on GitHub; register them on Gravatar.',
+    '',
+    '## The agents',
+    '',
+  ];
+
+  // Footnote markers are fixed per meaning, not positional — so a marker means the same thing
+  // whether or not the project has a bot identity configured.
+  const AUTHORED = '†';
+  const OVERRIDDEN = '‡';
+  if (configured) {
+    lines.push('| Agent | Display name | Syrup | Avatar | Commit author email |', '| --- | --- | --- | --- | --- |');
+    for (const r of rows) {
+      const em = `\`${r.email}\`${r.overridden ? ` ${OVERRIDDEN}` : ''}`;
+      lines.push(`| \`${r.name}\` | ${r.displayName} | ${r.flavor} | \`${r.avatar}\`${r.authored ? ` ${AUTHORED}` : ''} | ${em} |`);
+    }
+  } else {
+    lines.push(
+      '| Agent | Display name | Syrup | Avatar |',
+      '| --- | --- | --- | --- |',
+      ...rows.map((r) => `| \`${r.name}\` | ${r.displayName} | ${r.flavor} | \`${r.avatar}\`${r.authored ? ` ${AUTHORED}` : ''} |`),
+    );
+  }
+  lines.push('');
+  if (rows.some((r) => r.authored)) {
+    lines.push(`${AUTHORED} authored \`identity.avatar\` in the agent definition, not the generated default.`);
+  }
+  if (rows.some((r) => r.overridden)) {
+    lines.push(`${OVERRIDDEN} set verbatim by a \`git.agentIdentities.<agent>.botEmail\` override.`);
+  }
+  if (rows.some((r) => r.authored || r.overridden)) lines.push('');
+  if (!configured) {
+    lines.push(
+      '**No commit emails yet — this project has not opted into a bot identity.** The resolved `git.cmd`',
+      `is \`${git.cmd || 'git'}\`, which yields no usable \`user.email\`, so agents commit under *your own* git`,
+      'config and there is no per-agent address to give a Gravatar. Opt in by setting `git.botName` /',
+      '`git.botEmail` and pointing `git.cmd` at them (see the github-workflow stack\'s setup note), then',
+      're-render: the derived per-agent emails appear here.',
+      '',
+    );
+  }
+
+  if (sharedEmail) {
+    lines.push(
+      `> **Every agent above shares one address** (\`${git.baseEmail}\`). A \`*.noreply.github.com\` base — or any`,
+      '> base whose local part already carries a `+` — cannot subaddress, so the delegate skill uses it',
+      '> **verbatim** rather than mangling it into an address that routes nowhere. Agents are then distinct by',
+      '> **display name** only, and one Gravatar covers them all. To give an agent its own address (and so its',
+      '> own avatar), add an explicit `git.agentIdentities.<agent>.botEmail` to your project config.',
+      '',
+    );
+  }
+
+  if (configured && !sharedEmail) {
+    lines.push(
+      '## Registering the avatars (manual, one-time)',
+      '',
+      'Each address must receive mail for Gravatar to verify it. A plus-address delivers to its base inbox on',
+      'any provider that supports subaddressing (Gmail, Fastmail, Proton, most self-hosted setups) — so all of',
+      `the addresses above land in \`${git.baseEmail}\`. Then:`,
+      '',
+      '1. **Convert each avatar to a raster image.** Gravatar accepts PNG/JPG/GIF, not SVG. One line, any one of:',
+      '',
+      '   ```bash',
+      `   rsvg-convert -w 512 -h 512 ${avatarRel('<agent>')} > <agent>.png    # librsvg`,
+      `   npx --yes svgexport ${avatarRel('<agent>')} <agent>.png 512:512     # node, no install`,
+      `   magick -background none ${avatarRel('<agent>')} -resize 512x512 <agent>.png   # ImageMagick`,
+      '   ```',
+      '',
+      '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every agent).',
+      '3. **Add each agent\'s commit email** to that account and complete the verification mail.',
+      '4. **Upload that agent\'s PNG** and assign it to that address. Keep the rating at **G** — GitHub only',
+      '   displays G-rated images.',
+      '',
+      '## Smoke test',
+      '',
+      'Gravatar-side details (upload formats, the multi-email verification flow) are external-service behaviour',
+      'and can change, and GitHub caches the email→avatar association. So verify end-to-end rather than trusting',
+      'this document — author one commit as an agent and look at it on GitHub:',
+      '',
+      '```bash',
+      `git -c user.name="${rows[0].displayName}" -c user.email=${rows[0].email} \\`,
+      '  commit --allow-empty -m "chore: avatar smoke test"',
+      'git push',
+      '```',
+      '',
+      'Open the commit on GitHub: the avatar beside the author should be that agent\'s waffle, and the name',
+      'should **not** link to a user profile (it is an unregistered address — that is what puts it on the',
+      'Gravatar path). A gray Octocat means the Gravatar is not yet registered, not yet propagated, or rated',
+      'above G. Existing commits may keep the old avatar until GitHub\'s cache turns over.',
+      '',
+    );
+  }
+
+  lines.push(
+    '## Notes',
+    '',
+    '- Attribution is per agent **type**, not per spawn: two parallel instances of one agent share an identity.',
+    `- The avatar files are generated — a hand edit is drift, and \`wafflestack doctor\` will say so. Each is a`,
+    '  pure function of the agent name (skin, syrup, expression) and its granted-skill count (the dark pockets).',
+    '- `identity.avatar` in an agent definition overrides the generated default with a repo-relative path or an',
+    '  `https://` URL. It is a *reference* carried in the agent\'s identity metadata; nothing uploads it for you.',
+    '',
+    `_${agents.length} agent${agents.length === 1 ? '' : 's'} · generated — do not edit._`,
+    '',
+  );
   return lines.join('\n');
 }
 

@@ -18,6 +18,18 @@ const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArr
 const DISPLAY_NAME_RE = compilePattern('(?!.*\\$\\{\\{)[A-Za-z0-9._\\[\\]-]+(?: [A-Za-z0-9._\\[\\]-]+)*');
 
 /**
+ * Allowlist for an agent's `identity.avatar` (#157) — a *reference* to the agent's avatar image:
+ * a repo-relative path (`.waffle/avatars/scout.svg`) or an `https://` URL. Today it lands in YAML
+ * frontmatter and a generated Markdown table, neither of which is a shell word — but it is guarded
+ * in the same trust-boundary style as its `displayName` sibling, because a consumer may yet splice
+ * it somewhere hotter (an `<img src>`, a `curl`). No whitespace, quotes, backtick, `\`, `$`, `${{`;
+ * no `..` traversal. `^(?!…)` guards are the same sibling-injection lookaheads used elsewhere.
+ */
+const IDENTITY_AVATAR_RE = compilePattern('(?!.*\\$\\{\\{)(?!.*\\.\\.)[A-Za-z0-9._~:/?#@!&=+*%-]+');
+
+const IDENTITY_KEYS = ['displayName', 'avatar'];
+
+/**
  * Agent frontmatter keys the renderer owns and the `claude:` passthrough may NOT shadow (#156
  * review). `claude:` hoists every key it carries to the top level of the Claude render, so an
  * unpoliced `claude: { identity: { displayName: 'Evil"; id' } }` would overwrite the `identity:`
@@ -127,10 +139,11 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           problems.push(`${ctx}: agent ${agent.name} skill "${skillName}" is ambiguous across stacks (${where})`);
         }
       }
-      // Optional `identity:` block (#156) — the agent's virtualized git author. `displayName`
-      // lands inside the double quotes of `-c user.name="…"` in a shell command the delegate
-      // orchestrator hands a spawned agent, so it is the same injection surface as `git.botName`
-      // and carries the same allowlist. This is a trust-boundary check: external stacks flow
+      // Optional `identity:` block (#156, #157) — the agent's virtualized git author plus its
+      // avatar reference. `displayName` lands inside the double quotes of `-c user.name="…"` in a
+      // shell command the delegate orchestrator hands a spawned agent, so it is the same injection
+      // surface as `git.botName` and carries the same allowlist; `avatar` is guarded in the same
+      // style (see IDENTITY_AVATAR_RE). This is a trust-boundary check: external stacks flow
       // through `validateExternalStacks` at render, so a third-party agent cannot smuggle a
       // quote-breaking display name into an agent-executed command.
       const identity = agent.data.identity;
@@ -139,8 +152,11 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           problems.push(`${ctx}: agent ${agent.name} \`identity\` must be a map with a \`displayName\``);
         } else {
           for (const k of Object.keys(identity)) {
-            if (k !== 'displayName') {
-              problems.push(`${ctx}: agent ${agent.name} identity has unknown key "${k}" (only \`displayName\` is defined)`);
+            if (!IDENTITY_KEYS.includes(k)) {
+              problems.push(
+                `${ctx}: agent ${agent.name} identity has unknown key "${k}" ` +
+                  `(only ${IDENTITY_KEYS.map((n) => `\`${n}\``).join(' and ')} are defined)`,
+              );
             }
           }
           const displayName = identity.displayName;
@@ -148,6 +164,15 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
             problems.push(
               `${ctx}: agent ${agent.name} identity.displayName ${JSON.stringify(displayName ?? null)} ` +
                 `does not match the allowed shape (letters, digits, ". _ - [ ]", single interior spaces)`,
+            );
+          }
+          // Optional: absent means the deterministic `.waffle/avatars/<agent>.svg` default applies.
+          const avatar = identity.avatar;
+          if (avatar !== undefined && (typeof avatar !== 'string' || !IDENTITY_AVATAR_RE.test(avatar))) {
+            problems.push(
+              `${ctx}: agent ${agent.name} identity.avatar ${JSON.stringify(avatar ?? null)} ` +
+                `does not match the allowed shape (a repo-relative path or https:// URL — no whitespace, ` +
+                `quotes, backtick, "\\", "$", or "..")`,
             );
           }
         }

@@ -757,6 +757,14 @@ setup: |-
 
   Note this is prompt-level, not enforced: agents follow the rendered examples. Making the toolkit
   reason about signing (a `git.sign` tri-state rather than a hand-assembled `cmd`) is #158.
+  (5) **Per-agent avatars follow from the per-agent emails.** GitHub picks a commit's avatar from the
+  author email: an email on a GitHub account shows that account's one avatar, an email on none shows
+  its Gravatar, and otherwise the gray Octocat. So the derived `bot+<agent>@…` addresses take the
+  Gravatar path — register one per agent (manual, one-time) and each agent's commits carry its own
+  face. The generated `.waffle/AVATARS.md` lists every agent's avatar file and exact commit email
+  and walks the procedure; a noreply base forfeits distinct addresses and therefore distinct avatars
+  (agents differ by name only). Never add the aliases as secondary emails on the bot's GitHub
+  account — that relinks all of them to one profile and one avatar.
 
   Then set `git.identitySection` to prose that says the bot identity is in effect. Leave
   `git.coAuthorTrailer` alone unless you want to: with a bot identity configured the commit

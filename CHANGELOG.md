@@ -32,6 +32,31 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Per-agent avatars on GitHub commit views (#157, builds on #156).** Each agent now has a distinct
+  avatar wherever its identity shows up — including GitHub. `render` emits one **static**,
+  deterministic waffle SVG per installed agent to `.waffle/avatars/<agent>.svg` (the same name-seeded
+  character `team.html` already draws, minus the SMIL animation, sized 512px for upload), plus a
+  generated `.waffle/AVATARS.md` manifest pairing every agent with **the exact commit email it
+  authors under** — derived by new `waffledocs.mjs` helpers `extractBaseEmail`/`deriveAgentEmail`,
+  kept in lockstep with the delegate skill's prose rules and pinned by tests to the documented
+  examples. Both flow through `emit()`, so they are lock-tracked, doctor-drift-checked, and pruned
+  when a selection drops every agent. The `identity:` block gains an optional **`avatar`** key (a
+  repo-relative path or `https://` URL, allowlisted in the same trust-boundary style as
+  `displayName`; absent means the generated default), which renders through to `.claude/agents/*.md`
+  and `.agents/agents/*.md`. **The mechanism, stated honestly:** GitHub picks a commit avatar from the
+  author email — an account's avatar if the email is registered there, otherwise that email's
+  **Gravatar**, otherwise the gray Octocat. Because the derived `bot+<agent>@…` aliases belong to no
+  GitHub account, they land on the Gravatar path. **Registering one Gravatar per agent email is a
+  manual, one-time step this toolkit does not and cannot perform**, so the manifest ships the exact
+  addresses, one-line SVG→PNG conversion commands (no raster dependency is added to the installer),
+  the registration procedure, and a smoke test — plus the caveat that GitHub caches the email→avatar
+  association. It also states the anti-recommendation: never add these aliases as secondary emails on
+  the bot's GitHub account, which would relink every agent to one profile and one avatar. A project
+  with no bot identity (bare `git.cmd`), or one whose base email cannot subaddress, gets a manifest
+  that says exactly that instead of inventing an address.
+  **Consumer note:** the new avatar files and manifest appear on the next `render`; a repo that
+  commits its render will see new lock entries. The manifest's contents depend on `git.cmd` /
+  `git.agentIdentities`, so changing those (correctly) drifts the lock.
 - **Per-agent virtualized git identities (#156, `orchestration` + `github-workflow`).** Every agent
   spawned by the `delegate` skill used to commit under the same identity with a byte-identical
   `Co-Authored-By` trailer — two different agents produced indistinguishable attribution. Agents now

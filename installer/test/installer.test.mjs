@@ -19,7 +19,7 @@ import { computeListModel, formatListTable, selectableChoices, STATUS } from '..
 import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
-import { agentAvatarSvg, agentFlavor } from '../lib/waffledocs.mjs';
+import { agentAvatarSvg, agentFlavor, extractBaseEmail, deriveAgentEmail } from '../lib/waffledocs.mjs';
 import {
   loadProjectConfig,
   migrateLegacyDotfiles,
@@ -2040,6 +2040,50 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
   test('validate accepts a clean displayName', () => {
     writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: QA Engineer']);
     assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  // #157: `identity.avatar` — the avatar REFERENCE the identity metadata carries. Optional; a
+  // repo-relative path or an https:// URL, guarded in the same trust-boundary style as its sibling.
+  for (const avatar of ['.waffle/avatars/lead-engineer.svg', 'https://example.com/a.png', 'assets/lead_engineer-1.svg']) {
+    test(`validate accepts identity.avatar ${avatar}`, () => {
+      writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: Lead Engineer', `  avatar: ${avatar}`]);
+      assert.deepEqual(validateToolkit(toolkitRoot), []);
+    });
+  }
+
+  for (const [value, why] of [
+    ['"a b.svg"', 'whitespace'],
+    ['\'a"; id; echo ".svg\'', 'quote-breaking value'],
+    ['a`id`.svg', 'backtick is command substitution'],
+    ['$HOME/a.svg', '`$` opens a shell expansion'],
+    ['"${{ secrets.LEAK }}"', 'a ${{ }} expression survives the renderer verbatim'],
+    ['../../etc/passwd', 'path traversal'],
+    ['a\\b.svg', 'backslash'],
+    ['42', 'avatar must be a string'],
+  ]) {
+    test(`validate rejects identity.avatar: ${why}`, () => {
+      writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: Lead Engineer', `  avatar: ${value}`]);
+      const problems = validateToolkit(toolkitRoot);
+      assert.ok(problems.some((p) => /identity\.avatar/.test(p)), `expected a problem for ${why}: ${JSON.stringify(problems)}`);
+    });
+  }
+
+  test('an unknown identity key is still rejected, and the message names both allowed keys', () => {
+    writeAgent(['name: lead-engineer', 'description: Leads.', 'identity:', '  displayName: Lead Engineer', '  email: sneak@x.com']);
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /unknown key "email"/.test(p) && /displayName/.test(p) && /avatar/.test(p)), JSON.stringify(problems));
+  });
+
+  test('an authored identity.avatar renders through to the agent frontmatter, and codex drops it', () => {
+    writeAgent([
+      'name: lead-engineer', 'description: Leads.',
+      'identity:', '  displayName: Lead Engineer', '  avatar: .waffle/avatars/lead-engineer.svg',
+    ]);
+    assert.equal(render('claude, codex, agents-dir').ok, true);
+    const expected = { displayName: 'Lead Engineer', avatar: '.waffle/avatars/lead-engineer.svg' };
+    assert.deepEqual(parseFrontmatter(read(cwd, '.claude/agents/lead-engineer.md')).data.identity, expected);
+    assert.deepEqual(parseFrontmatter(read(cwd, '.agents/agents/lead-engineer.md')).data.identity, expected);
+    assert.doesNotMatch(read(cwd, '.codex/agents/lead-engineer.toml'), /avatar/);
   });
 
   test('the external-stack gate rejects a malformed identity too', () => {
@@ -5626,6 +5670,16 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
       '  project.name:',
       '    required: true',
       '    description: project name',
+      // The bot-identity keys the avatar manifest (#157) derives per-agent commit emails from —
+      // declared exactly as the github-workflow stack declares them, defaults included.
+      '  git.cmd:',
+      '    required: false',
+      '    default: git',
+      '    description: git invocation',
+      '  git.botEmail:',
+      '    required: false',
+      '    default: bot@example.com',
+      '    description: bot email',
       '',
     ].join('\n'));
     write(root, 'stacks/crew/agents/captain.md', [
@@ -5821,9 +5875,197 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
       assert.equal(renderProject({ toolkitRoot, cwd: cwd2, toolkitVersion: '0.0.test' }).ok, true);
       assert.equal(read(cwd2, '.waffle/team.html'), team1, 'team.html byte-identical across renders');
       assert.equal(read(cwd2, '.waffle/cheatsheet.html'), cheat1, 'cheatsheet.html byte-identical across renders');
+      assert.equal(read(cwd2, '.waffle/AVATARS.md'), read(cwd, '.waffle/AVATARS.md'), 'AVATARS.md byte-identical');
+      assert.equal(
+        read(cwd2, '.waffle/avatars/captain.svg'),
+        read(cwd, '.waffle/avatars/captain.svg'),
+        'avatar file byte-identical across renders',
+      );
     } finally {
       fs.rmSync(cwd2, { recursive: true, force: true });
     }
+  });
+
+  // ---- #157: per-agent avatar files + the Gravatar manifest ----------------------------
+
+  // A `git.cmd` that opts into a bot identity, with the base email a project value (as the
+  // github-workflow stack's setup recipe prescribes). `<email>` is substituted per case.
+  const identityCfg = (email) =>
+    [
+      'targets: [claude]',
+      'stacks: [crew]',
+      'config:',
+      '  project:',
+      '    name: Acme',
+      '  git:',
+      `    botEmail: ${email}`,
+      '    cmd: git -c user.name="Wafflebot" -c user.email={{git.botEmail}}',
+      '',
+    ].join('\n');
+
+  test('one static avatar SVG per agent, lock-tracked and animation-free', () => {
+    assert.equal(render().ok, true);
+    for (const name of ['captain', 'scout']) {
+      const svg = read(cwd, `.waffle/avatars/${name}.svg`);
+      assert.match(svg, /^<svg class="wd-av"/);
+      // SMIL does not rasterize predictably, and these files exist to be converted to PNG.
+      assert.doesNotMatch(svg, /<animate\b/, `${name}.svg must be static`);
+      assert.match(svg, /width="512" height="512"/, 'sized for a Gravatar upload');
+      assert.equal(svg, `${agentAvatarSvg(name, name === 'captain' ? 2 : 0, { px: 512, animated: false })}\n`);
+    }
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    for (const rel of ['.waffle/AVATARS.md', '.waffle/avatars/captain.svg', '.waffle/avatars/scout.svg']) {
+      assert.ok(rel in lock.files, `${rel} tracked in lock`);
+    }
+  });
+
+  test('avatar files and the manifest are pruned when the selection drops every agent', () => {
+    assert.equal(render().ok, true);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\ninclude: [skills/ship]\nconfig:\n  project:\n    name: Acme\n');
+    const result = render();
+    assert.equal(result.ok, true);
+    for (const rel of ['.waffle/AVATARS.md', '.waffle/avatars/captain.svg', '.waffle/avatars/scout.svg']) {
+      assert.ok(result.removed.includes(rel), `${rel} pruned: ${JSON.stringify(result.removed)}`);
+      assert.ok(!fs.existsSync(path.join(cwd, rel)));
+    }
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.ok(!('.waffle/AVATARS.md' in lock.files));
+  });
+
+  test('the manifest pairs each agent with its derived plus-addressed commit email', () => {
+    write(cwd, '.waffle/waffle.yaml', identityCfg('bot@wafflenet.io'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    assert.match(md, /\| `captain` \| Captain \| \w+ \| `\.waffle\/avatars\/captain\.svg` \| `bot\+captain@wafflenet\.io` \|/);
+    assert.match(md, /`bot\+scout@wafflenet\.io`/);
+    // The registration procedure + the honest mechanics, not a promise that avatars appear.
+    assert.match(md, /Registering the avatars \(manual, one-time\)/);
+    assert.match(md, /gravatar\.com/);
+    assert.match(md, /rsvg-convert -w 512 -h 512/);
+    assert.match(md, /## Smoke test/);
+    assert.match(md, /GitHub caches the email→avatar association/);
+    // The anti-recommendation: never add the aliases to the bot's GitHub account.
+    assert.match(md, /\*\*Do not\*\* add these plus-addresses as secondary emails/);
+    // Nothing unresolved leaked through.
+    assert.doesNotMatch(md, /\{\{/);
+  });
+
+  test('a noreply base is used verbatim, and the manifest says every agent shares it', () => {
+    write(cwd, '.waffle/waffle.yaml', identityCfg('12345+wafflebot@users.noreply.github.com'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    assert.match(md, /`12345\+wafflebot@users\.noreply\.github\.com`/);
+    assert.doesNotMatch(md, /\+captain@/, 'no second `+` segment is appended to a noreply base');
+    assert.match(md, /\*\*Every agent above shares one address\*\*/);
+    assert.match(md, /git\.agentIdentities\.<agent>\.botEmail/);
+    // A shared address cannot yield per-agent avatars, so the per-agent procedure is withheld.
+    assert.doesNotMatch(md, /Registering the avatars/);
+  });
+
+  test('a `git.agentIdentities` override replaces the derived email verbatim', () => {
+    write(cwd, '.waffle/waffle.yaml', [
+      identityCfg('bot@wafflenet.io').trimEnd(),
+      '    agentIdentities:',
+      '      scout:',
+      '        botName: Scout Bot',
+      '        botEmail: scout@wafflenet.io',
+      '',
+    ].join('\n'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    assert.match(md, /`bot\+captain@wafflenet\.io`/, 'un-overridden agent still derives');
+    assert.match(md, /\| `scout` \| Scout Bot \| \w+ \| `\.waffle\/avatars\/scout\.svg` \| `scout@wafflenet\.io` ‡ \|/);
+    assert.doesNotMatch(md, /bot\+scout@/, 'an explicit override is exact — never plus-addressed on top');
+    assert.match(md, /‡ set verbatim by a `git\.agentIdentities\.<agent>\.botEmail` override\./);
+  });
+
+  test('with no bot identity the manifest says so instead of inventing an address', () => {
+    assert.equal(render().ok, true); // CFG leaves git.cmd at its bare default
+    const md = read(cwd, '.waffle/AVATARS.md');
+    assert.match(md, /\*\*No commit emails yet — this project has not opted into a bot identity\.\*\*/);
+    assert.doesNotMatch(md, /Commit author email/, 'no email column without a base email');
+    assert.doesNotMatch(md, /Registering the avatars/);
+    assert.doesNotMatch(md, /## Smoke test/);
+    assert.doesNotMatch(md, /@/, 'no address of any kind is claimed');
+    // Still names every agent and its avatar file.
+    assert.match(md, /\| `captain` \| Captain \| \w+ \| `\.waffle\/avatars\/captain\.svg` \|/);
+  });
+
+  test('an unresolvable {{git.botEmail}} reads as "no bot identity", never as a literal placeholder', () => {
+    // `git.cmd` set, but the base email left to the stack default's own placeholder-free value…
+    // here we simulate the documented rule-2 hazard: a cmd referencing a key with no value.
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]', 'stacks: [crew]', 'config:', '  project:', '    name: Acme',
+      '  git:', '    cmd: git -c user.name="Wafflebot" -c user.email={{git.unset}}', '',
+    ].join('\n'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    assert.match(md, /has not opted into a bot identity/);
+    assert.doesNotMatch(md, /Commit author email/, 'an unresolved placeholder is never printed as an address');
+  });
+
+  test('an authored identity.avatar overrides the generated default in the manifest', () => {
+    write(toolkitRoot, 'stacks/crew/agents/scout.md', [
+      '---', 'name: scout', 'description: Scouts ahead and reports.',
+      'identity:', '  displayName: Scout', '  avatar: https://example.com/scout.png', '---', '', 'Scout body.', '',
+    ].join('\n'));
+    assert.equal(render().ok, true);
+    const md = read(cwd, '.waffle/AVATARS.md');
+    assert.match(md, /`https:\/\/example\.com\/scout\.png` †/);
+    assert.match(md, /† authored `identity\.avatar`/);
+    // The deterministic default is still emitted for the agent that authored none…
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/avatars/captain.svg')));
+    // …and for the one that did: the field is a REFERENCE, it does not suppress the render.
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/avatars/scout.svg')));
+  });
+});
+
+// The email derivation is duplicated by design: prose in the delegate skill (read by the
+// orchestrator at spawn time) and these helpers (read by the avatar manifest). These tests pin
+// the exact examples both sides document, so a one-sided change fails loudly. #157.
+describe('per-agent commit-email derivation (#157, lockstep with the delegate skill)', () => {
+  test('extractBaseEmail reads the user.email out of a resolved git.cmd', () => {
+    assert.equal(extractBaseEmail('git -c user.name="Wafflebot" -c user.email=bot@wafflenet.io'), 'bot@wafflenet.io');
+    assert.equal(extractBaseEmail('git -c user.email="bot@wafflenet.io" -c commit.gpgsign=false'), 'bot@wafflenet.io');
+    assert.equal(extractBaseEmail("git -c user.email='bot@wafflenet.io'"), 'bot@wafflenet.io');
+  });
+
+  test('extractBaseEmail returns null when the project has not opted into a bot identity', () => {
+    assert.equal(extractBaseEmail('git'), null, 'rule 1: a bare git virtualizes nothing');
+    assert.equal(extractBaseEmail('git -c commit.gpgsign=false'), null, 'no user.email set');
+    assert.equal(extractBaseEmail(null), null);
+    assert.equal(extractBaseEmail(undefined), null);
+    assert.equal(extractBaseEmail(''), null);
+    // An unresolved placeholder is not an address — it must never be printed as one to register.
+    assert.equal(extractBaseEmail('git -c user.email={{git.botEmail}}'), null);
+    // A TLD-less value is not an address either.
+    assert.equal(extractBaseEmail('git -c user.email=bot@localhost'), null);
+    // `user.email` must be its own `-c` word, not a suffix of another key.
+    assert.equal(extractBaseEmail('git -c not.user.email=bot@wafflenet.io'), null);
+  });
+
+  test('deriveAgentEmail plus-addresses a subaddressable base (rule 2)', () => {
+    assert.equal(deriveAgentEmail('bot@wafflenet.io', 'lead-engineer'), 'bot+lead-engineer@wafflenet.io');
+    assert.equal(deriveAgentEmail('bot@wafflenet.io', 'scout'), 'bot+scout@wafflenet.io');
+  });
+
+  test('deriveAgentEmail uses a base that cannot subaddress VERBATIM (rule 2)', () => {
+    // `*.noreply.github.com` routes only the `<id>+<username>@` shape.
+    assert.equal(
+      deriveAgentEmail('12345+wafflebot@users.noreply.github.com', 'scout'),
+      '12345+wafflebot@users.noreply.github.com',
+    );
+    assert.equal(deriveAgentEmail('bot@users.noreply.github.com', 'scout'), 'bot@users.noreply.github.com');
+    assert.equal(deriveAgentEmail('bot@noreply.github.com', 'scout'), 'bot@noreply.github.com');
+    // A local part whose tag is already spent.
+    assert.equal(deriveAgentEmail('bot+ci@x.io', 'scout'), 'bot+ci@x.io');
+    // …but a `noreply.github.com` SUBSTRING in another domain is not the noreply domain.
+    assert.equal(deriveAgentEmail('bot@notnoreply.github.com', 'scout'), 'bot+scout@notnoreply.github.com');
+  });
+
+  test('deriveAgentEmail passes a null base straight through (no identity ⇒ no address)', () => {
+    assert.equal(deriveAgentEmail(null, 'scout'), null);
+    assert.equal(deriveAgentEmail(undefined, 'scout'), null);
   });
 });
 

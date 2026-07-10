@@ -22,6 +22,9 @@ node_modules/
 .waffle/TEAM.md
 .waffle/cheatsheet.html
 .waffle/team.html
+# …and the per-agent avatar files + their Gravatar registration manifest (#157).
+.waffle/AVATARS.md
+.waffle/avatars/
 
 # Obsidian
 .obsidian/
