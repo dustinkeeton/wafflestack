@@ -157,7 +157,13 @@ function titleCaseSlug(slug) {
  * drops every item of that kind. Substitution problems (should not occur on a validated
  * toolkit, since descriptions are policed by `validate`) are pushed onto `errors`.
  */
-export function generateWaffleDocs({ toolkit, project, selection, errors = [] }) {
+/**
+ * The per-stack resolver cache + `substitute` closure the doc generators share. One cache per
+ * call (a fresh `Map`), so each generation resolves every stack's placeholders exactly as render
+ * does. `generateWaffleDocs` and `collectAgentAvatars` both build their rows through this, so the
+ * substituted values (and thus the registered addresses) can never diverge.
+ */
+function makeDocSubstitutor(project, errors) {
   const primaryTarget = project.targets[0] ?? 'claude';
   const resolvers = new Map();
   const resolverFor = (stack) => {
@@ -166,45 +172,62 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
   };
   const sub = (stack, text, ctx) =>
     substitute(String(text ?? ''), resolverFor(stack), stack.declared, errors, ctx, NO_GUARDS).trim();
+  return { primaryTarget, resolverFor, sub };
+}
 
-  const commands = [];
+/**
+ * Enumerate the installed agents from a selection into the single row shape both the rendered
+ * `TEAM.md`/`AVATARS.md` and the `avatars sync` pipeline consume. `ctxPrefix` only scopes the
+ * substitution error context (`waffledocs` vs `avatars`); the derived fields are identical, so
+ * the two callers never drift. Returned alphabetically for a deterministic (stable-hash) output.
+ */
+function enumerateAgents(selection, sub, ctxPrefix) {
   const agents = [];
   for (const { stack, kind, item } of selection.items) {
-    if (kind === 'skills') {
-      const { data } = parseFrontmatter(fs.readFileSync(path.join(item.dir, 'SKILL.md'), 'utf8'));
-      if (!isUserInvocable(data)) continue;
-      commands.push({
-        // `ref` is the skill's item name (its dir name) — the key an agent's frontmatter
-        // `skills:` list resolves against, so the skill→agents reverse map can join on it.
-        ref: item.name,
-        name: data.name ?? item.name,
-        argumentHint:
-          data['argument-hint'] != null
-            ? sub(stack, data['argument-hint'], `waffledocs:skills/${item.name}#argument-hint`)
-            : '',
-        description: sub(stack, data.description, `waffledocs:skills/${item.name}#description`),
-      });
-    } else if (kind === 'agents') {
-      agents.push({
-        name: item.data.name ?? item.name,
-        // The agent's SLUG — its definition filename, which is the key the delegate orchestrator
-        // plus-addresses with and `git.agentIdentities` is keyed by. `validateStack` pins
-        // `data.name` to the filename when both exist, so today they agree; keep them separate
-        // anyway, because the identity derivation is defined on the slug.
-        slug: item.name,
-        // `stackName` is retained so agent `skills:` refs resolve preferring their own stack
-        // (matching render's own resolution) when building the cheatsheet reverse map.
-        stackName: stack.name,
-        description: sub(stack, item.data.description, `waffledocs:agents/${item.name}#description`),
-        skills: Array.isArray(item.data.skills) ? item.data.skills : [],
-        // The validated `identity:` block (#156/#157), passed through by `renderAgent` verbatim.
-        identity: item.data.identity ?? null,
-      });
-    }
+    if (kind !== 'agents') continue;
+    agents.push({
+      name: item.data.name ?? item.name,
+      // The agent's SLUG — its definition filename, which is the key the delegate orchestrator
+      // plus-addresses with and `git.agentIdentities` is keyed by. `validateStack` pins
+      // `data.name` to the filename when both exist, so today they agree; keep them separate
+      // anyway, because the identity derivation is defined on the slug.
+      slug: item.name,
+      // `stackName` is retained so agent `skills:` refs resolve preferring their own stack
+      // (matching render's own resolution) when building the cheatsheet reverse map.
+      stackName: stack.name,
+      description: sub(stack, item.data.description, `${ctxPrefix}:agents/${item.name}#description`),
+      skills: Array.isArray(item.data.skills) ? item.data.skills : [],
+      // The validated `identity:` block (#156/#157), passed through by `renderAgent` verbatim.
+      identity: item.data.identity ?? null,
+    });
   }
+  agents.sort((a, b) => a.name.localeCompare(b.name));
+  return agents;
+}
+
+export function generateWaffleDocs({ toolkit, project, selection, errors = [] }) {
+  const { resolverFor, sub } = makeDocSubstitutor(project, errors);
+
+  const commands = [];
+  for (const { stack, kind, item } of selection.items) {
+    if (kind !== 'skills') continue;
+    const { data } = parseFrontmatter(fs.readFileSync(path.join(item.dir, 'SKILL.md'), 'utf8'));
+    if (!isUserInvocable(data)) continue;
+    commands.push({
+      // `ref` is the skill's item name (its dir name) — the key an agent's frontmatter
+      // `skills:` list resolves against, so the skill→agents reverse map can join on it.
+      ref: item.name,
+      name: data.name ?? item.name,
+      argumentHint:
+        data['argument-hint'] != null
+          ? sub(stack, data['argument-hint'], `waffledocs:skills/${item.name}#argument-hint`)
+          : '',
+      description: sub(stack, data.description, `waffledocs:skills/${item.name}#description`),
+    });
+  }
+  const agents = enumerateAgents(selection, sub, 'waffledocs');
   // Alphabetical, so output is deterministic (stable lock hash) regardless of stack order.
   commands.sort((a, b) => a.name.localeCompare(b.name));
-  agents.sort((a, b) => a.name.localeCompare(b.name));
 
   // Skill→agents reverse map: for each installed agent, resolve every granted skill ref
   // (leniently — an unresolved/ambiguous name is silently skipped, as elsewhere) and index
@@ -402,27 +425,8 @@ function avatarRows(agents, git) {
  */
 export function collectAgentAvatars({ toolkit, project, selection }) {
   const errors = [];
-  const primaryTarget = project.targets[0] ?? 'claude';
-  const resolvers = new Map();
-  const resolverFor = (stack) => {
-    if (!resolvers.has(stack.name)) resolvers.set(stack.name, makeResolver(stack, project.values, primaryTarget));
-    return resolvers.get(stack.name);
-  };
-  const sub = (stack, text, ctx) =>
-    substitute(String(text ?? ''), resolverFor(stack), stack.declared, errors, ctx, NO_GUARDS).trim();
-  const agents = [];
-  for (const { stack, kind, item } of selection.items) {
-    if (kind !== 'agents') continue;
-    agents.push({
-      name: item.data.name ?? item.name,
-      slug: item.name,
-      stackName: stack.name,
-      description: sub(stack, item.data.description, `avatars:agents/${item.name}#description`),
-      skills: Array.isArray(item.data.skills) ? item.data.skills : [],
-      identity: item.data.identity ?? null,
-    });
-  }
-  agents.sort((a, b) => a.name.localeCompare(b.name));
+  const { resolverFor, sub } = makeDocSubstitutor(project, errors);
+  const agents = enumerateAgents(selection, sub, 'avatars');
   const git = resolveGitIdentity({ project, selection, resolverFor });
   const rows = avatarRows(agents, git).map((r) => ({
     ...r,
