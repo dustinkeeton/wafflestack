@@ -20,7 +20,7 @@ import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequi
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 import { agentAvatarSvg, agentFlavor, extractBaseEmail, deriveAgentEmail, withIdentity } from '../lib/waffledocs.mjs';
-import { enumerateAgentAvatars } from '../lib/avatars-sync.mjs';
+import { enumerateAgentAvatars, runAvatarsSync, TOKEN_ENV } from '../lib/avatars-sync.mjs';
 import {
   loadProjectConfig,
   migrateLegacyDotfiles,
@@ -6578,6 +6578,91 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
       // The rendered SVG the pipeline would upload matches the on-disk avatar file.
       assert.equal(r.svg, read(cwd, `.waffle/avatars/${r.name}.svg`));
     }
+  });
+
+  // A recording Gravatar client — no network. `associated` decides whether each hashed email is
+  // reported as verified on the account (default: every address drifted).
+  const recordingHttp = ({ associated = () => false } = {}) => {
+    const calls = [];
+    let nextId = 100;
+    return {
+      calls,
+      async getAssociatedEmail({ token, emailHash: hash }) {
+        calls.push(['getAssociatedEmail', { token, hash }]);
+        return { associated: associated(hash) };
+      },
+      async uploadAvatar({ token, emailHash: hash, image }) {
+        calls.push(['uploadAvatar', { token, hash, image }]);
+        return { imageId: `img-${nextId++}` };
+      },
+      async setRating({ token, imageId, rating }) {
+        calls.push(['setRating', { token, imageId, rating }]);
+      },
+      async associateAvatarEmail({ token, imageId, emailHash: hash }) {
+        calls.push(['associateAvatarEmail', { token, imageId, hash }]);
+      },
+    };
+  };
+
+  test('runAvatarsSync short-circuits with no bot identity — enumerates, makes no Gravatar calls, skips all', async () => {
+    // The default fixture config sets no `git.cmd` identity, so `git.baseEmail` is null: the
+    // "no bot identity configured" branch (avatars-sync.mjs:244) a repo that hasn't opted into a
+    // bot identity hits when it runs `avatars status`/`sync`. It must still enumerate the roster,
+    // make ZERO Gravatar calls, and hand every agent back as `skipped` (CLI exit stays 0). A
+    // flipped guard here would silently no-op the feature on a configured repo and ship green.
+    const http = recordingHttp();
+    const rasterize = async () => {
+      throw new Error('rasterizer must not run on the no-identity path');
+    };
+    const logs = [];
+    const result = await runAvatarsSync({
+      toolkitRoot,
+      cwd,
+      mode: 'sync',
+      env: {},
+      http,
+      rasterize,
+      log: (m) => logs.push(m),
+    });
+    assert.deepEqual(result.synced, []);
+    assert.deepEqual(result.pending, []);
+    assert.deepEqual(
+      result.skipped.map((r) => r.name).sort(),
+      ['captain', 'scout'],
+      'both agents reported as skipped',
+    );
+    assert.equal(result.mode, 'sync');
+    assert.equal(http.calls.length, 0, 'no Gravatar calls when no identity is configured');
+    assert.match(logs.join('\n'), /no bot identity/);
+  });
+
+  test('runAvatarsSync status mode wires a null rasterizer, probes with the token, and never uploads', async () => {
+    // A configured identity, so the run proceeds past the no-identity guard. Status mode must
+    // resolve `rasterize` to null via the `mode === 'status' ? null : makeShellRasterizer()`
+    // wiring (never shell out to a native converter) yet still authenticate the associated-email
+    // probe. Passing no `rasterize` exercises exactly that branch; every address is drifted, so it
+    // reports drift and uploads nothing.
+    write(cwd, '.waffle/waffle.yaml', identityCfg('bot@wafflenet.io'));
+    const http = recordingHttp({ associated: () => false });
+    const result = await runAvatarsSync({
+      toolkitRoot,
+      cwd,
+      mode: 'status',
+      env: { [TOKEN_ENV]: 'tok' },
+      http,
+      // no `rasterize` passed → the status-mode null-rasterizer wiring is under test
+    });
+    assert.equal(result.mode, 'status');
+    const methods = http.calls.map((c) => c[0]);
+    assert.ok(methods.includes('getAssociatedEmail'), 'status authenticates the association probe');
+    assert.ok(!methods.includes('uploadAvatar'), 'status never uploads');
+    assert.equal(result.synced.length, 0);
+    assert.deepEqual(
+      result.pending.map((r) => r.email).sort(),
+      ['bot+captain@wafflenet.io', 'bot+scout@wafflenet.io'],
+      'both configured agents reported as drift',
+    );
+    assert.ok(http.calls.every((c) => c[1].token === 'tok'), 'the probe carries the env token');
   });
 
   test('a noreply base is used verbatim, and the manifest says every agent shares it', () => {
