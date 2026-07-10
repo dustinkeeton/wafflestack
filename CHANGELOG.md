@@ -89,7 +89,8 @@ is what you reach for across a breaking one.
   must satisfy it: each entry a map, each leaf key declared (an **unknown leaf fails the render**, so
   a typoed `botEmial:` cannot ride along unguarded), each leaf value a string fully matching its
   regex. An explicit `signingKey: ""` fails the render — the leaf is optional, so empty carries no
-  information and would only render the `-c user.signingkey=` that git rejects at run time.
+  information and would only render a `-c user.signingkey=` that git rejects only when the command
+  signs (a non-signing recipe carries the empty flag silently).
   Enforced at both the top-level and nested substitution paths, and compiled **toolkit-wide**
   like `pattern:`, so the guard travels with the key rather than with whichever stack happens to be
   installed. This closes the hole #154 documented: `git.agentIdentities` leaves now land in an
