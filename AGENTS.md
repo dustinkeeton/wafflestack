@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-07-09
+last-updated: 2026-07-10
 ---
 
 # AGENTS.md — wafflestack
@@ -73,7 +73,8 @@ collision is resolved by the `electron-`/`webapp-` renames; the output-conflict 
 | `installer/lib/setup.mjs` | `setup` output: `schema/SETUP.md` playbook + inventory generated from the installed toolkit. On an already-configured `cwd`, injects a "Current configuration — update mode" section (live targets/stacks/includes/ejects/effective config/unset required keys/opt-in syrup state) so a re-run curates an update pass. |
 | `installer/lib/migrations.mjs` | Migration registry (`MIGRATIONS`) + runner: ordered, idempotent, version-keyed steps `{ version, description, run(cwd) }`; applies steps in `(fromVersion, toVersion]`. Ships the 0.6.0 `.wafflestack.*`→`.waffle.*` rename, the 0.8.0 root→`.waffle/` config move, and the 0.10.0 consumer `bundles:`→`stacks:` key rename (#59). |
 | `installer/lib/upgrade.mjs` | `upgrade` flow: lock-vs-toolkit version diff, `CHANGELOG.md` delta printout, run migrations, then render (`refreshSources: true` — re-fetch each git pin so a moved ref is observed) + doctor. Diffs re-resolved source commits against the lock to report per-source moves (`diffSources`, #125). Also exports the changelog-section parser. |
-| `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded, self-contained HTML page (`cheatsheet.html`/`team.html`; hybrid font strategy — Google Fonts link + system-font fallback, fonts the only external ref); plus a static `avatars/<agent>.svg` per agent and the `AVATARS.md` Gravatar-registration manifest (#157), whose per-agent commit emails are derived by `extractBaseEmail`/`deriveAgentEmail` **in lockstep with the delegate skill's prose rules**. Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`/`identity`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. |
+| `installer/lib/waffledocs.mjs` | Generate the `.waffle/` overview docs from the render selection: `CHEATSHEET.md` (user-invocable skills) + `TEAM.md` (installed agents), each with a branded, self-contained HTML page (`cheatsheet.html`/`team.html`; hybrid font strategy — Google Fonts link + system-font fallback, fonts the only external ref); plus a static `avatars/<agent>.svg` per agent and the `AVATARS.md` Gravatar-registration manifest (#157), whose per-agent commit emails are derived by `extractBaseEmail`/`deriveAgentEmail` **in lockstep with the delegate skill's prose rules**. Assembles from item frontmatter (skill `user-invocable`/`argument-hint`/`description`; agent `name`/`description`/`skills`/`identity`), substituted with render's resolver. Emitted via `render.mjs`'s `emit()`, so lock-tracked + doctor-checked + pruned. Also exports `collectAgentAvatars({toolkit,project,selection})` (#285) — the same avatar rows + derived emails as `AVATARS.md`, each paired with its rendered SVG, consumed by `avatars-sync.mjs` so the pipeline and the manifest never drift. |
+| `installer/lib/avatars-sync.mjs` | Owner-side Gravatar pipeline behind `wafflestack avatars sync`/`status` (#285). `emailHash` (sha256 of lowercased-trimmed email), `syncAvatars` (the pure engine — probe `GET /me/associated-email`, then upload/rate-G/assign over Gravatar v3, or collect the manual "verify then re-run" remainder; HTTP + rasterizer **injected** for tests; per-agent errors isolated into a `failed[]` remainder), `avatarsExitCode` (pure drift/failure exit gate — any `failed` ⇒ 1, `status` + `pending` drift ⇒ 1), `makeGravatarHttp` (fetch-based v3 client), `makeShellRasterizer` (SVG→512px PNG via `rsvg-convert`/`magick`/`convert`/`npx svgexport`), `enumerateAgentAvatars` (roster rows via `collectAgentAvatars`), `runAvatarsSync` (CLI wiring). Token read from `WAFFLE_GRAVATAR_TOKEN`, never rendered or flagged. Never exercised by `npm test` against a real network. |
 | `installer/lib/evals.mjs` | Layer 2 eval harness (#109): discover/validate `stacks/*/evals/*.eval.yaml` cases, render a case's target through `renderProject` into a temp project (rendered body → system prompt), drive a model, evaluate transcript assertions (`includes`/`excludes`/`regex` deterministic; `judge` LLM-graded). `Budget` enforces a hard call cap BEFORE each call (`BudgetExceededError` stops the run, remaining cases skipped). `anthropicClient` (fetch-based, no SDK dep) for live runs; `mockClient` for dry-run/tests. Driven by `installer/evals.mjs` (`npm run evals`), never by `npm test`. |
 | `installer/lib/list.mjs` | `list` command (#119): compose `loadToolkit`/`loadProjectConfig`/`computeSelection`/`readLock`/doctor-style sha256 into a per-stack per-item state model classifying each item `current`/`outdated`/`not-installed`; render it as a plain aligned agent-parseable table (default, TTY-gated ANSI) or drive a hand-rolled keypress multi-select (`--interactive`, needs a real TTY, applies via `installRefs`+render). Built-in surface only (external `source:` stacks list as a selection error, like `setup`). |
 | `installer/lib/prerequisites.mjs` | Typed external prerequisites (#47/#129): normalize a stack's `prerequisites:` list, scope it to a selection (`applicablePrerequisites`, like `requires:`), run each `check` shell command (`runCheck`, exit 0 = satisfied, stdio ignored, timeout-bounded) and bucket by level (`evaluatePrerequisites` → `{unmetRequired,unmetRecommended,met}`). `RENDER_PROBE_KINDS` = `{tool,env}` (the cheap kinds render probes; doctor probes all). Imported by `doctor.mjs` + `render.mjs`. |
@@ -180,6 +181,17 @@ export function agentAvatarSvg(name, skillCount = 0, opts) // → inline waffleb
 export function extractBaseEmail(gitCmd)               // → the `-c user.email=` value of a resolved git.cmd, else null (no bot identity / unresolved placeholder) (#157)
 export function deriveAgentEmail(baseEmail, slug)      // → base plus-addressed with +<slug>, or verbatim when it cannot subaddress (*.noreply.github.com, local part already has `+`); null base → null (#157)
 export function withIdentity(gitCmd, displayName, email) // → git.cmd with `-c user.name=`/`-c user.email=` swapped in place, every other flag preserved (delegate rule 4) (#157)
+export function collectAgentAvatars({ toolkit, project, selection }) // → { rows:[{name,email,svg,skillCount,overridden,…}], git }  (shared avatar-row enumeration, #285; the same rows/emails AVATARS.md describes, consumed by avatars-sync so pipeline + manifest never drift. Refactor #289 shares makeDocSubstitutor/enumerateAgents with generateWaffleDocs — private, byte-identical output)
+
+// avatars-sync.mjs   (GRAVATAR_BASE = 'https://api.gravatar.com/v3'; TOKEN_ENV = 'WAFFLE_GRAVATAR_TOKEN')
+export function emailHash(email)                       // → sha256 hex of lowercased-trimmed email (Gravatar email id)
+export async function syncAvatars({ agents, token, http, rasterize, log, mode = 'sync' }) // → { synced, pending, skipped, failed, mode }  (probe GET /me/associated-email → upload/rate-G/assign, or collect unverified into pending; throws NO_TOKEN-coded error on falsy token; per-agent errors isolated into failed[])
+export function avatarsExitCode({ mode, pending, failed }) // → 0|1  (any failed ⇒ 1; status + pending drift ⇒ 1; else 0 — pure, so the gate is unit-testable)
+export function enumerateAgentAvatars({ toolkitRoot, cwd }) // → { rows:[{name,email,svg,…}], git }  (selection's avatar rows via collectAgentAvatars)
+export function makeGravatarHttp(fetchImpl = globalThis.fetch) // → v3 client { getAssociatedEmail, uploadAvatar, setRating, associateAvatarEmail }
+export const RASTERIZERS                                // ordered SVG→PNG converters probed by --version: rsvg-convert, magick, convert, npx svgexport
+export function makeShellRasterizer()                  // → async (svg) => Buffer  (512px PNG via first available converter; throws if none on PATH)
+export async function runAvatarsSync({ toolkitRoot, cwd, mode = 'sync', env = process.env, log, http, rasterize }) // → syncAvatars result  (wires real client + shell rasterizer unless injected; short-circuits with no bot identity; status mode needs no rasterizer)
 
 // list.mjs
 export const STATUS                                    // { CURRENT:'current', OUTDATED:'outdated', NOT_INSTALLED:'not-installed' }
@@ -210,9 +222,10 @@ Import graph (`util.mjs` and `refs.mjs` are pure leaves; `template.mjs` depends 
 `sources.mjs`→util and `prerequisites.mjs`→refs are near-leaves):
 
 ```
-cli.mjs      → render, doctor, eject, list, validate, setup, upgrade, toolkit, prerequisites, project  (command dispatch)
+cli.mjs      → render, doctor, eject, list, validate, setup, upgrade, toolkit, prerequisites, project, avatars-sync (dynamic)  (command dispatch)
 render.mjs   → refs, template, toolkit, project, util, waffledocs, sources, validate, prerequisites
-waffledocs.mjs → template, project, util
+waffledocs.mjs → template, project, util, refs
+avatars-sync.mjs → toolkit, project, refs, waffledocs
 doctor.mjs   → render, project, toolkit, refs, prerequisites, sources, util
 eject.mjs    → render, toolkit, refs, project, util
 validate.mjs → toolkit, template, refs, prerequisites, project, util
@@ -234,7 +247,7 @@ util.mjs     → (none)
 Bin `wafflestack` → `installer/cli.mjs`. Global flag `--cwd DIR` targets a project dir
 (spliced out before ref parsing; default: process cwd; `cli.mjs:26`, `extractCwd` `cli.mjs:190`).
 `render`/`install` also take `--force` (`extractFlag`, `cli.mjs:199`) to override the overwrite guard.
-Usage: `wafflestack <init|setup|list|install|render|upgrade|doctor|eject|validate> [refs…] [--cwd DIR]`.
+Usage: `wafflestack <init|setup|list|install|render|upgrade|doctor|eject|avatars|validate> [refs…] [--cwd DIR]`.
 
 | Command | Behavior |
 |---------|----------|
@@ -246,6 +259,7 @@ Usage: `wafflestack <init|setup|list|install|render|upgrade|doctor|eject|validat
 | `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render (re-fetching external source pins, reporting per-source commit moves) + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:33` |
 | `doctor` | Diff managed files vs lock; always report the rendered `toolkitVersion` + a skew note; run the selected stacks' typed `prerequisites:` checks. Exit 1 on drift OR an unmet `require`-level prerequisite (`recommend` only reports; `--allow-missing`: only modified files count as drift). `doctor.mjs:39` |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Add to `eject:`, strip any matching `include:` entry, drop the item's files from the lock; files stay in place, now project-owned. `eject.mjs:24` |
+| `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285). Enumerate the installed agent roster with its derived commit emails (same derivation as `AVATARS.md`), and for each email **already verified** on the Gravatar account: `sync` rasters the avatar SVG→512px PNG and uploads/assigns it (rating G); `status` only probes and reports drift (an installed agent whose address is unregistered). Reads an owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`; Gravatar has no add/verify-email API, so an unverified address is reported as a manual "verify then re-run" remainder. HTTP + rasterizer are injected (unit-tested with mocks). `status` exits 1 on drift; a per-agent `failed` remainder (transient API errors, isolated so one failure never aborts the roster) exits 1 in either mode (`avatarsExitCode`). `avatars-sync.mjs`, `cli.mjs:139` |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter complete, placeholder↔declaration sync, agent-skill/`requires:` refs resolve, `prerequisites:` fields + `items:` refs, harness.* defaults match their guards. Exit 1 on problems. `validate.mjs:11` |
 
 ## Item refs and render selection
