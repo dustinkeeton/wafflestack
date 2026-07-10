@@ -338,7 +338,11 @@ describe('git-workflow skill: the three-tier signing model (#158)', () => {
 
   test('all three tiers are named, with the resolved git.cmd as the posture', () => {
     assert.match(md, /## Signing model/);
-    assert.match(md, /the resolved `git\.cmd` above is this project's signing posture/);
+    // #158 review (should-fix): the headline claim is gated on the opt-in. Under the bare-`git`
+    // default `git.cmd` pins nothing, so calling it "this project's signing posture" was false
+    // for every project that has not opted in.
+    assert.match(md, /When `git\.cmd` above is \*\*not\*\* a bare `git`, the resolved command \*\*is\*\*\s+this project's signing posture/);
+    assert.match(md, /A bare `git` pins no posture/);
     assert.match(md, /\*\*Human\*\* — machine git config/);
     assert.match(md, /The toolkit configures no signing for humans/);
     assert.match(md, /\*\*Bot and agents\*\* — whatever `git\.cmd` pins/);
@@ -374,10 +378,25 @@ describe('github-workflow setup note: the signing recipes and verification matri
     assert.match(stack, /the recipe owns the posture, keys own key selection/i);
   });
 
+  // #158 review (should-fix): the `wafflestack init` scaffold is the copy-paste surface a new
+  // user actually uncomments, and it shipped the pre-#158 recipe (no `-c commit.gpgsign=false`)
+  // while the setup note claimed recipe A "is what every quoted opt-in shows". Pin them together
+  // so the starter config cannot drift from the note again.
+  test('the waffle-init starter config quotes recipe A verbatim', () => {
+    const eject = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'lib', 'eject.mjs'), 'utf8');
+    assert.match(
+      eject,
+      /#    cmd: git -c commit\.gpgsign=false -c user\.name="\{\{git\.botName\}\}" -c user\.email=\{\{git\.botEmail\}\}/,
+    );
+  });
+
   test('recipes B and C are documented upgrades with a non-prompting-signer precondition', () => {
     assert.match(stack, /# Recipe B \(SSH signing\)/);
     assert.match(stack, /-c gpg\.format=ssh -c user\.signingkey=\{\{git\.signingKey\}\}/);
     assert.match(stack, /# Recipe C \(GPG signing\)/);
+    // Both recipes pin gpg.format: an inherited format hands the key to the wrong signer.
+    // Deleting `-c gpg.format=...` from either recipe must fail here.
+    assert.match(stack, /-c gpg\.format=openpgp -c user\.signingkey=\{\{git\.signingKey\}\}/);
     assert.match(stack, /\*\*a non-prompting signer\*\*/);
   });
 
