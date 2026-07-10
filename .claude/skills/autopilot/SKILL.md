@@ -96,6 +96,12 @@ Create the directory first (`mkdir -p .claude/worktrees/.autopilot`); it sits un
 
 For a parallel group, plan each issue in the group first (these planning contexts can run concurrently — they only read and write their own plan file).
 
+**Plan-ahead overlap (optional).** The planning context is read-only and writes only its own throwaway plan file under `.claude/worktrees/.autopilot` (gitignored), so it is **conflict-free by construction** against any in-flight PR's gates. While PR N is in its gate loops (Steps 5–7) or merge-wait (Step 8), the orchestrator **MAY** spawn issue N+1's Step 1 planning context so N+1's plan file is ready the moment N merges. This overlap is a scheduling optimization only and changes **none** of the serial semantics:
+
+- **Read-only.** The plan-ahead planner is exactly the Step 1 read-only planner run early — it never edits source and never provisions a worktree, so it touches nothing the in-flight PR's gates or `pr-response`/`/audit` fixes can collide with.
+- **Serial handoff is unchanged.** N+1's plan is still handed to a **fresh implementer only after Step 8 confirms `MERGED`** for a dependent chain (Step 2's handoff and Step 8's merge-wait are untouched) — planning ahead never starts *implementing* ahead.
+- **The plan stays a brief, not a contract.** If PR N's gates change the ground the plan stood on (e.g. a semantic fix push), Step 2's authority language already covers the staleness — the fresh implementer owns the outcome, not fidelity to a plan drafted against pre-merge state.
+
 ### Step 2 — Handoff to a fresh implementer (the plan is a brief, not a contract)
 
 The implementer is a **fresh context** — the delegate-spawned agent — that receives the plan file's content in its prompt. Autopilot is the orchestrating context that runs the delegate playbook, so it controls the prompt delegate hands each agent: **inject the plan** as an extra section of delegate's agent-prompt template, immediately above its Instructions:
