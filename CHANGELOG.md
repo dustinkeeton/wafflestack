@@ -288,6 +288,18 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **Autopilot codifies implement-ahead for an independent next issue (#277).** The per-issue
+  loop's Step 3 now documents that when issue N+1 is independent of the in-flight one under
+  delegate's parallelization rules, the orchestrator MAY start N+1's implementer (Steps 2–3)
+  in its own delegate-provisioned worktree while PR N is still in its gate loops (Steps 5–7)
+  or merge-wait (Step 8) — so N+1's PR is open the moment N merges. Gates stay serial: N+1's
+  gate loops do not start until PR N reads `MERGED` and Step 9 housekeeping has run, and N+1's
+  branch rebases onto the freshly merged main before its gates begin (the reconciliation point
+  for the accepted, bounded pre-merge base staleness). Serial-dependent chains and the Step 8
+  merge-wait are unchanged, and Failure handling now covers an implement-ahead branch
+  invalidated by PR N's gate fixes (re-plan/re-implement counts as the one retry).
+  **Consumer impact:** prose-only change to the autopilot SKILL.md; no config or schema change;
+  consuming repos pick it up on re-render.
 - **Autopilot codifies the plan-ahead overlap for the next issue's planning context (#276).**
   The per-issue loop's Step 1 now documents that while PR N is in its gate loops (Steps 5–7)
   or merge-wait (Step 8), the orchestrator MAY spawn issue N+1's Step 1 planning context
