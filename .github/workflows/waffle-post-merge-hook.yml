@@ -159,15 +159,18 @@ jobs:
           # (4) Optimistic-concurrency update: GET content + sha, dedup on waffle.prs, PUT
           #     conditioned on that sha. A 409/422 means a concurrent merge's run won the
           #     write race — re-GET and retry, bounded; the dedup makes any retry idempotent.
+          #     An empty sha means the ref exists but the FILE is absent or unreadable (deleted
+          #     from the branch, pushed over, or a pre-existing consumer branch of the same
+          #     name — the bootstrap above gates on the ref only, so it never re-runs here).
+          #     Self-heal instead of wedging every future merge: fall through with the seed and
+          #     PUT in the sha-less CREATE form; if the file actually exists (a transient read
+          #     error), the create form 422s and the loop retries against a fresh read.
           attempt=1
           while [ "$attempt" -le 5 ]; do
             resp="$(gh api "repos/${GITHUB_REPOSITORY}/contents/${TPATH}?ref=${TBRANCH}" 2>/dev/null || true)"
             sha="$(printf '%s' "$resp" | jq -r '.sha // empty' 2>/dev/null || true)"
             current="$(printf '%s' "$resp" | jq -r '.content // "" | gsub("\\s"; "") | @base64d' 2>/dev/null || true)"
-            if [ -z "$sha" ]; then
-              echo "::warning title=waffle-post-merge-hook::Could not read ${TPATH}@${TBRANCH} — the global token counter was not updated for PR #${PR_NUMBER} (non-fatal; a missed tick never fails the run)."
-              exit 0
-            fi
+            if [ -z "$sha" ]; then current=""; fi
             printf '%s' "$current" | jq -e '.waffle' >/dev/null 2>&1 || current="$seed"
             if [ "$(printf '%s' "$current" | jq --arg pr "$PR_NUMBER" '.waffle.prs | has($pr)' 2>/dev/null || echo error)" = "true" ]; then
               echo "🧇 waffle-post-merge-hook: PR #${PR_NUMBER} is already in the global token counter — nothing to add (idempotent re-run)." | tee -a "$GITHUB_STEP_SUMMARY"
@@ -183,7 +186,7 @@ jobs:
               echo "::warning title=waffle-post-merge-hook::Could not encode the updated counter JSON — the global token counter was not updated for PR #${PR_NUMBER} (non-fatal)."
               exit 0
             fi
-            jq -n --arg msg "chore(telemetry): +${pr_total} tokens for PR #${PR_NUMBER}" --arg content "$b64" --arg sha "$sha" --arg branch "$TBRANCH" '{message: $msg, content: $content, sha: $sha, branch: $branch}' > "$RUNNER_TEMP/tk-put.json"
+            jq -n --arg msg "chore(telemetry): +${pr_total} tokens for PR #${PR_NUMBER}" --arg content "$b64" --arg sha "$sha" --arg branch "$TBRANCH" '{message: $msg, content: $content, branch: $branch} + (if $sha != "" then {sha: $sha} else {} end)' > "$RUNNER_TEMP/tk-put.json"
             if gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/${TPATH}" --input "$RUNNER_TEMP/tk-put.json" >/dev/null 2>&1; then
               echo "🧇 waffle-post-merge-hook: global token counter +${pr_total} tokens for PR #${PR_NUMBER} (badge JSON on ${TBRANCH})." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
