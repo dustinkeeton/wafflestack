@@ -522,9 +522,12 @@ describe('harness.* CI dispatcher pin + injection guards (#131)', () => {
 });
 
 describe('nested substitution', () => {
-  const declared = new Set(['git.coAuthorTrailer', 'git.cmd', 'a.b']);
+  const declared = new Set(['git.coAuthorTrailer', 'git.ownerName', 'git.ownerEmail', 'git.cmd', 'a.b']);
   const values = {
-    'git.coAuthorTrailer': 'Co-Authored-By: {{harness.assistantName}} <bot@example.com>',
+    // The real default shape (#284): the trailer nests the two owner keys.
+    'git.coAuthorTrailer': 'Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>',
+    'git.ownerName': 'Dustin Keeton',
+    'git.ownerEmail': 'owner@example.com',
     'git.cmd': 'git -c user.email={{git.localOnly}}',
     'git.localOnly': 'secret@example.com', // present in config but NOT declared (local-overlay pattern)
     'harness.assistantName': 'Claude',
@@ -536,7 +539,7 @@ describe('nested substitution', () => {
   test('placeholders inside values expand, including undeclared config-present keys', () => {
     const errors = [];
     const out = substitute('{{git.coAuthorTrailer}} via {{git.cmd}}', resolve, declared, errors, 't');
-    assert.equal(out, 'Co-Authored-By: Claude <bot@example.com> via git -c user.email=secret@example.com');
+    assert.equal(out, 'Co-authored-by: Dustin Keeton <owner@example.com> via git -c user.email=secret@example.com');
     assert.equal(errors.length, 0);
   });
 
@@ -1517,6 +1520,60 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.deepEqual(parseIdentityFence(skill), {});
   });
 
+  test('I1b #284: setting only the owner keys renders an owner-credited trailer, no anthropic noreply', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ownerName: Dustin Keeton\n    ownerEmail: 123+dustin@users.noreply.github.com\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    // the co-author trailer credits the owner (nested substitution resolved both owner keys)
+    assert.match(skill, /Co-authored-by: Dustin Keeton <123\+dustin@users\.noreply\.github\.com>/);
+    // the old harness default must appear nowhere in the rendered output
+    assert.doesNotMatch(skill, /noreply@anthropic\.com/);
+    assert.doesNotMatch(skill, /\{\{git\.owner/, 'no owner placeholder survives the render');
+  });
+
+  test('I1c #284: unset owner keys fall back to declared placeholder defaults (guards pass)', () => {
+    write(cwd, '.waffle/waffle.yaml', base);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /Co-authored-by: Repository Owner <owner@users\.noreply\.github\.com>/);
+    assert.doesNotMatch(skill, /noreply@anthropic\.com/);
+  });
+
+  // #291 review F1: git.ownerName is a real person's display name and lands only in inert splice
+  // sites (a backtick code span, single-quoted heredoc bodies), so its allowlist is name-appropriate,
+  // NOT botName's ASCII-only class. A legitimate owner named O'Brien / José / Müller / Nguyễn must
+  // render, not hit a red doctor gate on their own name. Tighten the class back to ASCII-only and
+  // this goes red.
+  test("I1d #291: an owner name with an apostrophe and accented Latin letters renders", () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ownerName: José O'Brien-Müller\n    ownerEmail: 123+jose@users.noreply.github.com\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /Co-authored-by: José O'Brien-Müller <123\+jose@users\.noreply\.github\.com>/);
+    assert.doesNotMatch(skill, /\{\{git\.owner/, 'no owner placeholder survives the render');
+  });
+
+  // #291 review F2: the two owner keys carry independent placeholder defaults, so a HALF-configured
+  // repo (name set, email unset) renders a trailer that LOOKS configured — a real display name — but
+  // credits nobody, because the email is the untouched placeholder. The render succeeds silently. This
+  // pins that documented footgun so the half-set path is exercised, not just the both-set (I1b) and
+  // neither-set (I1c) paths. Setup-note guidance ("set both or neither") is the only guard.
+  test('I1e #291: a half-configured owner (name set, email unset) renders name + placeholder email', () => {
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ownerName: Dustin Keeton\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    // the real name shows, but the email is still the inert placeholder default — credits nobody
+    assert.match(skill, /Co-authored-by: Dustin Keeton <owner@users\.noreply\.github\.com>/);
+    assert.doesNotMatch(skill, /\{\{git\.owner/, 'no owner placeholder survives the render');
+  });
+
   test('I2 precedence: local overlay > committed config: > stack default', () => {
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: CommittedBot\n    botEmail: committed@example.com\n`);
     write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n    signingKey: ABC123\n');
@@ -1567,6 +1624,13 @@ describe('github-workflow: identity config schema (#154)', () => {
     ['botName', '${{ secrets.LEAK }}', 'a ${{ }} expression survives the renderer verbatim'],
     ['botEmail', '$(id)@x.com', 'command substitution needs no space, @ or quote'],
     ['botEmail', 'a@b', 'no TLD'],
+    // #284: owner keys share the botName/botEmail allowlists — same landing class (a markdown code
+    // span in the rendered co-author trailer), so the same negative cases must fail their render.
+    ['ownerName', 'Bad\nName', 'newline'],
+    ['ownerName', 'Owner`Name', 'backtick breaks the markdown code span it renders into'],
+    ['ownerName', '${{ secrets.LEAK }}', 'a ${{ }} expression survives the renderer verbatim'],
+    ['ownerEmail', '$(id)@x.com', 'command substitution needs no space, @ or quote'],
+    ['ownerEmail', 'a@b', 'no TLD'],
     ['signingKey', 'has"a quote', 'quote escapes the rendered quoted span'],
     ['signingKey', '${{ secrets.LEAK }}', 'a ${{ }} expression survives the renderer verbatim'],
   ]) {
@@ -2553,6 +2617,37 @@ describe('git.agentIdentities entryPatterns lockstep (#247)', () => {
     // The regex itself is NOT pinned here — only that the two copies never drift apart.
     assert.equal(gw, patternOf('orchestration'));
   });
+
+  // #284: the default git.coAuthorTrailer nests git.ownerName / git.ownerEmail, so orchestration
+  // must declare both keys too or the nested placeholders render literally there. Both stacks must
+  // agree on the trailer default AND on each owner key's pattern + default, or a one-sided edit
+  // (flip the default in one stack, forget the key in the other) renders a broken trailer.
+  test('the git.coAuthorTrailer default is byte-identical across both stacks (#284)', () => {
+    const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+    const toolkit = loadToolkit(repoRoot);
+    const defaultOf = (name) => toolkit.stacks.get(name).config['git.coAuthorTrailer'].default;
+    const gw = defaultOf('github-workflow');
+    assert.ok(typeof gw === 'string' && gw.length > 0, 'github-workflow declares no coAuthorTrailer default');
+    // the default must credit the owner via nested substitution (not the old noreply harness form)
+    assert.match(gw, /\{\{git\.ownerName\}\}/);
+    assert.match(gw, /\{\{git\.ownerEmail\}\}/);
+    assert.doesNotMatch(gw, /noreply@anthropic\.com/);
+    assert.equal(gw, defaultOf('orchestration'));
+  });
+
+  for (const key of ['git.ownerName', 'git.ownerEmail']) {
+    test(`the ${key} pattern and default are byte-identical across both stacks (#284)`, () => {
+      const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+      const toolkit = loadToolkit(repoRoot);
+      const declOf = (name) => toolkit.stacks.get(name).config[key];
+      const gw = declOf('github-workflow');
+      assert.ok(gw && typeof gw.pattern === 'string' && gw.pattern.length > 0, `github-workflow declares no ${key} pattern`);
+      assert.ok(typeof gw.default === 'string' && gw.default.length > 0, `github-workflow declares no ${key} default`);
+      const orch = declOf('orchestration');
+      assert.equal(gw.pattern, orch.pattern);
+      assert.equal(gw.default, orch.default);
+    });
+  }
 });
 
 // #249 F3: a raw control byte in a toolkit source file makes ripgrep classify it as binary and

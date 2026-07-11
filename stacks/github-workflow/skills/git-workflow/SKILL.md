@@ -52,6 +52,20 @@ with nested `{{...}}` substitution — quoting `user.name` (it may contain space
 **both** keys explicitly in project config rather than relying on their stack defaults. See the
 stack's setup note for the exact recipes and the layering rules.
 
+### Attribution trailer (config)
+
+Reference data resolved from config — every agent-made commit ends with the attribution trailer
+(`git.coAuthorTrailer`), which by default credits this repo's **owner** so agent work that reaches
+the default branch counts toward their GitHub contribution graph:
+
+- Owner name (`git.ownerName`): `{{git.ownerName}}`
+- Owner email (`git.ownerEmail`): `{{git.ownerEmail}}`
+
+The owner email must be a **verified email on that GitHub account** for the credit to register
+(the `ID+user@users.noreply.github.com` form works and stays private); credit accrues only on
+default-branch commits. A project that would rather have the trailer name the bot points
+`git.coAuthorTrailer` at `{{git.botName}} <{{git.botEmail}}>` instead. See the stack's setup note.
+
 ### Signing model
 
 Signing has three tiers. When `git.cmd` above is **not** a bare `git`, the resolved command **is**

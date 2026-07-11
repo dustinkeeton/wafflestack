@@ -45,11 +45,22 @@ tested. All 10 commands work:
 
 ## Current focus
 
-**Unreleased (CHANGELOG `[Unreleased]`):** Programmatic Gravatar avatar pipeline (#285) — owner-side
-`avatars sync`/`status` (token from `WAFFLE_GRAVATAR_TOKEN`) automate per-agent avatar registration;
-`status` exits 1 on roster drift. The **default `git.botEmail` flips** to the subaddressable
-`bot@wafflenet.io`, so a project on defaults gets per-agent `bot+<slug>@…` emails and avatars on
-GitHub with zero setup. Trade-offs + manual verify-remainder: [DECISIONS.md](DECISIONS.md#2026-07-10).
+**Unreleased (CHANGELOG `[Unreleased]`):**
+
+- **Default co-author trailer credits the repo owner (#284, refined by #291).** Two new lockstep keys
+  — **`git.ownerName`** / **`git.ownerEmail`** (in `github-workflow` + `orchestration`) — and the
+  **`git.coAuthorTrailer` default flips** from the harness-noreply form to
+  `Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>`. The agent keeps its displayed author
+  identity; the owner gets contribution-graph credit — *if* the owner email is verified on GitHub and
+  the commit reaches the default branch. Set **both keys or neither** (a half-set pair looks
+  configured but credits nobody). `ownerName` takes a name-appropriate allowlist (`O'Brien`, `José`,
+  `Müller`). Additive, no migration; this repo sets Dustin's values. See
+  [DECISIONS.md](DECISIONS.md#2026-07-10-the-default-co-author-trailer-credits-the-consuming-repos-owner-284-refined-by-291).
+- **Programmatic Gravatar avatar pipeline (#285).** Owner-side `avatars sync`/`status` (token from
+  `WAFFLE_GRAVATAR_TOKEN`) automate per-agent avatar registration; `status` exits 1 on roster drift.
+  The **default `git.botEmail` flips** to the subaddressable `bot@wafflenet.io`, so a project on
+  defaults gets per-agent `bot+<slug>@…` emails and avatars on GitHub with zero setup. Trade-offs +
+  manual verify-remainder: [DECISIONS.md](DECISIONS.md#2026-07-10-a-programmatic-gravatar-pipeline-for-per-agent-avatars-and-a-default-bot-email-flip-285).
 
 Shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 

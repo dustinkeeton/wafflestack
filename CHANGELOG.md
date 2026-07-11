@@ -32,6 +32,24 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Default co-author trailer credits the consuming repo's owner (#284).** Two new lockstep config
+  keys — **`git.ownerName`** / **`git.ownerEmail`** — are declared in both the `github-workflow` and
+  `orchestration` stacks (byte-identical guard patterns and defaults, pinned by a deep-equal lockstep
+  test), and the **`git.coAuthorTrailer` default flips** from
+  `Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>` (an email mapped to no GitHub
+  account) to `Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>` (nested substitution). GitHub
+  grants contribution-graph credit to a verified co-author email on default-branch commits, so
+  agent-authored commits the owner initiates and merges now count toward **the owner's** heatmap while
+  the agent keeps its displayed author identity. The setup note documents the mechanics: the owner
+  email must be **verified on the owner's GitHub account** (the `ID+user@users.noreply.github.com`
+  form earns credit while staying private), credit accrues only on **default-branch** commits, and —
+  like `git.botEmail` — repos rendering in CI/worktrees should commit the values in
+  `.waffle/waffle.yaml`, not the gitignored overlay.
+  **Consumer impact:** additive/minor. Unset owner keys fall back to declared placeholder defaults
+  (`Repository Owner <owner@users.noreply.github.com>` — passes the guards but credits nobody, so set
+  the real values), and an explicit `git.coAuthorTrailer` override is honored unchanged. A repo that
+  commits its render will see a re-render diff where the trailer text changed. No migration required —
+  the default resolves at render; no consumer file is mutated.
 - **Programmatic Gravatar pipeline for per-agent avatars (#285, builds on #157/#156).** The manual
   Gravatar registration `.waffle/AVATARS.md` used to document is now a mostly-automated owner-side
   command. New **`wafflestack avatars sync`** enumerates the installed agent roster with its derived

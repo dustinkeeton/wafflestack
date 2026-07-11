@@ -903,12 +903,37 @@ setup: |-
   the aliases as secondary emails on the bot's GitHub account — that relinks all of them to one
   profile and one avatar.
 
-  Then set `git.identitySection` to prose that says the bot identity is in effect. Leave
-  `git.coAuthorTrailer` alone unless you want to: with a bot identity configured the commit
-  *author* is the bot and the trailer's job is crediting the AI harness — a project that would
-  rather have the trailer name the bot can point it at `{{git.botName}} <{{git.botEmail}}>`.
-  Enforcement is prompt-level: agents follow the rendered examples, the same as every other
-  git-workflow convention.
+  Then set `git.identitySection` to prose that says the bot identity is in effect. The trailer is a
+  separate lever: `git.coAuthorTrailer` defaults to crediting the consuming repo's **owner** —
+  `Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>` — so agent-authored commits that reach the
+  default branch count toward the owner's contribution graph while the commit *author* stays the bot
+  or the per-agent identity. To make that credit land, set **both** owner keys in project config:
+
+  - `git.ownerEmail` must be a **verified email on the owner's GitHub account** — GitHub grants
+    contribution-graph credit to a co-author email only when it is verified there. The
+    `ID+user@users.noreply.github.com` address (from GitHub → Settings → Emails) earns credit while
+    keeping the address private. The placeholder default (`owner@users.noreply.github.com`) passes the
+    guard but credits nobody, so an unconfigured repo gets a well-formed but inert trailer — set the
+    real values.
+  - Set **both** keys or **neither** — never just one. The two keys carry independent placeholder
+    defaults, so a repo that sets only `git.ownerName` renders a trailer that *looks* configured
+    (`Co-authored-by: Real Name <owner@users.noreply.github.com>`) but still credits nobody, because
+    the email — the field GitHub keys credit on — is the untouched placeholder. The render succeeds
+    silently; nothing warns. If you set the name, set the email in the same commit. (ownerName is a
+    display name and accepts an apostrophe and common accented Latin letters — `O'Brien`, `José`,
+    `Müller`, `Nguyễn`; scripts outside that range, e.g. CJK, are rejected by the render guard, so
+    fall back to a Latin transliteration for the display name — the email drives the actual credit.)
+  - Credit accrues **only for commits that reach the default branch.** Merge-commit and rebase flows
+    preserve the branch commits intact; a squash-merge relies on GitHub carrying the branch commits'
+    co-authors into the squash commit (it does, when the trailer is present in the commit messages).
+  - Like `git.botEmail`, repos that render in **CI or fresh worktrees** (no gitignored overlay
+    present) should commit the owner keys in `.waffle/waffle.yaml`, not the local overlay — an
+    overlay-held `ownerEmail` renders the placeholder there and reds the doctor drift gate.
+
+  A project that would rather have the trailer name the bot instead of the owner can point
+  `git.coAuthorTrailer` at `Co-authored-by: {{git.botName}} <{{git.botEmail}}>`; an explicit override
+  is honored unchanged. Enforcement is prompt-level: agents follow the rendered examples, the same as
+  every other git-workflow convention.
 
   **CI identity — token vs. git config.** In CI two *different* identities are in play, decided
   by two different mechanisms. Conflating them is the usual source of "why does the bot's PR say
@@ -1022,10 +1047,62 @@ config:
       signing one. See the stack setup note for recipes A/B/C and the layering rules.
   git.coAuthorTrailer:
     required: false
-    default: "Co-Authored-By: {{harness.assistantName}} <noreply@anthropic.com>"
+    default: "Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>"
     description: >-
-      Attribution trailer appended to agent-made commits and PR bodies. Override
-      for bot identities, e.g. "Co-Authored-By: {{harness.assistantName}} <bot@example.com>".
+      Attribution trailer appended to agent-made commits and PR bodies. The default credits the
+      consuming repo's OWNER (git.ownerName / git.ownerEmail), so agent-authored commits that reach
+      the default branch count toward the owner's GitHub contribution graph — the agent keeps its
+      displayed author identity, the owner's heatmap records the work. Nested substitution resolves
+      the two owner keys. Override to credit something else, e.g. the bot identity
+      "Co-authored-by: {{git.botName}} <{{git.botEmail}}>". Keep the default byte-identical with
+      stacks/orchestration/stack.yaml — lockstep test (#284).
+  git.ownerName:
+    required: false
+    default: Repository Owner
+    # A NAME-appropriate allowlist, deliberately looser than git.botName's. ownerName is a real
+    # person's display name and lands ONLY in inert splice sites — a backtick markdown code span
+    # and single-quoted heredoc commit/PR bodies (<<'EOF', no shell expansion) — so an apostrophe
+    # (O'Brien) and common Latin/accented/Vietnamese letters (José, Müller, Nguyễn) are SAFE here
+    # and are admitted. It is NOT spliced into an unquoted shell word the way botName is via
+    # git.cmd, so botName's stricter ASCII-only class does not apply. Still rejected, because they
+    # WOULD break a landing site or the renderer: backtick (closes the code span), `$`/`\`/`;`,
+    # newlines, and (via the `(?!.*\$\{\{)` guard) a surviving ${{ }} expression. The renderer
+    # compiles these patterns WITHOUT the `u` flag (see compilePattern), so the ranges match on
+    # UTF-16 code units: only accented Latin in the allowlisted BMP ranges is admitted, and every
+    # other script is rejected by one of two mechanisms — other BMP scripts (CJK U+4E00–, Cyrillic,
+    # Greek) because they fall outside the allowlisted ranges, and astral-plane characters (surrogate
+    # pairs, e.g. emoji or CJK Extension B) because a BMP range cannot match them at all. An owner on
+    # such a script falls back to a Latin transliteration for the display name (the email drives the
+    # actual credit); document that in the setup note. Keep the pattern AND default byte-identical
+    # with stacks/orchestration/stack.yaml — lockstep test (#284).
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._''\u00C0-\u024F\u1E00-\u1EFF\[\]-]+(?: [A-Za-z0-9._''\u00C0-\u024F\u1E00-\u1EFF\[\]-]+)*$'
+    description: >-
+      Display name credited in the default git.coAuthorTrailer — the consuming repo's OWNER, the
+      person who initiates and merges the agent work, so their contribution graph records it.
+      Placeholder default; a consuming repo sets its real owner name in the committed
+      .waffle/waffle.yaml. NEVER hardcode a person in a toolkit default — this only names whoever
+      owns the consuming repo. Because it is a declared key, an unset value falls back to this
+      placeholder instead of passing through verbatim. Unlike git.botName (an unquoted shell word
+      via git.cmd, hence ASCII-only), ownerName renders only into inert code spans and single-quoted
+      heredocs, so the allowlist admits an apostrophe and common Latin/accented letters — letters,
+      digits, "." "_" "-" "[" "]", "'", accented Latin (U+00C0–U+024F, U+1E00–U+1EFF), single
+      interior spaces; backtick, "$", "\\", ";", newlines and ${{ }} do not.
+  git.ownerEmail:
+    required: false
+    default: owner@users.noreply.github.com
+    # Byte-shared allowlist with git.botEmail; keep the pattern AND default byte-identical with
+    # stacks/orchestration/stack.yaml — lockstep test (#284).
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+    description: >-
+      Email credited in the default git.coAuthorTrailer. GitHub grants contribution-graph credit to
+      a co-author email ONLY if it is a VERIFIED email on the owner's GitHub account — the
+      ID+user@users.noreply.github.com form earns credit while keeping the address private. The
+      placeholder default is a noreply shape that passes the guard but credits nobody; a consuming
+      repo sets its owner's verified address in .waffle/waffle.yaml (committed, like git.botEmail,
+      for repos that render in CI/worktrees without the gitignored overlay). Credit accrues only on
+      default-branch commits — merge and rebase flows preserve branch commits, squash relies on
+      GitHub carrying co-authors into the squash commit. The pattern is byte-shared with git.botEmail
+      (requires a TLD); shell metacharacters and command substitution do not pass.
   git.botName:
     required: false
     default: Wafflebot
