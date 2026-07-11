@@ -346,6 +346,27 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **`/issue` plans read-only first and confirms before it mutates (#288).** The skill used to write
+  to GitHub immediately — `gh issue create` in create mode, an in-place title/body/label rewrite in
+  enrich mode — before the user had seen a word of the drafted content, so a bad inference (wrong
+  classification, off-base proposed solution, overwritten nuance) had to be repaired *after* it had
+  already landed on the tracker. All three modes now run as **plan phase → confirmation gate → act
+  phase**: context-gathering, classification, drafting, priority inference, and board placement all
+  happen read-only, then the gate presents the proposed title, body, labels, and placement and waits
+  for an explicit yes before the first mutation. **Declining leaves GitHub state untouched.** Batch
+  mode drafts the *whole* `{{issue.inferenceLabel}}` queue before touching any of it and presents
+  **one combined review** — approve the batch or a subset; unapproved issues keep their lifecycle
+  label for a later pass. The gate covers **mutating, not reading**, so the plan phase is always safe
+  to run. Two callers skip it: **`--yes`** (same convention as `pr-response` / `clean-up`) and any
+  **agent or CI invocation** — for those, the agent invocation *is* the explicit signal that stands
+  in for the confirmation, the same precedent as `delegate` batch mode's `confirmedVia:
+  "batch-scope"`. That auto-skip is load-bearing, not a convenience: label-hook dispatches enrich
+  mode from a headless Actions job that can never answer a prompt, so a model honoring the gate there
+  would hang the run until it timed out (label-hook's own `enrich` section now says so too). Agent
+  callers **log** the drafted plan before applying it, so an unattended run stays auditable after the
+  fact instead of being unreviewable in the moment.
+  *Consumer impact:* re-render. Interactive `/issue` now pauses where it previously acted — pass
+  `--yes` for the old straight-through behavior. Agent, hook, and autopilot invocations are unchanged.
 - **Autopilot's gate subloops reuse persistent named agents across rounds (#295).** Steps 5 (QA)
   and 6 (review) no longer re-invoke their gate skills fresh every round: round 1 spawns each half
   as a **named agent** (`qa-pr<N>` / `respond-qa-pr<N>`, `review-pr<N>` / `respond-rev-pr<N>`) and

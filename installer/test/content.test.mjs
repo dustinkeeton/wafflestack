@@ -142,6 +142,13 @@ describe('label-hook skill: refusal rules and action-token gate', () => {
     assert.match(md, /a hook run must not be able to fan out new hook runs/);
     assert.match(md, /a hook run must not be able to trigger a\s*\n?\s*release/);
   });
+
+  test('the enrich dispatch never pauses on the issue skill\'s confirmation gate (#288)', () => {
+    // Belt-and-suspenders with the issue skill's own agent/CI auto-skip: a model that
+    // honored the gate inside this headless Actions job would hang the workflow run.
+    assert.match(md, /confirmation gate \*\*auto-skips for this run\*\*/);
+    assert.match(md, /a CI job can never answer a prompt/);
+  });
 });
 
 describe('delegate skill: gates, checklist, checkpoint + approval invariants', () => {
@@ -1582,6 +1589,65 @@ describe('issue skill: required template sections', () => {
   test('native sub-issue linking uses the sub_issues GraphQL feature flag', () => {
     assert.match(md, /GraphQL-Features: sub_issues/);
     assert.match(md, /addSubIssue/);
+  });
+});
+
+describe('issue skill: plan-first confirmation gate (#288)', () => {
+  let md;
+  before(() => {
+    md = readSkill('issue');
+  });
+
+  test('the workflow is split into a read-only plan phase and a mutating act phase', () => {
+    assert.match(md, /## Plan first, then act/);
+    assert.match(md, /\*\*Plan phase — read-only\.\*\*/);
+    assert.match(md, /\*\*Act phase — mutating\.\*\*/);
+    // The gate's scope — the same framing as pr-response's `--yes` convention.
+    assert.match(md, /gate covers \*\*mutating\*\*, not reading/);
+  });
+
+  test('a confirmation gate stands between the draft and any mutation', () => {
+    assert.match(md, /### 4\. Confirm the plan/);
+    assert.match(md, /gate on an explicit yes/);
+    // The act-phase mutations must sit BELOW the gate, never above it: `gh issue
+    // create` is step 5, after the step-4 gate.
+    const gateAt = md.indexOf('### 4. Confirm the plan');
+    const createAt = md.indexOf('### 5. Create the issue');
+    assert.ok(gateAt !== -1 && createAt !== -1, 'gate/create step anchors not found');
+    assert.ok(gateAt < createAt, 'the confirmation gate must precede issue creation');
+  });
+
+  test('declining the gate leaves GitHub state untouched', () => {
+    assert.match(md, /leaves GitHub state untouched/);
+  });
+
+  test('--yes skips the gate and is advertised in the argument hint', () => {
+    assert.match(md, /argument-hint:.*\[--yes\]/);
+    assert.match(md, /#### The `--yes` convention/);
+    assert.match(md, /`--yes` skips the confirmation gate/);
+  });
+
+  test('agent and CI callers auto-skip the gate — a prompt would hang a CI run', () => {
+    // The load-bearing anti-hang rule. label-hook dispatches this skill from a
+    // headless Actions job; a model that pauses there blocks the run until timeout.
+    assert.match(md, /\*\*Do not pause at the confirmation gate\.\*\*/);
+    assert.match(
+      md,
+      /agent invocation is itself the explicit signal that stands in for the confirmation/i,
+    );
+    // Precedent: delegate batch mode's explicit scope standing in for the human.
+    assert.match(md, /confirmedVia: "batch-scope"/);
+    assert.match(md, /A CI caller can never answer a prompt/);
+    // The pause is replaced by an audit trail, not by silence.
+    assert.match(md, /\*\*log\*\* the drafted plan/);
+  });
+
+  test('batch enrich drafts the whole queue and gates it in one combined review', () => {
+    assert.match(md, /Plan every issue first/);
+    assert.match(md, /one combined review/);
+    // A subset approval must be honorable — not all-or-nothing.
+    assert.match(md, /Apply only what was approved/);
+    assert.match(md, /\bsubset\b/);
   });
 });
 
