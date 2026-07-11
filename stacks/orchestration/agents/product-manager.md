@@ -7,7 +7,6 @@ skills:
   - issue
 claude:
   tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch
-  model: sonnet
 ---
 
 {{pm.brief}}

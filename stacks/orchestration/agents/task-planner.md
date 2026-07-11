@@ -8,7 +8,6 @@ skills:
   - issue
 claude:
   tools: TaskCreate, TaskUpdate, TaskList, TaskGet, Read, Glob, Grep, Bash
-  model: haiku
 ---
 
 You are the task planner for **{{project.name}}**. Your job is to keep work flowing: tasks are atomic, dependencies are explicit, and the user always knows the next move.

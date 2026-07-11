@@ -520,6 +520,31 @@ is what you reach for across a breaking one.
   default untouched.** Re-render picks up the reworded git-workflow / delegate skills. Projects
   already on a bot identity should add `-c commit.gpgsign=false` to their `git.cmd` (or adopt recipe
   B/C); the old recipe still renders, it just leaves the posture ambient.
+- **Shipped agents no longer pre-pin a model (#287).** The `model:` frontmatter key is removed from
+  all seven agents that carried one — `lead-engineer` (was `opus`), `data-engineer`, `devops-engineer`,
+  `qa-engineer`, `ux-designer`, `product-manager` (each `sonnet`), and `task-planner` (was `haiku`).
+  The toolkit should not choose a model tier on the consumer's behalf: the pin decides both **cost**
+  and **capability**, the model lineup churns faster than the toolkit releases, and a stale pin
+  silently overrides the model the consumer picked for their own session. Agents now **inherit the
+  session model**, which is the harness default. `claude.model` remains a fully supported passthrough
+  key — a consumer who *wants* a pin can still set one; the toolkit simply stops making the choice for
+  them. #287 tracks dynamic model routing as the real answer. A content test
+  (`installer/test/content.test.mjs`) now pins the invariant by sweeping every `stacks/*/agents/*.md`
+  off disk, so a new agent cannot quietly reintroduce a pin.
+  **Consumer impact:** behavioral/minor — no migration, but **read this before you re-render**, because
+  the effect is not uniform and it is invisible in the diff. Each affected agent moves from its pinned
+  tier to whatever model your session runs, so the change cuts **both ways**:
+  - **Cost** — `task-planner` was pinned to `haiku`, the cheapest tier. On an Opus session it now runs
+    on Opus. If you invoke the planner frequently, expect its per-call cost to rise.
+  - **Capability** — `lead-engineer` was pinned to `opus`, and it is the agent that sets technical
+    direction, gatekeeps dependencies, and reviews non-trivial changes. On a Haiku or Sonnet session it
+    now runs on that weaker model.
+
+  If either tier mattered to you, the way to get it back is `wafflestack eject agents/<name>`: the
+  rendered file stays in place and becomes project-owned, so you can set `model:` on it yourself (in
+  exchange, it stops receiving toolkit updates). A `.waffle/extensions/` file will **not** do it —
+  extensions are appended to a rendered item's *body*, so they cannot override frontmatter. A repo that
+  commits its render will see a diff where the `model:` line disappears from each affected agent.
 
 ### Fixed
 - **The cold-start seeding rule collided with the cap hatch's deliberately-cold pass (#301,
