@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Create a well-structured GitHub issue from a brief description, or enrich an existing issue in place. Fleshes out title, body, labels, and optional sub-issues. Plans read-only first and confirms before mutating; `--yes` or an agent invocation skips the gate. Invokable by users and agents.
+description: Create a well-structured GitHub issue from a brief description, or enrich an existing issue in place. Fleshes out title, body, labels, and optional sub-issues. Plans read-only first and confirms before mutating; `--yes` or a non-interactive agent/CI invocation skips the gate. Invokable by users and agents.
 user-invocable: true
 argument-hint: "<description for a new issue> | <#N, number, or issue URL to enrich> | (omit to enrich all open '{{issue.inferenceLabel}}' issues)  [--yes]"
 ---
@@ -38,12 +38,14 @@ The flag itself is orthogonal to the mode it modifies:
 
 Every mode runs in two phases:
 
-1. **Plan phase — read-only.** Gather context, classify, and draft. Only reads: `gh issue view`, `gh issue list`, `gh label list`, and source files. Nothing on GitHub changes.
+1. **Plan phase — read-only.** Gather context, classify, and draft. Only reads: `gh issue view`, `gh issue list`, `gh label list`, the milestone list (`gh api repos/$OWNER/$REPO/milestones`), the project-board GraphQL **queries** that resolve the project, Status field, and Backlog option (Workflow steps 7a–7c), and source files. Nothing on GitHub changes.
 2. **Act phase — mutating.** Runs *only* after the confirmation gate. The mutations are: `gh issue create`, `gh issue edit` (title, body, or labels), any label add/remove, `addSubIssue`, and every project-board and milestone GraphQL mutation.
 
-The gate covers **mutating**, not reading — the plan-phase steps are always safe to run. Declining the gate leaves GitHub state untouched: nothing was created, edited, labeled, or moved, so there is nothing to roll back.
+The gate covers **mutating**, not reading — the plan-phase steps are always safe to run. That cuts both ways: a placement the gate *shows* must be one the plan phase actually **looked up**, never a guess. Read whatever it takes to make the plan true; just don't apply any of it.
 
-Two callers skip the gate: an explicit `--yes` (see [The `--yes` convention](#the---yes-convention)), and an agent or CI invocation (see [When called by agents](#when-called-by-agents)).
+Declining the gate leaves GitHub state untouched: nothing was created, edited, labeled, or moved, so there is nothing to roll back.
+
+Two callers skip the gate: an explicit `--yes` (see [The `--yes` convention](#the---yes-convention)), and a **non-interactive** agent or CI invocation (see [When called by agents](#when-called-by-agents)).
 
 ## Workflow
 
@@ -94,7 +96,7 @@ Then finish the plan — **infer, do not apply**. Both of the following are deci
 
 {{issue.priorityLabels}}
 
-**Board placement** — the issue goes on the project board as "Backlog", plus the milestone whose title/scope matches (bugs → earliest milestone, features → match by scope; no match → no milestone). State the intended placement; don't query-and-mutate the board yet.
+**Board placement** — the issue goes on the project board as "Backlog", plus the milestone whose title/scope matches (bugs → earliest milestone, features → match by scope; no match → no milestone). **Query the board and the milestone list to settle this — just don't mutate them yet.** Those are reads (Workflow steps 7a–7c and 7e's `gh api .../milestones`), so they belong in the plan phase: naming a milestone you never listed means the gate shows a placement it never verified, and the act phase silently takes the `no match → skip` branch on a milestone the user already approved. State the placement you resolved, by title.
 
 ### 4. Confirm the plan
 
@@ -108,7 +110,7 @@ Present the drafted plan **before** anything mutates, and gate on an explicit ye
 
 Proceed only on an explicit yes. On a decline, **stop**: nothing has been created, edited, or labeled. If the user asks for changes, revise the draft and re-present it — revising is still plan phase.
 
-Skip this gate when `--yes` was passed, or when the caller is an agent or a CI job (see [When called by agents](#when-called-by-agents)).
+Skip this gate when `--yes` was passed, or when the caller is a **non-interactive** agent or CI job — no human in the loop to protect (see [When called by agents](#when-called-by-agents)). An agent working a live user's turn is **not** that caller: it gates like anyone else.
 
 #### The `--yes` convention
 
@@ -254,6 +256,8 @@ gh api repos/$OWNER/$REPO/milestones --jq '.[] | select(.state == "open") | {num
 
 Match by scope: bugs → assign to earliest milestone, features → match by milestone title/scope. If no match → skip milestone assignment.
 
+You already ran this list in the plan phase (step 3) and the user approved the milestone it resolved — so **apply the confirmed one, don't re-decide it here**. If it has since vanished, say so in the step-8 report rather than silently taking the `no match → skip` branch: what was approved and what was applied must never diverge in silence.
+
 **Error handling:** Each substep fails independently. No project → skip with warning (the `github-project-board` skill can provision a standard board if the user wants one — don't create it inline). No "Backlog" option → try "Todo"/"New" fallbacks. GraphQL error → report but don't fail the issue creation. If the repo has no Projects board at all, skip step 7 entirely — issue creation still succeeds.
 
 See the `github-project-management` skill for the full GraphQL query catalog, and the `github-project-board` skill to create or standardize the board itself.
@@ -296,7 +300,7 @@ Use this when `$ARGUMENTS` is an issue reference (`#N`, a bare number, or an iss
    - the **label changes** — type + priority added, `{{issue.inferenceLabel}}` removed;
    - the intended **board placement + milestone**.
 
-   On a decline, **stop** — the issue is untouched. Skipped by `--yes` and by agent/CI callers, exactly as in the create-mode gate ([The `--yes` convention](#the---yes-convention), [When called by agents](#when-called-by-agents)).
+   On a decline, **stop** — the issue is untouched. Skipped by `--yes` and by non-interactive agent/CI callers, exactly as in the create-mode gate ([The `--yes` convention](#the---yes-convention), [When called by agents](#when-called-by-agents)).
 
 5. **Update the issue in place** (use `--body-file` to avoid shell-escaping problems with backticks/`$`/`&`):
    ```bash
@@ -331,9 +335,9 @@ Batch mode plans the **whole queue** before it touches any of it — a bad infer
 
    Offer the full drafted bodies alongside the table, or on request if the batch is large — but never apply a body the user hasn't been offered a look at.
 3. **Apply only what was approved.** The user may approve the batch, or a **subset** ("all but #41", "just 39 and 40") — enrich exactly the approved issues and leave the rest untouched, still labeled `{{issue.inferenceLabel}}` for a later pass. A decline enriches nothing.
-4. **Then act** — run steps 5–8 for each approved issue and print a summary of every issue enriched (number, new title, labels, milestone).
+4. **Then act** — run **enrich steps 5–8** (update in place, labels, board + milestone, report) for each approved issue, and print a summary of every issue enriched (number, new title, labels, milestone). Enrich steps, not Workflow steps: Workflow step 5 *creates* an issue, enrich step 5 rewrites one in place.
 
-`--yes` and agent/CI callers skip the combined review and enrich the whole queue straight through.
+`--yes` and non-interactive agent/CI callers skip the combined review and enrich the whole queue straight through.
 
 ## Examples
 
@@ -369,13 +373,51 @@ With no argument, drafts an enrichment for *every* open issue labeled `{{issue.i
 
 ## When called by agents
 
-Agents and CI invoke this skill non-interactively: the label-hook harness dispatches enrich mode from a GitHub Actions job, autopilot and pr-response file follow-up issues mid-run, and delegate-spawned workers file issues for what they find. The agent's prompt serves as the brief description; an agent may equally pass an issue reference (`#N`/number/URL) to enrich an existing issue in place — e.g. after a user files a rough issue tagged `{{issue.inferenceLabel}}`.
+"Agent caller" is **not** the test — *non-interactive* is. Being an agent is a fact about the caller's
+implementation; having nobody to ask is a fact about the run. Only the second one justifies skipping a
+gate that exists to protect a human, so sort callers by whether a human is waiting on this turn.
 
-**Do not pause at the confirmation gate.** For these callers, the **agent invocation is itself the explicit signal that stands in for the confirmation** — the same precedent as the `delegate` skill's batch mode, where explicit scope stands in for the human accepting the plan (`confirmedVia: "batch-scope"`). Proceed as if `--yes` were passed.
+**Non-interactive callers — skip the gate.** The label-hook harness dispatching enrich mode from a
+GitHub Actions job; autopilot and delegate-spawned workers filing issues mid-run; `pr-response` filing
+its Defer follow-ups. The agent's prompt serves as the brief description; such a caller may equally
+pass an issue reference (`#N`/number/URL) to enrich an existing issue in place.
 
-Two reasons this is not a shortcut:
+**Do not pause at the confirmation gate.** For these callers, the **agent invocation is itself the explicit signal that stands in for the confirmation** — the same precedent as the `delegate` skill's batch mode, where explicit scope stands in for the human accepting the plan (`confirmedVia: "batch-scope"`). Proceed as if `--yes` were passed. Two reasons this is not a shortcut:
 
-- **A CI caller can never answer a prompt.** The label-hook workflow runs headless; pausing for a yes would hang the run until it times out. The gate protects a human from an unreviewed mutation — there is no human in that loop to protect. Distinguish this from **a skill filing a follow-up mid-run** — `pr-response` is `user-invocable`, so an interactive `/pr-response` files its Defer follow-ups with a human very much present. Auto-skipping there is a *deliberate choice*, not a necessity: that human already accepted the triage plan, and interrupting the run to re-confirm each follow-up issue would be the worse prompt.
-- **The audit trail replaces the pause.** Before applying anything, **log** the drafted plan — title, body, labels, board placement — in the transcript, so the run stays reviewable after the fact rather than un-reviewable in the moment. That is what the gate would have shown; it just isn't blocking on it.
+- **A CI caller can never answer a prompt.** The label-hook workflow runs headless; pausing for a yes
+  would hang the run until it times out. The gate protects a human from an unreviewed mutation — there
+  is no human in that loop to protect. Distinguish this from **a skill filing a follow-up mid-run** —
+  `pr-response` is `user-invocable`, so an interactive `/pr-response` files its Defer follow-ups with a
+  human very much present. Auto-skipping there is a *deliberate choice*, not a necessity: that human
+  already accepted the triage plan, and interrupting the run to re-confirm each follow-up issue would be
+  the worse prompt.
+- **The audit trail replaces the pause.** Before applying anything, **log** the drafted plan — title,
+  body, labels, board placement — in the transcript, so the run stays reviewable after the fact rather
+  than un-reviewable in the moment. That is what the gate would have shown; it just isn't blocking on it.
 
-Everything else is unchanged: the plan phase still runs (context, classification, drafting), and the post-creation steps (priority label, project board placement, milestone assignment) run automatically.
+**Interactive agent callers — the gate still binds.** A subagent serving a live user's turn is the most
+natural route to filing an issue in this toolkit, and neither reason above reaches it: a subagent is
+**not** CI (there *is* a human to protect), and no plan was pre-accepted the way `pr-response`'s triage
+was — the drafted issue is fresh work the user has never seen. The audit trail is weakest here too: a
+subagent's log stays in its own transcript, and only its **final message** reaches the human. These
+callers are in scope today:
+
+- **`product-manager`** — files the issue once a user story is finalized.
+- **`task-planner`** — files each child issue when breaking a feature down.
+- **`project-manager`** — files gap issues found while reviewing the backlog.
+
+A subagent cannot prompt the user itself, so it does not *hold* the gate — it **hands it up**:
+
+1. Run the plan phase as normal, and **stop before the first mutation**.
+2. Return the drafted plan — title, body, labels, board placement, any sub-issues — as your **final
+   message** to the caller, which is what actually reaches the human. Create nothing.
+3. The caller confirms with the user and re-invokes with `--yes` to file it straight through. A caller
+   that already carries the user's explicit yes may pass `--yes` on the first invocation and skip
+   step 1's pause entirely.
+
+The user's approval of an upstream artifact — a product doc, a task breakdown — is **not** approval of
+the issue drafted from it. Only `--yes` or a human yes on *this* draft opens the act phase.
+
+Everything else is unchanged: the plan phase always runs (context, classification, drafting), and for a
+gate-skipping caller the post-creation steps (priority label, project board placement, milestone
+assignment) run automatically.

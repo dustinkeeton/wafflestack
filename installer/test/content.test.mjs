@@ -1676,6 +1676,52 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     // A subset approval must be honorable — not all-or-nothing.
     assert.match(md, /Apply only what was approved/);
     assert.match(md, /\bsubset\b/);
+    // Batch is the mode #288 calls the scariest (a whole queue rewritten in one
+    // unreviewed pass), so its gate gets the same structural ordering assertion as
+    // create and enrich: a presence pin alone would stay green if a future edit
+    // floated the act step above the combined review.
+    const section = md.slice(md.indexOf('### Batch enrich (no argument)'));
+    assert.ok(section.length > 0, 'batch-enrich section not found');
+    const reviewAt = section.indexOf('**Present one combined review**');
+    const actAt = section.indexOf('**Then act**');
+    assert.ok(reviewAt !== -1, 'batch mode must have a combined-review gate');
+    assert.ok(actAt !== -1, 'batch-mode act step not found');
+    assert.ok(reviewAt < actAt, 'the combined review must precede the act step');
+  });
+
+  test('the plan phase may read the board and milestones it plans a placement from', () => {
+    // Step 3 asks the plan to name the MATCHING milestone, so the milestone list and
+    // the board's resolve-queries are plan-phase reads. If they are not, the gate
+    // shows a placement it never verified and the act phase silently diverges from it
+    // via 7e's `no match → skip` branch.
+    const planAt = md.indexOf('**Plan phase — read-only.**');
+    const actAt = md.indexOf('**Act phase — mutating.**');
+    assert.ok(planAt !== -1 && actAt !== -1 && planAt < actAt, 'phase anchors not found');
+    const planLine = md.slice(planAt, actAt);
+    assert.match(planLine, /milestones/, 'the milestone list must be a plan-phase read');
+    assert.match(planLine, /GraphQL \*\*queries\*\*/, 'board resolve-queries must be plan-phase reads');
+    // The old wording forbade exactly the read that step 3 depends on.
+    assert.doesNotMatch(md, /don't query-and-mutate the board yet/);
+    assert.match(md, /Query the board and the milestone list to settle this/);
+    // And the act phase applies the CONFIRMED milestone rather than re-deciding it.
+    assert.match(md, /apply the confirmed one, don't re-decide it here/);
+  });
+
+  test('the gate skip is scoped to NON-interactive callers, not to agents as a class', () => {
+    // "Agent" is a fact about the caller; "no human waiting" is a fact about the run —
+    // only the second justifies skipping a gate that exists to protect a human. Three
+    // shipped agents (product-manager, task-planner, project-manager) file issues with
+    // a live user present; a categorical agent-skip would land unreviewed content on
+    // the tracker through the most natural interactive route in the toolkit.
+    assert.match(md, /"Agent caller" is \*\*not\*\* the test — \*non-interactive\* is/);
+    assert.match(md, /\*\*Interactive agent callers — the gate still binds\.\*\*/);
+    for (const agent of ['product-manager', 'task-planner', 'project-manager']) {
+      assert.match(md, new RegExp(`\\*\\*\`${agent}\`\\*\\*`), `${agent} must be named as in-scope`);
+    }
+    // A subagent cannot prompt, so it hands the gate up rather than holding it.
+    assert.match(md, /it \*\*hands it up\*\*/);
+    assert.match(md, /Create nothing\./);
+    assert.match(md, /is \*\*not\*\* approval of\s*\n?\s*the issue drafted from it/);
   });
 });
 
