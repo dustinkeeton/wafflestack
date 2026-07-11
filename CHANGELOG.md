@@ -554,6 +554,31 @@ is what you reach for across a breaking one.
   trigger needs no downstream change.
   **Consumer impact:** patch/prose-only. No installer, schema, or config change and no new config
   keys — a `render` picks up the three reworded skills (`autopilot`, `qa`, `adversarial-review`).
+- **Four post-cap review findings from the `/issue` plan gate (#303, follow-up to #288/PR #302).**
+  The gate is a safety feature, and the two substantive findings each let it be **silently skipped
+  or silently diverged from** — the exact failure step 7e forbids. (1) `product-manager` was named
+  one of three in-scope *interactive* callers that must run the plan phase and hand the gate up to
+  the human, but shipped without `Bash` and without a `skills:` grant — so every plan-phase read the
+  protocol demands of it (`gh label list`, the milestone list, the board resolve-queries) was a call
+  it could not make, leaving it no legal way to fill the board-placement field the gate presents and
+  no recovery but to re-invoke with `--yes` and apply a placement the human never saw. It now
+  carries `Bash` and a `skills: [issue]` grant, matching its two peers on that list (`task-planner`,
+  `project-manager`) — which also fixes a latent bug independent of the gate: its body already
+  instructed it to file issues via the `issue` skill's `gh` mechanics that its toolset forbade.
+  (2) The plan-phase read list cited the board resolve-queries as "Workflow steps 7a–7c" in both
+  places it appears; 7a is a shell env-resolve and **7b reads the node ID of an issue that does not
+  exist yet** in create mode. Both cites now name 7c, with 7a's env resolve as its prerequisite.
+  (3) The `--yes` strip rule read as strip-*anywhere*, so `/issue the --yes flag in pr-response is
+  ignored` — an ordinary filing in a toolkit where three skills carry that flag — would have its
+  token eaten, its title mangled, and its gate skipped on a run where nobody asked to skip it.
+  `--yes` is now stripped only as a **flag token** (unquoted, first or last position); a `--yes`
+  mid-prose or in backticks is description text, reaches the title and body, and **still gates**.
+  (4) Two `content.test.mjs` section guards asserted `section.length > 0` after a `slice(indexOf(…))`
+  — unreachable, since `slice(-1)` returns the file's last character on a missing header; both now
+  guard the index, so a deleted section fails with the right cause. New pins cover findings 1–3.
+  **Consumer impact: re-render.** `product-manager`'s rendered toolset gains `Bash` and its
+  dependency closure now pulls `skills/issue` (the same closure `task-planner`/`project-manager`
+  already create); the `issue` skill's prose is corrected. No schema or engine change.
 - **Five fresh-pass findings from the PR #250 signing model (#252, follow-up to #158).** Recipes
   A/B/C now pin the tag posture — `tag.gpgSign=false` (A) / `tag.gpgSign=true` (B/C) — everywhere
   they are quoted: the setup note, both stacks' `git.cmd` descriptions, the git-workflow skill's
