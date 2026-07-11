@@ -4785,6 +4785,164 @@ describe('doctor --verify-render: CLI, against the real toolkit', () => {
   });
 });
 
+// #308 review — `--verify-render` vs. the gitignored local overlay. The overlay is absent BY DESIGN in a
+// fresh CI checkout, but the lock may have been rendered on a machine where it existed. Reproducing
+// the render without it silently falls back to stack `default:`s (`git.botEmail` is
+// `required: false` with a default, so nothing errors) and every file the overlay touched comes back
+// `stale`. Reporting that as drift is worse than a false red: the remediation it implies —
+// "re-render and commit the result" — bakes the DEFAULT over the repo's real bot identity. So the
+// lock records whether the overlay actually FED the render, and doctor refuses the question rather
+// than answering it wrong. A missing input is not drift.
+describe('doctor --verify-render: the gitignored local overlay (#308 review)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  const CONFIG = '.waffle/waffle.yaml';
+  const OVERLAY = '.waffle/waffle.local.yaml';
+  const LOCK = '.waffle/waffle.lock.json';
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-vro-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-vro-'));
+    makeFixtureToolkit(toolkitRoot);
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const verify = (extra = {}) =>
+    doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, verifyRender: true, ...extra });
+  const lockJson = () => JSON.parse(fs.readFileSync(path.join(cwd, LOCK), 'utf8'));
+
+  // The exact layering schema/SETUP.md:124-130 prescribes: shared values committed, the
+  // account-specific `git.botEmail` in the gitignored overlay. This is the CI shape of that repo.
+  test('THE BUG: overlay fed the render, then vanished — refuse to answer, never call it drift', () => {
+    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', ''].join('\n'));
+    write(cwd, OVERLAY, ['config:', '  git:', '    botEmail: real-bot@mycorp.com', ''].join('\n'));
+    assert.equal(render().ok, true);
+    assert.equal(lockJson().renderedWithLocalOverlay, true, 'the lock must record that the overlay fed the render');
+
+    fs.rmSync(path.join(cwd, OVERLAY)); // a fresh CI checkout: the gitignored file is simply not there
+    const result = verify();
+
+    assert.equal(result.ok, false, 'an unanswerable question must never read as a pass');
+    assert.equal(result.render.evaluated, false, 'nothing was verified — say so');
+    assert.deepEqual(result.render.stale, [], 'a MISSING INPUT is not stale — that was the bug');
+    assert.deepEqual(result.render.absent, []);
+    assert.deepEqual(result.render.unexpected, []);
+    assert.match(result.render.errors.join('\n'), /cannot verify the render/);
+    assert.match(result.render.errors.join('\n'), /waffle\.local\.yaml/);
+    // The remediation must never be "re-render and commit": following it would overwrite the
+    // overlay-held bot identity with the stack default, which is data loss, not a fix.
+    assert.ok(
+      !result.notes.some((n) => /re-render and commit the result/.test(n)),
+      'must not advise re-rendering — it would clobber the real identity with the default',
+    );
+  });
+
+  // The machine-stability contract. A naive "an overlay file existed" flag would put the presence
+  // of a GITIGNORED file into COMMITTED content — reddening every CI checkout of a repo whose
+  // overlay holds nothing the render reads. The flag must turn on the overlay's *contribution*.
+  test('an overlay the render never reads leaves the lock byte-identical — no machine-dependent flag', () => {
+    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', 'config:', '  git:', '    botEmail: bot@example.com', ''].join('\n'));
+    write(cwd, OVERLAY, ['config:', '  local:', '    boardId: PVT_kwDemo', ''].join('\n'));
+    assert.equal(render().ok, true);
+    assert.equal(lockJson().renderedWithLocalOverlay, undefined, 'a key no template reads must NOT set the flag');
+    const withOverlay = fs.readFileSync(path.join(cwd, LOCK), 'utf8');
+
+    fs.rmSync(path.join(cwd, OVERLAY));
+    assert.equal(render().ok, true);
+    assert.equal(
+      fs.readFileSync(path.join(cwd, LOCK), 'utf8'),
+      withOverlay,
+      'the lock must not depend on whether a gitignored file happens to exist',
+    );
+    assert.equal(verify().ok, true, 'and verification still runs — a benign overlay forfeits nothing');
+  });
+
+  // The nested-substitution path, which is how the real hazard actually arises: NO template names
+  // {{git.botEmail}}. It is reached only from inside git.cmd's *value*. `collectUsedKeys` scans
+  // template bodies and cannot see it — `reachableKeys` is what does. Drop the transitive walk and
+  // this test is the only thing that fails.
+  test('a key reached only through another value (git.cmd → {{git.botEmail}}) still counts as fed', () => {
+    write(toolkitRoot, 'stacks/demo/agents/helper.md', [
+      '---', 'name: helper', 'description: A helper.', '---', '', 'Commit with: {{git.cmd}}', '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/demo/skills/demo-skill/SKILL.md', [
+      '---', 'name: demo-skill', 'description: A demo skill.', '---', '', '# Demo', '',
+    ].join('\n'));
+    write(cwd, CONFIG, [
+      'targets: [claude]', 'stacks: [demo]', 'config:', '  git:',
+      '    cmd: git -c user.email={{git.botEmail}}', '',
+    ].join('\n'));
+    write(cwd, OVERLAY, ['config:', '  git:', '    botEmail: real-bot@mycorp.com', ''].join('\n'));
+    assert.equal(render().ok, true);
+    assert.equal(
+      lockJson().renderedWithLocalOverlay,
+      true,
+      'git.botEmail is reached ONLY through git.cmd\'s value — the flag must still fire',
+    );
+  });
+});
+
+// #308 review — the lock is copied into the temp render as an INPUT, not just a comparison target, because
+// render reads its tracked paths to keep an already-poured opt-in syrup item selected. The docblock
+// on doctor.mjs asserts this; nothing pinned it, so deleting the copy failed no test and quietly
+// reintroduced false drift for every syrup consumer. Now it fails this one.
+describe('doctor --verify-render: a poured opt-in syrup file is not phantom drift (#308 review)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  const CONFIG = '.waffle/waffle.yaml';
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-vrs-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-vrs-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: syrup\nstacks: [sb]\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb', 'description: Syrup fixture.',
+      'files:', '  - safe.txt', '  - poured.yml',
+      'optIn:', '  - files/poured.yml', '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/files/safe.txt', 'plain payload\n');
+    write(toolkitRoot, 'stacks/sb/files/poured.yml', 'sensitive: true\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const tracked = () =>
+    Object.keys(JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8')).files);
+
+  test('an installed syrup file must not read as `absent` — the lock is a render input', () => {
+    // Pour the syrup with an explicit `include:` — that puts it in the render and into the lock.
+    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [sb]', 'include: [files/poured.yml]', ''].join('\n'));
+    assert.equal(render().ok, true);
+    assert.ok(tracked().includes('poured.yml'));
+
+    // Now the state the docblock is actually about, and the ONLY one where the lock-as-input
+    // matters: the syrup is tracked in the LOCK but no longer named in `include:` — an install
+    // that predates the opt-in gate, kept alive by `trackedFiles` alone (refs.mjs:391). An
+    // explicit `include:` would bypass the gate and prove nothing.
+    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [sb]', ''].join('\n'));
+    assert.equal(render().ok, true);
+    assert.ok(tracked().includes('poured.yml'), 'precondition: trackedFiles alone keeps the poured syrup selected');
+
+    const result = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, verifyRender: true });
+    assert.deepEqual(
+      result.render.absent,
+      [],
+      'withholding the lock from the temp render gates the syrup out and invents `absent` drift',
+    );
+    assert.equal(result.render.ok, true);
+    assert.equal(result.ok, true);
+  });
+});
+
 describe('setup guide', () => {
   test('real toolkit: playbook + generated inventory assemble', () => {
     const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
