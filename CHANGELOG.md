@@ -40,11 +40,14 @@ is what you reach for across a breaking one.
   must carry the story), **`md-maximalist`** (markdown's full range — tables, callouts, task lists,
   collapsibles, fenced blocks — with form chosen from the content's shape and every choice held to
   one test: does it speed up a scanning reader; richness in service of scanning, never decoration),
-  and **`accurate`** (docs as code — every claim traceable to a file actually read, omission over
-  invention, no hedging as cover, a wrong doc is a bug). Each is granted to its agent in **both** the
-  frontmatter `skills:` list and the agent's **body prose** — the latter is load-bearing because the
-  codex target drops frontmatter grants — and all three are `user-invocable: true`, so `/prose`,
-  `/md-maximalist`, and `/accurate` also work as ad-hoc slash commands on any file.
+  and **`accurate`** (machine-legible accuracy, docs as code — every claim traceable to a file
+  actually read, omission over invention, no hedging as cover, a wrong doc is a bug). The grants are
+  **orthogonal by audience** (settled in #299): `prose` + `md-maximalist` → **docs-human** (human
+  digestibility), `accurate` → **docs-agent** (claims an agent can act on without judgment). Each is
+  granted to its agent in **both** the frontmatter `skills:` list and the agent's **body prose** —
+  the latter is load-bearing because the codex target drops frontmatter grants — and all three are
+  `user-invocable: true`, so `/prose`, `/md-maximalist`, and `/accurate` also work as ad-hoc slash
+  commands on any file (docs-human can still reach for `/accurate` on demand).
   **Consumer impact:** additive/minor. Pure stack authoring — no installer, schema, or config change,
   and no new config keys. A `render` picks up the three new skills and the two reworded agent bodies;
   nothing existing is renamed or removed and no migration is required.
@@ -745,6 +748,34 @@ is what you reach for across a breaking one.
   teardown lists (item 3 and Failure handling) now name the **spawned set** rather than a fixed pair:
   a never-green PR stops before round 1 and spawned neither agent.
   - **Consumer impact:** re-render. Prose-only; no config, no behavior change to the gates' contracts.
+
+- **Restored the orthogonal docs-craft split — docs-human no longer carries `accurate` (#299).** A
+  fix round in #224 granted `accurate` to **docs-human** as well as docs-agent, to counterweight
+  `prose` §5's "quantify claims" (which pushes a writer toward paths, counts, and numbers — the most
+  fabricable claims there are). The concern was real but the remedy conflated a **writing value**
+  (don't invent specifics — one clause, every writer needs it) with a **verification protocol**
+  (`accurate`'s per-claim machine-doc craft). The grant is removed from both load-bearing sites —
+  frontmatter `skills:` and body prose — and the counterweight now lives **natively in `prose` §5**
+  ("Concrete over abstract — *from a source*": sourced numbers only; a specific you didn't read
+  somewhere is fabrication wearing concreteness's clothes; omit it rather than guess). docs-human is
+  not thereby licensed to be inaccurate — its accuracy is **provenance, not protocol**: as "a
+  derivative of docs-agent", its specifics come from the already-verified machine docs or a file it
+  actually read, stated as a new body clause. `accurate`'s description and opening are sharpened to
+  name **machine-legible accuracy** ("can an agent act on this without judgment?") as docs-agent's
+  craft standard, the way `md-maximalist` is docs-human's; it stays `user-invocable`, so `/accurate`
+  remains available ad hoc on any doc, docs-human's included. The `AGENTS.md` docs-system row records
+  the rationale so the grant is not re-flipped.
+  **Consumer impact:** additive/minor. Pure stack authoring — no installer, schema, or config change.
+  A `render` picks up the reworded skills and the docs-human agent; a repo that commits its render
+  sees a diff where docs-human's `skills:` list loses `accurate`. No migration required.
+- **`skills/prose` now declares its `requires:` edge on `skills/md-maximalist` (#299).** `prose` §4
+  delegates form choice to `md-maximalist` **by name**, but no dependency edge existed — so a
+  standalone `waffle-install docs-system/skills/prose` rendered a live pointer to a skill the project
+  did not have. The `docs-system` stack now declares `requires: skills/prose → skills/md-maximalist`
+  (mirroring `orchestration`'s `skills/docs` precedent).
+  **Consumer impact:** none for whole-stack installs — `docs-system` already lists both skills, so
+  nothing new appears in an existing render. A **single-item** `skills/prose` install now also pulls
+  `md-maximalist` (one extra skill file), which is the point.
 
 ## [0.11.0] - 2026-07-08
 
