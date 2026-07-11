@@ -7,6 +7,12 @@ Those files are generated. **Should they go in git?**
 Usually yes. But it is a real trade-off, and the case for ignoring them is not a bad one.
 This guide argues both sides so you can pick deliberately.
 
+> [!NOTE]
+> **This guide is for repos that *consume* wafflestack** — you install the toolkit over `npx`
+> and it renders agent files into your project. The toolkit's own repository appears here only
+> as a labelled case study; it self-hosts (it holds both the stack sources *and* its own
+> render), which gives it problems you do not have. Where that matters, this guide says so.
+
 > [!IMPORTANT]
 > **The render and the lock are two separate decisions.** Most of the value — knowing your
 > team is on the same source, and a CI check that means anything — comes from committing the
@@ -23,9 +29,9 @@ This guide argues both sides so you can pick deliberately.
 
 | If you… | Commit the render? | Commit the lock? |
 | --- | --- | --- |
-| Work on a team, or run agents in CI | **Yes** | **Yes** |
-| Want a clean code search and accept the cost | Partly — ignore a subset | **Yes** |
-| Want **zero** generated files in git, but still want a real gate | No | **Yes** — and CI must render |
+| Work on a team, or run agents in CI — **most readers** | **Yes** | **Yes** |
+| Would rather not track *some* generated files (the `.waffle/` overview docs, a harness you don't use) | Partly — ignore a subset | **Yes** |
+| Want **zero** generated files in review, and will build the CI gate yourself | No | **Yes** — and CI must render |
 | Just want agent tooling in your own working copy | No | No |
 
 The last row forfeits everything wafflestack's CI story offers. That is sometimes exactly the
@@ -41,45 +47,57 @@ explaining any of it. For most teams this alone settles the question.
 
 **CI agents can read the skills at all.** This is the one that surprises people. A
 CI-dispatched agent harness reads `.claude/skills/` out of the checkout. If the render is
-gitignored, the checkout does not contain it — there is *nothing for CI to read*. No amount
-of configuration works around this. Either the skills are in git or your CI agents have no
-skills.
+gitignored, the checkout does not contain it — there is *nothing for CI to read*. Either the
+skills are in git, or CI renders them itself, or your CI agents have no skills.
 
-**Stack changes become reviewable.** When someone edits `stacks/**`, the re-rendered output
-lands in the same pull request. A reviewer sees what actually changed in the agent's
-instructions, not just a config key they have to mentally compile.
+**Your agents' actual behavior becomes reviewable.** Change a config value, add an extension,
+or upgrade the toolkit, and the re-rendered output lands in the same pull request. A reviewer
+sees what changed in the agent's *instructions* — not just a config key they have to mentally
+compile into behavior. This is the benefit that no other posture can hand back to you.
 
 **The drift gate gets teeth** — though this one comes from the lock, not the render. See
 below.
 
 ## What committing the render costs you
 
-**A second copy of every skill, in your tree, forever.** Grep for a phrase and you get two
-hits: the source and the render. Every code search, every "find in files", every diff view
-carries the duplication. On a large stack selection this is genuinely irritating.
+**Diff noise.** Every config change, extension edit, or toolkit upgrade drags rendered output
+through the pull request. A one-line config change can touch a dozen generated files. The
+signal-to-noise ratio of your diffs goes down, and reviewers learn to skim past the `.claude/`
+churn — which is a habit you did not want to teach them.
 
-**Every `stacks/**` edit now obliges a re-render and a commit.** Forget it and the `doctor`
-check goes red on your pull request. It is a small tax, paid often, by everyone.
+**Merge conflicts on generated files.** The lock is a single JSON file of hashes that *every*
+render touches, so two long-lived branches that both re-render will collide on it. Generated
+files conflict in the least interesting way possible — nobody wants to hand-resolve a merge
+in output they did not write.
 
-**Long-lived branches conflict on generated files.** The lock is a single JSON file of
-hashes that *every* render touches, so two branches that both re-render will collide on it.
-Generated files conflict in the least interesting way possible — you never want to resolve
-a merge conflict in output you did not write.
+**A re-render-and-commit discipline, on everyone.** Change config or an extension, and you
+must re-render and commit the result or the `doctor` check reds your PR. It is a small tax,
+paid often, by every contributor.
 
 **A committed generated file invites hand-edits.** Someone will eventually "just fix" a typo
 directly in `.claude/skills/<name>/SKILL.md`, and the next `render` will silently overwrite
-it.
+it. **This is the one the lock inverts** — see the case study below.
 
-Ignoring the render inverts all four: clean search, no re-render tax, no generated-file
-conflicts, nothing to hand-edit. And it costs you every benefit in the section above.
+> [!NOTE]
+> **A cost you will read about elsewhere and do not actually pay: duplicate copies.** In the
+> wafflestack repo, committing the render means a *second* copy of every skill in the tree —
+> the stack source and its render — so code search returns everything twice. **Your repo does
+> not contain `stacks/**`.** The source lives in the toolkit, fetched over `npx`. In your tree
+> the rendered `.claude/` is the *only* copy of anything. No double grep hits, no search
+> pollution. That argument is a self-hosting artifact; ignore it.
 
 ---
 
-## The reversal: this repo made the call both ways
+## Case study: the toolkit's own repo made the call both ways
+
+> [!NOTE]
+> **This is the wafflestack repo, not a consumer repo** — it self-hosts, so it holds the stack
+> sources *and* its own render. Read it for the one insight that transfers to you. Half of its
+> reasoning does not, and this section is explicit about which half.
 
 The strongest argument against committing — *a committed copy invites edits to generated
-files* — turns out to be **conditional**. wafflestack's own repository decided this twice,
-in opposite directions, three days apart. The second decision explains why.
+files* — turns out to be **conditional**. The toolkit's own repository decided this twice, in
+opposite directions, three days apart. The second decision explains why.
 
 ### First: ignore the render (2026-07-01)
 
@@ -89,30 +107,36 @@ It ignored all rendered output **and the lock file**. The rationale:
 > A committed second copy of every skill would pollute code search and invite edits to
 > generated files — the one thing the toolkit forbids.
 
-A clean, defensible argument. It lasted two days.
+Two arguments there. **Only the second one is yours** — the "second copy" problem needs a repo
+that holds both source and render, which is the toolkit's situation and not yours.
 
 ### Then: commit the render and the lock (2026-07-03)
 
 [`DECISIONS.md:933`](../DECISIONS.md) — *Commit the self-render and arm the hygiene/doctor
-automation loop* — partially reversed it. The forcing function was concrete: activating the
-CI-dispatched hygiene harness required it to read the **committed** `.claude/skills/`, and
-with the render gitignored there was nothing in the checkout for CI to read.
+automation loop* — partially reversed it. The forcing function was concrete: activating a
+CI-dispatched agent harness required it to read the **committed** `.claude/skills/`, and with
+the render gitignored there was nothing in the checkout for CI to read.
 
-But the reasoning is the part worth internalizing:
+The rationale, and the reason this case study is here:
 
 > The 2026-07-01 rationale ("a committed copy invites edits to generated files") **inverts
 > once the lock is committed**: the doctor gate *enforces* that generated files match the
 > render, which gitignoring never could. Search pollution from the committed copies is the
 > accepted cost of a live automation loop.
 
-**Read that twice.** "Committing invites hand-edits" is only true when you commit the render
-*without* the lock. Commit both, and `doctor` compares every managed file against its
-recorded hash and fails the build on any local edit. The thing you were afraid of becomes
-the thing you are now protected from. Gitignoring the render never gave you that protection
-— it just moved the files somewhere nobody could check them.
+**The first sentence is the universal insight. Take it.** "Committing invites hand-edits" is
+only true when you commit the render *without* the lock. Commit both, and `doctor` compares
+every managed file against its recorded hash and fails the build on any local edit. The thing
+you were afraid of becomes the thing you are protected from. Gitignoring the render never gave
+you that protection — it just moved the files somewhere nobody could check them.
 
-The cost was real and was paid knowingly: contributors must commit the re-rendered output
-and lock with any stack change, or the required check fails their PR.
+**The second sentence is not yours to take.** "Search pollution from the committed copies" is
+the toolkit paying a self-hosting tax, and it is *accepting* that cost, not recommending it.
+You have no committed copies to pollute anything. Do not let it talk you out of committing
+your render.
+
+What *does* transfer, as a genuine cost: contributors must commit the re-rendered output and
+lock alongside the change that caused it, or the required check fails their PR.
 
 ---
 
@@ -155,47 +179,68 @@ doctor:
 
 ---
 
-## The three postures
+## The postures
 
-### Posture 1: commit the render + lock — the default
+### Posture 1: commit the render + lock — the default, and probably your answer
 
 Commit `.waffle/waffle.yaml`, the rendered output, and `.waffle/waffle.lock.json`. Leave
 `doctor.flags` empty.
 
 **Fits**: teams; any repo running agents in CI; anywhere you want the drift gate at full
-strength. **Costs**: the duplicated-copy tax and the re-render obligation, paid by everyone.
+strength; anyone who wants their agents' behavior visible in code review. **Costs**: diff
+noise, generated-file merge conflicts, and the re-render-and-commit discipline on every
+contributor.
+
+This is the default for a reason, and it is a stronger default for you than it is for the
+toolkit's own repo — the loudest objection to committing a render (a duplicate copy of every
+skill polluting search) simply does not apply to a consumer. Start here. Move off it only if
+one of the costs above is actively hurting you.
 
 ### Posture 2: commit the lock, ignore a subset of renders
 
 Commit the lock, gitignore the parts of the render you do not want in the tree, and set
 `doctor.flags: --allow-missing` so the deliberately-absent files do not red the build.
 
-**This is what the wafflestack repo itself runs.** Its `.gitignore` commits the `.claude/`
-render and the lock, but deliberately excludes `.codex/`, `.agents/`, `.claude/worktrees/`,
-the label-hook workflow, and the generated `.waffle/` overview docs (`CHEATSHEET.md`,
-`TEAM.md`, the branded HTML, `AVATARS.md`, `avatars/`).
+The usual consumer version of this: commit `.claude/`, but gitignore the generated `.waffle/`
+overview docs — `CHEATSHEET.md`, `TEAM.md`, their branded HTML, `AVATARS.md`, and `avatars/`.
+They are generated reading material, not agent behavior; nothing breaks if they are absent,
+and they add diff noise on every render. The other common case is rendering to a harness some
+of your team uses locally but the repo does not need in git.
 
-**Fits**: repos targeting one harness but rendering several; repos with generated docs they
-would rather not track. **Keeps**: the full drift gate on everything you *did* commit —
-hand-edits still fail. **Costs**: you must remember that absent files are now invisible to
-CI, so a render that silently stops being produced will not be caught.
+**Fits**: repos that want the render committed but not *all* of it. **Keeps**: the full drift
+gate on everything you *did* commit — hand-edits still fail. **Costs**: absent files are now
+invisible to CI, so a render that silently stops being produced will not be caught.
+
+<sub>(The toolkit's own repo runs this posture too, for self-hosting reasons of its own — it
+also ignores `.codex/`, `.agents/`, and a label-hook workflow it does not want armed.)</sub>
 
 ### Posture 2b: commit the lock only
 
 Push Posture 2 to its limit — the ignored subset becomes *everything*. Gitignore the entire
 render; commit `.waffle/waffle.yaml`, `.waffle/extensions/`, and `.waffle/waffle.lock.json`.
-**Zero generated files in git, and you still know whether your team is on the same source.**
+**Zero generated files in git — and the committed lock still proves your team is on the same
+source.**
 
-That is not a consolation prize, it's the real thing. **Render is deterministic**: the same
-toolkit version, `waffle.yaml`, and extensions produce byte-identical output, so the lock's
-hashes are a genuine shared contract. It pins the toolkit version, targets, stacks, includes,
-and the sha256 of every managed file. A teammate who renders locally and runs `doctor` gets a
-true answer — hand-edit a rendered skill and it fails with `modified: .claude/skills/…` and
-exit 1; a toolkit version skew surfaces as a note.
+That second half is real, and it is what makes this a posture rather than a mistake.
+**Render is deterministic**: the same toolkit version, `waffle.yaml`, and extensions produce
+byte-identical output, so the lock's hashes are a genuine shared contract. It pins the toolkit
+version, targets, stacks, includes, and the sha256 of every managed file. A teammate who
+renders locally and runs `doctor` gets a true answer — hand-edit a rendered skill and it fails
+with `modified: .claude/skills/…` and exit 1; a toolkit version skew surfaces as a note.
 
-**This is arguably the best trade for a repo that hates the duplicate-copy tax but still
-wants real CI agents and a real integrity gate.** It has exactly one sharp edge, and you must
-design your CI around it.
+**What you actually buy: clean reviews.** No generated output in any diff, no merge conflicts
+on rendered files, no re-render-and-commit tax on contributors. If your team's objection to
+Posture 1 is *"I don't want generated files in my pull requests"* — this is the posture that
+answers it, and it answers it without giving up the shared-source guarantee.
+
+**Be clear-eyed that the pitch is narrower than it looks.** It is not "avoid the duplicate-copy
+tax" — you never pay that tax (see the note above). It is *only* about keeping generated output
+out of git and out of review. That is a genuine preference, held by real teams, and it is
+enough to justify the posture. It is not enough to make this the default. Posture 1 is the
+default; this is for a team that specifically does not want generated output in review and will
+build its CI gate to suit.
+
+And it has one sharp edge you must design your CI around.
 
 > [!CAUTION]
 > **The naive CI gate passes while checking nothing.** In a fresh CI checkout there are no
@@ -243,8 +288,10 @@ your agents is never visible in the repo.** A change to an agent's actual instru
 up only as a changed hash in a JSON file. You can review the config that *implies* your
 agents' behavior; you can never review the behavior itself in a pull request.
 
-If your agents are load-bearing enough that a reviewer should see what they were told to do,
-commit the render (Posture 1 or 2) and pay the duplication tax.
+Note the irony: the very thing this posture buys you — no generated output in review — is the
+thing it costs you. Clean diffs and reviewable agent behavior are the same trade seen from two
+sides. If your agents are load-bearing enough that a reviewer should see what they were told
+to do, commit the render (Posture 1 or 2) and accept the noise.
 
 ### Posture 3: ignore both — a purely local waffle
 
@@ -264,10 +311,11 @@ repository. That is a legitimate and common thing to want.
 Everyone who wants the waffle must install the toolkit and run `render` themselves, and
 nothing verifies that any two people are running the same thing.
 
-**If you landed here because you hate the duplicate copies in git — you want
-[Posture 2b](#posture-2b-commit-the-lock-only), not this one.** Committing the lock alone
-costs you nothing in code-search noise and buys back the shared contract. Posture 3 is for
-when the *repo itself* must stay unaware of wafflestack, not merely uncluttered by it.
+**If you landed here because you just don't want generated files in git — you want
+[Posture 2b](#posture-2b-commit-the-lock-only), not this one.** It keeps generated output out
+of the tree *and* buys back the shared-source guarantee, for the price of committing one JSON
+file. Posture 3 is for when the *repo itself* must stay unaware of wafflestack — not merely
+uncluttered by it.
 
 ---
 
@@ -282,8 +330,9 @@ when the *repo itself* must stay unaware of wafflestack, not merely uncluttered 
 | **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person, and CI | Every person, always |
 | **CI agents can read skills** | Yes | Yes, if committed | Yes — CI renders them | **No** |
 | **Fresh clone works** | Yes | Yes | No — render first | No — install + render first |
-| **Agent behavior reviewable in a PR** | Yes | Partly | **No — only a hash changes** | No |
-| **Code-search duplication** | Yes | Partial | **None** | None |
+| **Agent behavior reviewable in a PR** | **Yes** | Partly | No — only a hash changes | No |
+| **Generated files in your diffs** | Yes | Some | **None** | None |
+| **Re-render-and-commit tax** | On every contributor | On every contributor | **None** | None |
 
 ---
 
