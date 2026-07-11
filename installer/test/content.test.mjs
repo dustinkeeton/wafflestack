@@ -1,4 +1,4 @@
-import { test, describe, before, beforeEach, afterEach } from 'node:test';
+import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1656,5 +1656,184 @@ describe('SETUP.md playbook: prerequisites walk is required and go-ahead-gated (
   test('opt-in syrup prerequisites are walked only once that file is installed', () => {
     assert.match(setupMd, /only once the user has asked to install\s+that file/);
     assert.match(setupMd, /waffle-label-hook\.yml/);
+  });
+});
+
+// #224: the docs agents' writing-craft skills. Each carries ONE load-bearing thesis that the
+// skill is worthless without — prose's reader-first ordering, md-maximalist's "richness must earn
+// its keep", accurate's "omission over invention". Pin the thesis, not the phrasing around it.
+describe('docs writing-craft skills: the guardrail that makes each one worth having (#224)', () => {
+  test('prose: conclusion first, plain language, and a skim of headings still tells the story', () => {
+    const md = readSkill('prose');
+    assert.match(md, /inverted pyramid/i);
+    assert.match(md, /Lead with the most important fact/);
+    // The scannability contract: headings + bold leads alone must carry the story.
+    assert.match(md, /only the headings and the bolded leads/);
+    assert.match(md, /Everyday words over jargon/);
+    // Hedging and throat-clearing are the two failure modes that survive every other rule.
+    assert.match(md, /throat-clearing/i);
+  });
+
+  test('md-maximalist: the full toolbox, but every choice must speed up a scanning reader', () => {
+    const md = readSkill('md-maximalist');
+    // The whole skill hinges on this test — without it, "maximalist" licenses decoration.
+    assert.match(md, /Every formatting choice must speed up a reader who is scanning/);
+    assert.match(md, /never decoration/i);
+    // Maximalist is explicitly NOT "use every tool every time".
+    assert.match(md, /not that every tool goes in every document/);
+    // Form follows the content's shape, and the anti-pattern sweep keeps it honest. Pin that the
+    // sweep EXISTS, not what each anti-pattern is called — the labels are phrasing, not thesis.
+    assert.match(md, /^## \d+\. Anti-patterns/m);
+    // The callout example must teach the two-line alert form: `> [!NOTE] text` on one line renders
+    // as a plain blockquote on GitHub, so a one-line example ships broken callouts everywhere.
+    assert.match(md, /> \[!NOTE\]\n\s*> /);
+    // Anchored to line start (indent allowed) so it rejects a real one-line blockquote without
+    // tripping on the inline `> [!NOTE] text` the prose quotes mid-sentence as the counter-example.
+    assert.doesNotMatch(md, /^[ \t]*> \[!(NOTE|WARNING|TIP|IMPORTANT|CAUTION)\][ \t]+\S/m);
+  });
+
+  test('accurate: a wrong doc is a bug — verify, omit, or flag, but never hedge', () => {
+    const md = readSkill('accurate');
+    assert.match(md, /A wrong doc is a bug/);
+    assert.match(md, /Prefer omission over invention|An absent fact beats a plausible guess/);
+    // Hedging is the loophole that lets an unverified guess into the doc anyway. The thesis is the
+    // rule itself; the raincoat metaphor that illustrates it is phrasing, so it is not pinned.
+    assert.match(md, /No hedging as cover/);
+    // Naming symmetry is the classic source of phantom APIs.
+    assert.match(md, /Never extrapolate an API surface from naming conventions/);
+    assert.match(md, /When source and doc disagree, the source wins/);
+  });
+
+  // #224 acceptance: all three are reachable as ad-hoc slash commands, declared explicitly.
+  // The flag is OPT-OUT, not opt-in: `isUserInvocable` (`installer/lib/waffledocs.mjs`) reads
+  // `data['user-invocable'] !== false`, so an ABSENT key still renders a slash command and still
+  // lands on the cheat sheet (`audit` ships exactly that way). Only an explicit `false` removes
+  // it — and that is the regression this guards: flip any of the three and /prose, /md-maximalist,
+  // /accurate vanish from the generated CHEATSHEET with every other assertion in this file green.
+  // The strict `=== true` below therefore pins the EXPLICIT declaration #224 asked for — stricter
+  // than the renderer requires, deliberately, because the criterion was the declaration. The
+  // argument-hint is the other half of what makes the slash form usable, so it is pinned alongside.
+  for (const name of ['prose', 'md-maximalist', 'accurate']) {
+    test(`${name} stays user-invocable — /${name} is an acceptance criterion, not a nicety`, () => {
+      const { data } = parseFrontmatter(readSkill(name));
+      assert.equal(data['user-invocable'], true, `${name} must render user-invocable: true`);
+      assert.ok(
+        typeof data['argument-hint'] === 'string' && data['argument-hint'].length > 0,
+        `${name} must carry an argument-hint for the slash form`,
+      );
+    });
+  }
+});
+
+// #224: the grant wiring is load-bearing TWICE. The frontmatter `skills:` list is what the claude
+// target reads; the BODY prose reference is the only grant signal that survives the codex target,
+// which drops frontmatter `skills:` entirely (FORMAT.md). Dropping either half silently unwires a
+// skill for one harness, so both are pinned.
+describe('docs agents: writing-craft skills granted in frontmatter AND body prose (#224)', () => {
+  const readAgent = (name) =>
+    fs.readFileSync(path.join(CLAUDE, 'agents', `${name}.md`), 'utf8');
+
+  test('docs-human grants prose + md-maximalist in frontmatter', () => {
+    const { data } = parseFrontmatter(readAgent('docs-human'));
+    assert.ok(data.skills.includes('prose'), 'docs-human must be granted `prose`');
+    assert.ok(data.skills.includes('md-maximalist'), 'docs-human must be granted `md-maximalist`');
+  });
+
+  // `prose` §5 pushes docs-human toward the most fabricable claims there are — paths, counts,
+  // numbers — and docs-human writes ARCHITECTURE.md/STATUS.md straight from the codebase. The
+  // verification counterweight has to ride along, or the pressure to quantify lands with nothing
+  // holding it honest. The frontmatter grant (not just the body prose) is what feeds `directDeps`,
+  // so `accurate` renders even when docs-human is included WITHOUT docs-agent.
+  test('docs-human grants accurate too — the counterweight to prose\'s "quantify claims"', () => {
+    const { data } = parseFrontmatter(readAgent('docs-human'));
+    assert.ok(data.skills.includes('accurate'), 'docs-human must be granted `accurate`');
+  });
+
+  test('docs-agent grants accurate in frontmatter', () => {
+    const { data } = parseFrontmatter(readAgent('docs-agent'));
+    assert.ok(data.skills.includes('accurate'), 'docs-agent must be granted `accurate`');
+  });
+
+  test('docs-human names both writing skills in body prose', () => {
+    const md = readAgent('docs-human');
+    assert.match(md, /`prose` skill/);
+    assert.match(md, /`md-maximalist` skill/);
+    assert.match(md, /`accurate` skill/);
+  });
+
+  // docs-human holds two skills with overlapping authority over FORM: the `docs-human` skill's
+  // format rules (humanDocSpec: "Use bullet points over paragraphs" — blanket) and md-maximalist
+  // ("do not default to a bullet list for everything" — form from the content's shape). Without a
+  // stated precedence the agent picks a winner silently, so the output oscillates between runs for
+  // no visible reason. Pin that the boundary is stated and which skill wins.
+  test('docs-human states the precedence rule when its format authorities disagree', () => {
+    const md = readAgent('docs-human');
+    assert.match(md, /`md-maximalist` decides/);
+    assert.match(md, /overrides any blanket "bullets over paragraphs"/);
+  });
+
+  test('docs-agent names accurate in body prose', () => {
+    const md = readAgent('docs-agent');
+    assert.match(md, /`accurate` skill/);
+  });
+});
+
+// #224: the two tests above read the CLAUDE render, so they prove the body prose exists — not that
+// it survives the target that actually needs it. The codex TOML has no frontmatter at all, so the
+// body reference is the ONLY grant signal a codex consumer ever sees. Render the codex target for
+// real and assert the grant lands in `developer_instructions`; if the codex body pipeline ever
+// diverges, this fails instead of the claude-render proxy quietly passing.
+describe('docs agents: the body-prose grant survives the CODEX render (#224)', () => {
+  let cwd;
+  let toml;
+
+  before(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-docs-codex-'));
+    fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.waffle', 'waffle.yaml'),
+      [
+        'targets: [codex]',
+        'stacks: [docs-system]',
+        'config:',
+        '  project:',
+        '    name: EvalFixture',
+        '    longName: the EvalFixture project',
+        '',
+      ].join('\n'),
+    );
+    const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+    assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+    toml = (name) => fs.readFileSync(path.join(cwd, '.codex', 'agents', `${name}.toml`), 'utf8');
+  });
+
+  after(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test('the codex agent TOML carries no frontmatter skills grant — the premise of the body reference', () => {
+    // If this ever fails, the body-prose duplication may no longer be load-bearing; revisit the
+    // grant strategy rather than deleting the assertions below.
+    assert.doesNotMatch(toml('docs-human'), /^skills\s*=/m);
+    assert.doesNotMatch(toml('docs-agent'), /^skills\s*=/m);
+  });
+
+  test('docs-human still names prose + md-maximalist in the rendered codex instructions', () => {
+    const md = toml('docs-human');
+    assert.match(md, /`prose` skill/);
+    assert.match(md, /`md-maximalist` skill/);
+  });
+
+  test('docs-agent still names accurate in the rendered codex instructions', () => {
+    assert.match(toml('docs-agent'), /`accurate` skill/);
+  });
+
+  test('all three writing skills render into the cross-tool .agents/skills dir codex reads', () => {
+    for (const name of ['prose', 'md-maximalist', 'accurate']) {
+      assert.ok(
+        fs.existsSync(path.join(cwd, '.agents', 'skills', name, 'SKILL.md')),
+        `${name} must render for the codex target`,
+      );
+    }
   });
 });

@@ -1,7 +1,7 @@
 name: docs-system
 description: Two-audience documentation system — machine-readable agent docs and human docs. The doc-set shapes (which files, which sections) are project config; the defaults adapt to the repo's layout (a root AGENTS.md always, per-feature AGENTS.md only where feature/module directories exist; DECISIONS/STATUS/ARCHITECTURE.md).
 agents: [docs-agent, docs-human]
-skills: [docs-agent, docs-human]
+skills: [docs-agent, docs-human, prose, md-maximalist, accurate]
 config:
   project.longName:
     required: true
