@@ -4480,6 +4480,311 @@ describe('doctor --allow-missing (CI drift gate)', () => {
   });
 });
 
+// #314 — `doctor --verify-render`. Plain doctor compares the tree to the lock and never asks
+// whether EITHER still reflects `.waffle/waffle.yaml`: edit the config, forget to re-render, and
+// the files and the lock are stale *together* — they agree with each other, and the gate goes
+// green. This flag renders the committed inputs to a temp dir and diffs the result against the
+// committed lock, so the un-applied change fails. It must never touch the working tree.
+describe('doctor --verify-render (an un-applied config/extension change)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  const CONFIG = '.waffle/waffle.yaml';
+  const AGENT = '.claude/agents/helper.md';
+  const SKILL = '.claude/skills/demo-skill/SKILL.md';
+  const config = (email) =>
+    ['targets: [claude]', 'stacks: [demo]', 'config:', '  git:', `    botEmail: ${email}`, ''].join('\n');
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-vr-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-vr-'));
+    makeFixtureToolkit(toolkitRoot);
+    write(cwd, CONFIG, config('bot@example.com'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const plain = (extra = {}) => doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, ...extra });
+  const verify = (extra = {}) => plain({ verifyRender: true, ...extra });
+
+  /** sha256 of every file under `dir`, keyed by relative path — a byte-level tree fingerprint. */
+  const snapshot = (dir) => {
+    const out = {};
+    const walk = (d) => {
+      for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+        const abs = path.join(d, entry.name);
+        if (entry.isDirectory()) walk(abs);
+        else out[path.relative(dir, abs)] = sha256(fs.readFileSync(abs));
+      }
+    };
+    walk(dir);
+    return out;
+  };
+  const verifyTempDirs = () => fs.readdirSync(os.tmpdir()).filter((e) => e.startsWith('wafflestack-verify-'));
+
+  test('THE BUG: config edited, never re-rendered — plain doctor PASSES, --verify-render FAILS', () => {
+    assert.equal(render().ok, true);
+    // The config now says something the render (and therefore the lock) never heard about.
+    write(cwd, CONFIG, config('somebody-else@example.com'));
+
+    // Half one — the bug itself. Every managed file still hashes to its lock entry, because the
+    // files and the lock are stale together. Nothing on disk disagrees with anything else.
+    const before = plain();
+    assert.equal(before.ok, true, 'plain doctor cannot see an un-applied config change — this is the hole');
+    assert.deepEqual(before.modified, []);
+    assert.deepEqual(before.missing, []);
+
+    // Half two — the fix. Rendering the committed config reproduces different content.
+    const after = verify();
+    assert.equal(after.ok, false, 'the config would render content the lock does not record');
+    assert.equal(after.render.evaluated, true);
+    assert.ok(after.render.stale.includes(AGENT), JSON.stringify(after.render.stale));
+    assert.ok(after.render.stale.includes(SKILL), JSON.stringify(after.render.stale));
+    // It is a *render* disagreement, not an on-disk one: nothing was hand-edited or deleted.
+    assert.deepEqual(after.modified, []);
+    assert.deepEqual(after.missing, []);
+    assert.deepEqual(after.render.absent, []);
+    assert.deepEqual(after.render.unexpected, []);
+    assert.ok(after.notes.some((n) => /does not match what/.test(n)), JSON.stringify(after.notes));
+  });
+
+  test('an extension edited but never re-rendered is caught', () => {
+    fs.mkdirSync(path.join(cwd, '.waffle/extensions/skills'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.waffle/extensions/skills/demo-skill.md'), 'Original addendum.\n');
+    assert.equal(render().ok, true);
+    assert.equal(verify().ok, true, 'baseline: the render is current');
+
+    fs.writeFileSync(path.join(cwd, '.waffle/extensions/skills/demo-skill.md'), 'Rewritten addendum.\n');
+    assert.equal(plain().ok, true, 'plain doctor is blind to it — the extension is an input, not an output');
+
+    const dr = verify();
+    assert.equal(dr.ok, false);
+    assert.deepEqual(dr.render.stale, [SKILL]);
+  });
+
+  test('a clean repo passes, and reports what it checked', () => {
+    assert.equal(render().ok, true);
+    const dr = verify();
+    assert.equal(dr.ok, true, JSON.stringify(dr.render));
+    assert.equal(dr.render.evaluated, true);
+    assert.ok(dr.render.checked > 1, 'it compared a real set of files');
+    assert.deepEqual(dr.render.stale, []);
+    assert.deepEqual(dr.render.absent, []);
+    assert.deepEqual(dr.render.unexpected, []);
+    assert.deepEqual(dr.render.errors, []);
+  });
+
+  test('a stale lock ENTRY (a file the config no longer renders) is reported as absent, not stale', () => {
+    assert.equal(render().ok, true);
+    // Hand-add a lock entry for a path nothing renders — a lock that outlived its config.
+    const lockPath = path.join(cwd, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    lock.files['.claude/agents/ghost.md'] = 'deadbeef';
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    const dr = verify({ allowMissing: true }); // the ghost is absent on disk too; ignore that
+    assert.equal(dr.ok, false);
+    assert.deepEqual(dr.render.absent, ['.claude/agents/ghost.md']);
+    assert.deepEqual(dr.render.stale, []);
+  });
+
+  test('a file the config WOULD render but the lock does not track is reported as unexpected', () => {
+    assert.equal(render().ok, true);
+    const lockPath = path.join(cwd, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    delete lock.files[AGENT]; // the lock forgot a file the config still produces
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    const dr = verify();
+    assert.equal(dr.ok, false);
+    assert.deepEqual(dr.render.unexpected, [AGENT]);
+  });
+
+  // The lock-only posture (docs/gitignore.md 2b) — the whole point of composing with #311.
+  // `nothingPresent` is the safety net (never pass on nothing); `--verify-render` is the escape
+  // ("I have no renders on purpose — verify by rendering instead"). Together they must be a REAL
+  // gate: nothing on disk to compare, but the render is reproduced and checked against the lock.
+  describe('lock-only posture: --allow-missing --verify-render', () => {
+    const removeAllManaged = () => {
+      const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+      for (const rel of Object.keys(lock.files)) fs.rmSync(path.join(cwd, rel));
+    };
+
+    test('PASSES when the render reproduces the lock — the guard must not veto a verified run', () => {
+      assert.equal(render().ok, true);
+      removeAllManaged();
+
+      // Without the flag this is the #311 failure: a checkout that verified nothing.
+      const unverified = plain({ allowMissing: true });
+      assert.equal(unverified.ok, false);
+      assert.equal(unverified.nothingPresent, true);
+
+      const dr = verify({ allowMissing: true });
+      assert.equal(dr.ok, true, 'the render WAS verified — the all-absent guard has nothing left to protect');
+      assert.equal(dr.nothingPresent, true, 'still true as a fact about the tree…');
+      assert.equal(dr.render.evaluated, true, '…but no longer decisive, because the render was reproduced');
+      assert.ok(
+        dr.notes.some((n) => /verified the render, not the tree/.test(n)),
+        JSON.stringify(dr.notes),
+      );
+      // and it must not still claim the check inspected nothing
+      assert.ok(!dr.notes.some((n) => /verified nothing/.test(n)), JSON.stringify(dr.notes));
+    });
+
+    test('FAILS when the render does not reproduce the lock (the un-applied change, with no tree at all)', () => {
+      assert.equal(render().ok, true);
+      removeAllManaged();
+      write(cwd, CONFIG, config('somebody-else@example.com'));
+
+      const dr = verify({ allowMissing: true });
+      assert.equal(dr.ok, false, 'a lock-only repo still gets a real answer');
+      assert.ok(dr.render.stale.includes(AGENT), JSON.stringify(dr.render.stale));
+    });
+  });
+
+  // This gate makes render determinism load-bearing: a future nondeterminism (a timestamp, a map
+  // iteration order) would make it FLAKY rather than merely wrong. Fail loudly here instead.
+  test('render is deterministic: identical inputs render to identical hashes', () => {
+    const twin = fs.mkdtempSync(path.join(os.tmpdir(), 'project-vr-twin-'));
+    try {
+      fs.mkdirSync(path.join(twin, '.waffle/extensions/agents'), { recursive: true });
+      fs.writeFileSync(path.join(twin, '.waffle/extensions/agents/helper.md'), 'Addendum.\n');
+      fs.mkdirSync(path.join(cwd, '.waffle/extensions/agents'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, '.waffle/extensions/agents/helper.md'), 'Addendum.\n');
+      write(twin, CONFIG, config('bot@example.com'));
+
+      assert.equal(render().ok, true);
+      assert.equal(renderProject({ toolkitRoot, cwd: twin, toolkitVersion: '0.0.test' }).ok, true);
+
+      const a = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8')).files;
+      const b = JSON.parse(fs.readFileSync(path.join(twin, '.waffle/waffle.lock.json'), 'utf8')).files;
+      assert.deepEqual(b, a, 'same toolkit + config + extensions must produce byte-identical output');
+    } finally {
+      fs.rmSync(twin, { recursive: true, force: true });
+    }
+  });
+
+  test('NO MUTATION: the working tree is byte-identical afterwards, and the temp dir is cleaned up', () => {
+    assert.equal(render().ok, true);
+    write(cwd, CONFIG, config('somebody-else@example.com')); // force the failing path — it writes least eagerly only if we let it
+    const before = snapshot(cwd);
+    const tempsBefore = verifyTempDirs();
+
+    const dr = verify();
+    assert.equal(dr.ok, false, 'precondition: this run found drift, so it did real work');
+
+    assert.deepEqual(snapshot(cwd), before, 'verify-render must not write, delete, or re-lock anything');
+    assert.deepEqual(verifyTempDirs(), tempsBefore, 'the scratch render dir must be removed');
+  });
+
+  test('a passing run is equally inert, and the toolkit dir is untouched too', () => {
+    assert.equal(render().ok, true);
+    const beforeProject = snapshot(cwd);
+    const beforeToolkit = snapshot(toolkitRoot);
+
+    assert.equal(verify().ok, true);
+
+    assert.deepEqual(snapshot(cwd), beforeProject);
+    assert.deepEqual(snapshot(toolkitRoot), beforeToolkit, 'the source toolkit is read-only to a render');
+    assert.deepEqual(verifyTempDirs(), []);
+  });
+
+  test('a config that cannot render fails the check (an unanswerable question is not a pass)', () => {
+    assert.equal(render().ok, true);
+    write(cwd, CONFIG, 'targets: [claude]\nstacks: [demo]\nconfig: {}\n'); // drops the required key
+
+    const dr = verify();
+    assert.equal(dr.ok, false);
+    assert.equal(dr.render.evaluated, false, 'no comparison was possible');
+    assert.ok(dr.render.errors.some((e) => /git\.botEmail/.test(e)), JSON.stringify(dr.render.errors));
+    // and it must not be rescued by --allow-missing on an otherwise absent tree
+    assert.equal(verify({ allowMissing: true }).ok, false);
+  });
+
+  test('DEFAULT UNCHANGED: without the flag, doctor never renders and reports nothing new', () => {
+    assert.equal(render().ok, true);
+    write(cwd, CONFIG, config('somebody-else@example.com'));
+
+    const dr = plain();
+    assert.equal(dr.ok, true, 'the additive flag must not silently tighten the default gate');
+    assert.equal(dr.render.evaluated, false);
+    assert.equal(dr.render.checked, 0);
+    assert.deepEqual(dr.render.stale, []);
+    assert.deepEqual(verifyTempDirs(), [], 'no scratch render happens without the flag');
+  });
+
+});
+
+// The CLI resolves its toolkit from its own location, so these drive the REAL stacks — which is
+// what a consumer's CI actually runs. `docs-system` is the cheapest real stack that substitutes a
+// config value into rendered content (one required key, `project.longName`), so editing that key
+// is the issue's exact repro, end to end through `npx … doctor`.
+describe('doctor --verify-render: CLI, against the real toolkit', () => {
+  let cwd;
+  const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+  const CONFIG = '.waffle/waffle.yaml';
+  const config = (longName) =>
+    ['targets: [claude]', 'stacks: [docs-system]', 'config:', '  project:', `    longName: ${longName}`, ''].join('\n');
+  const run = (extra) => spawnSync(process.execPath, [cli, 'doctor', ...extra, '--cwd', cwd], { encoding: 'utf8' });
+
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-vr-cli-'));
+    write(cwd, CONFIG, config('Original Project'));
+    const rendered = spawnSync(process.execPath, [cli, 'render', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(rendered.status, 0, rendered.stdout + rendered.stderr);
+  });
+
+  afterEach(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test('--verify-render flips the exit code on an un-applied config change', () => {
+    const clean = run(['--verify-render']);
+    assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+    assert.match(clean.stdout, /render verified: a fresh render of \.waffle\/waffle\.yaml reproduces the lock \(\d+ files\)/);
+    assert.match(clean.stdout, /working tree was not touched/);
+
+    write(cwd, CONFIG, config('Renamed Project')); // …and never re-render
+
+    const blind = run([]);
+    assert.equal(blind.status, 0, 'plain doctor still passes — the contrast IS the bug being closed');
+    assert.match(blind.stdout, /all managed files match the lock manifest/);
+
+    const seeing = run(['--verify-render']);
+    assert.equal(seeing.status, 1, seeing.stdout + seeing.stderr);
+    assert.match(seeing.stdout, /stale render: \.claude\/agents\/docs-agent\.md/);
+    assert.match(seeing.stdout, /does not match what \.waffle\/waffle\.yaml/);
+    assert.doesNotMatch(seeing.stdout, /all managed files match the lock manifest/);
+  });
+
+  test('--allow-missing --verify-render is a real gate for a lock-only checkout', () => {
+    const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    for (const rel of Object.keys(lock.files)) fs.rmSync(path.join(cwd, rel));
+
+    // #311's guard alone: red, having verified nothing…
+    const guarded = run(['--allow-missing']);
+    assert.equal(guarded.status, 1, guarded.stdout);
+    assert.match(guarded.stdout, /verified nothing/);
+    assert.match(guarded.stdout, /--verify-render/, 'the guard must advertise its own escape hatch');
+
+    // …and with the escape: green, having verified the render instead of the tree.
+    const escaped = run(['--allow-missing', '--verify-render']);
+    assert.equal(escaped.status, 0, escaped.stdout + escaped.stderr);
+    assert.match(escaped.stdout, /verified the render, not the tree/);
+    assert.doesNotMatch(escaped.stdout, /verified nothing/);
+
+    // Still a gate, not a rubber stamp: break the config and the same command reds.
+    write(cwd, CONFIG, config('Renamed Project'));
+    const broken = run(['--allow-missing', '--verify-render']);
+    assert.equal(broken.status, 1, broken.stdout);
+    assert.match(broken.stdout, /stale render:/);
+  });
+});
+
 describe('setup guide', () => {
   test('real toolkit: playbook + generated inventory assemble', () => {
     const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');

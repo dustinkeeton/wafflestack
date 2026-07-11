@@ -29,10 +29,18 @@ import {
  * Render every enabled stack into the project at `cwd`.
  * Frozen-image contract: outputs are regenerated verbatim; managed files from the
  * previous lock that are no longer rendered get deleted; a fresh lock is written.
+ *
+ * `sourceBaseDir` is the base a *relative local-path* external `source:` resolves against; it
+ * defaults to `cwd` (the project being rendered), which is what every ordinary render wants. It is
+ * separable only for `doctor --verify-render` (#314), which renders the committed inputs into a
+ * temp dir to check them against the lock: there `cwd` is the scratch dir, but a `source: ../foo`
+ * in the config still names a path relative to the REAL repo. Nothing else in the render follows
+ * it — outputs, extensions, and the lock all stay bound to `cwd`.
  */
 export function renderProject({
   toolkitRoot,
   cwd,
+  sourceBaseDir = cwd,
   toolkitVersion,
   force = false,
   log = () => {},
@@ -64,7 +72,7 @@ export function renderProject({
     toolkit = loadToolkitWithSources({
       builtinRoot: toolkitRoot,
       externalStacks: project.externalStacks ?? [],
-      cwd,
+      cwd: sourceBaseDir,
       cacheDir: sourceCacheDir,
       refreshSources,
     });

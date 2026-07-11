@@ -16,6 +16,7 @@ import {
   loadProjectConfig,
   ensureGitignoreEntries,
   recommendedGitignoreEntries,
+  CONFIG_FILE,
   LOCAL_CONFIG_FILE,
 } from './lib/project.mjs';
 
@@ -48,18 +49,30 @@ try {
     }
     case 'doctor': {
       const allowMissing = extractFlag(args, '--allow-missing');
-      const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing, toolkitRoot });
+      // #314: verify the lock still matches what the committed config WOULD render (a temp-dir
+      // render; the working tree is never touched). Opt-in — plain doctor is unchanged.
+      const verifyRender = extractFlag(args, '--verify-render');
+      const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing, verifyRender, toolkitRoot });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
-      // Absent files are only "tolerated" when *some* render survived; when every managed file is
-      // absent the flag no longer excuses them (#311), so don't label them as if it did.
-      const tolerated = allowMissing && !result.nothingPresent;
+      // Absent files are only "tolerated" when *some* render survived, or when --verify-render
+      // reproduced the render instead (#314); when every managed file is absent and nothing was
+      // verified in their place, the flag no longer excuses them (#311).
+      const tolerated = allowMissing && (!result.nothingPresent || result.render.evaluated);
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
       for (const f of result.missing) console.log((tolerated ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
+      // Render drift (#314): the lock disagrees with a fresh render of the committed config.
+      for (const f of result.render.stale) console.log(`stale render: ${f}${from(f)} — the config would render different content than the lock records`);
+      for (const f of result.render.absent) console.log(`stale lock entry: ${f}${from(f)} — tracked by the lock but no longer rendered by the config`);
+      for (const f of result.render.unexpected) console.log(`unrendered: ${f} — the config would render this file but the lock does not track it`);
+      for (const e of result.render.errors) console.log(`verify-render: ${e}`);
       for (const n of result.notes) console.log(n);
       // Prerequisite gate (#129): an unmet `require` fails the check; a `recommend` only reports.
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
       if (result.ok) {
+        if (result.render.evaluated) {
+          console.log(`render verified: a fresh render of ${CONFIG_FILE} reproduces the lock (${result.render.checked} files); the working tree was not touched`);
+        }
         console.log(
           result.missing.length
             ? `all present managed files match the lock manifest (${result.missing.length} absent, tolerated)`
