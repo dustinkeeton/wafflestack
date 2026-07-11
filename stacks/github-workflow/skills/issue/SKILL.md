@@ -12,10 +12,18 @@ When this skill is invoked, you either **create a new GitHub issue** from a brie
 ## Mode detection
 
 **Strip `--yes` from `$ARGUMENTS` first, then apply the mode rules to what remains.** `--yes` is a
-flag, not a mode: it never contributes to the description text. So bare `/issue --yes` is a
+flag, not a mode: as a flag it never contributes to the description text. So bare `/issue --yes` is a
 straight-through **batch enrich** — *not* a new issue titled `--yes` — and `/issue --yes fix the
 login bug` drafts from `fix the login bug`, with the flag never bleeding into the drafted title or
 body.
+
+**Strip it only as a flag token** — an unquoted `--yes` in the **first or last** position of
+`$ARGUMENTS`. A `--yes` sitting mid-prose or inside backticks is **description text**: it is not
+stripped, it reaches the drafted title and body, and **the gate still fires**. So `/issue --yes fix
+the login bug` and `/issue fix the login bug --yes` skip the gate, but `/issue the --yes flag in
+pr-response is ignored` files an issue *about* `--yes` and gates normally. Eating a *mentioned*
+`--yes` would mangle the description **and** skip a gate nobody asked to skip — in a toolkit where
+three skills carry that flag, filing an issue about one is an ordinary thing to want.
 
 With the flag removed, inspect what is left to choose a mode (same detection approach as the
 `delegate` skill):
@@ -38,7 +46,7 @@ The flag itself is orthogonal to the mode it modifies:
 
 Every mode runs in two phases:
 
-1. **Plan phase — read-only.** Gather context, classify, and draft. Only reads: `gh issue view`, `gh issue list`, `gh label list`, the milestone list (`gh api repos/$OWNER/$REPO/milestones`), the project-board GraphQL **queries** that resolve the project, Status field, and Backlog option (Workflow steps 7a–7c), and source files. Nothing on GitHub changes.
+1. **Plan phase — read-only.** Gather context, classify, and draft. Only reads: `gh issue view`, `gh issue list`, `gh label list`, the milestone list (`gh api repos/$OWNER/$REPO/milestones`), the project-board GraphQL **queries** that resolve the project, Status field, and Backlog option (Workflow step 7c, with 7a's `gh repo view` env resolve as its prerequisite), and source files. Nothing on GitHub changes. Not 7b — it reads the node ID of an issue that does not exist yet in create mode.
 2. **Act phase — mutating.** Runs *only* after the confirmation gate. The mutations are: `gh issue create`, `gh issue edit` (title, body, or labels), any label add/remove, `addSubIssue`, and every project-board and milestone GraphQL mutation.
 
 The gate covers **mutating**, not reading — the plan-phase steps are always safe to run. That cuts both ways: a placement the gate *shows* must be one the plan phase actually **looked up**, never a guess. Read whatever it takes to make the plan true; just don't apply any of it.
@@ -96,7 +104,7 @@ Then finish the plan — **infer, do not apply**. Both of the following are deci
 
 {{issue.priorityLabels}}
 
-**Board placement** — the issue goes on the project board as "Backlog", plus the milestone whose title/scope matches (bugs → earliest milestone, features → match by scope; no match → no milestone). **Query the board and the milestone list to settle this — just don't mutate them yet.** Those are reads (Workflow steps 7a–7c and 7e's `gh api .../milestones`), so they belong in the plan phase: naming a milestone you never listed means the gate shows a placement it never verified, and the act phase silently takes the `no match → skip` branch on a milestone the user already approved. State the placement you resolved, by title.
+**Board placement** — the issue goes on the project board as "Backlog", plus the milestone whose title/scope matches (bugs → earliest milestone, features → match by scope; no match → no milestone). **Query the board and the milestone list to settle this — just don't mutate them yet.** Those are reads (Workflow step 7c, after 7a's env resolve, and 7e's `gh api .../milestones`), so they belong in the plan phase: naming a milestone you never listed means the gate shows a placement it never verified, and the act phase silently takes the `no match → skip` branch on a milestone the user already approved. State the placement you resolved, by title.
 
 ### 4. Confirm the plan
 
