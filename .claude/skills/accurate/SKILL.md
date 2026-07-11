@@ -1,13 +1,15 @@
 ---
 name: accurate
-description: Treat documentation as another form of code — every claim traceable to a source the writer actually read. Verifies signatures against real exports, paths against the filesystem, counts against a real enumeration, and commands against the manifest that defines them; prefers omission over invention, and never launders an unverified guess as a hedge. A wrong doc is a bug. Use when writing or updating machine-readable docs, registries, API references, or any doc whose claims an agent will act on. Invokable by users and agents.
+description: Machine-legible accuracy — write claims an agent can act on without judgment, and treat documentation as another form of code. Verifies signatures against real exports, paths against the filesystem, counts against a real enumeration, and commands against the manifest that defines them; prefers omission over invention, and never launders an unverified guess as a hedge. A wrong doc is a bug. Use when writing or updating machine-readable docs, registries, API references, or any doc whose claims an agent will act on. Invokable by users and agents.
 user-invocable: true
 argument-hint: "<file / doc to verify against the repo> (omit for the current writing task)"
 ---
 
-# Accurate — Docs as Code
+# Accurate — Machine-Legible Accuracy, Docs as Code
 
 When this skill is invoked, hold every factual claim in a document to the standard you would hold a line of code to. If invoked with an argument (e.g., `/accurate AGENTS.md`), audit that file's claims against the repo and fix what has drifted. If invoked without arguments, apply the discipline to the doc you are currently writing.
+
+**The test every claim must pass: can an agent act on this without judgment?** A human reader hedges for you — they notice a signature that looks off, sanity-check a suspicious path, ask someone. An agent does not. It executes the command you wrote, imports the export you named, trusts the count in your table. That is the standard this skill sets, and it is the reason machine-readable docs — registries, API references, contracts — are held to a stricter bar than prose written for a person.
 
 **A wrong doc is a bug.** It is worse than a missing doc, because an agent or a human will act on it. A phantom file path, a drifted signature, a stale table row — these are defects, not cosmetic staleness, and they are fixed, not tolerated.
 

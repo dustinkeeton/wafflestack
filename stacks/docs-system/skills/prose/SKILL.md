@@ -48,11 +48,14 @@ The test: a reader who reads **only the headings and the bolded leads** must sti
 - **Structure over prose for parallel content** — three or more parallel items belong in a list or a table, not a paragraph. (See the `md-maximalist` skill for choosing the form.)
 - **One idea per bullet.** A bullet with a sub-clause pile-up is a paragraph in disguise.
 
-## 5. Concrete over abstract
+## 5. Concrete over abstract — from a source
 
-- **Numbers, names, and paths beat generalities.** "Keep `STATUS.md` under 100 lines" beats "keep it reasonably short." "`installer/lib/render.mjs`" beats "the render module."
+Specificity is this section's demand and its trap: the concrete details that make writing land are also the easiest ones to invent. Reach for them, but only from a source you actually read.
+
+- **Numbers, names, and paths beat generalities.** "Keep `STATUS.md` under 100 lines" beats "keep it reasonably short." "`installer/lib/render.mjs`" beats "the render module." Take each one from a file you opened, not from what the name suggests it should be.
 - **Show an example** wherever a rule is easier to demonstrate than to state.
-- **Quantify claims.** "Faster" is not a fact; "~200ms faster on a 500-file repo" is.
+- **Quantify claims — with *sourced* numbers only.** "Faster" is not a fact; "~200ms faster on a 500-file repo" is. But a specific you didn't read somewhere is fabrication wearing concreteness's clothes — it reads *more* credible than the vague claim it replaced, which is precisely what makes it worse.
+- **When the source doesn't carry the fact, omit it.** A missing detail is a gap; an invented one is a defect. Never close the gap with a number that merely sounds right.
 
 ## 6. Read it back before shipping
 
