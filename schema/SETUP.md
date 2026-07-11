@@ -192,6 +192,8 @@ content is already byte-identical to the render is adopted silently, no flag nee
 
 ## 6. Version control
 
+> Weighing whether to commit the render at all? [`docs/gitignore.md`](../docs/gitignore.md) argues the trade-off posture by posture — and is precise that `--allow-missing` tolerates absent *renders*, never an absent *lock*.
+
 - **Commit**: `.waffle/waffle.yaml`, the rendered output (`.claude/`, `.codex/`,
   `.agents/`), and `.waffle/waffle.lock.json`. Teammates then get working agent files
   without running the installer, and `wafflestack doctor` can catch drift in CI — the

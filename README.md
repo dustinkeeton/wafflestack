@@ -120,6 +120,8 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    absent files are then reported informationally and only *modified* files fail the gate. A
    missing lock still fails — that means the repo was never rendered, which the flag won't mask.
 
+**Deciding what to commit?** [Committing vs. gitignoring the rendered output](docs/gitignore.md) argues the trade-off — what you gain and lose each way, and why the lock is a separate decision from the render.
+
 **Run the drift gate** — the `doctor` command from rule 4, in three copyable forms:
 
 **Agent prompt** — paste to your coding agent:
