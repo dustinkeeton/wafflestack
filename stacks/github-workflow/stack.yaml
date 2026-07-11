@@ -1066,11 +1066,15 @@ config:
     # and are admitted. It is NOT spliced into an unquoted shell word the way botName is via
     # git.cmd, so botName's stricter ASCII-only class does not apply. Still rejected, because they
     # WOULD break a landing site or the renderer: backtick (closes the code span), `$`/`\`/`;`,
-    # newlines, and (via the `(?!.*\$\{\{)` guard) a surviving ${{ }} expression. Scripts do not
-    # compile these patterns with the `u` flag, so Unicode letters are admitted by BMP code-point
-    # RANGES (astral-plane scripts — e.g. CJK — are still rejected; document that in the setup
-    # note). Keep the pattern AND default byte-identical with stacks/orchestration/stack.yaml —
-    # lockstep test (#284).
+    # newlines, and (via the `(?!.*\$\{\{)` guard) a surviving ${{ }} expression. The renderer
+    # compiles these patterns WITHOUT the `u` flag (see compilePattern), so the ranges match on
+    # UTF-16 code units: only accented Latin in the allowlisted BMP ranges is admitted, and every
+    # other script is rejected by one of two mechanisms — other BMP scripts (CJK U+4E00–, Cyrillic,
+    # Greek) because they fall outside the allowlisted ranges, and astral-plane characters (surrogate
+    # pairs, e.g. emoji or CJK Extension B) because a BMP range cannot match them at all. An owner on
+    # such a script falls back to a Latin transliteration for the display name (the email drives the
+    # actual credit); document that in the setup note. Keep the pattern AND default byte-identical
+    # with stacks/orchestration/stack.yaml — lockstep test (#284).
     pattern: '^(?!.*\$\{\{)[A-Za-z0-9._''\u00C0-\u024F\u1E00-\u1EFF\[\]-]+(?: [A-Za-z0-9._''\u00C0-\u024F\u1E00-\u1EFF\[\]-]+)*$'
     description: >-
       Display name credited in the default git.coAuthorTrailer — the consuming repo's OWNER, the
