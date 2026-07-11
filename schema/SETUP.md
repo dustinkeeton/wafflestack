@@ -212,10 +212,17 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - **Dev-only or self-hosting waffle**: when the render should *not* be committed — a
   consumer who wants the waffle only in their own working environment, or the wafflestack
   source repo itself (where committed copies would duplicate every skill in the tree) —
-  also gitignore the rendered output (`.claude/`, `.codex/`, `.agents/`) and
-  `.waffle/waffle.lock.json`, and set `doctor.flags: --allow-missing` (github-workflow
-  stack) so the CI drift gate tolerates the deliberately-absent renders: only modified
-  files fail, a missing lock still fails.
+  gitignore the rendered output (`.claude/`, `.codex/`, `.agents/`). **The lock is a
+  separate decision**, and it is the one that decides whether CI can gate at all:
+  - **Keep `.waffle/waffle.lock.json` committed.** Ignoring *some* renders: set
+    `doctor.flags: --allow-missing` (github-workflow stack) and the drift gate keeps full
+    strength on the rest — only modified files fail. Ignoring *every* render: `doctor` has
+    nothing present left to check and passes vacuously, so gate on `wafflestack render`
+    followed by `git diff --exit-code .waffle/waffle.lock.json` instead
+    (`docs/gitignore.md`, Posture 2b).
+  - **Gitignore the lock too** and there is no CI drift gate: a missing lock fails `doctor`
+    unconditionally — `--allow-missing` is never consulted — so the flag neither helps nor
+    applies. A purely local waffle; every person renders their own.
 - Tell the user the standing rule: never hand-edit rendered files — `render` overwrites
   them. Project-specific additions go in `.waffle/extensions/{agents,skills}/<name>.md`
   (committed) and take effect on the next render.

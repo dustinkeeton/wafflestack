@@ -214,9 +214,14 @@ export function ensureGitignoreEntries(cwd, entries) {
  * behind the `--gitignore` flag and the setup playbook. Always the local overlay
  * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed), plus
  * the resolved `git.worktreesDir` (throwaway working state) when an enabled stack declares
- * that key. Dev-only / self-hosting mode — also gitignoring the renders +
- * `.waffle/waffle.lock.json`, paired with `doctor --allow-missing` — is a separate opt-in the
- * agent proposes case by case, not part of this baseline.
+ * that key. Gitignoring the rendered output is a separate opt-in the agent proposes case by
+ * case, not part of this baseline — and the render and the lock are two decisions, not one.
+ * Ignoring a subset of renders pairs with `doctor --allow-missing`, which relaxes *presence*
+ * and never *integrity*, so the gate keeps full strength on what remains; ignoring every
+ * render makes `doctor` vacuous (nothing present to check) and the gate becomes `render` + a
+ * `git diff` on the lock. Gitignoring `.waffle/waffle.lock.json` itself is not an
+ * `--allow-missing` pairing at all: a missing lock fails `doctor` before the flag is read
+ * (`doctor.mjs`), so that posture simply has no CI drift gate. See `docs/gitignore.md`.
  *
  * @param {Toolkit} toolkit
  * @param {ProjectConfig} project
