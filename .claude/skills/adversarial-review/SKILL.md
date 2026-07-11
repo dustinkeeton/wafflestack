@@ -206,6 +206,13 @@ the new diff" — instead of invoking this skill fresh each round. When resumed:
   re-argue a finding `pr-response` declined with a reason you accepted. Anything *new* in the
   diff gets the same hostility as round 1 — a fix that introduced a fresh hole is exactly what a
   later round is for.
+- **Cold starts recover the history from the PR itself.** If you have no in-context finding
+  history — you are a fresh spawn after a vanished agent — **seed it before reviewing**: read the
+  PR's own marked `<!-- waffle-adversarial-review -->` reviews (what earlier rounds already raised
+  and called resolved) and the marked `<!-- waffle-pr-response -->` reply's verdict table (what
+  was implemented, deferred, or declined — and why). Never re-raise a finding that table records
+  as settled without new evidence in the new head. This keeps the continuity rules above
+  satisfiable on every path, not only for an agent that lived through the earlier rounds.
 - **Your reply each round is the same structured summary** (step 7) a fresh run would return, so
   the loop's convergence logic is unaffected.
 

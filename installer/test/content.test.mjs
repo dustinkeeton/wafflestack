@@ -1253,9 +1253,13 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
   });
 
   test('failure handling: red/errored rounds still tear the agents down; a retry never re-enters a wedged context', () => {
-    // A stopped loop leaks nothing — both red-round bullets shut their agents down.
-    assert.match(md, /Stopping the loop \*\*includes shutting its gate agents down\*\* \(`qa-pr<N>`, `respond-qa-pr<N>`\)/);
-    assert.match(md, /Stopping the loop \*\*includes shutting its gate agents down\*\* \(`review-pr<N>`, `respond-rev-pr<N>`\)/);
+    // A stopped loop leaks nothing — both red-round bullets shut their agents down. #297 (F5)
+    // retargeted the enumeration from a fixed pair to the SPAWNED SET: the never-went-green stop
+    // can fire before either agent exists, so naming both unconditionally was the very defect
+    // #297 closes elsewhere. The guarantee this pin guards — a stopped loop tears its agents
+    // down — is unchanged; only the agent list is now honest about which of them exist.
+    assert.match(md, /Stopping the loop \*\*includes shutting down each gate agent it actually spawned\*\* \(`qa-pr<N>` once round 1 ran, and `respond-qa-pr<N>` once a finding round spawned it/);
+    assert.match(md, /Stopping the loop \*\*includes shutting down each gate agent it actually spawned\*\* \(`review-pr<N>` once round 1 ran, and `respond-rev-pr<N>` once a finding round spawned it/);
     // An errored round is still ONE failed round (the #220/#228 one-retry bound is untouched),
     // but the retry goes to a FRESH spawn — retrying into the wedged agent could error forever.
     const wedge = /tear the suspect agent down first and retry the round on a fresh spawn/g;
@@ -1310,6 +1314,184 @@ describe('gate skills: documented as resumable across rounds (#295)', () => {
     assert.match(md, /seed your verdict history and F-numbering from it/);
     assert.match(md, /\*\*never renumber\*\*/);
     assert.match(md, /on a cold start you first \*read\* it as verdict history/);
+  });
+});
+
+// #297: #295's lazy responder spawn (round 1 spawns it only when the review surfaces findings)
+// left three statements assuming the responder always exists — a zero-finding round 1 would
+// shut down an agent that never existed and read a convergence signal from a pr-response return
+// that never happened. These pin the reconciliation: teardown is scoped to the agents actually
+// spawned, the reviewer's clean summary is the stop signal when no responder ran, and the cap
+// hatch's fresh evidence pass is UNNAMED (the standing agent still holds the name until its
+// teardown, which defers until after the hatch). Plus the cold-start recovery rule the two
+// reviewer skills need to make autopilot's vanished-agent re-spawn non-destructive.
+describe('gate loops: lazy-responder coherence + cold-start recovery (#297)', () => {
+  let qaStep;
+  let reviewStep;
+  before(() => {
+    const md = readSkill('autopilot');
+    qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    assert.ok(qaStep.length > 0 && reviewStep.length > 0, 'Steps 5 and 6 are the gate loops');
+  });
+
+  test('teardown is scoped to the agents the loop actually spawned', () => {
+    // Still unconditional (the #295 pin) — but over the spawned set, not a fixed pair. A
+    // zero-finding round 1 has no responder to shut down.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /Teardown is unconditional:/);
+      assert.match(step, /each agent this loop actually spawned/);
+      assert.match(step, /there is no responder to shut down/);
+    }
+  });
+
+  test('a clean review is the stop signal when the responder never spawned', () => {
+    // Convergence normally reads pr-response's implemented count — but on the happy path that
+    // return does not exist. The reviewer's own no-findings summary carries the signal instead.
+    assert.match(qaStep, /"no QA concerns" summary \*is\* the stop signal/);
+    assert.match(reviewStep, /"no holes found" summary \*is\* the stop signal/);
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /there is no pr-response return to read/);
+      // The return-contract bullet's convergence parenthetical names the same alternative.
+      assert.match(step, /the reviewer's clean summary when the responder never spawned/);
+    }
+  });
+
+  test('the stop signal is scoped to nothing-left-to-triage, not merely a clean reviewer (F1)', () => {
+    // The responder-less break must key on UNTRIAGED FINDINGS ON THE HEAD, not on this round's
+    // own reviewer being clean. waffle-pr-green-hook fires on every green transition per head —
+    // including the PR's INITIAL green — so on a hook-armed repo the PR can already carry an
+    // adversarial review with findings when round 1 opens. Keyed on "my reviewer was clean", a
+    // clean round-1 QA would break, skip the responder, and (review loop + audit off) arm
+    // auto-merge over findings nobody triaged.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /nothing left to triage/);
+      assert.match(step, /findings to triage/);
+      assert.match(step, /never merely \*this round's reviewer surfaced some\*/);
+    }
+    // The hook-armed note is the fourth responder-always-exists statement: it must not presume a
+    // standing responder, and it must record that the hook fires on the PR's initial green too.
+    assert.ok(
+      !qaStep.includes('the standing `respond-qa-pr<N>` agent'),
+      'the hook-armed note must not presume a standing responder — a clean round may never have spawned one',
+    );
+    assert.match(qaStep, /\*\*spawned now\*\* when no round had/);
+    assert.match(qaStep, /including the PR's \*initial\* green/);
+  });
+
+  test('disposal is read from the verdict table, not from the reply existing (F2)', () => {
+    // The lazy-spawn trigger keys on findings "no marked waffle-pr-response reply has disposed
+    // of" — but pr-response keeps EXACTLY ONE reply, PATCHed in place across rounds, whose table
+    // names no review or head. So a reply exists as soon as any responder has run, and disposal
+    // cannot be read off its presence. Concrete failure it guards (no hook needed): Step 5's cap
+    // hatch posts a fresh QA review with NO pr-response after it (item 2 routes it to Step 6's
+    // triage) over a PR whose earlier rounds already left a reply → a Step 6 round 1 that finds
+    // no holes would read "a reply exists, so nothing is untriaged", skip the responder, and arm
+    // the merge over the QA findings Step 5 handed it. The table is the record; the tie-break is
+    // to spawn.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /verdict table/);
+      assert.match(step, /never from the reply's (mere )?existence/);
+      assert.match(step, /\*\*spawn the responder\*\*/);
+    }
+    assert.match(qaStep, /disposes only of the findings \*\*its verdict table records\*\*/);
+    assert.match(qaStep, /A redundant triage round costs one cheap round; a skipped one merges live findings/);
+    // Step 6 names the cap-hatch path that reaches it with an untriaged review and no responder.
+    assert.match(reviewStep, /no `pr-response` after it/);
+  });
+
+  test('teardown covers the spawned set — a never-green PR spawned neither agent (F3)', () => {
+    // Item 1's green wait stops the loop BEFORE round 1 on a never-green PR, and the reviewer is
+    // spawned IN round 1 — so that path has ZERO agents, not merely no responder. The old gloss
+    // ("always `qa-pr<N>`") contradicted its own umbrella clause inside the same sentence.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /\*\*A never-green PR is the empty case:\*\*/);
+      assert.match(step, /spawned \*\*no gate agents at all\*\*/);
+      assert.match(step, /it is never a fixed pair/);
+    }
+    assert.match(qaStep, /`qa-pr<N>` on every path that reached round 1/);
+    assert.match(reviewStep, /`review-pr<N>` on every path that reached round 1/);
+    // The retired gloss must not come back.
+    assert.ok(
+      !qaStep.includes('always `qa-pr<N>`') && !reviewStep.includes('always `review-pr<N>`'),
+      'teardown must not claim the reviewer is ALWAYS in the spawned set — a never-green PR never spawned it',
+    );
+  });
+
+  test('CHANGELOG: no version section repeats a change-type heading (F4)', () => {
+    // The release flow stamps `## [Unreleased]` -> `## [X.Y.Z] - DATE` VERBATIM, so a duplicated
+    // `### Fixed` under [Unreleased] ships into the released changelog and is then frozen there.
+    // Cheap structural guard: within any one version section, each change-type heading appears
+    // at most once. (Caught as a nit on this PR, which had opened a second `### Fixed`.)
+    const md = fs.readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
+    const dupes = [];
+    let section = null;
+    let seen = new Set();
+    for (const line of md.split('\n')) {
+      const version = line.match(/^## (.+)$/);
+      if (version) {
+        section = version[1];
+        seen = new Set();
+        continue;
+      }
+      const heading = line.match(/^### (.+)$/);
+      if (heading && section) {
+        if (seen.has(heading[1])) dupes.push(`${section} → ### ${heading[1]}`);
+        seen.add(heading[1]);
+      }
+    }
+    assert.deepEqual(dupes, [], 'each version section carries at most one heading of each change type');
+  });
+
+  test('Failure handling names the spawned set, not a fixed pair (F5)', () => {
+    // Item 3 says teardown governs "the stop paths in Failure handling" — so those stop paths
+    // must not enumerate two agents as if both always exist. The never-went-green stop can fire
+    // before either was spawned.
+    const md = readSkill('autopilot');
+    const failures = md.slice(md.indexOf('## Failure handling'));
+    const matches = failures.match(/shutting down each gate agent it actually spawned/g) ?? [];
+    assert.equal(matches.length, 2, 'both the red-QA-round and red-review-round stops scope teardown to the spawned set');
+    assert.match(failures, /a PR that never went green spawned neither/);
+  });
+
+  test("each cap hatch's fresh evidence pass is spawned UNNAMED", () => {
+    // #295 pins that the pass is FRESH, never the standing agent — but the standing agent is
+    // still alive when the hatch runs (its teardown defers until after), so the obvious name
+    // would collide. The pass runs once and is never resumed: it needs no name at all.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /Spawn it \*\*unnamed\*\* — a bare `Agent\(…\)` with no `name:`/);
+      assert.match(step, /never resumed/);
+    }
+    assert.match(qaStep, /the standing agent still holds `qa-pr<N>`/);
+    assert.match(reviewStep, /the standing agent still holds `review-pr<N>`/);
+  });
+
+  test('qa: a cold-spawned reviewer seeds its verdict history from the PR', () => {
+    // Autopilot's vanished-agent fallback re-spawns the reviewer COLD, which makes #295's
+    // "keep your verdict history" unsatisfiable — and a cold reviewer re-raises settled
+    // findings. Recovery source: the PR's own marked reviews + pr-response's verdict table.
+    const md = readSkill('qa');
+    assert.match(md, /Cold starts recover the history from the PR itself/);
+    assert.match(md, /seed it before reviewing/);
+    assert.match(md, /<!-- waffle-pr-response -->/);
+    assert.match(md, /Never re-raise a finding that table records as\s+settled/);
+    // Marker discipline (#228): the qa skill must never carry the OTHER gate's marker literal —
+    // pr-green-hook's duplicate-review guard keys on it. Re-asserted here because this test
+    // adds marker literals to the file.
+    assert.ok(
+      !md.includes('waffle-adversarial-review'),
+      'the qa skill must not contain the adversarial-review marker literal',
+    );
+  });
+
+  test('adversarial-review: a cold-spawned reviewer seeds its finding history from the PR', () => {
+    const md = readSkill('adversarial-review');
+    assert.match(md, /Cold starts recover the history from the PR itself/);
+    assert.match(md, /seed it before reviewing/);
+    // Its own marker (fine in its own skill) plus pr-response's verdict table.
+    assert.match(md, /marked `<!-- waffle-adversarial-review -->` reviews/);
+    assert.match(md, /<!-- waffle-pr-response -->/);
+    assert.match(md, /Never re-raise a finding that table records\s+as settled/);
   });
 });
 
