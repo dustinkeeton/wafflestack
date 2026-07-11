@@ -631,7 +631,6 @@ is what you reach for across a breaking one.
   - **Consumer impact:** re-render. Nothing to configure; `Bash(git:*)` is deliberately still
     excluded, as the job holds `contents: read` only.
 
-### Fixed
 - **Coherence holes in the persistent-gate-agent playbook (#297, follow-up to #295).** #295 made each
   gate loop's responder spawn **lazily** (only once a review surfaces findings), but three statements
   in autopilot's Steps 5/6 still assumed it always exists — so a zero-finding round 1 was told to
@@ -643,7 +642,14 @@ is what you reach for across a breaking one.
   its finding/verdict history from the PR's own marked reviews and the `<!-- waffle-pr-response -->`
   verdict table instead of re-raising every settled finding. Both cap hatches' fresh evidence pass is
   now specified as **unnamed** (it runs once and is never resumed, and the standing agent still holds
-  the gate name until its deferred teardown).
+  the gate name until its deferred teardown). The lazy spawn's trigger is scoped to **untriaged
+  findings on the head**, with disposal read from the marked `<!-- waffle-pr-response -->` reply's
+  **verdict table** rather than from the reply's mere existence (one reply is PATCHed in place across
+  rounds, so it exists as soon as any responder has run) and *when in doubt, spawn the responder* as
+  the tie-break — so a clean round over a head still carrying another gate's untriaged findings, such
+  as the QA cap hatch's un-triaged evidence pass, cannot converge and arm a merge over them. Both
+  teardown lists (item 3 and Failure handling) now name the **spawned set** rather than a fixed pair:
+  a never-green PR stops before round 1 and spawned neither agent.
   - **Consumer impact:** re-render. Prose-only; no config, no behavior change to the gates' contracts.
 
 ## [0.11.0] - 2026-07-08
