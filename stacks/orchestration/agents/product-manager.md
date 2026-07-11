@@ -3,8 +3,10 @@ name: product-manager
 description: Product strategy and discovery specialist for {{project.name}}. Use proactively when defining new features, writing user stories with acceptance criteria, evaluating UX trade-offs, or prioritizing the backlog. MUST BE USED before starting any net-new feature or user-facing change.
 identity:
   displayName: Product Manager
+skills:
+  - issue
 claude:
-  tools: Read, Write, Edit, Glob, Grep, WebSearch
+  tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch
   model: sonnet
 ---
 

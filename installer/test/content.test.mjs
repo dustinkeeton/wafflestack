@@ -1623,8 +1623,12 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     // whole enrich gate could be dropped with the suite still green. Enrich is the
     // destructive mode (#288 leads with it — an in-place rewrite overwrites nuance),
     // so it gets its own pin, scoped to its own section.
-    const section = md.slice(md.indexOf('## Enriching an existing issue'));
-    assert.ok(section.length > 0, 'enrich-mode section not found');
+    // Guard the INDEX, not the slice: `indexOf` → -1 on a missing header, and
+    // `slice(-1)` is a from-the-end index that returns the file's last character —
+    // a non-empty string. A `section.length > 0` guard could therefore never fire.
+    const at = md.indexOf('## Enriching an existing issue');
+    assert.ok(at !== -1, 'enrich-mode section not found');
+    const section = md.slice(at);
     const gateAt = section.indexOf('**Confirm the plan** — the gate');
     const editAt = section.indexOf('**Update the issue in place**');
     assert.ok(gateAt !== -1, 'enrich mode must have a confirmation gate');
@@ -1647,6 +1651,27 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     const catchAllAt = md.indexOf('| any other text | **Create new** |');
     assert.ok(stripAt !== -1 && catchAllAt !== -1, 'strip rule / catch-all row not found');
     assert.ok(stripAt < catchAllAt, 'the strip rule must precede the catch-all mode row');
+  });
+
+  test('the --yes strip is anchored to a flag token — a description MENTIONING --yes still gates (#303)', () => {
+    // An unanchored "strip --yes from $ARGUMENTS" reads as strip-ANYWHERE, so
+    // `/issue the --yes flag in pr-response is ignored` — an ordinary filing in a
+    // toolkit where three skills carry that flag — gets its token eaten, its title
+    // mangled, and THE GATE SILENTLY SKIPPED on a run where nobody asked to skip it.
+    // The strip must therefore be scoped to a positional flag token.
+    assert.match(md, /\*\*Strip it only as a flag token\*\*/);
+    assert.match(md, /\*\*first or last\*\* position/);
+    // The behavioral criterion: a mid-prose/backticked --yes is CONTENT, not a flag.
+    assert.match(md, /is \*\*description text\*\*/);
+    assert.match(md, /it is not\s*\n?\s*stripped/);
+    assert.match(md, /the gate still fires/);
+    // ...and the worked counter-example that separates the two readings survives.
+    assert.match(md, /pr-response is ignored` files an issue \*about\* `--yes` and gates normally/);
+    // The anchor is normative only if it is read before the mode table's catch-all.
+    const anchorAt = md.indexOf('**Strip it only as a flag token**');
+    const catchAllAt = md.indexOf('| any other text | **Create new** |');
+    assert.ok(anchorAt !== -1 && catchAllAt !== -1, 'anchor rule / catch-all row not found');
+    assert.ok(anchorAt < catchAllAt, 'the flag-token anchor must precede the catch-all mode row');
   });
 
   test('--yes skips the gate and is advertised in the argument hint', () => {
@@ -1680,8 +1705,10 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     // unreviewed pass), so its gate gets the same structural ordering assertion as
     // create and enrich: a presence pin alone would stay green if a future edit
     // floated the act step above the combined review.
-    const section = md.slice(md.indexOf('### Batch enrich (no argument)'));
-    assert.ok(section.length > 0, 'batch-enrich section not found');
+    // Guard the index, not the slice — see the enrich-mode pin above.
+    const at = md.indexOf('### Batch enrich (no argument)');
+    assert.ok(at !== -1, 'batch-enrich section not found');
+    const section = md.slice(at);
     const reviewAt = section.indexOf('**Present one combined review**');
     const actAt = section.indexOf('**Then act**');
     assert.ok(reviewAt !== -1, 'batch mode must have a combined-review gate');
@@ -1705,6 +1732,12 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     assert.match(md, /Query the board and the milestone list to settle this/);
     // And the act phase applies the CONFIRMED milestone rather than re-deciding it.
     assert.match(md, /apply the confirmed one, don't re-decide it here/);
+    // #303: the cite must name a range the plan phase can actually RUN. 7a is a shell
+    // env-resolve and 7b reads the node ID of the issue `gh issue create` returns —
+    // which does not exist during create mode's plan phase. The resolve-queries the
+    // sentence describes are 7c alone (7a being its prerequisite).
+    assert.doesNotMatch(planLine, /7a–7c/, 'the plan phase cannot run 7b: no issue exists yet');
+    assert.match(planLine, /step 7c/, 'the board resolve-queries are 7c');
   });
 
   test('the gate skip is scoped to NON-interactive callers, not to agents as a class', () => {
@@ -1723,6 +1756,40 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     assert.match(md, /Create nothing\./);
     assert.match(md, /is \*\*not\*\* approval of\s*\n?\s*the issue drafted from it/);
   });
+});
+
+// #303: `issue` names three agents as in-scope INTERACTIVE callers that must run the plan phase
+// and hand the gate up to the human. That naming is a promise about capability: every plan-phase
+// read the protocol requires of them — `gh label list`, the milestone list, the board's resolve-
+// queries — is a `gh` call, so a caller without `Bash` cannot satisfy hand-up step 1 ("Run the
+// plan phase as normal"). It would then have no legal way to fill the board-placement field the
+// gate presentation requires, and the recovery path is exactly the divergence step 7e forbids:
+// re-invoke with `--yes`, resolve a placement the human never saw, apply it in silence. Naming a
+// caller in-scope for a protocol it provably cannot execute is the bug; these pins keep the
+// roster and the toolset in sync.
+describe('issue skill: its three in-scope interactive callers can actually run the protocol (#303)', () => {
+  const readAgent = (name) => fs.readFileSync(path.join(CLAUDE, 'agents', `${name}.md`), 'utf8');
+  const CALLERS = ['product-manager', 'task-planner', 'project-manager'];
+
+  for (const name of CALLERS) {
+    test(`${name} can make the gh calls the plan phase requires`, () => {
+      const { data } = parseFrontmatter(readAgent(name));
+      assert.ok(
+        data.tools.includes('Bash'),
+        `${name} is named in-scope for the hand-up protocol, whose every plan-phase read is a gh call — it needs Bash`,
+      );
+    });
+
+    // Both halves of the grant, per the #224 convention above: the frontmatter `skills:` list is
+    // what the claude target reads and what feeds `directDeps`; the body prose reference is the
+    // only grant signal that survives the codex target, which drops frontmatter `skills:`.
+    test(`${name} is granted the issue skill in frontmatter AND names it in body prose`, () => {
+      const md = readAgent(name);
+      const { data } = parseFrontmatter(md);
+      assert.ok(data.skills.includes('issue'), `${name} must be granted \`issue\` in frontmatter`);
+      assert.match(md, /`issue`/, `${name} must name \`issue\` in body prose (the codex-target half)`);
+    });
+  }
 });
 
 describe('release skill: required sections and tag-safety guardrails', () => {

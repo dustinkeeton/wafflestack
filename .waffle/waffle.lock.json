@@ -23,7 +23,7 @@
     ".claude/agents/docs-agent.md": "ea9f77fafe46e9786b5423f1aa8dfa19278edf1100775b9957ed128c13058a08",
     ".claude/agents/docs-human.md": "a408b9ed7b37583680556d658c0d575215075ab4497980c30135d9f4cadec432",
     ".claude/agents/harness-architect.md": "3796d634e0180f5bd3658110a8dd95edbed2b0973b42b9c2672df9e06caeaf63",
-    ".claude/agents/product-manager.md": "5ca3c5a14643cd487a25f0ae0173ab88b4926de96400da442a20dff22f214434",
+    ".claude/agents/product-manager.md": "eb5fe99e12e980e950e95dfdb9233dd7bf25e2c9a8ba1714557a6e62f05ec99d",
     ".claude/agents/project-manager.md": "10233d0855774c2eadb6c9b8910e9966c7a7e25046e74f5a65641ae6a2c2b67b",
     ".claude/agents/task-planner.md": "ca2886b9662b0eab369c6bb4440d90c4d76690bbb7250f3be69adc3ac00c864e",
     ".claude/skills/accurate/SKILL.md": "5053d9d1fd51435d558b444c12da618561d19374453e794f064710069c4604d7",
@@ -44,7 +44,7 @@
     ".claude/skills/github-project-board/SKILL.md": "08dba414a75b9d412472a9c35b144fff69bbedb6f9c7b40fbb4ebd4eb69b1c45",
     ".claude/skills/github-project-management/SKILL.md": "c4640099a2855b104f2636aa179e5ad20bff4346bd692c9022f81cbacfedc3d1",
     ".claude/skills/hygiene/SKILL.md": "6918fcf43fad8261e30542ba89620c9dc0aea0130071c38e1a35d00338605539",
-    ".claude/skills/issue/SKILL.md": "791c83441ffea6a7a5b1cca1922dd3aab5293514f3125ced696824510ed246f0",
+    ".claude/skills/issue/SKILL.md": "5a4136920458a9a1fb8d57841839db11652c8119f081ba15e379ae865728831f",
     ".claude/skills/label-hook/SKILL.md": "9b1ee406237ed6de5ec2813b35575c1762df06b07ec02e15a3a5dcc1db3a89e7",
     ".claude/skills/md-maximalist/SKILL.md": "86bd0e14c3e10f334ef276a9ed8626e38d2fe945144c2f297a6147e074185c25",
     ".claude/skills/pr-response/SKILL.md": "a71263bc6e2b3577c947526c07bb99ae29f9a2ee242350c8249fdd582954d4d2",
@@ -71,12 +71,12 @@
     ".waffle/avatars/docs-agent.svg": "f3a3bb44916d1176d061e66141cccea6a82f3d570f162fc9ea01c8ef9e56826e",
     ".waffle/avatars/docs-human.svg": "0762b8f05e429c30383cff1224b3eff9a51cb1df0554e6f5896edf0382f87f77",
     ".waffle/avatars/harness-architect.svg": "eeaa80eddc8d53a5ed8c1db6bc11b4f8edcd74a68e0188781fda6b8791401f9b",
-    ".waffle/avatars/product-manager.svg": "c68cbbd28d1f1e1703b2e744989c0fdd65bfc2f786eebf9747d488b52244d1c5",
+    ".waffle/avatars/product-manager.svg": "dd3e1d2a1cb4b26292df2c7661e17059b930740553ccbff1f5e8892150100dd2",
     ".waffle/avatars/project-manager.svg": "336d96cedd1bb58ef98357e2c6a772a1a0e67ea114b6d870e72588541c585be8",
     ".waffle/avatars/task-planner.svg": "1bd6892e305bc5aa05dca39d1f7953928eee07212b6c3c3b0ef815607135edfd",
-    ".waffle/cheatsheet.html": "f0daca2cde0718c1437aa1d90f3f1dc6cb070ec755717d819d2a10f3cf3468dc",
+    ".waffle/cheatsheet.html": "4f3f5d1a14c0439cc6489aa10a3a0006e248f2c17c5f9dadc9f6daceed65a224",
     ".waffle/CHEATSHEET.md": "5a8f2f4662ce93444bfaa3ca8d48bd5965e33c56fb8e3397360f38c0e938abe4",
-    ".waffle/team.html": "d9508aba100ef4b81a49c3a38478a33e23746a8fb5a4cf8c0396cc58df54174e",
-    ".waffle/TEAM.md": "f41455bcbba04c8567f2830d9671fe8dde018043e673e10aef97b153e883f103"
+    ".waffle/team.html": "b45c11220247e509883375acfa6745316617fc8838cf09d5719cc224acdba702",
+    ".waffle/TEAM.md": "a69693138455e0e7976b22dd01a80e5ec707e90d5e0c2a28652aba5911728cd4"
   }
 }
