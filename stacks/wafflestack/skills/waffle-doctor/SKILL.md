@@ -22,7 +22,9 @@ npx --yes {{waffle.toolkitRef}} doctor
 Pass `--allow-missing` through when `$ARGUMENTS` asks (or when diagnosing a repo that
 deliberately gitignores some renders): absent managed files become informational and only
 **modified** files fail. A missing **lock** still fails either way — that means the repo was
-never rendered.
+never rendered. So does a checkout where **every** managed file is absent: the flag tolerates a
+*subset* of absent renders, never the whole set, because a check with nothing present verified
+nothing.
 
 ## Explain the findings — don't just relay them
 
@@ -33,6 +35,12 @@ never rendered.
 - **`missing: <path>`** — a locked file isn't on disk. Either it was deleted (re-render to
   restore) or the repo intentionally gitignores that render (then `--allow-missing` is the
   right posture, matching the CI workflow's `doctor.flags`).
+- **`every managed file (N/N) is absent`** — the repo never rendered, so the check had nothing
+  to verify and fails even under `--allow-missing`. Do **not** reach for another flag; there
+  isn't one. Either run **`/waffle-render`** (the usual answer — the render is simply missing),
+  or, if the repo deliberately commits only the lock and gitignores its whole render, stop
+  gating on doctor: gate on `render` + `git diff --exit-code .waffle/waffle.lock.json`, which
+  is the check that actually catches drift in that posture.
 - **`all managed files match the lock manifest`** — clean; nothing to do.
 - **version-skew note** — doctor mentions when the lock was written by a different toolkit
   version. That is informational; pin `{{waffle.toolkitRef}}` (and the repo's version) to a

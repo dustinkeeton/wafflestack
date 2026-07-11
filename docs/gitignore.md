@@ -20,8 +20,9 @@ This guide argues both sides so you can pick deliberately.
 > guarantees. What you cannot do is ignore the **lock**: a missing lock fails `doctor`
 > unconditionally, and no flag changes that.
 >
-> The catch, if you ignore *every* render: your CI gate must be built differently, or it will
-> pass while checking nothing. See [Posture 2b](#posture-2b-commit-the-lock-only).
+> The catch, if you ignore *every* render: `doctor` will not be your gate — it **fails on
+> purpose** when no rendered file is present, rather than passing on an empty set. You must
+> build the CI gate differently. See [Posture 2b](#posture-2b-commit-the-lock-only).
 
 ---
 
@@ -151,22 +152,36 @@ Everything above depends on the drift gate, so be precise about what it does.
 | Lock file absent | **fail** | **fail** — the flag is never even consulted |
 | Managed file absent | fail (`missing: <f>`) | pass (`missing (tolerated): <f>`) |
 | Managed file edited by hand | **fail** (`modified: <f>`) | **fail** (`modified: <f>`) |
-| **Every** managed file absent | fail — all of them missing | ⚠️ **pass** — nothing left to check ([Posture 2b](#posture-2b-commit-the-lock-only)) |
+| **Every** managed file absent | fail — all of them missing | **fail** — a repo with no render is a repo that never rendered ([Posture 2b](#posture-2b-commit-the-lock-only)) |
 
 > [!WARNING]
 > **`--allow-missing` tolerates absent *rendered files*. It never tolerates an absent
-> *lock*.** In `installer/lib/doctor.mjs:41-43` a missing lock returns `ok: false` and
-> returns immediately — before the flag is read at all. A repo that gitignores its lock can
-> never pass the CI doctor gate, with or without the flag.
+> *lock*.** In `installer/lib/doctor.mjs` a missing lock returns `ok: false` and returns
+> immediately — before the flag is read at all. A repo that gitignores its lock can never pass
+> the CI doctor gate, with or without the flag.
 
-The decisive line is `doctor.mjs:109`:
+The decisive line is the `driftOk` computation in `doctor.mjs`:
 
 ```js
-const driftOk = allowMissing ? modified.length === 0 : modified.length === 0 && missing.length === 0;
+const driftOk = allowMissing
+  ? modified.length === 0 && !nothingPresent
+  : modified.length === 0 && missing.length === 0;
 ```
 
 Modified files fail either way. That is the whole point: the flag relaxes *presence*, never
 *integrity*.
+
+And it relaxes presence only up to a limit. `nothingPresent` — every lock-tracked file absent —
+fails the gate even with the flag, on the same reasoning that a missing lock does: a checkout
+with no render **is** a repo that never rendered, and the flag exists to tolerate a *subset* of
+absent files, not the whole set. A check that inspected nothing does not get to report success.
+You get a named failure that tells you what to do instead:
+
+```
+every managed file (58/58) is absent — this check verified nothing; run `wafflestack render`,
+or gate on `render` + `git diff --exit-code .waffle/waffle.lock.json` if the repo deliberately
+commits only the lock
+```
 
 Set the flag through the `github-workflow` stack's `doctor.flags` config key, which the
 shipped workflow interpolates into its run line:
@@ -243,15 +258,23 @@ build its CI gate to suit.
 And it has one sharp edge you must design your CI around.
 
 > [!CAUTION]
-> **The naive CI gate passes while checking nothing.** In a fresh CI checkout there are no
-> rendered files. `doctor --allow-missing` therefore finds zero files present, zero modified,
-> and **exits 0** — reporting `all present managed files match the lock manifest (58 absent,
-> tolerated)`. The build goes green having verified the empty set.
+> **`doctor` cannot be your gate in this posture, and it will tell you so.** In a fresh CI
+> checkout there are no rendered files, so there is nothing for `doctor` to check — with or
+> without `--allow-missing`. It **fails**, deliberately:
 >
-> **A green that checked nothing is worse than a red**, because it looks like protection.
-> Drop the flag and you get the opposite failure: unconditional red, every file missing.
-> Neither is a gate. The shipped `waffle-doctor.yml` only runs `doctor` — it does not render —
-> so a lock-only repo that installs it as-is gets exactly this vacuous green.
+> ```
+> every managed file (58/58) is absent — this check verified nothing; run `wafflestack render`,
+> or gate on `render` + `git diff --exit-code .waffle/waffle.lock.json` if the repo deliberately
+> commits only the lock
+> ```
+>
+> The flag tolerates a *subset* of absent renders. It does not tolerate all of them, because a
+> checkout with no render is indistinguishable from a repo that never rendered — and **a green
+> build that inspected nothing is worse than a red one, because it looks like protection.**
+>
+> The shipped `waffle-doctor.yml` only runs `doctor` — it does not render — so a lock-only repo
+> that installs it as-is gets a red build until it builds the gate below. That red is the
+> correct answer to a check that has nothing to look at; it is not a bug to flag-away.
 
 #### The CI recipe that actually works
 
@@ -323,7 +346,7 @@ uncluttered by it.
 
 | | Posture 1<br>render + lock | Posture 2<br>lock + subset | Posture 2b<br>lock only | Posture 3<br>neither |
 | --- | --- | --- | --- | --- |
-| **CI `doctor` gate** | Full strength | Full on committed files | ⚠️ **Vacuous — passes on an empty set.** Use a lock diff instead | **Cannot run** |
+| **CI `doctor` gate** | Full strength | Full on committed files | ⚠️ **Fails by design — nothing present to check.** Use a lock diff instead | **Cannot run** |
 | **What actually gates CI** | `doctor` | `doctor` | `render` + `git diff --exit-code` on the lock | *nothing* |
 | **`doctor.flags`** | *(empty)* | `--allow-missing` | n/a — don't gate on doctor | n/a — no lock to check |
 | **Hand-edits caught?** | Yes | Yes, on committed files | Yes, locally — CI has nothing to edit | No |

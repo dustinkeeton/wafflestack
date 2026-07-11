@@ -50,8 +50,11 @@ try {
       const allowMissing = extractFlag(args, '--allow-missing');
       const result = doctor({ cwd, toolkitVersion: pkg.version, allowMissing, toolkitRoot });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
+      // Absent files are only "tolerated" when *some* render survived; when every managed file is
+      // absent the flag no longer excuses them (#311), so don't label them as if it did.
+      const tolerated = allowMissing && !result.nothingPresent;
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
-      for (const f of result.missing) console.log((allowMissing ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
+      for (const f of result.missing) console.log((tolerated ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
       for (const n of result.notes) console.log(n);
       // Prerequisite gate (#129): an unmet `require` fails the check; a `recommend` only reports.
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);

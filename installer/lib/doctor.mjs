@@ -15,13 +15,19 @@ function noPrereqs() {
 
 /**
  * Compare managed files against the lock manifest.
- * Returns { ok, modified, missing, notes, attribution, allowMissing }.
+ * Returns { ok, modified, missing, notes, attribution, allowMissing, nothingPresent }.
  *
  * `allowMissing` turns doctor into a CI-friendly drift gate: absent managed files are
  * reported informationally instead of failing the check, for repos that deliberately
- * gitignore some renders (so those files are legitimately absent in a fresh CI checkout).
- * Modified files are still an error, and a missing lock is still an error — the repo never
- * rendered, which the flag must not mask.
+ * gitignore *a subset* of their renders (so those files are legitimately absent in a fresh CI
+ * checkout). Modified files are still an error, and a missing lock is still an error — the repo
+ * never rendered, which the flag must not mask.
+ *
+ * That last rule applies one level down too (#311): a checkout where EVERY lock-tracked file is
+ * absent is likewise a repo that never rendered, so `nothingPresent` fails the gate even under
+ * `--allow-missing`. Without it, zero files present → zero modified → the check passes having
+ * verified the empty set, and a green that inspected nothing is worse than a red. Tolerating a
+ * subset is the supported posture; tolerating all of it never was.
  *
  * `attribution` maps each externally-sourced file to a human label for the source it came from
  * (#125), so a drift report names which external source a modified/missing file belongs to.
@@ -59,6 +65,11 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, toolkitRoot 
     }
   }
 
+  // The all-absent guard (#311). `total > 0` keeps a lock with an empty file set out of it —
+  // there is nothing to render, so nothing to have failed to render.
+  const total = Object.keys(lock.files).length;
+  const nothingPresent = allowMissing && total > 0 && missing.length === total;
+
   const notes = [];
   // A repo still on the legacy lock name reads fine (readLock falls back) but should migrate.
   const lockPath = resolveLockFile(cwd);
@@ -77,7 +88,9 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, toolkitRoot 
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
   }
-  if (allowMissing && missing.length) {
+  if (nothingPresent) {
+    notes.push(`every managed file (${total}/${total}) is absent — this check verified nothing; run \`wafflestack render\`, or gate on \`render\` + \`git diff --exit-code ${LOCK_FILE}\` if the repo deliberately commits only the lock`);
+  } else if (allowMissing && missing.length) {
     notes.push(`${missing.length} managed file(s) absent but tolerated (--allow-missing) — expected when a repo gitignores some renders (partial/CI checkout)`);
   }
 
@@ -105,11 +118,14 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, toolkitRoot 
     }
   }
 
-  // With --allow-missing, only *modified* files count as drift; absent files are informational.
-  const driftOk = allowMissing ? modified.length === 0 : modified.length === 0 && missing.length === 0;
+  // With --allow-missing, only *modified* files count as drift; absent files are informational —
+  // unless every one of them is absent, which is a never-rendered repo, not a tolerated subset.
+  const driftOk = allowMissing
+    ? modified.length === 0 && !nothingPresent
+    : modified.length === 0 && missing.length === 0;
   // An unmet `require` prerequisite is drift-equivalent — it fails the gate; `recommend` never does.
   const ok = driftOk && prerequisites.unmetRequired.length === 0;
-  return { ok, modified, missing, notes, attribution, allowMissing, prerequisites };
+  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites };
 }
 
 /**

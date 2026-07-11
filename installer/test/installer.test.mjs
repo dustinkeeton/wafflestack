@@ -4390,6 +4390,79 @@ describe('doctor --allow-missing (CI drift gate)', () => {
     assert.ok(lenient.notes.some((n) => /not found/.test(n)), JSON.stringify(lenient.notes));
   });
 
+  // #311 — the all-absent guard. A checkout with NO managed file present is a repo that never
+  // rendered, exactly like a missing lock: --allow-missing must not mask it. Before this guard,
+  // zero present → zero modified → the gate went green having verified the empty set.
+  const removeAllManaged = () => {
+    const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    const tracked = Object.keys(lock.files);
+    for (const rel of tracked) fs.rmSync(path.join(cwd, rel));
+    return tracked;
+  };
+
+  test('EVERY managed file absent still fails with --allow-missing (the gate must verify something)', () => {
+    assert.equal(render().ok, true);
+    const tracked = removeAllManaged();
+    assert.ok(tracked.length > 1, 'fixture must track several files for this to mean anything');
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, false, 'a wholly absent render is a never-rendered repo, not a tolerated subset');
+    assert.equal(lenient.nothingPresent, true);
+    assert.deepEqual(lenient.modified, [], 'it fails on absence, not on drift — nothing was left to be modified');
+    assert.deepEqual(lenient.missing.sort(), tracked.sort());
+    // the note must be actionable: what happened, and the two ways out
+    const note = lenient.notes.find((n) => /every managed file/.test(n));
+    assert.ok(note, JSON.stringify(lenient.notes));
+    assert.match(note, new RegExp(`${tracked.length}/${tracked.length}`), 'names how many are absent');
+    assert.match(note, /verified nothing/);
+    assert.match(note, /wafflestack render/);
+    assert.match(note, /git diff --exit-code \.waffle\/waffle\.lock\.json/, 'points at the lock-diff gate for a lock-only repo');
+    // and it must not simultaneously claim the absences were tolerated
+    assert.ok(!lenient.notes.some((n) => /tolerated/.test(n)), JSON.stringify(lenient.notes));
+  });
+
+  test('a SUBSET absent still passes with --allow-missing (the supported posture must not regress)', () => {
+    assert.equal(render().ok, true);
+    const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    const tracked = Object.keys(lock.files);
+    // remove all but one — the most extreme subset that is still a subset
+    for (const rel of tracked.filter((f) => f !== AGENT)) fs.rmSync(path.join(cwd, rel));
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, true, JSON.stringify(lenient));
+    assert.equal(lenient.nothingPresent, false, 'one surviving file is enough — the guard is all-or-nothing');
+    assert.ok(lenient.notes.some((n) => /tolerated/.test(n)), JSON.stringify(lenient.notes));
+  });
+
+  test('a lock with zero tracked files is not caught by the all-absent guard', () => {
+    assert.equal(render().ok, true);
+    removeAllManaged();
+    // an empty file set has nothing to render and so nothing to have failed to render;
+    // `total > 0` must keep it out of the guard rather than failing it vacuously in reverse
+    const lockPath = path.join(cwd, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    fs.writeFileSync(lockPath, JSON.stringify({ ...lock, files: {} }, null, 2));
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, true, JSON.stringify(lenient));
+    assert.equal(lenient.nothingPresent, false);
+    assert.deepEqual(lenient.missing, []);
+  });
+
+  test('CLI: an entirely absent render exits 1 under --allow-missing, and says so', () => {
+    assert.equal(render().ok, true);
+    removeAllManaged();
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = spawnSync(process.execPath, [cli, 'doctor', '--allow-missing', '--cwd', cwd], { encoding: 'utf8' });
+
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(run.stdout, /every managed file \(\d+\/\d+\) is absent/);
+    // the vacuous green must be gone, and the absences must not be labelled tolerated
+    assert.doesNotMatch(run.stdout, /all present managed files match the lock manifest/);
+    assert.doesNotMatch(run.stdout, /missing \(tolerated\)/);
+    assert.match(run.stdout, /missing: {2}.*demo-skill\/SKILL\.md/);
+  });
+
   test('CLI: --allow-missing flips the exit code on an absent render', () => {
     assert.equal(render().ok, true);
     fs.rmSync(path.join(cwd, SKILL));
