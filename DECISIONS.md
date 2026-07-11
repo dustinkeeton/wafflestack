@@ -9,6 +9,73 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-10: The default co-author trailer credits the consuming repo's owner (#284, refined by #291)
+
+**Context**: Agent-authored commits carried a `Co-authored-by:` trailer whose default named the
+**harness** at `noreply@anthropic.com`. That credited nobody useful: the address isn't verified to
+anyone's GitHub account, so it earned no contribution-graph credit, and it tied the commit to the
+harness vendor rather than to the person who actually initiated and merged the work. What a consumer
+usually wants is for **their own** contribution graph to reflect the agent work they drive.
+
+**Decision**: Flip the default trailer to credit the **consuming repo's owner**, via two new config
+keys.
+
+- **Two new keys — `git.ownerName` / `git.ownerEmail`** — declared in **both** the `github-workflow`
+  and `orchestration` stacks (orchestration's `delegate` nests them in its own default), byte-identical
+  across the two so they stay in lockstep.
+- **The `git.coAuthorTrailer` default flips** from the harness-noreply form to
+  `Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>` (nested substitution). The agent keeps its
+  **displayed author identity**; only the co-author line changes.
+- **Credit only lands when it's set up right.** The owner email must be **verified on the owner's
+  GitHub account** — GitHub grants contribution-graph credit to a co-author email only when it's
+  verified there. The private `ID+user@users.noreply.github.com` address works. Credit accrues **only
+  for commits that reach the default branch**. CI/worktree repos should commit the values in
+  `.waffle/waffle.yaml`, not the gitignored overlay (an overlay-held value renders the placeholder in
+  CI and reds the doctor gate).
+- **This repo dogfoods it** — `.waffle/waffle.yaml` now sets Dustin's `git.ownerName` /
+  `git.ownerEmail`, replacing the earlier hardcoded `coAuthorTrailer` override.
+
+**Refinements from #291** (owner-review follow-ups, same day):
+
+- **A name-appropriate allowlist for `git.ownerName`.** It had reused `git.botName`'s ASCII-only
+  guard, which hard-failed the render on legitimate names — `O'Brien`, `José`, `Müller`, `Nguyễn`.
+  But `ownerName` only lands in **inert splice sites** (a Markdown code span and single-quoted
+  heredoc bodies), never an unquoted shell word the way `botName` does via `git.cmd` — so `botName`'s
+  shell-safety rationale doesn't apply. The looser allowlist admits an apostrophe and common
+  accented Latin letters while still rejecting backticks, `$`, backslashes, newlines, and a surviving
+  `${{ }}` expression. Scripts outside that range (e.g. CJK) are still rejected — fall back to a Latin
+  transliteration for the display name; the **email** is what drives the actual credit.
+- **A "set both or neither" callout.** The two keys carry independent placeholder defaults, so a repo
+  that set only `git.ownerName` rendered a trailer that *looked* configured (a real name) but still
+  credited nobody, because the email — the field GitHub keys credit on — stayed the placeholder. The
+  render succeeds silently; nothing warns. The setup note now spells this out, pinned by a test.
+
+**Alternatives considered**:
+
+- **Keep the harness-noreply default.** Rejected — it credits nobody's contribution graph and ties
+  the commit to the harness vendor rather than the person driving the work.
+- **Reuse `git.botName`'s strict ASCII allowlist for `ownerName`.** Rejected in #291 — it's a real
+  person's display name in inert splice sites, so the shell-hardening that justifies `botName`'s
+  strictness doesn't apply, and rejecting `O'Brien`/`José` at a hard render failure is a footgun.
+- **Warn on a half-set pair.** Not taken — the render stays warning-free here; instead the setup note
+  and a test make the "set both or neither" rule explicit and exercised.
+
+**Rationale**: The person who initiates and merges agent work should get the contribution credit for
+it, and the honest way to do that is a verified co-author email on default-branch commits. The keys
+are declared, guarded, and substituted like every other config value, so there's no magic — just a
+better default.
+
+**Impact**: `stacks/github-workflow/stack.yaml` and `stacks/orchestration/stack.yaml` (the two new
+keys + the flipped default, kept byte-identical), `installer/lib/template.mjs`, the git-workflow and
+delegate skill prose, and this repo's `.waffle/waffle.yaml`. **Additive with no migration** — the
+default resolves at render, mutating no consumer file; an explicit `git.coAuthorTrailer` override is
+honored unchanged. Unset owner keys fall back to a well-formed but inert placeholder trailer
+(`Repository Owner <owner@users.noreply.github.com>`), so a consumer must set the real, verified
+values to actually earn credit. A repo that would rather credit the bot points `coAuthorTrailer` at
+`{{git.botName}} <{{git.botEmail}}>`.
+
+---
+
 ## 2026-07-10: A programmatic Gravatar pipeline for per-agent avatars, and a default bot-email flip (#285)
 
 **Context**: Each spawned agent commits under a deterministic per-agent email

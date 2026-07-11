@@ -175,6 +175,20 @@ installed agent whose address hasn't been registered. Adding and verifying a new
 Gravatar stays a manual web step — Gravatar has no API for it. `.waffle/AVATARS.md`
 (generated) lists every agent's avatar file and exact commit email.
 
+**Crediting the owner (co-author trailer).** Separate from *who authors* a commit is *who gets
+credited* on it. Agent commits carry a `Co-authored-by:` trailer, and its default now credits the
+**consuming repo's owner** — `Co-authored-by: {{git.ownerName}} <{{git.ownerEmail}}>` — so the
+person who initiates and merges agent work sees it on their GitHub contribution graph while the
+commit's *author* stays the bot or the per-agent identity. Two things have to be true for the credit
+to land: `git.ownerEmail` must be **verified on the owner's GitHub account** (the private
+`ID+user@users.noreply.github.com` form works), and the commit must reach the **default branch**. Set
+**both owner keys or neither** — a half-set pair renders a trailer that looks configured but credits
+nobody (the email, not the name, is what GitHub keys on). `git.ownerName` accepts real names with an
+apostrophe or accented Latin letters (`O'Brien`, `José`, `Müller`); it only lands in inert splice
+sites, so it doesn't need `git.botName`'s stricter shell-safe allowlist. A repo that would rather
+credit the bot points `git.coAuthorTrailer` at `{{git.botName}} <{{git.botEmail}}>`. See
+[DECISIONS.md](DECISIONS.md#2026-07-10-the-default-co-author-trailer-credits-the-consuming-repos-owner-284-refined-by-291).
+
 ### Targets (harnesses)
 
 A **target** is a coding assistant you render for. Three are supported:
