@@ -25,6 +25,19 @@ import { exists, sha256 } from './util.mjs';
  * Returns `{ root, commit }` — the absolute path to the resolved source root, plus the resolved
  * commit SHA for a git source (null for a local path, which carries no commit). `resolveSourceRoot`
  * is the back-compat wrapper for callers that only want the path.
+ *
+ * The `opts` shape is spelled out because the `= {}` default would otherwise let TS infer ONLY
+ * the defaulted keys — silently dropping `cwd` from the signature and rejecting callers that
+ * pass it (#177).
+ *
+ * @param {import('./project.mjs').ExternalStackEntry} ext
+ * @param {object} [opts]
+ * @param {string} [opts.cwd] base for resolving a relative local-path source
+ * @param {string} [opts.cacheDir] where git sources are checked out
+ * @param {(source: string, ref: string, dest: string) => void} [opts.gitFetch] injectable for tests
+ * @param {(dir: string) => string | null} [opts.gitResolveCommit] injectable for tests
+ * @param {boolean} [opts.refresh] re-fetch a pinned ref instead of serving the session cache
+ * @returns {{ root: string, commit: string | null }}
  */
 export function resolveSource(
   ext,

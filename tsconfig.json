@@ -1,0 +1,33 @@
+{
+  // Type-checking only — wafflestack ships raw .mjs and has NO build step (see #177).
+  // `tsc -p tsconfig.json` (npm run typecheck) is a gate, never a compiler: noEmit is
+  // non-negotiable, `bin`/`files` in package.json stay untouched, and nothing here is
+  // packed (the `files` whitelist excludes tsconfig.json).
+  //
+  // checkJs is FALSE by design: files opt in one at a time with a `// @ts-check` pragma on
+  // line 1. Unpragma'd files are still parsed (so imports resolve and checked files see real
+  // types across module boundaries) but not themselves checked. That keeps the gate green
+  // from day one while each migration wave flips a few files at full configured strictness.
+  // End state: every hand-authored installer file carries the pragma → flip checkJs to true
+  // and delete the pragmas.
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "target": "es2022",
+    // nodenext is required for .mjs + `node:` builtin imports under ESM.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "skipLibCheck": true,
+    // The dial that actually forces the JSDoc annotations. Full `strict` (notably
+    // strictNullChecks) over fs/yaml-boundary code is a deliberate later dial-up.
+    "noImplicitAny": true,
+    "resolveJsonModule": true
+  },
+  // installer/** ONLY. `stacks/**` payload scripts (e.g. the delegate skill's *.mjs) render
+  // verbatim into consumer repos that have no build step and no TypeScript — they must never
+  // enter this program or carry annotations.
+  "include": ["installer/**/*.mjs"],
+  "exclude": ["node_modules"]
+}
