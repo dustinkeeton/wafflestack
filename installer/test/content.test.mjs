@@ -1658,3 +1658,74 @@ describe('SETUP.md playbook: prerequisites walk is required and go-ahead-gated (
     assert.match(setupMd, /waffle-label-hook\.yml/);
   });
 });
+
+// #224: the docs agents' writing-craft skills. Each carries ONE load-bearing thesis that the
+// skill is worthless without — prose's reader-first ordering, md-maximalist's "richness must earn
+// its keep", accurate's "omission over invention". Pin the thesis, not the phrasing around it.
+describe('docs writing-craft skills: the guardrail that makes each one worth having (#224)', () => {
+  test('prose: conclusion first, plain language, and a skim of headings still tells the story', () => {
+    const md = readSkill('prose');
+    assert.match(md, /inverted pyramid/i);
+    assert.match(md, /Lead with the most important fact/);
+    // The scannability contract: headings + bold leads alone must carry the story.
+    assert.match(md, /only the headings and the bolded leads/);
+    assert.match(md, /Everyday words over jargon/);
+    // Hedging and throat-clearing are the two failure modes that survive every other rule.
+    assert.match(md, /throat-clearing/i);
+  });
+
+  test('md-maximalist: the full toolbox, but every choice must speed up a scanning reader', () => {
+    const md = readSkill('md-maximalist');
+    // The whole skill hinges on this test — without it, "maximalist" licenses decoration.
+    assert.match(md, /Every formatting choice must speed up a reader who is scanning/);
+    assert.match(md, /never decoration/i);
+    // Maximalist is explicitly NOT "use every tool every time".
+    assert.match(md, /not that every tool goes in every document/);
+    // Form follows the content's shape, and the anti-patterns keep it honest.
+    assert.match(md, /Emphasis soup/);
+    assert.match(md, /Collapsibles hiding must-read content/);
+  });
+
+  test('accurate: a wrong doc is a bug — verify, omit, or flag, but never hedge', () => {
+    const md = readSkill('accurate');
+    assert.match(md, /A wrong doc is a bug/);
+    assert.match(md, /Prefer omission over invention|An absent fact beats a plausible guess/);
+    // Hedging is the loophole that lets an unverified guess into the doc anyway.
+    assert.match(md, /No hedging as cover/);
+    assert.match(md, /a guess in a raincoat/);
+    // Naming symmetry is the classic source of phantom APIs.
+    assert.match(md, /Never extrapolate an API surface from naming conventions/);
+    assert.match(md, /When source and doc disagree, the source wins/);
+  });
+});
+
+// #224: the grant wiring is load-bearing TWICE. The frontmatter `skills:` list is what the claude
+// target reads; the BODY prose reference is the only grant signal that survives the codex target,
+// which drops frontmatter `skills:` entirely (FORMAT.md). Dropping either half silently unwires a
+// skill for one harness, so both are pinned.
+describe('docs agents: writing-craft skills granted in frontmatter AND body prose (#224)', () => {
+  const readAgent = (name) =>
+    fs.readFileSync(path.join(CLAUDE, 'agents', `${name}.md`), 'utf8');
+
+  test('docs-human grants prose + md-maximalist in frontmatter', () => {
+    const { data } = parseFrontmatter(readAgent('docs-human'));
+    assert.ok(data.skills.includes('prose'), 'docs-human must be granted `prose`');
+    assert.ok(data.skills.includes('md-maximalist'), 'docs-human must be granted `md-maximalist`');
+  });
+
+  test('docs-agent grants accurate in frontmatter', () => {
+    const { data } = parseFrontmatter(readAgent('docs-agent'));
+    assert.ok(data.skills.includes('accurate'), 'docs-agent must be granted `accurate`');
+  });
+
+  test('docs-human names both writing skills in body prose (survives the codex render)', () => {
+    const md = readAgent('docs-human');
+    assert.match(md, /`prose` skill/);
+    assert.match(md, /`md-maximalist` skill/);
+  });
+
+  test('docs-agent names accurate in body prose (survives the codex render)', () => {
+    const md = readAgent('docs-agent');
+    assert.match(md, /`accurate` skill/);
+  });
+});

@@ -32,6 +32,22 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Dedicated writing-craft skills for the two docs agents (#224).** The docs agents' writing
+  standards previously lived entirely in the injected `docs.humanDocSpec` / `docs.machineDocSpec`
+  config blobs, which say *which files* to write and how to structure them — but nothing about **how
+  to write them**. Three new `docs-system` skills carry that craft as named, reusable standards:
+  **`prose`** (plain language, one idea per sentence, conclusion first, headings + bold leads alone
+  must carry the story), **`md-maximalist`** (markdown's full range — tables, callouts, task lists,
+  collapsibles, fenced blocks — with form chosen from the content's shape and every choice held to
+  one test: does it speed up a scanning reader; richness in service of scanning, never decoration),
+  and **`accurate`** (docs as code — every claim traceable to a file actually read, omission over
+  invention, no hedging as cover, a wrong doc is a bug). Each is granted to its agent in **both** the
+  frontmatter `skills:` list and the agent's **body prose** — the latter is load-bearing because the
+  codex target drops frontmatter grants — and all three are `user-invocable: true`, so `/prose`,
+  `/md-maximalist`, and `/accurate` also work as ad-hoc slash commands on any file.
+  **Consumer impact:** additive/minor. Pure stack authoring — no installer, schema, or config change,
+  and no new config keys. A `render` picks up the three new skills and the two reworded agent bodies;
+  nothing existing is renamed or removed and no migration is required.
 - **Default co-author trailer credits the consuming repo's owner (#284).** Two new lockstep config
   keys — **`git.ownerName`** / **`git.ownerEmail`** — are declared in both the `github-workflow` and
   `orchestration` stacks (byte-identical guard patterns and defaults, pinned by a deep-equal lockstep
