@@ -2397,3 +2397,66 @@ describe('docs agents: the body-prose grant survives the CODEX render (#224)', (
     }
   });
 });
+
+// -----------------------------------------------------------------------------
+// #287. No shipped agent pre-pins a model.
+//
+// Asserted against the SOURCE agents, not the rendered output — the usual rule in
+// this file is the reverse, so the deviation is deliberate: only the stacks THIS
+// repo installs have a render, and the invariant has to cover every stack the
+// toolkit ships (engineering-team is not installed here, and it held five of the
+// seven pins this rule removed).
+//
+// Derived, never enumerated — same reason as the workflow-identity block above: a
+// for-all invariant that hardcodes its own subjects silently exempts the next agent
+// someone adds, which is precisely the regression this pins against.
+//
+// `claude.model` remains a supported passthrough key (schema/FORMAT.md names it as
+// one of the Claude-only keys the `claude:` block exists for, and the renderer's
+// passthrough is covered in installer.test.mjs). A CONSUMER may still pin a model.
+// What the toolkit must not do is pick one FOR them: the pinned tier decides both
+// cost and capability, the model lineup churns, and a stale pin silently overrides
+// the model the consumer chose for their session.
+// -----------------------------------------------------------------------------
+
+describe('shipped agents do not pre-pin a model (#287)', () => {
+  const STACKS_DIR = path.join(REPO_ROOT, 'stacks');
+
+  const allAgentFiles = fs
+    .readdirSync(STACKS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .flatMap((stack) => {
+      const agentsDir = path.join(STACKS_DIR, stack.name, 'agents');
+      if (!fs.existsSync(agentsDir)) return [];
+      return fs
+        .readdirSync(agentsDir)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => ({ stack: stack.name, file: f, abs: path.join(agentsDir, f) }));
+    })
+    .sort((a, b) => `${a.stack}/${a.file}`.localeCompare(`${b.stack}/${b.file}`));
+
+  // Guard the guard: a for-all over an empty set passes vacuously, so a glob that
+  // silently stops matching would turn this whole block green while asserting nothing.
+  test('the agent sweep actually found agents', () => {
+    assert.ok(
+      allAgentFiles.length >= 7,
+      `expected the toolkit to ship agents; found ${allAgentFiles.length}`,
+    );
+  });
+
+  for (const { stack, file, abs } of allAgentFiles) {
+    test(`${stack}/${file} declares no model`, () => {
+      const { data } = parseFrontmatter(fs.readFileSync(abs, 'utf8'));
+      assert.equal(
+        data.claude?.model,
+        undefined,
+        `${stack}/agents/${file} pins claude.model — the toolkit must not choose a model tier for the consumer (#287)`,
+      );
+      assert.equal(
+        data.model,
+        undefined,
+        `${stack}/agents/${file} pins a top-level model — the toolkit must not choose a model tier for the consumer (#287)`,
+      );
+    });
+  }
+});
