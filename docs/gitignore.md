@@ -8,11 +8,14 @@ Usually yes. But it is a real trade-off, and the case for ignoring them is not a
 This guide argues both sides so you can pick deliberately.
 
 > [!IMPORTANT]
-> **The render and the lock are two separate decisions.** Most of the value — the drift
-> gate, a CI check that means anything — comes from committing the **lock**, not the render.
-> You can ignore some or all of the render and still keep the gate. You cannot ignore the
-> lock and keep anything: a missing lock fails `doctor` unconditionally, and no flag changes
-> that.
+> **The render and the lock are two separate decisions.** Most of the value — knowing your
+> team is on the same source, and a CI check that means anything — comes from committing the
+> **lock**, not the render. You can ignore part or even all of the render and still get real
+> guarantees. What you cannot do is ignore the **lock**: a missing lock fails `doctor`
+> unconditionally, and no flag changes that.
+>
+> The catch, if you ignore *every* render: your CI gate must be built differently, or it will
+> pass while checking nothing. See [Posture 2b](#posture-2b-commit-the-lock-only).
 
 ---
 
@@ -22,10 +25,11 @@ This guide argues both sides so you can pick deliberately.
 | --- | --- | --- |
 | Work on a team, or run agents in CI | **Yes** | **Yes** |
 | Want a clean code search and accept the cost | Partly — ignore a subset | **Yes** |
+| Want **zero** generated files in git, but still want a real gate | No | **Yes** — and CI must render |
 | Just want agent tooling in your own working copy | No | No |
 
-The third row forfeits everything wafflestack's CI story offers. That is sometimes exactly
-the right call — see [Posture 3](#posture-3-ignore-both--a-purely-local-waffle).
+The last row forfeits everything wafflestack's CI story offers. That is sometimes exactly the
+right call — see [Posture 3](#posture-3-ignore-both--a-purely-local-waffle).
 
 ---
 
@@ -123,6 +127,7 @@ Everything above depends on the drift gate, so be precise about what it does.
 | Lock file absent | **fail** | **fail** — the flag is never even consulted |
 | Managed file absent | fail (`missing: <f>`) | pass (`missing (tolerated): <f>`) |
 | Managed file edited by hand | **fail** (`modified: <f>`) | **fail** (`modified: <f>`) |
+| **Every** managed file absent | fail — all of them missing | ⚠️ **pass** — nothing left to check ([Posture 2b](#posture-2b-commit-the-lock-only)) |
 
 > [!WARNING]
 > **`--allow-missing` tolerates absent *rendered files*. It never tolerates an absent
@@ -175,6 +180,72 @@ would rather not track. **Keeps**: the full drift gate on everything you *did* c
 hand-edits still fail. **Costs**: you must remember that absent files are now invisible to
 CI, so a render that silently stops being produced will not be caught.
 
+### Posture 2b: commit the lock only
+
+Push Posture 2 to its limit — the ignored subset becomes *everything*. Gitignore the entire
+render; commit `.waffle/waffle.yaml`, `.waffle/extensions/`, and `.waffle/waffle.lock.json`.
+**Zero generated files in git, and you still know whether your team is on the same source.**
+
+That is not a consolation prize, it's the real thing. **Render is deterministic**: the same
+toolkit version, `waffle.yaml`, and extensions produce byte-identical output, so the lock's
+hashes are a genuine shared contract. It pins the toolkit version, targets, stacks, includes,
+and the sha256 of every managed file. A teammate who renders locally and runs `doctor` gets a
+true answer — hand-edit a rendered skill and it fails with `modified: .claude/skills/…` and
+exit 1; a toolkit version skew surfaces as a note.
+
+**This is arguably the best trade for a repo that hates the duplicate-copy tax but still
+wants real CI agents and a real integrity gate.** It has exactly one sharp edge, and you must
+design your CI around it.
+
+> [!CAUTION]
+> **The naive CI gate passes while checking nothing.** In a fresh CI checkout there are no
+> rendered files. `doctor --allow-missing` therefore finds zero files present, zero modified,
+> and **exits 0** — reporting `all present managed files match the lock manifest (58 absent,
+> tolerated)`. The build goes green having verified the empty set.
+>
+> **A green that checked nothing is worse than a red**, because it looks like protection.
+> Drop the flag and you get the opposite failure: unconditional red, every file missing.
+> Neither is a gate. The shipped `waffle-doctor.yml` only runs `doctor` — it does not render —
+> so a lock-only repo that installs it as-is gets exactly this vacuous green.
+
+#### The CI recipe that actually works
+
+Have CI **render its own files**, then diff the resulting lock against the committed one:
+
+```yaml
+- run: npx github:dustinkeeton/wafflestack#v0.11.0 render
+- run: git diff --exit-code .waffle/waffle.lock.json
+```
+
+Rendering in CI also recovers the CI-agent story: a real `.claude/skills/` now exists in the
+runner for a CI-dispatched agent to read. You get that back without putting it in git.
+
+> [!WARNING]
+> **Do not run `doctor` after `render` and call it a gate — it is a tautology.** `render`
+> rewrites the lock, so `doctor` then compares the files against a lock derived from those
+> very files. It cannot fail. Change an extension, never re-render, never commit the lock —
+> render in CI, run doctor, and it reports `all managed files match the lock manifest`, exit
+> 0. The unreviewed change sails straight through.
+>
+> The check that catches it is the **lock diff** against the committed lock, which flags the
+> changed file immediately. That, not `doctor`, is your gate in this posture.
+
+**Pin the toolkit ref to a tag** (`#v0.11.0`, not a floating branch). If it floats, an
+upstream toolkit change can alter your agents' behavior with no commit in your repo at all.
+The lock diff *will* catch that as a red build — but only if whoever fixes the red actually
+reads the diff, rather than committing the new lock to make it go away. That temptation is
+the posture's second-order risk, and it is a human one.
+
+#### What it still does not buy back: reviewability
+
+This is the durable cost, and rendering in CI does not fix it. **The compiled behavior of
+your agents is never visible in the repo.** A change to an agent's actual instructions shows
+up only as a changed hash in a JSON file. You can review the config that *implies* your
+agents' behavior; you can never review the behavior itself in a pull request.
+
+If your agents are load-bearing enough that a reviewer should see what they were told to do,
+commit the render (Posture 1 or 2) and pay the duplication tax.
+
 ### Posture 3: ignore both — a purely local waffle
 
 Gitignore the render *and* the lock. Nothing wafflestack generates enters git.
@@ -193,19 +264,26 @@ repository. That is a legitimate and common thing to want.
 Everyone who wants the waffle must install the toolkit and run `render` themselves, and
 nothing verifies that any two people are running the same thing.
 
+**If you landed here because you hate the duplicate copies in git — you want
+[Posture 2b](#posture-2b-commit-the-lock-only), not this one.** Committing the lock alone
+costs you nothing in code-search noise and buys back the shared contract. Posture 3 is for
+when the *repo itself* must stay unaware of wafflestack, not merely uncluttered by it.
+
 ---
 
 ## Consequences at a glance
 
-| | Posture 1<br>render + lock | Posture 2<br>lock + subset | Posture 3<br>neither |
-| --- | --- | --- | --- |
-| **CI `doctor` gate** | Full strength | Full on committed files | **Cannot run** |
-| **`doctor.flags`** | *(empty)* | `--allow-missing` | n/a — no lock to check |
-| **Hand-edits caught?** | Yes | Yes, on committed files | No |
-| **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person, always |
-| **CI agents can read skills** | Yes | Yes, if committed | **No** |
-| **Fresh clone works** | Yes | Yes | No — install + render first |
-| **Code-search duplication** | Yes | Partial | None |
+| | Posture 1<br>render + lock | Posture 2<br>lock + subset | Posture 2b<br>lock only | Posture 3<br>neither |
+| --- | --- | --- | --- | --- |
+| **CI `doctor` gate** | Full strength | Full on committed files | ⚠️ **Vacuous — passes on an empty set.** Use a lock diff instead | **Cannot run** |
+| **What actually gates CI** | `doctor` | `doctor` | `render` + `git diff --exit-code` on the lock | *nothing* |
+| **`doctor.flags`** | *(empty)* | `--allow-missing` | n/a — don't gate on doctor | n/a — no lock to check |
+| **Hand-edits caught?** | Yes | Yes, on committed files | Yes, locally — CI has nothing to edit | No |
+| **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person, and CI | Every person, always |
+| **CI agents can read skills** | Yes | Yes, if committed | Yes — CI renders them | **No** |
+| **Fresh clone works** | Yes | Yes | No — render first | No — install + render first |
+| **Agent behavior reviewable in a PR** | Yes | Partly | **No — only a hash changes** | No |
+| **Code-search duplication** | Yes | Partial | **None** | None |
 
 ---
 
@@ -235,5 +313,8 @@ output. Project-specific additions go in `.waffle/extensions/agents/<name>.md` o
 `.waffle/extensions/skills/<name>.md`, which are appended to the rendered item and survive
 every render. Project parameters go in `.waffle/waffle.yaml`.
 
-Under Posture 1 or 2, `doctor` enforces this for you. Under Posture 3, nothing does — which
-is, in the end, the whole argument in one sentence.
+Under Postures 1 and 2, `doctor` enforces this for you. Under Posture 2b, the lock diff does.
+Under Posture 3, nothing does.
+
+Which is, in the end, the whole document in one line: **the lock is what buys you a
+guarantee, and the render is what buys you a review.** Decide how much of each you need.
