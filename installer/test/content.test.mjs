@@ -1353,6 +1353,28 @@ describe('gate loops: lazy-responder coherence + cold-start recovery (#297)', ()
     }
   });
 
+  test('the stop signal is scoped to nothing-left-to-triage, not merely a clean reviewer (F1)', () => {
+    // The responder-less break must key on UNTRIAGED FINDINGS ON THE HEAD, not on this round's
+    // own reviewer being clean. waffle-pr-green-hook fires on every green transition per head —
+    // including the PR's INITIAL green — so on a hook-armed repo the PR can already carry an
+    // adversarial review with findings when round 1 opens. Keyed on "my reviewer was clean", a
+    // clean round-1 QA would break, skip the responder, and (review loop + audit off) arm
+    // auto-merge over findings nobody triaged.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /nothing left to triage/);
+      assert.match(step, /findings to triage/);
+      assert.match(step, /never merely \*this round's reviewer surfaced some\*/);
+    }
+    // The hook-armed note is the fourth responder-always-exists statement: it must not presume a
+    // standing responder, and it must record that the hook fires on the PR's initial green too.
+    assert.ok(
+      !qaStep.includes('the standing `respond-qa-pr<N>` agent'),
+      'the hook-armed note must not presume a standing responder — a clean round may never have spawned one',
+    );
+    assert.match(qaStep, /\*\*spawned now\*\* when no round had/);
+    assert.match(qaStep, /including the PR's \*initial\* green/);
+  });
+
   test("each cap hatch's fresh evidence pass is spawned UNNAMED", () => {
     // #295 pins that the pass is FRESH, never the standing agent — but the standing agent is
     // still alive when the hatch runs (its teardown defers until after), so the obvious name
