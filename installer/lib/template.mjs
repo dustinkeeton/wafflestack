@@ -207,35 +207,6 @@ export function placeholderKeys(text) {
 }
 
 /**
- * Every config key a render *reaches* from `seed` — the keys written literally in the templates
- * PLUS the ones reachable only through composition, the way `expandNested` reaches them. A key
- * spliced into another key's *value* (`git.cmd: git -c user.email={{git.botEmail}}`) never appears
- * in any template body, so a seed collected from the templates alone (`collectUsedKeys`) cannot
- * see `git.botEmail` — and that key is precisely the one a repo is told to keep in its gitignored
- * overlay. Answering "did the overlay feed this render?" therefore needs the transitive set.
- *
- * A fixpoint walk, not a depth-limited one: the visited set terminates a reference cycle, and
- * over-approximating past `MAX_SUBSTITUTION_DEPTH` is the safe direction here. Callers use this to
- * decide whether a render is reproducible without the overlay; claiming a key was reached when it
- * was only *nearly* reached costs an honest "cannot verify", while missing one costs a silent
- * false pass.
- */
-export function reachableKeys(seed, resolve) {
-  const keys = new Set(seed);
-  const queue = [...seed];
-  while (queue.length) {
-    const value = resolve(queue.shift());
-    if (value === undefined) continue;
-    for (const key of placeholderKeys(formatValue(value))) {
-      if (keys.has(key)) continue;
-      keys.add(key);
-      queue.push(key);
-    }
-  }
-  return keys;
-}
-
-/**
  * Compile a config key's `pattern:` into a full-match RegExp. Wrapping in `^(?:…)$`
  * makes "the value must fully match" hold regardless of whether the author anchored the
  * pattern, and neutralizes top-level alternation (`a|b` → `^(?:a|b)$`, not `^a` OR `b$`).

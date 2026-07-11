@@ -773,36 +773,41 @@ describe('gitignore offer (#29)', () => {
     assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
   });
 
-  test('recommendedGitignoreEntries: local overlay always; worktrees dir when an enabled stack declares it', () => {
+  // The local LOCK rides with the local OVERLAY (#317): it records this machine's render, so it is
+  // account-specific for exactly the same reason the overlay is, and committing it would push one
+  // developer's hashes into everyone else's `doctor`. Both are unconditional — neither depends on
+  // which stacks are enabled.
+  test('recommendedGitignoreEntries: local overlay + local lock always; worktrees dir when an enabled stack declares it', () => {
     const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
     const toolkit = loadToolkit(repoRoot);
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { stacks: [], values: {}, targets: ['claude'] }),
-      ['.waffle/waffle.local.yaml'],
+      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json'],
     );
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { stacks: ['github-workflow'], values: {}, targets: ['claude'] }),
-      ['.waffle/waffle.local.yaml', '.claude/worktrees/'],
+      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.claude/worktrees/'],
     );
     // a project override of git.worktreesDir wins over the stack default (and is slash-normalized)
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { stacks: ['github-workflow'], values: { git: { worktreesDir: '.wt' } }, targets: ['claude'] }),
-      ['.waffle/waffle.local.yaml', '.wt/'],
+      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.wt/'],
     );
   });
 
-  test('CLI: init --gitignore seeds .waffle/waffle.local.yaml; the flag is not mistaken for a ref', () => {
+  test('CLI: init --gitignore seeds the local overlay + local lock; the flag is not mistaken for a ref', () => {
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const seeded = '# wafflestack\n.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n';
     const initRun = spawnSync(process.execPath, [cli, 'init', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(initRun.status, 0, initRun.stdout + initRun.stderr);
-    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
+    assert.equal(gi(), seeded);
 
     // install --gitignore on an empty selection re-applies the offer idempotently (renders, no ref error)
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     const installRun = spawnSync(process.execPath, [cli, 'install', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(installRun.status, 0, installRun.stdout + installRun.stderr);
     assert.doesNotMatch(installRun.stderr, /takes no refs/);
-    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n', 'already-present entry not duplicated');
+    assert.equal(gi(), seeded, 'already-present entries not duplicated');
   });
 });
 
@@ -4785,105 +4790,368 @@ describe('doctor --verify-render: CLI, against the real toolkit', () => {
   });
 });
 
-// #308 review — `--verify-render` vs. the gitignored local overlay. The overlay is absent BY DESIGN in a
-// fresh CI checkout, but the lock may have been rendered on a machine where it existed. Reproducing
-// the render without it silently falls back to stack `default:`s (`git.botEmail` is
-// `required: false` with a default, so nothing errors) and every file the overlay touched comes back
-// `stale`. Reporting that as drift is worse than a false red: the remediation it implies —
-// "re-render and commit the result" — bakes the DEFAULT over the repo's real bot identity. So the
-// lock records whether the overlay actually FED the render, and doctor refuses the question rather
-// than answering it wrong. A missing input is not drift.
-describe('doctor --verify-render: the gitignored local overlay (#308 review)', () => {
+// #317 — THE LOCK HASHES THE CANONICAL RENDER, NEVER THE LOCAL OVERLAY.
+//
+// `.waffle/waffle.local.yaml` is a developer's private tooling: gitignored, per-machine, absent in
+// CI. It used to leak anyway — `renderProject` hashed the EFFECTIVE render (overlay values already
+// baked in) into the COMMITTED lock, so two developers with different `git.botEmail` overlays
+// produced different committed locks and each one's commit reverted the other's. Rendering the
+// output gitignored did not help: the renders stayed private, and the locks still diverged.
+//
+// The fix splits the render in two. The effective render (committed config + overlay) is what lands
+// on disk; the CANONICAL render (committed inputs ALONE — `.waffle/waffle.yaml` +
+// `.waffle/extensions/`) is what the lock records. Canonical = everything committed, so extensions
+// are canonical and still propagate — that contrast with the overlay is the whole design.
+//
+// This suite supersedes #308's way-station (`lock.renderedWithLocalOverlay` + doctor's "cannot
+// verify the render" refusal). With a canonical lock there is nothing ambiguous left to refuse: CI
+// renders the canonical config and gets the canonical lock, so `--verify-render` goes GREEN.
+describe('the lock hashes the canonical render, not the local overlay (#317)', () => {
   let toolkitRoot;
-  let cwd;
+  const dirs = [];
 
   const CONFIG = '.waffle/waffle.yaml';
   const OVERLAY = '.waffle/waffle.local.yaml';
   const LOCK = '.waffle/waffle.lock.json';
+  const LOCAL_LOCK = '.waffle/waffle.local.lock.json';
+  const AGENT = '.claude/agents/helper.md';
+  const SKILL = '.claude/skills/demo-skill/SKILL.md';
+
+  // `git.botEmail` here is `required: false` WITH a default — the shape the real github-workflow
+  // stack ships, and the one the issue calls the correct answer: absent the overlay, the canonical
+  // render simply uses the default. The skill names the key directly; the agent reaches it only
+  // through `git.cmd`'s *value*, so both the literal and the nested-composition paths are exercised.
+  const makeOverlayFixture = (root) => {
+    write(root, 'toolkit.yaml', 'name: fixture\ndescription: overlay fixture\nstacks: [demo]\n');
+    write(root, 'stacks/demo/stack.yaml', [
+      'name: demo',
+      'description: Demo stack.',
+      'agents: [helper]',
+      'skills: [demo-skill]',
+      'config:',
+      '  git.botEmail:',
+      '    required: false',
+      '    default: bot@wafflenet.io',
+      '    description: bot email',
+      '  git.cmd:',
+      '    required: false',
+      '    default: git -c user.email={{git.botEmail}}',
+      '    description: git command',
+      '',
+    ].join('\n'));
+    write(root, 'stacks/demo/agents/helper.md', [
+      '---', 'name: helper', 'description: A helper.', '---', '', 'Commit with: {{git.cmd}}', '',
+    ].join('\n'));
+    write(root, 'stacks/demo/skills/demo-skill/SKILL.md', [
+      '---', 'name: demo-skill', 'description: A demo skill.', '---', '', '# Demo', '', 'Email {{git.botEmail}}.', '',
+    ].join('\n'));
+  };
+
+  /** A developer's checkout: the same committed config everywhere, their own overlay (or none). */
+  const machine = (label, overlay = null) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `project-317-${label}-`));
+    dirs.push(dir);
+    write(dir, CONFIG, ['targets: [claude]', 'stacks: [demo]', ''].join('\n'));
+    if (overlay) write(dir, OVERLAY, ['config:', '  git:', `    botEmail: ${overlay}`, ''].join('\n'));
+    return dir;
+  };
+
+  const render = (cwd) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const read = (cwd, rel) => fs.readFileSync(path.join(cwd, rel), 'utf8');
+  const lockBytes = (cwd) => read(cwd, LOCK);
+  const check = (cwd, extra = {}) => doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, ...extra });
 
   beforeEach(() => {
-    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-vro-'));
-    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-vro-'));
-    makeFixtureToolkit(toolkitRoot);
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-317-'));
+    makeOverlayFixture(toolkitRoot);
   });
   afterEach(() => {
     fs.rmSync(toolkitRoot, { recursive: true, force: true });
-    fs.rmSync(cwd, { recursive: true, force: true });
+    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
   });
 
-  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
-  const verify = (extra = {}) =>
-    doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, verifyRender: true, ...extra });
-  const lockJson = () => JSON.parse(fs.readFileSync(path.join(cwd, LOCK), 'utf8'));
+  // ── The headline. This is the whole issue in one assertion. ────────────────────────────────────
+  test('THE BUG: two machines, different overlays — the COMMITTED lock is byte-identical', () => {
+    const dustin = machine('dustin', 'dustin+bot@myaddress.com');
+    const alice = machine('alice', 'alice+bot@heraddress.com');
+    assert.equal(render(dustin).ok, true);
+    assert.equal(render(alice).ok, true);
 
-  // The exact layering schema/SETUP.md:124-130 prescribes: shared values committed, the
-  // account-specific `git.botEmail` in the gitignored overlay. This is the CI shape of that repo.
-  test('THE BUG: overlay fed the render, then vanished — refuse to answer, never call it drift', () => {
-    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', ''].join('\n'));
-    write(cwd, OVERLAY, ['config:', '  git:', '    botEmail: real-bot@mycorp.com', ''].join('\n'));
-    assert.equal(render().ok, true);
-    assert.equal(lockJson().renderedWithLocalOverlay, true, 'the lock must record that the overlay fed the render');
+    assert.equal(
+      lockBytes(alice),
+      lockBytes(dustin),
+      'a private overlay must not reach shared state — whoever commits last would revert the other',
+    );
 
-    fs.rmSync(path.join(cwd, OVERLAY)); // a fresh CI checkout: the gitignored file is simply not there
-    const result = verify();
+    // …and it is not identical by having quietly gone empty or machine-shaped: it is exactly the
+    // lock a machine with NO overlay at all produces. That is what "canonical" means.
+    const ci = machine('ci');
+    assert.equal(render(ci).ok, true);
+    assert.equal(lockBytes(dustin), lockBytes(ci), 'the canonical lock IS the no-overlay lock');
+  });
 
-    assert.equal(result.ok, false, 'an unanswerable question must never read as a pass');
-    assert.equal(result.render.evaluated, false, 'nothing was verified — say so');
-    assert.deepEqual(result.render.stale, [], 'a MISSING INPUT is not stale — that was the bug');
+  // The other half of the contract, and the reason the fix is not simply "render canonically".
+  // Each developer's tree must still carry THEIR values — the overlay keeps working, it just stops
+  // propagating. (This one does not fail against the old code; it fails against the naive fix, which
+  // is what it is here to prevent.)
+  test('each machine\'s RENDER still carries its own overlay values', () => {
+    const dustin = machine('dustin', 'dustin+bot@myaddress.com');
+    const alice = machine('alice', 'alice+bot@heraddress.com');
+    assert.equal(render(dustin).ok, true);
+    assert.equal(render(alice).ok, true);
+
+    assert.match(read(dustin, SKILL), /dustin\+bot@myaddress\.com/, 'direct reference');
+    assert.match(read(dustin, AGENT), /dustin\+bot@myaddress\.com/, 'reached only through git.cmd');
+    assert.match(read(alice, SKILL), /alice\+bot@heraddress\.com/);
+    assert.doesNotMatch(read(dustin, SKILL), /alice/);
+    assert.doesNotMatch(read(alice, SKILL), /dustin/);
+    // and neither tree fell back to the stack default
+    assert.doesNotMatch(read(dustin, SKILL), /bot@wafflenet\.io/);
+  });
+
+  // Extensions are COMMITTED, so they are canonical and they DO propagate. The contrast with the
+  // overlay is the whole design, and it is only meaningful as a conjunction: the extension moves the
+  // lock (so it is really in the canonical render) AND the two machines still agree (so the overlay
+  // still is not).
+  test('extensions still propagate — they are committed, therefore canonical', () => {
+    const dustin = machine('dustin', 'dustin+bot@myaddress.com');
+    const alice = machine('alice', 'alice+bot@heraddress.com');
+    assert.equal(render(dustin).ok, true);
+    assert.equal(render(alice).ok, true);
+    const before = lockBytes(dustin);
+
+    for (const dir of [dustin, alice]) write(dir, '.waffle/extensions/skills/demo-skill.md', 'Project addendum.\n');
+    assert.equal(render(dustin).ok, true);
+    assert.equal(render(alice).ok, true);
+
+    assert.notEqual(lockBytes(dustin), before, 'a committed extension MUST move the canonical lock');
+    assert.equal(lockBytes(alice), lockBytes(dustin), '…and both machines must still land on the same lock');
+    assert.match(read(dustin, SKILL), /Project addendum\./);
+  });
+
+  // Acceptance: `--verify-render` PASSES in a CI-shaped checkout of a repo whose overlay sets
+  // git.botEmail. Under #308 this same scenario produced a refusal ("cannot verify the render") and
+  // a red build — the way-station this issue supersedes.
+  //
+  // A CI checkout is built the way git builds one: it contains the COMMITTED files and nothing else.
+  // For an overlay repo that means the config, the extensions and the canonical lock — no overlay, no
+  // local lock, and no renders (a render-affecting overlay implies a gitignored render; a committed
+  // file with your personal address inside it IS the propagation). This is docs/gitignore.md's
+  // Posture 2b, which is why the flags are the lock-only pair.
+  const ciCheckoutOf = (repo) => {
+    const ci = fs.mkdtempSync(path.join(os.tmpdir(), 'project-317-ci-'));
+    dirs.push(ci);
+    for (const rel of [CONFIG, LOCK]) write(ci, rel, read(repo, rel));
+    const ext = path.join(repo, '.waffle/extensions');
+    if (fs.existsSync(ext)) fs.cpSync(ext, path.join(ci, '.waffle/extensions'), { recursive: true });
+    return ci;
+  };
+
+  test('--verify-render is GREEN in a CI checkout (no overlay) of a repo whose overlay sets git.botEmail', () => {
+    const dev = machine('dev', 'dustin+bot@myaddress.com');
+    assert.equal(render(dev).ok, true);
+    const ci = ciCheckoutOf(dev);
+    assert.ok(!fs.existsSync(path.join(ci, OVERLAY)), 'precondition: the gitignored overlay is not in the checkout');
+
+    const result = check(ci, { allowMissing: true, verifyRender: true });
+    assert.equal(result.ok, true, JSON.stringify(result.render));
+    assert.equal(result.render.evaluated, true, 'it answered the question rather than refusing it');
+    assert.deepEqual(result.render.stale, [], 'the canonical render reproduces the canonical lock exactly');
     assert.deepEqual(result.render.absent, []);
     assert.deepEqual(result.render.unexpected, []);
-    assert.match(result.render.errors.join('\n'), /cannot verify the render/);
-    assert.match(result.render.errors.join('\n'), /waffle\.local\.yaml/);
-    // The remediation must never be "re-render and commit": following it would overwrite the
-    // overlay-held bot identity with the stack default, which is data loss, not a fix.
-    assert.ok(
-      !result.notes.some((n) => /re-render and commit the result/.test(n)),
-      'must not advise re-rendering — it would clobber the real identity with the default',
-    );
+    assert.deepEqual(result.render.errors, []);
+    // Nobody is red-gated into committing a personal value.
+    assert.ok(!JSON.stringify(result).includes('cannot verify the render'));
+    assert.ok(!JSON.stringify(result).includes('dustin'), 'and no private value is anywhere in the answer');
   });
 
-  // The machine-stability contract. A naive "an overlay file existed" flag would put the presence
-  // of a GITIGNORED file into COMMITTED content — reddening every CI checkout of a repo whose
-  // overlay holds nothing the render reads. The flag must turn on the overlay's *contribution*.
-  test('an overlay the render never reads leaves the lock byte-identical — no machine-dependent flag', () => {
-    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', 'config:', '  git:', '    botEmail: bot@example.com', ''].join('\n'));
-    write(cwd, OVERLAY, ['config:', '  local:', '    boardId: PVT_kwDemo', ''].join('\n'));
-    assert.equal(render().ok, true);
-    assert.equal(lockJson().renderedWithLocalOverlay, undefined, 'a key no template reads must NOT set the flag');
-    const withOverlay = fs.readFileSync(path.join(cwd, LOCK), 'utf8');
+  // Still a gate in CI too, not a rubber stamp: change the committed config, do not re-render, red.
+  test('…and the CI gate still reds on an un-applied committed change', () => {
+    const dev = machine('dev', 'dustin+bot@myaddress.com');
+    assert.equal(render(dev).ok, true);
+    const ci = ciCheckoutOf(dev);
+    write(ci, CONFIG, ['targets: [claude]', 'stacks: [demo]', 'config:', '  git:', '    botName: Renamed', ''].join('\n'));
+    write(ci, '.waffle/extensions/skills/demo-skill.md', 'Never rendered.\n');
 
-    fs.rmSync(path.join(cwd, OVERLAY));
-    assert.equal(render().ok, true);
-    assert.equal(
-      fs.readFileSync(path.join(cwd, LOCK), 'utf8'),
-      withOverlay,
-      'the lock must not depend on whether a gitignored file happens to exist',
-    );
-    assert.equal(verify().ok, true, 'and verification still runs — a benign overlay forfeits nothing');
+    const result = check(ci, { allowMissing: true, verifyRender: true });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.render.stale, [SKILL]);
   });
 
-  // The nested-substitution path, which is how the real hazard actually arises: NO template names
-  // {{git.botEmail}}. It is reached only from inside git.cmd's *value*. `collectUsedKeys` scans
-  // template bodies and cannot see it — `reachableKeys` is what does. Drop the transitive walk and
-  // this test is the only thing that fails.
-  test('a key reached only through another value (git.cmd → {{git.botEmail}}) still counts as fed', () => {
-    write(toolkitRoot, 'stacks/demo/agents/helper.md', [
-      '---', 'name: helper', 'description: A helper.', '---', '', 'Commit with: {{git.cmd}}', '',
-    ].join('\n'));
-    write(toolkitRoot, 'stacks/demo/skills/demo-skill/SKILL.md', [
-      '---', 'name: demo-skill', 'description: A demo skill.', '---', '', '# Demo', '',
-    ].join('\n'));
-    write(cwd, CONFIG, [
-      'targets: [claude]', 'stacks: [demo]', 'config:', '  git:',
-      '    cmd: git -c user.email={{git.botEmail}}', '',
-    ].join('\n'));
-    write(cwd, OVERLAY, ['config:', '  git:', '    botEmail: real-bot@mycorp.com', ''].join('\n'));
-    assert.equal(render().ok, true);
-    assert.equal(
-      lockJson().renderedWithLocalOverlay,
-      true,
-      'git.botEmail is reached ONLY through git.cmd\'s value — the flag must still fire',
-    );
+  // The same question, asked on the DEVELOPER's machine, must get the same answer as in CI: a clean
+  // repo verifies green with the overlay sitting right there. (Pre-#317 this was the refusal branch;
+  // it now simply passes, because the render being verified is canonical on every machine.)
+  //
+  // Honest about what this does NOT pin: restoring the overlay-copy that `verifyRenderAgainstLock`
+  // used to do would leave this green, because `renderProject` excludes the overlay from the lock by
+  // itself — the temp render's lock comes out canonical either way. The copy is dead weight, not a
+  // bug, and it is removed as such; see that docblock.
+  test('--verify-render is GREEN on the developer\'s own machine too, overlay and all', () => {
+    const cwd = machine('dev', 'dustin+bot@myaddress.com');
+    assert.equal(render(cwd).ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, OVERLAY)), 'precondition: the overlay is right here');
+
+    const result = check(cwd, { verifyRender: true });
+    assert.equal(result.ok, true, JSON.stringify(result.render));
+    assert.deepEqual(result.render.stale, [], 'the overlay must not be part of the render being verified');
+  });
+
+  // Still a GATE, not a rubber stamp: the overlay must not become a blanket excuse.
+  test('--verify-render still catches an un-applied config change on an overlay repo', () => {
+    const cwd = machine('dev', 'dustin+bot@myaddress.com');
+    assert.equal(render(cwd).ok, true);
+    write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', 'config:', '  git:', '    botName: Renamed', ''].join('\n'));
+    write(cwd, '.waffle/extensions/skills/demo-skill.md', 'Never rendered.\n');
+
+    const result = check(cwd, { verifyRender: true });
+    assert.equal(result.ok, false, 'an un-applied COMMITTED change is still drift');
+    assert.deepEqual(result.render.stale, [SKILL]);
+  });
+
+  // ── The local lock (constraint 1, option b). ───────────────────────────────────────────────────
+  describe('the gitignored local lock', () => {
+    test('an overlay that feeds the render writes one — and plain doctor stays GREEN', () => {
+      const cwd = machine('dev', 'dustin+bot@myaddress.com');
+      assert.equal(render(cwd).ok, true);
+
+      assert.ok(fs.existsSync(path.join(cwd, LOCAL_LOCK)), 'the tree on disk needs a manifest of its own');
+      const local = JSON.parse(read(cwd, LOCAL_LOCK));
+      const committed = JSON.parse(read(cwd, LOCK));
+      assert.notDeepEqual(local.files, committed.files, 'they describe different bytes — that IS the point');
+      assert.equal(local.files[SKILL], sha256(fs.readFileSync(path.join(cwd, SKILL))), 'and the local one matches disk');
+
+      // The payoff. Without a local lock, doctor would hash this tree against the CANONICAL hashes
+      // and call every overlay-touched file hand-edited — a permanently red doctor for the one
+      // developer whose privacy the canonical lock exists to protect.
+      const result = check(cwd);
+      assert.equal(result.ok, true, JSON.stringify(result.modified));
+      assert.deepEqual(result.modified, []);
+      assert.deepEqual(result.missing, []);
+    });
+
+    test('…and integrity is NOT relaxed: a hand-edit is still caught', () => {
+      const cwd = machine('dev', 'dustin+bot@myaddress.com');
+      assert.equal(render(cwd).ok, true);
+      fs.appendFileSync(path.join(cwd, SKILL), '\nSomeone hand-edited this.\n');
+
+      const result = check(cwd);
+      assert.equal(result.ok, false, 'the local lock is a real manifest, not a blanket amnesty');
+      assert.deepEqual(result.modified, [SKILL]);
+    });
+
+    test('an overlay the render never reads writes NO local lock, and leaves the lock byte-identical', () => {
+      const cwd = machine('dev');
+      write(cwd, OVERLAY, ['config:', '  local:', '    boardId: PVT_kwDemo', ''].join('\n'));
+      assert.equal(render(cwd).ok, true);
+      assert.ok(!fs.existsSync(path.join(cwd, LOCAL_LOCK)), 'nothing diverged — no local lock to write');
+
+      const ci = machine('ci');
+      assert.equal(render(ci).ok, true);
+      assert.equal(lockBytes(cwd), lockBytes(ci), 'a benign overlay costs nothing');
+      assert.equal(check(cwd, { verifyRender: true }).ok, true);
+    });
+
+    test('removing the overlay removes the now-stale local lock', () => {
+      const cwd = machine('dev', 'dustin+bot@myaddress.com');
+      assert.equal(render(cwd).ok, true);
+      assert.ok(fs.existsSync(path.join(cwd, LOCAL_LOCK)));
+
+      fs.rmSync(path.join(cwd, OVERLAY));
+      assert.equal(render(cwd).ok, true);
+      assert.ok(
+        !fs.existsSync(path.join(cwd, LOCAL_LOCK)),
+        'a stale local lock would go on describing a tree that no longer exists',
+      );
+      assert.equal(check(cwd).ok, true);
+    });
+
+    test('render warns when .gitignore does not cover the local lock it just wrote', () => {
+      const cwd = machine('dev', 'dustin+bot@myaddress.com');
+      const warned = render(cwd).warnings.some((w) => w.includes(LOCAL_LOCK));
+      assert.ok(warned, 'an un-ignored local lock is the same propagation, one file over');
+
+      fs.writeFileSync(path.join(cwd, '.gitignore'), `${OVERLAY}\n${LOCAL_LOCK}\n`);
+      assert.ok(
+        !render(cwd).warnings.some((w) => w.includes(LOCAL_LOCK)),
+        'and it goes quiet once the entry is there',
+      );
+    });
+
+    // The frozen-image bookkeeping reads the lock that describes the TREE. Ejecting drops the item
+    // from BOTH locks — leave it in the local one and the next render's stale-prune deletes the
+    // file the eject just handed to the project.
+    test('eject releases the item from both locks, so the next render does not prune it away', () => {
+      const cwd = machine('dev', 'dustin+bot@myaddress.com');
+      assert.equal(render(cwd).ok, true);
+
+      const { released } = eject({ cwd, item: 'skills/demo-skill' });
+      assert.ok(released.includes(SKILL));
+      assert.ok(!(SKILL in JSON.parse(read(cwd, LOCK)).files));
+      assert.ok(!(SKILL in JSON.parse(read(cwd, LOCAL_LOCK)).files));
+
+      write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', 'eject: [skills/demo-skill]', ''].join('\n'));
+      assert.equal(render(cwd).ok, true);
+      assert.ok(fs.existsSync(path.join(cwd, SKILL)), 'an ejected file is project-owned — it stays');
+    });
+  });
+
+  // ── Constraint 2: a required, defaultless key held only in the overlay. ────────────────────────
+  //
+  // `makeFixtureToolkit` declares `git.botEmail` as `required: true` with NO default — so a config
+  // that omits it renders only because the overlay supplies it, and the canonical render cannot be
+  // built at all. That must be LOUD. It is not a red-gate on a *personal* value: commit any value
+  // (a team address, a placeholder) and the overlay goes on overriding it locally, for you alone.
+  describe('a required, defaultless key held only in the overlay', () => {
+    let cwd;
+    beforeEach(() => {
+      toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-317-req-'));
+      makeFixtureToolkit(toolkitRoot);
+      cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-317-req-'));
+      dirs.push(cwd);
+      write(cwd, CONFIG, ['targets: [claude]', 'stacks: [demo]', ''].join('\n'));
+      write(cwd, OVERLAY, ['config:', '  git:', '    botEmail: private@myaddress.com', ''].join('\n'));
+    });
+
+    test('fails LOUDLY — never a silent fallback, and never a half-written lock', () => {
+      const result = render(cwd);
+      assert.equal(result.ok, false, 'the lock could not be built from committed inputs — say so');
+
+      const said = result.errors.join('\n');
+      assert.match(said, /CANONICAL render/, 'name the reason the render is being refused');
+      assert.match(said, /waffle\.local\.yaml/, 'name the file the value is hiding in');
+      assert.match(said, /config\.git\.botEmail/, 'name the key');
+      assert.match(said, /Commit a value/, 'name the fix');
+      assert.match(said, /overrides it locally/, '…and say the private value still wins locally');
+
+      // Tree untouched: the fail-loud contract, not a partial render with a lock that lies.
+      assert.ok(!fs.existsSync(path.join(cwd, LOCK)), 'no lock');
+      assert.ok(!fs.existsSync(path.join(cwd, AGENT)), 'no render');
+    });
+
+    test('committing ANY value fixes it — and the overlay still overrides it locally', () => {
+      write(cwd, CONFIG, [
+        'targets: [claude]', 'stacks: [demo]', 'config:', '  git:', '    botEmail: team-bot@example.com', '',
+      ].join('\n'));
+      assert.equal(render(cwd).ok, true);
+
+      assert.match(read(cwd, SKILL), /private@myaddress\.com/, 'my tree still renders MY address');
+      const ci = fs.mkdtempSync(path.join(os.tmpdir(), 'project-317-req-ci-'));
+      dirs.push(ci);
+      write(ci, CONFIG, read(cwd, CONFIG));
+      assert.equal(render(ci).ok, true);
+      assert.equal(lockBytes(ci), lockBytes(cwd), 'and the committed lock is the team value, everywhere');
+      assert.match(read(ci, SKILL), /team-bot@example\.com/);
+    });
+
+    // The precedence rule that keeps the loud error unambiguous: an effective render that is broken
+    // on its own terms reports ITS error, not the canonical one.
+    test('a config broken for everyone reports the ordinary error, not the overlay one', () => {
+      fs.rmSync(path.join(cwd, OVERLAY));
+      const result = render(cwd);
+      assert.equal(result.ok, false);
+      assert.match(result.errors.join('\n'), /needs config values: config\.git\.botEmail/);
+      assert.doesNotMatch(result.errors.join('\n'), /CANONICAL render/, 'no overlay is involved — do not blame one');
+    });
   });
 });
 
