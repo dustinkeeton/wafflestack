@@ -39,10 +39,13 @@ If a table reads worse than a sentence, write the sentence. If a callout would s
 ## 3. The toolbox
 
 - **Tables** — for registries, comparisons, and enumerations. Keep cells short; a table crammed with paragraphs is worse than a list.
-- **Callouts** — GitHub alerts when the target renders them:
+- **Callouts** — GitHub alerts when the target renders them. **The marker sits alone on its line**; put text beside it (`> [!NOTE] Useful context.`) and GitHub renders a plain blockquote with a literal `[!NOTE]` in it — the alert never fires:
   ```markdown
-  > [!NOTE] Useful context that is not essential.
-  > [!WARNING] A footgun the reader will otherwise hit.
+  > [!NOTE]
+  > Useful context that is not essential.
+
+  > [!WARNING]
+  > A footgun the reader will otherwise hit.
   ```
   Plain `> **Note:** …` blockquotes are the portable fallback.
 - **Task lists** — `- [x] Done` / `- [ ] Pending` for anything with completion state; they render as checkboxes and scan instantly.
