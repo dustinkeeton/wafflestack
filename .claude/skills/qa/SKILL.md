@@ -252,3 +252,18 @@ branch's PR), the review posts to the PR where `pr-response` reads it, and the s
 summary (step 7) is the agent's return value. Honesty still governs severity — an agent must
 not manufacture blockers to look diligent, and "no QA concerns" is a legitimate result to
 hand back.
+
+**Being resumed across rounds.** An orchestrating loop (autopilot's Step 5) may keep the
+invoking agent alive and **resume** it — "the PR head moved to `<sha>` — re-run your QA pass on
+the new diff" — instead of invoking this skill fresh each round. When resumed:
+
+- **Re-read the diff and the PR state fresh from the new head.** The branch moved: never trust
+  cached file contents, a cached head SHA, or a remembered checks verdict. Re-run steps 1–7
+  against the new head.
+- **Keep your verdict history.** Don't re-litigate acceptance criteria you already verified met
+  unless the new diff touches them, and say explicitly when a prior finding is now resolved by
+  the fixes that landed. Continuity is the reason the loop keeps you alive.
+- **Your reply each round is the same structured summary** (step 7) a fresh run would return —
+  identical in shape, so the loop's convergence logic is unaffected. The head-scoped delivery
+  check (step 7) already guarantees a resumed round cannot be satisfied by an earlier round's
+  review.

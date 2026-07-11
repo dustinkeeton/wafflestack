@@ -196,6 +196,19 @@ default to the current branch's PR), the review posts to the PR, and the structu
 manufacture blockers to look diligent, and "no holes found" is a legitimate result to hand
 back.
 
+**Being resumed across rounds.** An orchestrating loop (autopilot's Step 6) may keep the
+invoking agent alive and **resume** it — "the PR head moved to `<sha>` — re-run your review on
+the new diff" — instead of invoking this skill fresh each round. When resumed:
+
+- **Re-read the diff and the PR state fresh from the new head.** The branch moved: never trust
+  cached file contents or a cached head SHA. Re-run the review against the new head.
+- **Keep your finding history.** Don't re-post a hole the last round's fixes closed, and don't
+  re-argue a finding `pr-response` declined with a reason you accepted. Anything *new* in the
+  diff gets the same hostility as round 1 — a fix that introduced a fresh hole is exactly what a
+  later round is for.
+- **Your reply each round is the same structured summary** (step 7) a fresh run would return, so
+  the loop's convergence logic is unaffected.
+
 > **Auto-invocation on PR-green (opt-in).** The `github-workflow` stack ships a companion
 > opt-in workflow, `waffle-pr-green-hook.yml`, that dispatches the CI harness to run this skill
 > automatically the moment a PR's required checks go green — firing once per green transition

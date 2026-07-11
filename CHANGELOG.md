@@ -330,6 +330,26 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **Autopilot's gate subloops reuse persistent named agents across rounds (#295).** Steps 5 (QA)
+  and 6 (review) no longer re-invoke their gate skills fresh every round: round 1 spawns each half
+  as a **named agent** (`qa-pr<N>` / `respond-qa-pr<N>`, `review-pr<N>` / `respond-rev-pr<N>`) and
+  later rounds **resume the same agent** with `SendMessage` ("the PR head moved to `<sha>` — re-run
+  your pass on the new diff"). The agent keeps the diff, the issue's acceptance criteria, and its
+  own verdict history, so a later round neither re-derives the PR from scratch nor re-litigates a
+  finding an earlier round already declined. The **structured return contract is unchanged** —
+  per-severity counts from `qa`/`adversarial-review`, per-verdict + implemented counts from
+  `pr-response` — so convergence (0 implemented), the caps, the review markers, and the posted-review
+  format are all untouched. Three guardrails bound the optimization: a **vanished agent degrades to a
+  fresh spawn** (correctness never depends on persistence), each cap hatch's **evidence pass is still
+  spawned fresh** (an agent that lived through every fix round is the wrong context to certify the
+  result — #234's clean-fresh-pass semantics), and **no gate agent outlives its loop** (teardown is
+  unconditional, including the red-round and errored-round stop paths; an errored round retries on a
+  fresh spawn rather than re-entering a wedged context). The `qa`, `adversarial-review`, and
+  `pr-response` skills now document being resumed with a new PR head: re-read the diff fresh from the
+  new head, keep the finding/verdict history, and — for `pr-response` — never flip a settled verdict
+  without new evidence, keeping F-numbering stable across rounds.
+  **Consumer impact:** prose-only change to four SKILL.md files; no config or schema change;
+  consuming repos pick it up on re-render.
 - **Autopilot codifies implement-ahead for an independent next issue (#277).** The per-issue
   loop's Step 3 now documents that when issue N+1 is independent of the in-flight one under
   delegate's parallelization rules, the orchestrator MAY start N+1's implementer (Steps 2–3)
