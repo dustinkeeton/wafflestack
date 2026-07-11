@@ -26,6 +26,11 @@ import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
  * @property {string} file absolute path to read (the CURRENT name when nothing exists)
  * @property {boolean} legacy true when a fallback (older layout) was found
  * @property {string | null} note a one-line deprecation message to surface, else null
+ *
+ * @typedef {object} OverlayContribution what the gitignored `.local` overlay adds to a render
+ * @property {boolean} present the overlay file exists
+ * @property {Set<string>} configKeys its `config:` leaves, as dotted paths
+ * @property {boolean} shapesRender it declares a key that changes WHICH files render
  */
 
 // Canonical consumer paths — everything wafflestack keeps in a consumer repo lives inside
@@ -350,12 +355,17 @@ const RENDER_SHAPING_KEYS = ['targets', 'stacks', 'bundles', 'include', 'eject']
  * changes the *file set*, not merely the bytes inside it. Rendering without it produces different
  * paths, which surface as `absent`/`unexpected` rather than `stale` — the same false-drift bug from
  * the other end, so it counts too.
+ *
+ * @param {string} cwd
+ * @returns {OverlayContribution}
  */
 export function localOverlayContribution(cwd) {
   const overlay = resolveLocalConfigFile(cwd);
   if (!exists(overlay.file)) return { present: false, configKeys: new Set(), shapesRender: false };
   const raw = readYaml(overlay.file) ?? {};
+  /** @type {Set<string>} */
   const configKeys = new Set();
+  /** @type {(node: any, prefix: string) => void} */
   const walk = (node, prefix) => {
     if (!isPlainObject(node)) return;
     for (const [key, value] of Object.entries(node)) {
@@ -382,6 +392,10 @@ export function localOverlayContribution(cwd) {
  * only keys the render never reads (`git.signingKey`, a board id) must NOT set it, or the lock
  * would record the presence of a gitignored file and go machine-dependent — red in every CI
  * checkout, which is the very disease the flag exists to cure.
+ *
+ * @param {OverlayContribution} contribution
+ * @param {Set<string>} reached every config key the render resolved (see `reachableKeys`)
+ * @returns {boolean}
  */
 export function overlayFedRender(contribution, reached) {
   if (!contribution.present) return false;
