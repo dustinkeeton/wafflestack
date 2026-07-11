@@ -1,4 +1,4 @@
-import { test, describe, before, beforeEach, afterEach } from 'node:test';
+import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1697,6 +1697,22 @@ describe('docs writing-craft skills: the guardrail that makes each one worth hav
     assert.match(md, /Never extrapolate an API surface from naming conventions/);
     assert.match(md, /When source and doc disagree, the source wins/);
   });
+
+  // #224 acceptance: all three are reachable as ad-hoc slash commands. `waffledocs.mjs` keys the
+  // generated CHEATSHEET off exactly this flag, so deleting it (or flipping it to false) silently
+  // removes /prose, /md-maximalist, /accurate AND drops them from the cheat sheet — with every
+  // other assertion in this file still green. The argument-hint is the other half of what makes
+  // the slash form usable, so it is pinned alongside.
+  for (const name of ['prose', 'md-maximalist', 'accurate']) {
+    test(`${name} stays user-invocable — /${name} is an acceptance criterion, not a nicety`, () => {
+      const { data } = parseFrontmatter(readSkill(name));
+      assert.equal(data['user-invocable'], true, `${name} must render user-invocable: true`);
+      assert.ok(
+        typeof data['argument-hint'] === 'string' && data['argument-hint'].length > 0,
+        `${name} must carry an argument-hint for the slash form`,
+      );
+    });
+  }
 });
 
 // #224: the grant wiring is load-bearing TWICE. The frontmatter `skills:` list is what the claude
@@ -1718,14 +1734,74 @@ describe('docs agents: writing-craft skills granted in frontmatter AND body pros
     assert.ok(data.skills.includes('accurate'), 'docs-agent must be granted `accurate`');
   });
 
-  test('docs-human names both writing skills in body prose (survives the codex render)', () => {
+  test('docs-human names both writing skills in body prose', () => {
     const md = readAgent('docs-human');
     assert.match(md, /`prose` skill/);
     assert.match(md, /`md-maximalist` skill/);
   });
 
-  test('docs-agent names accurate in body prose (survives the codex render)', () => {
+  test('docs-agent names accurate in body prose', () => {
     const md = readAgent('docs-agent');
     assert.match(md, /`accurate` skill/);
+  });
+});
+
+// #224: the two tests above read the CLAUDE render, so they prove the body prose exists — not that
+// it survives the target that actually needs it. The codex TOML has no frontmatter at all, so the
+// body reference is the ONLY grant signal a codex consumer ever sees. Render the codex target for
+// real and assert the grant lands in `developer_instructions`; if the codex body pipeline ever
+// diverges, this fails instead of the claude-render proxy quietly passing.
+describe('docs agents: the body-prose grant survives the CODEX render (#224)', () => {
+  let cwd;
+  let toml;
+
+  before(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-docs-codex-'));
+    fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.waffle', 'waffle.yaml'),
+      [
+        'targets: [codex]',
+        'stacks: [docs-system]',
+        'config:',
+        '  project:',
+        '    name: EvalFixture',
+        '    longName: the EvalFixture project',
+        '',
+      ].join('\n'),
+    );
+    const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+    assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+    toml = (name) => fs.readFileSync(path.join(cwd, '.codex', 'agents', `${name}.toml`), 'utf8');
+  });
+
+  after(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test('the codex agent TOML carries no frontmatter skills grant — the premise of the body reference', () => {
+    // If this ever fails, the body-prose duplication may no longer be load-bearing; revisit the
+    // grant strategy rather than deleting the assertions below.
+    assert.doesNotMatch(toml('docs-human'), /^skills\s*=/m);
+    assert.doesNotMatch(toml('docs-agent'), /^skills\s*=/m);
+  });
+
+  test('docs-human still names prose + md-maximalist in the rendered codex instructions', () => {
+    const md = toml('docs-human');
+    assert.match(md, /`prose` skill/);
+    assert.match(md, /`md-maximalist` skill/);
+  });
+
+  test('docs-agent still names accurate in the rendered codex instructions', () => {
+    assert.match(toml('docs-agent'), /`accurate` skill/);
+  });
+
+  test('all three writing skills render into the cross-tool .agents/skills dir codex reads', () => {
+    for (const name of ['prose', 'md-maximalist', 'accurate']) {
+      assert.ok(
+        fs.existsSync(path.join(cwd, '.agents', 'skills', name, 'SKILL.md')),
+        `${name} must render for the codex target`,
+      );
+    }
   });
 });
