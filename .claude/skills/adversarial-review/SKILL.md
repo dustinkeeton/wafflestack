@@ -198,7 +198,8 @@ back.
 
 **Being resumed across rounds.** An orchestrating loop (autopilot's Step 6) may keep the
 invoking agent alive and **resume** it — "the PR head moved to `<sha>` — re-run your review on
-the new diff" — instead of invoking this skill fresh each round. When resumed:
+the new diff" — instead of invoking this skill fresh each round. When resumed — and, for the two
+cold-start rules below, when you are the fresh spawn that *replaces* a resumable agent:
 
 - **Re-read the diff and the PR state fresh from the new head.** The branch moved: never trust
   cached file contents or a cached head SHA. Re-run the review against the new head.
@@ -206,13 +207,21 @@ the new diff" — instead of invoking this skill fresh each round. When resumed:
   re-argue a finding `pr-response` declined with a reason you accepted. Anything *new* in the
   diff gets the same hostility as round 1 — a fix that introduced a fresh hole is exactly what a
   later round is for.
-- **Cold starts recover the history from the PR itself.** If you have no in-context finding
-  history — you are a fresh spawn after a vanished agent — **seed it before reviewing**: read the
+- **Cold starts recover the history from the PR itself.** Seed **only when your invocation tells
+  you you are replacing a vanished loop agent** — autopilot's re-spawn prompt carries exactly that
+  sentence. When it does, **seed it before reviewing**: read the
   PR's own marked `<!-- waffle-adversarial-review -->` reviews (what earlier rounds already raised
   and called resolved) and the marked `<!-- waffle-pr-response -->` reply's verdict table (what
   was implemented, deferred, or declined — and why). Never re-raise a finding that table records
   as settled without new evidence in the new head. This keeps the continuity rules above
   satisfiable on every path, not only for an agent that lived through the earlier rounds.
+- **An empty context is *not* itself the signal — never infer the seed from it.** A loop may spawn
+  you deliberately **cold**: autopilot's cap-escape evidence pass does precisely that, so that your
+  look at the final head is *not* anchored by what earlier rounds declined — and its prompt says so
+  ("this pass is deliberately cold — do not seed history from the PR"). **When the invocation says
+  the pass is deliberately cold, do not seed**: seeding would re-anchor you on the very verdicts the
+  cold spawn exists to escape, suppressing every finding earlier rounds declined. Absent an
+  invocation that names you a replacement, review the head on its own evidence.
 - **Your reply each round is the same structured summary** (step 7) a fresh run would return, so
   the loop's convergence logic is unaffected.
 
