@@ -263,6 +263,13 @@ the new diff" — instead of invoking this skill fresh each round. When resumed:
 - **Keep your verdict history.** Don't re-litigate acceptance criteria you already verified met
   unless the new diff touches them, and say explicitly when a prior finding is now resolved by
   the fixes that landed. Continuity is the reason the loop keeps you alive.
+- **Cold starts recover the history from the PR itself.** If you have no in-context verdict
+  history — you are a fresh spawn after a vanished agent — **seed it before reviewing**: read the
+  PR's own marked `<!-- waffle-qa -->` reviews (what earlier rounds already raised and called
+  resolved) and the marked `<!-- waffle-pr-response -->` reply's verdict table (what was
+  implemented, deferred, or declined — and why). Never re-raise a finding that table records as
+  settled without new evidence in the new head. This keeps the continuity rules above satisfiable
+  on every path, not only for an agent that lived through the earlier rounds.
 - **Your reply each round is the same structured summary** (step 7) a fresh run would return —
   identical in shape, so the loop's convergence logic is unaffected. The head-scoped delivery
   check (step 7) already guarantees a resumed round cannot be satisfied by an earlier round's

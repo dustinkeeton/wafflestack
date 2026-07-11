@@ -631,6 +631,21 @@ is what you reach for across a breaking one.
   - **Consumer impact:** re-render. Nothing to configure; `Bash(git:*)` is deliberately still
     excluded, as the job holds `contents: read` only.
 
+### Fixed
+- **Coherence holes in the persistent-gate-agent playbook (#297, follow-up to #295).** #295 made each
+  gate loop's responder spawn **lazily** (only once a review surfaces findings), but three statements
+  in autopilot's Steps 5/6 still assumed it always exists — so a zero-finding round 1 was told to
+  `shutdown_request` an agent that was never spawned and to read convergence from a `pr-response`
+  return that never happened. Teardown is now scoped to **each agent the loop actually spawned**, and
+  the reviewer's own clean summary ("no QA concerns" / "no holes found") is named as the stop signal
+  when no responder ran. The `qa` and `adversarial-review` skills gain the **cold-start recovery rule**
+  #295 gave `pr-response`: a reviewer re-spawned cold by autopilot's vanished-agent fallback now seeds
+  its finding/verdict history from the PR's own marked reviews and the `<!-- waffle-pr-response -->`
+  verdict table instead of re-raising every settled finding. Both cap hatches' fresh evidence pass is
+  now specified as **unnamed** (it runs once and is never resumed, and the standing agent still holds
+  the gate name until its deferred teardown).
+  - **Consumer impact:** re-render. Prose-only; no config, no behavior change to the gates' contracts.
+
 ## [0.11.0] - 2026-07-08
 
 ### Consumer impact
