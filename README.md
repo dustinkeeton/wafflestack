@@ -127,7 +127,9 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    that: it renders your committed config into a temp dir (never the working tree) and checks the
    result against the committed lock. Paired with `--allow-missing` it is also the gate for a repo
    that gitignores its *whole* render — nothing is present to compare, so the render is reproduced
-   and verified instead.
+   and verified instead. It renders from your **committed** inputs, so a value the render reads
+   must not live only in the gitignored `.local` overlay — commit it, or run `--verify-render`
+   locally rather than in CI ([the trade-off](docs/gitignore.md#one-real-constraint-the-values-it-renders-from-must-be-committed)).
 
 **Deciding what to commit?** [Committing vs. gitignoring the rendered output](docs/gitignore.md) argues the trade-off — what you gain and lose each way, and why the lock is a separate decision from the render.
 

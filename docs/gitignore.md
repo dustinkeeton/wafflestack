@@ -206,6 +206,39 @@ external `source:`), so it is slower than a pure hash check. That is why it is o
 if "someone changed the config and forgot to re-render" is a mistake your team can make — which
 is most teams.
 
+#### One real constraint: the values it renders from must be committed
+
+`--verify-render` reproduces the render from your **committed** inputs. Your `.waffle/waffle.local.yaml`
+overlay is not one of them — it is gitignored by design, so it does not exist in a CI checkout.
+
+That matters when a value the render *reads* lives only in the overlay. The layering this toolkit
+otherwise recommends puts `git.botEmail` and `git.signingKey` there, precisely because they are
+account-specific — and both are read by the rendered `git-workflow` skill. Render locally with the
+overlay, commit the result, and CI reproduces the render **without** it: the placeholders quietly
+fall back to the stack's `default:`, the bytes differ, and every file the overlay touched looks
+drifted.
+
+So `doctor` refuses to guess. The lock records whether the overlay actually fed the render, and
+when it did and the overlay is absent, you get this instead of a drift report:
+
+```
+verify-render: cannot verify the render: the lock was rendered with .waffle/waffle.local.yaml,
+which supplied a value the render used — and that file is not here.
+```
+
+A missing input is not drift, and it must not be reported as drift — the "re-render and commit"
+remediation that a drift report implies would bake the *default* over your real bot identity.
+
+The fix is the trade the flag asks of you: **if you want `--verify-render` in CI, commit the values
+that feed the render.** Use a public, non-personal bot address (`bot@wafflenet.io`, or one on your
+own domain) — [this repo does exactly that](https://github.com/dustinkeeton/wafflestack/blob/main/.waffle/waffle.yaml),
+and says why in a comment. An overlay holding only values the render never reads — a board id, a
+local path — costs you nothing: the flag still runs, and your lock stays byte-identical to every
+other machine's.
+
+If you would rather keep those values out of git, that is a legitimate choice — it just means
+`--verify-render` is a **local** check for you, not a CI gate. Run it before you push.
+
 ### The limits of tolerating absence
 
 `--allow-missing` relaxes presence only up to a limit. Every lock-tracked file absent
@@ -231,7 +264,8 @@ shipped workflow interpolates into its run line. They compose:
 # .waffle/waffle.yaml
 doctor:
   flags: --allow-missing                    # Posture 2 — some renders gitignored
-  # flags: --verify-render                  # any posture — also catch a forgotten re-render
+  # flags: --verify-render                  # also catch a forgotten re-render — but see the
+  #                                         #   constraint above: commit the values it renders from
   # flags: --allow-missing --verify-render  # Posture 2b — the whole render gitignored
 ```
 
@@ -242,8 +276,10 @@ doctor:
 ### Posture 1: commit the render + lock — the default, and probably your answer
 
 Commit `.waffle/waffle.yaml`, the rendered output, and `.waffle/waffle.lock.json`. Leave
-`doctor.flags` empty — or set `--verify-render`, which is worth it in any posture: it is the
-only thing that catches the re-render someone forgot.
+`doctor.flags` empty — or set `--verify-render`, which is the only thing that catches the
+re-render someone forgot. It asks one thing of you in return: the values it renders from have to
+be committed too, so a render-affecting key cannot hide in your gitignored overlay
+([the constraint](#one-real-constraint-the-values-it-renders-from-must-be-committed)).
 
 **Fits**: teams; any repo running agents in CI; anywhere you want the drift gate at full
 strength; anyone who wants their agents' behavior visible in code review. **Costs**: diff
