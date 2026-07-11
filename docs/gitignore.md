@@ -166,12 +166,13 @@ The decisive line is the `driftOk` computation in `doctor.mjs`:
 
 ```js
 const driftOk = allowMissing
-  ? modified.length === 0 && !nothingPresent
+  ? modified.length === 0 && (!nothingPresent || verified)
   : modified.length === 0 && missing.length === 0;
 ```
 
 Modified files fail either way. That is the whole point: the flag relaxes *presence*, never
-*integrity*.
+*integrity*. (`verified` is `--verify-render` having reproduced the render — the one thing that
+excuses an all-absent tree, because something was checked after all.)
 
 ### The one thing plain `doctor` cannot see: a forgotten re-render
 
@@ -206,38 +207,79 @@ external `source:`), so it is slower than a pure hash check. That is why it is o
 if "someone changed the config and forgot to re-render" is a mistake your team can make — which
 is most teams.
 
-#### One real constraint: the values it renders from must be committed
+#### Your private overlay stays private — and the gate still works
 
-`--verify-render` reproduces the render from your **committed** inputs. Your `.waffle/waffle.local.yaml`
-overlay is not one of them — it is gitignored by design, so it does not exist in a CI checkout.
+`--verify-render` reproduces the render from your **committed** inputs. Your
+`.waffle/waffle.local.yaml` overlay is not one of them — it is gitignored by design, so it does not
+exist in a CI checkout. That is a fact about the overlay, and it is *not* a constraint on you,
+because the lock is not built from the overlay either.
 
-That matters when a value the render *reads* lives only in the overlay. The layering this toolkit
-otherwise recommends puts `git.botEmail` and `git.signingKey` there, precisely because they are
-account-specific — and both are read by the rendered `git-workflow` skill. Render locally with the
-overlay, commit the result, and CI reproduces the render **without** it: the placeholders quietly
-fall back to the stack's `default:`, the bytes differ, and every file the overlay touched looks
-drifted.
+**The lock records the canonical render**: what `.waffle/waffle.yaml` + `.waffle/extensions/`
+produce **on their own**. Everything committed is canonical; the local overlay never is. So:
 
-So `doctor` refuses to guess. The lock records whether the overlay actually fed the render, and
-when it did and the overlay is absent, you get this instead of a drift report:
+- **Your working copy still gets your values.** Put a personal `git.botEmail` in the overlay and
+  your rendered `.claude/` carries it, exactly as before. Nothing about your local setup changes.
+- **The committed lock is byte-identical for everyone.** It describes the canonical render, so two
+  teammates with different overlays produce the *same* lock. Neither one's commit reverts the
+  other's.
+- **CI reproduces it exactly**, having no overlay to miss. `--verify-render` goes green — it is a
+  real gate, not a refusal.
+- **Extensions still propagate.** They are committed, so they *are* canonical: edit one and the
+  canonical render changes, the lock changes, and everyone gets it. That contrast is the whole
+  design — committed things propagate, private things do not.
+- **Nobody is ever red-gated into committing a personal value.** If an earlier version of this guide
+  told you to commit `git.botEmail` so CI would stop complaining: it was wrong, and that advice is
+  gone.
+
+> [!IMPORTANT]
+> **The one tautology: a render-affecting overlay means you must gitignore the render.** Not because
+> a tool says so — because a *committed rendered file with your personal address inside it* **is**
+> the propagation you were avoiding. The overlay cannot keep a value private if you check the
+> compiled result of it into git. If you override a render-affecting key, you want
+> [Posture 2b](#posture-2b-commit-the-lock-only): commit the lock, ignore the render, gate with
+> `--allow-missing --verify-render`.
+
+##### The local lock
+
+Once your overlay feeds your render, the bytes on your disk are no longer the bytes the lock
+records — so `render` writes a second, gitignored manifest of what *it actually wrote*:
 
 ```
-verify-render: cannot verify the render: the lock was rendered with .waffle/waffle.local.yaml,
-which supplied a value the render used — and that file is not here.
+.waffle/waffle.lock.json         committed   — the canonical render (everyone's is identical)
+.waffle/waffle.local.lock.json   gitignored  — your render (only exists if your overlay changes a byte)
 ```
 
-A missing input is not drift, and it must not be reported as drift — the "re-render and commit"
-remediation that a drift report implies would bake the *default* over your real bot identity.
+`doctor` and `list` compare your files against the **local** lock, so a hand-edit to a rendered
+skill still fails locally, exactly as it always did — the integrity guarantee is not relaxed, it is
+just measured against the render you actually have. `--verify-render` keeps using the **committed**
+lock, because it is asking the other question: *does the committed config still produce the
+committed lock?*
 
-The fix is the trade the flag asks of you: **if you want `--verify-render` in CI, commit the values
-that feed the render.** Use a public, non-personal bot address (`bot@wafflenet.io`, or one on your
-own domain) — [this repo does exactly that](https://github.com/dustinkeeton/wafflestack/blob/main/.waffle/waffle.yaml),
-and says why in a comment. An overlay holding only values the render never reads — a board id, a
-local path — costs you nothing: the flag still runs, and your lock stays byte-identical to every
-other machine's.
+The file appears only when your overlay changes an output byte, and it is removed again the moment
+that stops being true. An overlay holding only values the render never reads — a board id, a local
+path — never creates one at all. **Gitignore it** (`--gitignore` does this for you); committing it
+would push your machine's hashes into everyone else's `doctor`, which is the same propagation one
+file over. `render` warns you if `.gitignore` doesn't cover it.
 
-If you would rather keep those values out of git, that is a legitimate choice — it just means
-`--verify-render` is a **local** check for you, not a CI gate. Run it before you push.
+##### The one thing the overlay may not hold
+
+A **`required:` key with no `default:`** cannot live *only* in your overlay. The canonical render
+has to be buildable from committed inputs, and without that value it isn't. `render` says so, loudly,
+and refuses — it does not silently substitute something:
+
+```
+.waffle/waffle.lock.json records the CANONICAL render — what .waffle/waffle.yaml +
+.waffle/extensions/ produce on their own — and that render fails. …
+Commit a value for each key below to .waffle/waffle.yaml — the overlay still overrides it
+locally, for you alone.
+```
+
+Note what it asks for, and what it does not. Commit **a** value — a team address, a placeholder,
+anything the project can render from. Your private one keeps overriding it, locally, for you alone.
+This is not the old "commit your personal address" advice wearing a hat.
+
+Most keys never hit this: `git.botEmail` is `required: false` with a default (`bot@wafflenet.io`),
+so the canonical render simply uses the default and your overlay quietly wins on your own machine.
 
 ### The limits of tolerating absence
 
@@ -264,8 +306,7 @@ shipped workflow interpolates into its run line. They compose:
 # .waffle/waffle.yaml
 doctor:
   flags: --allow-missing                    # Posture 2 — some renders gitignored
-  # flags: --verify-render                  # also catch a forgotten re-render — but see the
-  #                                         #   constraint above: commit the values it renders from
+  # flags: --verify-render                  # also catch a forgotten re-render
   # flags: --allow-missing --verify-render  # Posture 2b — the whole render gitignored
 ```
 
@@ -277,14 +318,20 @@ doctor:
 
 Commit `.waffle/waffle.yaml`, the rendered output, and `.waffle/waffle.lock.json`. Leave
 `doctor.flags` empty — or set `--verify-render`, which is the only thing that catches the
-re-render someone forgot. It asks one thing of you in return: the values it renders from have to
-be committed too, so a render-affecting key cannot hide in your gitignored overlay
-([the constraint](#one-real-constraint-the-values-it-renders-from-must-be-committed)).
+re-render someone forgot.
 
 **Fits**: teams; any repo running agents in CI; anywhere you want the drift gate at full
 strength; anyone who wants their agents' behavior visible in code review. **Costs**: diff
 noise, generated-file merge conflicts, and the re-render-and-commit discipline on every
 contributor.
+
+> [!NOTE]
+> **One thing this posture rules out: a render-affecting local overlay.** Committing the render
+> means committing whatever your overlay put *inside* it — your personal `git.botEmail`, in plain
+> text, in git. If you want a private override, you want [Posture 2b](#posture-2b-commit-the-lock-only)
+> instead ([why](#your-private-overlay-stays-private--and-the-gate-still-works)). Committing a
+> *public* bot address in `.waffle/waffle.yaml` — `bot@wafflenet.io`, or one on your own domain —
+> is the ordinary answer here, and costs you nothing.
 
 This is the default for a reason, and it is a stronger default for you than it is for the
 toolkit's own repo — the loudest objection to committing a render (a duplicate copy of every
@@ -455,17 +502,20 @@ uncluttered by it.
 
 ## Always gitignore these, whichever posture you pick
 
-Two entries are never a judgement call. `wafflestack install --gitignore` (or
+Three entries are never a judgement call. `wafflestack install --gitignore` (or
 `render --gitignore`) appends exactly these for you, idempotently, under a `# wafflestack`
 marker — it preserves whatever is already in the file, and it never touches `.gitignore`
 unasked.
 
 - **`.waffle/waffle.local.yaml`** — the local overlay. Account-specific values (bot
   identities, board IDs) that must never be committed. Always emitted.
+- **`.waffle/waffle.local.lock.json`** — [the local lock](#the-local-lock): the manifest of the
+  render *your* machine wrote, which exists only if your overlay changes an output byte. It is
+  account-specific for exactly the same reason the overlay is. Always emitted.
 - **The configured `git.worktreesDir`** (default `.claude/worktrees/`) — throwaway working
   state. Emitted when an enabled stack declares the key.
 
-`init --gitignore` seeds only the local overlay, since no stack is chosen yet; run
+`init --gitignore` seeds the first two, since no stack is chosen yet; run
 `install --gitignore` once a stack is enabled to pick up the worktrees directory.
 
 ---
