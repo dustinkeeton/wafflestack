@@ -1196,9 +1196,34 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
   test('a vanished agent degrades to a fresh spawn — correctness never depends on persistence', () => {
     assert.match(qaStep, /A vanished agent degrades to a fresh spawn/);
     assert.match(reviewStep, /A vanished agent degrades to a fresh spawn/);
-    // The fallback is concrete: re-spawn under the same name with the full round-1 prompt.
+    // The fallback is concrete IN BOTH STEPS: re-spawn under the same name with the full
+    // round-1 prompt. (The steps carry deliberately parallel prose — pin each on its own,
+    // or an edit trimming Step 6's bullet to its headline would leave CI green.)
     assert.match(qaStep, /spawn a fresh agent under the same name with the full round-1 prompt/);
     assert.match(qaStep, /correctness never depends on it/i);
+    assert.match(reviewStep, /re-spawn under the same name with the full round-1 prompt/);
+    assert.match(reviewStep, /Correctness never depends on persistence/i);
+    // A fresh responder is COLD — it recovers settled verdicts from the PR's marked reply
+    // instead of re-litigating or renumbering (pr-response's cold-start rule).
+    assert.match(qaStep, /cold-start rule/);
+    assert.match(reviewStep, /cold-start recovery/);
+  });
+
+  test('the resume SHA comes from the green wait, never a cache', () => {
+    // Both loops interpolate <sha> into their resume messages; the green wait is the only
+    // party that can certify a FRESH head, so both steps must say where the SHA comes from.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /--json headRefOid -q \.headRefOid/);
+      assert.match(step, /never reuse a SHA cached from before the wait/);
+    }
+  });
+
+  test('the responder spawns lazily — a zero-finding round 1 never spawns it', () => {
+    assert.match(qaStep, /spawn the \*\*responder lazily\*\*/);
+    assert.match(reviewStep, /The responder spawns \*\*lazily\*\* here too/);
+    // Step 6's responder is a NEW agent even on the happy path — it must cold-start from any
+    // existing marked reply so verdicts the QA gate settled stay settled across the gate boundary.
+    assert.match(reviewStep, /cold-starts from any existing marked reply/);
   });
 
   test('each cap hatch\'s evidence pass is spawned FRESH, never the standing gate agent', () => {
@@ -1277,6 +1302,14 @@ describe('gate skills: documented as resumable across rounds (#295)', () => {
     assert.match(md, /never restart at F1/);
     // The implemented count is the loop's stop signal — an honest 0 is load-bearing.
     assert.match(md, /not that you are tired of the round/);
+    // The continuity rules must be satisfiable on a COLD start too (a vanished-agent re-spawn,
+    // or a later gate's responder): the existing marked reply is read as verdict history — the
+    // step-2 "skip your own reply" rule carves this read out — and F-numbering continues from
+    // its high-water mark.
+    assert.match(md, /Cold starts recover the history from the PR itself/);
+    assert.match(md, /seed your verdict history and F-numbering from it/);
+    assert.match(md, /\*\*never renumber\*\*/);
+    assert.match(md, /on a cold start you first \*read\* it as verdict history/);
   });
 });
 
