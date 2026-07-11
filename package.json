@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "test": "node --test installer/test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
     "validate": "node installer/cli.mjs validate",
     "evals": "node installer/evals.mjs"
   },
@@ -25,5 +26,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3"
   }
 }
