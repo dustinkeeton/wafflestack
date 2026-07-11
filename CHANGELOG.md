@@ -346,6 +346,40 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **`/issue` plans read-only first and confirms before it mutates (#288).** The skill used to write
+  to GitHub immediately — `gh issue create` in create mode, an in-place title/body/label rewrite in
+  enrich mode — before the user had seen a word of the drafted content, so a bad inference (wrong
+  classification, off-base proposed solution, overwritten nuance) had to be repaired *after* it had
+  already landed on the tracker. All three modes now run as **plan phase → confirmation gate → act
+  phase**: context-gathering, classification, drafting, priority inference, and board placement all
+  happen read-only, then the gate presents the proposed title, body, labels, and placement and waits
+  for an explicit yes before the first mutation. **Declining leaves GitHub state untouched.** Batch
+  mode drafts the *whole* `{{issue.inferenceLabel}}` queue before touching any of it and presents
+  **one combined review** — approve the batch or a subset; unapproved issues keep their lifecycle
+  label for a later pass. The gate covers **mutating, not reading**, so the plan phase is always safe
+  to run — and it must be read *enough*: the board and milestone **queries** the placement is inferred
+  from are plan-phase reads, so the gate never shows a placement it did not actually look up, and the
+  act phase applies the milestone the user confirmed instead of silently re-deciding it. Two callers
+  skip the gate: **`--yes`** (same convention as `pr-response` / `clean-up`) and a **non-interactive**
+  agent or CI invocation — for those, the agent invocation *is* the explicit signal that stands in for
+  the confirmation, the same precedent as `delegate` batch mode's `confirmedVia: "batch-scope"`. That
+  auto-skip is load-bearing, not a convenience: label-hook dispatches enrich mode from a headless
+  Actions job that can never answer a prompt, so a model honoring the gate there would hang the run
+  until it timed out (label-hook's own `enrich` section now says so too). Such callers **log** the
+  drafted plan before applying it, so an unattended run stays auditable after the fact instead of being
+  unreviewable in the moment. The skip is scoped to *non-interactive* deliberately: **being an agent is
+  not the test — having nobody to ask is.** The three agents that file issues with a live user present
+  (`product-manager`, `task-planner`, `project-manager`) still gate. Since a subagent cannot prompt the
+  user itself, it **hands the gate up**: it plans, stops before the first mutation, and returns the
+  drafted plan as its final message for the caller to confirm and re-invoke with `--yes`. The flag is
+  **stripped from `$ARGUMENTS` before mode detection**, so bare `/issue --yes` is a straight-through
+  *batch enrich* rather than a junk issue titled `--yes`, and the flag never bleeds into a drafted title
+  or body.
+  *Consumer impact:* re-render. Interactive `/issue` now pauses where it previously acted — pass
+  `--yes` for the old straight-through behavior. Hook, autopilot, and other non-interactive agent
+  invocations are unchanged. An agent that files issues **on a live user's turn** no longer creates them
+  outright: it now returns a plan for confirmation, so a caller that wants the old straight-through
+  behavior must pass `--yes`.
 - **Autopilot's gate subloops reuse persistent named agents across rounds (#295).** Steps 5 (QA)
   and 6 (review) no longer re-invoke their gate skills fresh every round: round 1 spawns each half
   as a **named agent** (`qa-pr<N>` / `respond-qa-pr<N>`, `review-pr<N>` / `respond-rev-pr<N>`) and

@@ -44,8 +44,8 @@
     ".claude/skills/github-project-board/SKILL.md": "08dba414a75b9d412472a9c35b144fff69bbedb6f9c7b40fbb4ebd4eb69b1c45",
     ".claude/skills/github-project-management/SKILL.md": "c4640099a2855b104f2636aa179e5ad20bff4346bd692c9022f81cbacfedc3d1",
     ".claude/skills/hygiene/SKILL.md": "6918fcf43fad8261e30542ba89620c9dc0aea0130071c38e1a35d00338605539",
-    ".claude/skills/issue/SKILL.md": "26095c7c69150a33269bf9158d034b61ce8bdee2f9ea37584540e3b9e56bcb7f",
-    ".claude/skills/label-hook/SKILL.md": "02b29a4caf5b918178bb5ea5bee57a3b876c0d055eb9c2614ae44edf1d322a41",
+    ".claude/skills/issue/SKILL.md": "791c83441ffea6a7a5b1cca1922dd3aab5293514f3125ced696824510ed246f0",
+    ".claude/skills/label-hook/SKILL.md": "9b1ee406237ed6de5ec2813b35575c1762df06b07ec02e15a3a5dcc1db3a89e7",
     ".claude/skills/md-maximalist/SKILL.md": "86bd0e14c3e10f334ef276a9ed8626e38d2fe945144c2f297a6147e074185c25",
     ".claude/skills/pr-response/SKILL.md": "a71263bc6e2b3577c947526c07bb99ae29f9a2ee242350c8249fdd582954d4d2",
     ".claude/skills/prose/SKILL.md": "02051ce48632cb3edd7893e397e2e944accefc0b60ffcc8a42daeeca5dfdef70",
@@ -74,8 +74,8 @@
     ".waffle/avatars/product-manager.svg": "c68cbbd28d1f1e1703b2e744989c0fdd65bfc2f786eebf9747d488b52244d1c5",
     ".waffle/avatars/project-manager.svg": "336d96cedd1bb58ef98357e2c6a772a1a0e67ea114b6d870e72588541c585be8",
     ".waffle/avatars/task-planner.svg": "1bd6892e305bc5aa05dca39d1f7953928eee07212b6c3c3b0ef815607135edfd",
-    ".waffle/cheatsheet.html": "b16732d93edde46a142b178e1db538f338e2924fa45576c19c9b85a3f7ff2035",
-    ".waffle/CHEATSHEET.md": "bb34e461aea77a91eae80a0c6fc32733c0e47f8017160077ac5876b922b97a88",
+    ".waffle/cheatsheet.html": "f0daca2cde0718c1437aa1d90f3f1dc6cb070ec755717d819d2a10f3cf3468dc",
+    ".waffle/CHEATSHEET.md": "5a8f2f4662ce93444bfaa3ca8d48bd5965e33c56fb8e3397360f38c0e938abe4",
     ".waffle/team.html": "d9508aba100ef4b81a49c3a38478a33e23746a8fb5a4cf8c0396cc58df54174e",
     ".waffle/TEAM.md": "f41455bcbba04c8567f2830d9671fe8dde018043e673e10aef97b153e883f103"
   }

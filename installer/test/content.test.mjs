@@ -142,6 +142,13 @@ describe('label-hook skill: refusal rules and action-token gate', () => {
     assert.match(md, /a hook run must not be able to fan out new hook runs/);
     assert.match(md, /a hook run must not be able to trigger a\s*\n?\s*release/);
   });
+
+  test('the enrich dispatch never pauses on the issue skill\'s confirmation gate (#288)', () => {
+    // Belt-and-suspenders with the issue skill's own agent/CI auto-skip: a model that
+    // honored the gate inside this headless Actions job would hang the workflow run.
+    assert.match(md, /confirmation gate \*\*auto-skips for this run\*\*/);
+    assert.match(md, /a CI job can never answer a prompt/);
+  });
 });
 
 describe('delegate skill: gates, checklist, checkpoint + approval invariants', () => {
@@ -1582,6 +1589,139 @@ describe('issue skill: required template sections', () => {
   test('native sub-issue linking uses the sub_issues GraphQL feature flag', () => {
     assert.match(md, /GraphQL-Features: sub_issues/);
     assert.match(md, /addSubIssue/);
+  });
+});
+
+describe('issue skill: plan-first confirmation gate (#288)', () => {
+  let md;
+  before(() => {
+    md = readSkill('issue');
+  });
+
+  test('the workflow is split into a read-only plan phase and a mutating act phase', () => {
+    assert.match(md, /## Plan first, then act/);
+    assert.match(md, /\*\*Plan phase — read-only\.\*\*/);
+    assert.match(md, /\*\*Act phase — mutating\.\*\*/);
+    // The gate's scope — the same framing as pr-response's `--yes` convention.
+    assert.match(md, /gate covers \*\*mutating\*\*, not reading/);
+  });
+
+  test('a confirmation gate stands between the draft and any mutation', () => {
+    assert.match(md, /### 4\. Confirm the plan/);
+    assert.match(md, /gate on an explicit yes/);
+    // The act-phase mutations must sit BELOW the gate, never above it: `gh issue
+    // create` is step 5, after the step-4 gate.
+    const gateAt = md.indexOf('### 4. Confirm the plan');
+    const createAt = md.indexOf('### 5. Create the issue');
+    assert.ok(gateAt !== -1 && createAt !== -1, 'gate/create step anchors not found');
+    assert.ok(gateAt < createAt, 'the confirmation gate must precede issue creation');
+  });
+
+  test('the enrich-mode gate precedes the in-place rewrite', () => {
+    // The create-mode pin above cannot catch a deleted ENRICH gate: `### 4. Confirm
+    // the plan` and `gate on an explicit yes` both match create mode's step 4, so the
+    // whole enrich gate could be dropped with the suite still green. Enrich is the
+    // destructive mode (#288 leads with it — an in-place rewrite overwrites nuance),
+    // so it gets its own pin, scoped to its own section.
+    const section = md.slice(md.indexOf('## Enriching an existing issue'));
+    assert.ok(section.length > 0, 'enrich-mode section not found');
+    const gateAt = section.indexOf('**Confirm the plan** — the gate');
+    const editAt = section.indexOf('**Update the issue in place**');
+    assert.ok(gateAt !== -1, 'enrich mode must have a confirmation gate');
+    assert.ok(editAt !== -1, 'enrich-mode in-place rewrite step not found');
+    assert.ok(gateAt < editAt, 'the gate must precede the in-place rewrite');
+  });
+
+  test('declining the gate leaves GitHub state untouched', () => {
+    assert.match(md, /leaves GitHub state untouched/);
+  });
+
+  test('mode detection strips --yes before choosing a mode', () => {
+    // Without this, a top-down read of the mode table sends bare `/issue --yes` to the
+    // `any other text` catch-all — filing a junk issue titled `--yes`, with the gate
+    // skipped so nothing pauses to catch it.
+    assert.match(md, /Strip `--yes` from `\$ARGUMENTS` first/);
+    assert.match(md, /`--yes` is a\s*\n?\s*flag, not a mode/);
+    // The strip rule is normative only if it is read BEFORE the catch-all row.
+    const stripAt = md.indexOf('Strip `--yes` from `$ARGUMENTS` first');
+    const catchAllAt = md.indexOf('| any other text | **Create new** |');
+    assert.ok(stripAt !== -1 && catchAllAt !== -1, 'strip rule / catch-all row not found');
+    assert.ok(stripAt < catchAllAt, 'the strip rule must precede the catch-all mode row');
+  });
+
+  test('--yes skips the gate and is advertised in the argument hint', () => {
+    assert.match(md, /argument-hint:.*\[--yes\]/);
+    assert.match(md, /#### The `--yes` convention/);
+    assert.match(md, /`--yes` skips the confirmation gate/);
+  });
+
+  test('agent and CI callers auto-skip the gate — a prompt would hang a CI run', () => {
+    // The load-bearing anti-hang rule. label-hook dispatches this skill from a
+    // headless Actions job; a model that pauses there blocks the run until timeout.
+    assert.match(md, /\*\*Do not pause at the confirmation gate\.\*\*/);
+    assert.match(
+      md,
+      /agent invocation is itself the explicit signal that stands in for the confirmation/i,
+    );
+    // Precedent: delegate batch mode's explicit scope standing in for the human.
+    assert.match(md, /confirmedVia: "batch-scope"/);
+    assert.match(md, /A CI caller can never answer a prompt/);
+    // The pause is replaced by an audit trail, not by silence.
+    assert.match(md, /\*\*log\*\* the drafted plan/);
+  });
+
+  test('batch enrich drafts the whole queue and gates it in one combined review', () => {
+    assert.match(md, /Plan every issue first/);
+    assert.match(md, /one combined review/);
+    // A subset approval must be honorable — not all-or-nothing.
+    assert.match(md, /Apply only what was approved/);
+    assert.match(md, /\bsubset\b/);
+    // Batch is the mode #288 calls the scariest (a whole queue rewritten in one
+    // unreviewed pass), so its gate gets the same structural ordering assertion as
+    // create and enrich: a presence pin alone would stay green if a future edit
+    // floated the act step above the combined review.
+    const section = md.slice(md.indexOf('### Batch enrich (no argument)'));
+    assert.ok(section.length > 0, 'batch-enrich section not found');
+    const reviewAt = section.indexOf('**Present one combined review**');
+    const actAt = section.indexOf('**Then act**');
+    assert.ok(reviewAt !== -1, 'batch mode must have a combined-review gate');
+    assert.ok(actAt !== -1, 'batch-mode act step not found');
+    assert.ok(reviewAt < actAt, 'the combined review must precede the act step');
+  });
+
+  test('the plan phase may read the board and milestones it plans a placement from', () => {
+    // Step 3 asks the plan to name the MATCHING milestone, so the milestone list and
+    // the board's resolve-queries are plan-phase reads. If they are not, the gate
+    // shows a placement it never verified and the act phase silently diverges from it
+    // via 7e's `no match → skip` branch.
+    const planAt = md.indexOf('**Plan phase — read-only.**');
+    const actAt = md.indexOf('**Act phase — mutating.**');
+    assert.ok(planAt !== -1 && actAt !== -1 && planAt < actAt, 'phase anchors not found');
+    const planLine = md.slice(planAt, actAt);
+    assert.match(planLine, /milestones/, 'the milestone list must be a plan-phase read');
+    assert.match(planLine, /GraphQL \*\*queries\*\*/, 'board resolve-queries must be plan-phase reads');
+    // The old wording forbade exactly the read that step 3 depends on.
+    assert.doesNotMatch(md, /don't query-and-mutate the board yet/);
+    assert.match(md, /Query the board and the milestone list to settle this/);
+    // And the act phase applies the CONFIRMED milestone rather than re-deciding it.
+    assert.match(md, /apply the confirmed one, don't re-decide it here/);
+  });
+
+  test('the gate skip is scoped to NON-interactive callers, not to agents as a class', () => {
+    // "Agent" is a fact about the caller; "no human waiting" is a fact about the run —
+    // only the second justifies skipping a gate that exists to protect a human. Three
+    // shipped agents (product-manager, task-planner, project-manager) file issues with
+    // a live user present; a categorical agent-skip would land unreviewed content on
+    // the tracker through the most natural interactive route in the toolkit.
+    assert.match(md, /"Agent caller" is \*\*not\*\* the test — \*non-interactive\* is/);
+    assert.match(md, /\*\*Interactive agent callers — the gate still binds\.\*\*/);
+    for (const agent of ['product-manager', 'task-planner', 'project-manager']) {
+      assert.match(md, new RegExp(`\\*\\*\`${agent}\`\\*\\*`), `${agent} must be named as in-scope`);
+    }
+    // A subagent cannot prompt, so it hands the gate up rather than holding it.
+    assert.match(md, /it \*\*hands it up\*\*/);
+    assert.match(md, /Create nothing\./);
+    assert.match(md, /is \*\*not\*\* approval of\s*\n?\s*the issue drafted from it/);
   });
 });
 

@@ -46,6 +46,10 @@ CI notes: the CI token has no Projects scope — the board/milestone steps will 
 with a warning; that is expected, continue. Do **not** remove or add either trigger
 label yourself.
 
+The issue skill's confirmation gate **auto-skips for this run** — you are an agent/CI
+caller, and a CI job can never answer a prompt, so pausing for one would hang the
+workflow. Log the drafted plan in the transcript, then apply it.
+
 ## implement
 
 1. Fetch #N and its context:
