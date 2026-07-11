@@ -1265,8 +1265,12 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
     // can fire before either agent exists, so naming both unconditionally was the very defect
     // #297 closes elsewhere. The guarantee this pin guards — a stopped loop tears its agents
     // down — is unchanged; only the agent list is now honest about which of them exist.
-    assert.match(md, /Stopping the loop \*\*includes shutting down each gate agent it actually spawned\*\* \(`qa-pr<N>` once round 1 ran, and `respond-qa-pr<N>` once a finding round spawned it/);
-    assert.match(md, /Stopping the loop \*\*includes shutting down each gate agent it actually spawned\*\* \(`review-pr<N>` once round 1 ran, and `respond-rev-pr<N>` once a finding round spawned it/);
+    // (#301 F2 reworded the responder's existence test from "a finding round" — which reads as
+    // "this round's reviewer surfaced some" — to the trigger's own vocabulary, "findings to
+    // triage". Same guarantee, wording that can't be misread into skipping a hook-spawned
+    // responder's shutdown.)
+    assert.match(md, /Stopping the loop \*\*includes shutting down each gate agent it actually spawned\*\* \(`qa-pr<N>` once round 1 ran, and `respond-qa-pr<N>` once a round with findings to triage spawned it/);
+    assert.match(md, /Stopping the loop \*\*includes shutting down each gate agent it actually spawned\*\* \(`review-pr<N>` once round 1 ran, and `respond-rev-pr<N>` once a round with findings to triage spawned it/);
     // An errored round is still ONE failed round (the #220/#228 one-retry bound is untouched),
     // but the retry goes to a FRESH spawn — retrying into the wedged agent could error forever.
     const wedge = /tear the suspect agent down first and retry the round on a fresh spawn/g;
@@ -1499,6 +1503,141 @@ describe('gate loops: lazy-responder coherence + cold-start recovery (#297)', ()
     assert.match(md, /marked `<!-- waffle-adversarial-review -->` reviews/);
     assert.match(md, /<!-- waffle-pr-response -->/);
     assert.match(md, /Never re-raise a finding that table records\s+as settled/);
+  });
+});
+
+// #301: two coherence holes #297's prose left, plus the nit it deferred.
+//
+// F1 — the cold-start seeding rule triggered on an INFERENCE FROM ABSENCE ("no in-context history
+// ⇒ you are a vanished-agent re-spawn ⇒ seed"), and that inference is FALSE on a path autopilot
+// specifies: the cap hatch spawns its evidence pass UNNAMED and deliberately cold, with the bare
+// skill invocation, precisely so it is NOT anchored by what earlier rounds declined. Both spawns
+// look identical from inside (neither can see its own `name:`), so a hatch pass obeying the rule
+// seeds the verdict table and suppresses every declined finding — the exact anchoring the hatch
+// exists to escape. Fix: the signal is INVOCATION-CARRIED, never inferred, and autopilot's two
+// prompts now carry it in both directions ("replacing a vanished loop agent" / "deliberately
+// cold — do not seed").
+//
+// F2 — six teardown glosses keyed the responder's existence on "this round's reviewer was clean",
+// contradicting the trigger sentence two lines above them. On a hook-armed repo a zero-finding
+// round 1 over an undisposed hook review DOES spawn a responder; an agent following the gloss
+// skips its shutdown_request → the #295 agent leak, back again.
+//
+// F3 (the deferred nit — FIXED, not accepted) — the trigger/convergence clauses were scoped to
+// MARKED reviews, so an unmarked HUMAN review with findings converged the loop and armed
+// auto-merge over them untriaged. The general-principle sentence already said the right thing
+// ("the trigger is *untriaged findings on the PR*"); the enumerations were narrower than the
+// principle they illustrate.
+describe('gate loops: cold-start signal is invocation-carried; triggers cover any untriaged review (#301)', () => {
+  let md;
+  let qaStep;
+  let reviewStep;
+  before(() => {
+    md = readSkill('autopilot');
+    qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    assert.ok(qaStep.length > 0 && reviewStep.length > 0, 'Steps 5 and 6 are the gate loops');
+  });
+
+  test("both cap hatches tell their evidence pass it is deliberately cold — do not seed (F1)", () => {
+    // Without this sentence the pass cannot distinguish itself from a vanished-agent re-spawn,
+    // and the seeding rule would anchor it on the declined findings it was spawned cold to
+    // re-examine. It rides in the PROMPT because that is the only channel a fresh agent reads.
+    const cold = /this pass is deliberately cold — do not seed history from the PR/g;
+    assert.equal(
+      [...md.matchAll(cold)].length,
+      2,
+      "both cap hatches (QA and review) carry the deliberately-cold sentence in the pass's prompt",
+    );
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /\*\*say so in the prompt\*\*/);
+      assert.match(step, /cannot tell itself apart from a vanished-agent re-spawn/);
+    }
+  });
+
+  test('both re-spawn prompts name the agent a replacement — the seed signal (F1)', () => {
+    const respawn = /you are replacing a vanished loop agent — seed your history from the PR before reviewing/g;
+    assert.equal(
+      [...md.matchAll(respawn)].length,
+      2,
+      'both loops (Step 5 and Step 6) carry the re-spawn sentence in the re-spawn prompt',
+    );
+    // It goes to BOTH halves: #297 documented only the responder's cold start, but the reviewer
+    // is re-spawned cold by the same fallback and needs the same signal.
+    assert.match(qaStep, /for \*\*reviewer and responder alike\*\*/);
+    assert.match(reviewStep, /for reviewer and responder alike/);
+  });
+
+  test('the two reviewer skills seed on the invocation, never on an empty context (F1)', () => {
+    for (const name of ['qa', 'adversarial-review']) {
+      const skill = readSkill(name);
+      // The trigger is what the invocation SAYS…
+      assert.match(skill, /Seed \*\*only when your invocation tells\s+you you are replacing a vanished loop agent\*\*/);
+      // …and the inference-from-absence that #295 shipped is explicitly retired.
+      assert.match(skill, /An empty context is \*not\* itself the signal/);
+      assert.match(skill, /When the invocation says\s+the pass is deliberately cold, do not seed/);
+      assert.match(skill, /Absent an\s+invocation that names you a replacement, review the head on its own evidence/);
+      // The retired inference must not creep back: an empty context alone licensing the seed is
+      // exactly what collides with the hatch's cold pass.
+      assert.ok(
+        !skill.includes('If you have no in-context'),
+        `${name} must not infer the seed from an empty context — the hatch spawns one deliberately`,
+      );
+      // The bullets govern a FIRST invocation, so they must not sit under a "when resumed" scope.
+      assert.match(skill, /when you are the fresh spawn that \*replaces\* a resumable agent/);
+    }
+  });
+
+  test('pr-response keeps its own cold-start rule — no hatch pass ever precedes a responder (F1)', () => {
+    // Deliberately NOT widened: the hatch runs no pr-response after its pass ("this pass is
+    // evidence, not another fix round"), so a responder is never spawned deliberately cold and
+    // always wants its history. Its inference-from-absence trigger is sound where it lives.
+    const skill = readSkill('pr-response');
+    assert.match(skill, /Cold starts recover the history from the PR itself/);
+    assert.match(skill, /seed your verdict history and F-numbering from it/);
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /\*\*No `pr-response` follows it\*\*/);
+    }
+  });
+
+  test('no teardown gloss keys the responder on "this round\'s reviewer was clean" (F2)', () => {
+    // The trigger is untriaged findings on the PR — so the glosses that explain which agents exist
+    // at teardown must speak the trigger's vocabulary. On a hook-armed repo a clean round 1 DOES
+    // spawn a responder; a gloss-following agent would skip its shutdown_request (#295's leak).
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /A round 1 with \*\*nothing to triage\*\* leaves only the reviewer to shut down/);
+      assert.match(step, /when a round with \*\*findings to triage\*\* ever spawned it \(a round 1 with \*\*nothing to triage\*\* never did/);
+    }
+    // Including the hook-armed note, whose whole subject is a responder spawned by someone else's
+    // findings — the one place the old gloss was flatly wrong.
+    assert.match(qaStep, /\*\*resumed\*\* when a round with \*\*findings to triage\*\* already spawned it/);
+    // The retired shorthands, all six sites plus the hook-armed note, must not come back.
+    for (const gloss of ['zero-finding round 1', 'no-holes round 1', 'a finding round spawned it', 'a finding round already spawned it']) {
+      assert.ok(!md.includes(gloss), `the retired gloss "${gloss}" keys the responder on the wrong condition`);
+    }
+  });
+
+  test('the spawn trigger and convergence test cover ANY untriaged review with findings (F3)', () => {
+    // Marker-scoped clauses let an unmarked HUMAN review with findings converge the loop and arm
+    // auto-merge over them. pr-response already triages human reviews when it runs and records
+    // them in the same verdict table, so widening the SPAWN trigger needs no downstream change.
+    const any = /\*\*any untriaged review with findings\*\*/g;
+    assert.equal(
+      [...md.matchAll(any)].length,
+      4,
+      "both loops' spawn triggers and both convergence tests key on any untriaged review with findings",
+    );
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /or a human's/);
+      // Widened, not unbounded: a bare approval is not a trigger…
+      assert.match(step, /has \*\*not\*\* converged/);
+    }
+    assert.match(qaStep, /A review is a trigger only when it \*\*carries findings\*\* — a bare approval, or a comment raising none, is nothing to triage/);
+    // …and disposal is still read from the verdict table, never from a marked reply existing.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /verdict table/);
+      assert.match(step, /never from the reply's (mere )?existence/);
+    }
   });
 });
 

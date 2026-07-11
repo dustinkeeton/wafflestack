@@ -519,6 +519,41 @@ is what you reach for across a breaking one.
   B/C); the old recipe still renders, it just leaves the posture ambient.
 
 ### Fixed
+- **The cold-start seeding rule collided with the cap hatch's deliberately-cold pass (#301,
+  follow-up to #297).** The gate reviewers (`qa`, `adversarial-review`) triggered their history
+  seeding on an **inference from absence** — "no in-context history ⇒ you are a vanished-agent
+  re-spawn ⇒ seed from the PR" — and that inference is **false** on a path `autopilot` itself
+  specifies: the cap escape hatch spawns its fresh evidence pass **unnamed and deliberately cold**,
+  with the same bare skill invocation, precisely so it is *not* anchored by what earlier rounds
+  declined. Neither spawn can see its own `name:`, so a hatch pass obeying the rule seeded the
+  verdict table and suppressed every declined finding — the exact anchoring the cold spawn exists
+  to escape. The signal is now **invocation-carried, never inferred**: the reviewers seed *only*
+  when told they are replacing a vanished loop agent, an empty context explicitly is **not** the
+  signal, and `autopilot`'s prompts now carry both directions — its re-spawn prompt says *"you are
+  replacing a vanished loop agent — seed your history from the PR before reviewing"* (for reviewer
+  **and** responder), and both cap hatches say *"this pass is deliberately cold — do not seed"*.
+  `pr-response`'s own cold-start rule is deliberately **unchanged** — no responder ever follows a
+  hatch pass, so a fresh responder always wants its history. Also fixes the bullets' scope, which
+  sat under a "when resumed:" list yet govern a *first* invocation.
+- **Six teardown glosses keyed responder existence on the wrong condition (#301).** `autopilot`'s
+  spawn trigger says the responder exists when there are *untriaged findings on the PR*, "never
+  merely *this round's reviewer surfaced some*" — but six glosses still explained teardown as "a
+  zero-finding round 1 never [spawned] it" / "once a finding round spawned it". On a **hook-armed
+  repo** a clean round 1 over an undisposed hook review **does** spawn a responder, whose
+  `shutdown_request` a gloss-following agent would skip — re-creating the agent leak #297 fixed
+  elsewhere. All six (plus the hook-armed note) now use the trigger's own vocabulary: "a round 1
+  with **nothing to triage**" / "a round with **findings to triage**".
+- **The responder's spawn trigger and both convergence tests were marker-scoped (#301).** They
+  enumerated *marked* reviews only, so an unmarked **human** review with findings on an otherwise
+  clean head converged the loop and **armed auto-merge over those findings untriaged**. The four
+  clauses now key on **any untriaged review with findings** — its own, another gate's marked
+  review, *or a human's* — matching the general-principle sentence they illustrate. Scoped to
+  reviews that *carry findings* (a bare approval is not a trigger), and disposal is still read from
+  the marked reply's **verdict table**, never from the reply's existence — `pr-response` already
+  triages human findings and records them in that same table when it runs, so the widened spawn
+  trigger needs no downstream change.
+  **Consumer impact:** patch/prose-only. No installer, schema, or config change and no new config
+  keys — a `render` picks up the three reworded skills (`autopilot`, `qa`, `adversarial-review`).
 - **Five fresh-pass findings from the PR #250 signing model (#252, follow-up to #158).** Recipes
   A/B/C now pin the tag posture — `tag.gpgSign=false` (A) / `tag.gpgSign=true` (B/C) — everywhere
   they are quoted: the setup note, both stacks' `git.cmd` descriptions, the git-workflow skill's
