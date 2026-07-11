@@ -20,9 +20,10 @@ This guide argues both sides so you can pick deliberately.
 > guarantees. What you cannot do is ignore the **lock**: a missing lock fails `doctor`
 > unconditionally, and no flag changes that.
 >
-> The catch, if you ignore *every* render: `doctor` will not be your gate — it **fails on
-> purpose** when no rendered file is present, rather than passing on an empty set. You must
-> build the CI gate differently. See [Posture 2b](#posture-2b-commit-the-lock-only).
+> The catch, if you ignore *every* render: plain `doctor` will not be your gate — it **fails on
+> purpose** when no rendered file is present, rather than passing on an empty set. Give it
+> `--verify-render` and it becomes one again, by *reproducing* the render instead of reading it.
+> See [Posture 2b](#posture-2b-commit-the-lock-only).
 
 ---
 
@@ -32,7 +33,7 @@ This guide argues both sides so you can pick deliberately.
 | --- | --- | --- |
 | Work on a team, or run agents in CI — **most readers** | **Yes** | **Yes** |
 | Would rather not track *some* generated files (the `.waffle/` overview docs, a harness you don't use) | Partly — ignore a subset | **Yes** |
-| Want **zero** generated files in review, and will build the CI gate yourself | No | **Yes** — and CI must render |
+| Want **zero** generated files in review | No | **Yes** — and gate with `--verify-render` |
 | Just want agent tooling in your own working copy | No | No |
 
 The last row forfeits everything wafflestack's CI story offers. That is sometimes exactly the
@@ -153,6 +154,7 @@ Everything above depends on the drift gate, so be precise about what it does.
 | Managed file absent | fail (`missing: <f>`) | pass (`missing (tolerated): <f>`) |
 | Managed file edited by hand | **fail** (`modified: <f>`) | **fail** (`modified: <f>`) |
 | **Every** managed file absent | fail — all of them missing | **fail** — a repo with no render is a repo that never rendered ([Posture 2b](#posture-2b-commit-the-lock-only)) |
+| Config edited, never re-rendered | **pass** — see below | **pass** — see below |
 
 > [!WARNING]
 > **`--allow-missing` tolerates absent *rendered files*. It never tolerates an absent
@@ -171,7 +173,42 @@ const driftOk = allowMissing
 Modified files fail either way. That is the whole point: the flag relaxes *presence*, never
 *integrity*.
 
-And it relaxes presence only up to a limit. `nothingPresent` — every lock-tracked file absent —
+### The one thing plain `doctor` cannot see: a forgotten re-render
+
+Look again at the last row of that table. `doctor` compares your **files** to your **lock**. It
+never asks whether either still reflects `.waffle/waffle.yaml`. So when you edit your config and
+forget to re-render, the files and the lock go stale **together** — they still agree with each
+other, and the check passes. Your agents keep behaving the old way, and nothing tells you.
+
+`--verify-render` closes it. It renders your committed inputs — `.waffle/waffle.yaml`, your
+extensions, the pinned toolkit — into a **temp directory**, hashes what the render *would*
+produce, and compares that against your committed lock:
+
+```yaml
+# .waffle/waffle.yaml
+doctor:
+  flags: --verify-render
+```
+
+```
+stale render: .claude/agents/docs-agent.md — the config would render different content than the lock records
+the lock does not match what .waffle/waffle.yaml (+ .waffle/extensions/) would render — re-render and commit the result
+```
+
+Two properties are worth knowing. It **never touches your working tree** — the render goes to a
+scratch dir that is deleted afterwards, so it is safe to run anywhere, including on a dirty
+checkout. And it is **not circular**, which the obvious homemade version is: running `render`
+and then `doctor` proves nothing, because `render` rewrites the very lock `doctor` then checks
+against. Verifying against the *unmodified, committed* lock is what gives the answer meaning.
+
+It costs a little: it needs the toolkit resolved (and the network, if you pull stacks from an
+external `source:`), so it is slower than a pure hash check. That is why it is opt-in. Turn it on
+if "someone changed the config and forgot to re-render" is a mistake your team can make — which
+is most teams.
+
+### The limits of tolerating absence
+
+`--allow-missing` relaxes presence only up to a limit. Every lock-tracked file absent
 fails the gate even with the flag, on the same reasoning that a missing lock does: a checkout
 with no render **is** a repo that never rendered, and the flag exists to tolerate a *subset* of
 absent files, not the whole set. A check that inspected nothing does not get to report success.
@@ -179,17 +216,23 @@ You get a named failure that tells you what to do instead:
 
 ```
 every managed file (58/58) is absent — this check verified nothing; run `wafflestack render`,
-or gate on `render` + `git diff --exit-code .waffle/waffle.lock.json` if the repo deliberately
-commits only the lock
+or add `--verify-render` to verify by re-rendering the committed config against the lock
 ```
 
-Set the flag through the `github-workflow` stack's `doctor.flags` config key, which the
-shipped workflow interpolates into its run line:
+That is the escape hatch, and it is a principled one rather than a louder flag. The guard's rule
+is *never pass having checked nothing*; `--verify-render` doesn't weaken it, it gives the check
+something to do — **"I have no renders on purpose. Verify by rendering instead."** Which is
+exactly [Posture 2b](#posture-2b-commit-the-lock-only).
+
+Set flags through the `github-workflow` stack's `doctor.flags` config key, which the
+shipped workflow interpolates into its run line. They compose:
 
 ```yaml
 # .waffle/waffle.yaml
 doctor:
-  flags: --allow-missing
+  flags: --allow-missing                    # Posture 2 — some renders gitignored
+  # flags: --verify-render                  # any posture — also catch a forgotten re-render
+  # flags: --allow-missing --verify-render  # Posture 2b — the whole render gitignored
 ```
 
 ---
@@ -199,7 +242,8 @@ doctor:
 ### Posture 1: commit the render + lock — the default, and probably your answer
 
 Commit `.waffle/waffle.yaml`, the rendered output, and `.waffle/waffle.lock.json`. Leave
-`doctor.flags` empty.
+`doctor.flags` empty — or set `--verify-render`, which is worth it in any posture: it is the
+only thing that catches the re-render someone forgot.
 
 **Fits**: teams; any repo running agents in CI; anywhere you want the drift gate at full
 strength; anyone who wants their agents' behavior visible in code review. **Costs**: diff
@@ -252,55 +296,67 @@ answers it, and it answers it without giving up the shared-source guarantee.
 tax" — you never pay that tax (see the note above). It is *only* about keeping generated output
 out of git and out of review. That is a genuine preference, held by real teams, and it is
 enough to justify the posture. It is not enough to make this the default. Posture 1 is the
-default; this is for a team that specifically does not want generated output in review and will
-build its CI gate to suit.
+default; this is for a team that specifically does not want generated output in review.
 
-And it has one sharp edge you must design your CI around.
+#### The CI gate: one config line
 
-> [!CAUTION]
-> **`doctor` cannot be your gate in this posture, and it will tell you so.** In a fresh CI
-> checkout there are no rendered files, so there is nothing for `doctor` to check — with or
-> without `--allow-missing`. It **fails**, deliberately:
->
-> ```
-> every managed file (58/58) is absent — this check verified nothing; run `wafflestack render`,
-> or gate on `render` + `git diff --exit-code .waffle/waffle.lock.json` if the repo deliberately
-> commits only the lock
-> ```
->
-> The flag tolerates a *subset* of absent renders. It does not tolerate all of them, because a
-> checkout with no render is indistinguishable from a repo that never rendered — and **a green
-> build that inspected nothing is worse than a red one, because it looks like protection.**
->
-> The shipped `waffle-doctor.yml` only runs `doctor` — it does not render — so a lock-only repo
-> that installs it as-is gets a red build until it builds the gate below. That red is the
-> correct answer to a check that has nothing to look at; it is not a bug to flag-away.
+Set both flags. That is the whole setup — the shipped `waffle-doctor.yml` needs no editing and
+no ejecting:
 
-#### The CI recipe that actually works
+```yaml
+# .waffle/waffle.yaml
+doctor:
+  flags: --allow-missing --verify-render
+```
 
-Have CI **render its own files**, then diff the resulting lock against the committed one:
+The two do exactly opposite halves of the job, which is why the pair is the answer:
+
+- **`--allow-missing`** — nothing is on disk to compare, and that is on purpose, so don't fail
+  on the absences.
+- **`--verify-render`** — *but check something anyway*: re-render the committed config into a
+  temp dir and hold the result against the committed lock.
+
+You get a real gate. A config change that was never re-rendered, an edited extension, a floating
+toolkit ref that quietly changed your agents — each one produces a `stale render:` line and a red
+build. Without `--verify-render` the same run fails for a different and much less useful reason
+(*"this check verified nothing"*), because a green build that inspected nothing is worse than a
+red one — it looks like protection.
+
+> [!IMPORTANT]
+> **`--verify-render` never writes to your working tree**, which is what makes it trustworthy
+> here. It renders to a scratch directory and compares against your **unmodified, committed**
+> lock. Contrast that with the homemade version below, which mutates the checkout.
+
+#### The manual recipe (older toolkits, or if you'd rather see the render)
+
+Before `--verify-render` existed, the way to gate this posture was to have CI render its own
+files and diff the resulting lock against the committed one. It still works:
 
 ```yaml
 - run: npx github:dustinkeeton/wafflestack#v0.11.0 render
 - run: git diff --exit-code .waffle/waffle.lock.json
 ```
 
-Rendering in CI also recovers the CI-agent story: a real `.claude/skills/` now exists in the
-runner for a CI-dispatched agent to read. You get that back without putting it in git.
+It has one genuine advantage worth knowing: rendering in CI leaves a real `.claude/skills/` in
+the runner, so a CI-dispatched agent has something to read. If you dispatch agents in CI, you
+want this **as well as** the doctor gate — but as a *setup step*, not as your drift check. As a
+check it is strictly weaker: it mutates the checkout, it needs git, and it reports "the lock file
+differs" rather than naming the drifted files.
 
 > [!WARNING]
-> **Do not run `doctor` after `render` and call it a gate — it is a tautology.** `render`
-> rewrites the lock, so `doctor` then compares the files against a lock derived from those
-> very files. It cannot fail. Change an extension, never re-render, never commit the lock —
-> render in CI, run doctor, and it reports `all managed files match the lock manifest`, exit
-> 0. The unreviewed change sails straight through.
+> **Whichever recipe you use, do not run `doctor` *after* `render` and call it a gate — that is
+> a tautology.** `render` rewrites the lock, so `doctor` then compares the files against a lock
+> derived from those very files. It cannot fail. Change an extension, never re-render, never
+> commit the lock — render in CI, run plain doctor, and it reports `all managed files match the
+> lock manifest`, exit 0. The unreviewed change sails straight through.
 >
-> The check that catches it is the **lock diff** against the committed lock, which flags the
-> changed file immediately. That, not `doctor`, is your gate in this posture.
+> This is precisely the trap `--verify-render` is built to avoid: it renders to a temp dir and
+> compares against the lock **as committed**, which the render never touches. Run it *instead of*
+> the in-place render, or before it — never after.
 
 **Pin the toolkit ref to a tag** (`#v0.11.0`, not a floating branch). If it floats, an
 upstream toolkit change can alter your agents' behavior with no commit in your repo at all.
-The lock diff *will* catch that as a red build — but only if whoever fixes the red actually
+The gate *will* catch that as a red build — but only if whoever fixes the red actually
 reads the diff, rather than committing the new lock to make it go away. That temptation is
 the posture's second-order risk, and it is a human one.
 
@@ -327,9 +383,10 @@ repository. That is a legitimate and common thing to want.
 > [!CAUTION]
 > **Be honest about what this forfeits — it is everything.** No CI agents (nothing in the
 > checkout for them to read). No teammate benefit. No drift gate: the CI `doctor` job
-> **cannot run at all**, because the lock it needs is not in git. Do not set
-> `--allow-missing` and imagine it rescues this — it does not. In this posture you are not
-> running a relaxed gate, you are running no gate.
+> **cannot run at all**, because the lock it needs is not in git. No flag rescues this. Not
+> `--allow-missing` — a missing lock fails before it is even read. Not `--verify-render` — it
+> checks a fresh render *against the lock*, and there is no lock to check it against. In this
+> posture you are not running a relaxed gate, you are running no gate.
 
 Everyone who wants the waffle must install the toolkit and run `render` themselves, and
 nothing verifies that any two people are running the same thing.
@@ -346,12 +403,13 @@ uncluttered by it.
 
 | | Posture 1<br>render + lock | Posture 2<br>lock + subset | Posture 2b<br>lock only | Posture 3<br>neither |
 | --- | --- | --- | --- | --- |
-| **CI `doctor` gate** | Full strength | Full on committed files | ⚠️ **Fails by design — nothing present to check.** Use a lock diff instead | **Cannot run** |
-| **What actually gates CI** | `doctor` | `doctor` | `render` + `git diff --exit-code` on the lock | *nothing* |
-| **`doctor.flags`** | *(empty)* | `--allow-missing` | n/a — don't gate on doctor | n/a — no lock to check |
+| **CI `doctor` gate** | Full strength | Full on committed files | Full — by re-rendering, not by reading files | **Cannot run** |
+| **What actually gates CI** | `doctor` | `doctor` | `doctor --verify-render` | *nothing* |
+| **`doctor.flags`** | *(empty)*, or `--verify-render` | `--allow-missing` | `--allow-missing --verify-render` | n/a — no lock to check |
 | **Hand-edits caught?** | Yes | Yes, on committed files | Yes, locally — CI has nothing to edit | No |
-| **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person, and CI | Every person, always |
-| **CI agents can read skills** | Yes | Yes, if committed | Yes — CI renders them | **No** |
+| **Forgotten re-render caught?** | Only with `--verify-render` | Only with `--verify-render` | Yes — that *is* the gate | No |
+| **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person; CI reproduces it | Every person, always |
+| **CI agents can read skills** | Yes | Yes, if committed | Only if CI also renders in place | **No** |
 | **Fresh clone works** | Yes | Yes | No — render first | No — install + render first |
 | **Agent behavior reviewable in a PR** | **Yes** | Partly | No — only a hash changes | No |
 | **Generated files in your diffs** | Yes | Some | **None** | None |
@@ -385,8 +443,9 @@ output. Project-specific additions go in `.waffle/extensions/agents/<name>.md` o
 `.waffle/extensions/skills/<name>.md`, which are appended to the rendered item and survive
 every render. Project parameters go in `.waffle/waffle.yaml`.
 
-Under Postures 1 and 2, `doctor` enforces this for you. Under Posture 2b, the lock diff does.
-Under Posture 3, nothing does.
+Under Postures 1 and 2, `doctor` enforces this for you. Under Posture 2b, `--verify-render`
+does — by rendering the truth and comparing it to what you committed. Under Posture 3, nothing
+does.
 
 Which is, in the end, the whole document in one line: **the lock is what buys you a
 guarantee, and the render is what buys you a review.** Decide how much of each you need.

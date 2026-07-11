@@ -1290,8 +1290,12 @@ config:
       the workflow managed instead of ejecting it: only modified files fail the check, absent
       ones are tolerated (a missing lock still fails). The flag tolerates a *subset* of absent
       renders, not all of them — a checkout where EVERY managed file is absent fails too, since
-      it verified nothing. A repo that gitignores its whole render should gate on `render` +
-      `git diff --exit-code .waffle/waffle.lock.json` instead of on doctor. Empty by default.
+      it verified nothing. Add `--verify-render` to also check the lock against a fresh render of
+      the committed config (in a temp dir; the tree is never touched), which catches a config or
+      extension change that was never re-rendered — invisible to the plain check, since the files
+      and the lock go stale together. `--allow-missing --verify-render` is therefore the gate for
+      a repo that gitignores its whole render: nothing is present to compare, so the render is
+      reproduced and checked against the lock instead. Empty by default.
   labelHook.enrichLabel:
     required: false
     default: "waffle:enrich"
