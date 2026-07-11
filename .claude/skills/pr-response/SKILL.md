@@ -262,3 +262,18 @@ The honesty constraints bind agents harder, not softer. An agent responding to a
 work has an obvious incentive to score inconvenient findings low. Score the finding, not the
 author — a **Decline must name the reason the finding is wrong**, never merely that fixing it would
 be work. "Effort/Risk 0, declining" is not a verdict; it is a confession.
+
+**Being resumed across rounds.** An orchestrating loop (autopilot's Steps 5–6) may keep the
+invoking agent alive and **resume** it — "new review(s) posted on head `<sha>` — triage them" —
+instead of invoking this skill fresh each round. When resumed:
+
+- **Re-read the PR state fresh from the new head.** The branch moved (you pushed it): never trust
+  cached file contents or a cached head SHA when scoring the new findings.
+- **Verdict continuity is the point.** You remember *why* you declined or deferred each earlier
+  finding, so **do not flip a settled verdict without new evidence in the new head** — and equally,
+  do not silently re-implement something you already declined. Keep the F-numbering **stable across
+  rounds**: continue the sequence, never restart at F1.
+- **The reply and the return are unchanged.** The idempotent one-reply PATCH (step 6) already
+  handles posting across rounds, and the per-verdict + implemented counts (step 7) are your reply
+  each round — the implemented count is the loop's convergence signal, so report it honestly: 0
+  means nothing was left to fix, not that you are tired of the round.

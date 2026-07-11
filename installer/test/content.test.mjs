@@ -1140,6 +1140,146 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
   });
 });
 
+// #295: the two gate loops reuse ONE named agent per gate role across their rounds — round 1
+// spawns, later rounds resume via SendMessage — instead of re-invoking each skill fresh. The
+// optimization is only safe because of four load-bearing properties, each pinned below: the
+// structured return contract (and therefore convergence) is unchanged; a vanished agent falls
+// back to a fresh spawn, so correctness never depends on persistence; the cap hatch's evidence
+// pass stays a FRESH spawn (an agent that lived through every fix round is exactly the wrong
+// context to certify the result — #234's "a clean fresh pass IS the convergence evidence");
+// and no gate agent outlives its loop, on every exit path including the error/red stops.
+describe('autopilot skill: persistent gate agents across subloop rounds (#295)', () => {
+  let md;
+  let qaStep;
+  let reviewStep;
+  before(() => {
+    md = readSkill('autopilot');
+    // Assert each loop's wiring inside its OWN step — the two steps carry deliberately
+    // parallel prose, so a whole-document match would let one loop satisfy the other's pin.
+    qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    assert.ok(qaStep.length > 0 && reviewStep.length > 0, 'Steps 5 and 6 are the gate loops');
+  });
+
+  test('QA loop: round 1 spawns named agents, later rounds resume them via SendMessage', () => {
+    // The named agents are the round VEHICLE — one per gate role, named per PR and per loop.
+    assert.match(qaStep, /Agent\(name: "qa-pr<N>"/);
+    assert.match(qaStep, /Agent\(name: "respond-qa-pr<N>"/);
+    // Round 1 spawns; every later round resumes the SAME agent on the new head.
+    assert.match(qaStep, /Round 1 spawns them/);
+    assert.match(qaStep, /Every later round resumes the same agent/);
+    assert.match(qaStep, /SendMessage\(to: "qa-pr<N>", content: "the PR head moved to <sha>/);
+    // The point of persistence: no re-deriving the PR, no re-litigating settled verdicts.
+    assert.match(qaStep, /why it settled each verdict/);
+    assert.match(qaStep, /re-litigates?( a finding round 1 already declined| settled verdicts)/);
+  });
+
+  test('review loop: same wiring under its own agent names', () => {
+    assert.match(reviewStep, /Agent\(name: "review-pr<N>"/);
+    assert.match(reviewStep, /Agent\(name: "respond-rev-pr<N>"/);
+    assert.match(reviewStep, /Every later round resumes the same agent/);
+    assert.match(reviewStep, /SendMessage\(to: "review-pr<N>", content: "the PR head moved to <sha>/);
+    // A resumed reviewer keeps its finding history but stays hostile to NEW code.
+    assert.match(reviewStep, /new blood in the diff gets the same hostility/);
+  });
+
+  test('the structured return contract — and therefore convergence — is unchanged', () => {
+    // Persistence changes the vehicle, not the contract: same counts, same 0-implemented stop.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /The return contract is identical/);
+      assert.match(step, /A round that implements \*\*0 findings\*\* is the terminal signal/);
+    }
+    // The PR's own marked reviews stay the ground truth — never an agent's self-report.
+    assert.match(qaStep, /never take an agent's word over the PR's own state/);
+  });
+
+  test('a vanished agent degrades to a fresh spawn — correctness never depends on persistence', () => {
+    assert.match(qaStep, /A vanished agent degrades to a fresh spawn/);
+    assert.match(reviewStep, /A vanished agent degrades to a fresh spawn/);
+    // The fallback is concrete: re-spawn under the same name with the full round-1 prompt.
+    assert.match(qaStep, /spawn a fresh agent under the same name with the full round-1 prompt/);
+    assert.match(qaStep, /correctness never depends on it/i);
+  });
+
+  test('each cap hatch\'s evidence pass is spawned FRESH, never the standing gate agent', () => {
+    // #234: the hatch's value is a CLEAN look at the final state. Reusing the agent that lived
+    // through every fix round would hand the brief back to an anchored context — the one thing
+    // the evidence pass exists to avoid. These sit beside the pinned "once more, outside the
+    // loop" sentences, which stay literally true only because the pass is a fresh invocation.
+    assert.match(qaStep, /Spawn this pass fresh — never the standing `qa-pr<N>` agent/);
+    assert.match(reviewStep, /Spawn this pass fresh — never the standing `review-pr<N>` agent/);
+    assert.match(qaStep, /run `qa <pr>` \*\*once more, outside the loop\*\*/);
+    assert.match(reviewStep, /run `adversarial-review <pr>` \*\*once more, outside the loop\*\*/);
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /clean pass credible as convergence evidence/);
+    }
+  });
+
+  test('no gate agent outlives its loop — teardown is unconditional, on every exit path', () => {
+    // The guardrail is the owning statement…
+    assert.match(md, /Persistent gate agents are loop-scoped/);
+    assert.match(md, /\*\*No gate agent outlives its loop\.\*\*/);
+    assert.match(md, /converged, cap-reached, red, or errored/);
+    // …and each loop's exit item repeats it as an unconditional step.
+    for (const step of [qaStep, reviewStep]) {
+      assert.match(step, /Teardown is unconditional:/);
+      assert.match(step, /shutdown_request/);
+    }
+  });
+
+  test('failure handling: red/errored rounds still tear the agents down; a retry never re-enters a wedged context', () => {
+    // A stopped loop leaks nothing — both red-round bullets shut their agents down.
+    assert.match(md, /Stopping the loop \*\*includes shutting its gate agents down\*\* \(`qa-pr<N>`, `respond-qa-pr<N>`\)/);
+    assert.match(md, /Stopping the loop \*\*includes shutting its gate agents down\*\* \(`review-pr<N>`, `respond-rev-pr<N>`\)/);
+    // An errored round is still ONE failed round (the #220/#228 one-retry bound is untouched),
+    // but the retry goes to a FRESH spawn — retrying into the wedged agent could error forever.
+    const wedge = /tear the suspect agent down first and retry the round on a fresh spawn/g;
+    assert.equal(
+      [...md.matchAll(wedge)].length,
+      2,
+      'both skill-error bullets (QA loop and review loop) route the retry to a fresh spawn',
+    );
+    assert.match(md, /never retry into a wedged context/);
+  });
+});
+
+// #295: the three gate skills document being RESUMED with a new PR head — the other half of the
+// contract above. A resumed pass must re-derive from the new head (the branch moved under it)
+// while keeping the judgment history that makes persistence worth having; its structured return
+// stays identical, so the loops' convergence logic never learns the difference.
+describe('gate skills: documented as resumable across rounds (#295)', () => {
+  test('qa: re-read the diff fresh from the new head, keep the verdict history', () => {
+    const md = readSkill('qa');
+    assert.match(md, /Being resumed across rounds/);
+    assert.match(md, /Re-read the diff and the PR state fresh from the new head/);
+    assert.match(md, /Keep your verdict history/);
+    // The return shape is what autopilot's convergence reads — it must not change on resume.
+    assert.match(md, /identical in shape, so the loop's convergence logic is unaffected/);
+  });
+
+  test('adversarial-review: fresh diff on the new head, no re-posting closed holes, new code still gets hostility', () => {
+    const md = readSkill('adversarial-review');
+    assert.match(md, /Being resumed across rounds/);
+    assert.match(md, /Re-read the diff and the PR state fresh from the new head/);
+    assert.match(md, /Keep your finding history/);
+    assert.match(md, /same hostility as round 1/);
+  });
+
+  test('pr-response: verdict continuity is the point — no flipping a settled verdict, stable F-numbering', () => {
+    const md = readSkill('pr-response');
+    assert.match(md, /Being resumed across rounds/);
+    assert.match(md, /Verdict continuity is the point/);
+    // The anti-flip rule cuts BOTH ways: don't reverse a Decline without new evidence, and
+    // don't quietly implement what you already declined.
+    assert.match(md, /do not flip a settled verdict without new evidence in the new head/);
+    assert.match(md, /do not silently re-implement something you already declined/);
+    // F-numbers must keep counting across rounds, or the PR reply's finding refs collide.
+    assert.match(md, /never restart at F1/);
+    // The implemented count is the loop's stop signal — an honest 0 is load-bearing.
+    assert.match(md, /not that you are tired of the round/);
+  });
+});
+
 // #228: the qa skill itself — the functional sibling of adversarial-review. These pin the
 // posting mechanics (one review, file payload, single-line commands — the #188 allowlist
 // discipline) and the marker contract: the qa marker is its own, and the adversarial-review
