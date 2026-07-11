@@ -6,7 +6,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys, makeGuard } from './template.mjs';
+import { substitute, placeholderKeys, makeGuard, reachableKeys } from './template.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
@@ -19,6 +19,8 @@ import {
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   resolveLockFile,
+  localOverlayContribution,
+  overlayFedRender,
   HARNESS_PATTERNS,
   CONFIG_FILE,
   LOCK_FILE,
@@ -182,6 +184,11 @@ export function renderProject({
   // Toolkit-wide, not per-stack: see compileGuards.
   const guards = compileGuards(toolkit, errors);
 
+  // Every config key this render reaches, across all stacks — the seed keys written in the
+  // templates plus the ones reached only through composition. Feeds `renderedWithLocalOverlay`
+  // in the lock below; see `overlayFedRender`.
+  const reached = new Set();
+
   for (const [stackName, { stack, items }] of groups) {
     // One resolver per enabled target — the reserved `harness.*` keys resolve
     // differently per output target (Claude vs. Codex attribution, etc.).
@@ -194,6 +201,7 @@ export function renderProject({
     // Scope required-config to keys the *selected* items actually reference — installing
     // one skill from a stack must not demand config only its siblings use.
     const usedKeys = collectUsedKeys(items);
+    for (const key of reachableKeys(usedKeys, primaryResolver)) reached.add(key);
     const missing = missingRequiredKeys(stack, project.values, (values, key) => primaryResolver(key), usedKeys);
     if (missing.length) {
       errors.push(
@@ -294,6 +302,18 @@ export function renderProject({
   // doctors clean, since doctor/upgrade treat a missing `sources` as "all built-in").
   const sources = collectSourceProvenance(groups, producedBy, lockFiles);
 
+  // Did the gitignored overlay feed this render (#308 review)? `--verify-render` reproduces the render
+  // from the *committed* inputs, and the overlay is by definition not among them — so without this
+  // it cannot tell "the config drifted" from "an input I was never given is missing", and reports
+  // the latter as the former. Recording it here is what lets doctor refuse to answer instead.
+  //
+  // Emitted ONLY when true, and only when an overlay key was actually *reached* by the render —
+  // never on mere presence of the file. Both halves protect the lock's machine-stability: an
+  // overlay holding just `git.signingKey` leaves the lock byte-identical to a machine with no
+  // overlay at all, as does having no overlay. A naive presence flag would put a gitignored file's
+  // existence into committed content and red every CI checkout — the disease, not the cure.
+  const overlayFed = overlayFedRender(localOverlayContribution(cwd), reached);
+
   // `stacks:` records the enabled built-in stack names; `sources` (when present) records each
   // external source's resolved provenance and the files it produced. External files also live in
   // `files` so doctor drift-checks them like any managed file.
@@ -302,6 +322,7 @@ export function renderProject({
     targets: project.targets,
     stacks: project.stacks,
     include: project.include,
+    ...(overlayFed ? { renderedWithLocalOverlay: true } : {}),
     ...(sources.length ? { sources } : {}),
     files: lockFiles,
   };

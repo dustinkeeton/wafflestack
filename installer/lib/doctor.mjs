@@ -200,11 +200,26 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
  *
  * A render that outright fails (bad config, unresolvable source) is a failure of the check, not a
  * clean bill of health: `ok: false` with the render's own errors. Same for a missing toolkit root.
+ *
+ * And the same for an input that is not here to render *from* (#308 review). The `.local` overlay is
+ * gitignored by design, so it does not exist in a CI checkout — while the lock was rendered on a
+ * machine where it did. Reproducing the render without it silently substitutes stack `default:`s
+ * (`git.botEmail` is `required: false`, so nothing errors) and every file the overlay touched comes
+ * back `stale`. That is a missing input, not drift, and reporting it as drift is worse than useless:
+ * the remediation it implies — re-render and commit — would bake the default over the repo's real
+ * bot identity. So when the lock says the overlay fed the render and the overlay is absent, refuse
+ * the question: `ok: false` with an error that says which input is missing, and no drift at all.
  */
 export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, sourceCacheDir = defaultSourceCacheDir() }) {
   const result = { evaluated: false, ok: false, checked: 0, stale: [], absent: [], unexpected: [], errors: [] };
   if (!toolkitRoot) {
     result.errors.push('--verify-render needs the toolkit to render from, but no toolkit root was supplied');
+    return result;
+  }
+  if (lock?.renderedWithLocalOverlay && !exists(resolveLocalConfigFile(cwd).file)) {
+    result.errors.push(
+      `cannot verify the render: the lock was rendered with ${LOCAL_CONFIG_FILE}, which supplied a value the render used — and that file is not here. It is gitignored by design, so it is absent in every fresh CI checkout. Re-rendering without it would fall back to stack defaults and report every file it touched as stale, so this check refuses to guess. Move the render-affecting keys into ${CONFIG_FILE} (see docs/gitignore.md — a repo that verifies its render in CI must commit the values that feed it), or run --verify-render where the overlay exists.`,
+    );
     return result;
   }
 

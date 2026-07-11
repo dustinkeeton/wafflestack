@@ -335,6 +335,66 @@ export function loadProjectConfig(cwd, notes = []) {
   };
 }
 
+/** Top-level overlay keys that reshape *which* files render, not just what they contain. */
+const RENDER_SHAPING_KEYS = ['targets', 'stacks', 'bundles', 'include', 'eject'];
+
+/**
+ * What the gitignored local overlay contributes to a render (#308 review).
+ *
+ * `configKeys` are the overlay's `config:` leaves as dotted paths, so a caller can ask whether any
+ * of them fed the render. Leaves, not branches: `git.agentIdentities.docs-agent.botEmail` is what
+ * the overlay *supplies*, while a template references the whole `git.agentIdentities` map — so the
+ * caller must match a key against its ancestors too (see `overlayFedRender`).
+ *
+ * `shapesRender` is the blunter question: an overlay that declares `stacks:`/`targets:`/`include:`
+ * changes the *file set*, not merely the bytes inside it. Rendering without it produces different
+ * paths, which surface as `absent`/`unexpected` rather than `stale` — the same false-drift bug from
+ * the other end, so it counts too.
+ */
+export function localOverlayContribution(cwd) {
+  const overlay = resolveLocalConfigFile(cwd);
+  if (!exists(overlay.file)) return { present: false, configKeys: new Set(), shapesRender: false };
+  const raw = readYaml(overlay.file) ?? {};
+  const configKeys = new Set();
+  const walk = (node, prefix) => {
+    if (!isPlainObject(node)) return;
+    for (const [key, value] of Object.entries(node)) {
+      const dotted = prefix ? `${prefix}.${key}` : key;
+      if (isPlainObject(value)) walk(value, dotted);
+      else configKeys.add(dotted);
+    }
+  };
+  walk(raw.config ?? {}, '');
+  return {
+    present: true,
+    configKeys,
+    shapesRender: RENDER_SHAPING_KEYS.some((key) => raw[key] !== undefined),
+  };
+}
+
+/**
+ * Did the overlay supply a value this render actually consumed? True when it declares a
+ * render-shaping key, or when any config leaf it supplies is reached by the render — matching a
+ * leaf against `reached` *and its ancestors*, so an overlay entry inside a map (`git.agentIdentities.
+ * docs-agent.botEmail`) still counts as feeding the `{{git.agentIdentities}}` the templates name.
+ *
+ * This is the whole machine-stability contract of `renderedWithLocalOverlay`: an overlay holding
+ * only keys the render never reads (`git.signingKey`, a board id) must NOT set it, or the lock
+ * would record the presence of a gitignored file and go machine-dependent — red in every CI
+ * checkout, which is the very disease the flag exists to cure.
+ */
+export function overlayFedRender(contribution, reached) {
+  if (!contribution.present) return false;
+  if (contribution.shapesRender) return true;
+  for (const key of contribution.configKeys) {
+    const parts = key.split('.');
+    for (let i = parts.length; i > 0; i--) {
+      if (reached.has(parts.slice(0, i).join('.'))) return true;
+    }
+  }
+  return false;
+}
+
 // Keys a `{ name, source, ref }` external stack entry may carry. An unknown key is rejected
 // (catches a `pin:`/`rev:` typo instead of silently ignoring the pin).
 const STACK_ENTRY_KEYS = new Set(['name', 'source', 'ref']);

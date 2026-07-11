@@ -591,6 +591,31 @@ is what you reach for across a breaking one.
   commits its render will see a diff where the `model:` line disappears from each affected agent.
 
 ### Fixed
+- **`doctor --verify-render` reported a missing gitignored input as drift, and told you to commit
+  the damage (#308 review, follow-up to #314).** `--verify-render` reproduces the render from the
+  **committed** inputs — and `.waffle/waffle.local.yaml` is not one of them: it is gitignored by
+  design, so it does not exist in a CI checkout. But the lock was rendered on a machine where it
+  *did*. Reproducing the render without it silently substituted the stack `default:` for every
+  overlay-held value (`git.botEmail` is `required: false` with a default, so nothing errored), and
+  every file the overlay touched came back **`stale`** — for a repo that had changed nothing. Worse
+  than a false red: the remediation it printed, *"re-render and commit the result"*, would have baked
+  `bot@wafflenet.io` over the repo's real bot identity. And it broke the exact posture #314 exists to
+  enable — a lock-only repo following the prescribed layering (`schema/SETUP.md`: account-specific
+  `git.botEmail` / `git.signingKey` in the overlay) got false drift from the one gate available to
+  it. The lock now records **`renderedWithLocalOverlay`** when the overlay actually *fed* the render,
+  and `doctor` refuses the question rather than answering it wrong: a specific `cannot verify the
+  render:` error naming the missing input, and **no drift at all**. A missing input is not drift.
+  The flag turns on the overlay's *contribution*, not its presence — an overlay holding only values
+  the render never reads (a board id, a local path) leaves the lock **byte-identical** to a machine
+  with no overlay, so the presence of a gitignored file never leaks into committed content. It counts
+  a key reached only through **nested substitution** (`git.cmd: … {{git.botEmail}}`) — which is how
+  the hazard actually arises, and which a scan of the template bodies alone cannot see.
+  **Consumer impact:** `doctor --verify-render` in CI now requires that the values your render reads
+  are **committed**, not overlay-held — commit a public bot address (`bot@wafflenet.io` or one on
+  your own domain), or keep `--verify-render` as a local pre-push check. A repo that already commits
+  its identity values is unaffected. `renderedWithLocalOverlay` is emitted only when true, so an
+  existing lock is byte-identical and re-rendering changes nothing for repos with no overlay.
+  See [`docs/gitignore.md`](docs/gitignore.md#one-real-constraint-the-values-it-renders-from-must-be-committed).
 - **The cold-start seeding rule collided with the cap hatch's deliberately-cold pass (#301,
   follow-up to #297).** The gate reviewers (`qa`, `adversarial-review`) triggered their history
   seeding on an **inference from absence** — "no in-context history ⇒ you are a vanished-agent
