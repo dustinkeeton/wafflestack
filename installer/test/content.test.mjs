@@ -1617,8 +1617,36 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     assert.ok(gateAt < createAt, 'the confirmation gate must precede issue creation');
   });
 
+  test('the enrich-mode gate precedes the in-place rewrite', () => {
+    // The create-mode pin above cannot catch a deleted ENRICH gate: `### 4. Confirm
+    // the plan` and `gate on an explicit yes` both match create mode's step 4, so the
+    // whole enrich gate could be dropped with the suite still green. Enrich is the
+    // destructive mode (#288 leads with it — an in-place rewrite overwrites nuance),
+    // so it gets its own pin, scoped to its own section.
+    const section = md.slice(md.indexOf('## Enriching an existing issue'));
+    assert.ok(section.length > 0, 'enrich-mode section not found');
+    const gateAt = section.indexOf('**Confirm the plan** — the gate');
+    const editAt = section.indexOf('**Update the issue in place**');
+    assert.ok(gateAt !== -1, 'enrich mode must have a confirmation gate');
+    assert.ok(editAt !== -1, 'enrich-mode in-place rewrite step not found');
+    assert.ok(gateAt < editAt, 'the gate must precede the in-place rewrite');
+  });
+
   test('declining the gate leaves GitHub state untouched', () => {
     assert.match(md, /leaves GitHub state untouched/);
+  });
+
+  test('mode detection strips --yes before choosing a mode', () => {
+    // Without this, a top-down read of the mode table sends bare `/issue --yes` to the
+    // `any other text` catch-all — filing a junk issue titled `--yes`, with the gate
+    // skipped so nothing pauses to catch it.
+    assert.match(md, /Strip `--yes` from `\$ARGUMENTS` first/);
+    assert.match(md, /`--yes` is a\s*\n?\s*flag, not a mode/);
+    // The strip rule is normative only if it is read BEFORE the catch-all row.
+    const stripAt = md.indexOf('Strip `--yes` from `$ARGUMENTS` first');
+    const catchAllAt = md.indexOf('| any other text | **Create new** |');
+    assert.ok(stripAt !== -1 && catchAllAt !== -1, 'strip rule / catch-all row not found');
+    assert.ok(stripAt < catchAllAt, 'the strip rule must precede the catch-all mode row');
   });
 
   test('--yes skips the gate and is advertised in the argument hint', () => {

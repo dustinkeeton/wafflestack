@@ -11,14 +11,26 @@ When this skill is invoked, you either **create a new GitHub issue** from a brie
 
 ## Mode detection
 
-Inspect `$ARGUMENTS` to choose a mode (same detection approach as the `delegate` skill):
+**Strip `--yes` from `$ARGUMENTS` first, then apply the mode rules to what remains.** `--yes` is a
+flag, not a mode: it never contributes to the description text. So bare `/issue --yes` is a
+straight-through **batch enrich** — *not* a new issue titled `--yes` — and `/issue --yes fix the
+login bug` drafts from `fix the login bug`, with the flag never bleeding into the drafted title or
+body.
 
-| `$ARGUMENTS` | Mode | What to do |
+With the flag removed, inspect what is left to choose a mode (same detection approach as the
+`delegate` skill):
+
+| `$ARGUMENTS` (after stripping `--yes`) | Mode | What to do |
 |--------------|------|------------|
 | `#N`, a bare number, or a GitHub issue URL | **Enrich-in-place** | Flesh out that existing issue and update it — see **Enriching an existing issue ({{issue.inferenceLabel}})** below. |
 | empty / omitted | **Batch enrich** | Enrich **every** open issue labeled `{{issue.inferenceLabel}}` — see the batch note in that section. |
 | any other text | **Create new** | Treat the text as the description for a brand-new issue and follow the **Workflow** below. |
-| `--yes` (with or without any of the above) | **Gate skip** | Combines with any mode: skip the confirmation gate and go straight through — see [The `--yes` convention](#the---yes-convention). |
+
+The flag itself is orthogonal to the mode it modifies:
+
+| Flag | Effect | What to do |
+|------|--------|------------|
+| `--yes` (with or without any mode above) | **Gate skip** | Combines with any mode: skip the confirmation gate and go straight through — see [The `--yes` convention](#the---yes-convention). |
 
 `{{issue.inferenceLabel}}` is the lifecycle label: it marks an issue as awaiting AI fleshing-out, and is **removed** once the issue has been enriched.
 
@@ -363,7 +375,7 @@ Agents and CI invoke this skill non-interactively: the label-hook harness dispat
 
 Two reasons this is not a shortcut:
 
-- **A CI caller can never answer a prompt.** The label-hook workflow runs headless; pausing for a yes would hang the run until it times out. The gate protects a human from an unreviewed mutation — there is no human in that loop to protect.
+- **A CI caller can never answer a prompt.** The label-hook workflow runs headless; pausing for a yes would hang the run until it times out. The gate protects a human from an unreviewed mutation — there is no human in that loop to protect. Distinguish this from **a skill filing a follow-up mid-run** — `pr-response` is `user-invocable`, so an interactive `/pr-response` files its Defer follow-ups with a human very much present. Auto-skipping there is a *deliberate choice*, not a necessity: that human already accepted the triage plan, and interrupting the run to re-confirm each follow-up issue would be the worse prompt.
 - **The audit trail replaces the pause.** Before applying anything, **log** the drafted plan — title, body, labels, board placement — in the transcript, so the run stays reviewable after the fact rather than un-reviewable in the moment. That is what the gate would have shown; it just isn't blocking on it.
 
 Everything else is unchanged: the plan phase still runs (context, classification, drafting), and the post-creation steps (priority label, project board placement, milestone assignment) run automatically.

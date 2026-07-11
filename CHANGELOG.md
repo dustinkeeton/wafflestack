@@ -364,7 +364,9 @@ is what you reach for across a breaking one.
   mode from a headless Actions job that can never answer a prompt, so a model honoring the gate there
   would hang the run until it timed out (label-hook's own `enrich` section now says so too). Agent
   callers **log** the drafted plan before applying it, so an unattended run stays auditable after the
-  fact instead of being unreviewable in the moment.
+  fact instead of being unreviewable in the moment. The flag is **stripped from `$ARGUMENTS` before
+  mode detection**, so bare `/issue --yes` is a straight-through *batch enrich* rather than a junk
+  issue titled `--yes`, and the flag never bleeds into a drafted title or body.
   *Consumer impact:* re-render. Interactive `/issue` now pauses where it previously acted — pass
   `--yes` for the old straight-through behavior. Agent, hook, and autopilot invocations are unchanged.
 - **Autopilot's gate subloops reuse persistent named agents across rounds (#295).** Steps 5 (QA)
