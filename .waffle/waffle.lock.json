@@ -20,9 +20,9 @@
     "files/.github/workflows/waffle-pr-response-hook.yml"
   ],
   "files": {
-    ".claude/agents/docs-agent.md": "ea9f77fafe46e9786b5423f1aa8dfa19278edf1100775b9957ed128c13058a08",
-    ".claude/agents/docs-human.md": "f930d33461f6093cc5b21459a2dec81bb95dd2cba6122cde747d122ea7f2a33d",
-    ".claude/agents/harness-architect.md": "3796d634e0180f5bd3658110a8dd95edbed2b0973b42b9c2672df9e06caeaf63",
+    ".claude/agents/docs-agent.md": "2906db901f756096c6d40ab61bafc340f31d9a9664d508796789ee4c2933ac56",
+    ".claude/agents/docs-human.md": "d204bd90ca07c4f5f1a075542779ea62c65cc56ed134a33ab0d9edaa8bc3f5e4",
+    ".claude/agents/harness-architect.md": "be832000f196fdaafa12207e99e1ff109d1ec32673ec32ad829cdc29c1c31086",
     ".claude/agents/product-manager.md": "0e31ef14c546e3e0994b04d2fbb34d74c8e8966601af3ec6cc57e68731727fcc",
     ".claude/agents/project-manager.md": "10233d0855774c2eadb6c9b8910e9966c7a7e25046e74f5a65641ae6a2c2b67b",
     ".claude/agents/task-planner.md": "629b0f8e5c8ba1845a3e8086c4637ac75ec75e8c0c313e6f817c683103196604",

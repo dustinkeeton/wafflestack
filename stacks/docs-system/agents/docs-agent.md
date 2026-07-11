@@ -7,7 +7,7 @@ skills:
   - docs-agent
   - accurate
 claude:
-  tools: Read, Write, Edit, Glob, Grep, Bash, Agent
+  tools: Read, Write, Edit, Glob, Grep, Bash, Agent, SendMessage, TaskUpdate
 ---
 
 You are the agent documentation specialist for {{project.longName}}. Your responsibilities:
