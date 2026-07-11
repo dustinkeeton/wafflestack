@@ -1,6 +1,32 @@
+// @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
+
+/** @import { Toolkit, Stack } from './toolkit.mjs' */
+
+/**
+ * @typedef {'claude' | 'codex' | 'agents-dir'} Target an enabled output harness
+ *
+ * @typedef {object} ExternalStackEntry a `{ name, source, ref }` entry from `stacks:` (#88)
+ * @property {string} name the stack name, unique across ALL sources
+ * @property {string} source a git URL or a local filesystem path
+ * @property {'git' | 'path'} sourceType classified by `classifyStackSource`
+ * @property {string | null} ref pinned tag/branch/commit; always null for a local path
+ *
+ * @typedef {object} ProjectConfig the loaded `.waffle/waffle.yaml` (+ local overlay)
+ * @property {Target[]} targets
+ * @property {string[]} stacks built-in stack names
+ * @property {ExternalStackEntry[]} externalStacks
+ * @property {string[]} include item refs to install with their dependency closure
+ * @property {Record<string, any>} values the `config:` block — parsed YAML, so `any`-valued
+ * @property {string[]} eject item refs released to project ownership
+ *
+ * @typedef {object} ResolvedDotPath
+ * @property {string} file absolute path to read (the CURRENT name when nothing exists)
+ * @property {boolean} legacy true when a fallback (older layout) was found
+ * @property {string | null} note a one-line deprecation message to surface, else null
+ */
 
 // Canonical consumer paths — everything wafflestack keeps in a consumer repo lives inside
 // the one `.waffle/` directory (config, local overlay, lock, extensions) as of 0.8.0 (#43).
@@ -24,6 +50,7 @@ export const LEGACY_LOCAL_CONFIG_FILE = '.wafflestack.local.yaml';
 export const LEGACY_LOCK_FILE = '.wafflestack.lock.json';
 export const LEGACY_EXTENSIONS_DIR = path.join('.wafflestack', 'extensions');
 
+/** @type {Target[]} */
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'];
 
 /**
@@ -33,6 +60,11 @@ export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'];
  * (the current name when nothing exists, so "not found" errors name the current file),
  * `legacy` flags a fallback, and `note` is a one-line deprecation message the caller can
  * surface, naming the legacy path found and how to migrate it.
+ *
+ * @param {string} cwd
+ * @param {string} currentName
+ * @param {string[]} legacyNames ordered newest generation first
+ * @returns {ResolvedDotPath}
  */
 function resolveDotPath(cwd, currentName, legacyNames) {
   const current = path.join(cwd, currentName);
@@ -50,10 +82,13 @@ function resolveDotPath(cwd, currentName, legacyNames) {
   return { file: current, legacy: false, note: null };
 }
 
+/** @type {(cwd: string) => ResolvedDotPath} */
 export const resolveConfigFile = (cwd) =>
   resolveDotPath(cwd, CONFIG_FILE, [LEGACY_ROOT_CONFIG_FILE, LEGACY_CONFIG_FILE]);
+/** @type {(cwd: string) => ResolvedDotPath} */
 export const resolveLocalConfigFile = (cwd) =>
   resolveDotPath(cwd, LOCAL_CONFIG_FILE, [LEGACY_ROOT_LOCAL_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE]);
+/** @type {(cwd: string) => ResolvedDotPath} */
 export const resolveLockFile = (cwd) =>
   resolveDotPath(cwd, LOCK_FILE, [LEGACY_ROOT_LOCK_FILE, LEGACY_LOCK_FILE]);
 
@@ -66,8 +101,12 @@ export const resolveLockFile = (cwd) =>
  * performed (for reporting). This is the shared body of the 0.6.0 and 0.8.0 migrations and
  * also runs at the top of every `render`, so a plain re-render carries a legacy repo
  * across too.
+ *
+ * @param {string} cwd
+ * @returns {{ from: string, to: string }[]} the renames performed (for reporting)
  */
 export function migrateLegacyDotfiles(cwd) {
+  /** @type {{ from: string, to: string }[]} */
   const renamed = [];
   const pairs = [
     // pre-0.6.0 `.wafflestack.*` → 0.6.0-era root `.waffle.*` (#17) …
@@ -107,6 +146,9 @@ export function migrateLegacyDotfiles(cwd) {
  * after a dotfile move we remind them to update the entries themselves. Self-clearing:
  * returns [] once the stale lines are gone. (A current `.waffle/waffle.*` line never
  * matches a legacy name — the `/` breaks the substring — so migrated repos stay quiet.)
+ *
+ * @param {string} cwd
+ * @returns {string[]}
  */
 export function staleGitignoreEntries(cwd) {
   const gi = path.join(cwd, '.gitignore');
@@ -133,11 +175,16 @@ export const GITIGNORE_MARKER = '# wafflestack';
  * trailing newline is added so the first appended entry can't glue onto the last existing
  * line), and the `# wafflestack` marker is written once. Creates `.gitignore` when absent.
  * Returns the entries actually added (for reporting) — [] when everything was already present.
+ *
+ * @param {string} cwd
+ * @param {Iterable<string>} entries
+ * @returns {string[]} the entries actually added
  */
 export function ensureGitignoreEntries(cwd, entries) {
   const gi = path.join(cwd, '.gitignore');
   const existing = exists(gi) ? fs.readFileSync(gi, 'utf8') : '';
   const present = new Set(existing.split(/\r?\n/).map((line) => line.trim()));
+  /** @type {string[]} */
   const toAdd = [];
   for (const raw of entries) {
     const entry = String(raw).trim();
@@ -170,6 +217,10 @@ export function ensureGitignoreEntries(cwd, entries) {
  * that key. Dev-only / self-hosting mode — also gitignoring the renders +
  * `.waffle/waffle.lock.json`, paired with `doctor --allow-missing` — is a separate opt-in the
  * agent proposes case by case, not part of this baseline.
+ *
+ * @param {Toolkit} toolkit
+ * @param {ProjectConfig} project
+ * @returns {string[]}
  */
 export function recommendedGitignoreEntries(toolkit, project) {
   const entries = [LOCAL_CONFIG_FILE];
@@ -194,10 +245,17 @@ export function recommendedGitignoreEntries(toolkit, project) {
  * by the 0.10.0 migration and `installRefs` so a plain install and an `upgrade` converge.
  * Idempotent: a no-op returning false when `stacks:` already exists or no `bundles:` pair is
  * present; returns true when it renamed the key.
+ *
+ * `doc` stays `any` rather than `import('yaml').Document`: the code walks the raw CST-ish
+ * `contents.items` pair list, which is not on the public `Node` union, and it already guards
+ * every hop with `?.`. Narrowing here would buy nothing but casts.
+ *
+ * @param {any} doc a parsed YAML Document (from `YAML.parseDocument`)
+ * @returns {boolean} true when it renamed the key
  */
 export function renameLegacyStacksKey(doc) {
   if (doc.has('stacks') || !doc.has('bundles')) return false;
-  const pair = doc.contents?.items?.find((p) => (p.key?.value ?? String(p.key)) === 'bundles');
+  const pair = doc.contents?.items?.find((/** @type {any} */ p) => (p.key?.value ?? String(p.key)) === 'bundles');
   if (!pair) return false;
   pair.key.value = 'stacks';
   return true;
@@ -208,6 +266,10 @@ export function renameLegacyStacksKey(doc) {
  * to the legacy root `.waffle.*` — and then pre-0.6.0 `.wafflestack.*` — names when the
  * current ones are absent. Deprecation notes for any legacy read are pushed onto `notes`
  * (when provided) for the caller to surface.
+ *
+ * @param {string} cwd
+ * @param {string[]} [notes] collects deprecation notes for the caller to surface
+ * @returns {ProjectConfig}
  */
 export function loadProjectConfig(cwd, notes = []) {
   const cfgPath = resolveConfigFile(cwd);
@@ -222,6 +284,9 @@ export function loadProjectConfig(cwd, notes = []) {
     cfg = deepMerge(cfg, readYaml(localPath.file) ?? {});
   }
 
+  // Raw and unvalidated (it is parsed YAML) — the `bad` check on the next line is what actually
+  // proves it is a Target[], so it is typed loosely here rather than asserted to be one.
+  /** @type {any[]} */
   const targets = cfg.targets ?? VALID_TARGETS;
   const bad = targets.filter((t) => !VALID_TARGETS.includes(t));
   if (bad.length) {
@@ -275,6 +340,9 @@ const STACK_ENTRY_KEYS = new Set(['name', 'source', 'ref']);
  * `user@host:owner/repo` address, or a trailing `.git`; anything else (relative or absolute
  * filesystem path) is a local path. Slice 1 only records the classification — nothing is
  * fetched or resolved yet.
+ *
+ * @param {string} source
+ * @returns {'git' | 'path'}
  */
 export function classifyStackSource(source) {
   const s = String(source).trim();
@@ -298,6 +366,9 @@ export function classifyStackSource(source) {
  * error, not a silent shadow. External sources validate here; `render` then resolves each to a
  * toolkit root and merges its named stack (`loadToolkitWithSources`), where a name that collides
  * with a built-in or another source is likewise a hard error (see #88).
+ *
+ * @param {any} raw the raw `stacks:` value as parsed from YAML
+ * @returns {{ stacks: string[], externalStacks: ExternalStackEntry[] }}
  */
 export function normalizeStackEntries(raw) {
   if (raw === undefined || raw === null) return { stacks: [], externalStacks: [] };
@@ -306,8 +377,11 @@ export function normalizeStackEntries(raw) {
       `\`stacks:\` in ${CONFIG_FILE} must be a list of stack names or { name, source } mappings`,
     );
   }
+  /** @type {string[]} */
   const stacks = [];
+  /** @type {ExternalStackEntry[]} */
   const externalStacks = [];
+  /** @type {Map<string, number>} */
   const seen = new Map(); // stack name -> 1-based entry position, for collision reporting
 
   raw.forEach((entry, i) => {
@@ -382,6 +456,21 @@ export function normalizeStackEntries(raw) {
  * Reserved `harness.*` template values, resolved per output target. Not declared in
  * any stack — always available. A project may override any sub-key via
  * `config.harness.<sub>` (a scalar applied to every target, or a per-target map).
+ *
+ * Typed as the precise per-key shape INTERSECTED with a string index signature: callers reach
+ * for both (`HARNESS_BUILTINS.agentsDir` — a per-target map worth keeping precise — and
+ * `HARNESS_BUILTINS[sub]` in `makeResolver`/`validate`, where `sub` is an arbitrary string).
+ * The intersection serves both without widening the per-target maps to `any`.
+ *
+ * @type {{
+ *   assistantName: Record<Target, string>,
+ *   attributionPath: Record<Target, string>,
+ *   skillsDir: Record<Target, string>,
+ *   agentsDir: Record<Target, string>,
+ *   actionRef: string,
+ *   actionVersion: string,
+ *   apiKeySecret: string,
+ * } & Record<string, string | Record<string, string>>}
  */
 export const HARNESS_BUILTINS = {
   assistantName: { claude: 'Claude', codex: 'Codex', 'agents-dir': 'Codex' },
@@ -425,6 +514,8 @@ export const HARNESS_BUILTINS = {
  * stack's `config:`. Enforced at render (render.mjs seeds these into the pattern map so every
  * splice is validated) and checked by `validate` (the built-in defaults must satisfy them).
  * Keyed by sub-key; a `harness.<sub>` with no entry here is unguarded, as before.
+ *
+ * @type {Record<string, string>} sub-key → anchored regex source
  */
 export const HARNESS_PATTERNS = {
   // Directory paths spliced into content an agent then *executes against* — `read
@@ -451,6 +542,11 @@ export const HARNESS_PATTERNS = {
  * - `harness.<sub>` — project override (scalar for all targets, or per-target map),
  *   falling back to the built-in for `target`.
  * - anything else — project config value, else the stack-declared default.
+ *
+ * @param {Stack} stack
+ * @param {Record<string, any>} values the project `config:` values
+ * @param {Target} target
+ * @returns {(key: string) => any} resolves a template key to its value (undefined when unset)
  */
 export function makeResolver(stack, values, target) {
   return (key) => {
@@ -476,6 +572,10 @@ export function makeResolver(stack, values, target) {
   };
 }
 
+/**
+ * @param {any} v
+ * @returns {v is Record<string, any>}
+ */
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }

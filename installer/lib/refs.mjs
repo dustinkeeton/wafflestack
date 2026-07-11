@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Ref grammar, toolkit-wide resolution, and dependency-closure logic shared by
  * `install`, `render`, and `validate`.
@@ -11,6 +12,42 @@
 
 import path from 'node:path';
 
+/** @import { Toolkit, Stack, Item } from './toolkit.mjs' */
+
+/**
+ * A REF kind — always PLURAL. Distinct from an item's intrinsic `kind` (`'agent'` | `'skill'` |
+ * `'files'`), which is singular for agents and skills. See the note on toolkit.mjs's typedefs.
+ * @typedef {'agents' | 'skills' | 'files'} ItemKind
+ *
+ * A raw ref parsed into its grammatical form — discriminated on `form`.
+ * @typedef {{ form: 'qualified', stack: string, kind: ItemKind, name: string }
+ *         | { form: 'item', kind: ItemKind, name: string }
+ *         | { form: 'stack', name: string }} ParsedRef
+ *
+ * A ref resolved against the toolkit — discriminated on `type`.
+ * @typedef {{ type: 'stack', name: string }
+ *         | { type: 'item', kind: ItemKind, name: string, stack: string, item: Item,
+ *             canonicalRef: string }} ResolvedRef
+ *
+ * A node in a dependency closure: an item, plus the stack it was resolved from.
+ * @typedef {object} DepNode
+ * @property {ItemKind} kind
+ * @property {string} name
+ * @property {string} stack the stack the item was resolved from
+ * @property {Item} item
+ *
+ * @typedef {object} SelectionItem an item chosen for rendering
+ * @property {string} stackName
+ * @property {Stack} stack
+ * @property {ItemKind} kind
+ * @property {Item} item
+ *
+ * @typedef {object} Selection the result of `computeSelection`
+ * @property {SelectionItem[]} items deduped by stack+kind+name, eject-filtered
+ * @property {{ rootRef: string, deps: string[] }[]} closures pulled-in dependencies, for reporting
+ * @property {string[]} errors resolution errors (unknown stack, unknown/ambiguous ref)
+ */
+
 /**
  * Predicate matching the repo-relative output paths a rendered item owns, across ALL targets
  * (claude/codex/agents-dir) — the inverse of the render's item→path mapping. A `files/` item is
@@ -19,6 +56,10 @@ import path from 'node:path';
  * target-blind: a lock only holds paths for the *enabled* targets, so an over-broad pattern set
  * can never over-match — it just finds whichever of an item's paths the lock actually tracks.
  * Shared by `eject` (drop an item's files from the lock) and `list` (drift-check them).
+ *
+ * @param {ItemKind} kind
+ * @param {string} name
+ * @returns {(rel: string) => boolean} predicate over repo-relative output paths
  */
 export function itemOutputMatcher(kind, name) {
   if (kind === 'files') return (rel) => rel === name;
@@ -33,20 +74,39 @@ export function itemOutputMatcher(kind, name) {
   return (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
 }
 
-/** Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… → `files/`. */
+/**
+ * Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… → `files/`.
+ *
+ * @param {string} ref
+ * @returns {string}
+ */
 export function normalizeItemRef(ref) {
   return ref.replace(/^(agent|skill|file)s?[:/]/, (_m, kind) => `${kind}s/`);
 }
 
-/** The agents, skills, or files array of a stack, selected by kind. */
+/**
+ * The agents, skills, or files array of a stack, selected by kind.
+ *
+ * @param {Stack} stack
+ * @param {ItemKind} kind
+ * @returns {Item[]} widened to the Item union so callers get one uniform element type
+ */
 export function itemsOfKind(stack, kind) {
   if (kind === 'agents') return stack.agents;
   if (kind === 'files') return stack.files;
   return stack.skills;
 }
 
-/** Every (stackName, item) pair of `kind` across the toolkit that is named `name`. */
+/**
+ * Every (stackName, item) pair of `kind` across the toolkit that is named `name`.
+ *
+ * @param {Toolkit} toolkit
+ * @param {ItemKind} kind
+ * @param {string} name
+ * @returns {{ stackName: string, item: Item }[]}
+ */
 export function findItems(toolkit, kind, name) {
+  /** @type {{ stackName: string, item: Item }[]} */
   const matches = [];
   for (const [stackName, stack] of toolkit.stacks) {
     const item = itemsOfKind(stack, kind).find((i) => i.name === name);
@@ -60,16 +120,27 @@ export function findItems(toolkit, kind, name) {
  *   { form: 'qualified', stack, kind, name }   — `<stack>/(agents|skills|files)/<name>`
  *   { form: 'item', kind, name }               — `(agents|skills|files)[:/]<name>`
  *   { form: 'stack', name }                    — anything else (a stack name)
+ *
+ * The `kind` casts are safe by construction: each regex alternates over exactly the three
+ * ItemKind literals, so a captured group can only be one of them — tsc just can't see that
+ * through a capture group.
+ *
+ * @param {string} raw
+ * @returns {ParsedRef}
  */
 export function parseRef(raw) {
   const ref = String(raw).trim();
   const qualified = /^([^/]+)\/(agents|skills|files)\/(.+)$/.exec(ref);
-  if (qualified) return { form: 'qualified', stack: qualified[1], kind: qualified[2], name: qualified[3] };
+  if (qualified) return { form: 'qualified', stack: qualified[1], kind: /** @type {ItemKind} */ (qualified[2]), name: qualified[3] };
   const item = /^(agents|skills|files)\/(.+)$/.exec(normalizeItemRef(ref));
-  if (item) return { form: 'item', kind: item[1], name: item[2] };
+  if (item) return { form: 'item', kind: /** @type {ItemKind} */ (item[1]), name: item[2] };
   return { form: 'stack', name: ref };
 }
 
+/**
+ * @param {Toolkit} toolkit
+ * @returns {string[]} every `kind/name` item ref in the toolkit, sorted
+ */
 function availableItemRefs(toolkit) {
   const refs = new Set();
   for (const stack of toolkit.stacks.values()) {
@@ -87,6 +158,11 @@ function availableItemRefs(toolkit) {
  * `canonicalRef` is the minimal ref that re-resolves uniquely: unqualified when the
  * name is unique toolkit-wide, stack-qualified when it is not.
  * Throws with an actionable message on unknown or ambiguous refs.
+ *
+ * @param {Toolkit} toolkit
+ * @param {string} raw
+ * @returns {ResolvedRef}
+ * @throws on an unknown or ambiguous ref
  */
 export function resolveRef(toolkit, raw) {
   const parsed = parseRef(raw);
@@ -148,6 +224,12 @@ export function resolveRef(toolkit, raw) {
  * the declaring item's own stack for bare names, then a unique toolkit-wide match.
  * Throws on unknown or ambiguous refs — `requires:` is authored, so a dangling entry
  * is a toolkit bug.
+ *
+ * @param {Toolkit} toolkit
+ * @param {string} refString
+ * @param {string} preferStack the declaring item's own stack, preferred for a bare name
+ * @returns {DepNode}
+ * @throws on an unknown or ambiguous dependency ref
  */
 export function resolveDepStrict(toolkit, refString, preferStack) {
   const parsed = parseRef(refString);
@@ -178,6 +260,11 @@ export function resolveDepStrict(toolkit, refString, preferStack) {
  * this toolkit (project-local, or not yet authored), so an unresolved name is not an
  * error — it is simply skipped. Prefers the agent's own stack, then a unique
  * toolkit-wide match. Returns the resolved item or null (unknown or ambiguous).
+ *
+ * @param {Toolkit} toolkit
+ * @param {string} name a bare skill name
+ * @param {string} preferStack the agent's own stack
+ * @returns {DepNode | null} null when unknown OR ambiguous — deliberately lenient
  */
 export function resolveAgentSkill(toolkit, name, preferStack) {
   const own = toolkit.stacks.get(preferStack);
@@ -188,9 +275,16 @@ export function resolveAgentSkill(toolkit, name, preferStack) {
   return null;
 }
 
-/** Direct dependencies of a resolved item: agent frontmatter `skills:` + stack `requires:`. */
+/**
+ * Direct dependencies of a resolved item: agent frontmatter `skills:` + stack `requires:`.
+ *
+ * @param {Toolkit} toolkit
+ * @param {DepNode} node
+ * @returns {DepNode[]}
+ */
 function directDeps(toolkit, node) {
   const stack = toolkit.stacks.get(node.stack);
+  /** @type {DepNode[]} */
   const deps = [];
   if (node.kind === 'agents') {
     const agent = stack.agents.find((a) => a.name === node.name);
@@ -209,10 +303,17 @@ function directDeps(toolkit, node) {
  * Transitive, cross-stack dependency closure of a resolved item, breadth-first, with
  * the root first. Each node is { kind, name, stack, item }. Dedup is by
  * stack+kind+name so the same item pulled via two paths appears once.
+ *
+ * @param {Toolkit} toolkit
+ * @param {DepNode} root
+ * @returns {DepNode[]} breadth-first, root first
  */
 export function closureFor(toolkit, root) {
+  /** @type {Set<string>} */
   const seen = new Set();
+  /** @type {DepNode[]} */
   const order = [];
+  /** @type {DepNode[]} */
   const queue = [{ kind: root.kind, name: root.name, stack: root.stack, item: root.item }];
   while (queue.length) {
     const node = queue.shift();
@@ -225,14 +326,27 @@ export function closureFor(toolkit, root) {
   return order;
 }
 
-/** The non-root dependency refs of a closure, as `kind/name` strings (for CLI output). */
+/**
+ * The non-root dependency refs of a closure, as `kind/name` strings (for CLI output).
+ *
+ * @param {Toolkit} toolkit
+ * @param {DepNode} root
+ * @returns {string[]}
+ */
 export function closureDeps(toolkit, root) {
   return closureFor(toolkit, root)
     .filter((n) => !(n.stack === root.stack && n.kind === root.kind && n.name === root.name))
     .map((n) => `${n.kind}/${n.name}`);
 }
 
-/** Does an `include:` entry (qualified or not) refer to the given kind/name? */
+/**
+ * Does an `include:` entry (qualified or not) refer to the given kind/name?
+ *
+ * @param {string} includeRef
+ * @param {ItemKind} kind
+ * @param {string} name
+ * @returns {boolean}
+ */
 export function includeRefMatches(includeRef, kind, name) {
   const parsed = parseRef(includeRef);
   return parsed.form !== 'stack' && parsed.kind === kind && parsed.name === name;
@@ -248,14 +362,23 @@ export function includeRefMatches(includeRef, kind, name) {
  *   items:    [{ stackName, stack, kind, item }] deduped by stack+kind+name, eject-filtered
  *   closures: [{ rootRef, deps: [kind/name…] }] for reporting pulled-in dependencies
  *   errors:   resolution errors (unknown stack, unknown/ambiguous ref)
+ *
+ * @param {Toolkit} toolkit
+ * @param {import('./project.mjs').ProjectConfig} project
+ * @param {Set<string>} [trackedFiles] repo-relative paths the previous lock managed
+ * @returns {Selection}
  */
 export function computeSelection(toolkit, project, trackedFiles = new Set()) {
+  /** @type {string[]} */
   const errors = [];
+  /** @type {Map<string, SelectionItem>} */
   const chosen = new Map();
+  /** @type {(stackName: string, kind: ItemKind, item: Item) => void} */
   const addItem = (stackName, kind, item) => {
     const key = `${stackName}::${kind}/${item.name}`;
     if (!chosen.has(key)) chosen.set(key, { stackName, stack: toolkit.stacks.get(stackName), kind, item });
   };
+  /** @type {(stackName: string) => void} */
   const addStack = (stackName) => {
     const stack = toolkit.stacks.get(stackName);
     for (const a of stack.agents) addItem(stackName, 'agents', a);
@@ -278,8 +401,10 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
     addStack(stackName);
   }
 
+  /** @type {{ rootRef: string, deps: string[] }[]} */
   const closures = [];
   for (const ref of project.include ?? []) {
+    /** @type {ResolvedRef} */
     let resolved;
     try {
       resolved = resolveRef(toolkit, ref);
@@ -291,6 +416,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       addStack(resolved.name);
       continue;
     }
+    /** @type {DepNode[]} */
     let closure;
     try {
       closure = closureFor(toolkit, resolved);
@@ -327,15 +453,16 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  * stack X means X is in that set, so no relevant pairing is missed, and syrup from an
  * uninvolved stack is never suggested.
  *
- * @param toolkit  loaded toolkit
- * @param selection  a `computeSelection` result ({ items, … })
- * @returns [{ fileRef, stackName, companions: ["kind/name"…] }] — one entry per skipped syrup
- *   file, `companions` naming the selected waffles that pull it into relevance. `fileRef` is a
- *   ready `wafflestack install <fileRef>` argument. Deterministic order (stack, then manifest).
+ * @param {Toolkit} toolkit loaded toolkit
+ * @param {Selection} selection a `computeSelection` result ({ items, … })
+ * @returns {{ fileRef: string, stackName: string, companions: string[] }[]} one entry per skipped
+ *   syrup file, `companions` naming the selected waffles that pull it into relevance. `fileRef` is
+ *   a ready `wafflestack install <fileRef>` argument. Deterministic order (stack, then manifest).
  */
 export function skippedSyrupCompanions(toolkit, selection) {
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
   const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
+  /** @type {{ fileRef: string, stackName: string, companions: string[] }[]} */
   const results = [];
   for (const stackName of stacksInSelection) {
     const stack = toolkit.stacks.get(stackName);
@@ -344,8 +471,10 @@ export function skippedSyrupCompanions(toolkit, selection) {
       const fileRef = `files/${f.name}`;
       if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
       if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
+      /** @type {string[]} */
       const companions = [];
       for (const ref of stack.requires?.[fileRef] ?? []) {
+        /** @type {DepNode} */
         let dep;
         try {
           dep = resolveDepStrict(toolkit, ref, stackName);
@@ -361,6 +490,10 @@ export function skippedSyrupCompanions(toolkit, selection) {
   return results;
 }
 
+/**
+ * @param {ItemKind} kind
+ * @returns {string} the kind, singular, for an error message
+ */
 function singular(kind) {
   if (kind === 'agents') return 'agent';
   if (kind === 'files') return 'file';

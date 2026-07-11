@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
@@ -5,7 +6,98 @@ import { normalizeItemRef } from './refs.mjs';
 import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
 
-/** Load the toolkit registry and every stack it lists. */
+/** @import { ExternalStackEntry } from './project.mjs' */
+
+/**
+ * The core toolkit types. This module owns them; every other module imports them from here.
+ *
+ * NOTE — two `kind` vocabularies coexist, and they are NOT interchangeable:
+ *   - an ITEM's intrinsic `kind` (below) is `'agent'` | `'skill'` | `'files'` — singular for
+ *     agents and skills, but plural for files;
+ *   - a REF/selection `kind` (see refs.mjs `ItemKind`) is always plural: `'agents'` | `'skills'`
+ *     | `'files'`.
+ * A selection entry wraps an item as `{ kind: 'agents', item: AgentItem }` — outer kind plural,
+ * inner `item.kind` singular. Typing both literally is deliberate: it makes tsc reject a
+ * cross-vocabulary comparison like `item.kind === 'agents'`, which today would silently be
+ * false forever. Do not "harmonize" these types without changing the runtime that produces them.
+ *
+ * @typedef {object} AgentItem
+ * @property {'agent'} kind
+ * @property {string} name
+ * @property {string} file absolute path to `agents/<name>.md`
+ * @property {Record<string, any>} data parsed frontmatter
+ * @property {string} body markdown body, frontmatter stripped
+ *
+ * @typedef {object} SkillItem
+ * @property {'skill'} kind
+ * @property {string} name
+ * @property {string} dir absolute path to `skills/<name>/`
+ * @property {string[]} files skill-dir-relative paths, sorted; always includes `SKILL.md`
+ *
+ * @typedef {object} FileItem
+ * @property {'files'} kind
+ * @property {string} name the repo-relative output path (also the item's name)
+ * @property {string} path absolute path to the source file under `files/`
+ * @property {boolean} binary byte-copied when true, template-substituted when false
+ *
+ * @typedef {AgentItem | SkillItem | FileItem} Item
+ *
+ * @typedef {object} Provenance
+ * @property {string} name
+ * @property {string} source
+ * @property {'git' | 'path'} sourceType
+ * @property {string | null} ref
+ * @property {string | null} commit
+ *
+ * @typedef {object} Stack
+ * @property {string} name
+ * @property {string} dir
+ * @property {string} description
+ * @property {AgentItem[]} agents
+ * @property {SkillItem[]} skills
+ * @property {FileItem[]} files
+ * @property {Set<string>} optIn normalized `files/<path>` refs gated out of a default render
+ * @property {Record<string, any>} config the declared `config:` block (key → spec)
+ * @property {Set<string>} declared the keys of `config`
+ * @property {Record<string, string>} env legacy harness `env:` map
+ * @property {any[]} prerequisites normalized typed prerequisites
+ * @property {Record<string, string[]>} requires item ref → dependency refs
+ * @property {string} setup
+ * @property {Provenance} [provenance] present only for a stack loaded from an external source
+ *
+ * @typedef {object} Toolkit
+ * @property {string} name
+ * @property {string} description
+ * @property {Map<string, Stack>} stacks
+ */
+
+/**
+ * The parsed `stack.yaml`, as AUTHORED — i.e. the shape a well-formed manifest has, not a shape
+ * anything has yet proven. It comes straight off `readYaml`, so a malformed manifest can violate
+ * it at runtime; `validate` (plus the defensive `String()`/`typeof` coercions below) stays
+ * authoritative. Declaring it buys the `agents:`/`skills:`/`files:`/`optIn:` map callbacks a real
+ * element type instead of an implicit `any`.
+ *
+ * @typedef {object} StackManifest
+ * @property {string} [description]
+ * @property {string[]} [agents] bare agent names
+ * @property {string[]} [skills] bare skill names
+ * @property {string[]} [files] repo-relative output paths
+ * @property {string[]} [optIn] item refs gated out of a default render
+ * @property {Record<string, any>} [config] declared template keys (key → spec)
+ * @property {Record<string, string>} [env] legacy harness env map
+ * @property {any} [prerequisites] normalized by `normalizePrerequisites`
+ * @property {Record<string, string[]>} [requires] item ref → dependency refs
+ * @property {string} [setup]
+ * @property {unknown} [syrup] removed in 0.10.0 — its presence is a hard error
+ */
+
+/**
+ * Load the toolkit registry and every stack it lists.
+ *
+ * @param {string} rootDir
+ * @returns {Toolkit}
+ */
 export function loadToolkit(rootDir) {
   const registry = readYaml(path.join(rootDir, 'toolkit.yaml'));
   const stacks = new Map();
@@ -36,6 +128,16 @@ export function loadToolkit(rootDir) {
  * two contributing stacks — hence a stack name uniquely identifies its source.)
  *
  * With no external stacks this is exactly `loadToolkit(builtinRoot)` — nothing is fetched.
+ *
+ * @param {object} opts
+ * @param {string} opts.builtinRoot toolkit root of the built-in stacks
+ * @param {ExternalStackEntry[]} [opts.externalStacks]
+ * @param {string} [opts.cwd] resolves a local-path source
+ * @param {string} [opts.cacheDir] where git sources are checked out
+ * @param {(source: string, ref: string, dest: string) => void} [opts.gitFetch] injectable for tests
+ * @param {(dir: string) => string | null} [opts.gitResolveCommit] injectable for tests
+ * @param {boolean} [opts.refreshSources] force a git re-fetch instead of reusing the session cache
+ * @returns {Toolkit}
  */
 export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) {
   const builtin = loadToolkit(builtinRoot);
@@ -83,6 +185,10 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
  * root (the stack lives at `stacks/<name>/`, exactly like the built-in layout) or point directly
  * at a single stack directory (a `stack.yaml` at its root). Prefers the toolkit-root shape.
  * Returns the stack directory, or null when neither layout has a `stack.yaml`.
+ *
+ * @param {string} root
+ * @param {string} name
+ * @returns {string | null}
  */
 function externalStackDir(root, name) {
   const inToolkit = path.join(root, 'stacks', name);
@@ -91,11 +197,21 @@ function externalStackDir(root, name) {
   return null;
 }
 
+/**
+ * @param {ExternalStackEntry} ext
+ * @returns {string}
+ */
 function describeSource(ext) {
   return ext.ref ? `${ext.source}@${ext.ref}` : ext.source;
 }
 
+/**
+ * @param {string} name
+ * @param {string} dir
+ * @returns {Stack}
+ */
 function loadStack(name, dir) {
+  /** @type {StackManifest} */
   const manifest = readYaml(path.join(dir, 'stack.yaml'));
   const config = manifest.config ?? {};
   const declared = new Set(Object.keys(config));
@@ -105,6 +221,11 @@ function loadStack(name, dir) {
   // traversal entry like `../../secret` is never dereferenced outside the toolkit root at load
   // time — the same load-time posture `files:` entries get below (#247 review). Fine-grained
   // slug shape is validateStack's job (AGENT_SLUG_RE); this only stops a name acting as a path.
+  /**
+   * @param {string} kind
+   * @param {string} entry
+   * @returns {string}
+   */
   const bareName = (kind, entry) => {
     const n = String(entry);
     if (/[\\/]/.test(n) || n === '.' || n === '..') {
@@ -113,6 +234,10 @@ function loadStack(name, dir) {
     return n;
   };
 
+  // The `@type` is load-bearing, not decoration: it contextually types the map callback's return
+  // so `kind: 'agent'` keeps its LITERAL type instead of widening to `string`. Same for the two
+  // below. (See the two-kind-vocabularies note on the typedefs.)
+  /** @type {AgentItem[]} */
   const agents = (manifest.agents ?? []).map((entry) => {
     const agentName = bareName('agents', entry);
     const file = path.join(dir, 'agents', `${agentName}.md`);
@@ -121,6 +246,7 @@ function loadStack(name, dir) {
     return { kind: 'agent', name: agentName, file, data, body };
   });
 
+  /** @type {SkillItem[]} */
   const skills = (manifest.skills ?? []).map((entry) => {
     const skillName = bareName('skills', entry);
     const skillDir = path.join(dir, 'skills', skillName);
@@ -139,6 +265,7 @@ function loadStack(name, dir) {
   // to that same path in the consuming project (CI workflows, scripts, config). Text files
   // are template-substituted, binaries byte-copied — text/binary is sniffed by content, so
   // any text type works, not just `.md`.
+  /** @type {FileItem[]} */
   const files = (manifest.files ?? []).map((entry) => {
     const rel = String(entry);
     if (path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === '..')) {
@@ -193,6 +320,12 @@ function loadStack(name, dir) {
  * Config keys that are `required` and unresolved. When `usedKeys` is supplied, only
  * keys actually referenced by the selected items are considered — so a partial install
  * (one item from a stack) does not demand config only the stack's other items use.
+ *
+ * @param {Stack} stack
+ * @param {Record<string, any>} values resolved project config values
+ * @param {(values: Record<string, any>, key: string) => any} lookup dotted-path lookup
+ * @param {Set<string> | null} [usedKeys] keys actually referenced by the selected items
+ * @returns {string[]} the missing required keys
  */
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) {
   const missing = [];
