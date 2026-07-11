@@ -90,7 +90,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.waffle/waffle.lock.json`. |
 | `install [ref…]` | With refs: add them to `.waffle/waffle.yaml` (stack name → `stacks:`, item → `include:`), pull in their dependencies, then render. Refs are a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` (qualify when a name is in two stacks). Bare `install` = `render`. Add `--gitignore` to append the recommended ignore entries (`.waffle/waffle.local.yaml`, plus the configured `git.worktreesDir` when an enabled stack declares one) — idempotent, existing content preserved. Also on `render`. |
 | `upgrade` | Move an existing install across toolkit versions: compare the lock's `toolkitVersion` to the invoked toolkit, print the `CHANGELOG.md` entries in between, run any registered migrations in order, then re-render and run `doctor`. A missing lock or version degrades to a plain render + doctor with a clear note. See [Rules of the road](#rules-of-the-road). |
-| `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational. |
+| `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational — but a checkout with *every* managed file absent still fails, having verified nothing. Add `--verify-render` to also verify the lock against a fresh render of the committed config, in a temp dir — it catches a config or extension change that was never re-rendered (which the tree-vs-lock check cannot see, since both go stale together) and never touches the working tree. `--allow-missing --verify-render` is the gate for a repo that commits only the lock. |
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
 
@@ -119,6 +119,15 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    renders (so they're legitimately absent in a fresh CI checkout), add `--allow-missing`:
    absent files are then reported informationally and only *modified* files fail the gate. A
    missing lock still fails — that means the repo was never rendered, which the flag won't mask.
+   So does a checkout where *every* managed file is absent, for the same reason: the flag
+   tolerates a **subset** of absent renders, not the whole set — a gate that inspected nothing
+   doesn't get to report success. Note what plain `doctor` does *not* check: whether the tree and
+   the lock still match your **config**. Edit `.waffle/waffle.yaml` and forget to re-render, and
+   they go stale together — agreeing with each other, and passing. Add `--verify-render` to close
+   that: it renders your committed config into a temp dir (never the working tree) and checks the
+   result against the committed lock. Paired with `--allow-missing` it is also the gate for a repo
+   that gitignores its *whole* render — nothing is present to compare, so the render is reproduced
+   and verified instead.
 
 **Deciding what to commit?** [Committing vs. gitignoring the rendered output](docs/gitignore.md) argues the trade-off — what you gain and lose each way, and why the lock is a separate decision from the render.
 

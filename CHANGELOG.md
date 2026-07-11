@@ -32,6 +32,29 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`doctor --verify-render` — catch a render that no longer matches its config (#314).** `doctor`
+  compares the files on disk against `.waffle/waffle.lock.json`, and never asked whether *either*
+  still reflects `.waffle/waffle.yaml`. So a config edited without a re-render left the files and
+  the lock stale **together** — they agreed with each other, and the gate went green. That hole
+  affected **every** posture, including the default one, and nothing but discipline closed it. The
+  new flag renders the committed inputs (config + `.waffle/extensions/` + the pinned toolkit) into a
+  **temp directory**, hashes what the render *would* produce, and compares that against the
+  **committed, unmodified** lock — reporting `stale render:` / `stale lock entry:` / `unrendered:`
+  per file and failing the gate. It never writes to the working tree, which is exactly what makes it
+  non-circular: gating on an in-place `render` rewrites the very lock it would then be checked
+  against, so it cannot fail (see the tautology warning in `docs/gitignore.md`). It composes with
+  `--allow-missing` — the #311 all-absent guard is the safety net ("never pass having checked
+  nothing") and this is the principled escape from it ("I have no renders *on purpose* — verify by
+  rendering instead"), so **`--allow-missing --verify-render` turns the lock-only posture
+  ([`docs/gitignore.md`](docs/gitignore.md) Posture 2b) from "hand-roll your own CI job" into one
+  `doctor.flags` line on the shipped `waffle-doctor.yml`.** Opt-in via the **existing**
+  `doctor.flags` config key (no new config surface — a flag composes, an enum would not); absent the
+  flag, `doctor` behaves exactly as before. It does make render determinism load-bearing, so a test
+  now renders identical inputs twice and asserts identical hashes, failing loudly if a future
+  nondeterminism (a timestamp, a map ordering) creeps in.
+  **Consumer impact:** additive; no behavior change unless you pass the flag. Adopt it with
+  `doctor: { flags: --verify-render }` in `.waffle/waffle.yaml` (or `--allow-missing
+  --verify-render` if you gitignore your whole render), then re-render to update the workflow.
 - **Dedicated writing-craft skills for the two docs agents (#224).** The docs agents' writing
   standards previously lived entirely in the injected `docs.humanDocSpec` / `docs.machineDocSpec`
   config blobs, which say *which files* to write and how to structure them — but nothing about **how
@@ -349,6 +372,27 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **⚠️ Behavior change — `doctor --allow-missing` now fails when *every* managed file is absent
+  (#311).** The flag exists so a repo that deliberately gitignores **a subset** of its renders can
+  still run the CI drift gate: absent files are informational, only modified ones fail. But with
+  *no* rendered file present, zero files were present, therefore zero were modified, therefore the
+  check **exited 0 having verified the empty set** — and a green build that inspected nothing is
+  worse than a red one, because it looks like protection. `doctor` already refused to let the flag
+  mask a **missing lock**, on the stated grounds that it means "the repo never rendered"; a checkout
+  where every managed file is absent *is* a repo that never rendered, so it now fails on exactly the
+  same reasoning. The old guard caught the case where the **evidence** of a render was gone; this
+  one catches the case where the **render itself** is gone. The failure names the count and the two
+  ways out — *"every managed file (58/58) is absent — this check verified nothing; run `wafflestack
+  render`, or gate on `render` + `git diff --exit-code .waffle/waffle.lock.json` if the repo
+  deliberately commits only the lock"*. A lock tracking **zero** files is not caught (nothing to
+  render, so nothing failed to render).
+  **Consumer impact:** a repo that gitignores its **entire** render and gates CI on
+  `doctor --allow-missing` goes from green to **red**. That green was vacuous — the fix is not to
+  flag it away (there is no flag) but to adopt the gate that posture actually needs: have CI run
+  `render`, then `git diff --exit-code .waffle/waffle.lock.json`. This is the "Posture 2b" recipe
+  already documented in [`docs/gitignore.md`](docs/gitignore.md); the change turns that written
+  warning into an enforced one. **Repos ignoring only a subset of their renders are unaffected** —
+  that posture is supported, and the toolkit's own CI runs it.
 - **`/issue` plans read-only first and confirms before it mutates (#288).** The skill used to write
   to GitHub immediately — `gh issue create` in create mode, an in-place title/body/label rewrite in
   enrich mode — before the user had seen a word of the drafted content, so a bad inference (wrong
