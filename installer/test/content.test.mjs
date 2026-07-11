@@ -2202,6 +2202,18 @@ describe('docs writing-craft skills: the guardrail that makes each one worth hav
     assert.match(md, /throat-clearing/i);
   });
 
+  // #299: §5 tells the writer to reach for paths, counts, and numbers — the most fabricable claims
+  // there are. The counterweight lives HERE, natively, and not as an `accurate` grant on docs-human
+  // (the orthogonal-audience ruling). Without it, "quantify claims" is an unqualified license to
+  // invent a credible-sounding number, so this pin is what keeps the demand for specifics honest.
+  test('prose: the demand for specifics is bounded by sourcing — invented numbers are the trap (#299)', () => {
+    const md = readSkill('prose');
+    assert.match(md, /sourced/i);
+    assert.match(md, /fabrication wearing concreteness's clothes/);
+    // The escape hatch when the source is silent: a gap, never a plausible guess.
+    assert.match(md, /the source doesn't carry the fact, omit it/i);
+  });
+
   test('md-maximalist: the full toolbox, but every choice must speed up a scanning reader', () => {
     const md = readSkill('md-maximalist');
     // The whole skill hinges on this test — without it, "maximalist" licenses decoration.
@@ -2223,6 +2235,13 @@ describe('docs writing-craft skills: the guardrail that makes each one worth hav
   test('accurate: a wrong doc is a bug — verify, omit, or flag, but never hedge', () => {
     const md = readSkill('accurate');
     assert.match(md, /A wrong doc is a bug/);
+    // #299: `accurate` is docs-agent's craft standard, the way md-maximalist is docs-human's. Its
+    // subject is MACHINE-legible accuracy — the reader is an agent that cannot sanity-check you —
+    // and naming that audience is what keeps the orthogonal split legible to a future reader who
+    // might otherwise re-grant it to docs-human. Thesis-level: the audience, not the phrasing.
+    const { data, body } = parseFrontmatter(md);
+    assert.match(data.description, /machine-legible accuracy/i);
+    assert.match(body, /can an agent act on this without judgment/i);
     assert.match(md, /Prefer omission over invention|An absent fact beats a plausible guess/);
     // Hedging is the loophole that lets an unverified guess into the doc anyway. The thesis is the
     // rule itself; the raincoat metaphor that illustrates it is phrasing, so it is not pinned.
@@ -2267,14 +2286,17 @@ describe('docs agents: writing-craft skills granted in frontmatter AND body pros
     assert.ok(data.skills.includes('md-maximalist'), 'docs-human must be granted `md-maximalist`');
   });
 
-  // `prose` §5 pushes docs-human toward the most fabricable claims there are — paths, counts,
-  // numbers — and docs-human writes ARCHITECTURE.md/STATUS.md straight from the codebase. The
-  // verification counterweight has to ride along, or the pressure to quantify lands with nothing
-  // holding it honest. The frontmatter grant (not just the body prose) is what feeds `directDeps`,
-  // so `accurate` renders even when docs-human is included WITHOUT docs-agent.
-  test('docs-human grants accurate too — the counterweight to prose\'s "quantify claims"', () => {
+  // #299 (owner ruling, reversing a fix round in #298): the split is ORTHOGONAL BY AUDIENCE, so
+  // docs-human must NOT carry `accurate`. docs-human owns human digestibility; docs-agent owns
+  // machine-trustworthy claims. That is not a license to be inaccurate — docs-human's accuracy is
+  // PROVENANCE, not protocol (it derives from the already-verified machine docs), and the
+  // anti-fabrication counterweight to `prose` §5's "quantify claims" lives natively in `prose`
+  // (pinned below) rather than being imported as `accurate`'s per-claim verification protocol.
+  // Granting it here double-runs that protocol and blurs the boundary the skills exist to draw.
+  // Pinned negatively because the grant is the exact regression #299 had to undo.
+  test('docs-human does NOT grant accurate — the split is orthogonal by audience (#299)', () => {
     const { data } = parseFrontmatter(readAgent('docs-human'));
-    assert.ok(data.skills.includes('accurate'), 'docs-human must be granted `accurate`');
+    assert.ok(!data.skills.includes('accurate'), 'docs-human must NOT be granted `accurate` (#299)');
   });
 
   test('docs-agent grants accurate in frontmatter', () => {
@@ -2286,7 +2308,17 @@ describe('docs agents: writing-craft skills granted in frontmatter AND body pros
     const md = readAgent('docs-human');
     assert.match(md, /`prose` skill/);
     assert.match(md, /`md-maximalist` skill/);
-    assert.match(md, /`accurate` skill/);
+  });
+
+  // The body prose is the ONLY grant signal the codex target sees (it drops frontmatter `skills:`),
+  // so removing the frontmatter grant without the body clause would leave docs-human half-granted.
+  // Assert both halves of #299's replacement: the provenance clause is present, AND the body no
+  // longer names the `accurate` skill — so the grant cannot creep back in through the codex half.
+  test('docs-human carries the provenance clause instead of an accurate grant (#299)', () => {
+    const md = readAgent('docs-human');
+    assert.match(md, /never invented/);
+    assert.match(md, /omit it rather than guess/);
+    assert.doesNotMatch(md, /`accurate` skill/, 'the body grant must not creep back (#299)');
   });
 
   // docs-human holds two skills with overlapping authority over FORM: the `docs-human` skill's

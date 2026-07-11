@@ -3285,6 +3285,47 @@ describe('github-workflow: waffle-hygiene payload (#46)', () => {
   });
 });
 
+// #299: `prose` §4 delegates form choice to `md-maximalist` BY NAME ("See the `md-maximalist`
+// skill for choosing the form"). Without a requires: edge, a standalone `skills/prose` install
+// renders a live pointer to a skill the project does not have — the dangling-reference class the
+// toolkit treats as a defect everywhere else. The edge only bites on SINGLE-ITEM installs: a
+// whole-stack install already lists both in `skills:`, which is exactly why the regression would
+// be invisible in this repo's own render. This drives the ACTUAL shipped docs-system stack.
+describe('docs-system: the prose → md-maximalist requires edge (#299)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-docs-prose-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  test('installing ONLY skills/prose pulls md-maximalist through the requires closure', () => {
+    write(
+      cwd,
+      '.waffle/waffle.yaml',
+      'targets: [claude]\ninclude: [docs-system/skills/prose]\nconfig:\n  project:\n    name: ProseProj\n    longName: the ProseProj project\n',
+    );
+    const result = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    // (a) the requested skill, and (b) the sibling its body points at — the edge under test.
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/prose/SKILL.md')), 'prose rendered');
+    assert.ok(
+      fs.existsSync(path.join(cwd, '.claude/skills/md-maximalist/SKILL.md')),
+      'md-maximalist pulled transitively by the requires edge — the see-also must not dangle',
+    );
+
+    // (c) the closure stays TIGHT: prose's pointer justifies md-maximalist, nothing more. The
+    // sibling docs skills are not dragged along, or a one-skill install quietly becomes the stack.
+    for (const skill of ['accurate', 'docs-agent', 'docs-human']) {
+      assert.equal(
+        fs.existsSync(path.join(cwd, `.claude/skills/${skill}/SKILL.md`)),
+        false,
+        `${skill} must NOT be pulled by a standalone prose install`,
+      );
+    }
+  });
+});
+
 // #188: the pr-green hook died on its FIRST live invocation (release PR #186, run 28994016078) —
 // the harness completed the review but was denied every tool it used to POST it. Root cause: the
 // dispatch prompt asks for single-program commands so the CI allowlist can match them, while the

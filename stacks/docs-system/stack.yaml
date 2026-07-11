@@ -2,6 +2,13 @@ name: docs-system
 description: Two-audience documentation system — machine-readable agent docs and human docs. The doc-set shapes (which files, which sections) are project config; the defaults adapt to the repo's layout (a root AGENTS.md always, per-feature AGENTS.md only where feature/module directories exist; DECISIONS/STATUS/ARCHITECTURE.md).
 agents: [docs-agent, docs-human]
 skills: [docs-agent, docs-human, prose, md-maximalist, accurate]
+# Cross-item skill dependencies pulled in when an item is installed on its own (#299). `prose` §4
+# delegates form choice to `md-maximalist` by name, so a standalone `skills/prose` install would
+# otherwise render a pointer to a skill the repo does not have. Whole-stack installs already render
+# both (see `skills:` above), so this edge only changes single-item installs.
+requires:
+  skills/prose:
+    - skills/md-maximalist
 config:
   project.longName:
     required: true
