@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-11
+
 ### Added
 - **`doctor --verify-render` — catch a render that no longer matches its config (#314).** `doctor`
   compares the files on disk against `.waffle/waffle.lock.json`, and never asked whether *either*

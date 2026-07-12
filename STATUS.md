@@ -3,7 +3,7 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.11.0 (pre-1.0 — the file contract can still change between minor
+- **Version**: v0.12.0 (pre-1.0 — the file contract can still change between minor
   releases). See Current focus for what this release adds.
 - **Last updated**: 2026-07-11
 - **Health**: 🟢 tests 858/858 (121 suites) · `validate` clean · `doctor --allow-missing` clean
