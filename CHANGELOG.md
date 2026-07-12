@@ -597,6 +597,25 @@ is what you reach for across a breaking one.
   commits its render will see a diff where the `model:` line disappears from each affected agent.
 
 ### Fixed
+- **Every `delegate` specialist was mute — told to report back with tools it was never granted.**
+  `delegate`'s routing table names exactly three specialists — **`harness-architect`**, **`docs-agent`**
+  and **`docs-human`** — and its agent-prompt template closes by telling each of them to report with
+  `SendMessage(to: "team-lead", …)` and to mark its work done with `TaskUpdate(taskId, status:
+  "completed")`. **None of the three was granted either tool.** So a delegated specialist finished
+  **silently**: it could not hand back its PR URL, could not close its task, and could not answer the
+  orchestrator's `shutdown_request` at teardown. The skill had grown a whole *"Silent specialists"*
+  section instructing the orchestrator to go verify the branch by hand — a documented workaround for a
+  capability the agent should simply have had. This is the same defect #303 fixed for the `issue`
+  skill's callers, one layer down: **naming an agent in-scope for a protocol it provably cannot
+  execute is the bug.** It is not cosmetic — a delegated run stalled with its work complete but
+  uncommitted and no way to say so, and the orchestrator only noticed by polling the worktree. All
+  three now grant `SendMessage` + `TaskUpdate`; a content test pins delegate's roster against its
+  toolset so the two cannot drift apart again. Deliberately *not* granted: `TaskCreate` (a worker does
+  not open work — that is `task-planner`'s job) and `TaskList`/`TaskGet` (the orchestrator injects the
+  task id; a worker has no business browsing the board).
+  **Consumer impact:** re-render to pick it up. Delegated specialists now report their PR and close
+  their task instead of finishing silently — an orchestrator no longer has to poll the branch to learn
+  whether they succeeded.
 - **The lock hashed the render your overlay produced, so private values propagated (#317,
   superseding the #308 way-station).** `.waffle/waffle.local.yaml` is a developer's private tooling:
   gitignored, per-machine, absent in CI. It leaked anyway. `render` wrote

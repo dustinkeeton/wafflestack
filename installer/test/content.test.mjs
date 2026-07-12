@@ -1952,6 +1952,39 @@ describe('issue skill: its three in-scope interactive callers can actually run t
   }
 });
 
+// The same bug class as #303 above, one layer down — and this one shipped. `delegate`'s routing
+// table names exactly three specialists, and its agent-prompt template (step 7) closes by telling
+// each of them to report with `SendMessage(to: "team-lead", …)` and to `TaskUpdate(taskId, status:
+// "completed")`. **None of the three was granted either tool.** So every delegated specialist
+// finished SILENTLY: it could not hand back its PR URL, could not mark its task done, and could not
+// answer the orchestrator's `shutdown_request` at teardown. The skill had grown a "Silent
+// specialists" section instructing the orchestrator to go verify the branch by hand — a documented
+// workaround for a capability the agent should simply have had.
+//
+// It is not a cosmetic gap: a #317 run stalled with the work complete but uncommitted and no way to
+// say so, and the orchestrator only noticed by polling the worktree. Naming an agent in-scope for a
+// protocol it provably cannot execute is the bug (#303's words); these pins keep delegate's roster
+// and its toolset in sync.
+describe('delegate specialists can actually close the loop delegate tells them to close', () => {
+  const readAgent = (name) => fs.readFileSync(path.join(CLAUDE, 'agents', `${name}.md`), 'utf8');
+  // The three rows of delegate's agent-routing table.
+  const SPECIALISTS = ['harness-architect', 'docs-agent', 'docs-human'];
+
+  for (const name of SPECIALISTS) {
+    test(`${name} can report back and mark its task done`, () => {
+      const { data } = parseFrontmatter(readAgent(name));
+      assert.ok(
+        data.tools.includes('SendMessage'),
+        `${name} is spawned by delegate, whose prompt tells it to SendMessage(to: "team-lead", …) — and whose teardown sends it a shutdown_request it must answer. Without SendMessage it finishes silently and cannot be cleanly stood down.`,
+      );
+      assert.ok(
+        data.tools.includes('TaskUpdate'),
+        `${name} is spawned by delegate, whose prompt tells it to TaskUpdate(taskId, status: "completed")`,
+      );
+    });
+  }
+});
+
 describe('release skill: required sections and tag-safety guardrails', () => {
   let md;
   before(() => {

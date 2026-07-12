@@ -8,7 +8,7 @@ skills:
   - prose
   - md-maximalist
 claude:
-  tools: Read, Write, Edit, Glob, Grep, Bash, Agent
+  tools: Read, Write, Edit, Glob, Grep, Bash, Agent, SendMessage, TaskUpdate
 ---
 
 You are the human documentation specialist for {{project.longName}}. Your responsibilities:
