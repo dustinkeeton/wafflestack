@@ -3898,6 +3898,18 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       B('git tag --contains HEAD'),
       B('git tag --points-at HEAD'),
       B('git tag --merged main'),
+      // TERMINATORS (#330 review round 2). A bare `git tag` lists tags, so it is a READ — but "bare"
+      // must mean end-of-COMMAND, not end-of-STRING. `(?!\s*$)` alone redded every one of these, in
+      // the one tier a delivered review can NEVER downgrade, with an ::error naming them
+      // "exfil/destructive". `git tag` is not granted (the job grants only git log/diff/show/status),
+      // so these ARE denied and DO reach the classifier — and this job chews untrusted PR content, so
+      // a false "exfil" red is also a cry-wolf vector an injected PR could trigger on demand.
+      B('git tag | head -20'),
+      B('git tag; git log --oneline'),
+      B('git tag && git log'),
+      B('git tag > /tmp/tags.txt'),
+      B('git tag\ngit log --oneline'),
+      B('git tag -v v0.12.0'),
     ], 'Reviewed: 1 blocker, 2 nits.');
     const { code, out } = runPrGreenGuard(g.prGreen, log, [MARKED]);
     assert.equal(code, 0, `read-only denials on a delivered review must not red: ${out}`);
@@ -3927,6 +3939,15 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     const inline = g.prGreen.match(/\(rm\|rmdir\|[^)]*mkfs\)/g) || [];
     assert.deepEqual(inline, [],
       'no classifier re-types the program list inline — that is the drift that re-opens #208');
+    // The list is spliced into a regex as an alternation, so a program name is a regex FRAGMENT
+    // (#330 review round 2). `python3.11` would match `python3X11`; `g++` would match a bare `g`, i.e.
+    // every command starting with `g`. Both change the tier SILENTLY (a malformed one like `foo(`
+    // at least fails closed and reds). #331 copies this list into three more hooks, so enforce the
+    // plain-name contract here rather than trusting the comment on the declaration.
+    for (const p of destructive) {
+      assert.match(p, /^[a-z0-9-]+$/,
+        `"${p}": program names are spliced into a regex — plain [a-z0-9-] only, no metacharacters`);
+    }
   });
 
   // FAIL-CLOSED. `2>/dev/null || echo 0` read an ERROR as PROOF OF SAFETY in the one classifier that

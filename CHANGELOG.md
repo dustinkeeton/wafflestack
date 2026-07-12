@@ -69,7 +69,10 @@ is what you reach for across a breaking one.
   SOFT/AMB and the run went green. A classifier that cannot run now reds the job and prints what jq
   said. Also: `git tag` was the one verb clause that failed *open* (it inspected only the token after
   `tag`, so `git tag --cleanup=verbatim -m x v9.9.9` slipped to AMB) — it is now fail-closed like
-  every other clause. **Known blind spots, documented in the guard:** scripting interpreters
+  every other clause, and "bare `git tag` is a read" correctly means end-of-**command**, not
+  end-of-string, so `git tag | head`, `git tag; git log` and a bare `git tag` on its own line of a
+  multi-line call still downgrade rather than redding as *"exfil/destructive"* in a tier no delivered
+  review can rescue. **Known blind spots, documented in the guard:** scripting interpreters
   (`python3 -c`, `node -e`, …) and boundary-anchor evasion (`FOO=1 curl`, `/usr/bin/curl`,
   `{ curl …; }`) still classify SOFT; program-name matching cannot close these, and the
   allowlist-derived redesign that can is tracked in #331.
