@@ -51,13 +51,20 @@ is what you reach for across a breaking one.
   (`typecheckCmd: tsc --noEmit && eslint .`) rendered **ok** and emitted
   `Bash(tsc --noEmit && eslint .:*)`: a **dead grant that can match no command**, plus the verbatim
   pre-fix checklist row. So `project.{lint,typecheck,test,build}Cmd` now carry a **`pattern:`
-  guard**: a value with an **unquoted** shell operator (`&&`, `||`, `;`, `|`, `&`), a `cd ` prefix, a
-  `$(…)`/backtick substitution, a newline, or a `${{ }}` expression **fails the render**, naming the
-  key and carrying the remedy. The invariant is a constraint on the command string — *a project
-  command is only grantable as a single-program prefix* — so it is enforced where the value
-  **enters**, which makes the class unrepresentable rather than merely linted downstream.
-  (Only *unquoted* operators: `jest -t "foo|bar"` is one program and still renders. Rejecting a valid
-  command is the one way a guard like this ends up worse than the hole it closes.)
+  guard**: a value with a shell operator (`&&`, `||`, `;`, `|`, `&`), a `cd ` prefix, a
+  `$(…)`/backtick substitution, a newline, a `${{ }}` expression, **or a quote character** **fails the
+  render**, naming the key and carrying the remedy. The invariant is a constraint on the command
+  string — *a project command is only grantable as a single-program prefix* — so it is enforced where
+  the value **enters**, which makes the class unrepresentable rather than merely linted downstream.
+  **Quotes are rejected too, and that is not overreach.** The value is spliced verbatim into the
+  single-quoted `--allowedTools '…'` shell word, so a quoted value cannot survive the render:
+  `Bash(pytest -k 'not slow':*)` terminates that word early and the grant is silently mangled to
+  `Bash(pytest -k not slow:*)`, which the real command no longer prefix-matches — *the same silent
+  denial this guard exists to prevent*. Substitution cannot know its target context, so escaping is
+  impossible in general and the toolkit's answer is to fail loudly (`git.cmd` bans quotes for exactly
+  this reason, #254). Wrap a quoted argument in an npm script and set that here — the rejection says
+  so. A false reject is loud and worked around in one line; a false accept is a dead grant nobody
+  ever sees, so this guard fails **closed**.
   **The guard runs in the gate you actually have.** A `pattern:` polices the config *value*, so it
   needs no re-render to evaluate — and it must not, because the shipped `waffle-doctor.yml` runs
   **bare `doctor`** (`doctor.flags` defaults to `""`) and `--verify-render` is opt-in (#314). Bare
@@ -79,9 +86,9 @@ is what you reach for across a breaking one.
   command joined to non-project work in **bare, un-backticked** template text. Nothing in `stacks/`
   occupies that gap today; closing it without false-firing on ordinary prose is tracked in **#350**.
   **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3. **If
-  any of your four `project.*Cmd` values carries an unquoted compound, `render` and `doctor` — bare
-  `doctor`, the one your CI already runs — will now fail**, name the key, and tell you to split it
-  into an npm-script-style single entry point (`npm run ci`). That failure is the point, and it is
+  any of your four `project.*Cmd` values carries a compound **or a quote**, `render` and `doctor` —
+  bare `doctor`, the one your CI already runs — will now fail**, name the key, and tell you to wrap it
+  in an npm-script-style single entry point (`npm run ci`). That failure is the point, and it is
   aimed squarely at the repos that are *already* broken: such a value was **already** producing a
   dead grant and a silently denied CI check, behind a doctor that reported no drift.
 - **New: an optional `patternHint:` on a config key (#218).** A `pattern:` rejection printed the raw
