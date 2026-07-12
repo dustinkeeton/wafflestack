@@ -381,18 +381,24 @@ is what you reach for across a breaking one.
   mask a **missing lock**, on the stated grounds that it means "the repo never rendered"; a checkout
   where every managed file is absent *is* a repo that never rendered, so it now fails on exactly the
   same reasoning. The old guard caught the case where the **evidence** of a render was gone; this
-  one catches the case where the **render itself** is gone. The failure names the count and the two
+  one catches the case where the **render itself** is gone. The failure names the count and both
   ways out — *"every managed file (58/58) is absent — this check verified nothing; run `wafflestack
-  render`, or gate on `render` + `git diff --exit-code .waffle/waffle.lock.json` if the repo
+  render`, or add `--verify-render` to verify by re-rendering the committed config against the lock
+  (`render` + `git diff --exit-code .waffle/waffle.lock.json` is the manual equivalent) if the repo
   deliberately commits only the lock"*. A lock tracking **zero** files is not caught (nothing to
   render, so nothing failed to render).
   **Consumer impact:** a repo that gitignores its **entire** render and gates CI on
-  `doctor --allow-missing` goes from green to **red**. That green was vacuous — the fix is not to
-  flag it away (there is no flag) but to adopt the gate that posture actually needs: have CI run
-  `render`, then `git diff --exit-code .waffle/waffle.lock.json`. This is the "Posture 2b" recipe
-  already documented in [`docs/gitignore.md`](docs/gitignore.md); the change turns that written
-  warning into an enforced one. **Repos ignoring only a subset of their renders are unaffected** —
-  that posture is supported, and the toolkit's own CI runs it.
+  `doctor --allow-missing` goes from green to **red**. That green was vacuous — and you do not have
+  to hand-roll its replacement, because the gate that posture actually needs ships in this same
+  release: add **`--verify-render`** (above), so `doctor: { flags: --allow-missing --verify-render }`
+  re-renders the committed config in a temp dir and checks that against the lock. That is a real
+  gate on a checkout with no rendered files at all, and — now that the lock records the **canonical**
+  render (#317, below) — it stays green in CI even when a private `.waffle/waffle.local.yaml` feeds
+  your local render. On a toolkit too old for the flag, the manual equivalent is CI running `render`
+  and then `git diff --exit-code .waffle/waffle.lock.json`. This is the "Posture 2b" recipe
+  documented in [`docs/gitignore.md`](docs/gitignore.md#posture-2b-commit-the-lock-only); the change
+  turns that written warning into an enforced one. **Repos ignoring only a subset of their renders
+  are unaffected** — that posture is supported, and the toolkit's own CI runs it.
 - **`/issue` plans read-only first and confirms before it mutates (#288).** The skill used to write
   to GitHub immediately — `gh issue create` in create mode, an in-place title/body/label rewrite in
   enrich mode — before the user had seen a word of the drafted content, so a bad inference (wrong
