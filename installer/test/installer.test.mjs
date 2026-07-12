@@ -3816,6 +3816,17 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       'gh repo delete o/r --yes',
       'gh pr merge 7 --squash',
       'node x.mjs && git push',
+      // the DENIABLE gh families (#330 review): `gh pr|api|repo` are GRANTED, so their mutating
+      // verbs can never actually be denied — but `gh issue|label|run` are NOT granted, so they ARE
+      // auto-denied in headless CI and DO reach this classifier. They sit in the lookahead's read
+      // allow-list, so without an explicit mutating-verb enumeration they fell through to AMB and a
+      // delivered review downgraded them to a warning — the exact lost-signal class #208 closes.
+      'gh issue delete 7 --yes',
+      'gh issue create -t pwn -b x',
+      'gh issue comment 7 --body pwned',
+      'gh label delete bug --yes',
+      'gh run cancel 123',
+      'gh run rerun 123',
     ]) {
       const { code, out } = runPrGreenGuard(g.prGreen, RESULT([B(cmd)], 'Reviewed: 1 nit.'), [MARKED]);
       assert.equal(code, 1, `a delivered review must NOT downgrade \`${cmd}\`: ${out}`);
@@ -3851,6 +3862,18 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       B('gh api repos/o/r/pulls/7/reviews --method POST --input /tmp/review.json'),
       B('gh pr view 7 --json body'),
       B('cd /home/runner/work/w/w\nnode installer/cli.mjs render\ngit status --short'),
+      // WHITESPACE RUNS (#330 review). The verb lookahead absorbs its own leading blanks; without
+      // that, `\s+` backtracks to ONE space and the negative lookahead is tested against the
+      // leftover blank — it succeeds, and these read-only calls misread as DANGER (a fail-closed
+      // false-red of precisely the #188 shape this tier must preserve). Pinned so it stays fixed.
+      B('git  log --oneline'),
+      B('gh  pr view 7'),
+      B('git\tlog --stat'),
+      // read-only verbs of the deniable gh families must STAY ambiguous — the enumeration above
+      // must catch the mutating verbs without redding their read siblings.
+      B('gh issue view 7 --json body'),
+      B('gh run view 123 --log'),
+      B('gh label list'),
     ], 'Reviewed: 1 blocker, 2 nits.');
     const { code, out } = runPrGreenGuard(g.prGreen, log, [MARKED]);
     assert.equal(code, 0, `read-only denials on a delivered review must not red: ${out}`);

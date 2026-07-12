@@ -270,11 +270,27 @@ jobs:
             # shape #188 fixed. The gsub normalizes `git --no-pager log` ⇒ `git log` before matching:
             # widening the lookahead with an optional flag prefix instead would let a backtracking
             # engine take the zero-flag path and misread `git -c x=y push` as ambiguous.
+            #
+            # The lookaheads absorb their own leading whitespace (`\s+(?!\s*(…)`). Without the inner
+            # `\s*`, a whitespace RUN lets the engine backtrack `\s+` to a single space, so the
+            # negative lookahead is tested against the leftover blank — it succeeds, and `git  log`
+            # (two spaces) misreads as DANGER. It fails closed, but it is a false-red of exactly the
+            # read-only shape #188 fixed, so the lookahead swallows the run instead.
+            #
+            # The gh verb enumeration is deliberately keyed to what is DENIABLE, not to what merely
+            # sounds dangerous. `Bash(gh pr:*|gh api:*|gh repo:*)` are GRANTED (see :166), so a
+            # `gh repo delete` / `gh pr merge` can never be denied and never reaches this classifier
+            # — those verbs are enumerated for defence in depth only. The families NOT granted are
+            # auto-denied in headless CI and so DO arrive here: `gh issue`, `gh label`, `gh run` sit
+            # in the lookahead's read allow-list, so their MUTATING verbs must be named explicitly or
+            # they fall through to AMB and a delivered review downgrades them (the very lost-signal
+            # class #208 exists to close). Every other gh family (secret, workflow, cache, release,
+            # variable, auth, …) is absent from the allow-list and is already DANGER by fail-close.
             hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(gh|git|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
             case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
             escapes="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end' 2>/dev/null || echo 0)"
             case "$escapes" in ''|*[!0-9]*) escapes=0 ;; esac
-            danger="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox != true) and ((.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and (((.tool_input.command // "") | gsub("git\\s+(--no-pager|--paginate)\\s+"; "git ")) as $c | ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*git\\s+(?!(log|diff|show|status|tag|blame|shortlog|describe|rev-parse|rev-list|ls-files|cat-file)\\b)")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*git\\s+tag\\s+(-[adfmsu]|--(delete|force|annotate|sign|message|file)|[^-\\s])")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*gh\\s+(?!(pr|api|repo|issue|search|run|label|browse|status)\\b)")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*gh\\s+(repo\\s+(create|delete|fork|rename|archive|edit|sync|deploy-key)|pr\\s+(merge|close|reopen))\\b")))))) ] | length else 0 end' 2>/dev/null || echo 0)"
+            danger="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox != true) and ((.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and (((.tool_input.command // "") | gsub("git\\s+(--no-pager|--paginate)\\s+"; "git ")) as $c | ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*git\\s+(?!\\s*(log|diff|show|status|tag|blame|shortlog|describe|rev-parse|rev-list|ls-files|cat-file)\\b)")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*git\\s+tag\\s+(-[adfmsu]|--(delete|force|annotate|sign|message|file)|[^-\\s])")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*gh\\s+(?!\\s*(pr|api|repo|issue|search|run|label|browse|status)\\b)")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*gh\\s+(repo\\s+(create|delete|fork|rename|archive|edit|sync|deploy-key)|pr\\s+(merge|close|reopen)|issue\\s+(create|delete|edit|close|reopen|comment|transfer|pin|unpin|lock|unlock|develop)|label\\s+(create|delete|edit|clone)|run\\s+(cancel|delete|rerun))\\b")))))) ] | length else 0 end' 2>/dev/null || echo 0)"
             case "$danger" in ''|*[!0-9]*) danger=0 ;; esac
             soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
             # DANGER ⊆ HARD \ ESCAPES by construction, so this cannot go negative — clamped anyway.
