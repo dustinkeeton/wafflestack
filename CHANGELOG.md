@@ -54,6 +54,26 @@ is what you reach for across a breaking one.
   green today — that is the point; inspect the `claude-execution-log-pr-green` artifact rather than
   widening `--allowedTools` to make it green.
 
+  **Review hardening (#330).** The tier is only as good as the list it stands on, so three holes in
+  that list were closed. (1) **The raw exfil channels were in neither list.** A denied
+  `nc … < hosts.yml` — plus `netcat`, `socat`, `telnet`, `openssl s_client` — classified *SOFT* and
+  the job went green **even with no review posted**; they are now in the destructive list and red.
+  (2) **The two program lists are now ONE.** `hard` and `danger` kept hand-maintained copies with a
+  load-bearing invariant (`danger == hard \ {gh,git}`) that no test pinned — and the natural way to
+  fix a gap (add the program to `hard`) did not make it red, it made it **AMB**, which a delivered
+  review *downgrades*: #208, silently re-opened. `danger` is now **derived** from a single
+  declaration, so the drift is unrepresentable, and a test pins the derivation against the rendered
+  YAML. (3) **The classifier now fails CLOSED.** `2>/dev/null || echo 0` read a jq error as *proof of
+  safety* in the very guard that decides whether delivery evidence may apply — break its expression,
+  or hand it a denial whose `tool_name` key is simply absent, and every denial silently became
+  SOFT/AMB and the run went green. A classifier that cannot run now reds the job and prints what jq
+  said. Also: `git tag` was the one verb clause that failed *open* (it inspected only the token after
+  `tag`, so `git tag --cleanup=verbatim -m x v9.9.9` slipped to AMB) — it is now fail-closed like
+  every other clause. **Known blind spots, documented in the guard:** scripting interpreters
+  (`python3 -c`, `node -e`, …) and boundary-anchor evasion (`FOO=1 curl`, `/usr/bin/curl`,
+  `{ curl …; }`) still classify SOFT; program-name matching cannot close these, and the
+  allowlist-derived redesign that can is tracked in #331.
+
 ## [0.12.0] - 2026-07-11
 
 ### Added
