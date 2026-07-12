@@ -167,7 +167,7 @@ rounds](#when-called-by-agents)).
 rewrite the last one:
 
 ```bash
-gh pr comment "$N" --body-file /tmp/pr-response-body.md
+gh pr comment "$N" --body-file "${TMPDIR:-/tmp}/waffle-pr-response-body-$N.md"
 ```
 
 That holds even when the new round revisits an earlier finding. The rounds are a **paper trail**,
@@ -195,6 +195,32 @@ Read them as history; write only new ones.
 
 That is the whole post path: one `Write`, one line of shell (the `gh pr comment` above). Keep the
 body file out of the commit — write it to a temp path, not into the repo.
+
+**The staging path MUST be namespaced by PR number** (`$N`, in scope since step 1):
+
+```
+${TMPDIR:-/tmp}/waffle-pr-response-body-$N.md
+```
+
+A fixed, un-namespaced path (`/tmp/pr-response-body.md`) is a **correctness bug, not a style nit**.
+This skill runs *per PR, concurrently* — an autopilot parallel group responds to several PRs at
+once. On one shared path, two runs interleaving a `Write` and a `gh --body-file` post **PR A's
+verdict table onto PR B**, and the loser never knows; a stale body left by an earlier run gets
+posted as if it were this round's. The PR number in the path is what keeps two concurrent runs from
+ever touching the same file.
+
+> **The `Write` tool does not expand shell syntax.** `$N` and `${TMPDIR:-/tmp}` are for the `bash`
+> command line only. When you call `Write`, pass a **literal, already-substituted** path —
+> `/tmp/waffle-pr-response-body-321.md` for PR 321 — or you will create a file named literally
+> `${TMPDIR:-/tmp}` and post nothing. Use the same resolved path in both steps.
+
+**Read back the body before you post it.** Immediately before handing the path to `gh`, use the
+`Read` tool on the *exact* file you are about to post and confirm it is the reply you just wrote
+**for this PR and this round**: `<!-- waffle-pr-response -->` on line 1, the round label, and the
+F-numbers you just dispositioned. If it holds anything else — another PR's verdict table, a prior
+round's body, an empty or truncated file — **stop and do not post**: rewrite it, re-read, then post.
+The marker makes a wrong-PR reply indistinguishable from a real one, and these replies are the
+paper trail this skill exists to produce.
 
 ### Label each round
 

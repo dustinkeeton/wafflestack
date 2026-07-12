@@ -1336,8 +1336,11 @@ describe('gate skills: documented as resumable across rounds (#295)', () => {
     const md = readSkill('pr-response');
     assert.match(md, /Append\. Never edit a previous reply\./);
     assert.match(md, /paper trail/i);
-    // The posting mechanic must be `gh pr comment` — a plain append.
-    assert.match(md, /gh pr comment "\$N" --body-file/);
+    // The posting mechanic must be `gh pr comment` — a plain append, from a per-PR staging path
+    // (#324: the old fixed `/tmp/pr-response-body.md` was shared by every PR and every round).
+    assert.match(md, /gh pr comment "\$N" --body-file "\$\{TMPDIR:-\/tmp\}\/waffle-pr-response-body-\$N\.md"/);
+    assert.doesNotMatch(md, /--body-file\s+\/tmp\//,
+      'no command posts from a shared, un-namespaced /tmp path — that cross-posts replies (#324)');
     // And it must NOT be a comment-editing API call. This is the actual regression guard: the old
     // instruction was `gh api …/issues/comments/$COMMENT_ID --method PATCH`, and it is what
     // clobbered a real PR's history before anyone noticed.
@@ -1723,8 +1726,18 @@ describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
     const bash = blocks.join('\n');
     assert.doesNotMatch(bash, /--input\s+-(\s|$)/m, 'the review payload comes from a FILE, not stdin');
     assert.doesNotMatch(bash, /--body\s+"/, 'the no-concerns summary uses --body-file, not an inline --body');
-    assert.match(bash, /--input \/tmp\/[\w.-]+\.json/, 'step 5 posts a file payload');
-    assert.match(bash, /--body-file \/tmp\/[\w.-]+\.md/, 'step 6 posts a file body');
+    // #324: the staging path must be namespaced BY PR NUMBER. A fixed, shared path (the old
+    // `/tmp/qa-review.json`) is read and written by every invocation across every PR, and it is
+    // handed straight to `gh --input` — so whatever sits there at that instant is what gets POSTed.
+    // Real near-miss: the gate on PR #321 found the path already holding PR #285's payload, one step
+    // from posting #285's review onto #321 under the `<!-- waffle-qa -->` marker. Worse, autopilot
+    // runs these gates per-PR CONCURRENTLY, so it is a live race, not just stale leftovers.
+    assert.match(bash, /--input "\$\{TMPDIR:-\/tmp\}\/waffle-qa-review-\$N\.json"/,
+      'step 5 posts a per-PR file payload (#324)');
+    assert.match(bash, /--body-file "\$\{TMPDIR:-\/tmp\}\/waffle-qa-summary-\$N\.md"/,
+      'step 6 posts a per-PR file body (#324)');
+    assert.doesNotMatch(bash, /--(?:input|body-file)\s+\/tmp\//,
+      'no command posts from a shared, un-namespaced /tmp path — that cross-posts reviews (#324)');
     // And no command is a compound the allowlist could not match either.
     for (const cmd of bashCommands()) {
       assert.ok(!cmd.includes('&&'), `no && compound in the skill's commands: ${cmd}`);
@@ -2511,6 +2524,65 @@ describe('shipped agents do not pre-pin a model (#287)', () => {
         undefined,
         `${stack}/agents/${file} pins a top-level model — the toolkit must not choose a model tier for the consumer (#287)`,
       );
+    });
+  }
+});
+
+// #324 — the PR-gate skills stage a payload on disk and hand that path straight to `gh` as
+// `--input`/`--body-file`, so whatever is on disk at that instant is what gets POSTed to GitHub.
+// All three used FIXED, un-namespaced /tmp paths, shared by every PR, every run, every concurrent
+// session. The benign failure is a stale leftover — the gate on PR #321 found the path already
+// holding a payload from an earlier run on PR #285, one step from posting #285's review onto #321
+// under a marker indistinguishable from a real gate review. The sharp failure is a live RACE:
+// autopilot runs these gates "per PR (each PR in a parallel group independently)", so two gates
+// interleaving a write and a post on one path attach PR A's findings to PR B — and those findings
+// then drive pr-response's implement/defer/decline verdicts. Namespacing by $N is the fix; reading
+// the payload back before posting is the belt to that suspenders.
+describe('PR-gate skills: staging paths are per-PR and payloads are read back before posting (#324)', () => {
+  const GATES = [
+    { skill: 'qa', artifacts: ['waffle-qa-review-$N.json', 'waffle-qa-summary-$N.md'] },
+    {
+      skill: 'adversarial-review',
+      artifacts: ['waffle-adversarial-review-$N.json', 'waffle-adversarial-review-summary-$N.md'],
+    },
+    { skill: 'pr-response', artifacts: ['waffle-pr-response-body-$N.md'] },
+  ];
+
+  for (const { skill, artifacts } of GATES) {
+    test(`${skill}: every staged artifact is namespaced by PR number`, () => {
+      const md = readSkill(skill);
+      for (const artifact of artifacts) {
+        assert.ok(
+          md.includes(`\${TMPDIR:-/tmp}/${artifact}`),
+          `${skill} must stage ${artifact} under a per-PR path`,
+        );
+      }
+    });
+
+    test(`${skill}: no gh command posts from a shared, un-namespaced /tmp path`, () => {
+      const md = readSkill(skill);
+      // Only the bash the skill actually runs — the prose deliberately NAMES the old bad paths to
+      // explain why they are bugs, and that prose must stay.
+      const commands = (md.match(/```bash\n([\s\S]*?)```/g) || []).join('\n');
+      assert.doesNotMatch(
+        commands,
+        /--(?:input|body-file)\s+\/tmp\//,
+        `${skill} would post from a path shared with every other PR`,
+      );
+      // A payload path that carries no $N cannot be unique per PR.
+      for (const m of commands.matchAll(/--(?:input|body-file)\s+"?([^\s"]+)"?/g)) {
+        assert.match(m[1], /\$N/, `${skill} stages a payload at a path with no PR number: ${m[1]}`);
+      }
+    });
+
+    test(`${skill}: documents reading the payload back before POSTing it`, () => {
+      const md = readSkill(skill);
+      assert.match(
+        md,
+        /Read back the (?:file|body) before you post it/,
+        `${skill} must tell the agent to verify the payload it is about to post is THIS PR's`,
+      );
+      assert.match(md, /stop and do not post/i, `${skill} must refuse to post a payload it cannot vouch for`);
     });
   }
 });

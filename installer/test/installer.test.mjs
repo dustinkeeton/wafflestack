@@ -3431,8 +3431,17 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     const bash = blocks.join('\n');
     assert.doesNotMatch(bash, /--input\s+-(\s|$)/m, 'the review payload comes from a FILE, not stdin');
     assert.doesNotMatch(bash, /--body\s+"/, 'the no-holes summary uses --body-file, not an inline --body');
-    assert.match(bash, /--input \/tmp\/[\w.-]+\.json/, 'step 5 posts a file payload');
-    assert.match(bash, /--body-file \/tmp\/[\w.-]+\.md/, 'step 6 posts a file body');
+    // #324: the staging path must be namespaced BY PR NUMBER. A fixed, shared path (the old
+    // `/tmp/adversarial-review.json`) is read and written by every invocation across every PR, and
+    // it is handed straight to `gh --input` — so whatever sits there at that instant is what gets
+    // POSTed. autopilot runs these gates per-PR CONCURRENTLY across a parallel group, so two gates
+    // interleaving a write and a post on one path can put PR A's review onto PR B.
+    assert.match(bash, /--input "\$\{TMPDIR:-\/tmp\}\/waffle-adversarial-review-\$N\.json"/,
+      'step 5 posts a per-PR file payload (#324)');
+    assert.match(bash, /--body-file "\$\{TMPDIR:-\/tmp\}\/waffle-adversarial-review-summary-\$N\.md"/,
+      'step 6 posts a per-PR file body (#324)');
+    assert.doesNotMatch(bash, /--(?:input|body-file)\s+\/tmp\//,
+      'no command posts from a shared, un-namespaced /tmp path — that cross-posts reviews (#324)');
 
     // and no command is a compound the allowlist could not match either
     for (const cmd of skillBashCommands(skill)) {

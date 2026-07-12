@@ -597,6 +597,28 @@ is what you reach for across a breaking one.
   commits its render will see a diff where the `model:` line disappears from each affected agent.
 
 ### Fixed
+- **PR-gate skills staged their payloads in shared `/tmp` paths — one PR's review could post onto
+  another (#324).** `qa`, `adversarial-review` and `pr-response` each wrote their review/reply payload
+  to a **fixed, un-namespaced** path (`/tmp/qa-review.json`, `/tmp/qa-summary.md`,
+  `/tmp/adversarial-review.json`, `/tmp/adversarial-review-summary.md`, `/tmp/pr-response-body.md`) and
+  handed that path straight to `gh` as `--input`/`--body-file` — so whatever sat on disk at that instant
+  is what got **POSTed to GitHub**. Nothing in the path identified the PR, the run, or the session, so
+  every invocation across every PR reused *the same five files*. The benign failure is a stale leftover:
+  during the autopilot run on #316/PR #321, the `qa` gate found `/tmp/qa-review.json` already holding a
+  review payload from an earlier run on **PR #285**, one step from being posted to #321 under the
+  `<!-- waffle-qa -->` marker — indistinguishable from a legitimate gate review, and picked up as such by
+  `pr-response`'s triage. Only the agent's own read-before-post habit caught it. The sharper failure is a
+  **live race**: `autopilot` runs these gates *per PR, concurrently across a parallel group*, so two gates
+  interleaving a write and a `gh --input` on one path can post **PR A's findings onto PR B** — and the
+  loser never knows. Those findings then drive `pr-response`'s implement/defer/decline verdicts, so the
+  wrong review silently steers the wrong PR's code. All five paths are now namespaced by PR number
+  (`${TMPDIR:-/tmp}/waffle-<skill>-<artifact>-$N.<ext>`; `$N` was already in scope at every call site), so
+  two concurrent gates can never touch the same file. Each skill now also carries the **read-back rule**
+  the near-miss depended on as a lucky habit: `Read` the exact file you are about to post, confirm it is
+  this PR's payload (marker + findings matching this diff), and **stop rather than post** if it is not.
+  Each also warns that the `Write` tool does **not** expand `$N`/`${TMPDIR:-/tmp}` — pass it a literal,
+  already-substituted path. Every documented `gh` command stays single-line and allowlist-matchable.
+  *Consumer impact: re-render; the three skills' staging paths and post procedure changed.*
 - **Every `delegate` specialist was mute — told to report back with tools it was never granted.**
   `delegate`'s routing table names exactly three specialists — **`harness-architect`**, **`docs-agent`**
   and **`docs-human`** — and its agent-prompt template closes by telling each of them to report with
