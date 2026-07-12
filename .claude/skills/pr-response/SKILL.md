@@ -163,6 +163,23 @@ marker is how this skill (and any automation wrapping it) recognizes its own rep
 **reads** to recover verdict history on a cold start (see [Being resumed across
 rounds](#when-called-by-agents)).
 
+> [!IMPORTANT]
+> **The first-line placement is LOAD-BEARING — it is not a formatting convention you may relax.**
+> `waffle-pr-response-hook`'s delivery check matches the marker with jq **`startswith()`**, so it
+> asks whether the reply *begins* with the marker, not whether it merely contains one. A marker
+> moved off line 1 — behind a heading, a blank line, a BOM — makes every denial-bearing run red as
+> "the response did NOT post", even though the reply is sitting right there on the PR. Nothing but
+> this paragraph enforces the coupling: it is prose-to-prose, and no test can pin a skill's output
+> shape against a workflow's predicate. (The sibling `adversarial-review` skill carries the same
+> rule for the same reason.)
+>
+> **Never paste the raw marker literal into the middle of a body, either.** This skill writes
+> verdict tables *about* findings, so on a PR that touches the hooks it will be tempted to quote the
+> marker in prose — and the hook's loop bound still matches a quoted literal as a substring, so a
+> mid-body copy can make a *later* PR look like it was already answered and silently cost it its one
+> automated reply. Name the marker, or break the literal, rather than pasting it. Your own reply's
+> leading marker is fine — that is the match the guard is looking for.
+
 **Append. Never edit a previous reply.** A second round posts a **new** comment; it does not
 rewrite the last one:
 
