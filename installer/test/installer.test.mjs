@@ -1623,6 +1623,14 @@ describe('project commands never join with && (#218)', () => {
     const flag = (file, i, why, text) =>
       offenders.push(`${path.relative(repoRoot, file)}:${i + 1}: [${why}] ${text.trim()}`);
 
+    // POSITIVE CONTROL. Without it this test is green whether it inspected every project-command
+    // unit in stacks/ or ZERO of them — so a moved `stacks/`, a broken `repoRoot`/`walk`, or a
+    // renamed key (`project.testCmd` → `project.testCommand`, which PH would no longer match) would
+    // silently degrade the backstop into a permanent no-op that still reports success. That is the
+    // SAME failure shape as the bug being fixed: a check that quietly stops running, with no error
+    // to notice. `seen` counts the placeholder-bearing units actually examined.
+    let seen = 0;
+
     for (const file of walk(path.join(repoRoot, 'stacks'))) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       let lang = null;
@@ -1678,6 +1686,7 @@ describe('project commands never join with && (#218)', () => {
             for (const m of line.matchAll(/`([^`]+)`/g)) {
               const span = m[1];
               if (!PH.test(span)) continue;
+              seen++;
               if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span (heredoc)', span);
               else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span (heredoc)', span);
             }
@@ -1691,6 +1700,7 @@ describe('project commands never join with && (#218)', () => {
           fenceCmds.push(cmd);                                          // EVERY runnable line — see the fence close
           if (!PH.test(cmd)) return;
           fencePH = true;
+          seen++;
           if (OP.test(cmd.replace(PH_G, '')) || cmd.includes('`')) flag(file, i, 'compound', cmd);
           else if (CD.test(cmd) || SUBST.test(cmd)) flag(file, i, 'cd/substitution', cmd);
           return;
@@ -1700,6 +1710,7 @@ describe('project commands never join with && (#218)', () => {
         // command legitimately sits inside parens, and it must never read as a compound.
         const l = line.replace(GRANT, '');
         if (!PH.test(l)) return;
+        seen++;
 
         // (a) Each inline `code span` is a runnable unit on its own — an agent runs `cmd`, not the
         // sentence around it. A span WITHOUT a placeholder is somebody else's command (the
@@ -1707,6 +1718,7 @@ describe('project commands never join with && (#218)', () => {
         for (const m of l.matchAll(/`([^`]+)`/g)) {
           const span = m[1];
           if (!PH.test(span)) continue;
+          seen++;
           if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span', span);
           else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span', span);
         }
@@ -1732,6 +1744,12 @@ describe('project commands never join with && (#218)', () => {
     }
 
     assert.deepEqual(offenders, [], `project command joined to text the allowlist cannot match:\n${offenders.join('\n')}`);
+
+    // The POSITIVE CONTROL (see `seen`, above). A floor, not an exact count: docs churn, and a test
+    // that reds on every added sentence gets deleted. It is 62 today; the 40 margin is wide on
+    // purpose — what this must catch is not a drift of a few units, it is the scan silently
+    // stopping altogether.
+    assert.ok(seen >= 40, `A4 must actually INSPECT project-command units, but saw only ${seen}`);
   });
 });
 
