@@ -51,28 +51,45 @@ is what you reach for across a breaking one.
   (`typecheckCmd: tsc --noEmit && eslint .`) rendered **ok** and emitted
   `Bash(tsc --noEmit && eslint .:*)`: a **dead grant that can match no command**, plus the verbatim
   pre-fix checklist row. So `project.{lint,typecheck,test,build}Cmd` now carry a **`pattern:`
-  guard**: a value with a shell operator (`&&`, `||`, `;`, `|`, `&`), a `cd ` prefix, a
+  guard**: a value with an **unquoted** shell operator (`&&`, `||`, `;`, `|`, `&`), a `cd ` prefix, a
   `$(…)`/backtick substitution, a newline, or a `${{ }}` expression **fails the render**, naming the
-  key. The invariant is a constraint on the command string — *a project command is only grantable as
-  a single-program prefix* — so it is enforced where the value **enters**, which makes the class
-  unrepresentable rather than merely linted downstream.
+  key and carrying the remedy. The invariant is a constraint on the command string — *a project
+  command is only grantable as a single-program prefix* — so it is enforced where the value
+  **enters**, which makes the class unrepresentable rather than merely linted downstream.
+  (Only *unquoted* operators: `jest -t "foo|bar"` is one program and still renders. Rejecting a valid
+  command is the one way a guard like this ends up worse than the hole it closes.)
+  **The guard runs in the gate you actually have.** A `pattern:` polices the config *value*, so it
+  needs no re-render to evaluate — and it must not, because the shipped `waffle-doctor.yml` runs
+  **bare `doctor`** (`doctor.flags` defaults to `""`) and `--verify-render` is opt-in (#314). Bare
+  doctor only hashes the tree against the lock, so without this it would sail straight past a bad
+  value: an existing repo's renders and lock were produced *before* the guard, they still agree, and
+  the dead grant sits behind a green check. **`doctor` now evaluates config guards in every mode**,
+  and a rejected value fails it — which is the only reason the Consumer-impact line below is true.
   (`&&` remains load-bearing — and untouched — in the prose that warns *against* compounds, the jq
   denial classifier that *detects* them, GHA `if:` expressions, and git-family compounds. And in
   `project.installCmd`, which lands in a `run:` shell GitHub executes directly — a compound there is
   legitimate, which is why its guard bans only newlines and `${{ }}`.)
-  **What the tests guarantee**, precisely — the config guard above (`A5`); no compound allowlist
-  entry (`A1`); the PR-body checklist is exactly the four single commands, each covered by a grant
-  (`A2`); delegate runs one command per fence (`A3`); and a `stacks/**` source backstop (`A4`) that
-  fails a project command joined to more work inside a **code span** (including in a heredoc body),
-  inside a **`bash` fence** carrying any second command, joined to **another project placeholder** by
-  an operator, or `cd …`-prefixed / `$(…)`-wrapped — with a **positive control** so it cannot pass
-  vacuously. **What they do not guarantee:** a project command joined to non-project work in **bare,
-  un-backticked** template text. Nothing in `stacks/` occupies that gap today; closing it without
-  false-firing on ordinary prose is tracked in **#350**.
+  **What the tests guarantee**, precisely — the config guard at render (`A5`) *and in bare `doctor`,
+  the shipped gate* (`A6`); no compound allowlist entry (`A1`); the PR-body checklist is exactly the
+  four single commands, each covered by a grant (`A2`); delegate runs one command per fence (`A3`);
+  and a `stacks/**` source backstop (`A4`) that fails a project command joined to more work inside a
+  **code span** (including in a heredoc body), inside a **`bash` fence** carrying any second command,
+  joined to **another project placeholder** by an operator, or `cd …`-prefixed / `$(…)`-wrapped —
+  with a **positive control** so it cannot pass vacuously. **What they do not guarantee:** a project
+  command joined to non-project work in **bare, un-backticked** template text. Nothing in `stacks/`
+  occupies that gap today; closing it without false-firing on ordinary prose is tracked in **#350**.
   **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3. **If
-  any of your four `project.*Cmd` values is a compound, `render` and `doctor` will now fail** and
-  name the key — split it into an npm-script-style single entry point (`npm run ci`). That failure
-  is the point: such a value was already producing a dead grant and a silently denied CI check.
+  any of your four `project.*Cmd` values carries an unquoted compound, `render` and `doctor` — bare
+  `doctor`, the one your CI already runs — will now fail**, name the key, and tell you to split it
+  into an npm-script-style single entry point (`npm run ci`). That failure is the point, and it is
+  aimed squarely at the repos that are *already* broken: such a value was **already** producing a
+  dead grant and a silently denied CI check, behind a doctor that reported no drift.
+- **New: an optional `patternHint:` on a config key (#218).** A `pattern:` rejection printed the raw
+  regex and nothing else. When a guard newly rejects a consumer's value there is **no migration** —
+  no tool can safely split `tsc --noEmit && eslint .` for them — so that message *is* the entire
+  upgrade path, and a PCRE lookahead is not an upgrade path. A key may now declare the remedy in
+  prose; it is printed after the pattern when the guard fires. Absent on a key, its messages are
+  byte-identical to before. **Consumer impact:** none unless you author stacks.
 - **The hooks' dedup markers are matched on the full literal, not a loose substring (#211).** Both
   `waffle-pr-response-hook` and `waffle-pr-green-hook` looked for their marker with a **bare-word
   regex** — `test("waffle-pr-response")` / `test("waffle-adversarial-review")` — while the skills
