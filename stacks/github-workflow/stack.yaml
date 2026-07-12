@@ -1208,22 +1208,47 @@ config:
   project.name:
     required: true
     description: Project name as used in prose and as the project-board title matcher, e.g. "Synapse".
+  # #218 — the SINGLE-PROGRAM guard. THIS is the stack where the dead grant is emitted: each of the
+  # four keys below lands inside the single-quoted `--allowedTools '…'` string as `Bash(<cmd>:*)`,
+  # which the harness matches by LEADING PROGRAM. A compound value (`tsc --noEmit && eslint .`) is
+  # therefore un-matchable by construction — the grant is dead, the Bash call is silently DENIED,
+  # and the paid run never checks the build. Rendering must fail loudly instead of shipping that.
+  # Contrast project.installCmd below, which lands in a `run:` shell GitHub executes directly: a
+  # compound there is legitimate, which is exactly why its guard bans only newlines and `${{ }}`.
+  # Byte-identical in code-quality / engineering-team / orchestration; guards union toolkit-wide.
   project.buildCmd:
     required: false
     default: npm run build
-    description: Production build command run in the pre-flight checklist and PR test plan.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Production build command run in the pre-flight checklist and PR test plan. Must be ONE program
+      the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline. Wrap a compound in an npm-script-style single entry
+      point (`npm run ci`) instead.
   project.testCmd:
     required: false
     default: npm test
-    description: Test command run in the pre-flight checklist and PR test plan.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Test command run in the pre-flight checklist and PR test plan. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   project.typecheckCmd:
     required: false
     default: npx tsc --noEmit --skipLibCheck
-    description: Type-check command run in the pre-flight checklist and PR test plan.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Type-check command run in the pre-flight checklist and PR test plan. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   project.lintCmd:
     required: false
     default: npm run lint --if-present
-    description: Lint/format check command run in the pre-flight checklist and PR test plan.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Lint/format check command run in the pre-flight checklist and PR test plan. Must be ONE program
+      the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   project.installCmd:
     required: false
     default: npm install

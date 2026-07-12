@@ -16,7 +16,14 @@ config:
   project.testCmd:
     required: false
     default: npm test
-    description: Test command that runs the project's full suite (referenced throughout the TDD skill).
+    # #218: a project command is only grantable as a single-program `Bash(<cmd>:*)` prefix, so a
+    # compound value renders a DEAD grant that matches nothing. Rejected at render, not linted later.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Test command that runs the project's full suite (referenced throughout the TDD skill).
+      Must be ONE program the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`,
+      no `cd ` prefix, no `$(…)`/backtick substitution, no newline. Wrap a compound in an
+      npm-script-style single entry point (`npm run ci`) instead.
   tdd.priorityTiers:
     required: true
     description: Verbatim body of the TDD "Test Priority Tiers" section — the project's module/test-coverage map (tier tables plus the "Do NOT unit test" list).

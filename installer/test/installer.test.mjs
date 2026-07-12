@@ -1403,8 +1403,10 @@ describe('project commands never join with && (#218)', () => {
   // The label-hook files/ payload pulls git-workflow through its requires: closure; delegate
   // lives in another stack, so it is installed explicitly (and orchestration's required roster.*
   // keys come along for the ride — inert here, but the render won't proceed without them).
-  const renderAll = () => {
-    const cmdLines = Object.entries(CMDS).map(([k, v]) => `    ${k}: ${v}`).join('\n');
+  const renderWith = (cmds) => {
+    // JSON-quoted: a compound value is hostile YAML too (a leading `&` is an anchor, a leading `|`
+    // a block scalar) — quoting keeps A5 testing the RENDER guard, not the YAML parser.
+    const cmdLines = Object.entries(cmds).map(([k, v]) => `    ${k}: ${JSON.stringify(v)}`).join('\n');
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
       `include: [files/${REL}, orchestration/skills/delegate]`,
@@ -1420,7 +1422,11 @@ describe('project commands never join with && (#218)', () => {
       '    moduleDependencies: none',
       '',
     ].join('\n'));
-    const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    return renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  const renderAll = () => {
+    const r = renderWith(CMDS);
     assert.equal(r.ok, true, JSON.stringify(r.errors));
   };
 
@@ -1450,6 +1456,61 @@ describe('project commands never join with && (#218)', () => {
     }
     for (const cmd of PREFLIGHT) {
       assert.ok(tools.includes(`Bash(${cmd}:*)`), `implement grants ${cmd} individually`);
+    }
+  });
+
+  // A5 is the PRIMARY guard, and the only one that closes the likeliest path: the CONFIG door.
+  //
+  // The grant is `Bash({{project.lintCmd}}:*)` — the CONSUMER's config value, interpolated verbatim.
+  // A1–A4 all render their own single-word sentinels, so not one of them can see a compound that
+  // arrives through config. Before the `pattern:` guard, an ordinary monorepo setting
+  // `typecheckCmd: tsc --noEmit && eslint .` rendered **ok** and emitted
+  // `Bash(tsc --noEmit && eslint .:*)` — a DEAD grant matching no command — plus the checklist row
+  // ``- [ ] Types pass (`tsc --noEmit && eslint .`)``: the verbatim pre-fix #218 defect, reproduced
+  // against the fixed tree, with all four source guards green.
+  //
+  // The invariant is a constraint on the COMMAND STRING (a project command is only ever grantable as
+  // a single-program `Bash(<cmd>:*)` prefix), so it is enforced where the value ENTERS — a declared
+  // `pattern:` on all four keys, checked at every substitution site by render and doctor. That makes
+  // the class UNREPRESENTABLE rather than merely linted, and demotes A4 from primary guard to
+  // backstop: A4 still catches a TEMPLATE that ships a compound, which config validation cannot see.
+  test('A5 CONFIG DOOR: a compound project command is rejected at render, never shipped as a dead grant', () => {
+    const failsNaming = (r, key) => {
+      assert.equal(r.ok, false, `render must reject a compound ${key}: ${JSON.stringify(r.errors)}`);
+      assert.ok(
+        r.errors.some((e) => e.includes(`project.${key}`) && /does not match its declared pattern/.test(e)),
+        `the error must NAME the offending key: ${JSON.stringify(r.errors)}`,
+      );
+    };
+
+    // (a) all FOUR keys are guarded — not just the one the bug happened to ship in.
+    for (const key of Object.keys(CMDS)) failsNaming(renderWith({ ...CMDS, [key]: 'zbuild && ztest' }), key);
+
+    // (b) every unmatchable SHAPE is guarded, not just the `&&` #218 shipped as. Each of these
+    // renders a grant that can match nothing, so each must fail the render instead.
+    for (const bad of [
+      'tsc --noEmit && eslint .',   // the reported defect, arriving through config
+      'cd packages/app && npm test', // the monorepo shape hygiene.yml names as a denial by name
+      'npm test; npm run build',
+      'npm test || true',
+      'npm test | tee out.log',
+      '$(npm test)',
+      'npm test `date`',
+      'npm test\nnpm run build',    // a newline is a compound too (the jq classifier says so)
+      'npm install ${{ secrets.NPM_TOKEN }}', // lands in the workflow — GitHub would interpolate it
+    ]) failsNaming(renderWith({ ...CMDS, typecheckCmd: bad }), 'typecheckCmd');
+
+    // (c) …and it must NOT fire on an ordinary single-program command. A guard that rejects
+    // `pytest -k 'not slow'` gets deleted by the first annoyed consumer, and then guards nothing.
+    for (const good of [
+      'npm test', 'npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm pack --dry-run',
+      "pytest -k 'not slow'", 'go test ./...', 'cargo test --all-features', './gradlew test',
+      'npm run test:ci', 'true',
+    ]) {
+      assert.equal(
+        renderWith({ ...CMDS, typecheckCmd: good }).ok, true,
+        `an ordinary single-program command must render: ${good}`,
+      );
     }
   });
 

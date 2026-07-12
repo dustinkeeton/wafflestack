@@ -24,22 +24,45 @@ config:
   project.longName:
     required: true
     description: Full prose project descriptor, e.g. "the Plotto lottery-analysis app".
+  # #218 — the SINGLE-PROGRAM guard, on all four pre-flight commands. A project command reaches the
+  # harness as a `Bash(<cmd>:*)` allowlist grant, which matches a command by its LEADING PROGRAM, so
+  # a compound value (`tsc --noEmit && eslint .`) renders a grant that can match NOTHING: the call is
+  # silently denied and the check never runs. The value is the consumer's, interpolated verbatim, so
+  # the class is closed HERE — at the point of use — rather than by linting the templates downstream.
+  # Byte-identical in code-quality / orchestration / github-workflow; guards union toolkit-wide.
   project.lintCmd:
     required: false
     default: npm run lint --if-present
-    description: Lint/format check command referenced in agent pre-flight guidance.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Lint/format check command referenced in agent pre-flight guidance. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline. Wrap a compound in an npm-script-style single
+      entry point (`npm run ci`) instead.
   project.typecheckCmd:
     required: false
     default: npx tsc --noEmit --skipLibCheck
-    description: Type-check command referenced in agent pre-flight guidance.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Type-check command referenced in agent pre-flight guidance. Must be ONE program the allowlist
+      can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   project.testCmd:
     required: false
     default: npm test
-    description: Test command the qa-engineer runs and reports on.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Test command the qa-engineer runs and reports on. Must be ONE program the allowlist can grant
+      as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no `$(…)`/backtick
+      substitution, no newline.
   project.buildCmd:
     required: false
     default: npm run build
-    description: Production build command (pre-flight guidance and bundle-output secret scan).
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Production build command (pre-flight guidance and bundle-output secret scan). Must be ONE
+      program the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd `
+      prefix, no `$(…)`/backtick substitution, no newline.
   project.lockfile:
     required: false
     default: package-lock.json

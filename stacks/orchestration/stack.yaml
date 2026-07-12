@@ -88,22 +88,42 @@ config:
   project.longName:
     required: true
     description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+  # #218 — the SINGLE-PROGRAM guard (see engineering-team/stack.yaml for the full rationale). A
+  # `Bash(<cmd>:*)` grant matches by LEADING PROGRAM, so a compound value renders a dead grant and
+  # the call is silently denied. Byte-identical across the four declaring stacks; guards union
+  # toolkit-wide, so a value must satisfy every declarer's pattern.
   project.buildCmd:
     required: false
     default: npm run build
-    description: Production build command run in the delegation pre-flight checklist.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Production build command run in the delegation pre-flight checklist. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   project.testCmd:
     required: false
     default: npm test
-    description: Test command run in delegation pre-flight and post-agent verification.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Test command run in delegation pre-flight and post-agent verification. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   project.typecheckCmd:
     required: false
     default: npx tsc --noEmit --skipLibCheck
-    description: Type-check command run in delegation pre-flight, post-agent verification, and audit build checks.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Type-check command run in delegation pre-flight, post-agent verification, and audit build
+      checks. Must be ONE program the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;`
+      / `|`, no `cd ` prefix, no `$(…)`/backtick substitution, no newline.
   project.lintCmd:
     required: false
     default: npm run lint --if-present
-    description: Lint/format check command run in the delegation pre-flight checklist.
+    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    description: >-
+      Lint/format check command run in the delegation pre-flight checklist. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
+      `$(…)`/backtick substitution, no newline.
   git.cmd:
     required: false
     default: git
