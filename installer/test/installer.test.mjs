@@ -1810,6 +1810,76 @@ describe('project commands never join with && (#218)', () => {
     );
   });
 
+  // A9 reads the SOURCE stack.yaml files, not a render — and that is the whole point. Every other
+  // test in this block observes the guard through `renderWith`, whose fixture installs only
+  // github-workflow (via the files/ payload) and orchestration (via delegate). That reaches 8 of the
+  // 13 declarations; engineering-team's 4 and code-quality's 1 are never rendered, so no assertion
+  // in the suite could see them. Reverting `+`→`*` in just those five — reintroducing #351 in 5 of
+  // the 13 places it was fixed — left the suite fully green. Widening the fixture would only move
+  // the blind spot to the next stack that declares one; asserting on the sources cannot go blind.
+  //
+  // This is also the only pin on the lockstep property itself: the 13 guards union toolkit-wide and
+  // are byte-identical BY DESIGN, so a lone edit to one of them is always a bug — the guard a
+  // consumer gets depends on which stacks they install, and a weaker one anywhere reopens the door
+  // for whoever installs that stack alone.
+  test('A9 LOCKSTEP: the command guard is ONE string across all 13 declarations, in every stack', () => {
+    // The four keys spliced into an allowlist as `Bash(<cmd>:*)`. `project.installCmd` is NOT one of
+    // them and must not be added: it lands in a `run:` step GitHub executes directly, never in a
+    // grant prefix, so its looser guard is correct rather than drift. (`sec.auditCmd` likewise.)
+    const GUARDED = /^project\.(lint|typecheck|test|build)Cmd$/;
+
+    const decls = [];
+    for (const dir of fs.readdirSync(path.join(repoRoot, 'stacks'))) {
+      const src = path.join(repoRoot, 'stacks', dir, 'stack.yaml');
+      if (!fs.existsSync(src)) continue;
+      for (const [key, spec] of Object.entries(YAML.parse(fs.readFileSync(src, 'utf8')).config ?? {})) {
+        if (GUARDED.test(key)) decls.push({ stack: dir, key, spec });
+      }
+    }
+
+    // A hard count, so a 14th declaration cannot be added with a hand-rolled guard and go unnoticed:
+    // the new site must join the lockstep (and bump this number) rather than quietly diverge.
+    assert.equal(
+      decls.length, 13,
+      `expected 13 guarded project commands, found ${decls.length}: ${JSON.stringify(decls.map((d) => `${d.stack}/${d.key}`))}`,
+    );
+    // …and every stack that declares one is actually represented, so the count can't be met by one
+    // stack declaring thirteen.
+    assert.deepEqual(
+      [...new Set(decls.map((d) => d.stack))].sort(),
+      ['code-quality', 'engineering-team', 'github-workflow', 'orchestration'],
+      'all four declaring stacks are present',
+    );
+
+    // THE LOCKSTEP ITSELF. One distinct value, or the guard has drifted somewhere.
+    for (const field of ['pattern', 'patternHint']) {
+      const distinct = new Set(decls.map((d) => d.spec[field]));
+      assert.equal(
+        distinct.size, 1,
+        `project.*Cmd \`${field}\` must be byte-identical across all 13 declarations, found ${distinct.size} variants:\n` +
+          [...distinct].map((v) => `  ${JSON.stringify(v)}\n    ← ${decls.filter((d) => d.spec[field] === v).map((d) => `${d.stack}/${d.key}`).join(', ')}`).join('\n'),
+      );
+    }
+
+    // The pattern is the thing #351 actually turned. Pin the `+` head-on: `*` accepts the empty
+    // value that renders `Bash(:*)`, an allowlist prefix EVERY command matches.
+    const [pattern] = new Set(decls.map((d) => d.spec.pattern));
+    const re = new RegExp(pattern);
+    assert.ok(!re.test(''), `the guard must reject the empty command (an empty grant prefix): ${pattern}`);
+    assert.ok(re.test('true'), `the guard must accept the documented \`true\` no-op: ${pattern}`);
+
+    // The remedy has to travel with the guard: a rejection is a dead end unless it names `true`, and
+    // the description is where a consumer reads it. The prose differs per key (each names its own
+    // command); the sentence that points at the no-op does not.
+    for (const { stack, key, spec } of decls) {
+      assert.match(
+        spec.description ?? '',
+        /set the shell no-op `true`/,
+        `${stack}/${key}: the description must point at the \`true\` no-op (#351)`,
+      );
+    }
+  });
+
   test('A2 every PR-body checklist item is ONE command, and each is covered by an allowlist prefix', () => {
     renderAll();
     const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')));
