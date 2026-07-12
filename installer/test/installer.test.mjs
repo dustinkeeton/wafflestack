@@ -1485,9 +1485,39 @@ describe('project commands never join with && (#218)', () => {
     // the post-agent verification specifically: typecheck and test, each on its own line
     assert.ok(lines.includes(CMDS.typecheckCmd), 'typecheck stands alone on its own line');
     assert.ok(lines.includes(CMDS.testCmd), 'test stands alone on its own line');
+
+    // ...and in SEPARATE fences. Two commands in one fence read as ONE Bash call, whose text is
+    // then a newline-separated compound — the shape the dispatch prompts and the hygiene denial
+    // classifier both call unmatchable. One command per fence is the only shape that survives.
+    for (const b of fences) {
+      const cmds = b.split('\n').map((l) => l.trim()).filter(Boolean)
+        .filter((l) => PREFLIGHT.some((c) => l.includes(c)));
+      assert.ok(cmds.length <= 1, `each bash fence holds at most ONE project command: ${JSON.stringify(cmds)}`);
+    }
   });
 
-  test('A4 SOURCE backstop: no stack source joins two project commands with && ', () => {
+  // A4 guards the CLASS, not the `&&` instance. A project command is only ever grantable as a
+  // single-program `Bash(<cmd>:*)` prefix, so ANY shell text that joins one to more work is
+  // unmatchable and silently denied: `;`, `|`, `||`, `&&`, `&`, a `cd …` prefix, a `$(…)`
+  // substitution — or a second command on the next line of the same fence, since one fence reads
+  // as one Bash call. #218 shipped as `&&`; the next rot will not be, so the backstop guards the
+  // shape rather than the character.
+  //
+  // SCOPING is what keeps this honest. It fires only on text carrying a {{project.*Cmd}}
+  // placeholder, so every INTENTIONAL compound in this repo is out of reach by construction:
+  // the dispatch prompts that warn against `cmd1 && cmd2` (they name it literally — no
+  // placeholder), the jq denial classifier that DETECTS compounds (#330/#332), the GHA `if:`
+  // expressions, and `git checkout main && git pull` (pinned by W2b/#155). A blanket `&&` ban
+  // would fail all four.
+  //
+  // The unit of analysis is the RUNNABLE unit — a bash-fence line, or an inline `code span` —
+  // never the raw line, because markdown DECORATES commands with the same characters a shell
+  // uses. The checklist writes ``(`{{project.lintCmd}}`)``; the allowlist grant writes
+  // `Bash({{project.lintCmd}}:*)`; and webapp-security-audit puts a {{project.buildCmd}} span on
+  // the same LINE as a `grep -rE "(sk-|API_KEY|SECRET)"` span whose pipes are regex alternation,
+  // not shell. A raw-line scan for `[;&|(]` flags all three — which is why bare `(`/`)` are NOT
+  // operators here, and why joining text is only ever read inside the unit that would really run.
+  test('A4 SOURCE backstop: no stack source joins a project command to text the allowlist cannot match', () => {
     // Fires on stacks/ itself, so a NEW stack reintroducing the pattern fails immediately —
     // without anyone remembering to render first. This is what keeps the fix from rotting.
     const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -1495,15 +1525,80 @@ describe('project commands never join with && (#218)', () => {
       if (e.isDirectory()) return walk(p);
       return /\.(md|ya?ml)$/.test(e.name) ? [p] : [];
     });
-    const COMPOUND = /\{\{project\.\w*Cmd\}\}[^\n]*&&[^\n]*\{\{project\.\w*Cmd\}\}/;
+
+    const PH = /\{\{project\.\w*Cmd\}\}/;
+    const PH_G = /\{\{project\.\w*Cmd\}\}/g;
+    const BASH = /^(bash|sh|shell|console)$/;
+    const OP = /(&&|\|\||[;|&])/;                                        // joins a command to more work
+    const JOINED = /\{\{project\.\w*Cmd\}\}[^\n]*?(&&|\|\||[;|&])[^\n]*?\{\{project\.\w*Cmd\}\}/;
+    const CD = /\bcd\s+\S+\s*(&&|\|\||[;|])/;                            // hygiene.yml names this denial by name
+    const SUBST = /\$\(/;                                                // $(…) command substitution
+    const GRANT = /Bash\([^)]*\)/g;                                      // the ONE legit parenthesised use
 
     const offenders = [];
+    const flag = (file, i, why, text) =>
+      offenders.push(`${path.relative(repoRoot, file)}:${i + 1}: [${why}] ${text.trim()}`);
+
     for (const file of walk(path.join(repoRoot, 'stacks'))) {
-      fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-        if (COMPOUND.test(line)) offenders.push(`${path.relative(repoRoot, file)}:${i + 1}: ${line.trim()}`);
+      const lines = fs.readFileSync(file, 'utf8').split('\n');
+      let lang = null;
+      let fenceAt = 0;
+      let fenceCmds = [];
+      let heredoc = null;
+
+      lines.forEach((line, i) => {
+        const fence = line.match(/^```(\w*)/);
+        if (fence) {
+          if (lang === null) {
+            lang = fence[1] || 'text';
+            fenceAt = i;
+            fenceCmds = [];
+            heredoc = null;
+          } else {
+            // A bash fence holding 2+ project commands IS a newline-separated compound.
+            if (BASH.test(lang) && fenceCmds.length > 1) {
+              flag(file, fenceAt, 'newline-compound fence', fenceCmds.join(' \\n '));
+            }
+            lang = null;
+          }
+          return;
+        }
+
+        if (lang !== null && BASH.test(lang)) {
+          // A heredoc BODY is data, not commands — git-workflow builds its PR body (whose test-plan
+          // checklist cites all four project commands) with `--body "$(cat <<'EOF' … EOF)"`. Those
+          // rows are prose in a PR description, not a compound; A2 is what pins them.
+          if (heredoc !== null) {
+            if (line.trim() === heredoc) heredoc = null;
+            return;
+          }
+          const open = line.match(/<<-?\s*['"]?(\w+)['"]?/);
+          if (open) heredoc = open[1];
+
+          const cmd = line.split('#')[0].trim();                        // drop any trailing comment
+          if (!PH.test(cmd)) return;
+          fenceCmds.push(cmd);
+          if (OP.test(cmd.replace(PH_G, '')) || cmd.includes('`')) flag(file, i, 'compound', cmd);
+          else if (CD.test(cmd) || SUBST.test(cmd)) flag(file, i, 'cd/substitution', cmd);
+          return;
+        }
+
+        // Prose and YAML. Strip the allowlist grant grammar first: it is the one place a project
+        // command legitimately sits inside parens, and it must never read as a compound.
+        const l = line.replace(GRANT, '');
+        if (!PH.test(l)) return;
+
+        for (const m of l.matchAll(/`([^`]+)`/g)) {
+          const span = m[1];
+          if (PH.test(span) && OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span', span);
+        }
+        if (JOINED.test(l)) flag(file, i, 'joined', l);
+        if (CD.test(l)) flag(file, i, 'cd-prefixed', l);
+        if (SUBST.test(l)) flag(file, i, 'substitution', l);
       });
     }
-    assert.deepEqual(offenders, [], `project commands joined by && in a stack source:\n${offenders.join('\n')}`);
+
+    assert.deepEqual(offenders, [], `project command joined to text the allowlist cannot match:\n${offenders.join('\n')}`);
   });
 });
 
