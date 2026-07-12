@@ -44,5 +44,5 @@ Each check is its own CI step so failures land on the right line. Never `--no-ve
 
 ## Skills
 
-- **`git-workflow`** — read `{{harness.skillsDir}}/git-workflow/SKILL.md` for the canonical branch / commit / PR conventions that your CI must validate. The pre-flight there (`{{project.lintCmd}} && {{project.typecheckCmd}} && {{project.testCmd}} && {{project.buildCmd}}`) should match the CI pipeline order — keep them in sync.
+- **`git-workflow`** — read `{{harness.skillsDir}}/git-workflow/SKILL.md` for the canonical branch / commit / PR conventions that your CI must validate. The pre-flight there (`{{project.lintCmd}}` → `{{project.typecheckCmd}}` → `{{project.testCmd}}` → `{{project.buildCmd}}`, each run as its own command) should match the CI pipeline order — keep them in sync.
 - **`github-project-management`** — when wiring CI status to the project board, automating release-tracking, or scripting milestone burndown, see `{{harness.skillsDir}}/github-project-management/SKILL.md` for GraphQL operations.

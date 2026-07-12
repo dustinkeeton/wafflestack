@@ -649,8 +649,11 @@ When the gate is on, each agent commits locally and STOPS before `git push` (see
 After each agent completes, verify the build still passes in the main working directory:
 
 ```bash
-{{project.typecheckCmd}} && {{project.testCmd}}
+{{project.typecheckCmd}}
+{{project.testCmd}}
 ```
+
+Run them as **separate commands**, not joined with `&&` — a single Bash call containing `cmd1 && cmd2` matches no single-program tool-allowlist entry and is silently denied.
 
 If verification fails after a parallel agent's worktree merge, stop and report the conflict.
 

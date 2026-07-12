@@ -32,6 +32,23 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Fixed
+- **Project commands are never joined with `&&`, so the pre-flight can actually run (#218).** A
+  `Bash(<prefix>:*)` allowlist entry matches a command by its **leading program**, and the hooks
+  grant **one entry per project command** (`Bash(npm test:*)`, `Bash(npm run build:*)`, …). So a
+  single Bash call whose text was `cmd1 && cmd2` matched **neither** entry and was **silently
+  denied** — the paid CI run simply never checked the build, with no error to notice. The
+  git-workflow PR-body test plan shipped exactly that — a "Build passes" row that ran
+  `{{project.typecheckCmd}} && {{project.buildCmd}}` as one call — and `delegate`'s post-agent
+  verification shipped it in a fenced
+  `bash` block the orchestrator is told to **run**. The checklist is now four rows, one command
+  each, in pre-flight order (lint → typecheck → test → build), matching the allowlist 1:1 and the
+  pre-flight section that was already correct a hundred lines below it; delegate's fence runs its
+  two commands on separate lines; and the `lead-engineer` / `devops-engineer` agents no longer
+  hand the model a copy-pasteable 4-command compound to imitate. A source-level test now fails any
+  stack that joins two `{{project.*Cmd}}` placeholders with `&&`, so this cannot rot back in.
+  (`&&` remains load-bearing — and untouched — in the prose that warns *against* compounds, the jq
+  denial classifier that *detects* them, GHA `if:` expressions, and git-family compounds.)
+  **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3.
 - **The hooks' dedup markers are matched on the full literal, not a loose substring (#211).** Both
   `waffle-pr-response-hook` and `waffle-pr-green-hook` looked for their marker with a **bare-word
   regex** — `test("waffle-pr-response")` / `test("waffle-adversarial-review")` — while the skills

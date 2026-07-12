@@ -1372,6 +1372,141 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
   });
 });
 
+// #218: a `Bash(<prefix>:*)` allowlist entry matches a command by its LEADING PROGRAM. The
+// allowlist grants ONE entry per project command, so a single Bash call whose text is
+// `cmd1 && cmd2` matches NEITHER entry and is silently denied — the failure is invisible, the
+// paid run just never checks the build. Every project command the toolkit tells an agent to run
+// must therefore stand alone: in the allowlist, in the PR-body checklist, and in delegate's
+// post-agent verification.
+//
+// SCOPE, deliberately: these guard `{{project.*Cmd}}` commands ONLY. `&&` is load-bearing
+// elsewhere in the same files — the prose that warns AGAINST compounds, the jq denial classifier
+// that DETECTS them, GHA `if:` expressions, and git-family compounds (`git checkout main &&
+// git pull`, pinned by W2b/#155 and granted wholesale by a single `Bash(git:*)`). A blanket
+// "no && anywhere" assertion would fail the existing suite and gut those guards.
+describe('project commands never join with && (#218)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-label-hook.yml';
+  const GIT_SKILL = '.claude/skills/git-workflow/SKILL.md';
+  const DELEGATE_SKILL = '.claude/skills/delegate/SKILL.md';
+
+  // DISTINCT sentinels. With the real defaults every command starts `npm …`, so an assertion
+  // could pass by accident on a shared prefix; these four share nothing.
+  const CMDS = { lintCmd: 'zlint', typecheckCmd: 'ztypecheck', testCmd: 'ztest', buildCmd: 'zbuild' };
+  // pre-flight order: lint → typecheck → test → build
+  const PREFLIGHT = [CMDS.lintCmd, CMDS.typecheckCmd, CMDS.testCmd, CMDS.buildCmd];
+
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-218-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  // The label-hook files/ payload pulls git-workflow through its requires: closure; delegate
+  // lives in another stack, so it is installed explicitly (and orchestration's required roster.*
+  // keys come along for the ride — inert here, but the render won't proceed without them).
+  const renderAll = () => {
+    const cmdLines = Object.entries(CMDS).map(([k, v]) => `    ${k}: ${v}`).join('\n');
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      `include: [files/${REL}, orchestration/skills/delegate]`,
+      'config:',
+      '  project:',
+      '    name: Sentinel218',
+      cmdLines,
+      '  roster:',
+      '    classificationTable: "| Signal | Agent |"',
+      '    labelFallback: "| Label | Agent |"',
+      '    rootFiles: package.json',
+      '    sharedModule: lib/',
+      '    moduleDependencies: none',
+      '',
+    ].join('\n'));
+    const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+  };
+
+  const claudeArgsOf = (wf, job) =>
+    YAML.parse(wf).jobs[job].steps.find((s) => s.with && 'claude_args' in s.with).with.claude_args;
+  const allowedTools = (claudeArgs) => {
+    const m = /--allowedTools\s+'([^']*)'/.exec(claudeArgs);
+    assert.ok(m, `claude_args carries a quoted --allowedTools: ${claudeArgs}`);
+    return m[1].split(',').map((s) => s.trim()).filter(Boolean);
+  };
+  // Bash(npm test:*) → 'npm test'  (the leading-program prefix a command is matched against)
+  const bashPrefixes = (tools) =>
+    tools.filter((t) => t.startsWith('Bash(')).map((t) => t.slice('Bash('.length, -1).replace(/:\*$/, ''));
+  const isCovered = (cmd, prefixes) => prefixes.some((p) => cmd === p || cmd.startsWith(`${p} `));
+
+  // A1 pins the OTHER HALF of the contract: the allowlist side was never the broken one, so this
+  // passes pre-fix too. It is not a reproducer — it is the invariant that gives A2 its teeth
+  // (one grant per command ⇒ a compound can match nothing), and it fails the day someone
+  // "simplifies" the allowlist into a compound entry instead of fixing the caller.
+  test('A1 no allowlist entry is an && compound; each project command is granted on its own', () => {
+    renderAll();
+    const tools = allowedTools(claudeArgsOf(read(cwd, REL), 'implement'));
+
+    // An entry containing && could never match anything — it would be dead grant.
+    for (const t of tools) {
+      assert.ok(!t.includes('&&'), `allowlist entry is a single program, not a compound: ${t}`);
+    }
+    for (const cmd of PREFLIGHT) {
+      assert.ok(tools.includes(`Bash(${cmd}:*)`), `implement grants ${cmd} individually`);
+    }
+  });
+
+  test('A2 every PR-body checklist item is ONE command, and each is covered by an allowlist prefix', () => {
+    renderAll();
+    const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')));
+    const skill = read(cwd, GIT_SKILL);
+
+    // - [ ] Lint passes (`zlint`)  →  'zlint'
+    const items = [...skill.matchAll(/^- \[ \] .*?\(`([^`]+)`\)\s*$/gm)].map((m) => m[1]);
+
+    // The checklist is exactly the four pre-flight commands, in pre-flight order — one per row.
+    assert.deepEqual(items, PREFLIGHT, `git-workflow test-plan checklist: ${JSON.stringify(items)}`);
+    for (const cmd of items) {
+      assert.ok(!cmd.includes('&&'), `checklist item is a single command: ${cmd}`);
+      assert.ok(isCovered(cmd, prefixes), `checklist command "${cmd}" is covered by an allowlist prefix`);
+    }
+  });
+
+  test('A3 delegate post-agent verification runs its project commands one per line', () => {
+    renderAll();
+    const skill = read(cwd, DELEGATE_SKILL);
+    const fences = [...skill.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+    const lines = fences.flatMap((b) => b.split('\n')).map((l) => l.trim()).filter(Boolean);
+
+    // Scoped to PROJECT commands on purpose: git-family compounds in this same skill are pinned
+    // elsewhere and are NOT what this guards.
+    const withProjectCmd = lines.filter((l) => PREFLIGHT.some((c) => l.includes(c)));
+    assert.ok(withProjectCmd.length >= 2, `delegate runs project commands in a fence: ${JSON.stringify(lines)}`);
+    for (const l of withProjectCmd) {
+      assert.ok(!l.includes('&&'), `delegate runs project commands separately, not compounded: ${l}`);
+    }
+    // the post-agent verification specifically: typecheck and test, each on its own line
+    assert.ok(lines.includes(CMDS.typecheckCmd), 'typecheck stands alone on its own line');
+    assert.ok(lines.includes(CMDS.testCmd), 'test stands alone on its own line');
+  });
+
+  test('A4 SOURCE backstop: no stack source joins two project commands with && ', () => {
+    // Fires on stacks/ itself, so a NEW stack reintroducing the pattern fails immediately —
+    // without anyone remembering to render first. This is what keeps the fix from rotting.
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) return walk(p);
+      return /\.(md|ya?ml)$/.test(e.name) ? [p] : [];
+    });
+    const COMPOUND = /\{\{project\.\w*Cmd\}\}[^\n]*&&[^\n]*\{\{project\.\w*Cmd\}\}/;
+
+    const offenders = [];
+    for (const file of walk(path.join(repoRoot, 'stacks'))) {
+      fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (COMPOUND.test(line)) offenders.push(`${path.relative(repoRoot, file)}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    assert.deepEqual(offenders, [], `project commands joined by && in a stack source:\n${offenders.join('\n')}`);
+  });
+});
+
 // #51: the label-hook workflow is SYRUP — sensitive, opt-in. Enabling the stack no longer
 // renders it; it lands only on an explicit install or when a prior lock tracks its path.
 // These drive the ACTUAL shipped github-workflow stack.
