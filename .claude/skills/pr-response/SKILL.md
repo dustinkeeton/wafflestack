@@ -1,6 +1,6 @@
 ---
 name: pr-response
-description: Triage the review findings on a pull request — read every review and review comment (from the adversarial-review bot or a human), score each finding on a four-dimension rubric (severity, validity, effort/risk, alignment), decide Implement / Defer / Decline with a recorded score and one-line reason, apply the accepted fixes, and post one reply summarizing the verdicts. Use when a PR has review feedback to answer, when the user says "respond to the review", "address the findings", or "triage the PR comments". Invokable by users and agents.
+description: Triage the review findings on a pull request — read every review and review comment (from the adversarial-review bot or a human), score each finding on a four-dimension rubric (severity, validity, effort/risk, alignment), decide Implement / Defer / Decline with a recorded score and one-line reason, apply the accepted fixes, and post one reply per round summarizing the verdicts. Use when a PR has review feedback to answer, when the user says "respond to the review", "address the findings", or "triage the PR comments". Invokable by users and agents.
 user-invocable: true
 argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [--yes]"
 ---
@@ -10,7 +10,9 @@ argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [--
 When this skill is invoked, you **answer the review findings on a pull request**. Something
 reviewed this PR — the `adversarial-review` skill, a human, a bot — and left findings. Your job
 is the step after review and before merge: decide, **per finding**, whether to implement it,
-defer it, or decline it; do the accepted work; and post one reply that shows your reasoning.
+defer it, or decline it; do the accepted work; and post one reply, each round, that shows your
+reasoning. Those replies accumulate: the verdict trail is the product, so a later round **appends**
+to it and never rewrites it.
 
 The decision is the product here, not the diff. A finding is not a command, and "the reviewer
 said so" is not a reason to change code. But neither is silence an answer: every finding gets a
@@ -150,26 +152,39 @@ issue number in the reply. A defer with nowhere to land is a decline wearing a n
 
 For each **Decline** finding, do nothing but write the reason.
 
-## 6. Post one reply
+## 6. Post one reply per round
 
-Post **exactly one** comment summarizing every verdict. One comment, not one per finding — the
-author already read the findings; what they need is your disposition of all of them at a glance.
+Post **exactly one** comment per round, summarizing every verdict from *that* round. One comment,
+not one per finding — the author already read the findings; what they need is your disposition of
+all of them at a glance.
 
 The reply **must** carry the dedup marker `<!-- waffle-pr-response -->` as its first line. The
-marker is how this skill (and any automation wrapping it) recognizes its own prior reply.
+marker is how this skill (and any automation wrapping it) recognizes its own replies — the ones it
+**reads** to recover verdict history on a cold start (see [Being resumed across
+rounds](#when-called-by-agents)).
 
-**Idempotency.** Before posting, check whether a marked reply already exists:
-
-```bash
-gh api "repos/$OWNER/$REPO/issues/$N/comments" --jq '[.[] | select(.body | contains("<!-- waffle-pr-response -->")) | .id] | last // empty'
-```
-
-If it returns an id, **update that comment** rather than adding a second one — a second run after
-new review findings should leave one comment carrying the current, complete verdict table:
+**Append. Never edit a previous reply.** A second round posts a **new** comment; it does not
+rewrite the last one:
 
 ```bash
-gh api "repos/$OWNER/$REPO/issues/comments/$COMMENT_ID" --method PATCH -F body=@<body-file>
+gh pr comment "$N" --body-file /tmp/pr-response-body.md
 ```
+
+That holds even when the new round revisits an earlier finding. The rounds are a **paper trail**,
+and overwriting one destroys exactly the record this skill exists to produce: what was found, what
+it scored, and why it was disposed of that way — at the time, on the evidence then available. A
+reader must be able to see that F3 was declined in round 1 and implemented in round 3 *because the
+head changed*, and no single mutating comment can show that. If a verdict genuinely changes, say so
+in the new comment and name the new evidence; do not quietly retcon the old one.
+
+So the marked comments accumulate, oldest first, and **that is correct** — not a bug to dedup away.
+Read them as history; write only new ones.
+
+> [!WARNING]
+> Earlier versions of this skill told you to find the last marked comment and `PATCH` it, "so a
+> second run leaves one comment carrying the current, complete verdict table." That was wrong, and
+> it is the one instruction in this file that actively destroyed user data. If you have a memory,
+> a habit, or a wrapper that still does it: stop.
 
 ### How to post — write a file, then one single-line command
 
@@ -178,13 +193,15 @@ gh api "repos/$OWNER/$REPO/issues/comments/$COMMENT_ID" --method PATCH -F body=@
 > post is **denied** and the reply never lands — silently, after all the work is done. Write the
 > body to a file with the `Write` tool, then post it with one single-line command.
 
-```bash
-gh pr comment "$N" --body-file /tmp/pr-response-body.md
-```
+That is the whole post path: one `Write`, one line of shell (the `gh pr comment` above). Keep the
+body file out of the commit — write it to a temp path, not into the repo.
 
-That is the whole post path: one `Write`, one line of shell. Same for the PATCH above (`-F
-body=@file` reads the file; no heredoc). Keep the body file out of the commit — write it to a
-temp path, not into the repo.
+### Label each round
+
+A round's comment should say which round it is and what it is answering, so the trail reads in
+order — e.g. `**PR response — round 2** (adversarial review on `<head-sha>`). 5 findings, F3–F7.`
+Link back to the previous round's comment rather than restating its verdicts; the F-numbering is
+what stitches them together (see step 3 and the resumption rules).
 
 ### Reply format
 
@@ -276,13 +293,14 @@ instead of invoking this skill fresh each round. When resumed:
   rounds**: continue the sequence, never restart at F1.
 - **Cold starts recover the history from the PR itself.** If you have no in-context history — you
   are a fresh spawn after a vanished agent, or a later gate's responder whose sibling loop already
-  ran on this PR — but a marked `<!-- waffle-pr-response -->` reply already exists, **read it first
-  and seed your verdict history and F-numbering from it**: treat it as history, not merely a PATCH
-  target. Append new findings after its F high-water mark — **never renumber** — and never reverse
-  one of its recorded verdicts without new evidence in the new head. This is what keeps the
-  continuity rules above satisfiable on every path, not only for an agent that lived through the
-  earlier rounds.
-- **The reply and the return are unchanged.** The idempotent one-reply PATCH (step 6) already
-  handles posting across rounds, and the per-verdict + implemented counts (step 7) are your reply
+  ran on this PR — but marked `<!-- waffle-pr-response -->` replies already exist, **read them all,
+  oldest first, and seed your verdict history and F-numbering from them.** They are history, and
+  they are the *only* record of it: nothing else on the PR says why F5 was declined two rounds ago.
+  Append new findings after the highest F across all of them — **never renumber** — and never
+  reverse a recorded verdict without new evidence in the new head. This is what keeps the continuity
+  rules above satisfiable on every path, not only for an agent that lived through the earlier rounds.
+  **Read them; do not touch them.**
+- **The reply and the return are unchanged.** Step 6 posts a **new** comment for this round (never
+  editing an earlier one), and the per-verdict + implemented counts (step 7) are your reply
   each round — the implemented count is the loop's convergence signal, so report it honestly: 0
   means nothing was left to fix, not that you are tired of the round.

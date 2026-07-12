@@ -566,6 +566,22 @@ is what you reach for across a breaking one.
   **Consumer impact:** re-render to pick it up. Delegated specialists now report their PR and close
   their task instead of finishing silently — an orchestrator no longer has to poll the branch to learn
   whether they succeeded.
+- **`pr-response` overwrote its own verdict history (owner report, found while running the skill on
+  #308).** The skill's "Idempotency" section told
+  the responder to find its last marked `<!-- waffle-pr-response -->` comment and **`PATCH`** it, so
+  that "a second run leaves one comment carrying the current, complete verdict table." Following that
+  instruction **destroys the paper trail**: round 2 silently replaces round 1, and the record of what
+  was found, what it scored, and why it was disposed of *at the time, on the evidence then available*
+  is gone. That record is the entire product of the skill — the rubric exists to make judgment legible
+  and **recalibratable**, and you cannot recalibrate against verdicts you have deleted. It also made
+  the skill's own cold-start rule incoherent: it says to read the prior reply as *history*, while step
+  6 said to overwrite it. Each round now **appends** a new comment, labelled with its round and the
+  head SHA it answers; the marker stays (it is how a cold start recovers verdict history and continues
+  the F-numbering across rounds) but marked comments are now **read-only history** — read them all,
+  oldest first, and write only new ones. A verdict that genuinely changes is stated in the new comment
+  with the new evidence named, never retconned into the old one.
+  **Consumer impact:** re-render to pick it up. `pr-response` now leaves one comment per round instead
+  of one per PR — expect the comment count on a multi-round PR to grow, which is the point.
 - **The cold-start seeding rule collided with the cap hatch's deliberately-cold pass (#301,
   follow-up to #297).** The gate reviewers (`qa`, `adversarial-review`) triggered their history
   seeding on an **inference from absence** — "no in-context history ⇒ you are a vanished-agent
