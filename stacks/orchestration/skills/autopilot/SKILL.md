@@ -177,6 +177,7 @@ Auto-merge is **not yet armed** on this PR — Step 3 deferred arming precisely 
             | (.description // "")
             | select(startswith("triaged-through="))
             | ltrimstr("triaged-through=")
+            | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
             | select(. >= $since)
           ] | length'
   ```
@@ -184,6 +185,10 @@ Auto-merge is **not yet armed** on this PR — Step 3 deferred arming precisely 
   Expect **≥ 1** for triaged. `pr-response` writes `description=triaged-through=<ISO-8601 UTC>`, where the cutoff is the newest `submitted_at` it saw **when it read the findings** — so the status asserts *"I read every review submitted up to this moment"*, which is exactly the question this gate asks. Both values are ISO-8601 UTC (`2026-07-12T22:02:22Z`), so a plain string `>=` orders them. A status description takes repo **push access** to write, exactly like the status itself: no body can forge it.
 
   **Fail closed: no status, no parseable cutoff, or a cutoff older than the review ⇒ UNTRIAGED ⇒ spawn the responder.** A redundant triage round costs one cheap round; a skipped one merges live findings.
+
+  **THE `test(…)` VALIDATION IS THE FAIL-CLOSED PROMISE — WITHOUT IT THE GATE FAILS *OPEN*.** `startswith("triaged-through=")` proves only that a prefix is present; whatever follows is compared as a **raw string**, and ISO dates begin with a digit. So **any** token sorting above ASCII digits certifies *everything on that head*: `triaged-through=now`, `=null`, `=unknown` each read as **TRIAGED** — against a review from 2099, even. That is not fail-closed, it is merge-over-everything, and it is reachable precisely because the writer is a **model** being asked to emit a formatted string: hand it an empty or unclear cutoff and `now` is the natural improvisation.
+
+  **The reader must not trust the writer's format.** This whole design rests on *decide on an artifact that takes push access to forge, never on prose a model was told to emit* — and the description **is** the prose half of that artifact. The status is unforgeable; the *string inside it* is not disciplined by anything except this validation. Validate it here, or the thesis has a hole exactly where it is load-bearing.
 
   **Why the cutoff, and not the status's `created_at`.** Two ways a weaker test merges over live findings — the gate must defeat both:
 

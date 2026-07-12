@@ -267,6 +267,15 @@ gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f
 verbatim, **do not write the status**, and do **not** claim the review posted — a QA pass whose
 findings never landed is a failed pass, not a clean one.
 
+> [!WARNING]
+> **If you run those as separate `Bash` calls, paste the LITERAL values — shell state does not
+> survive between calls.** The harness persists the working directory, but variables die with the
+> call, so a `$REVIEW_ID` or `$HEAD_SHA` captured in one call is **empty** in the next. Substitute
+> what the previous command actually printed (`…/reviews/2891…`, `…/statuses/8f2d3f1…`). Here that
+> fails loudly — an empty id makes a malformed URL and the API errors — but the sibling `pr-response`
+> skill has a value whose loss is **silent** (its `triaged-through` cutoff), so treat the rule as
+> absolute rather than learning it the expensive way.
+
 > [!IMPORTANT]
 > **A status must never be its own proof.** The obvious shortcut — write the status, then verify
 > delivery by reading *that status* back — is **self-attesting**: it proves "I wrote a status", which

@@ -81,6 +81,31 @@ is what you reach for across a breaking one.
   - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
     read is best-effort by design: getting it wrong costs a redundant round, while getting the
     *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **The triage gate validates the cutoff's format, and the cutoff is written as a literal (#354, QA
+  round 4).** Two bugs in the round-3 plumbing, failing in **opposite** directions:
+  - **The writer could never deliver the cutoff (fail-closed).** The skill captured `CUTOFF=$(…)`
+    when it read the findings and spent `$CUTOFF` when it wrote the status — but those are **two
+    different shells**. The agent harness persists the working directory between `Bash` calls and
+    **not** shell state, and the status is written many tool calls later (after scoring, fixing, the
+    pre-flight, the push and the reply). So every status was stamped `triaged-through=` with nothing
+    after it, and the gate read *every* review as untriaged: the cutoff mechanism was **silently
+    inert**, and an always-untriaged gate is indistinguishable from a working one. The cutoff is now
+    a **literal** the responder substitutes from what it read (a compound `CUTOFF=$(…); gh api …` is
+    not the escape hatch — CI's allowlist matches on the leading program and rejects compounds, so
+    the literal is the only form that works on both paths). The same slip is called out in `qa` and
+    `adversarial-review`, which hand `$REVIEW_ID` and the head SHA across the same boundary.
+  - **The reader trusted the writer's format (fail-OPEN).** The gate checked only
+    `startswith("triaged-through=")` and compared whatever followed as a **raw string** — but ISO
+    dates begin with a digit, so any token sorting above ASCII digits (`now`, `null`, `unknown`)
+    certified **every review on that head**, including one submitted in 2099. The skill promised
+    *"no parseable cutoff ⇒ untriaged ⇒ fail closed"* and did not keep it. The gate now validates
+    `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$` before comparing. **The reader must
+    not trust the writer's format**: the status is unforgeable, but the string inside it is prose a
+    model was told to emit — which is the one place this design was still trusting prose.
+  - **The gate is now tested by being EXECUTED, not by being grepped.** The jq predicate is extracted
+    from `autopilot/SKILL.md` and run against real status payloads (valid, empty, malformed, stale,
+    wrong-context, wrong-state, null). No text assertion can tell a working gate from an inert one —
+    which is precisely how both bugs above shipped past a green suite.
 - **The triage gate certifies the responder's READ CUTOFF, not its finish time (#354, QA round 3).**
   Comparing the status's own `created_at` against a review's `submitted_at` closes the *early*-write
   hole but leaves the other end open, and that end is inherent to writing the status last.

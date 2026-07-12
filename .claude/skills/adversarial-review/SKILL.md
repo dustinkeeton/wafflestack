@@ -185,6 +185,13 @@ Notes on mechanics:
   **Fail closed** — if the POST errors, or the read-back returns no id, report it, **do not write the
   status**, and do not claim the review posted.
 
+  **If you run those as separate `Bash` calls, paste the LITERAL values — shell state does not survive
+  between calls.** The harness persists the working directory, but variables die with the call, so a
+  `$REVIEW_ID` or `$HEAD_SHA` captured in one call is **empty** in the next; substitute what the
+  previous command printed. Here that fails loudly (an empty id makes a malformed URL and the API
+  errors), but in the sibling `pr-response` skill the same slip loses a value **silently**, so treat
+  the rule as absolute.
+
   **A status must never be its own proof.** Writing the status and then "verifying delivery" by
   reading *that status* back is self-attesting — it proves you wrote a status, not that a review
   exists, so an errored POST would still report *delivered* with nothing on the PR. The status is a

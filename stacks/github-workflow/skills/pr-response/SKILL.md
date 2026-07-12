@@ -69,15 +69,38 @@ Issue-style comments on the PR conversation can also carry findings:
 gh api "repos/$OWNER/$REPO/issues/$N/comments" --jq '.[] | {id, user: .user.login, body}'
 ```
 
-**Capture your read cutoff, `$CUTOFF`, right here** — the newest `submitted_at` among **all** reviews
-on the PR at the moment you read them:
+**Read your cutoff right here** — the newest `submitted_at` among **all** reviews on the PR at the
+moment you read them:
 
 ```bash
-CUTOFF=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[].submitted_at' | sort | tail -1)
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[].submitted_at' | sort | tail -1
 ```
 
+It prints one timestamp, e.g. `2026-07-12T23:03:42Z`. **Read it off the output and carry it in your
+head — it is a literal you will paste in step 6, not a shell variable.**
+
+> [!WARNING]
+> **Do not assign it to a shell variable.** `CUTOFF=$(…)` here and `…$CUTOFF` in step 6 are **two
+> different shells**: the agent harness persists the working directory between `Bash` calls but
+> **not shell state** — variables, exports, functions all die with the call. Step 6 runs many tool
+> calls later (after scoring, fixing, the pre-flight, the push and the reply), so `$CUTOFF` expands
+> to **empty**, the status is written as `triaged-through=` with nothing after it, and the gate reads
+> it as *no cutoff* — **untriaged, for every review, forever.** The mechanism silently does nothing,
+> and it looks exactly like a mechanism that works.
+>
+> **A compound is not the escape hatch either.** `CUTOFF=$(…); gh api …` in one call would work
+> locally but is **denied in CI**: the allowlist matches on the leading program, so a compound
+> matches no `Bash(gh api:*)` pattern and the status never posts. The literal is the only form that
+> works on **both** paths.
+>
+> And do not improvise a value if you have lost it — **re-run the command above**. A plausible-looking
+> token (`now`, `unknown`, `null`) is far worse than an empty one: it sorts *above* ASCII digits, so
+> the gate certifies **every** review on that head as triaged and auto-merge is armed over all of
+> them. (The gate now validates the format and rejects such a token, but do not rely on the reader to
+> cover for the writer.)
+
 That one value is what your delivery status will certify (step 6): *"I read every review submitted up
-to `$CUTOFF`."* It is **not** the time you finish — a review can land while you are scoring, fixing
+to this cutoff."* It is **not** the time you finish — a review can land while you are scoring, fixing
 and pushing, and a status stamped with a completion time would certify a review that never crossed
 your desk. Take it from GitHub's own timestamps, not a local clock, so no skew can push it forward.
 If the PR carries no reviews yet, there is nothing to triage — stop.
@@ -292,15 +315,22 @@ paper trail this skill exists to produce.
 ### After the reply lands — emit the delivery signal
 
 **Once the reply has posted, and only then**, write a `waffle/pr-response` **commit status** on the
-head SHA you responded to — carrying **the cutoff you read the findings at** (`$CUTOFF`, captured in
-step 2):
+head SHA you responded to — carrying **the cutoff you read in step 2, pasted as a literal**:
 
 ```bash
-gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/pr-response -f "description=triaged-through=$CUTOFF"
+gh api --method POST "repos/$OWNER/$REPO/statuses/<head-sha>" -f state=success -f context=waffle/pr-response -f "description=triaged-through=2026-07-12T23:03:42Z"
 ```
 
+**Substitute both literals** — the head SHA, and the exact timestamp step 2 printed. **Never write
+`$CUTOFF` here**: that variable belonged to a shell that exited many tool calls ago, it expands to
+empty, and an empty cutoff makes the gate read *every* review on this head as untriaged — the whole
+mechanism silently inert (see the warning in step 2). If you no longer have the value, **re-run step
+2's command**; never guess one.
+
 The description format is **exact and machine-read** — `triaged-through=<ISO-8601 UTC>`, nothing else
-in it. Consumers parse it; prose there breaks the gate.
+in it. Consumers parse it, and the gate validates it against
+`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`: prose there, or an improvised token, is
+rejected and the head reads as untriaged.
 
 This is **this skill's delivery signal, on every path** — a local `/pr-response` run emits it exactly
 as a CI-dispatched one does. It is not a CI implementation detail you may skip when a human invoked

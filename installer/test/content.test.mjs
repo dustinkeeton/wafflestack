@@ -1,5 +1,6 @@
 import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -2963,13 +2964,23 @@ describe('issue / PR / review templates (#337)', () => {
     // Fail-closed on an unparseable/absent cutoff — an unreadable certificate is not a certificate.
     assert.match(ap, /no parseable cutoff.*⇒ UNTRIAGED|no status, no parseable cutoff/i, 'the gate must fail closed when the cutoff is missing or unparseable');
     // The responder must capture the cutoff AT READ TIME and stamp exactly that.
-    assert.match(pr, /CUTOFF=\$\(gh api "repos\/\$OWNER\/\$REPO\/pulls\/\$N\/reviews" --paginate --jq '\.\[\]\.submitted_at'/, 'pr-response must capture the cutoff from the reviews it read');
-    assert.match(pr, /description=triaged-through=\$CUTOFF/, 'pr-response must stamp the read cutoff into the status description');
+    assert.match(pr, /pulls\/\$N\/reviews" --paginate --jq '\.\[\]\.submitted_at'/, 'pr-response must read the cutoff from the reviews it saw');
+    assert.match(pr, /description=triaged-through=/, 'pr-response must stamp the read cutoff into the status description');
     assert.match(pr, /Under-claiming is safe; over-claiming merges live findings/, 'pr-response must state which direction of error is safe');
-    // The CI dispatch prompt writes the same status, so it must carry the same format — otherwise a
-    // CI-written status is unparseable and every review on that head fails closed forever.
+    // F10: the cutoff must be a LITERAL the model substitutes, never a shell variable. `CUTOFF=$(…)`
+    // in step 2 and `$CUTOFF` in step 6 are different shells — the harness persists cwd but not shell
+    // state — so the variable expands to EMPTY and the status certifies nothing. Both the skill and
+    // the CI dispatch prompt must show the literal form and say why.
+    assert.doesNotMatch(pr, /description=triaged-through=\$CUTOFF/, 'pr-response writes $CUTOFF into the status — shell state does not survive between Bash calls, so it expands to empty and the gate certifies nothing');
+    assert.doesNotMatch(pr, /^CUTOFF=\$\(/m, 'pr-response assigns the cutoff to a shell variable that cannot survive to step 6');
+    assert.match(pr, /shell state/i, 'pr-response must explain WHY the cutoff is a literal, or the next editor "tidies" it back into a variable');
+    assert.match(pr, /never improvise|never guess one/i, 'pr-response must forbid improvising a cutoff — a plausible token fails OPEN');
+    // The CI dispatch prompt writes the same status, so it must carry the same format and the same
+    // literal-not-variable rule — the CI harness crosses the same Bash-call boundary.
     const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
-    assert.match(wf, /description=triaged-through=\$CUTOFF/, 'the CI dispatch prompt must stamp the cutoff too, or CI-written statuses never parse');
+    assert.match(wf, /description=triaged-through=/, 'the CI dispatch prompt must stamp the cutoff too, or CI-written statuses never parse');
+    assert.doesNotMatch(wf, /description=triaged-through=\$CUTOFF"/, 'the CI dispatch prompt writes $CUTOFF — it expands to empty in the harness too');
+    assert.match(wf, /PASTE, AS A LITERAL/i, 'the CI dispatch prompt must tell the harness to paste the literal cutoff');
   });
 
   test('#338: a delivery check never reads back its own status — that is self-attesting (F8)', () => {
@@ -2999,8 +3010,13 @@ describe('issue / PR / review templates (#337)', () => {
     // consumer had no artifact to read and would fall back to prose.
     for (const [name, context] of [['qa', 'waffle/qa'], ['adversarial-review', 'waffle/adversarial-review'], ['pr-response', 'waffle/pr-response']]) {
       const md = readSkill(name);
-      assert.match(md, /statuses\/\$HEAD_SHA/, `${name} does not POST a commit status on the head it acted on`);
+      assert.match(md, /--method POST "repos\/\$OWNER\/\$REPO\/statuses\//, `${name} does not POST a commit status on the head it acted on`);
       assert.ok(md.includes(`context=${context}`), `${name} does not write the ${context} status its consumers read`);
+      // F10, generalized: EVERY value these commands carry from one call's output into the next
+      // ($REVIEW_ID, the head SHA, the cutoff) crosses a Bash-call boundary, and shell state does not
+      // survive it. Each skill must say so where it hands one along, or the next editor "tidies" the
+      // literal back into a variable and the command silently posts an empty value.
+      assert.match(md, /shell state/i, `${name} carries a value between Bash calls without warning that shell state does not survive`);
     }
   });
 
@@ -3045,6 +3061,77 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(templates.review, /\| # \| Finding \| Severity \| Reach \| Validity \| Effort\/Risk \| Alignment \| Composite \| Verdict \| Reason \|/, 'the template verdict table must carry the Reach column');
     assert.match(templates.review, /Score the five dimensions/, 'the template must teach five dimensions');
     assert.doesNotMatch(templates.review, /Score the four dimensions/, 'the template still teaches the v1 four');
+  });
+
+  // ── The gate is CODE. Test it as code. ───────────────────────────────────────────────────────
+  // Every other test here asserts that the gate's TEXT contains the right things. Not one of them
+  // can tell a WORKING gate from an INERT one — which is precisely how F10 shipped (an empty
+  // `$CUTOFF` makes every status read as untriaged: the mechanism silently does nothing, and it
+  // looks exactly like a mechanism that works) and how F11 survived (an unvalidated cutoff makes
+  // every review read as TRIAGED: fail-OPEN, on the path that arms auto-merge).
+  //
+  // "Asserts presence, not meaning" was the reviewer's criticism two rounds running. This is the
+  // answer to it at the root: pull the jq predicate straight out of autopilot/SKILL.md and RUN it.
+  // If the documented gate is wrong, these fail — no reimplementation to drift out from under it.
+  const gateFilter = () => {
+    const md = readSkill('autopilot');
+    const m = /--arg since "\$SINCE" '([\s\S]*?)'/.exec(md);
+    assert.ok(m, 'could not extract the triage-gate jq filter from autopilot/SKILL.md');
+    return m[1];
+  };
+  const runGate = (statuses, since) => {
+    const r = spawnSync('jq', ['-s', '--arg', 'since', since, gateFilter()], {
+      input: JSON.stringify(statuses),
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, `the documented gate is not valid jq: ${r.stderr}`);
+    return Number(r.stdout.trim());
+  };
+  const mkStatus = (description, over = {}) => [
+    { context: 'waffle/pr-response', state: 'success', description, ...over },
+  ];
+  const SINCE = '2026-07-12T23:03:42Z'; // the review's submitted_at
+
+  test('GATE EXECUTED: a valid cutoff at or after the review triages it', () => {
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T23:03:42Z'), SINCE), 1, 'the exact cutoff must triage');
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-13T00:00:00Z'), SINCE), 1, 'a later cutoff must triage');
+  });
+
+  test('GATE EXECUTED: an EMPTY cutoff reads untriaged — the whole mechanism inert (F10)', () => {
+    // `CUTOFF=$(…)` in step 2 and `$CUTOFF` in step 6 are DIFFERENT SHELLS: the harness persists the
+    // working directory between Bash calls but not shell state. So the status was written as
+    // `triaged-through=` and every review on every head read as untriaged — fail-closed, so nothing
+    // merged, but the gate certified nothing and no text assertion could see it.
+    assert.equal(runGate(mkStatus('triaged-through='), SINCE), 0);
+  });
+
+  test('GATE EXECUTED: a MALFORMED cutoff reads untriaged — this one failed OPEN (F11)', () => {
+    // ISO dates begin with a DIGIT, and the gate compares raw strings. Any token sorting above ASCII
+    // digits therefore certified EVERYTHING on that head. Before the test() validation, each of
+    // these returned 1 — including against a review submitted in 2099. And it is reachable exactly
+    // because the writer is a model handed an empty cutoff (F10): `now` is the natural improvisation.
+    for (const bogus of ['now', 'null', 'unknown', 'pending', 'HEAD', 'latest']) {
+      assert.equal(runGate(mkStatus(`triaged-through=${bogus}`), SINCE), 0, `a cutoff of "${bogus}" must triage nothing`);
+      assert.equal(runGate(mkStatus(`triaged-through=${bogus}`), '2099-01-01T00:00:00Z'), 0, `a cutoff of "${bogus}" must not triage a review from 2099`);
+    }
+    // Near-misses must fail too — the reader does not get to be generous about the writer's format.
+    for (const bogus of ['2026-07-12', '2026-07-12T23:03:42', '2026-07-12T23:03:42+00:00', 'x2026-07-12T23:03:42Z']) {
+      assert.equal(runGate(mkStatus(`triaged-through=${bogus}`), SINCE), 0, `a cutoff of "${bogus}" is not the pinned format and must triage nothing`);
+    }
+  });
+
+  test('GATE EXECUTED: a cutoff OLDER than the review reads untriaged (F7 and F9)', () => {
+    // F7: the last responder deferred everything, so its status sits on a head that then receives a
+    // NEW review. F9: a review lands mid-run, after the read cutoff. Both are this case.
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T20:00:00Z'), SINCE), 0);
+  });
+
+  test('GATE EXECUTED: no status, wrong context, wrong state, or prose description → untriaged', () => {
+    assert.equal(runGate([], SINCE), 0, 'no status must not triage');
+    assert.equal(runGate(mkStatus('triaged-through=2099-01-01T00:00:00Z', { context: 'waffle/qa' }), SINCE), 0, 'another skill’s status must not triage');
+    assert.equal(runGate(mkStatus('triaged-through=2099-01-01T00:00:00Z', { state: 'failure' }), SINCE), 0, 'a failed status must not triage');
+    assert.equal(runGate(mkStatus('Automated response posted'), SINCE), 0, 'a prose description must not triage');
+    assert.equal(runGate(mkStatus(null), SINCE), 0, 'a null description must not triage');
   });
 
   test('#338: qa no longer substring-matches a review body to prove its own delivery (#296)', () => {
