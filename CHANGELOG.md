@@ -31,6 +31,52 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Fixed
+- **pr-green: a blocked exfil/destructive call no longer goes green just because the review posted
+  (#208).** #204 taught the `waffle-pr-green-hook` guard to downgrade a denied tool call to a warning
+  when a marker-carrying adversarial review is on the head commit. The motivation was narrow — the
+  program-name classifier cannot tell a read-only `git log` from a mutating `git push`, so a denied
+  *read* was false-redding runs that had demonstrably posted their review. **The implementation was
+  much wider than the motivation:** the downgrade excused the entire hard class, so a **denied**
+  `curl … -d @…/gh/hosts.yml`, `rm -rf`, `git push`, or `gh secret list` warned and the job went
+  **green** — in the one job whose whole purpose is chewing on untrusted PR content. Nothing ever
+  escaped (the call *was* blocked; the allowlist is the control), but CI stopped telling us the
+  attempt happened — a lost-signal bug. The hard class is now split into three tiers: a **sandbox
+  escape** (unconditionally red, unchanged and still first), a new **exfil/destructive/mutating**
+  tier — an exfil program, a mutating `git`/`gh` verb (`git push`, `git tag <name>`, `gh secret`,
+  `gh pr merge`, …), or a blocked file edit — which is **never** downgraded, not even by a delivered
+  review; and the genuinely **ambiguous** residue, which keeps #188's delivery-aware downgrade. The
+  governing principle: *the downgrade exists only to excuse the classifier's imprecision* — a denial
+  is downgradeable iff the classifier truly cannot tell read from mutate, never when the tool name or
+  the verb says plainly what it is. `git`/`gh` are classified by verb, fail-closed (an unknown verb is
+  treated as dangerous); a bare `permission_denials_count` (no array to classify) behaves exactly as
+  before. **Consumer impact:** re-render to pick this up. This will newly **red** some runs that are
+  green today — that is the point; inspect the `claude-execution-log-pr-green` artifact rather than
+  widening `--allowedTools` to make it green.
+
+  **Review hardening (#330).** The tier is only as good as the list it stands on, so three holes in
+  that list were closed. (1) **The raw exfil channels were in neither list.** A denied
+  `nc … < hosts.yml` — plus `netcat`, `socat`, `telnet`, `openssl s_client` — classified *SOFT* and
+  the job went green **even with no review posted**; they are now in the destructive list and red.
+  (2) **The two program lists are now ONE.** `hard` and `danger` kept hand-maintained copies with a
+  load-bearing invariant (`danger == hard \ {gh,git}`) that no test pinned — and the natural way to
+  fix a gap (add the program to `hard`) did not make it red, it made it **AMB**, which a delivered
+  review *downgrades*: #208, silently re-opened. `danger` is now **derived** from a single
+  declaration, so the drift is unrepresentable, and a test pins the derivation against the rendered
+  YAML. (3) **The classifier now fails CLOSED.** `2>/dev/null || echo 0` read a jq error as *proof of
+  safety* in the very guard that decides whether delivery evidence may apply — break its expression,
+  or hand it a denial whose `tool_name` key is simply absent, and every denial silently became
+  SOFT/AMB and the run went green. A classifier that cannot run now reds the job and prints what jq
+  said. Also: `git tag` was the one verb clause that failed *open* (it inspected only the token after
+  `tag`, so `git tag --cleanup=verbatim -m x v9.9.9` slipped to AMB) — it is now fail-closed like
+  every other clause, and "bare `git tag` is a read" correctly means end-of-**command**, not
+  end-of-string, so `git tag | head`, `git tag; git log` and a bare `git tag` on its own line of a
+  multi-line call still downgrade rather than redding as *"exfil/destructive"* in a tier no delivered
+  review can rescue. **Known blind spots, documented in the guard:** scripting interpreters
+  (`python3 -c`, `node -e`, …) and boundary-anchor evasion (`FOO=1 curl`, `/usr/bin/curl`,
+  `{ curl …; }`) still classify SOFT; program-name matching cannot close these, and the
+  allowlist-derived redesign that can is tracked in #331.
+
 ## [0.12.0] - 2026-07-11
 
 ### Added
