@@ -12,6 +12,7 @@
     "installer",
     "stacks",
     "schema",
+    "docs",
     "toolkit.yaml",
     "CHANGELOG.md"
   ],

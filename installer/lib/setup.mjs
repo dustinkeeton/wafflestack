@@ -4,7 +4,7 @@ import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
 import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
-import { readLock, collectUsedKeys } from './render.mjs';
+import { readTreeLock, collectUsedKeys } from './render.mjs';
 import {
   applicablePrerequisites,
   evaluatePrerequisites,
@@ -66,7 +66,10 @@ function currentConfigSection(toolkit, cwd) {
     ].join('\n');
   }
 
-  const trackedFiles = new Set(Object.keys(readLock(cwd)?.files ?? {}));
+  // The TREE lock (#317): `trackedFiles` answers "what is already installed in this working copy",
+  // which on a machine whose `.local` overlay shapes the render is the effective render, not the
+  // canonical one the committed lock describes.
+  const trackedFiles = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
   const selection = computeSelection(toolkit, project, trackedFiles);
   const primaryTarget = project.targets[0] ?? 'claude';
 

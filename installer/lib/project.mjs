@@ -33,6 +33,16 @@ import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 export const CONFIG_FILE = '.waffle/waffle.yaml';
 export const LOCAL_CONFIG_FILE = '.waffle/waffle.local.yaml';
 export const LOCK_FILE = '.waffle/waffle.lock.json';
+// The gitignored twin of the lock (#317). `LOCK_FILE` records the CANONICAL render — the one
+// the committed inputs produce, identical on every machine — so it can be committed without
+// carrying a developer's private overlay values into shared state. But the bytes actually on
+// disk are the EFFECTIVE render (canonical + the local overlay), and the frozen-image
+// bookkeeping needs a truthful record of *those*: which files this machine wrote (to prune
+// and to not clobber), and what they hashed to (so `doctor` still catches a hand-edit).
+// That is this file. Written only when the overlay actually changes an output byte, removed
+// again when it stops; account-specific by construction, so — like the overlay itself — it
+// must never be committed (`recommendedGitignoreEntries` offers it).
+export const LOCAL_LOCK_FILE = '.waffle/waffle.local.lock.json';
 export const EXTENSIONS_DIR = path.join('.waffle', 'extensions');
 
 // Legacy (0.6.0 – 0.7.x) repo-root dot-paths, introduced by the #17 rename and moved into
@@ -91,6 +101,14 @@ export const resolveLocalConfigFile = (cwd) =>
 /** @type {(cwd: string) => ResolvedDotPath} */
 export const resolveLockFile = (cwd) =>
   resolveDotPath(cwd, LOCK_FILE, [LEGACY_ROOT_LOCK_FILE, LEGACY_LOCK_FILE]);
+/**
+ * The local lock (#317) has no legacy generations — it was born inside `.waffle/` — so it needs
+ * no fallback chain, just its absolute path.
+ *
+ * @param {string} cwd
+ * @returns {string}
+ */
+export const localLockPath = (cwd) => path.join(cwd, LOCAL_LOCK_FILE);
 
 /**
  * Move any legacy consumer dot-paths under `cwd` to their current `.waffle/` locations, in
@@ -162,6 +180,27 @@ export function staleGitignoreEntries(cwd) {
   ].filter((name) => text.includes(name));
 }
 
+/**
+ * Is `entry` named anywhere in the repo's `.gitignore`? A deliberately literal test — it matches
+ * the entry's basename as a substring and does not evaluate glob semantics, so a repo that ignores
+ * the file by pattern rather than by name reads as "not ignored".
+ *
+ * That is the safe direction for its only caller. `render` uses it to *remind* a repo to ignore the
+ * local lock it just wrote (#317): an un-ignored `.waffle/waffle.local.lock.json` is the very
+ * propagation the canonical lock exists to prevent, one file over — commit it and every teammate's
+ * `doctor` starts comparing their tree against YOUR machine's hashes. A stray reminder costs a line
+ * of noise; a missed one costs the invariant. It is a warning, never a gate.
+ *
+ * @param {string} cwd
+ * @param {string} entry a `.gitignore`-able repo-relative path
+ * @returns {boolean}
+ */
+export function gitignoreMentions(cwd, entry) {
+  const gi = path.join(cwd, '.gitignore');
+  if (!exists(gi)) return false;
+  return fs.readFileSync(gi, 'utf8').includes(path.basename(entry));
+}
+
 // Marker prefixing wafflestack's own appended block, so a human scanning `.gitignore` can see
 // where the offered entries came from. Written once; a later run appends more lines below it.
 export const GITIGNORE_MARKER = '# wafflestack';
@@ -212,18 +251,25 @@ export function ensureGitignoreEntries(cwd, entries) {
 /**
  * The `.gitignore` entries wafflestack recommends for a loaded `project` — the baseline offer
  * behind the `--gitignore` flag and the setup playbook. Always the local overlay
- * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed), plus
- * the resolved `git.worktreesDir` (throwaway working state) when an enabled stack declares
- * that key. Dev-only / self-hosting mode — also gitignoring the renders +
- * `.waffle/waffle.lock.json`, paired with `doctor --allow-missing` — is a separate opt-in the
- * agent proposes case by case, not part of this baseline.
+ * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed) and its
+ * derivative the local lock (`.waffle/waffle.local.lock.json` — this machine's render, written
+ * only when the overlay changes an output byte; see LOCAL_LOCK_FILE), plus the resolved
+ * `git.worktreesDir` (throwaway working state) when an enabled stack declares that key.
+ * Gitignoring the rendered output is a separate opt-in the agent proposes case by
+ * case, not part of this baseline — and the render and the lock are two decisions, not one.
+ * Ignoring a subset of renders pairs with `doctor --allow-missing`, which relaxes *presence*
+ * and never *integrity*, so the gate keeps full strength on what remains; ignoring every
+ * render makes `doctor` vacuous (nothing present to check) and the gate becomes
+ * `doctor --allow-missing --verify-render`. Gitignoring `.waffle/waffle.lock.json` itself is
+ * not an `--allow-missing` pairing at all: a missing lock fails `doctor` before the flag is
+ * read (`doctor.mjs`), so that posture simply has no CI drift gate. See `docs/gitignore.md`.
  *
  * @param {Toolkit} toolkit
  * @param {ProjectConfig} project
  * @returns {string[]}
  */
 export function recommendedGitignoreEntries(toolkit, project) {
-  const entries = [LOCAL_CONFIG_FILE];
+  const entries = [LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE];
   for (const name of project.stacks ?? []) {
     const stack = toolkit.stacks.get(name);
     if (!stack || !('git.worktreesDir' in stack.config)) continue;
@@ -267,11 +313,20 @@ export function renameLegacyStacksKey(doc) {
  * current ones are absent. Deprecation notes for any legacy read are pushed onto `notes`
  * (when provided) for the caller to surface.
  *
+ * `{ canonical: true }` loads the CANONICAL config instead: committed inputs only, the local
+ * overlay deliberately not merged (#317). The overlay is a developer's private tooling — it is
+ * gitignored, it differs per machine, and it must never reach a teammate or CI. The lock is
+ * shared state, so it records the render the *committed* inputs produce; that render is what
+ * this mode loads. `render` calls it for the lock and the ordinary (effective) mode for the
+ * bytes it writes to disk, so each developer's tree carries their own overlay values while
+ * everyone's committed lock stays byte-identical.
+ *
  * @param {string} cwd
  * @param {string[]} [notes] collects deprecation notes for the caller to surface
+ * @param {{ canonical?: boolean }} [options] `canonical` skips the local overlay entirely
  * @returns {ProjectConfig}
  */
-export function loadProjectConfig(cwd, notes = []) {
+export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
   const cfgPath = resolveConfigFile(cwd);
   if (!exists(cfgPath.file)) {
     throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack init\` first`);
@@ -279,7 +334,7 @@ export function loadProjectConfig(cwd, notes = []) {
   if (cfgPath.legacy) notes.push(cfgPath.note);
   let cfg = readYaml(cfgPath.file) ?? {};
   const localPath = resolveLocalConfigFile(cwd);
-  if (exists(localPath.file)) {
+  if (!canonical && exists(localPath.file)) {
     if (localPath.legacy) notes.push(localPath.note);
     cfg = deepMerge(cfg, readYaml(localPath.file) ?? {});
   }

@@ -4,7 +4,7 @@ import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit } from './toolkit.mjs';
 import { computeSelection, itemOutputMatcher } from './refs.mjs';
-import { readLock } from './render.mjs';
+import { readTreeLock } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 
 /**
@@ -14,7 +14,12 @@ import { loadProjectConfig, resolveConfigFile } from './project.mjs';
  *   - `loadToolkit`           — the available surface (every stack and its items)
  *   - `loadProjectConfig`     — the repo's selection intent
  *   - `computeSelection`      — the installed selection (opt-in syrup already gated out)
- *   - `readLock`              — the rendered manifest (paths → sha256)
+ *   - `readTreeLock`          — the rendered manifest OF THIS TREE (paths → sha256). The *tree*
+ *                               lock, not the committed one: every hash below is compared against
+ *                               a file on disk, and on a machine whose `.local` overlay feeds the
+ *                               render those files are the effective render, not the canonical one
+ *                               the committed lock describes (#317). Reading the canonical lock here
+ *                               would report every overlay-touched item as `outdated`.
  *   - `itemOutputMatcher`     — maps an item to its lock paths (shared with `eject`)
  *   - doctor-style sha256     — per-item file drift
  *   - lock.toolkitVersion vs the invoked CLI — toolkit version skew
@@ -45,7 +50,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     }
   }
 
-  const lock = readLock(cwd);
+  const lock = readTreeLock(cwd);
   const lockFiles = lock?.files ?? {};
   const trackedFiles = new Set(Object.keys(lockFiles));
   const lockVersion = lock?.toolkitVersion ?? null;
