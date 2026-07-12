@@ -21,7 +21,10 @@ rather than guessing whether it was even read.
 
 Score honestly. The rubric exists to make your judgment legible and **recalibratable** — not to
 launder a decision you already made. If a finding is a true blocker, a low score means the rubric
-is wrong, not the finding; say so (see [Recalibrating the rubric](#recalibrating-the-rubric-v1)).
+is wrong, not the finding; say so (see [Recalibrating the rubric](#recalibrating-the-rubric-v2)).
+If you catch yourself shading one dimension down to move a verdict you have already decided, **stop
+and name the dimension you are actually missing** — that is the bug, and v2 exists because it went
+unnamed once.
 
 This is the consuming side of `adversarial-review`: that skill *produces* findings on a green PR,
 this one *disposes* of them.
@@ -79,34 +82,48 @@ Before you score, **read the code each finding names**. A finding is a claim abo
 cannot judge its Validity from the comment text alone. Open the file, trace the call path, and
 check whether the claimed failure is real.
 
-## 3. Score each finding — rubric v1
+## 3. Score each finding — rubric v2
 
-Score every finding **0–3 on four dimensions**. The anchors are the contract; use them literally.
+Score every finding **0–3 on five dimensions**. The anchors are the contract; use them literally.
 
 | Dimension | Question | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|---|
-| **Severity** | What does it cost to leave this unaddressed? | Nothing — pure taste | nit — cosmetic, no behavior change | should-fix — real weakness, not merge-blocking | blocker — correctness bug, data loss, security hole, or untested load-bearing logic |
+| **Severity** | How bad is it **if it is hit**? | Nothing — pure taste | nit — cosmetic, no behavior change | should-fix — real weakness, not merge-blocking | blocker — correctness bug, data loss, security hole, or untested load-bearing logic |
+| **Reach** | **Can it be hit at all**, and by what? | Dead — unreachable, or an opt-in nobody has installed; no run can execute it today | Latent — a rare path, an unset flag, or a doc a maintainer may act on later | Live — most runs reach it | Live on a **critical path** — it gates merges, ships code, spends money, or touches secrets |
 | **Validity** | Is the finding actually correct? | False positive — the code already handles it | Speculative — no concrete failure or call site named | Plausible — likely right, not fully confirmed | Confirmed — you traced it and reproduced the reasoning |
 | **Effort/Risk** | What does the fix cost, and what could it break? *(inverted — low cost scores high)* | Large + risky — redesign, or touches load-bearing code with thin tests | Substantial — a day's work, or a wide blast radius | Moderate — contained change, tests exist | Trivial — a few lines, obviously safe, covered by tests |
 | **Alignment** | Does the fix match repo intent, conventions, and owner wishes? | Contradicts a documented decision or the PR's stated scope | Tangential — unrelated to this PR's purpose | Consistent with repo conventions | Directly advances the PR's stated intent or a documented convention |
 
-**Composite** = the four scores summed, 0–12:
+**Severity and Reach are a pair, and keeping them apart is the point of v2.** Severity is *impact if
+hit*; Reach is *exposure*. v1 had only Severity, so a defect that could never execute and one that
+gates every merge scored identically — and the only way to record "real bug, dormant code" was to
+talk Severity down, which is laundering a judgment, not making one. Score the bug honestly on
+Severity, and let Reach carry the dormancy.
+
+**Composite** = the five scores summed, 0–15:
 
 | Composite | Verdict | Meaning |
 |---|---|---|
-| **≥ 8** | **Implement** | Fix it in this PR, now. |
-| **4–7** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
-| **≤ 3** | **Decline** | Do not do it. Say why, once, and move on. |
+| **≥ 10** | **Implement** | Fix it in this PR, now. |
+| **5–9** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
+| **≤ 4** | **Decline** | Do not do it. Say why, once, and move on. |
 
-Two rules that override the arithmetic — apply them **explicitly**, never silently:
+Three rules that override the arithmetic — apply them **explicitly**, never silently:
 
-- **A confirmed blocker is always Implement.** If `Severity = 3` and `Validity = 3`, implement it
-  even when Effort/Risk drags the composite under 8. Note the override in the reason.
+- **A confirmed blocker on live code is always Implement.** If `Severity = 3`, `Validity = 3` **and
+  `Reach ≥ 2`**, implement it even when Effort/Risk drags the composite under 10. Note the override
+  in the reason. (v1 omitted the Reach clause, which would have forced a dormant, unreachable bug
+  to be fixed on the spot — see the CHANGELOG note for v2.)
 - **A false positive is always Decline.** If `Validity = 0`, decline regardless of Severity — the
   cost of a bug that does not exist is zero. Note the override in the reason.
+- **A real defect in dead code is a Defer, never a Decline.** If `Validity ≥ 2` and `Reach = 0`, the
+  verdict floor is Defer **with a filed issue**, whatever the arithmetic says. Dead code comes back
+  to life, and the evidence — the measurements, the repro, the reason — is never cheaper to
+  reconstruct than it is to write down now. "It cannot fire today" is a reason to schedule the fix,
+  not to forget the bug.
 
 Record every score, even for declines. The scores are the dataset that makes the thresholds
-tunable; a verdict without its four numbers is exactly the invisible judgment this skill exists to
+tunable; a verdict without its five numbers is exactly the invisible judgment this skill exists to
 replace.
 
 ## 4. Confirm the plan
@@ -302,25 +319,30 @@ what stitches them together (see step 3 and the resumption rules).
 <!-- waffle-pr-response -->
 **PR response** — 4 findings: 2 implemented, 1 deferred, 1 declined.
 
-| # | Finding | Sev | Val | E/R | Align | Score | Verdict |
-|---|---|:---:|:---:|:---:|:---:|:---:|---|
-| F1 | `parseRange` returns the wrong bound on empty input | 3 | 3 | 3 | 3 | 12 | **Implement** |
-| F2 | No test for the `null`-config branch in `load.ts` | 2 | 3 | 3 | 3 | 11 | **Implement** |
-| F3 | `flush()` swallows the write error | 2 | 2 | 1 | 2 | 7 | **Defer** |
-| F4 | Rename `tmp2` to something meaningful | 1 | 1 | 3 | 1 | 6 | **Defer** |
-| F5 | `withTempDir` is already reimplemented here | 1 | 0 | 2 | 1 | 4 | **Decline** |
+| # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| F1 | `parseRange` returns the wrong bound on empty input | 3 | 3 | 3 | 3 | 3 | 15 | **Implement** |
+| F2 | No test for the `null`-config branch in `load.ts` | 2 | 2 | 3 | 3 | 3 | 13 | **Implement** |
+| F3 | `flush()` swallows the write error | 2 | 2 | 2 | 1 | 2 | 9 | **Defer** |
+| F4 | The retry cap is wrong in the disabled `legacy-sync` path | 3 | 0 | 3 | 1 | 1 | 8 | **Defer** |
+| F5 | Rename `tmp2` to something meaningful | 1 | 1 | 1 | 3 | 1 | 7 | **Defer** |
+| F6 | `withTempDir` is already reimplemented here | 1 | 1 | 0 | 2 | 1 | 5 | **Decline** |
 
-- **F1 — Implement (12).** Confirmed: `input === ""` yields `[0, -1]`. Fixed in `a1b2c3d` with a
+- **F1 — Implement (15).** Confirmed: `input === ""` yields `[0, -1]`. Fixed in `a1b2c3d` with a
   regression test pinning the bound.
-- **F2 — Implement (11).** Confirmed the branch had no coverage. Test added in `d4e5f6a`.
-- **F3 — Defer (7).** Real, but surfacing the error changes the caller contract — out of scope for
+- **F2 — Implement (13).** Confirmed the branch had no coverage. Test added in `d4e5f6a`.
+- **F3 — Defer (9).** Real, but surfacing the error changes the caller contract — out of scope for
   this PR. Tracked in #201.
-- **F4 — Defer (6).** Fair nit; batched into the naming pass in #202.
-- **F5 — Decline (4).** False positive (Validity 0 → auto-decline): this is a different helper
+- **F4 — Defer (8).** A genuine blocker (Severity 3, Confirmed) in code that **cannot execute**:
+  `legacy-sync` is disabled and has no caller. Reach 0, so the blocker-override does not fire — but
+  a real defect in dead code is a **Defer with an issue**, never a Decline. Tracked in #203, with
+  the repro, so it is not rediscovered the day that path is re-enabled.
+- **F5 — Defer (7).** Fair nit; batched into the naming pass in #202.
+- **F6 — Decline (5).** False positive (Validity 0 → auto-decline): this is a different helper
   with a different cleanup contract; `withTempDir` does not unlink on error.
 
-Scored with pr-response rubric **v1** (Severity · Validity · Effort/Risk · Alignment, 0–3 each;
-≥8 Implement · 4–7 Defer · ≤3 Decline).
+Scored with pr-response rubric **v2** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+each; ≥10 Implement · 5–9 Defer · ≤4 Decline).
 
 — posted by the pr-response bot
 ```
@@ -335,9 +357,9 @@ Return a concise summary to the caller: the PR URL, the finding count by verdict
 of the posted reply. Call out any rule-override you applied (blocker-implement, false-positive
 decline) and any finding you could not score confidently.
 
-## Recalibrating the rubric (v1)
+## Recalibrating the rubric (v2)
 
-**This section is the point of the skill.** The rubric is a guess: four dimensions, equal weight,
+**This section is the point of the skill.** The rubric is a guess: five dimensions, equal weight,
 two thresholds. Review quality drifts (a bot gets better or noisier) and the repo's own bar drifts
 (a prototype hardens into a dependency). A fixed rubric therefore goes wrong slowly and quietly.
 The scores in every posted reply are the record that lets you notice, and this file is the one
@@ -349,17 +371,48 @@ place to change it.
 |---|---|---|
 | Deferred/declined findings keep coming back as real bugs | Thresholds too high, or Severity anchors too generous | Lower the Implement threshold, or raise Severity anchors |
 | Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise the Implement threshold, or down-weight Effort/Risk |
-| Everything scores 6–8 and lands on Defer | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
+| Everything scores 7–10 and lands on Defer | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
 | Declines are argued down by the author every time | Alignment is being scored by the responder's taste, not repo intent | Re-anchor Alignment on *documented* decisions only |
-| A whole class of finding has no dimension | The rubric is missing a dimension | Add one — and bump the version |
+| A dimension's score is being argued *around* rather than *with* — a scorer keeps having to distort dimension A to express something A does not measure | The rubric is missing a dimension, and the missing one is whatever the distortion was standing in for | Add it — and bump the version. **This is how v2 happened; see below.** |
+
+### What changed in v2, and why (the worked example)
+
+v1 had **four** dimensions and no way to say *"this bug is real and serious, and it cannot execute."*
+Severity's anchor asked "what does it cost to leave this unaddressed?" — which silently mixed **impact
+if hit** with **whether it can be hit at all**.
+
+On PR #354 that broke, visibly. A confirmed defect made an entire CI hook unable to fire on any PR —
+by the Severity-3 anchor a blocker, and v1's blocker-override (`Severity 3 + Validity 3`) would have
+**forced** it to be fixed on the spot. But the hook was opt-in, inert, and in a subsystem the owner
+had just deprioritized: fixing it *now* was the wrong call, and the owner said so. The only way v1
+could express that was to score Severity **2** — talking the bug down to move the verdict. That is
+laundering a judgment, not recording one, and it leaves a false number in the dataset the next
+recalibration reads.
+
+v2 splits the two questions:
+
+- **Severity** — how bad *if hit*. Score the bug honestly. A blocker stays a 3 even in dead code.
+- **Reach** — can it be hit *at all*, and by what. Dormant code scores 0; code that gates merges
+  scores 3.
+
+Rescored under v2, that finding is `Severity 3 · Reach 0 · Validity 3 · E/R 1 · Alignment 1 = 8` →
+**Defer**. Same verdict as v1 produced, but for the reason that is actually true, with the blocker
+recorded at full weight and the dormancy carried by the dimension that means dormancy. The
+blocker-override gained its `Reach ≥ 2` clause for the same reason, and the new *"real defect in dead
+code is a Defer, never a Decline"* floor exists so that dormancy schedules the fix instead of
+forgetting the bug.
 
 **How to change it:** edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
-truth; the rendered copies are generated output. Bump the version (`v1` → `v2`) in the rubric
+truth; the rendered copies are generated output. Bump the version (`v2` → `v3`) in the rubric
 heading, the reply footer, and here. Note the change and its motivating evidence in the repo's
-`CHANGELOG.md`, because a rubric change silently reinterprets every future verdict.
+`CHANGELOG.md`, because a rubric change silently reinterprets every future verdict — and **old
+replies stay scored against the rubric that produced them**, which is why every reply names its
+version. A v1 reply's four numbers are not comparable to a v2 reply's five; do not restate them.
 
 **Do not** tune per-PR. A rubric adjusted to make one uncomfortable finding go away is not a rubric.
-Change it on a pattern across runs, never on a single verdict you dislike.
+Change it on a pattern across runs, never on a single verdict you dislike. v2 cleared that bar only
+because the distortion was structural — the rubric had no dimension for the thing being decided —
+and not because anyone disliked the verdict, which v1 and v2 in fact agree on.
 
 ## When called by agents
 

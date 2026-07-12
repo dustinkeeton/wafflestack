@@ -6,7 +6,7 @@ automation already writes. A review round is two halves, and each has a canonica
 | Half | Who writes it | Canonical source (the enforcement point) |
 |---|---|---|
 | **Findings** — what is wrong with this PR | `adversarial-review` / `qa`, or a human reviewer | `.claude/skills/adversarial-review/SKILL.md` (§ "Rank findings by honest severity") |
-| **Verdicts** — what the author will do about each finding | `pr-response`, or the PR author | `.claude/skills/pr-response/SKILL.md` (§ "Score each finding — rubric v1") |
+| **Verdicts** — what the author will do about each finding | `pr-response`, or the PR author | `.claude/skills/pr-response/SKILL.md` (§ "Score each finding — rubric v2") |
 
 **The skills are canonical; this file is a convenience.** The scoring anchors, the composite
 thresholds, and the override rules live in the skills and are deliberately *not* restated here — one
@@ -46,11 +46,11 @@ thresholds tunable, and a verdict without its numbers is exactly the invisible j
 exists to replace.
 
 ```markdown
-| # | Finding | Severity | Validity | Effort/Risk | Alignment | Composite | Verdict | Reason |
-|---|---------|----------|----------|-------------|-----------|-----------|---------|--------|
-| F1 | <short restatement> | 3 | 3 | 2 | 3 | 11 | **Implement** | <one line: why> |
-| F2 | <short restatement> | 2 | 2 | 1 | 2 | 7  | **Defer**     | <one line + follow-up issue link> |
-| F3 | <short restatement> | 1 | 0 | 3 | 1 | 5  | **Decline**   | <one line: why it is a false positive> |
+| # | Finding | Severity | Reach | Validity | Effort/Risk | Alignment | Composite | Verdict | Reason |
+|---|---------|----------|-------|----------|-------------|-----------|-----------|---------|--------|
+| F1 | <short restatement> | 3 | 3 | 3 | 2 | 3 | 14 | **Implement** | <one line: why> |
+| F2 | <short restatement> | 2 | 2 | 2 | 1 | 2 | 9  | **Defer**     | <one line + follow-up issue link> |
+| F3 | <short restatement> | 1 | 1 | 0 | 3 | 1 | 6  | **Decline**   | <one line: why it is a false positive> |
 ```
 
 The three verdicts, and what each obliges you to do:
@@ -60,9 +60,14 @@ The three verdicts, and what each obliges you to do:
   reason.** A defer with no issue is a decline wearing a nicer word.
 - **Decline** — do not do it. Say why, once, and move on.
 
-Score the four dimensions (Severity · Validity · Effort/Risk · Alignment) against the anchors in the
-`pr-response` skill, apply its two override rules explicitly, and never round a score to reach the
-verdict you already wanted.
+Score the five dimensions (Severity · **Reach** · Validity · Effort/Risk · Alignment) against the
+anchors in the `pr-response` skill, apply its three override rules explicitly, and never round a
+score to reach the verdict you already wanted.
+
+**Severity and Reach are separate on purpose** (rubric v2): Severity is how bad it is *if hit*,
+Reach is whether it can be hit at all. A confirmed blocker in code that cannot execute keeps its
+Severity 3 and takes Reach 0 — it defers on the honest numbers instead of being talked down. And a
+real defect in dead code is always a **Defer with an issue**, never a Decline: dead code comes back.
 
 ## Rounds are append-only
 

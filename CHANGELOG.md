@@ -81,6 +81,26 @@ is what you reach for across a breaking one.
   - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
     read is best-effort by design: getting it wrong costs a redundant round, while getting the
     *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **`pr-response` rubric bumped to v2 — a fifth dimension, `Reach` (#354).** A rubric change
+  reinterprets every future verdict, so it is recorded here with its motivating evidence, per the
+  skill's own recalibration rule.
+  - **The gap.** v1's `Severity` anchor asked *"what does it cost to leave this unaddressed?"*, which
+    silently mixed **impact if hit** with **whether it can be hit at all**. So v1 had no way to say
+    *"this bug is real and serious, and it cannot execute."*
+  - **How it surfaced.** On this PR, a confirmed defect left a CI hook unable to fire on any PR. By
+    the Severity-3 anchor it was a blocker, and v1's blocker-override (`Severity 3 + Validity 3`)
+    would have **forced** an immediate fix — but the hook is opt-in, inert, and in a deprioritized
+    subsystem, so deferring was correct. The only way v1 could express that was to score Severity
+    **2**: talking the bug down to move the verdict. That is laundering a judgment, and it leaves a
+    false number in the very dataset the next recalibration reads.
+  - **The fix.** `Severity` now means *how bad if hit* (a blocker stays 3 even in dead code) and
+    **`Reach`** means *can it be hit, and by what* (0 = dormant · 3 = gates merges, ships code,
+    spends money, touches secrets). Composite is 0–15; thresholds rescale proportionally
+    (**≥10** Implement · **5–9** Defer · **≤4** Decline). The blocker-override gains a `Reach ≥ 2`
+    clause, and a new floor says a **real defect in dead code is a Defer with an issue, never a
+    Decline** — dormancy schedules the fix rather than forgetting the bug.
+  - **Old replies stay scored against the rubric that produced them.** Every reply names its version;
+    a v1 reply's four numbers are not comparable to a v2 reply's five.
 - **Known defect, recorded rather than advertised away:** `waffle-pr-response-hook` does **not**
   currently dispatch on any PR. At the second `workflow_run` hop, `head_sha` is the default branch's
   tip rather than the PR head, so the gate resolves no PR and always skips. The signal design above
