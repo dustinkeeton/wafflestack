@@ -1621,10 +1621,19 @@ describe('project commands never join with && (#218)', () => {
           else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span', span);
         }
 
-        // (b) Across spans, on the backtick-stripped line. Markdown PUNCTUATES with the shell's own
-        // characters, so only an operator-ONLY join counts as a compound — see JOINED. In a table
-        // row the pipe is a column separator, so it is not an operator there.
-        const flat = l.replace(/`/g, '');
+        // (b) Across spans. A span with NO placeholder is somebody else's command, so it is DROPPED
+        // outright before the line-level checks — the same runnable-unit rule as (a), just applied
+        // to the line. Without this, an unrelated `cd packages/app && npm ci` or
+        // `$(git rev-parse --show-toplevel)` sharing the line reads as though it were joined to the
+        // project command next to it. Dropping the span is what fixes that at the root, rather than
+        // teaching each of JOINED/CD/SUBST to re-derive which command the operator belongs to.
+        // What survives is the project command plus the bare (unquoted) text around it — which is
+        // exactly the YAML `run:` shape where a real `cd … && {{project.testCmd}}` has no backticks.
+        //
+        // Markdown then PUNCTUATES with the shell's own characters, so only an operator-ONLY join
+        // counts as a compound — see JOINED. In a table row the pipe is a column separator, so it
+        // is not an operator there.
+        const flat = l.replace(/`([^`]+)`/g, (m, inner) => (PH.test(inner) ? inner : ' '));
         const joined = TABLE_ROW.test(line) ? JOINED_IN_TABLE : JOINED;
         if (joined.test(flat)) flag(file, i, 'joined', l);
         if (CD.test(flat)) flag(file, i, 'cd-prefixed', l);
