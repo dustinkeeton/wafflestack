@@ -97,6 +97,36 @@ config:
     # The CI drift gate (required check on main) tolerates the deliberately-untracked
     # renders (label-hook workflow, .waffle/ overview docs): only modified files fail;
     # a missing lock still fails.
+    #
+    # #316 asked for `--verify-render` here as well. It is deliberately NOT here — it runs from
+    # .github/workflows/tests.yml instead, as `node installer/cli.mjs doctor --allow-missing
+    # --verify-render`. The reason is that --verify-render re-renders the committed config with
+    # whatever toolkit it is handed, and the workflow THIS key feeds (waffle-doctor.yml) gets its
+    # toolkit from `npx --yes <doctor.toolkitRef>` — by default GitHub's default branch. For a
+    # consuming repo that is exactly right: their toolkit really is external. For the toolkit's own
+    # repo it is the wrong toolkit, and adding the flag here would fail in BOTH directions:
+    #   - a PR that edits stacks/** and correctly re-renders would false-RED (its lock is built
+    #     from its own stacks; CI would render with main's), and
+    #   - a PR that edits stacks/** and FORGETS to re-render would false-GREEN (main's unchanged
+    #     stacks still reproduce the stale lock byte for byte) — a clean pass on the exact bug the
+    #     flag exists to catch.
+    # Both were reproduced before choosing this shape; see the #316 PR. Pointing toolkitRef at the
+    # checkout does not rescue it: `npx --yes .` links the package in place rather than installing
+    # it, and this workflow deliberately never runs `npm ci` (a consumer need not be a Node project
+    # at all), so the run dies on `Cannot find package 'yaml'`.
+    #
+    # tests.yml has none of that coupling: it runs `npm ci` first and invokes the CHECKOUT's own
+    # CLI, so the render under test is built from the PR's own stacks/**. `test` is already a
+    # required check on main, so the gate is armed with no branch-protection change.
+    #
+    # NB the soundness of --verify-render has nothing to do with this repo committing
+    # git.botEmail / git.ownerEmail, which is what #316 supposed. Since #317 the lock records the
+    # CANONICAL render — committed inputs only, the gitignored .waffle/waffle.local.yaml overlay
+    # excluded by construction — and --verify-render reads those same committed inputs, so the flag
+    # is sound for any repo, overlay or not (docs/gitignore.md: "Nobody is ever red-gated into
+    # committing a personal value"). What committing those two keys actually buys is the property
+    # one level up: it is why this repo can commit its RENDER at all, since a render-affecting
+    # overlay would bake a personal value into a committed .claude/ file.
     flags: --allow-missing
   hygiene:
     # #82: this repo dogfoods the scheduled hygiene hook, and its own skill prompts steer the

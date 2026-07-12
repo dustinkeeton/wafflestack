@@ -4790,6 +4790,42 @@ describe('doctor --verify-render: CLI, against the real toolkit', () => {
   });
 });
 
+// #316 (QA review F2) — PIN THE GATE'S OWN EXISTENCE.
+//
+// Everything above tests the flag's BEHAVIOR. Nothing tested the WIRING: that THIS repo actually
+// runs it. #316's whole deliverable is one step in `.github/workflows/tests.yml`, and deleting it
+// left the suite fully green — the classic failure mode of a guard that is invisible while it is
+// working, and so gets "cleaned up" and never missed. Same shape as the typecheck gate's own guard
+// (`typecheck-gate.test.mjs`, #177 / PR #293 F1), pinned the same way.
+//
+// This asserts on the PARSED workflow, not on a substring of the file. The 24-line comment block
+// above the step already discusses `--verify-render`, so a text search could be satisfied by a
+// comment — including the comment left behind after someone deletes the step it describes.
+describe('this repo runs the render gate it shipped (#316)', () => {
+  const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+  test('the required `test` job runs doctor --verify-render on the checkout\'s own CLI', () => {
+    const wf = YAML.parse(fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/tests.yml'), 'utf8'));
+
+    // The job name is load-bearing: `test` is a REQUIRED check on main, so the gate is only armed
+    // while it lives here. Moved to a non-required job, it still runs and still catches nothing.
+    const steps = wf.jobs?.test?.steps ?? [];
+    const gate = steps.map((s) => s.run ?? '').find((r) => /\bdoctor\b/.test(r) && r.includes('--verify-render'));
+
+    assert.ok(
+      gate,
+      'the required `test` job must run `doctor --verify-render`: it is the entire deliverable of ' +
+        '#316, and without this assertion nothing in the suite notices its removal',
+    );
+    // The render is partly gitignored here, so the gate needs the lock-only posture to run at all.
+    assert.match(gate, /--allow-missing/, 'the gate must tolerate the deliberately-untracked renders');
+    // The heart of #316: run the CHECKOUT's toolkit. An `npx`'d toolkit (i.e. moving this into
+    // `doctor.flags`, which waffle-doctor.yml runs off main) false-GREENS the very bug this
+    // catches, and false-REDS any PR that correctly re-renders. See the step's comment block.
+    assert.match(gate, /installer\/cli\.mjs/, "the gate must run the checkout's own CLI, never an npx'd toolkit");
+  });
+});
+
 // #317 — THE LOCK HASHES THE CANONICAL RENDER, NEVER THE LOCAL OVERLAY.
 //
 // `.waffle/waffle.local.yaml` is a developer's private tooling: gitignored, per-machine, absent in

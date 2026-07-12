@@ -33,3 +33,29 @@ jobs:
       - run: npm test
       - run: npm run validate
       - run: npm run typecheck
+
+      # #316: dogfood `doctor --verify-render` against our OWN committed render.
+      #
+      # The plain drift gate in waffle-doctor.yml only asks "do the committed files still hash to
+      # the committed lock?" — it never asks whether either still reflects the inputs. So a
+      # stacks/** or .waffle/waffle.yaml edit that is never re-rendered leaves the files and the
+      # lock stale TOGETHER: they agree with each other, and the gate goes green (#314). This repo
+      # re-renders on roughly every other PR (113 of the last 223 commits touch stacks/), so that
+      # is a live hazard here, not a hypothetical. --verify-render re-renders the committed inputs
+      # into a temp dir and checks the result against the committed lock; the tree is not touched.
+      #
+      # WHY HERE AND NOT IN doctor.flags (the gate waffle-doctor.yml runs) — the flag renders with
+      # whatever toolkit it is given, and that workflow gets its toolkit from
+      # `npx --yes github:dustinkeeton/wafflestack`, i.e. from GitHub's default branch. For every
+      # consuming repo that is correct: their toolkit really is external. For the toolkit's OWN
+      # repo it is the wrong toolkit, and it fails in both directions — a PR that edits stacks/**
+      # and correctly re-renders false-REDs (its lock is ahead of main), and a PR that edits
+      # stacks/** and FORGETS to re-render false-GREENs (main's unchanged stacks still reproduce
+      # the stale lock exactly) — a clean pass on the very bug the flag exists to catch.
+      #
+      # This step runs the CHECKOUT's own CLI, so the render under test is the PR's own stacks/**.
+      # It belongs in this workflow because this is the one that runs `npm ci` (the doctor workflow
+      # deliberately does not — a consumer need not even be a Node project), and because `test` is
+      # already a required check on main.
+      - name: Verify the committed render still reproduces the lock
+        run: node installer/cli.mjs doctor --allow-missing --verify-render
