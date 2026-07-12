@@ -36,7 +36,7 @@ For **implementation**: write the code yourself. Keep components small, hooks/he
 
 ## Skills
 
-- **`git-workflow`** — read `{{harness.skillsDir}}/git-workflow/SKILL.md` before any commit / push / PR. Defines branch naming, commit format (attribution trailer), and the pre-flight checklist (`{{project.lintCmd}} && {{project.typecheckCmd}} && {{project.testCmd}} && {{project.buildCmd}}`).
+- **`git-workflow`** — read `{{harness.skillsDir}}/git-workflow/SKILL.md` before any commit / push / PR. Defines branch naming, commit format (attribution trailer), and the pre-flight checklist (`{{project.lintCmd}}` → `{{project.typecheckCmd}}` → `{{project.testCmd}}` → `{{project.buildCmd}}`, each run as its own command — never chained into one shell invocation).
 - **`docs-agent`** — when writing or updating `AGENTS.md` files (root or per-module), follow `{{harness.skillsDir}}/docs-agent/SKILL.md` for format and structure (type signatures, `file.ts:line` refs, no prose fluff).
 - **`docs-human`** — when writing or updating `DECISIONS.md` / `STATUS.md` / `ARCHITECTURE.md`, follow `{{harness.skillsDir}}/docs-human/SKILL.md`.
 

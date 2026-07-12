@@ -1372,6 +1372,594 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
   });
 });
 
+// #218: a `Bash(<prefix>:*)` allowlist entry matches a command by its LEADING PROGRAM. The
+// allowlist grants ONE entry per project command, so a single Bash call whose text is
+// `cmd1 && cmd2` matches NEITHER entry and is silently denied — the failure is invisible, the
+// paid run just never checks the build. Every project command the toolkit tells an agent to run
+// must therefore stand alone: in the allowlist, in the PR-body checklist, and in delegate's
+// post-agent verification.
+//
+// SCOPE, deliberately: these guard `{{project.*Cmd}}` commands ONLY. `&&` is load-bearing
+// elsewhere in the same files — the prose that warns AGAINST compounds, the jq denial classifier
+// that DETECTS them, GHA `if:` expressions, and git-family compounds (`git checkout main &&
+// git pull`, pinned by W2b/#155 and granted wholesale by a single `Bash(git:*)`). A blanket
+// "no && anywhere" assertion would fail the existing suite and gut those guards.
+describe('project commands never join with && (#218)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const REL = '.github/workflows/waffle-label-hook.yml';
+  const GIT_SKILL = '.claude/skills/git-workflow/SKILL.md';
+  const DELEGATE_SKILL = '.claude/skills/delegate/SKILL.md';
+
+  // DISTINCT sentinels. With the real defaults every command starts `npm …`, so an assertion
+  // could pass by accident on a shared prefix; these four share nothing.
+  const CMDS = { lintCmd: 'zlint', typecheckCmd: 'ztypecheck', testCmd: 'ztest', buildCmd: 'zbuild' };
+  // pre-flight order: lint → typecheck → test → build
+  const PREFLIGHT = [CMDS.lintCmd, CMDS.typecheckCmd, CMDS.testCmd, CMDS.buildCmd];
+
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-218-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  // The label-hook files/ payload pulls git-workflow through its requires: closure; delegate
+  // lives in another stack, so it is installed explicitly (and orchestration's required roster.*
+  // keys come along for the ride — inert here, but the render won't proceed without them).
+  const renderWith = (cmds) => {
+    // JSON-quoted: a compound value is hostile YAML too (a leading `&` is an anchor, a leading `|`
+    // a block scalar) — quoting keeps A5 testing the RENDER guard, not the YAML parser.
+    const cmdLines = Object.entries(cmds).map(([k, v]) => `    ${k}: ${JSON.stringify(v)}`).join('\n');
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      `include: [files/${REL}, orchestration/skills/delegate]`,
+      'config:',
+      '  project:',
+      '    name: Sentinel218',
+      cmdLines,
+      '  roster:',
+      '    classificationTable: "| Signal | Agent |"',
+      '    labelFallback: "| Label | Agent |"',
+      '    rootFiles: package.json',
+      '    sharedModule: lib/',
+      '    moduleDependencies: none',
+      '',
+    ].join('\n'));
+    return renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+  };
+
+  const renderAll = () => {
+    const r = renderWith(CMDS);
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+  };
+
+  const claudeArgsOf = (wf, job) =>
+    YAML.parse(wf).jobs[job].steps.find((s) => s.with && 'claude_args' in s.with).with.claude_args;
+  const allowedTools = (claudeArgs) => {
+    const m = /--allowedTools\s+'([^']*)'/.exec(claudeArgs);
+    assert.ok(m, `claude_args carries a quoted --allowedTools: ${claudeArgs}`);
+    return m[1].split(',').map((s) => s.trim()).filter(Boolean);
+  };
+  // Bash(npm test:*) → 'npm test'  (the leading-program prefix a command is matched against)
+  const bashPrefixes = (tools) =>
+    tools.filter((t) => t.startsWith('Bash(')).map((t) => t.slice('Bash('.length, -1).replace(/:\*$/, ''));
+  const isCovered = (cmd, prefixes) => prefixes.some((p) => cmd === p || cmd.startsWith(`${p} `));
+
+  // A1 pins the OTHER HALF of the contract: the allowlist side was never the broken one, so this
+  // passes pre-fix too. It is not a reproducer — it is the invariant that gives A2 its teeth
+  // (one grant per command ⇒ a compound can match nothing), and it fails the day someone
+  // "simplifies" the allowlist into a compound entry instead of fixing the caller.
+  test('A1 no allowlist entry is an && compound; each project command is granted on its own', () => {
+    renderAll();
+    const tools = allowedTools(claudeArgsOf(read(cwd, REL), 'implement'));
+
+    // An entry containing && could never match anything — it would be dead grant.
+    for (const t of tools) {
+      assert.ok(!t.includes('&&'), `allowlist entry is a single program, not a compound: ${t}`);
+    }
+    for (const cmd of PREFLIGHT) {
+      assert.ok(tools.includes(`Bash(${cmd}:*)`), `implement grants ${cmd} individually`);
+    }
+  });
+
+  // A5 is the PRIMARY guard, and the only one that closes the likeliest path: the CONFIG door.
+  //
+  // The grant is `Bash({{project.lintCmd}}:*)` — the CONSUMER's config value, interpolated verbatim.
+  // A1–A4 all render their own single-word sentinels, so not one of them can see a compound that
+  // arrives through config. Before the `pattern:` guard, an ordinary monorepo setting
+  // `typecheckCmd: tsc --noEmit && eslint .` rendered **ok** and emitted
+  // `Bash(tsc --noEmit && eslint .:*)` — a DEAD grant matching no command — plus the checklist row
+  // ``- [ ] Types pass (`tsc --noEmit && eslint .`)``: the verbatim pre-fix #218 defect, reproduced
+  // against the fixed tree, with all four source guards green.
+  //
+  // The invariant is a constraint on the COMMAND STRING (a project command is only ever grantable as
+  // a single-program `Bash(<cmd>:*)` prefix), so it is enforced where the value ENTERS — a declared
+  // `pattern:` on all four keys, checked at every substitution site by render and doctor. That makes
+  // the class UNREPRESENTABLE rather than merely linted, and demotes A4 from primary guard to
+  // backstop: A4 still catches a TEMPLATE that ships a compound, which config validation cannot see.
+  test('A5 CONFIG DOOR: a compound project command is rejected at render, never shipped as a dead grant', () => {
+    const failsNaming = (r, key) => {
+      assert.equal(r.ok, false, `render must reject a compound ${key}: ${JSON.stringify(r.errors)}`);
+      assert.ok(
+        r.errors.some((e) => e.includes(`project.${key}`) && /does not match its declared pattern/.test(e)),
+        `the error must NAME the offending key: ${JSON.stringify(r.errors)}`,
+      );
+      // …and it must carry the REMEDY, not just a PCRE lookahead. There is no migration for this
+      // guard — no tool can safely split `tsc --noEmit && eslint .` — so this message IS the entire
+      // upgrade path for every consumer it newly rejects. A raw regex is not an upgrade path.
+      assert.ok(
+        r.errors.some((e) => e.includes(`project.${key}`) && /npm-script-style single entry point/.test(e)),
+        `the error must carry the patternHint remedy: ${JSON.stringify(r.errors)}`,
+      );
+    };
+
+    // (a) all FOUR keys are guarded — not just the one the bug happened to ship in.
+    for (const key of Object.keys(CMDS)) failsNaming(renderWith({ ...CMDS, [key]: 'zbuild && ztest' }), key);
+
+    // (b) every unmatchable SHAPE is guarded, not just the `&&` #218 shipped as. Each of these
+    // renders a grant that can match nothing, so each must fail the render instead.
+    for (const bad of [
+      'tsc --noEmit && eslint .',   // the reported defect, arriving through config
+      'cd packages/app && npm test', // the monorepo shape hygiene.yml names as a denial by name
+      'npm test; npm run build',
+      'npm test || true',
+      'npm test | tee out.log',
+      '$(npm test)',
+      'npm test `date`',
+      'npm test\nnpm run build',    // a newline is a compound too (the jq classifier says so)
+      'npm install ${{ secrets.NPM_TOKEN }}', // lands in the workflow — GitHub would interpolate it
+      'jest -t "foo" | tee out.log',
+      'jest -t "a|b" && npm run build',
+      'npm test -- "unbalanced | quote',
+
+      // THE OPERATOR BETWEEN TWO QUOTED ARGUMENTS — the arrangement whose absence let a bypass ship.
+      // An earlier cut tried to be clever and permit a quoted `|`/`;` inside an argument. Its fallback
+      // class also matched a quote, so the alternation RE-PAIRED the quotes: the CLOSING quote of the
+      // first argument and the OPENING quote of the second were read as one span, swallowing the
+      // operator between them. `eslint 'src/**/*.ts' && prettier --check 'src/**/*.ts'` — an utterly
+      // ordinary lint command — rendered `ok` and emitted a DEAD GRANT. Every probe above puts the
+      // operator AFTER the last quote, where there is no second span to re-pair with, so all of them
+      // stayed green while the guard was wide open. That is what an untested ARRANGEMENT costs.
+      "eslint 'src/**/*.ts' && prettier --check 'src/**/*.ts'",
+      "echo 'a' && echo 'b'",
+      'jest -t "a" && jest -t "b"',
+      "echo 'a' | tee 'b'",
+      "echo 'a' ; echo 'b'",
+      `echo "a" && echo 'b'`,        // …and with the quote STYLES mixed, in both directions
+      `echo 'a' && echo "b"`,
+
+      // A SINGLE QUOTE — even in a genuinely single-program command. The value is spliced VERBATIM
+      // into the single-quoted `--allowedTools '…'` shell word, so it cannot survive:
+      // `Bash(pytest -k 'not slow':*)` terminates that word early, and the grant is silently mangled
+      // into `Bash(pytest -k not slow:*)` — which the real command no longer prefix-matches. That is
+      // the SAME silent denial this key exists to prevent, so the value must fail loudly instead.
+      // Escaping is not available: substitution cannot know its target context (template.mjs), which
+      // is why `git.cmd` bans single quotes for exactly this reason (#254). The remedy is in the
+      // patternHint: wrap it in an npm script and set THAT here.
+      "pytest -k 'not slow'", 'jest -t "foo|bar"', 'npm test -- --reporters="a;b"', 'jest -t "a&b"',
+      "grep -E 'a|b' src", "eslint 'src/**/*.ts'", "echo 'a' 'b'", `echo "it's fine"`,
+
+      // THE COMMA — the allowlist's OWN separator, and the delimiter this guard shipped without.
+      // `--allowedTools 'Edit,Write,…,Bash(<cmd>:*),…'` is parsed TEXTUALLY: the CLI splits that
+      // word on `,` and reads each entry as `Tool(spec)`. So `eslint --ext .js,.jsx,.ts,.tsx src`
+      // — the textbook multi-extension invocation, ONE program, no shell operator, which sailed
+      // through every operator probe above — SHATTERED the list into `Bash(eslint --ext .js` plus
+      // junk `.jsx` / `.ts` / `.tsx src:*)` entries. The real command then matched NO entry and was
+      // silently denied: #218's exact failure mode, delivered through the mechanism built to
+      // eliminate it, with A1–A6 all green (#341 review). The split is textual, so quoting cannot
+      // protect it — `jest -t "a,b"` breaks the list exactly as a bare comma does.
+      'eslint --ext .js,.jsx,.ts,.tsx src', 'eslint --ext .js,.ts .',
+      'jest --coverageReporters=text,lcov', 'pytest --ignore=a,b', 'jest -t "a,b"',
+
+      // PARENS — they delimit the `Bash(…)` rule itself, so a `)` closes it early. Same textual
+      // parse, so again quoting is no protection. This also catches `<(…)` process substitution,
+      // the third substitution form (the `$(` and backtick lookaheads never covered it).
+      'diff <(npm test) <(npm run build)', 'pytest -k "not (slow)"', 'npm test -- --grep "(a)"',
+
+      // LEADING / TRAILING WHITESPACE — the same dead grant, with no operator and no delimiter in
+      // sight. `npm test ` grants `Bash(npm test :*)`, and the real `npm test` does NOT prefix-match
+      // a trailing space, so the call is silently denied. (YAML strips whitespace from a plain
+      // scalar, so it takes an explicitly QUOTED value to reach this — but the grant it ships is
+      // just as dead, and this is the class the guard claims to make unrepresentable.) An INTERNAL
+      // double space is fine and must stay fine: the grant and the documented command carry the
+      // same value, so it round-trips — it is pinned in the accept column, not here.
+      'npm test ', ' npm test', '\tnpm test',
+    ]) failsNaming(renderWith({ ...CMDS, typecheckCmd: bad }), 'typecheckCmd');
+
+    // (c) …and it must NOT fire on an ordinary single-program command. A guard the consumer deletes
+    // guards nothing — but note which way this errs. A false REJECT is loud, and the consumer works
+    // around it in one line (`npm run ci`); a false ACCEPT is a dead grant nobody ever sees. A guard
+    // for a silent-denial bug must fail CLOSED, so where the two conflict, loudness wins.
+    //
+    // The comma/paren ban above must NOT be bought with a false rejection here: every consumer's
+    // command runs through this column on upgrade.
+    const ORDINARY = [
+      'npm test', 'npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm pack --dry-run',
+      'go test ./...', 'go build ./...', 'cargo test --all-features', './gradlew build --no-daemon',
+      'make -j4 build', 'bazel build //...', 'mvn -B verify', 'dotnet test --no-build',
+      'true', 'pytest -q', 'bundle exec rspec', 'python -m pytest', 'npm test -- --maxWorkers=2',
+      'npm run test:ci', 'npm run test:unit', // a `:` is NOT banned: the rule's prefix marker is the
+                                 // LAST `:*`, so `Bash(npm run test:ci:*)` matches. Banning the colon
+                                 // to "match" the comma would false-reject a huge population.
+      'C:\\tools\\node\\npm.cmd test', // a Windows path — `:` and `\` are both fine
+      'cdk deploy --all',        // starts with "cd" — but the guard requires the trailing space
+      'npm test -- ${FLAGS}',    // variable expansion is not `$(…)` and not `${{ }}`
+
+      // A DOUBLE QUOTE is fine, and must stay fine. It is not a delimiter at ANY landing site: it is
+      // literal inside the single-quoted `--allowedTools '…'` shell word, literal in the
+      // `claude_args: >-` folded scalar, literal in the markdown code spans these values also land
+      // in, and a literal character in the `Bash(…)` prefix — where it ROUND-TRIPS with the command
+      // the agent actually runs (pinned in (d)). An earlier cut banned it alongside `'`, which
+      // rejected these three ordinary commands on upgrade with no failure mode behind the ban.
+      'go test -run "TestFoo" ./...', 'npm test -- --testPathPattern="src/.*"', 'jest -t "foo bar"',
+
+      // An INTERNAL double space round-trips (the grant and the documented command carry the same
+      // value), so the whitespace anchor must bite only at the ENDS — not on whitespace as such.
+      'npm  test',
+    ];
+    for (const good of ORDINARY) {
+      assert.equal(
+        renderWith({ ...CMDS, typecheckCmd: good }).ok, true,
+        `an ordinary single-program command must render: ${good}`,
+      );
+    }
+
+    // (d) ACCEPTED ⇒ ACTUALLY GRANTED. The accept column above only proves the render did not fail;
+    // it cannot see a value that renders `ok` and still ships a dead grant — which is EXACTLY what
+    // the comma did, and exactly why a green A5 missed it. So close the loop on the real property:
+    // parse the shipped allowlist the way the CLI does (split the `--allowedTools` word on `,`, read
+    // each entry as `Bash(<prefix>:*)`) and assert the command the consumer configured is actually
+    // prefix-matched by some entry. This is the assertion the comma could not have survived.
+    for (const good of ORDINARY) {
+      const r = renderWith({ ...CMDS, typecheckCmd: good });
+      assert.equal(r.ok, true, `precondition: ${good} renders`);
+      const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')));
+      assert.ok(
+        isCovered(good, prefixes),
+        `the shipped allowlist must actually GRANT the configured command — ${JSON.stringify(good)} ` +
+          `matches no entry in ${JSON.stringify(prefixes)} (a dead grant: rendered ok, silently denied)`,
+      );
+    }
+  });
+
+  // A7 is the TYPE half of A5. A5 polices the command STRING; a value that is not a string never
+  // becomes one until `formatValue` has already flattened it — joining a list with `', '` and
+  // running anything else through `YAML.stringify` — so the pattern ended up policing the
+  // FLATTENING's output instead of the value, and the guard was dodged entirely (#341 review).
+  //
+  // This is not a hypothetical: the list form is precisely the idiom a consumer REJECTED for `&&`
+  // reaches for next, and the guard's own error message pushes them off the string form while
+  // saying nothing about the list. `[tsc --noEmit, tsc -p tsconfig.test.json]` rendered `ok` and
+  // shipped `Bash(tsc --noEmit, tsc -p tsconfig.test.json:*)` — a dead grant, bare doctor green.
+  // The map form (`{a: npm test}`) carries NO comma at all, so the comma ban does not cover it.
+  // `entryPatternProblems` already type-checks its leaves; this is the scalar path's half of that.
+  test('A7 TYPE DOOR: a non-string value cannot dodge the pattern by being flattened into one', () => {
+    for (const [label, bad] of [
+      ['a list (joined with ", " → a comma-shattered dead grant)', ['tsc --noEmit', 'tsc -p tsconfig.test.json']],
+      ['a single-element list', ['npm test']],
+      ['a map (YAML.stringify → "a: npm test" — NO comma, so the comma ban cannot see it)', { a: 'npm test' }],
+      ['a number', 42],
+      ['a boolean', true],
+    ]) {
+      const r = renderWith({ ...CMDS, typecheckCmd: bad });
+      assert.equal(r.ok, false, `render must reject ${label}: ${JSON.stringify(r.errors)}`);
+      assert.ok(
+        r.errors.some((e) => e.includes('project.typecheckCmd') && /must be a string/.test(e)),
+        `the error must NAME the key and say it must be a string (${label}): ${JSON.stringify(r.errors)}`,
+      );
+    }
+
+    // …and the SHIPPED gate sees it too — bare `doctor`, no flags, same clean-room upgrade path as
+    // A6: render under a valid config, then swap the value a consumer would actually reach for.
+    renderAll();
+    write(cwd, '.waffle/waffle.yaml',
+      read(cwd, '.waffle/waffle.yaml').replace('"ztypecheck"', '["tsc --noEmit", "eslint ."]'));
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot });
+    assert.equal(dr.ok, false, 'bare doctor must fail on a list-valued project command');
+    assert.ok(
+      dr.configProblems.some((n) => n.includes('project.typecheckCmd') && /must be a string/.test(n)),
+      `bare doctor must name the key: ${JSON.stringify(dr.configProblems)}`,
+    );
+    assert.deepEqual(dr.modified, [], 'no file was hand-edited — the fault is the config value');
+  });
+
+  // A6 is A5's other half, and the one that reaches the consumers this guard is FOR.
+  //
+  // A5 pins that a compound fails the RENDER. But the shipped CI gate is `waffle-doctor.yml`, which
+  // runs `doctor <doctor.flags>` — and `doctor.flags` defaults to `""`. So the gate a consumer
+  // actually runs is BARE doctor, which only hashes the tree against the lock and never re-renders.
+  // (`--verify-render` sees a bad value, but it is opt-in by design, #314.)
+  //
+  // That left the exact population #218's guard exists for silently unprotected: a repo whose config
+  // ALREADY carries a compound has renders and a lock — produced by the OLD toolkit — that match
+  // each other. They upgrade; hash-comparison doctor stays GREEN; the dead grant
+  // `Bash(tsc --noEmit && eslint .:*)` stays live in their rendered workflow; their CI keeps silently
+  // denying the check. The guard would have closed the door on new dead grants while leaving the
+  // existing ones behind a passing check — the original bug's own failure shape.
+  //
+  // A `pattern:` guard polices the config VALUE, so it needs no re-render to evaluate. It now runs
+  // unconditionally, in every doctor mode.
+  test('A6 the SHIPPED gate sees it: bare `doctor` fails on a compound config value, no flags needed', () => {
+    // A clean render first — this is the upgrade path: the tree and lock are valid and agree.
+    renderAll();
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot }).ok, true, 'clean config: doctor green');
+
+    // Now the config carries a compound, exactly as an existing consumer's would. The rendered files
+    // and the lock still hash-match — nothing on disk changed — so the drift check alone sees nothing.
+    write(cwd, '.waffle/waffle.yaml', read(cwd, '.waffle/waffle.yaml').replace('"ztypecheck"', '"ztypecheck && zbuild"'));
+
+    // EVERY doctor mode must fail, above all the two that ship: bare, and --allow-missing.
+    for (const flags of [{}, { allowMissing: true }, { verifyRender: true }, { allowMissing: true, verifyRender: true }]) {
+      const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot, ...flags });
+      const label = JSON.stringify(flags);
+      assert.equal(dr.ok, false, `doctor ${label} must fail on a compound config value`);
+      assert.ok(
+        dr.notes.some((n) => n.includes('project.typecheckCmd') && /does not match its declared pattern/.test(n)),
+        `doctor ${label} must NAME the offending key: ${JSON.stringify(dr.notes)}`,
+      );
+      assert.ok(
+        dr.notes.some((n) => /npm-script-style single entry point/.test(n)),
+        `doctor ${label} must carry the remedy: ${JSON.stringify(dr.notes)}`,
+      );
+    }
+
+    // The drift check itself must stay quiet: this is a CONFIG fault, not a hand-edited file. A
+    // doctor that blamed the tree here would send the consumer hunting the wrong thing.
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot });
+    assert.deepEqual(dr.modified, [], 'no file was hand-edited — the fault is the config value');
+    // One problem per KEY, not one per substitution site (the value lands in several files).
+    assert.equal(dr.configProblems.length, 1, `one problem per key: ${JSON.stringify(dr.configProblems)}`);
+  });
+
+  test('A2 every PR-body checklist item is ONE command, and each is covered by an allowlist prefix', () => {
+    renderAll();
+    const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')));
+    const skill = read(cwd, GIT_SKILL);
+
+    // - [ ] Lint passes (`zlint`)  →  'zlint'
+    const items = [...skill.matchAll(/^- \[ \] .*?\(`([^`]+)`\)\s*$/gm)].map((m) => m[1]);
+
+    // The checklist is exactly the four pre-flight commands, in pre-flight order — one per row.
+    assert.deepEqual(items, PREFLIGHT, `git-workflow test-plan checklist: ${JSON.stringify(items)}`);
+    for (const cmd of items) {
+      assert.ok(!cmd.includes('&&'), `checklist item is a single command: ${cmd}`);
+      assert.ok(isCovered(cmd, prefixes), `checklist command "${cmd}" is covered by an allowlist prefix`);
+    }
+  });
+
+  test('A3 delegate post-agent verification runs its project commands one per line', () => {
+    renderAll();
+    const skill = read(cwd, DELEGATE_SKILL);
+    const fences = [...skill.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+    const lines = fences.flatMap((b) => b.split('\n')).map((l) => l.trim()).filter(Boolean);
+
+    // Scoped to PROJECT commands on purpose: git-family compounds in this same skill are pinned
+    // elsewhere and are NOT what this guards.
+    const withProjectCmd = lines.filter((l) => PREFLIGHT.some((c) => l.includes(c)));
+    assert.ok(withProjectCmd.length >= 2, `delegate runs project commands in a fence: ${JSON.stringify(lines)}`);
+    for (const l of withProjectCmd) {
+      assert.ok(!l.includes('&&'), `delegate runs project commands separately, not compounded: ${l}`);
+    }
+    // the post-agent verification specifically: typecheck and test, each on its own line
+    assert.ok(lines.includes(CMDS.typecheckCmd), 'typecheck stands alone on its own line');
+    assert.ok(lines.includes(CMDS.testCmd), 'test stands alone on its own line');
+
+    // ...and in SEPARATE fences. Two commands in one fence read as ONE Bash call, whose text is
+    // then a newline-separated compound — the shape the dispatch prompts and the hygiene denial
+    // classifier both call unmatchable. One command per fence is the only shape that survives.
+    for (const b of fences) {
+      const cmds = b.split('\n').map((l) => l.trim()).filter(Boolean)
+        .filter((l) => PREFLIGHT.some((c) => l.includes(c)));
+      assert.ok(cmds.length <= 1, `each bash fence holds at most ONE project command: ${JSON.stringify(cmds)}`);
+    }
+  });
+
+  // A4 guards the CLASS, not the `&&` instance. A project command is only ever grantable as a
+  // single-program `Bash(<cmd>:*)` prefix, so ANY shell text that joins one to more work is
+  // unmatchable and silently denied: `;`, `|`, `||`, `&&`, `&`, a `cd …` prefix, a `$(…)`
+  // substitution — or a second command on the next line of the same fence, since one fence reads
+  // as one Bash call. #218 shipped as `&&`; the next rot will not be, so the backstop guards the
+  // shape rather than the character.
+  //
+  // SCOPING is what keeps this honest. It fires only on text carrying a {{project.*Cmd}}
+  // placeholder, so every INTENTIONAL compound in this repo is out of reach by construction:
+  // the dispatch prompts that warn against `cmd1 && cmd2` (they name it literally — no
+  // placeholder), the jq denial classifier that DETECTS compounds (#330/#332), the GHA `if:`
+  // expressions, and `git checkout main && git pull` (pinned by W2b/#155). A blanket `&&` ban
+  // would fail all four.
+  //
+  // The unit of analysis is the RUNNABLE unit — a bash-fence line, or an inline `code span` —
+  // never the raw line, because markdown DECORATES commands with the same characters a shell
+  // uses. The checklist writes ``(`{{project.lintCmd}}`)``; the allowlist grant writes
+  // `Bash({{project.lintCmd}}:*)`; and webapp-security-audit puts a {{project.buildCmd}} span on
+  // the same LINE as a `grep -rE "(sk-|API_KEY|SECRET)"` span whose pipes are regex alternation,
+  // not shell. A raw-line scan for `[;&|(]` flags all three — which is why bare `(`/`)` are NOT
+  // operators here, and why joining text is only ever read inside the unit that would really run.
+  //
+  // ALL FIVE checks honor that rule (an earlier cut applied it to the span check but left JOINED /
+  // CD / SUBST scanning the raw line, which false-fired on ordinary markdown). Two corollaries do
+  // the work of telling a command apart from a sentence that merely contains shell punctuation:
+  //
+  //   - A cross-span join must be operator-ONLY. `cmd` ; `cmd` is a compound; "Run `cmd`; then run
+  //     `cmd`." is English. The prose between them is the whole difference.
+  //   - In a markdown TABLE row, `|` is the column separator, not a pipe — this repo's
+  //     md-maximalist skill actively pushes authors toward tables, so a two-column
+  //     "command → purpose" table is the obvious way to document these four commands and must not
+  //     be flagged. A genuine compound inside a cell still sits in a code span, which is checked
+  //     on its own.
+  //   - SUBST matches only a `$(…)` that WRAPS a project command, so an unrelated
+  //     `$(git rev-parse --show-toplevel)` sharing the line is somebody else's substitution.
+  test('A4 SOURCE backstop: no stack source joins a project command to text the allowlist cannot match', () => {
+    // Fires on stacks/ itself, so a NEW stack reintroducing the pattern fails immediately —
+    // without anyone remembering to render first. This is what keeps the fix from rotting.
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) return walk(p);
+      return /\.(md|ya?ml)$/.test(e.name) ? [p] : [];
+    });
+
+    const PH = /\{\{project\.\w*Cmd\}\}/;
+    const PH_G = /\{\{project\.\w*Cmd\}\}/g;
+    const BASH = /^(bash|sh|shell|console)$/;
+    const OP = /(&&|\|\||[;|&])/;                                        // joins a command to more work
+    // An operator-ONLY join: nothing but whitespace between the two commands and the operator.
+    // `cmd` ; `cmd` is a compound; "Run `cmd`; then run `cmd`." is an English sentence that merely
+    // contains a semicolon — the prose between them is what tells the two apart.
+    const JOINED = /\{\{project\.\w*Cmd\}\}\s*(&&|\|\||[;|&])\s*\{\{project\.\w*Cmd\}\}/;
+    // Same, minus the pipe: inside a markdown TABLE row `|` is the column separator, never a shell
+    // pipe. A genuine compound in a cell still lands in a code span, which is checked on its own.
+    const JOINED_IN_TABLE = /\{\{project\.\w*Cmd\}\}\s*(&&|[;&])\s*\{\{project\.\w*Cmd\}\}/;
+    // Table detection keys off the SEPARATOR row — the one row a table cannot omit. Keying it off
+    // each row's OWN punctuation (the earlier `/^\s*\|.*\|\s*$/`) demanded a TRAILING pipe, which
+    // GFM does not require: a valid row that omits it fell through to the pipe-bearing JOINED and
+    // was flagged as a compound. A false red is how a backstop dies — the annoyed author deletes it
+    // — and md-maximalist actively pushes authors toward tables, so this is the axis A4 lives on.
+    // TABLE_SEP needs a pipe (so a `---` horizontal rule or YAML front matter is not a table) and
+    // dashes, and nothing else; TABLE_ROW still catches the header row that PRECEDES the separator.
+    const TABLE_SEP = /^(?=[^|]*\|)(?=.*-{3,})[\s|:-]+$/;
+    const TABLE_ROW = /^\s*\|/;
+    const CD = /\bcd\s+\S+\s*(&&|\|\||[;|])/;                            // hygiene.yml names this denial by name
+    // A substitution that WRAPS a project command — `$({{project.buildCmd}})`. Scoped this way on
+    // purpose: a bare /\$\(/ also fires on an unrelated `$(git rev-parse …)` sharing the line.
+    const SUBST = /\$\([^)]*\{\{project\.\w*Cmd\}\}/;
+    const GRANT = /Bash\([^)]*\)/g;                                      // the ONE legit parenthesised use
+
+    const offenders = [];
+    const flag = (file, i, why, text) =>
+      offenders.push(`${path.relative(repoRoot, file)}:${i + 1}: [${why}] ${text.trim()}`);
+
+    // POSITIVE CONTROL. Without it this test is green whether it inspected every project-command
+    // unit in stacks/ or ZERO of them — so a moved `stacks/`, a broken `repoRoot`/`walk`, or a
+    // renamed key (`project.testCmd` → `project.testCommand`, which PH would no longer match) would
+    // silently degrade the backstop into a permanent no-op that still reports success. That is the
+    // SAME failure shape as the bug being fixed: a check that quietly stops running, with no error
+    // to notice. `seen` counts the placeholder-bearing units actually examined.
+    let seen = 0;
+
+    for (const file of walk(path.join(repoRoot, 'stacks'))) {
+      const lines = fs.readFileSync(file, 'utf8').split('\n');
+      let lang = null;
+      let fenceAt = 0;
+      let fenceCmds = [];
+      let fencePH = false;
+      let heredoc = null;
+      let inTable = false;
+
+      lines.forEach((line, i) => {
+        const fence = line.match(/^```(\w*)/);
+        if (fence) {
+          inTable = false;
+          if (lang === null) {
+            lang = fence[1] || 'text';
+            fenceAt = i;
+            fenceCmds = [];
+            fencePH = false;
+            heredoc = null;
+          } else {
+            // A bash fence reads as ONE Bash call, so a project command sharing it with ANY second
+            // command is a newline-separated compound — the shape F1 fixed in delegate, and the one
+            // the jq denial classifier names by putting `\n` in its separator class.
+            //
+            // Counting only PLACEHOLDER-BEARING lines (the earlier cut) missed the common half of
+            // that: a fence holding `{{project.testCmd}}` and then `git push` never reached
+            // `length > 1`. Count every runnable line; flag only when the fence actually carries a
+            // project command, so unrelated bash fences stay out of reach by construction.
+            if (BASH.test(lang) && fencePH && fenceCmds.length > 1) {
+              flag(file, fenceAt, 'newline-compound fence', fenceCmds.join(' \\n '));
+            }
+            lang = null;
+          }
+          return;
+        }
+
+        if (lang !== null && BASH.test(lang)) {
+          // A heredoc BODY is not a sequence of Bash calls — git-workflow builds its PR body with
+          // `--body "$(cat <<'EOF' … EOF)"`, and those lines are a PR description, so the
+          // fence/newline-compound rule genuinely must not apply to them.
+          //
+          // But its ROWS are instructions ABOUT commands, and that distinction is the whole bug:
+          // #218 WAS a compound in this very heredoc — the test-plan checklist — which the agent
+          // read out of a row and ran as one call. Skipping the body wholesale left A4 GREEN on the
+          // exact defect it exists to prevent (only A2 caught it), and A2 is hardcoded to
+          // git-workflow's path — so a NEW stack shipping its own `gh pr create --body "$(cat <<'EOF'`
+          // template with a compound row was guarded by nothing at all. The carve-out was added to
+          // kill a false positive and opened a false negative in the same stroke.
+          //
+          // So: keep the fence rule carved out, but still read every `code span` in the body — the
+          // same runnable-unit rule as everywhere else. Silent on today's heredoc (each row is a
+          // lone placeholder in its own span), red on the reintroduced #218 line.
+          if (heredoc !== null) {
+            if (line.trim() === heredoc) { heredoc = null; return; }
+            for (const m of line.matchAll(/`([^`]+)`/g)) {
+              const span = m[1];
+              if (!PH.test(span)) continue;
+              seen++;
+              if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span (heredoc)', span);
+              else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span (heredoc)', span);
+            }
+            return;
+          }
+          const open = line.match(/<<-?\s*['"]?(\w+)['"]?/);
+          if (open) heredoc = open[1];
+
+          const cmd = line.split('#')[0].trim();                        // drop any trailing comment
+          if (!cmd) return;                                             // blank / comment-only
+          fenceCmds.push(cmd);                                          // EVERY runnable line — see the fence close
+          if (!PH.test(cmd)) return;
+          fencePH = true;
+          seen++;
+          if (OP.test(cmd.replace(PH_G, '')) || cmd.includes('`')) flag(file, i, 'compound', cmd);
+          else if (CD.test(cmd) || SUBST.test(cmd)) flag(file, i, 'cd/substitution', cmd);
+          return;
+        }
+
+        // Prose and YAML. Strip the allowlist grant grammar first: it is the one place a project
+        // command legitimately sits inside parens, and it must never read as a compound.
+        if (!line.trim()) inTable = false;
+        else if (TABLE_SEP.test(line)) inTable = true;
+
+        const l = line.replace(GRANT, '');
+        if (!PH.test(l)) return;
+        seen++;
+
+        // (a) Each inline `code span` is a runnable unit on its own — an agent runs `cmd`, not the
+        // sentence around it. A span WITHOUT a placeholder is somebody else's command (the
+        // `grep -rE "(sk-|API_KEY|SECRET)"` next to buildCmd) and is never this test's business.
+        for (const m of l.matchAll(/`([^`]+)`/g)) {
+          const span = m[1];
+          if (!PH.test(span)) continue;
+          seen++;
+          if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span', span);
+          else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span', span);
+        }
+
+        // (b) Across spans. A span with NO placeholder is somebody else's command, so it is DROPPED
+        // outright before the line-level checks — the same runnable-unit rule as (a), just applied
+        // to the line. Without this, an unrelated `cd packages/app && npm ci` or
+        // `$(git rev-parse --show-toplevel)` sharing the line reads as though it were joined to the
+        // project command next to it. Dropping the span is what fixes that at the root, rather than
+        // teaching each of JOINED/CD/SUBST to re-derive which command the operator belongs to.
+        // What survives is the project command plus the bare (unquoted) text around it — which is
+        // exactly the YAML `run:` shape where a real `cd … && {{project.testCmd}}` has no backticks.
+        //
+        // Markdown then PUNCTUATES with the shell's own characters, so only an operator-ONLY join
+        // counts as a compound — see JOINED. In a table row the pipe is a column separator, so it
+        // is not an operator there.
+        const flat = l.replace(/`([^`]+)`/g, (m, inner) => (PH.test(inner) ? inner : ' '));
+        const joined = inTable || TABLE_ROW.test(line) ? JOINED_IN_TABLE : JOINED;
+        if (joined.test(flat)) flag(file, i, 'joined', l);
+        if (CD.test(flat)) flag(file, i, 'cd-prefixed', l);
+        if (SUBST.test(flat)) flag(file, i, 'substitution', l);
+      });
+    }
+
+    assert.deepEqual(offenders, [], `project command joined to text the allowlist cannot match:\n${offenders.join('\n')}`);
+
+    // The POSITIVE CONTROL (see `seen`, above). A floor, not an exact count: docs churn, and a test
+    // that reds on every added sentence gets deleted. It is 62 today; the 40 margin is wide on
+    // purpose — what this must catch is not a drift of a few units, it is the scan silently
+    // stopping altogether.
+    assert.ok(seen >= 40, `A4 must actually INSPECT project-command units, but saw only ${seen}`);
+  });
+});
+
 // #51: the label-hook workflow is SYRUP — sensitive, opt-in. Enabling the stack no longer
 // renders it; it lands only on an explicit install or when a prior lock tracks its path.
 // These drive the ACTUAL shipped github-workflow stack.

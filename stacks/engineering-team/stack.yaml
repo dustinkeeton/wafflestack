@@ -24,22 +24,248 @@ config:
   project.longName:
     required: true
     description: Full prose project descriptor, e.g. "the Plotto lottery-analysis app".
+  # #218 — the SINGLE-PROGRAM guard, on all four pre-flight commands. A project command reaches the
+  # harness as a `Bash(<cmd>:*)` allowlist grant, which matches a command by its LEADING PROGRAM, so
+  # a compound value (`tsc --noEmit && eslint .`) renders a grant that can match NOTHING: the call is
+  # silently denied and the check never runs. The value is the consumer's, interpolated verbatim, so
+  # the class is closed HERE — at the point of use — rather than by linting the templates downstream.
+  # Byte-identical in code-quality / orchestration / github-workflow; guards union toolkit-wide.
   project.lintCmd:
     required: false
     default: npm run lint --if-present
-    description: Lint/format check command referenced in agent pre-flight guidance.
+    # BAN THE DELIMITERS, not the quotes. The value is spliced VERBATIM into the allowlist:
+    #     --allowedTools 'Edit,Write,…,Bash(<cmd>:*),…'
+    # The CLI parses that word TEXTUALLY — split on `,`, then read each entry as `Tool(spec)` —
+    # BEFORE any shell or quote processing runs. So quoting cannot protect a delimiter: a `,` or a
+    # `)` inside a "quoted" argument shatters the list exactly as a bare one does. The delimiters
+    # are therefore banned UNCONDITIONALLY, with no quote-awareness anywhere in the pattern:
+    #   `,`     separates the allowlist entries. `eslint --ext .js,.jsx,.ts,.tsx src` — the textbook
+    #           multi-extension invocation, ONE program, no shell operator — shattered the list into
+    #           `Bash(eslint --ext .js` plus junk `.jsx`/`.ts`/`.tsx src:*)` entries. The real command
+    #           matched nothing and was SILENTLY DENIED: #218's exact failure mode, delivered through
+    #           the mechanism built to eliminate it (#341 review).
+    #   `(` `)` delimit the `Bash(…)` rule itself — a `)` closes it early. This also catches `<(…)`.
+    #   `'`     terminates the single-quoted shell word (#254: "a single quote must never reach a
+    #           shell literal"); `Bash(pytest -k 'not slow':*)` ends the word early and is mangled.
+    #   CR/LF   break the `claude_args: >-` folded scalar.
+#   LEADING/TRAILING WHITESPACE is banned too, for the same dead-grant reason: `npm test ` grants
+#           `Bash(npm test :*)`, and the real `npm test` does not prefix-match a trailing space.
+#           (YAML strips it from a plain scalar, so it takes an explicitly quoted value to hit —
+#           but the grant it ships is just as dead, so the guard anchors both ends.)
+    # …plus the #218 compound class itself (`;` `|` `&`, `$(…)`, backtick, `${{ }}`, a `cd ` prefix),
+    # each of which renders a grant no real command can ever match.
+    #
+    # `:` is NOT banned: the rule's prefix marker is the LAST `:*`, so `npm run test:ci` grants
+    # `Bash(npm run test:ci:*)` and matches fine. Banning it would false-reject a huge population.
+    # `"` is NOT banned: it is inert at every landing site — literal inside the single-quoted shell
+    # word, literal in the folded scalar, literal in a markdown code span, and a literal character in
+    # the `Bash(…)` prefix, where it round-trips with the command the agent actually runs. The earlier
+    # blanket quote ban rejected `go test -run "TestFoo" ./...` with no failure mode behind it.
+    #
+    # NO ALTERNATION, NO QUOTED SPANS. An earlier cut tried to permit a quoted `|`/`;` inside an
+    # argument. Its fallback class also matched a quote, so the alternation RE-PAIRED the quotes — in
+    # `eslint 'a' && prettier 'b'` the closing quote of the first argument and the opening quote of
+    # the second were read as one span, swallowing the `&&`, and an ordinary lint command rendered a
+    # DEAD GRANT. A flat negated character class cannot re-pair anything, so it stays flat.
+    #
+    # A guard for a silent-denial bug must fail CLOSED: reject the value, name the remedy, and let the
+    # consumer wrap it in an npm script. A false reject is loud and trivially worked around; a false
+    # accept is a dead grant nobody ever sees.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`. It is
+      spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'` — a list the CLI parses
+      TEXTUALLY: it splits on `,` and reads each entry as `Tool(spec)`, before any shell or quote
+      processing. So quoting cannot protect a delimiter — a `,` or a `)` inside an argument shatters
+      the list exactly as a bare one does. Hence no `,`, no `(`/`)`, no `'`, no `&&` / `||` / `;` /
+      `|` / `&`, no `cd ` prefix, no `$(…)`/backtick/`<(…)` substitution, and no newline: each
+      renders a grant the real command cannot match, so the call is silently denied. Wrap it in an
+      npm-script-style single entry point — put the compound (or the comma-separated argument, e.g.
+      `eslint --ext .js,.ts .`) inside `package.json` or a Makefile and set this to the one command
+      that runs it, e.g. `npm run ci` (#218). A `"` is fine: it is inert at every landing site.
+    description: >-
+      Lint/format check command referenced in agent pre-flight guidance. Must be ONE program the
+      allowlist can grant as `Bash(<cmd>:*)` — no `,` (it separates the allowlist entries), no
+      `(`/`)`, no `'`, no `&&` / `||` / `;` / `|`, no `cd ` prefix, no `$(…)`/backtick substitution,
+      no newline. Wrap a compound — or a comma-separated argument like `eslint --ext .js,.ts .` — in
+      an npm-script-style single entry point (`npm run ci`) instead.
   project.typecheckCmd:
     required: false
     default: npx tsc --noEmit --skipLibCheck
-    description: Type-check command referenced in agent pre-flight guidance.
+    # BAN THE DELIMITERS, not the quotes. The value is spliced VERBATIM into the allowlist:
+    #     --allowedTools 'Edit,Write,…,Bash(<cmd>:*),…'
+    # The CLI parses that word TEXTUALLY — split on `,`, then read each entry as `Tool(spec)` —
+    # BEFORE any shell or quote processing runs. So quoting cannot protect a delimiter: a `,` or a
+    # `)` inside a "quoted" argument shatters the list exactly as a bare one does. The delimiters
+    # are therefore banned UNCONDITIONALLY, with no quote-awareness anywhere in the pattern:
+    #   `,`     separates the allowlist entries. `eslint --ext .js,.jsx,.ts,.tsx src` — the textbook
+    #           multi-extension invocation, ONE program, no shell operator — shattered the list into
+    #           `Bash(eslint --ext .js` plus junk `.jsx`/`.ts`/`.tsx src:*)` entries. The real command
+    #           matched nothing and was SILENTLY DENIED: #218's exact failure mode, delivered through
+    #           the mechanism built to eliminate it (#341 review).
+    #   `(` `)` delimit the `Bash(…)` rule itself — a `)` closes it early. This also catches `<(…)`.
+    #   `'`     terminates the single-quoted shell word (#254: "a single quote must never reach a
+    #           shell literal"); `Bash(pytest -k 'not slow':*)` ends the word early and is mangled.
+    #   CR/LF   break the `claude_args: >-` folded scalar.
+#   LEADING/TRAILING WHITESPACE is banned too, for the same dead-grant reason: `npm test ` grants
+#           `Bash(npm test :*)`, and the real `npm test` does not prefix-match a trailing space.
+#           (YAML strips it from a plain scalar, so it takes an explicitly quoted value to hit —
+#           but the grant it ships is just as dead, so the guard anchors both ends.)
+    # …plus the #218 compound class itself (`;` `|` `&`, `$(…)`, backtick, `${{ }}`, a `cd ` prefix),
+    # each of which renders a grant no real command can ever match.
+    #
+    # `:` is NOT banned: the rule's prefix marker is the LAST `:*`, so `npm run test:ci` grants
+    # `Bash(npm run test:ci:*)` and matches fine. Banning it would false-reject a huge population.
+    # `"` is NOT banned: it is inert at every landing site — literal inside the single-quoted shell
+    # word, literal in the folded scalar, literal in a markdown code span, and a literal character in
+    # the `Bash(…)` prefix, where it round-trips with the command the agent actually runs. The earlier
+    # blanket quote ban rejected `go test -run "TestFoo" ./...` with no failure mode behind it.
+    #
+    # NO ALTERNATION, NO QUOTED SPANS. An earlier cut tried to permit a quoted `|`/`;` inside an
+    # argument. Its fallback class also matched a quote, so the alternation RE-PAIRED the quotes — in
+    # `eslint 'a' && prettier 'b'` the closing quote of the first argument and the opening quote of
+    # the second were read as one span, swallowing the `&&`, and an ordinary lint command rendered a
+    # DEAD GRANT. A flat negated character class cannot re-pair anything, so it stays flat.
+    #
+    # A guard for a silent-denial bug must fail CLOSED: reject the value, name the remedy, and let the
+    # consumer wrap it in an npm script. A false reject is loud and trivially worked around; a false
+    # accept is a dead grant nobody ever sees.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`. It is
+      spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'` — a list the CLI parses
+      TEXTUALLY: it splits on `,` and reads each entry as `Tool(spec)`, before any shell or quote
+      processing. So quoting cannot protect a delimiter — a `,` or a `)` inside an argument shatters
+      the list exactly as a bare one does. Hence no `,`, no `(`/`)`, no `'`, no `&&` / `||` / `;` /
+      `|` / `&`, no `cd ` prefix, no `$(…)`/backtick/`<(…)` substitution, and no newline: each
+      renders a grant the real command cannot match, so the call is silently denied. Wrap it in an
+      npm-script-style single entry point — put the compound (or the comma-separated argument, e.g.
+      `eslint --ext .js,.ts .`) inside `package.json` or a Makefile and set this to the one command
+      that runs it, e.g. `npm run ci` (#218). A `"` is fine: it is inert at every landing site.
+    description: >-
+      Type-check command referenced in agent pre-flight guidance. Must be ONE program the allowlist
+      can grant as `Bash(<cmd>:*)` — no `,` (it separates the allowlist entries), no `(`/`)`, no
+      `'`, no `&&` / `||` / `;` / `|`, no `cd ` prefix, no `$(…)`/backtick substitution, no newline.
+      Wrap a compound — or a comma-separated argument like `eslint --ext .js,.ts .` — in an
+      npm-script-style single entry point (`npm run ci`) instead.
   project.testCmd:
     required: false
     default: npm test
-    description: Test command the qa-engineer runs and reports on.
+    # BAN THE DELIMITERS, not the quotes. The value is spliced VERBATIM into the allowlist:
+    #     --allowedTools 'Edit,Write,…,Bash(<cmd>:*),…'
+    # The CLI parses that word TEXTUALLY — split on `,`, then read each entry as `Tool(spec)` —
+    # BEFORE any shell or quote processing runs. So quoting cannot protect a delimiter: a `,` or a
+    # `)` inside a "quoted" argument shatters the list exactly as a bare one does. The delimiters
+    # are therefore banned UNCONDITIONALLY, with no quote-awareness anywhere in the pattern:
+    #   `,`     separates the allowlist entries. `eslint --ext .js,.jsx,.ts,.tsx src` — the textbook
+    #           multi-extension invocation, ONE program, no shell operator — shattered the list into
+    #           `Bash(eslint --ext .js` plus junk `.jsx`/`.ts`/`.tsx src:*)` entries. The real command
+    #           matched nothing and was SILENTLY DENIED: #218's exact failure mode, delivered through
+    #           the mechanism built to eliminate it (#341 review).
+    #   `(` `)` delimit the `Bash(…)` rule itself — a `)` closes it early. This also catches `<(…)`.
+    #   `'`     terminates the single-quoted shell word (#254: "a single quote must never reach a
+    #           shell literal"); `Bash(pytest -k 'not slow':*)` ends the word early and is mangled.
+    #   CR/LF   break the `claude_args: >-` folded scalar.
+#   LEADING/TRAILING WHITESPACE is banned too, for the same dead-grant reason: `npm test ` grants
+#           `Bash(npm test :*)`, and the real `npm test` does not prefix-match a trailing space.
+#           (YAML strips it from a plain scalar, so it takes an explicitly quoted value to hit —
+#           but the grant it ships is just as dead, so the guard anchors both ends.)
+    # …plus the #218 compound class itself (`;` `|` `&`, `$(…)`, backtick, `${{ }}`, a `cd ` prefix),
+    # each of which renders a grant no real command can ever match.
+    #
+    # `:` is NOT banned: the rule's prefix marker is the LAST `:*`, so `npm run test:ci` grants
+    # `Bash(npm run test:ci:*)` and matches fine. Banning it would false-reject a huge population.
+    # `"` is NOT banned: it is inert at every landing site — literal inside the single-quoted shell
+    # word, literal in the folded scalar, literal in a markdown code span, and a literal character in
+    # the `Bash(…)` prefix, where it round-trips with the command the agent actually runs. The earlier
+    # blanket quote ban rejected `go test -run "TestFoo" ./...` with no failure mode behind it.
+    #
+    # NO ALTERNATION, NO QUOTED SPANS. An earlier cut tried to permit a quoted `|`/`;` inside an
+    # argument. Its fallback class also matched a quote, so the alternation RE-PAIRED the quotes — in
+    # `eslint 'a' && prettier 'b'` the closing quote of the first argument and the opening quote of
+    # the second were read as one span, swallowing the `&&`, and an ordinary lint command rendered a
+    # DEAD GRANT. A flat negated character class cannot re-pair anything, so it stays flat.
+    #
+    # A guard for a silent-denial bug must fail CLOSED: reject the value, name the remedy, and let the
+    # consumer wrap it in an npm script. A false reject is loud and trivially worked around; a false
+    # accept is a dead grant nobody ever sees.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`. It is
+      spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'` — a list the CLI parses
+      TEXTUALLY: it splits on `,` and reads each entry as `Tool(spec)`, before any shell or quote
+      processing. So quoting cannot protect a delimiter — a `,` or a `)` inside an argument shatters
+      the list exactly as a bare one does. Hence no `,`, no `(`/`)`, no `'`, no `&&` / `||` / `;` /
+      `|` / `&`, no `cd ` prefix, no `$(…)`/backtick/`<(…)` substitution, and no newline: each
+      renders a grant the real command cannot match, so the call is silently denied. Wrap it in an
+      npm-script-style single entry point — put the compound (or the comma-separated argument, e.g.
+      `eslint --ext .js,.ts .`) inside `package.json` or a Makefile and set this to the one command
+      that runs it, e.g. `npm run ci` (#218). A `"` is fine: it is inert at every landing site.
+    description: >-
+      Test command the qa-engineer runs and reports on. Must be ONE program the allowlist can grant
+      as `Bash(<cmd>:*)` — no `,` (it separates the allowlist entries), no `(`/`)`, no `'`, no `&&`
+      / `||` / `;` / `|`, no `cd ` prefix, no `$(…)`/backtick substitution, no newline. Wrap a
+      compound — or a comma-separated argument like `eslint --ext .js,.ts .` — in an
+      npm-script-style single entry point (`npm run ci`) instead.
   project.buildCmd:
     required: false
     default: npm run build
-    description: Production build command (pre-flight guidance and bundle-output secret scan).
+    # BAN THE DELIMITERS, not the quotes. The value is spliced VERBATIM into the allowlist:
+    #     --allowedTools 'Edit,Write,…,Bash(<cmd>:*),…'
+    # The CLI parses that word TEXTUALLY — split on `,`, then read each entry as `Tool(spec)` —
+    # BEFORE any shell or quote processing runs. So quoting cannot protect a delimiter: a `,` or a
+    # `)` inside a "quoted" argument shatters the list exactly as a bare one does. The delimiters
+    # are therefore banned UNCONDITIONALLY, with no quote-awareness anywhere in the pattern:
+    #   `,`     separates the allowlist entries. `eslint --ext .js,.jsx,.ts,.tsx src` — the textbook
+    #           multi-extension invocation, ONE program, no shell operator — shattered the list into
+    #           `Bash(eslint --ext .js` plus junk `.jsx`/`.ts`/`.tsx src:*)` entries. The real command
+    #           matched nothing and was SILENTLY DENIED: #218's exact failure mode, delivered through
+    #           the mechanism built to eliminate it (#341 review).
+    #   `(` `)` delimit the `Bash(…)` rule itself — a `)` closes it early. This also catches `<(…)`.
+    #   `'`     terminates the single-quoted shell word (#254: "a single quote must never reach a
+    #           shell literal"); `Bash(pytest -k 'not slow':*)` ends the word early and is mangled.
+    #   CR/LF   break the `claude_args: >-` folded scalar.
+#   LEADING/TRAILING WHITESPACE is banned too, for the same dead-grant reason: `npm test ` grants
+#           `Bash(npm test :*)`, and the real `npm test` does not prefix-match a trailing space.
+#           (YAML strips it from a plain scalar, so it takes an explicitly quoted value to hit —
+#           but the grant it ships is just as dead, so the guard anchors both ends.)
+    # …plus the #218 compound class itself (`;` `|` `&`, `$(…)`, backtick, `${{ }}`, a `cd ` prefix),
+    # each of which renders a grant no real command can ever match.
+    #
+    # `:` is NOT banned: the rule's prefix marker is the LAST `:*`, so `npm run test:ci` grants
+    # `Bash(npm run test:ci:*)` and matches fine. Banning it would false-reject a huge population.
+    # `"` is NOT banned: it is inert at every landing site — literal inside the single-quoted shell
+    # word, literal in the folded scalar, literal in a markdown code span, and a literal character in
+    # the `Bash(…)` prefix, where it round-trips with the command the agent actually runs. The earlier
+    # blanket quote ban rejected `go test -run "TestFoo" ./...` with no failure mode behind it.
+    #
+    # NO ALTERNATION, NO QUOTED SPANS. An earlier cut tried to permit a quoted `|`/`;` inside an
+    # argument. Its fallback class also matched a quote, so the alternation RE-PAIRED the quotes — in
+    # `eslint 'a' && prettier 'b'` the closing quote of the first argument and the opening quote of
+    # the second were read as one span, swallowing the `&&`, and an ordinary lint command rendered a
+    # DEAD GRANT. A flat negated character class cannot re-pair anything, so it stays flat.
+    #
+    # A guard for a silent-denial bug must fail CLOSED: reject the value, name the remedy, and let the
+    # consumer wrap it in an npm script. A false reject is loud and trivially worked around; a false
+    # accept is a dead grant nobody ever sees.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`. It is
+      spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'` — a list the CLI parses
+      TEXTUALLY: it splits on `,` and reads each entry as `Tool(spec)`, before any shell or quote
+      processing. So quoting cannot protect a delimiter — a `,` or a `)` inside an argument shatters
+      the list exactly as a bare one does. Hence no `,`, no `(`/`)`, no `'`, no `&&` / `||` / `;` /
+      `|` / `&`, no `cd ` prefix, no `$(…)`/backtick/`<(…)` substitution, and no newline: each
+      renders a grant the real command cannot match, so the call is silently denied. Wrap it in an
+      npm-script-style single entry point — put the compound (or the comma-separated argument, e.g.
+      `eslint --ext .js,.ts .`) inside `package.json` or a Makefile and set this to the one command
+      that runs it, e.g. `npm run ci` (#218). A `"` is fine: it is inert at every landing site.
+    description: >-
+      Production build command (pre-flight guidance and bundle-output secret scan). Must be ONE
+      program the allowlist can grant as `Bash(<cmd>:*)` — no `,` (it separates the allowlist
+      entries), no `(`/`)`, no `'`, no `&&` / `||` / `;` / `|`, no `cd ` prefix, no `$(…)`/backtick
+      substitution, no newline. Wrap a compound — or a comma-separated argument like `eslint --ext
+      .js,.ts .` — in an npm-script-style single entry point (`npm run ci`) instead.
   project.lockfile:
     required: false
     default: package-lock.json

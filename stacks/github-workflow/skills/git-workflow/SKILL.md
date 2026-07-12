@@ -171,8 +171,9 @@ gh pr create --title "feat: short title" --body "$(cat <<'EOF'
 
 ## Test plan
 - [ ] Lint passes (`{{project.lintCmd}}`)
+- [ ] Types pass (`{{project.typecheckCmd}}`)
 - [ ] Tests pass (`{{project.testCmd}}`)
-- [ ] Build passes (`{{project.typecheckCmd}} && {{project.buildCmd}}`)
+- [ ] Build passes (`{{project.buildCmd}}`)
 
 {{git.coAuthorTrailer}}
 EOF

@@ -183,8 +183,9 @@ gh pr create --title "feat: short title" --body "$(cat <<'EOF'
 
 ## Test plan
 - [ ] Lint passes (`npm run lint --if-present`)
+- [ ] Types pass (`npm run validate`)
 - [ ] Tests pass (`npm test`)
-- [ ] Build passes (`npm run validate && npm pack --dry-run`)
+- [ ] Build passes (`npm pack --dry-run`)
 
 Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 EOF

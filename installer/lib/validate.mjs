@@ -347,6 +347,16 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           problems.push(`${ctx}: config key ${key} has an invalid pattern: ${err.message}`);
         }
       }
+      // `patternHint:` (#218) — the prose remedy printed when the guard fires. It must be a string,
+      // and it is meaningless without a `pattern:` to explain: a hint on an unguarded key is an
+      // authoring mistake that would silently never print.
+      if (spec?.patternHint !== undefined) {
+        if (typeof spec.patternHint !== 'string') {
+          problems.push(`${ctx}: config key ${key} \`patternHint\` must be a string`);
+        } else if (typeof spec.patternHint === 'string' && typeof spec?.pattern !== 'string') {
+          problems.push(`${ctx}: config key ${key} declares a \`patternHint\` but no \`pattern\` — the hint would never print`);
+        }
+      }
       // `entryPatterns:` (#156) — the map-valued sibling of `pattern:`. Each leaf's regex must
       // compile (render fails loudly otherwise, so a broken guard can never ship unenforced),
       // and a static `default:` map must satisfy its own guard, exactly as a string default must.
