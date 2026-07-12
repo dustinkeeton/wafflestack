@@ -36,28 +36,40 @@ is what you reach for across a breaking one.
   `waffle-pr-response-hook` and `waffle-pr-green-hook` looked for their marker with a **bare-word
   regex** — `test("waffle-pr-response")` / `test("waffle-adversarial-review")` — while the skills
   they wrap, and the workflows' own job-level `if:`, key on the full literal HTML comment
-  (`<!-- waffle-pr-response -->`). So any PR whose conversation *merely mentioned the marker word* —
-  a human comment, a changelog quote, a review discussing the hook — matched. All four call sites now
-  match the full literal via jq `index()` (a literal substring search; `test()` takes a **regex**,
-  which is the wrong tool for a marker containing `<!--` / `-->`).
-  **The two sites per hook fail in opposite directions, and only one is safe.** The loop bound /
-  idempotency gate is fail-*closed* (a false positive **skips** a real dispatch — wrong, but not
-  dangerous). `check_delivered` is fail-**open**: a false positive tells the guard the reply posted
-  when it did not, which **downgrades a blocked delivery denial to a warning and turns the job
-  green**. In `waffle-pr-response-hook` that is the live, high-severity one: it is a single-tier
-  classifier holding `contents: write`, so a false `delivered=1` excused the whole hard class — a
-  blocked `git push`, `curl`, `rm -rf` — *and its query has no `commit_id` narrowing at all*, so
-  **any** comment on the PR containing the substring satisfied it (PR #207's conversation already
-  contains one). In `waffle-pr-green-hook` the severity is smaller after #208 — only the `amb` tier
-  is still downgradeable, and both of its sites also filter `commit_id == HEAD_SHA` — but the loose
-  match was wrong there too, and a false positive still converted a genuine "the review did not post"
-  red into a warning. The `commit_id` narrowing is preserved: narrowing and literal-matching are
-  independent, and both are wanted.
+  (`<!-- waffle-pr-response -->`). So any PR whose conversation *merely named the marker word* — a
+  human comment, a review discussing the hook — matched. All four call sites now match the full
+  literal (`test()` takes a **regex**, which is the wrong tool for a marker containing `<!--` /
+  `-->`), which closes the bare-word class outright.
+  **The two sites per hook fail in opposite directions, so they now match asymmetrically — each in
+  the direction that fails safe.** The loop bound / idempotency gate is fail-*closed* (a false
+  positive **skips** a real dispatch — wrong, but cheap) while a false *negative* there re-arms an
+  unbounded paid, committing loop; it therefore keeps the **tolerant** substring match (jq `index()`).
+  `check_delivered` is the reverse: a false positive tells the guard the reply posted when it did not,
+  which **downgrades a blocked delivery denial to a warning and turns the job green**, while a false
+  negative merely reds a run that did deliver. Both `check_delivered` sites therefore take the
+  **strict** form — delivery evidence must be **marker-led** (jq `startswith()`), which is exactly
+  what the skills already mandate (the marker is the reply's *first line*).
+  **Scope, precisely:** matching the full literal closes bodies that *name* the marker; requiring the
+  marker to **lead** the body closes bodies that *quote* it. A quoting comment is not hypothetical —
+  PR #207 (the evidence PR for #211) carries a **human comment with the literal at offset 1084**, and
+  under a plain substring match that comment still read as proof the bot had replied. At the two
+  `check_delivered` sites both classes are now closed. At the loop bound the quoting class remains
+  **deliberately** open (it costs a PR its one automated reply — wrong, but safe), tracked in **#333**;
+  narrowing by comment *author* was evaluated and **does not discriminate here**, because the hook
+  posts under the same identity humans comment under.
+  In `waffle-pr-response-hook` the fail-open was the live, high-severity one: a single-tier classifier
+  holding `contents: write`, so a false `delivered=1` excused the whole hard class — a blocked
+  `git push`, `curl`, `rm -rf` — *and its query has no `commit_id` narrowing at all*, so **any**
+  comment on the PR satisfied it. In `waffle-pr-green-hook` the severity is smaller after #208 — only
+  the `amb` tier is still downgradeable, and both of its sites also filter `commit_id == HEAD_SHA` —
+  but the loose match was wrong there too. The `commit_id` narrowing is preserved: narrowing and
+  literal-matching are independent, and both are wanted.
   *Note for anyone touching this code:* `index()` returns an **offset**, and the marker sits on the
   body's **first line** ⇒ offset **`0`**. In jq only `null`/`false` are falsy, so the bare
   `select((.body // "") | index("…"))` form correctly keeps a `0` hit. Do **not** "harden" it to
-  `index(…) > 0` — that drops exactly the real reply. Guard and gate tests now pin mention-vs-literal
-  for both hooks, and pin that the offset is never compared.
+  `index(…) > 0` — that drops exactly the real reply. Guard and gate tests now pin mention-vs-quote-
+  vs-literal for both hooks, pin the asymmetry in both directions, and pin that the offset is never
+  compared.
   Back-porting #208's three-tier denial classifier to `waffle-pr-response-hook` (the *other* half of
   this fail-open) is tracked separately in **#331**.
 - **pr-green: a blocked exfil/destructive call no longer goes green just because the review posted
