@@ -37,6 +37,13 @@ config:
 #           `Bash(npm test :*)`, and the real `npm test` does not prefix-match a trailing space.
 #           (YAML strips it from a plain scalar, so it takes an explicitly quoted value to hit —
 #           but the grant it ships is just as dead, so the guard anchors both ends.)
+    #   EMPTY   is banned by the `+`, and it is the degenerate case the `*` waved through (#351). An
+    #           empty value renders `Bash(:*)` — an allowlist entry whose PREFIX IS THE EMPTY STRING,
+    #           and every command starts with that. So the entry either grants ALL Bash or is inert,
+    #           depending on how the CLI parses a degenerate rule; both are wrong, and a privilege
+    #           boundary must not rest on which. A repo with no such check sets the shell no-op `true`
+    #           (a narrow, harmless `Bash(true:*)` that exits 0) — never `""`. `true` must never be a
+    #           shipped `default:`: a gate that passes VACUOUSLY is the silent false pass #218 is for.
     # …plus the #218 compound class itself (`;` `|` `&`, `$(…)`, backtick, `${{ }}`, a `cd ` prefix),
     # each of which renders a grant no real command can ever match.
     #
@@ -56,7 +63,7 @@ config:
     # A guard for a silent-denial bug must fail CLOSED: reject the value, name the remedy, and let the
     # consumer wrap it in an npm script. A false reject is loud and trivially worked around; a false
     # accept is a dead grant nobody ever sees.
-    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]*$'
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]+$'
     patternHint: >-
       a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`. It is
       spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'` — a list the CLI parses
@@ -68,12 +75,18 @@ config:
       npm-script-style single entry point — put the compound (or the comma-separated argument, e.g.
       `eslint --ext .js,.ts .`) inside `package.json` or a Makefile and set this to the one command
       that runs it, e.g. `npm run ci` (#218). A `"` is fine: it is inert at every landing site.
+      And it must not be EMPTY: an empty value grants `Bash(:*)`, and EVERY command has the empty
+      string as a prefix. If this project has no such check, set the shell no-op `true` — it grants a
+      harmless `Bash(true:*)` and exits 0 (#351).
     description: >-
       Test command that runs the project's full suite (referenced throughout the TDD skill). Must be
       ONE program the allowlist can grant as `Bash(<cmd>:*)` — no `,` (it separates the allowlist
       entries), no `(`/`)`, no `'`, no `&&` / `||` / `;` / `|`, no `cd ` prefix, no `$(…)`/backtick
       substitution, no newline. Wrap a compound — or a comma-separated argument like `eslint --ext
       .js,.ts .` — in an npm-script-style single entry point (`npm run ci`) instead.
+      Never leave it EMPTY: an empty value grants `Bash(:*)`, and every command has the empty string
+      as a prefix. If this project has no such check, set the shell no-op `true` — it grants a
+      harmless `Bash(true:*)` and exits 0.
   tdd.priorityTiers:
     required: true
     description: Verbatim body of the TDD "Test Priority Tiers" section — the project's module/test-coverage map (tier tables plus the "Do NOT unit test" list).

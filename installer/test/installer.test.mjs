@@ -1708,6 +1708,108 @@ describe('project commands never join with && (#218)', () => {
     assert.equal(dr.configProblems.length, 1, `one problem per key: ${JSON.stringify(dr.configProblems)}`);
   });
 
+  // A8 is the DEGENERATE half of A5, and the one case the guard was built without (#351).
+  //
+  // A5 bans every shape that says TOO MUCH — an operator, a delimiter, a substitution. The empty
+  // string says NOTHING, and the character class was `*` (zero-or-more), so `""` satisfied every
+  // lookahead, passed BOTH gates, and rendered an allowlist entry with an empty prefix:
+  //
+  //     --allowedTools 'Edit,…,Bash(gh repo view:*),Bash(:*),Bash(npm test:*),…'
+  //                                                 ^^^^^^^^^
+  //
+  // `Bash(<cmd>:*)` matches a command by its LEADING PROGRAM — by PREFIX — and EVERY command has
+  // the empty string as a prefix. Whether the CLI reads `Bash(:*)` as a prefix that matches
+  // everything (⇒ unrestricted Bash in a headless harness — in three workflows, two holding
+  // `contents: write`, one of them the `implement` job that processes untrusted issue content) or
+  // as an inert no-op (⇒ merely another silent dead grant, #218's own failure shape) is a question
+  // about a degenerate pattern that the toolkit MUST NOT gamble a privilege boundary on. Both
+  // answers are wrong, so the value is rejected at the door and the question is never asked.
+  //
+  // It is also the value a repo with no linter reaches for FIRST (#219): when the check genuinely
+  // does not exist, `lintCmd: ""` is the obvious thing to type. So rejecting it is only half a fix —
+  // the message must name a real destination. That is the shell no-op `true`: it passes the guard,
+  // grants a narrow and harmless `Bash(true:*)`, and exits 0.
+  //
+  // `true` must NEVER become a shipped `default:`. A default of `true` gives every unconfigured
+  // consumer a gate that passes VACUOUSLY — green, and checking nothing — which is the silent false
+  // pass this entire effort exists to eliminate. A loudly-wrong default beats a silently-vacuous one.
+  test('A8 EMPTY DOOR: an empty project command is rejected — an empty prefix grants every command', () => {
+    // (a) EMPTY, and the whole "no command at all" class around it, on all FOUR keys. A guard that
+    // caught `""` but not `" "` would just move the dead grant one space to the right.
+    for (const key of Object.keys(CMDS)) {
+      for (const [label, bad] of [
+        ['the empty string', ''],
+        ['a single space', ' '],
+        ['whitespace only', '   '],
+        ['a tab', '\t'],
+        ['a newline', '\n'],
+      ]) {
+        const r = renderWith({ ...CMDS, [key]: bad });
+        assert.equal(r.ok, false, `render must reject ${label} for ${key}: ${JSON.stringify(r.errors)}`);
+        assert.ok(
+          r.errors.some((e) => e.includes(`project.${key}`) && /does not match its declared pattern/.test(e)),
+          `the error must NAME the offending key (${label}, ${key}): ${JSON.stringify(r.errors)}`,
+        );
+        // …and it must point at a DESTINATION. A repo with no linter cannot "wrap it in an npm
+        // script" — there is nothing to wrap. Without `true` in the message this rejection is a
+        // dead end, and the consumer's only way out is to delete the guard or fake a command.
+        assert.ok(
+          r.errors.some((e) => e.includes(`project.${key}`) && /\btrue\b/.test(e) && /no such check|no-op/i.test(e)),
+          `the error must point at the \`true\` no-op (${label}, ${key}): ${JSON.stringify(r.errors)}`,
+        );
+      }
+    }
+
+    // (b) the SHIPPED gate sees it too — bare `doctor`, no flags (see A6: `doctor.flags` defaults to
+    // ""). A repo that rendered `Bash(:*)` under the OLD toolkit has a tree and lock that still
+    // hash-match, so the drift check alone is structurally blind to it. That repo is exactly who
+    // this guard is for.
+    renderAll();
+    write(cwd, '.waffle/waffle.yaml', read(cwd, '.waffle/waffle.yaml').replace('"ztypecheck"', '""'));
+    for (const flags of [{}, { allowMissing: true }, { verifyRender: true }]) {
+      const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot, ...flags });
+      const label = JSON.stringify(flags);
+      assert.equal(dr.ok, false, `doctor ${label} must fail on an empty project command`);
+      assert.ok(
+        dr.configProblems.some((n) => n.includes('project.typecheckCmd') && /\btrue\b/.test(n)),
+        `doctor ${label} must name the key and the remedy: ${JSON.stringify(dr.configProblems)}`,
+      );
+    }
+    assert.deepEqual(
+      doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot }).modified, [],
+      'no file was hand-edited — the fault is the config value',
+    );
+
+    // (c) THE PROPERTY ITSELF: no rendered allowlist may carry an empty prefix. The accept column
+    // cannot see this on its own — `Bash(:*)` is what a rendered-`ok` empty value SHIPPED — so
+    // assert it against the parsed allowlist the CLI actually reads, for every value the guard lets
+    // through. An empty prefix in that list is a grant on every command there is.
+    for (const good of ['npm test', 'true', ...Object.values(CMDS)]) {
+      const r = renderWith({ ...CMDS, typecheckCmd: good });
+      assert.equal(r.ok, true, `precondition: ${JSON.stringify(good)} renders: ${JSON.stringify(r.errors)}`);
+      const claudeArgs = claudeArgsOf(read(cwd, REL), 'implement');
+      assert.ok(
+        !claudeArgs.includes('Bash(:*)'),
+        `the rendered allowlist must never contain an empty-prefix grant: ${claudeArgs}`,
+      );
+      const prefixes = bashPrefixes(allowedTools(claudeArgs));
+      assert.ok(
+        prefixes.every((p) => p.trim() !== ''),
+        `no allowlist prefix may be empty (it would prefix-match EVERY command): ${JSON.stringify(prefixes)}`,
+      );
+    }
+
+    // (d) …and the remedy actually WORKS end to end: `true` renders, and the command it documents is
+    // genuinely granted by the shipped allowlist. A remedy the guard's own accept path rejected —
+    // or that shipped its own dead grant — would be worse than no remedy at all.
+    const r = renderWith({ ...CMDS, lintCmd: 'true' });
+    assert.equal(r.ok, true, `the documented no-op must render: ${JSON.stringify(r.errors)}`);
+    assert.ok(
+      isCovered('true', bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')))),
+      'the allowlist must actually GRANT the `true` no-op the hint sends consumers to',
+    );
+  });
+
   test('A2 every PR-body checklist item is ONE command, and each is covered by an allowlist prefix', () => {
     renderAll();
     const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')));

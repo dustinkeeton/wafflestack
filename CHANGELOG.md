@@ -64,6 +64,19 @@ is what you reach for across a breaking one.
   matches no command), plus the compound class itself — `&&`, `||`, `;`, `|`, `&`, a `cd ` prefix, a
   `$(…)`/backtick substitution, a `${{ }}` expression. And a guarded key must be handed a **string**:
   a list or map would otherwise be flattened into text *before* the pattern could police it.
+  **And it must not be EMPTY (#351).** The character class was `*` (zero-or-**more**), so `""` satisfied
+  every lookahead, passed both gates, and rendered `Bash(:*)` — an allowlist entry whose **prefix is the
+  empty string**, and *every* command has the empty string as a prefix. Whether the CLI reads that as a
+  grant on **every** Bash command — unrestricted Bash in the three workflows this lands in, two of which
+  hold `contents: write`, one of them the `implement` job that processes **untrusted issue content** — or
+  as an inert entry (merely another silent dead grant) is a question about the CLI's parsing of a
+  degenerate rule, and **a privilege boundary must never rest on which way it is answered**. Both answers
+  are wrong, so the quantifier is now `+` and the value is rejected at the door. This is also the value a
+  repo with **no such check** reaches for *first* (#219) — so rejecting it is only half a fix, and the
+  message names a **destination**: the shell no-op **`true`**, which passes the guard, grants a narrow and
+  harmless `Bash(true:*)`, and exits 0. (`true` is deliberately **not** a shipped `default:` — a default of
+  `true` would give every unconfigured consumer a gate that passes **vacuously**, green and checking
+  nothing, which is the silent false pass this entire effort exists to eliminate.)
   **A `"` is NOT banned.** It is not a delimiter at any landing site — it is literal inside the
   single-quoted shell word, in the folded scalar, in the markdown code spans these values also land
   in, and in the `Bash(…)` prefix, where it round-trips with the command the agent actually runs. So
@@ -83,7 +96,10 @@ is what you reach for across a breaking one.
   legitimate, which is why its guard bans only newlines and `${{ }}`.)
   **What the tests guarantee**, precisely — the config guard at render (`A5`) *and in bare `doctor`,
   the shipped gate* (`A6`), including the **type door** (`A7`: a list/map value cannot dodge the
-  pattern by being flattened into a string); and — the assertion that actually pins the property —
+  pattern by being flattened into a string) and the **empty door** (`A8`: `""` — and the whitespace-only
+  values around it — rejected at render *and* in bare `doctor`, on all four keys, with the message
+  pointing at `true`, and **no rendered allowlist carrying an empty prefix**); and — the assertion that
+  actually pins the property —
   **every accepted command is ACTUALLY GRANTED** by the shipped allowlist, parsed the way the CLI
   parses it (`A5`(d)). An accept column alone only proves the render did not *fail*; it cannot see a
   value that renders `ok` and still ships a grant no command matches, which is exactly how the comma
@@ -98,9 +114,11 @@ is what you reach for across a breaking one.
   occupies that gap today; closing it without false-firing on ordinary prose is tracked in **#350**.
   **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3. **If
   any of your four `project.*Cmd` values carries a compound, a `,`, a `(`/`)`, a `'`, or whitespace at
-  either end — or is a list/map rather than a string — `render` and `doctor` — bare `doctor`, the one
-  your CI already runs — will now fail**, name the key, and tell you to wrap it in an npm-script-style
-  single entry point (`npm run ci`). The **`,`** is the one most likely to bite an ordinary repo:
+  either end — or is a list/map rather than a string, or is **empty** — `render` and `doctor` — bare
+  `doctor`, the one your CI already runs — will now fail**, name the key, and tell you to wrap it in an
+  npm-script-style single entry point (`npm run ci`). **If the check genuinely does not exist in your
+  repo, set the value to the shell no-op `true`** — not `""`, which was granting `Bash(:*)`, an empty
+  allowlist prefix that every command matches. The **`,`** is the one most likely to bite an ordinary repo:
   `eslint --ext .js,.jsx,.ts,.tsx src` is one program with no shell operator, and it was shipping a
   shattered, unmatchable grant. (A `"` is fine and keeps rendering.) That failure is the point, and it
   is aimed squarely at the repos that are *already* broken: such a value was **already** producing a
