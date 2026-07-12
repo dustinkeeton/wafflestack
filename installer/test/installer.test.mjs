@@ -1517,6 +1517,20 @@ describe('project commands never join with && (#218)', () => {
   // the same LINE as a `grep -rE "(sk-|API_KEY|SECRET)"` span whose pipes are regex alternation,
   // not shell. A raw-line scan for `[;&|(]` flags all three — which is why bare `(`/`)` are NOT
   // operators here, and why joining text is only ever read inside the unit that would really run.
+  //
+  // ALL FIVE checks honor that rule (an earlier cut applied it to the span check but left JOINED /
+  // CD / SUBST scanning the raw line, which false-fired on ordinary markdown). Two corollaries do
+  // the work of telling a command apart from a sentence that merely contains shell punctuation:
+  //
+  //   - A cross-span join must be operator-ONLY. `cmd` ; `cmd` is a compound; "Run `cmd`; then run
+  //     `cmd`." is English. The prose between them is the whole difference.
+  //   - In a markdown TABLE row, `|` is the column separator, not a pipe — this repo's
+  //     md-maximalist skill actively pushes authors toward tables, so a two-column
+  //     "command → purpose" table is the obvious way to document these four commands and must not
+  //     be flagged. A genuine compound inside a cell still sits in a code span, which is checked
+  //     on its own.
+  //   - SUBST matches only a `$(…)` that WRAPS a project command, so an unrelated
+  //     `$(git rev-parse --show-toplevel)` sharing the line is somebody else's substitution.
   test('A4 SOURCE backstop: no stack source joins a project command to text the allowlist cannot match', () => {
     // Fires on stacks/ itself, so a NEW stack reintroducing the pattern fails immediately —
     // without anyone remembering to render first. This is what keeps the fix from rotting.
@@ -1530,9 +1544,18 @@ describe('project commands never join with && (#218)', () => {
     const PH_G = /\{\{project\.\w*Cmd\}\}/g;
     const BASH = /^(bash|sh|shell|console)$/;
     const OP = /(&&|\|\||[;|&])/;                                        // joins a command to more work
-    const JOINED = /\{\{project\.\w*Cmd\}\}[^\n]*?(&&|\|\||[;|&])[^\n]*?\{\{project\.\w*Cmd\}\}/;
+    // An operator-ONLY join: nothing but whitespace between the two commands and the operator.
+    // `cmd` ; `cmd` is a compound; "Run `cmd`; then run `cmd`." is an English sentence that merely
+    // contains a semicolon — the prose between them is what tells the two apart.
+    const JOINED = /\{\{project\.\w*Cmd\}\}\s*(&&|\|\||[;|&])\s*\{\{project\.\w*Cmd\}\}/;
+    // Same, minus the pipe: inside a markdown TABLE row `|` is the column separator, never a shell
+    // pipe. A genuine compound in a cell still lands in a code span, which is checked on its own.
+    const JOINED_IN_TABLE = /\{\{project\.\w*Cmd\}\}\s*(&&|[;&])\s*\{\{project\.\w*Cmd\}\}/;
+    const TABLE_ROW = /^\s*\|.*\|\s*$/;
     const CD = /\bcd\s+\S+\s*(&&|\|\||[;|])/;                            // hygiene.yml names this denial by name
-    const SUBST = /\$\(/;                                                // $(…) command substitution
+    // A substitution that WRAPS a project command — `$({{project.buildCmd}})`. Scoped this way on
+    // purpose: a bare /\$\(/ also fires on an unrelated `$(git rev-parse …)` sharing the line.
+    const SUBST = /\$\([^)]*\{\{project\.\w*Cmd\}\}/;
     const GRANT = /Bash\([^)]*\)/g;                                      // the ONE legit parenthesised use
 
     const offenders = [];
@@ -1588,13 +1611,24 @@ describe('project commands never join with && (#218)', () => {
         const l = line.replace(GRANT, '');
         if (!PH.test(l)) return;
 
+        // (a) Each inline `code span` is a runnable unit on its own — an agent runs `cmd`, not the
+        // sentence around it. A span WITHOUT a placeholder is somebody else's command (the
+        // `grep -rE "(sk-|API_KEY|SECRET)"` next to buildCmd) and is never this test's business.
         for (const m of l.matchAll(/`([^`]+)`/g)) {
           const span = m[1];
-          if (PH.test(span) && OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span', span);
+          if (!PH.test(span)) continue;
+          if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span', span);
+          else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span', span);
         }
-        if (JOINED.test(l)) flag(file, i, 'joined', l);
-        if (CD.test(l)) flag(file, i, 'cd-prefixed', l);
-        if (SUBST.test(l)) flag(file, i, 'substitution', l);
+
+        // (b) Across spans, on the backtick-stripped line. Markdown PUNCTUATES with the shell's own
+        // characters, so only an operator-ONLY join counts as a compound — see JOINED. In a table
+        // row the pipe is a column separator, so it is not an operator there.
+        const flat = l.replace(/`/g, '');
+        const joined = TABLE_ROW.test(line) ? JOINED_IN_TABLE : JOINED;
+        if (joined.test(flat)) flag(file, i, 'joined', l);
+        if (CD.test(flat)) flag(file, i, 'cd-prefixed', l);
+        if (SUBST.test(flat)) flag(file, i, 'substitution', l);
       });
     }
 
