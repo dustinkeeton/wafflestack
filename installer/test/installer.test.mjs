@@ -1525,32 +1525,83 @@ describe('project commands never join with && (#218)', () => {
       `echo "a" && echo 'b'`,        // …and with the quote STYLES mixed, in both directions
       `echo 'a' && echo "b"`,
 
-      // A QUOTE CHARACTER AT ALL — even in a genuinely single-program command. The value is spliced
-      // VERBATIM into the single-quoted `--allowedTools '…'` shell word, so it cannot survive:
+      // A SINGLE QUOTE — even in a genuinely single-program command. The value is spliced VERBATIM
+      // into the single-quoted `--allowedTools '…'` shell word, so it cannot survive:
       // `Bash(pytest -k 'not slow':*)` terminates that word early, and the grant is silently mangled
       // into `Bash(pytest -k not slow:*)` — which the real command no longer prefix-matches. That is
       // the SAME silent denial this key exists to prevent, so the value must fail loudly instead.
       // Escaping is not available: substitution cannot know its target context (template.mjs), which
-      // is why `git.cmd` bans quotes for exactly this reason (#254). The remedy is in the
+      // is why `git.cmd` bans single quotes for exactly this reason (#254). The remedy is in the
       // patternHint: wrap it in an npm script and set THAT here.
       "pytest -k 'not slow'", 'jest -t "foo|bar"', 'npm test -- --reporters="a;b"', 'jest -t "a&b"',
       "grep -E 'a|b' src", "eslint 'src/**/*.ts'", "echo 'a' 'b'", `echo "it's fine"`,
+
+      // THE COMMA — the allowlist's OWN separator, and the delimiter this guard shipped without.
+      // `--allowedTools 'Edit,Write,…,Bash(<cmd>:*),…'` is parsed TEXTUALLY: the CLI splits that
+      // word on `,` and reads each entry as `Tool(spec)`. So `eslint --ext .js,.jsx,.ts,.tsx src`
+      // — the textbook multi-extension invocation, ONE program, no shell operator, which sailed
+      // through every operator probe above — SHATTERED the list into `Bash(eslint --ext .js` plus
+      // junk `.jsx` / `.ts` / `.tsx src:*)` entries. The real command then matched NO entry and was
+      // silently denied: #218's exact failure mode, delivered through the mechanism built to
+      // eliminate it, with A1–A6 all green (#341 review). The split is textual, so quoting cannot
+      // protect it — `jest -t "a,b"` breaks the list exactly as a bare comma does.
+      'eslint --ext .js,.jsx,.ts,.tsx src', 'eslint --ext .js,.ts .',
+      'jest --coverageReporters=text,lcov', 'pytest --ignore=a,b', 'jest -t "a,b"',
+
+      // PARENS — they delimit the `Bash(…)` rule itself, so a `)` closes it early. Same textual
+      // parse, so again quoting is no protection. This also catches `<(…)` process substitution,
+      // the third substitution form (the `$(` and backtick lookaheads never covered it).
+      'diff <(npm test) <(npm run build)', 'pytest -k "not (slow)"', 'npm test -- --grep "(a)"',
     ]) failsNaming(renderWith({ ...CMDS, typecheckCmd: bad }), 'typecheckCmd');
 
     // (c) …and it must NOT fire on an ordinary single-program command. A guard the consumer deletes
     // guards nothing — but note which way this errs. A false REJECT is loud, and the consumer works
     // around it in one line (`npm run ci`); a false ACCEPT is a dead grant nobody ever sees. A guard
     // for a silent-denial bug must fail CLOSED, so where the two conflict, loudness wins.
-    for (const good of [
+    //
+    // The comma/paren ban above must NOT be bought with a false rejection here: every consumer's
+    // command runs through this column on upgrade.
+    const ORDINARY = [
       'npm test', 'npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm pack --dry-run',
-      'go test ./...', 'cargo test --all-features', './gradlew build --no-daemon', 'make -j4 build',
-      'npm run test:ci', 'true', 'pytest -q', 'bundle exec rspec', 'python -m pytest',
+      'go test ./...', 'go build ./...', 'cargo test --all-features', './gradlew build --no-daemon',
+      'make -j4 build', 'bazel build //...', 'mvn -B verify', 'dotnet test --no-build',
+      'true', 'pytest -q', 'bundle exec rspec', 'python -m pytest', 'npm test -- --maxWorkers=2',
+      'npm run test:ci', 'npm run test:unit', // a `:` is NOT banned: the rule's prefix marker is the
+                                 // LAST `:*`, so `Bash(npm run test:ci:*)` matches. Banning the colon
+                                 // to "match" the comma would false-reject a huge population.
+      'C:\\tools\\node\\npm.cmd test', // a Windows path — `:` and `\` are both fine
       'cdk deploy --all',        // starts with "cd" — but the guard requires the trailing space
       'npm test -- ${FLAGS}',    // variable expansion is not `$(…)` and not `${{ }}`
-    ]) {
+
+      // A DOUBLE QUOTE is fine, and must stay fine. It is not a delimiter at ANY landing site: it is
+      // literal inside the single-quoted `--allowedTools '…'` shell word, literal in the
+      // `claude_args: >-` folded scalar, literal in the markdown code spans these values also land
+      // in, and a literal character in the `Bash(…)` prefix — where it ROUND-TRIPS with the command
+      // the agent actually runs (pinned in (d)). An earlier cut banned it alongside `'`, which
+      // rejected these three ordinary commands on upgrade with no failure mode behind the ban.
+      'go test -run "TestFoo" ./...', 'npm test -- --testPathPattern="src/.*"', 'jest -t "foo bar"',
+    ];
+    for (const good of ORDINARY) {
       assert.equal(
         renderWith({ ...CMDS, typecheckCmd: good }).ok, true,
         `an ordinary single-program command must render: ${good}`,
+      );
+    }
+
+    // (d) ACCEPTED ⇒ ACTUALLY GRANTED. The accept column above only proves the render did not fail;
+    // it cannot see a value that renders `ok` and still ships a dead grant — which is EXACTLY what
+    // the comma did, and exactly why a green A5 missed it. So close the loop on the real property:
+    // parse the shipped allowlist the way the CLI does (split the `--allowedTools` word on `,`, read
+    // each entry as `Bash(<prefix>:*)`) and assert the command the consumer configured is actually
+    // prefix-matched by some entry. This is the assertion the comma could not have survived.
+    for (const good of ORDINARY) {
+      const r = renderWith({ ...CMDS, typecheckCmd: good });
+      assert.equal(r.ok, true, `precondition: ${good} renders`);
+      const prefixes = bashPrefixes(allowedTools(claudeArgsOf(read(cwd, REL), 'implement')));
+      assert.ok(
+        isCovered(good, prefixes),
+        `the shipped allowlist must actually GRANT the configured command — ${JSON.stringify(good)} ` +
+          `matches no entry in ${JSON.stringify(prefixes)} (a dead grant: rendered ok, silently denied)`,
       );
     }
   });
