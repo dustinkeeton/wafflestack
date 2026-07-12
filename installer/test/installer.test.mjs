@@ -4809,8 +4809,9 @@ describe('this repo runs the render gate it shipped (#316)', () => {
 
     // The job name is load-bearing: `test` is a REQUIRED check on main, so the gate is only armed
     // while it lives here. Moved to a non-required job, it still runs and still catches nothing.
+    // Keep the STEP, not just its `run` text (#323): a step can be present and still not gate.
     const steps = wf.jobs?.test?.steps ?? [];
-    const gate = steps.map((s) => s.run ?? '').find((r) => /\bdoctor\b/.test(r) && r.includes('--verify-render'));
+    const gate = steps.find((s) => /\bdoctor\b/.test(s.run ?? '') && (s.run ?? '').includes('--verify-render'));
 
     assert.ok(
       gate,
@@ -4818,11 +4819,32 @@ describe('this repo runs the render gate it shipped (#316)', () => {
         '#316, and without this assertion nothing in the suite notices its removal',
     );
     // The render is partly gitignored here, so the gate needs the lock-only posture to run at all.
-    assert.match(gate, /--allow-missing/, 'the gate must tolerate the deliberately-untracked renders');
+    assert.match(gate.run, /--allow-missing/, 'the gate must tolerate the deliberately-untracked renders');
     // The heart of #316: run the CHECKOUT's toolkit. An `npx`'d toolkit (i.e. moving this into
     // `doctor.flags`, which waffle-doctor.yml runs off main) false-GREENS the very bug this
     // catches, and false-REDS any PR that correctly re-renders. See the step's comment block.
-    assert.match(gate, /installer\/cli\.mjs/, "the gate must run the checkout's own CLI, never an npx'd toolkit");
+    assert.match(gate.run, /installer\/cli\.mjs/, "the gate must run the checkout's own CLI, never an npx'd toolkit");
+
+    // #323 — EXISTENCE IS NOT EFFICACY. The assertions above pin the step's TEXT; these two pin
+    // that it still gates. Disabling the step is the same failure mode as deleting it — the guard
+    // is invisible while it is working either way — and both disarms are one line:
+    //   `continue-on-error: true` — the step runs, fails, and the job stays GREEN anyway.
+    //   `if: false`               — the step never runs at all.
+    // Falsy-not-absent on continue-on-error so an explicit `false` is allowed but any truthy value
+    // (including an `${{ … }}` expression, which parses as a non-empty string) is rejected.
+    assert.ok(
+      !gate['continue-on-error'],
+      'the gate must not be neutered with `continue-on-error`: a failing render check that leaves ' +
+        'the job green is not a check',
+    );
+    // Any `if:` at all is disqualifying, not just a literal `false`: the expression is evaluated by
+    // Actions, not by us, so an unconditional step is the only shape we can actually verify runs.
+    assert.equal(
+      gate.if,
+      undefined,
+      'the gate must run unconditionally: an `if:` guard can silently skip it on the very runs it ' +
+        'exists to police',
+    );
   });
 });
 
