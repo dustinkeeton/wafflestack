@@ -591,8 +591,53 @@ is what you reach for across a breaking one.
   commits its render will see a diff where the `model:` line disappears from each affected agent.
 
 ### Fixed
+- **The lock hashed the render your overlay produced, so private values propagated (#317,
+  superseding the #308 way-station).** `.waffle/waffle.local.yaml` is a developer's private tooling:
+  gitignored, per-machine, absent in CI. It leaked anyway. `render` wrote
+  `.waffle/waffle.lock.json` as a hash manifest of the **effective** render — overlay substitutions
+  already baked in — so any overlay value that fed a template was fingerprinted into a **committed**
+  file. Two teammates with different personal `git.botEmail` overrides produced **different**
+  committed lock hashes for the same source, and each one's commit reverted the other's; the loser's
+  `doctor` went red. Gitignoring the render did not help — the renders stayed private and the locks
+  still diverged. Committing the render was worse: the personal address landed literally in git, and
+  a teammate who pulled without re-rendering had their agents commit under the *renderer's* identity.
+  **The lock now records the CANONICAL render** — what the committed `.waffle/waffle.yaml` +
+  `.waffle/extensions/` produce **on their own**, with the overlay excluded. `render` computes both:
+  the *effective* render (config + overlay) is what lands on your disk, so your working copy still
+  carries your values; the *canonical* render is what is hashed into the lock. Canonical means
+  *everything committed*, so **extensions still propagate** — that contrast with the overlay is the
+  whole design. Every consequence follows: every developer's committed lock is **byte-identical**;
+  `doctor --verify-render` reproduces it in CI and goes **green** (it renders the same committed
+  inputs the lock records) instead of refusing to answer; and **nobody is red-gated into committing a
+  personal value**. Where the two renders diverge, the effective hashes go to a new **gitignored**
+  `.waffle/waffle.local.lock.json`, which `doctor`/`list`/`render`'s prune-and-clobber bookkeeping
+  read in preference to the committed lock — so a hand-edit to a rendered file is still caught
+  locally (integrity is not relaxed, it is measured against the render you actually have), while the
+  committed lock stays canonical. It is created only when the overlay changes an output byte and
+  removed when that stops. One value may no longer hide in the overlay: a **`required:` key with no
+  `default:`**, since the canonical render must be buildable from committed inputs — `render` now
+  fails loudly and names the key rather than silently substituting a default. (`git.botEmail` is
+  `required: false` with a default, so the canonical render simply uses it — the correct answer.)
+  This supersedes #308's `lock.renderedWithLocalOverlay` flag and doctor's `cannot verify the render:`
+  refusal, both removed: with a canonical lock there is nothing ambiguous left to refuse.
+  **Consumer impact:** **what the lock records has changed.** If a render-affecting value lives in
+  your `.waffle/waffle.local.yaml`, your next `render` rewrites `.waffle/waffle.lock.json` with the
+  canonical hashes — commit that diff once, and every teammate's lock agrees from then on. Add
+  `.waffle/waffle.local.lock.json` to `.gitignore` (`render --gitignore` does it; `render` warns if
+  you haven't). A repo with **no** overlay, or one whose overlay holds only values the render never
+  reads, is **entirely unaffected**: same lock, same render, no new file. The #308 guidance to commit
+  the values your render reads so CI would stop complaining is **withdrawn** — you no longer need to,
+  and you never should have had to. Two things remain true and are now stated plainly: a
+  render-affecting overlay means you should **gitignore the rendered output** (a committed file with
+  your personal address inside it *is* propagation — that is
+  [Posture 2b](docs/gitignore.md#posture-2b-commit-the-lock-only)), and a `required:` defaultless key
+  must be committed with *some* value (your overlay still overrides it locally, for you alone).
+  See [`docs/gitignore.md`](docs/gitignore.md#your-private-overlay-stays-private--and-the-gate-still-works).
 - **`doctor --verify-render` reported a missing gitignored input as drift, and told you to commit
-  the damage (#308 review, follow-up to #314).** `--verify-render` reproduces the render from the
+  the damage (#308 review, follow-up to #314).** *(Superseded by #317, above — the
+  `renderedWithLocalOverlay` flag and the `cannot verify the render:` refusal it describes were
+  removed once the lock became canonical. Kept for the record of what the bug was.)*
+  `--verify-render` reproduces the render from the
   **committed** inputs — and `.waffle/waffle.local.yaml` is not one of them: it is gitignored by
   design, so it does not exist in a CI checkout. But the lock was rendered on a machine where it
   *did*. Reproducing the render without it silently substituted the stack `default:` for every
@@ -610,12 +655,9 @@ is what you reach for across a breaking one.
   with no overlay, so the presence of a gitignored file never leaks into committed content. It counts
   a key reached only through **nested substitution** (`git.cmd: … {{git.botEmail}}`) — which is how
   the hazard actually arises, and which a scan of the template bodies alone cannot see.
-  **Consumer impact:** `doctor --verify-render` in CI now requires that the values your render reads
-  are **committed**, not overlay-held — commit a public bot address (`bot@wafflenet.io` or one on
-  your own domain), or keep `--verify-render` as a local pre-push check. A repo that already commits
-  its identity values is unaffected. `renderedWithLocalOverlay` is emitted only when true, so an
-  existing lock is byte-identical and re-rendering changes nothing for repos with no overlay.
-  See [`docs/gitignore.md`](docs/gitignore.md#one-real-constraint-the-values-it-renders-from-must-be-committed).
+  **Consumer impact:** none — this shipped in the same release as #317, which supersedes it. The
+  "commit the values your render reads" trade it asked for is **withdrawn**; see #317 above for what
+  actually landed, and [`docs/gitignore.md`](docs/gitignore.md#your-private-overlay-stays-private--and-the-gate-still-works).
 - **`pr-response` overwrote its own verdict history (owner report, found while running the skill on
   #308).** The skill's "Idempotency" section told
   the responder to find its last marked `<!-- waffle-pr-response -->` comment and **`PATCH`** it, so

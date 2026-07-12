@@ -90,7 +90,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | `render` | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.waffle/waffle.lock.json`. |
 | `install [ref…]` | With refs: add them to `.waffle/waffle.yaml` (stack name → `stacks:`, item → `include:`), pull in their dependencies, then render. Refs are a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` (qualify when a name is in two stacks). Bare `install` = `render`. Add `--gitignore` to append the recommended ignore entries (`.waffle/waffle.local.yaml`, plus the configured `git.worktreesDir` when an enabled stack declares one) — idempotent, existing content preserved. Also on `render`. |
 | `upgrade` | Move an existing install across toolkit versions: compare the lock's `toolkitVersion` to the invoked toolkit, print the `CHANGELOG.md` entries in between, run any registered migrations in order, then re-render and run `doctor`. A missing lock or version degrades to a plain render + doctor with a clear note. See [Rules of the road](#rules-of-the-road). |
-| `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational — but a checkout with *every* managed file absent still fails, having verified nothing. Add `--verify-render` to also verify the lock against a fresh render of the committed config, in a temp dir — it catches a config or extension change that was never re-rendered (which the tree-vs-lock check cannot see, since both go stale together) and never touches the working tree. `--allow-missing --verify-render` is the gate for a repo that commits only the lock. |
+| `doctor` | Diff managed files against the lock manifest; report local edits, missing files, and env prerequisites. Exit 1 on drift. Add `--allow-missing` to tolerate absent renders (a CI drift gate for repos that gitignore some outputs): only *modified* files fail, missing ones are informational — but a checkout with *every* managed file absent still fails, having verified nothing. Add `--verify-render` to also verify the lock against a fresh render of the committed config, in a temp dir — it catches a config or extension change that was never re-rendered (which the tree-vs-lock check cannot see, since both go stale together) and never touches the working tree. It renders the same **committed** inputs the lock records, so it is a real gate in CI whatever your gitignored `.local` overlay holds. `--allow-missing --verify-render` is the gate for a repo that commits only the lock. |
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
 
@@ -102,9 +102,16 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 2. **Account-specific values** (bot identities, board IDs) go in `.waffle/waffle.local.yaml`,
    which is gitignored and merged over the committed config. Config values may reference
    other keys with `{{...}}` (nested substitution) — so a committed value can point at a
-   key kept in the local overlay. wafflestack never edits your `.gitignore` *unasked*, but
-   `wafflestack install --gitignore` (or the setup agent, on your approval) appends the
-   entries for you — the local overlay always, plus the configured worktrees directory.
+   key kept in the local overlay. **The overlay is private and never propagates**: the lock
+   hashes the *canonical* render — what your committed config and extensions produce on their
+   own — so your values shape your working copy and nobody else's, and every teammate's lock
+   is byte-identical. (Extensions are the deliberate contrast: they *are* committed, so they
+   are canonical, so they do propagate.) The one thing that cannot hide in the overlay is a
+   `required:` key with no `default:` — the canonical render must be buildable from committed
+   inputs, and `render` says so loudly rather than substituting something behind your back.
+   wafflestack never edits your `.gitignore` *unasked*, but `wafflestack install --gitignore`
+   (or the setup agent, on your approval) appends the entries for you — the local overlay and
+   its local lock always, plus the configured worktrees directory.
 3. **Updates are re-renders — until they aren't.** For patch/minor tags,
    `npx github:dustinkeeton/wafflestack#<newtag> render` regenerates everything and your
    config and extensions survive untouched. For a **breaking** tag (a renamed/removed item,
@@ -127,9 +134,9 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
    that: it renders your committed config into a temp dir (never the working tree) and checks the
    result against the committed lock. Paired with `--allow-missing` it is also the gate for a repo
    that gitignores its *whole* render — nothing is present to compare, so the render is reproduced
-   and verified instead. It renders from your **committed** inputs, so a value the render reads
-   must not live only in the gitignored `.local` overlay — commit it, or run `--verify-render`
-   locally rather than in CI ([the trade-off](docs/gitignore.md#one-real-constraint-the-values-it-renders-from-must-be-committed)).
+   and verified instead. It renders from your **committed** inputs, which is exactly what the lock
+   records, so it works in CI no matter what your gitignored `.local` overlay holds
+   ([how](docs/gitignore.md#your-private-overlay-stays-private--and-the-gate-still-works)).
 
 **Deciding what to commit?** [Committing vs. gitignoring the rendered output](docs/gitignore.md) argues the trade-off — what you gain and lose each way, and why the lock is a separate decision from the render.
 

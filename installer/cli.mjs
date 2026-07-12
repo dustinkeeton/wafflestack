@@ -18,6 +18,7 @@ import {
   recommendedGitignoreEntries,
   CONFIG_FILE,
   LOCAL_CONFIG_FILE,
+  LOCAL_LOCK_FILE,
 } from './lib/project.mjs';
 
 const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
@@ -116,10 +117,11 @@ try {
       const file = init({ cwd });
       console.log(`wrote ${file} — pick stacks and config values, then run \`wafflestack render\``);
       console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
-      // Only the local overlay (`.waffle/waffle.local.yaml`) is knowable at init (no stacks
-      // chosen yet); `install --gitignore` later adds the worktrees dir once a stack that
-      // declares it is enabled.
-      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE]));
+      // Only the local overlay (`.waffle/waffle.local.yaml`) and its derivative the local lock
+      // (`.waffle/waffle.local.lock.json` — this machine's render, written only when the overlay
+      // feeds it; #317) are knowable at init, no stacks having been chosen yet; `install
+      // --gitignore` later adds the worktrees dir once a stack that declares it is enabled.
+      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE]));
       break;
     }
     case 'setup': {

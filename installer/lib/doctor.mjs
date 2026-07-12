@@ -2,15 +2,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sha256, exists } from './util.mjs';
-import { readLock, renderProject } from './render.mjs';
+import { readLock, readTreeLock, renderProject } from './render.mjs';
 import {
   LOCK_FILE,
+  LOCAL_LOCK_FILE,
   CONFIG_FILE,
   LOCAL_CONFIG_FILE,
   EXTENSIONS_DIR,
   resolveLockFile,
   resolveConfigFile,
-  resolveLocalConfigFile,
   loadProjectConfig,
 } from './project.mjs';
 import { loadToolkitWithSources } from './toolkit.mjs';
@@ -70,22 +70,35 @@ function noVerify() {
  * on purpose — verify by rendering instead"), so `--allow-missing --verify-render` is a REAL gate
  * for a repo that commits only the lock. Opt-in: it needs the toolkit resolved (and, for external
  * `source:` stacks, possibly the network), so absent the flag doctor behaves exactly as before.
+ *
+ * Two locks, two questions (#317). The committed `lock` records the CANONICAL render — committed
+ * inputs only, the private `.local` overlay excluded — so it is byte-identical on every machine and
+ * is what `--verify-render` reproduces and checks. But on a machine whose overlay feeds the render,
+ * the BYTES ON DISK are the effective render, and hashing them against canonical hashes would call
+ * every overlay-touched file hand-edited. So the tree-vs-lock check reads `readTreeLock` — the local
+ * lock when there is one, else the committed one — which is by construction the manifest of the
+ * files that are actually there. The two coexist without overlapping: one asks "has anyone edited my
+ * rendered files", the other "does the committed config still produce the committed lock".
  */
 export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
   const lock = readLock(cwd);
   if (!lock) {
     return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, prerequisites: noPrereqs(), render: noVerify() };
   }
+  // The manifest of what is actually on disk (see the docblock). Identical to `lock` unless a local
+  // overlay shaped this machine's render.
+  const tree = readTreeLock(cwd);
+  const localRender = tree !== lock;
 
   const attribution = {};
-  for (const src of lock.sources ?? []) {
+  for (const src of tree.sources ?? []) {
     const label = sourceLabel(src);
     for (const rel of src.files ?? []) attribution[rel] = label;
   }
 
   const modified = [];
   const missing = [];
-  for (const [rel, hash] of Object.entries(lock.files)) {
+  for (const [rel, hash] of Object.entries(tree.files)) {
     const abs = path.join(cwd, rel);
     if (!exists(abs)) {
       missing.push(rel);
@@ -96,13 +109,21 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
 
   // The all-absent guard (#311). `total > 0` keeps a lock with an empty file set out of it —
   // there is nothing to render, so nothing to have failed to render.
-  const total = Object.keys(lock.files).length;
+  const total = Object.keys(tree.files).length;
   const nothingPresent = allowMissing && total > 0 && missing.length === total;
 
   const notes = [];
   // A repo still on the legacy lock name reads fine (readLock falls back) but should migrate.
   const lockPath = resolveLockFile(cwd);
   if (lockPath.legacy) notes.push(lockPath.note);
+  // Say which lock answered the on-disk question, so a drift report is never mystifying: on an
+  // overlay machine the hashes checked here are NOT the hashes in the committed lock, and that is
+  // the design, not a bug to go chasing.
+  if (localRender) {
+    notes.push(
+      `${LOCAL_CONFIG_FILE} feeds this machine's render, so the files on disk were checked against ${LOCAL_LOCK_FILE} (this machine's render); ${LOCK_FILE} records the canonical render and is the one you commit`,
+    );
+  }
   // Always report which toolkit version the tree was rendered from, so a drift report
   // says what a repo is sitting on — not just when it happens to skew from the CLI.
   const rendered = lock.toolkitVersion ?? 'unknown (pre-versioned lock)';
@@ -178,13 +199,28 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
 /**
  * Reproduce the render from the committed inputs and compare it to the committed lock (#314).
  *
- * The inputs — `.waffle/waffle.yaml`, the `.local` overlay, `.waffle/extensions/`, and the lock
- * itself — are copied into a fresh temp dir, which is then rendered as if it were the project.
+ * The inputs — `.waffle/waffle.yaml`, `.waffle/extensions/`, and the lock itself — are copied into
+ * a fresh temp dir, which is then rendered as if it were the project.
  * The working tree is never written to, read-only from start to finish; the temp dir is removed in
  * a `finally`, including on error. That isolation is the whole point: gating on an in-place
  * `render` mutates the tree AND rewrites the lock it would be compared against, so it cannot fail
  * (see the tautology warning in docs/gitignore.md). Rendering to scratch and diffing against the
  * *unmodified* committed lock has no such circularity.
+ *
+ * The `.local` overlay is NOT copied in (#317). Since the lock now records the CANONICAL render —
+ * committed inputs only — this check gets the same answer on the CI runner that never had an overlay
+ * and on the developer who wrote one, and both match the committed lock. That is what makes it a
+ * green gate rather than the refusal #308 had to install back when the lock was built from whatever
+ * values happened to be on the rendering machine: with a canonical lock there is nothing ambiguous
+ * left to refuse.
+ *
+ * Be precise about the omission, though: it is a cleanup, not the mechanism. `renderProject` excludes
+ * the overlay from the lock all by itself, so copying the file in would leave the verdict unchanged —
+ * the temp render would simply produce the same canonical lock, plus a local lock nobody reads, in a
+ * directory about to be deleted. It is left out because the lock is *defined* not to be a function of
+ * it: feeding in an input the answer cannot depend on is dead weight, it would drag any external
+ * `source:` the overlay declares through resolution (a network fetch) for nothing, and it invites the
+ * next reader to believe the overlay is somehow part of what is being verified. It is not.
  *
  * Three ways the lock can disagree with a fresh render, reported separately because they mean
  * different things:
@@ -200,26 +236,11 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
  *
  * A render that outright fails (bad config, unresolvable source) is a failure of the check, not a
  * clean bill of health: `ok: false` with the render's own errors. Same for a missing toolkit root.
- *
- * And the same for an input that is not here to render *from* (#308 review). The `.local` overlay is
- * gitignored by design, so it does not exist in a CI checkout — while the lock was rendered on a
- * machine where it did. Reproducing the render without it silently substitutes stack `default:`s
- * (`git.botEmail` is `required: false`, so nothing errors) and every file the overlay touched comes
- * back `stale`. That is a missing input, not drift, and reporting it as drift is worse than useless:
- * the remediation it implies — re-render and commit — would bake the default over the repo's real
- * bot identity. So when the lock says the overlay fed the render and the overlay is absent, refuse
- * the question: `ok: false` with an error that says which input is missing, and no drift at all.
  */
 export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, sourceCacheDir = defaultSourceCacheDir() }) {
   const result = { evaluated: false, ok: false, checked: 0, stale: [], absent: [], unexpected: [], errors: [] };
   if (!toolkitRoot) {
     result.errors.push('--verify-render needs the toolkit to render from, but no toolkit root was supplied');
-    return result;
-  }
-  if (lock?.renderedWithLocalOverlay && !exists(resolveLocalConfigFile(cwd).file)) {
-    result.errors.push(
-      `cannot verify the render: the lock was rendered with ${LOCAL_CONFIG_FILE}, which supplied a value the render used — and that file is not here. It is gitignored by design, so it is absent in every fresh CI checkout. Re-rendering without it would fall back to stack defaults and report every file it touched as stale, so this check refuses to guess. Move the render-affecting keys into ${CONFIG_FILE} (see docs/gitignore.md — a repo that verifies its render in CI must commit the values that feed it), or run --verify-render where the overlay exists.`,
-    );
     return result;
   }
 
@@ -240,8 +261,10 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
     }
     copy(config.file, CONFIG_FILE);
 
-    const localConfig = resolveLocalConfigFile(cwd);
-    if (exists(localConfig.file)) copy(localConfig.file, LOCAL_CONFIG_FILE);
+    // NOT the `.local` overlay — see the docblock: the lock is defined not to depend on it, so
+    // handing it in is dead weight (and would resolve any external source it declares, for nothing).
+    // Extensions ARE copied, and that is the deliberate contrast: they are committed, so they are
+    // canonical, so they belong to the render being verified.
     const extensions = path.join(cwd, EXTENSIONS_DIR);
     if (exists(extensions)) copy(extensions, EXTENSIONS_DIR);
     copy(resolveLockFile(cwd).file, LOCK_FILE);
