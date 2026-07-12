@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { exists, writeFileEnsuringDir } from './util.mjs';
-import { readLock } from './render.mjs';
+import { readLock, readLocalLock } from './render.mjs';
 import { loadToolkit } from './toolkit.mjs';
 import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches, itemOutputMatcher } from './refs.mjs';
 import {
@@ -10,6 +10,7 @@ import {
   LEGACY_ROOT_CONFIG_FILE,
   LEGACY_CONFIG_FILE,
   LOCK_FILE,
+  LOCAL_LOCK_FILE,
   resolveConfigFile,
   renameLegacyStacksKey,
 } from './project.mjs';
@@ -51,26 +52,37 @@ export function eject({ cwd, item, log = () => {} }) {
   }
   if (dirty) fs.writeFileSync(configFile, doc.toString());
 
-  const lock = readLock(cwd);
-  const released = [];
-  if (lock) {
-    // A `files/` item is a single output at its repo-relative path — matched exactly (no
-    // prefix match, so `scripts/build` never sweeps up `scripts/build.mjs`). Agents and skills
-    // expand to their per-target render dirs. `itemOutputMatcher` is the shared inverse of the
-    // render's item→path mapping (also used by `list` for per-item drift).
-    const matches = itemOutputMatcher(kind, name);
+  // Release the item's paths from EVERY lock that tracks them — the committed one, and (when a
+  // `.local` overlay shapes this machine's render) the gitignored local one too (#317). Both matter,
+  // for different reasons: the committed lock is what stops the *project* managing the file, and the
+  // local lock is what the next render's stale-prune reads to decide what to delete. Leave the local
+  // lock still listing an ejected path and the very next `render` sweeps the now project-owned file
+  // off disk — the opposite of ejecting it.
+  //
+  // A `files/` item is a single output at its repo-relative path — matched exactly (no prefix match,
+  // so `scripts/build` never sweeps up `scripts/build.mjs`). Agents and skills expand to their
+  // per-target render dirs. `itemOutputMatcher` is the shared inverse of the render's item→path
+  // mapping (also used by `list` for per-item drift).
+  const matches = itemOutputMatcher(kind, name);
+  const released = new Set();
+  const locks = [
+    { lock: readLock(cwd), file: LOCK_FILE },
+    { lock: readLocalLock(cwd), file: LOCAL_LOCK_FILE },
+  ];
+  for (const { lock, file } of locks) {
+    if (!lock) continue;
     for (const rel of Object.keys(lock.files)) {
       if (matches(rel)) {
         delete lock.files[rel];
-        released.push(rel);
+        released.add(rel);
       }
     }
     // Always write to the current location (creating `.waffle/` when a legacy-layout repo
     // has no dir yet) — a lock read via the legacy fallback migrates here as a side effect.
-    writeFileEnsuringDir(path.join(cwd, LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`);
+    writeFileEnsuringDir(path.join(cwd, file), `${JSON.stringify(lock, null, 2)}\n`);
   }
 
-  return { ref, released };
+  return { ref, released: [...released].sort((a, b) => a.localeCompare(b)) };
 }
 
 /**

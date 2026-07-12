@@ -139,10 +139,21 @@ Walk the config schema of every enabled stack (from the inventory):
   annotated tags. For a bot that should really sign, the
   github-workflow setup note's recipes B (SSH) and C (GPG) reference `git.signingKey` and require a
   non-prompting signer.
-  **Caveat to the layering split:** a repo that commits its rendered output and re-renders in CI
-  or in fresh `git worktree` checkouts must commit `git.botEmail` too — a gitignored overlay does
-  not exist there, so the value would render differently per machine and trip the doctor drift
-  gate. Use a public noreply-style address. The overlay split suits repos that render locally only.
+  **The overlay never propagates, by construction.** The lock hashes the **canonical** render —
+  what the committed `.waffle/waffle.yaml` + `.waffle/extensions/` produce on their own — so an
+  overlay value shapes that machine's rendered files and nothing else: every teammate's committed
+  lock is byte-identical, and `doctor --verify-render` reproduces it in CI regardless of what any
+  overlay holds. (Extensions are the deliberate contrast: committed, therefore canonical, therefore
+  they *do* propagate.) Two consequences to state to the user:
+  - **A render-affecting overlay means gitignoring the rendered output** (`docs/gitignore.md`,
+    Posture 2b). Not a tool limitation — a *committed rendered file with their personal address
+    inside it* **is** the propagation the overlay was meant to prevent. A repo that wants its render
+    committed should put a **public** bot address in `.waffle/waffle.yaml` instead (the toolkit
+    default `bot@wafflenet.io`, or one on their own domain), which costs nothing.
+  - **A `required:` key with no `default:` may not live only in the overlay** — the canonical render
+    must be buildable from committed inputs. `render` fails loudly and names the key; commit *a*
+    value (a team address, a placeholder) and the overlay goes on overriding it locally. Never
+    advise committing a personal value to silence a gate.
 - Only keys declared in a stack's config schema are substituted — do not invent keys.
 
 ## 4. External prerequisites — walk the block (required)
@@ -192,6 +203,8 @@ content is already byte-identical to the render is adopted silently, no flag nee
 
 ## 6. Version control
 
+> Weighing whether to commit the render at all? [`docs/gitignore.md`](../docs/gitignore.md) argues the trade-off posture by posture — and is precise that `--allow-missing` tolerates absent *renders*, never an absent *lock*.
+
 - **Commit**: `.waffle/waffle.yaml`, the rendered output (`.claude/`, `.codex/`,
   `.agents/`), and `.waffle/waffle.lock.json`. Teammates then get working agent files
   without running the installer, and `wafflestack doctor` can catch drift in CI — the
@@ -204,16 +217,29 @@ content is already byte-identical to the render is adopted silently, no flag nee
   `wafflestack install --gitignore` (it idempotently appends only the missing ones under a
   `# wafflestack` marker, preserving existing content) or hand-edit the file. Baseline:
   - `.waffle/waffle.local.yaml` — **always** (account-specific config must never be committed).
+  - `.waffle/waffle.local.lock.json` — **always**. The manifest of the render *that machine*
+    wrote; `render` creates it only when the overlay changes an output byte, and it is
+    account-specific for the same reason the overlay is. `doctor`/`list` read it in preference to
+    the committed lock, so hand-edits are still caught locally while the committed lock stays
+    canonical. Committing it would push one machine's hashes into everyone's `doctor`.
   - the configured `git.worktreesDir` when an enabled stack declares one (throwaway
-    working state). `init --gitignore` seeds only the local overlay, since no stack is
+    working state). `init --gitignore` seeds the overlay and its local lock, since no stack is
     chosen yet; `install --gitignore` adds the worktrees dir once one is enabled.
 - **Dev-only or self-hosting waffle**: when the render should *not* be committed — a
   consumer who wants the waffle only in their own working environment, or the wafflestack
   source repo itself (where committed copies would duplicate every skill in the tree) —
-  also gitignore the rendered output (`.claude/`, `.codex/`, `.agents/`) and
-  `.waffle/waffle.lock.json`, and set `doctor.flags: --allow-missing` (github-workflow
-  stack) so the CI drift gate tolerates the deliberately-absent renders: only modified
-  files fail, a missing lock still fails.
+  gitignore the rendered output (`.claude/`, `.codex/`, `.agents/`). **The lock is a
+  separate decision**, and it is the one that decides whether CI can gate at all:
+  - **Keep `.waffle/waffle.lock.json` committed.** Ignoring *some* renders: set
+    `doctor.flags: --allow-missing` (github-workflow stack) and the drift gate keeps full
+    strength on the rest — only modified files fail. Ignoring *every* render: set
+    `doctor.flags: --allow-missing --verify-render`. `doctor` refuses to pass on an all-absent
+    tree (a check that inspected nothing is not a green), and `--verify-render` is the principled
+    escape — it re-renders the committed config into a temp dir and holds the result against the
+    committed lock, so the gate has something real to do (`docs/gitignore.md`, Posture 2b).
+  - **Gitignore the lock too** and there is no CI drift gate: a missing lock fails `doctor`
+    unconditionally — `--allow-missing` is never consulted — so the flag neither helps nor
+    applies. A purely local waffle; every person renders their own.
 - Tell the user the standing rule: never hand-edit rendered files — `render` overwrites
   them. Project-specific additions go in `.waffle/extensions/{agents,skills}/<name>.md`
   (committed) and take effect on the next render.

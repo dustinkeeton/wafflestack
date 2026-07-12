@@ -18,10 +18,15 @@ import {
   makeResolver,
   migrateLegacyDotfiles,
   staleGitignoreEntries,
+  gitignoreMentions,
   resolveLockFile,
+  resolveLocalConfigFile,
+  localLockPath,
   HARNESS_PATTERNS,
   CONFIG_FILE,
+  LOCAL_CONFIG_FILE,
   LOCK_FILE,
+  LOCAL_LOCK_FILE,
   EXTENSIONS_DIR,
 } from './project.mjs';
 
@@ -29,10 +34,44 @@ import {
  * Render every enabled stack into the project at `cwd`.
  * Frozen-image contract: outputs are regenerated verbatim; managed files from the
  * previous lock that are no longer rendered get deleted; a fresh lock is written.
+ *
+ * ## Two renders, because the lock is shared and the overlay is not (#317)
+ *
+ * `.waffle/waffle.local.yaml` is a developer's private tooling: gitignored, different on every
+ * machine, and absent in CI. It must never reach a teammate's workspace — and the lock is a
+ * *committed* file, so a lock built from the overlay's values is exactly that leak. (It was one:
+ * two developers with different `git.botEmail` overlays produced different committed lock hashes,
+ * and each one's commit reverted the other's.) So this function computes the render twice:
+ *
+ *   - the **effective** render — committed config *plus* the overlay — is what gets **written to
+ *     disk**, so your working copy carries YOUR values, exactly as before;
+ *   - the **canonical** render — committed inputs alone (`.waffle/waffle.yaml` +
+ *     `.waffle/extensions/`) — is what gets **hashed into `.waffle/waffle.lock.json`**.
+ *
+ * Canonical means *everything committed*. Extensions are committed, so they are canonical and they
+ * still propagate — that contrast with the overlay is the whole design. The consequences all fall
+ * out: every developer's committed lock is byte-identical, nobody is ever red-gated into committing
+ * a personal value, and `doctor --verify-render` (which renders the committed config in a temp dir)
+ * reproduces the canonical lock exactly, so it goes green in CI instead of refusing to answer.
+ *
+ * With no overlay present the two configs are the same object and the second render is skipped
+ * entirely — the overwhelmingly common case pays nothing and behaves byte-for-byte as before.
+ *
+ * When they diverge, the bytes on disk are no longer the bytes the lock records, so the frozen-image
+ * bookkeeping needs its own truthful record of the tree: `.waffle/waffle.local.lock.json`, gitignored,
+ * written only on divergence and removed when it ends. See `readTreeLock`.
+ *
+ * `sourceBaseDir` is the base a *relative local-path* external `source:` resolves against; it
+ * defaults to `cwd` (the project being rendered), which is what every ordinary render wants. It is
+ * separable only for `doctor --verify-render` (#314), which renders the committed inputs into a
+ * temp dir to check them against the lock: there `cwd` is the scratch dir, but a `source: ../foo`
+ * in the config still names a path relative to the REAL repo. Nothing else in the render follows
+ * it — outputs, extensions, and the lock all stay bound to `cwd`.
  */
 export function renderProject({
   toolkitRoot,
   cwd,
+  sourceBaseDir = cwd,
   toolkitVersion,
   force = false,
   log = () => {},
@@ -51,7 +90,13 @@ export function renderProject({
       `.gitignore still lists ${stale.join(', ')} — update to the .waffle/ paths (the CLI does not edit .gitignore)`,
     );
   }
+
+  // The two configs (see the docblock). `canonicalProject === project` — the same object, by
+  // identity — is the "no overlay" fast path every branch below tests against.
   const project = loadProjectConfig(cwd, warnings);
+  const canonicalProject = exists(resolveLocalConfigFile(cwd).file)
+    ? loadProjectConfig(cwd, [], { canonical: true })
+    : project;
 
   // External stack sources (#88): resolve each declared `{ name, source, ref }` entry to a
   // toolkit root — a git URL fetched at the pinned `ref`, or a local path read in place — and
@@ -59,15 +104,23 @@ export function renderProject({
   // and external stacks alike. Cross-source name collisions are a hard error naming both sources
   // (see loadToolkitWithSources). A resolution/collision failure is surfaced as a render error
   // (same fail-loud, tree-untouched contract as the guards below), not thrown.
-  let toolkit;
-  try {
-    toolkit = loadToolkitWithSources({
+  const loadToolkitFor = (proj) =>
+    loadToolkitWithSources({
       builtinRoot: toolkitRoot,
-      externalStacks: project.externalStacks ?? [],
-      cwd,
+      externalStacks: proj.externalStacks ?? [],
+      cwd: sourceBaseDir,
       cacheDir: sourceCacheDir,
       refreshSources,
     });
+  let toolkit;
+  let canonicalToolkit;
+  try {
+    toolkit = loadToolkitFor(project);
+    // The canonical render must resolve its stacks from the COMMITTED config too — otherwise an
+    // overlay that redeclares `stacks:` (an added source, a different `ref:`) would leak back into
+    // the lock through the toolkit registry, by the back door. Re-resolved only when the overlay
+    // actually changes the external entries; the source cache makes that near-free when it does.
+    canonicalToolkit = sameExternalStacks(project, canonicalProject) ? toolkit : loadToolkitFor(canonicalProject);
   } catch (err) {
     return { ok: false, warnings, errors: [err.message] };
   }
@@ -80,18 +133,228 @@ export function renderProject({
   // coarser breakage (unparseable manifest, missing SKILL.md); this adds the finer lint the
   // toolkit's own `validate` runs, scoped to external stacks so built-in ones aren't re-linted on
   // every consumer render. Returning here leaves the tree untouched (nothing is written yet).
-  if (project.externalStacks?.length) {
-    const problems = validateExternalStacks(toolkit);
-    if (problems.length) {
-      return {
-        ok: false,
-        warnings,
-        errors: problems.map((p) => `${p} — malformed external stack; fix it at the source before rendering`),
-      };
+  const externalProblems = new Set([
+    ...(project.externalStacks?.length ? validateExternalStacks(toolkit) : []),
+    ...(canonicalToolkit !== toolkit && canonicalProject.externalStacks?.length
+      ? validateExternalStacks(canonicalToolkit)
+      : []),
+  ]);
+  if (externalProblems.size) {
+    return {
+      ok: false,
+      warnings,
+      errors: [...externalProblems].map((p) => `${p} — malformed external stack; fix it at the source before rendering`),
+    };
+  }
+
+  // Read both locks up front, before anything is written.
+  //   `lock`      — the committed, CANONICAL lock: what the project renders.
+  //   `localLock` — the gitignored, EFFECTIVE lock: what THIS machine last rendered. Absent
+  //                 unless the overlay moved a byte.
+  // Every question about the tree on disk (which files are mine to prune, which pre-existing file
+  // would I clobber, which opt-in syrup is already poured here) must be answered by the lock that
+  // actually describes that tree — so the frozen-image bookkeeping below reads `treeLock`, never
+  // `lock`. Answering from the canonical lock on an overlay machine would prune files it never
+  // wrote and refuse to overwrite files it did.
+  const lock = readLock(cwd);
+  const localLock = readLocalLock(cwd);
+  const treeLock = localLock ?? lock;
+
+  const errors = [];
+  const effective = computeOutputs({
+    toolkit,
+    project,
+    cwd,
+    errors,
+    warnings,
+    trackedFiles: new Set(Object.keys(treeLock?.files ?? {})),
+  });
+
+  // Generalized prerequisite warnings (#129): beyond the legacy `env:` map, every declared
+  // `prerequisites:` entry cheap to probe locally (a `tool`/`env` kind — a `command -v` binary
+  // check or an env-var read) that is currently unmet emits a non-blocking `warning:`. This is
+  // advisory only — it never fails the render (that is `doctor`'s job), and it deliberately does
+  // NOT shell out for the network/auth kinds (secret, scope, label, setting, service), which the
+  // deliberate `doctor` gate verifies instead. Scoped to the selected items, like `requires:`.
+  //
+  // Deliberately OUTSIDE `computeOutputs`: it shells out, and it describes the machine you are
+  // rendering on — so it runs once, against the effective selection, never twice.
+  {
+    const prereqs = applicablePrerequisites(toolkit, { items: effective.selection.items });
+    const { unmetRequired, unmetRecommended } = evaluatePrerequisites(prereqs, cwd, {
+      kinds: RENDER_PROBE_KINDS,
+      timeoutMs: 5000,
+    });
+    for (const p of [...unmetRequired, ...unmetRecommended]) warnings.push(formatPrereq(p));
+  }
+
+  // The same placeholder is substituted once per target, so a missing value yields
+  // one error per target — collapse to a distinct set.
+  //
+  // The developer's OWN render is checked first, and a failure returns here — which is also what
+  // keeps the canonical failure below unambiguous. If the effective render is broken, that is the
+  // problem to report; only once it is clean can a *canonical* error mean anything else.
+  if (errors.length) return { ok: false, errors: [...new Set(errors)], warnings };
+
+  // The canonical render — the bytes the lock will record. Nothing here is written to disk.
+  // Its warnings are dropped on purpose: they describe a render that exists nowhere (the syrup
+  // pairing note, the env prerequisites) and would double every line the effective pass already
+  // said.
+  const canonicalErrors = [];
+  const canonical =
+    canonicalProject === project
+      ? effective
+      : computeOutputs({
+          toolkit: canonicalToolkit,
+          project: canonicalProject,
+          cwd,
+          errors: canonicalErrors,
+          warnings: [],
+          trackedFiles: new Set(Object.keys(lock?.files ?? {})),
+        });
+
+  // A canonical error that survives a clean effective render can have exactly one cause: the
+  // overlay supplied something the committed config cannot. The headline case is a `required:` key
+  // with no `default:` held ONLY in the overlay — the render works for you and for nobody else,
+  // and the lock could not be built from committed inputs at all.
+  //
+  // That must be LOUD, never a silent fallback to a default nobody asked for, and never a silent
+  // half-lock (#317, constraint 2). It is not a red-gate on a *personal* value either: the fix is
+  // to commit SOME value — a team address, the stack's own default, a placeholder — while your
+  // private one keeps overriding it locally. A defaultless required key is by definition one the
+  // stack cannot render without, so the canonical render must be given something.
+  if (canonicalErrors.length) {
+    return {
+      ok: false,
+      warnings,
+      errors: [
+        `${LOCK_FILE} records the CANONICAL render — what ${CONFIG_FILE} + ${EXTENSIONS_DIR}/ produce on ` +
+          `their own — and that render fails. Yours succeeds only because ${LOCAL_CONFIG_FILE} supplies what ` +
+          `the committed config is missing, and that overlay is private: it is gitignored, so it is in no ` +
+          `teammate's checkout and in no CI runner, and the shared lock can never be built from it. Commit a ` +
+          `value for each key below to ${CONFIG_FILE} — the overlay still overrides it locally, for you alone.`,
+        ...new Set(canonicalErrors),
+      ],
+    };
+  }
+
+  // Frozen image: reconcile against the lock that describes the TREE (read up front).
+  const managed = treeLock?.files ?? {};
+
+  // Refuse to clobber a pre-existing UNMANAGED file: a path this render would produce that
+  // already exists on disk but was not tracked by the previous lock — i.e. the consumer's
+  // own hand-written file, not a prior render of ours. A byte-identical file is adopted
+  // silently (the write is a no-op and the new lock records it either way); only a genuine
+  // content difference is a collision. `--force` overwrites. Checked before any write or
+  // prune, so a refusal leaves the whole tree untouched — same fail-loud spirit as the
+  // cross-stack `emit()` conflict above.
+  if (!force) {
+    const collisions = [];
+    for (const [rel, content] of effective.outputs) {
+      if (rel in managed) continue; // already ours — re-render/restore is expected
+      const abs = path.join(cwd, rel);
+      if (!exists(abs)) continue; // fresh path — nothing to clobber
+      if (sha256(fs.readFileSync(abs)) === sha256(content)) continue; // identical — silent adopt
+      collisions.push(rel);
+    }
+    if (collisions.length) {
+      const errs = collisions
+        .sort((a, b) => a.localeCompare(b))
+        .map(
+          (rel) =>
+            `refusing to overwrite ${rel}: a pre-existing file not tracked by ${LOCK_FILE} — back it up or remove it and re-render, or pass \`--force\` to overwrite it`,
+        );
+      return { ok: false, errors: errs, warnings };
     }
   }
 
-  const errors = [];
+  // Remove previously managed files that this render no longer produces.
+  const removed = [];
+  for (const rel of Object.keys(managed)) {
+    if (!effective.outputs.has(rel) && exists(path.join(cwd, rel))) {
+      fs.rmSync(path.join(cwd, rel));
+      removed.push(rel);
+    }
+  }
+
+  // Write the EFFECTIVE render — your overlay's values, on your disk.
+  for (const [rel, content] of sortedOutputs(effective.outputs)) {
+    writeFileEnsuringDir(path.join(cwd, rel), content);
+  }
+
+  const canonicalFiles = hashOutputs(canonical.outputs);
+  const effectiveFiles = canonical === effective ? canonicalFiles : hashOutputs(effective.outputs);
+
+  // Per-source provenance (#125): attribute every rendered *external* file to the source it came
+  // from. `producedBy` records "<stackName>/<kind>/…" per output, and only external stacks carry
+  // `provenance` — so built-in and waffledocs outputs have no source entry and stay attributable
+  // to the toolkit as before. The `sources` block is omitted when empty, so a built-in-only lock
+  // is byte-identical to the pre-#125 shape (backward compatible: an old lock still validates and
+  // doctors clean, since doctor/upgrade treat a missing `sources` as "all built-in").
+  const sources = collectSourceProvenance(canonical.groups, canonical.producedBy, canonicalFiles);
+
+  // The committed lock: canonical throughout — its `targets`/`stacks`/`include` come from the
+  // committed config, not the merged one, for the same reason its hashes do. `stacks:` records
+  // the enabled built-in stack names; `sources` (when present) records each external source's
+  // resolved provenance and the files it produced. External files also live in `files` so doctor
+  // drift-checks them like any managed file.
+  writeLockFile(path.join(cwd, LOCK_FILE), {
+    toolkitVersion,
+    targets: canonicalProject.targets,
+    stacks: canonicalProject.stacks,
+    include: canonicalProject.include,
+    ...(sources.length ? { sources } : {}),
+    files: canonicalFiles,
+  });
+
+  // The local lock: written only when the overlay actually moved a byte, so a repo with no overlay
+  // — or one holding only keys the render never reads (`git.signingKey`, a board id) — never grows
+  // the file at all. Removed again the moment that stops being true, because a stale local lock
+  // would go on describing a tree that no longer exists.
+  const localLockFile = localLockPath(cwd);
+  const overlayChangedTheRender = JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles);
+  if (overlayChangedTheRender) {
+    writeLockFile(localLockFile, {
+      toolkitVersion,
+      targets: project.targets,
+      stacks: project.stacks,
+      include: project.include,
+      ...(() => {
+        const s = collectSourceProvenance(effective.groups, effective.producedBy, effectiveFiles);
+        return s.length ? { sources: s } : {};
+      })(),
+      files: effectiveFiles,
+    });
+    // An un-ignored local lock would be the very propagation this design closes, one file over:
+    // commit it and every teammate's `doctor` compares their tree against YOUR machine's hashes.
+    if (!gitignoreMentions(cwd, LOCAL_LOCK_FILE)) {
+      warnings.push(
+        `${LOCAL_CONFIG_FILE} feeds your render, so ${LOCAL_LOCK_FILE} now records the result — and .gitignore ` +
+          `does not list it. It is machine-specific, like the overlay itself: add it (or re-run with ` +
+          `\`--gitignore\`). ${LOCK_FILE} stays canonical and is the one to commit.`,
+      );
+    }
+  } else if (exists(localLockFile)) {
+    fs.rmSync(localLockFile);
+  }
+
+  log(`rendered ${effective.outputs.size} files${removed.length ? `, removed ${removed.length} stale` : ''}`);
+  return { ok: true, errors: [], warnings, written: [...effective.outputs.keys()], removed, sources };
+}
+
+/**
+ * Compute every file a `project` config would render — the pure core of `renderProject`, run once
+ * per config (effective and canonical; see that docblock). It reads the toolkit and the committed
+ * `.waffle/extensions/`, and writes nothing: the caller decides which result lands on disk and
+ * which one is merely hashed.
+ *
+ * `errors` and `warnings` are push-style sinks the caller owns — the canonical pass hands in a
+ * throwaway `warnings` array precisely because its advisories describe a render that exists
+ * nowhere. Returns the pieces the caller still needs: `outputs` (path → content), `producedBy`
+ * (path → the "stack/kind/name" that emitted it) and `groups`, which together build the lock's
+ * per-source provenance, and `selection`, which the prerequisite probe runs against.
+ */
+function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings }) {
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "stack/kind/name" that emitted it
   // Two enabled stacks may define same-named items (alternative implementations of
@@ -108,15 +371,12 @@ export function renderProject({
     outputs.set(rel, content);
   };
 
-  // Read the previous lock up front: its tracked file paths let the selection keep
-  // rendering an opt-in syrup item the repo already has (so existing installs keep getting
-  // updates) while gating opt-in syrup out of a fresh stack expansion.
-  const oldLock = readLock(cwd);
-  const trackedFiles = new Set(Object.keys(oldLock?.files ?? {}));
-
   // Selection = union(items of enabled stacks) ∪ closure(include items) − eject. An external
   // `{ name, source, ref }` entry enables its stack exactly like a bare built-in name — both are
   // registered in `toolkit.stacks` — so fold the external names into the enabled set here.
+  // `trackedFiles` (the caller's lock paths) lets the selection keep rendering an opt-in syrup item
+  // the repo already has, so existing installs keep getting updates while opt-in syrup stays gated
+  // out of a fresh stack expansion.
   const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
   errors.push(...selection.errors);
@@ -188,8 +448,13 @@ export function renderProject({
     const usedKeys = collectUsedKeys(items);
     const missing = missingRequiredKeys(stack, project.values, (values, key) => primaryResolver(key), usedKeys);
     if (missing.length) {
+      // Names the committed config, and ONLY it. This fires exclusively for a `required:` key with
+      // no resolvable value — by construction the one class that may not live only in the overlay
+      // (#317: the canonical render must be buildable from committed inputs). Advising the overlay
+      // here would route the consumer straight into the canonical-render guard above, which prints
+      // in the same output and says the opposite.
       errors.push(
-        `stack "${stackName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to ${CONFIG_FILE} (or the .local overlay)`,
+        `stack "${stackName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to ${CONFIG_FILE}`,
       );
       continue;
     }
@@ -203,21 +468,6 @@ export function renderProject({
     checkEnvPrerequisites({ stack, project, cwd, warnings });
   }
 
-  // Generalized prerequisite warnings (#129): beyond the legacy `env:` map above, every declared
-  // `prerequisites:` entry cheap to probe locally (a `tool`/`env` kind — a `command -v` binary
-  // check or an env-var read) that is currently unmet emits a non-blocking `warning:`. This is
-  // advisory only — it never fails the render (that is `doctor`'s job), and it deliberately does
-  // NOT shell out for the network/auth kinds (secret, scope, label, setting, service), which the
-  // deliberate `doctor` gate verifies instead. Scoped to the selected items, like `requires:`.
-  {
-    const prereqs = applicablePrerequisites(toolkit, { items: selection.items });
-    const { unmetRequired, unmetRecommended } = evaluatePrerequisites(prereqs, cwd, {
-      kinds: RENDER_PROBE_KINDS,
-      timeoutMs: 5000,
-    });
-    for (const p of [...unmetRequired, ...unmetRecommended]) warnings.push(formatPrereq(p));
-  }
-
   // Generate the `.waffle/` overview docs (cheat sheet + team intro, Markdown + branded HTML)
   // from the same computed selection, through the same `emit()` choke point — so they are
   // lock-tracked, doctor-drift-checked, pruned when stale, and refreshed on every render.
@@ -229,78 +479,33 @@ export function renderProject({
     }
   }
 
-  // The same placeholder is substituted once per target, so a missing value yields
-  // one error per target — collapse to a distinct set.
-  if (errors.length) return { ok: false, errors: [...new Set(errors)], warnings };
+  return { outputs, producedBy, groups, selection };
+}
 
-  // Frozen image: reconcile against the previous lock (read up front) before touching the tree.
-  const managed = oldLock?.files ?? {};
+/** Outputs in a stable order — the lock's key order, and therefore its bytes, must not depend on
+ *  the order stacks happened to render in. */
+const sortedOutputs = (outputs) => [...outputs.entries()].sort(([a], [b]) => a.localeCompare(b));
 
-  // Refuse to clobber a pre-existing UNMANAGED file: a path this render would produce that
-  // already exists on disk but was not tracked by the previous lock — i.e. the consumer's
-  // own hand-written file, not a prior render of ours. A byte-identical file is adopted
-  // silently (the write is a no-op and the new lock records it either way); only a genuine
-  // content difference is a collision. `--force` overwrites. Checked before any write or
-  // prune, so a refusal leaves the whole tree untouched — same fail-loud spirit as the
-  // cross-stack `emit()` conflict above.
-  if (!force) {
-    const collisions = [];
-    for (const [rel, content] of outputs) {
-      if (rel in managed) continue; // already ours — re-render/restore is expected
-      const abs = path.join(cwd, rel);
-      if (!exists(abs)) continue; // fresh path — nothing to clobber
-      if (sha256(fs.readFileSync(abs)) === sha256(content)) continue; // identical — silent adopt
-      collisions.push(rel);
-    }
-    if (collisions.length) {
-      const errs = collisions
-        .sort((a, b) => a.localeCompare(b))
-        .map(
-          (rel) =>
-            `refusing to overwrite ${rel}: a pre-existing file not tracked by ${LOCK_FILE} — back it up or remove it and re-render, or pass \`--force\` to overwrite it`,
-        );
-      return { ok: false, errors: errs, warnings };
-    }
-  }
+/** A lock's `files` manifest: every rendered path → the sha256 of its content, sorted. */
+function hashOutputs(outputs) {
+  const files = {};
+  for (const [rel, content] of sortedOutputs(outputs)) files[rel] = sha256(content);
+  return files;
+}
 
-  // Remove previously managed files that this render no longer produces.
-  const removed = [];
-  for (const rel of Object.keys(managed)) {
-    if (!outputs.has(rel) && exists(path.join(cwd, rel))) {
-      fs.rmSync(path.join(cwd, rel));
-      removed.push(rel);
-    }
-  }
+/** @param {string} file @param {object} lock */
+function writeLockFile(file, lock) {
+  writeFileEnsuringDir(file, `${JSON.stringify(lock, null, 2)}\n`);
+}
 
-  const lockFiles = {};
-  for (const [rel, content] of [...outputs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    writeFileEnsuringDir(path.join(cwd, rel), content);
-    lockFiles[rel] = sha256(content);
-  }
-
-  // Per-source provenance (#125): attribute every rendered *external* file to the source it came
-  // from. `producedBy` records "<stackName>/<kind>/…" per output, and only external stacks carry
-  // `provenance` — so built-in and waffledocs outputs have no source entry and stay attributable
-  // to the toolkit as before. The `sources` block is omitted when empty, so a built-in-only lock
-  // is byte-identical to the pre-#125 shape (backward compatible: an old lock still validates and
-  // doctors clean, since doctor/upgrade treat a missing `sources` as "all built-in").
-  const sources = collectSourceProvenance(groups, producedBy, lockFiles);
-
-  // `stacks:` records the enabled built-in stack names; `sources` (when present) records each
-  // external source's resolved provenance and the files it produced. External files also live in
-  // `files` so doctor drift-checks them like any managed file.
-  const lock = {
-    toolkitVersion,
-    targets: project.targets,
-    stacks: project.stacks,
-    include: project.include,
-    ...(sources.length ? { sources } : {}),
-    files: lockFiles,
-  };
-  writeFileEnsuringDir(path.join(cwd, LOCK_FILE), `${JSON.stringify(lock, null, 2)}\n`);
-
-  log(`rendered ${outputs.size} files${removed.length ? `, removed ${removed.length} stale` : ''}`);
-  return { ok: true, errors: [], warnings, written: [...outputs.keys()], removed, sources };
+/**
+ * Do two configs declare the same external stack sources? Compared structurally (`normalizeStackEntries`
+ * emits its entries in config order, with a fixed key order), so this is exactly "would these two
+ * resolve the same toolkit registry" — the question that decides whether the canonical render can
+ * reuse the effective render's toolkit or must load its own.
+ */
+function sameExternalStacks(a, b) {
+  return JSON.stringify(a.externalStacks ?? []) === JSON.stringify(b.externalStacks ?? []);
 }
 
 function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, guards }) {
@@ -467,10 +672,42 @@ function checkEnvPrerequisites({ stack, project, cwd, warnings }) {
   }
 }
 
+/**
+ * The committed lock — the CANONICAL render (#317): what `.waffle/waffle.yaml` +
+ * `.waffle/extensions/` produce on any machine, with the private `.local` overlay excluded. This
+ * is the project's shared contract, and the only lock `--verify-render` ever checks against.
+ */
 export function readLock(cwd) {
   const { file } = resolveLockFile(cwd);
   if (!exists(file)) return null;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/**
+ * The gitignored local lock — the EFFECTIVE render this machine last wrote, overlay values
+ * included. `null` on the overwhelmingly common machine, where the overlay is absent or changes no
+ * output byte and `render` therefore writes no such file.
+ */
+export function readLocalLock(cwd) {
+  const file = localLockPath(cwd);
+  if (!exists(file)) return null;
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+/**
+ * The lock that describes the files ON DISK — the local lock when the overlay shaped this tree,
+ * else the committed one. Every check that hashes the working tree must read through here
+ * (`doctor`'s drift check, `list`'s per-item status, `render`'s prune and clobber guards):
+ * comparing a tree the overlay shaped against the *canonical* hashes would report every file the
+ * overlay touched as hand-edited, which is a permanently red `doctor` for the one developer whose
+ * private tooling the canonical lock exists to protect.
+ *
+ * Note what does NOT read through here: `--verify-render`, which asks the orthogonal question —
+ * does the COMMITTED config still reproduce the COMMITTED lock — and must therefore stay on the
+ * canonical pair, on every machine.
+ */
+export function readTreeLock(cwd) {
+  return readLocalLock(cwd) ?? readLock(cwd);
 }
 
 /** Human-readable identity of an external source from its lock provenance: `source@ref`, or just

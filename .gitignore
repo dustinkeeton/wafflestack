@@ -15,6 +15,11 @@ node_modules/
 # runs with --allow-missing so this deliberately-absent render doesn't fail CI.
 .github/workflows/waffle-label-hook.yml
 .waffle/waffle.local.yaml
+# …and the local lock it implies (#317): when a contributor's overlay actually feeds their render,
+# `render` records THEIR hashes here, leaving .waffle/waffle.lock.json canonical (committed inputs
+# only) and therefore identical for everyone. Machine-specific, exactly like the overlay — never
+# commit it. Absent entirely on a machine with no overlay.
+.waffle/waffle.local.lock.json
 # Generated .waffle/ overview docs (cheat sheet + team intro, Markdown + branded HTML).
 # Consumers commit these; here they are generated-only, covered by doctor's
 # --allow-missing like the label-hook workflow above.
