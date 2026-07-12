@@ -1552,6 +1552,15 @@ describe('project commands never join with && (#218)', () => {
       // parse, so again quoting is no protection. This also catches `<(…)` process substitution,
       // the third substitution form (the `$(` and backtick lookaheads never covered it).
       'diff <(npm test) <(npm run build)', 'pytest -k "not (slow)"', 'npm test -- --grep "(a)"',
+
+      // LEADING / TRAILING WHITESPACE — the same dead grant, with no operator and no delimiter in
+      // sight. `npm test ` grants `Bash(npm test :*)`, and the real `npm test` does NOT prefix-match
+      // a trailing space, so the call is silently denied. (YAML strips whitespace from a plain
+      // scalar, so it takes an explicitly QUOTED value to reach this — but the grant it ships is
+      // just as dead, and this is the class the guard claims to make unrepresentable.) An INTERNAL
+      // double space is fine and must stay fine: the grant and the documented command carry the
+      // same value, so it round-trips — it is pinned in the accept column, not here.
+      'npm test ', ' npm test', '\tnpm test',
     ]) failsNaming(renderWith({ ...CMDS, typecheckCmd: bad }), 'typecheckCmd');
 
     // (c) …and it must NOT fire on an ordinary single-program command. A guard the consumer deletes
@@ -1580,6 +1589,10 @@ describe('project commands never join with && (#218)', () => {
       // the agent actually runs (pinned in (d)). An earlier cut banned it alongside `'`, which
       // rejected these three ordinary commands on upgrade with no failure mode behind the ban.
       'go test -run "TestFoo" ./...', 'npm test -- --testPathPattern="src/.*"', 'jest -t "foo bar"',
+
+      // An INTERNAL double space round-trips (the grant and the documented command carry the same
+      // value), so the whitespace anchor must bite only at the ENDS — not on whitespace as such.
+      'npm  test',
     ];
     for (const good of ORDINARY) {
       assert.equal(

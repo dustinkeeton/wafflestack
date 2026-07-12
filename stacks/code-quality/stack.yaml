@@ -33,6 +33,10 @@ config:
     #   `'`     terminates the single-quoted shell word (#254: "a single quote must never reach a
     #           shell literal"); `Bash(pytest -k 'not slow':*)` ends the word early and is mangled.
     #   CR/LF   break the `claude_args: >-` folded scalar.
+#   LEADING/TRAILING WHITESPACE is banned too, for the same dead-grant reason: `npm test ` grants
+#           `Bash(npm test :*)`, and the real `npm test` does not prefix-match a trailing space.
+#           (YAML strips it from a plain scalar, so it takes an explicitly quoted value to hit —
+#           but the grant it ships is just as dead, so the guard anchors both ends.)
     # …plus the #218 compound class itself (`;` `|` `&`, `$(…)`, backtick, `${{ }}`, a `cd ` prefix),
     # each of which renders a grant no real command can ever match.
     #
@@ -52,7 +56,7 @@ config:
     # A guard for a silent-denial bug must fail CLOSED: reject the value, name the remedy, and let the
     # consumer wrap it in an npm script. A false reject is loud and trivially worked around; a false
     # accept is a dead grant nobody ever sees.
-    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)[^;|&'',()\r\n]*$'
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?!\s)(?!.*\s$)[^;|&'',()\r\n]*$'
     patternHint: >-
       a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`. It is
       spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'` — a list the CLI parses
