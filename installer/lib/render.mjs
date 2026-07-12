@@ -448,8 +448,13 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     const usedKeys = collectUsedKeys(items);
     const missing = missingRequiredKeys(stack, project.values, (values, key) => primaryResolver(key), usedKeys);
     if (missing.length) {
+      // Names the committed config, and ONLY it. This fires exclusively for a `required:` key with
+      // no resolvable value — by construction the one class that may not live only in the overlay
+      // (#317: the canonical render must be buildable from committed inputs). Advising the overlay
+      // here would route the consumer straight into the canonical-render guard above, which prints
+      // in the same output and says the opposite.
       errors.push(
-        `stack "${stackName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to ${CONFIG_FILE} (or the .local overlay)`,
+        `stack "${stackName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to ${CONFIG_FILE}`,
       );
       continue;
     }

@@ -5123,6 +5123,13 @@ describe('the lock hashes the canonical render, not the local overlay (#317)', (
       assert.match(said, /Commit a value/, 'name the fix');
       assert.match(said, /overrides it locally/, '…and say the private value still wins locally');
 
+      // …and it must not argue with itself. The missing-required-key error prints in this SAME
+      // output (the canonical errors are spread beneath the headline), and it used to end with
+      // "(or the .local overlay)" — advice that only ever fires for a `required:` key, i.e. exactly
+      // the class this guard rejects. Follow it and you land right back here.
+      assert.doesNotMatch(said, /\.local overlay/, 'never advise the overlay for a key that may not live there');
+      assert.match(said, /needs config values: config\.git\.botEmail — add them to \.waffle\/waffle\.yaml$/m);
+
       // Tree untouched: the fail-loud contract, not a partial render with a lock that lies.
       assert.ok(!fs.existsSync(path.join(cwd, LOCK)), 'no lock');
       assert.ok(!fs.existsSync(path.join(cwd, AGENT)), 'no render');
