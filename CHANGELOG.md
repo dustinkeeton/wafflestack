@@ -51,20 +51,25 @@ is what you reach for across a breaking one.
   (`typecheckCmd: tsc --noEmit && eslint .`) rendered **ok** and emitted
   `Bash(tsc --noEmit && eslint .:*)`: a **dead grant that can match no command**, plus the verbatim
   pre-fix checklist row. So `project.{lint,typecheck,test,build}Cmd` now carry a **`pattern:`
-  guard**: a value with a shell operator (`&&`, `||`, `;`, `|`, `&`), a `cd ` prefix, a
-  `$(…)`/backtick substitution, a newline, a `${{ }}` expression, **or a quote character** **fails the
-  render**, naming the key and carrying the remedy. The invariant is a constraint on the command
-  string — *a project command is only grantable as a single-program prefix* — so it is enforced where
-  the value **enters**, which makes the class unrepresentable rather than merely linted downstream.
-  **Quotes are rejected too, and that is not overreach.** The value is spliced verbatim into the
-  single-quoted `--allowedTools '…'` shell word, so a quoted value cannot survive the render:
-  `Bash(pytest -k 'not slow':*)` terminates that word early and the grant is silently mangled to
-  `Bash(pytest -k not slow:*)`, which the real command no longer prefix-matches — *the same silent
-  denial this guard exists to prevent*. Substitution cannot know its target context, so escaping is
-  impossible in general and the toolkit's answer is to fail loudly (`git.cmd` bans quotes for exactly
-  this reason, #254). Wrap a quoted argument in an npm script and set that here — the rejection says
-  so. A false reject is loud and worked around in one line; a false accept is a dead grant nobody
-  ever sees, so this guard fails **closed**.
+  guard**, enforced where the value **enters**, so a value that cannot be granted fails the render
+  and `doctor` — naming the key and carrying the remedy — rather than shipping a dead grant.
+  **What the guard bans, and why: the DELIMITERS of the place the value lands, not "quotes".** The
+  value is spliced verbatim into `--allowedTools 'Edit,…,Bash(<cmd>:*),…'`, and the CLI parses that
+  word **textually** — split on `,`, each entry read as `Tool(spec)` — *before* any shell or quote
+  processing. **So quoting cannot protect a delimiter**, and the delimiters are banned
+  unconditionally, with no quote-awareness in the pattern:
+  a **`,`** (it separates the allowlist entries), a **`(`/`)`** (they delimit the `Bash(…)` rule, and
+  this also catches `<(…)`), a **`'`** (it terminates the single-quoted shell word, #254), a newline
+  or CR (it breaks the `claude_args: >-` scalar), **leading/trailing whitespace** (`Bash(npm test :*)`
+  matches no command), plus the compound class itself — `&&`, `||`, `;`, `|`, `&`, a `cd ` prefix, a
+  `$(…)`/backtick substitution, a `${{ }}` expression. And a guarded key must be handed a **string**:
+  a list or map would otherwise be flattened into text *before* the pattern could police it.
+  **A `"` is NOT banned.** It is not a delimiter at any landing site — it is literal inside the
+  single-quoted shell word, in the folded scalar, in the markdown code spans these values also land
+  in, and in the `Bash(…)` prefix, where it round-trips with the command the agent actually runs. So
+  `go test -run "TestFoo" ./...` renders fine. A false reject is loud and worked around in one line;
+  a false accept is a dead grant nobody ever sees — so the guard fails **closed** on the delimiters
+  and stays out of the way everywhere else.
   **The guard runs in the gate you actually have.** A `pattern:` polices the config *value*, so it
   needs no re-render to evaluate — and it must not, because the shipped `waffle-doctor.yml` runs
   **bare `doctor`** (`doctor.flags` defaults to `""`) and `--verify-render` is opt-in (#314). Bare
@@ -77,8 +82,14 @@ is what you reach for across a breaking one.
   `project.installCmd`, which lands in a `run:` shell GitHub executes directly — a compound there is
   legitimate, which is why its guard bans only newlines and `${{ }}`.)
   **What the tests guarantee**, precisely — the config guard at render (`A5`) *and in bare `doctor`,
-  the shipped gate* (`A6`); no compound allowlist entry (`A1`); the PR-body checklist is exactly the
-  four single commands, each covered by a grant (`A2`); delegate runs one command per fence (`A3`);
+  the shipped gate* (`A6`), including the **type door** (`A7`: a list/map value cannot dodge the
+  pattern by being flattened into a string); and — the assertion that actually pins the property —
+  **every accepted command is ACTUALLY GRANTED** by the shipped allowlist, parsed the way the CLI
+  parses it (`A5`(d)). An accept column alone only proves the render did not *fail*; it cannot see a
+  value that renders `ok` and still ships a grant no command matches, which is exactly how the comma
+  and the whitespace holes survived a green suite. Also: no compound allowlist entry (`A1`); the
+  PR-body checklist is exactly the four single commands, each covered by a grant (`A2`);
+  delegate runs one command per fence (`A3`);
   and a `stacks/**` source backstop (`A4`) that fails a project command joined to more work inside a
   **code span** (including in a heredoc body), inside a **`bash` fence** carrying any second command,
   joined to **another project placeholder** by an operator, or `cd …`-prefixed / `$(…)`-wrapped —
@@ -86,10 +97,13 @@ is what you reach for across a breaking one.
   command joined to non-project work in **bare, un-backticked** template text. Nothing in `stacks/`
   occupies that gap today; closing it without false-firing on ordinary prose is tracked in **#350**.
   **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3. **If
-  any of your four `project.*Cmd` values carries a compound **or a quote**, `render` and `doctor` —
-  bare `doctor`, the one your CI already runs — will now fail**, name the key, and tell you to wrap it
-  in an npm-script-style single entry point (`npm run ci`). That failure is the point, and it is
-  aimed squarely at the repos that are *already* broken: such a value was **already** producing a
+  any of your four `project.*Cmd` values carries a compound, a `,`, a `(`/`)`, a `'`, or whitespace at
+  either end — or is a list/map rather than a string — `render` and `doctor` — bare `doctor`, the one
+  your CI already runs — will now fail**, name the key, and tell you to wrap it in an npm-script-style
+  single entry point (`npm run ci`). The **`,`** is the one most likely to bite an ordinary repo:
+  `eslint --ext .js,.jsx,.ts,.tsx src` is one program with no shell operator, and it was shipping a
+  shattered, unmatchable grant. (A `"` is fine and keeps rendering.) That failure is the point, and it
+  is aimed squarely at the repos that are *already* broken: such a value was **already** producing a
   dead grant and a silently denied CI check, behind a doctor that reported no drift.
 - **New: an optional `patternHint:` on a config key (#218).** A `pattern:` rejection printed the raw
   regex and nothing else. When a guard newly rejects a consumer's value there is **no migration** —
