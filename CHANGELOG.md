@@ -31,6 +31,55 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **Issue, PR, and review templates — a hand-filed issue now lands in the shape the automation
+  already assumes (#337).** The `issue` skill drafts every issue into Problem / Proposed Solution /
+  Sub-issues / Context, and `Needs Inference` is the entry point to the enrichment path — but
+  `.github/` carried no templates, so anything filed by hand started from a blank box and looked
+  nothing like a skill-drafted issue. The `github-workflow` stack now ships six templates as `files/`
+  syrup: `.github/ISSUE_TEMPLATE/{config,bug,feature,rough-idea}.yml`,
+  `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/REVIEW_TEMPLATE.md`.
+  - **Default render, not opt-in.** Every workflow in this stack is opt-in because it holds write
+    permissions and spends API money. A template holds neither — it is inert markdown/YAML GitHub
+    reads only when a human opens the new-issue/new-PR form — so the templates pour with the stack.
+  - **The forms mirror the skill's template.** Bug and feature ask for Problem / Proposed Solution /
+    Context (feature adds Sub-issues) and apply the new `issue.bugLabel` / `issue.featureLabel`. One
+    honest seam: GitHub issue-forms render a field label as an `###` heading where the skill's
+    canonical template uses `##`; section names match, heading level does not, and the enrich pass
+    re-drafts the body into the canonical shape anyway.
+  - **The rough-idea form is the enrichment on-ramp** — a one-liner is a complete submission, and the
+    form auto-applies `issue.inferenceLabel` (default `Needs Inference`), so filing it *is* the
+    request to enrich it (`/issue` with no argument batch-enriches every issue carrying the label).
+    That label is safe to auto-apply precisely because it is a **queue marker, not a trigger**: no
+    workflow dispatches on it and it spends nothing. A template must **never** auto-apply
+    `labelHook.{enrich,implement,release}Label` — a form-applied label is attributed to the human
+    filer and therefore passes the label-hook's bot-sender gate, which would hand any drive-by issue
+    author a button that bills the repo for a harness run. A test pins that invariant.
+  - **The PR template** mirrors the `git-workflow` PR body (Summary, `Closes #N` with the per-issue
+    closing-keyword rule, Test plan) and renders its four pre-flight rows from `project.lintCmd` /
+    `project.typecheckCmd` / `project.testCmd` / `project.buildCmd` — change a pre-flight command,
+    re-render, and the checklist follows. Agents pass `--body-file` and bypass it, as before.
+  - **Review templates stay skill-rendered.** GitHub has no native review template, so a `.github/`
+    file can only be a reference doc. The canonical finding shape (`adversarial-review`'s severity
+    ladder) and verdict shape (`pr-response`'s four-dimension rubric and thresholds) are already
+    load-bearing — the pr-green/pr-response hooks key their dedup and delivery guards on the markers
+    those skills emit — so duplicating the rubric into `.github/` would create a copy that drifts out
+    from under the guards. `REVIEW_TEMPLATE.md` is therefore a thin human-facing companion: the round
+    skeleton (finding block, verdict table, append-only rule) plus the stable vocabulary, pointing at
+    the skills for the scoring anchors. It also names — but deliberately never spells out — the
+    automation markers, because a hand-pasted review marker convinces the pr-green hook the commit is
+    already reviewed and can dispatch a paid response run.
+  - **New config keys:** `issue.bugLabel` (`bug`), `issue.featureLabel` (`enhancement`),
+    `issue.blankIssuesEnabled` (`true` — the forms are the paved path, not a wall), and
+    `issue.contactLinks` (a comment block by default; a toolkit default cannot know your Discussions
+    URL). `issue.inferenceLabel` gains a label-name allowlist `pattern:` now that it renders into a
+    double-quoted YAML scalar as well as a shell word.
+  - **Consumer impact:** additive. A re-render pours the six templates into `.github/`; a repo that
+    already has its own file at one of those paths keeps it (`render` refuses to clobber an
+    unmanaged file) and can `eject:` any template it does not want. Keep `issue.bugLabel` /
+    `issue.featureLabel` in step with `issue.typeLabels` if your repo's taxonomy is not the default —
+    GitHub silently drops a label that does not exist, so a mismatch fails quietly.
+
 ### Fixed
 - **Project commands are never joined with `&&`, so the pre-flight can actually run (#218).** A
   `Bash(<prefix>:*)` allowlist entry matches a command by its **leading program**, and the hooks

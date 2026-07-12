@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { parseFrontmatter } from '../lib/util.mjs';
 import { placeholderKeys } from '../lib/template.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
@@ -2606,4 +2607,229 @@ describe('PR-gate skills: staging paths are per-PR and payloads are read back be
       assert.match(md, /stop and do not post/i, `${skill} must refuse to post a payload it cannot vouch for`);
     });
   }
+});
+
+describe('issue / PR / review templates (#337)', () => {
+  // Rendered in-test from a MINIMAL consumer config — the templates must arrive from a plain
+  // `stacks: [github-workflow]` selection with no `include:` entry at all. That is the whole
+  // default-render claim: unlike the workflows (permissions + API spend ⇒ opt-in syrup), a
+  // template is inert markdown/YAML and pours with the stack.
+  let cwd;
+  let templates;
+
+  // Deliberately NON-default label values: a form that hardcodes `bug` instead of rendering
+  // {{issue.bugLabel}} would still pass a defaults-only fixture. This one catches it.
+  const CFG = {
+    bug: 'type/bug',
+    feature: 'type/feature',
+    inference: 'Awaiting Inference',
+    enrich: 'ci:enrich',
+    implement: 'ci:implement',
+    release: 'ci:release',
+  };
+
+  before(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-templates-'));
+    fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.waffle', 'waffle.yaml'),
+      [
+        'targets: [claude]',
+        'stacks: [github-workflow]',
+        'config:',
+        '  project:',
+        '    name: EvalFixture',
+        '  issue:',
+        `    bugLabel: ${CFG.bug}`,
+        `    featureLabel: ${CFG.feature}`,
+        `    inferenceLabel: ${CFG.inference}`,
+        '  labelHook:',
+        `    enrichLabel: ${CFG.enrich}`,
+        `    implementLabel: ${CFG.implement}`,
+        `    releaseLabel: ${CFG.release}`,
+        '',
+      ].join('\n'),
+    );
+    const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+    assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+
+    const read = (rel) => {
+      const file = path.join(cwd, ...rel.split('/'));
+      assert.ok(fs.existsSync(file), `${rel} did not render from a plain stack selection`);
+      return fs.readFileSync(file, 'utf8');
+    };
+    templates = {
+      config: read('.github/ISSUE_TEMPLATE/config.yml'),
+      bug: read('.github/ISSUE_TEMPLATE/bug.yml'),
+      feature: read('.github/ISSUE_TEMPLATE/feature.yml'),
+      roughIdea: read('.github/ISSUE_TEMPLATE/rough-idea.yml'),
+      pr: read('.github/PULL_REQUEST_TEMPLATE.md'),
+      review: read('.github/REVIEW_TEMPLATE.md'),
+    };
+  });
+
+  after(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test('every template renders with no leftover config placeholders', () => {
+    for (const [name, body] of Object.entries(templates)) {
+      const keys = [...placeholderKeys(body)];
+      assert.deepEqual(keys, [], `${name}: unsubstituted placeholders ${keys.join(', ')}`);
+    }
+  });
+
+  test('the issue forms parse as YAML and are valid GitHub issue-form schema', () => {
+    for (const name of ['bug', 'feature', 'roughIdea']) {
+      const form = parseYaml(templates[name]);
+      assert.ok(form.name, `${name}: form has no name`);
+      assert.ok(form.description, `${name}: form has no description (the chooser blurb)`);
+      assert.ok(Array.isArray(form.body) && form.body.length > 0, `${name}: form has no body`);
+      for (const field of form.body) {
+        assert.ok(field.type, `${name}: a body field has no type`);
+        assert.ok(field.attributes, `${name}: a body field has no attributes`);
+      }
+    }
+    const chooser = parseYaml(templates.config);
+    assert.equal(typeof chooser.blank_issues_enabled, 'boolean', 'config.yml: blank_issues_enabled must render as a bare YAML boolean');
+  });
+
+  test('bug + feature forms mirror the issue skill body template, and their type labels are config-driven', () => {
+    const labelsOf = (name) => parseYaml(templates[name]).labels;
+    const headingsOf = (name) =>
+      parseYaml(templates[name]).body.map((f) => f.attributes.label).filter(Boolean);
+
+    // The convergence claim: a hand-filed issue lands in the same sections the skill drafts.
+    assert.deepEqual(headingsOf('bug'), ['Problem / Motivation', 'Proposed Solution', 'Context']);
+    assert.deepEqual(headingsOf('feature'), [
+      'Problem / Motivation',
+      'Proposed Solution',
+      'Sub-issues',
+      'Context',
+    ]);
+    // …and the type label follows the repo's taxonomy, not a hardcoded `bug`.
+    assert.deepEqual(labelsOf('bug'), [CFG.bug]);
+    assert.deepEqual(labelsOf('feature'), [CFG.feature]);
+  });
+
+  test('the rough-idea form auto-applies the inference label — the enrichment queue the issue skill reads', () => {
+    const form = parseYaml(templates.roughIdea);
+    assert.deepEqual(
+      form.labels,
+      [CFG.inference],
+      'rough-idea must apply issue.inferenceLabel — filing a one-liner IS the request to enrich it',
+    );
+    // The label is only an on-ramp if the SAME value is what the skill's batch mode queries.
+    // Both sides render from issue.inferenceLabel, and this pins that they stay one value.
+    const skill = fs.readFileSync(
+      path.join(cwd, '.claude', 'skills', 'issue', 'SKILL.md'),
+      'utf8',
+    );
+    assert.match(
+      skill,
+      new RegExp(`gh issue list --state open --label "${CFG.inference}"`),
+      'the issue skill must batch-enrich exactly the label the rough-idea form applies',
+    );
+  });
+
+  test('NO issue template auto-applies a label that dispatches a paid harness run', () => {
+    // The load-bearing safety invariant. A template-applied label is attributed to the HUMAN who
+    // filed the issue, so it sails through the label-hook's bot-sender gate: auto-applying a
+    // trigger label from a form would hand any drive-by author a button that spends real API
+    // money against this repo. The inference label is safe precisely because NO workflow keys on
+    // it — it is a queue marker a human picks up, not a trigger.
+    const triggers = new Set([CFG.enrich, CFG.implement, CFG.release]);
+    for (const name of ['bug', 'feature', 'roughIdea']) {
+      for (const label of parseYaml(templates[name]).labels || []) {
+        assert.ok(
+          !triggers.has(label),
+          `${name} auto-applies the dispatch trigger "${label}" — any issue author could then bill this repo`,
+        );
+      }
+    }
+    // …and the guard above only holds while the inference label really is inert. If a workflow
+    // ever starts dispatching on it, the rough-idea form becomes that same button.
+    const workflowDir = path.join(cwd, '.github', 'workflows');
+    for (const file of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []) {
+      const wf = fs.readFileSync(path.join(workflowDir, file), 'utf8');
+      assert.ok(
+        !new RegExp(`label\\.name == '${CFG.inference}'`).test(wf),
+        `${file} dispatches on the inference label, which an issue FORM auto-applies`,
+      );
+    }
+  });
+
+  test('the PR template mirrors the git-workflow PR body: Closes + the four pre-flight commands', () => {
+    assert.match(templates.pr, /^## Summary$/m);
+    assert.match(templates.pr, /^Closes #$/m, 'the linked-issue line must be there to be filled in');
+    // The per-issue closing-keyword gotcha the skill calls out (`Closes #1, #2` closes only #1).
+    assert.match(templates.pr, /Closes #1, closes #2/);
+
+    // The test plan renders the project's OWN pre-flight commands, so changing one and
+    // re-rendering updates the checklist — no second place to edit. Rather than hardcode the
+    // commands (which would only pin this repo's config), assert the PR template's four rows
+    // are exactly the four the git-workflow skill runs as its pre-flight — the invariant that
+    // makes the template an alignment with the skill instead of a copy of it.
+    const gitWorkflow = fs.readFileSync(
+      path.join(cwd, '.claude', 'skills', 'git-workflow', 'SKILL.md'),
+      'utf8',
+    );
+    const preflight = gitWorkflow
+      .split('## Pre-flight Checklist')[1]
+      .split('\n')
+      .map((l) => l.match(/^\d+\. `([^`]+)` —/))
+      .filter(Boolean)
+      .map((m) => m[1])
+      .filter((cmd) => !cmd.startsWith('git diff'));
+    assert.equal(preflight.length, 4, 'expected the four project.*Cmd pre-flight rows in git-workflow');
+    for (const cmd of preflight) {
+      assert.ok(
+        templates.pr.includes(`\`${cmd}\``),
+        `PR template test plan is missing the pre-flight command git-workflow runs: ${cmd}`,
+      );
+    }
+  });
+
+  test('REVIEW_TEMPLATE points at the skills as canonical rather than restating the rubric', () => {
+    // The decision (#337): the skills are the enforcement point; this file is a human-facing
+    // companion. It may carry the round's SKELETON and the stable vocabulary, but the scoring
+    // anchors and thresholds stay in one place — a copy in .github/ would drift out from under
+    // the hooks' guards.
+    assert.match(templates.review, /adversarial-review\/SKILL\.md/);
+    assert.match(templates.review, /pr-response\/SKILL\.md/);
+    assert.match(templates.review, /skills are canonical/i);
+
+    // Vocabulary sync: every severity/verdict word this file teaches must exist in the skill
+    // that owns it, so the human form and the automated one speak the same language. Read both
+    // from the committed render — adversarial-review lives in the code-quality stack, which the
+    // minimal fixture above deliberately does not select.
+    const adversarial = readSkill('adversarial-review');
+    const prResponse = readSkill('pr-response');
+    for (const severity of ['blocker', 'should-fix', 'nit']) {
+      assert.ok(templates.review.includes(severity), `REVIEW_TEMPLATE drops the severity "${severity}"`);
+      assert.ok(adversarial.includes(severity), `adversarial-review no longer uses "${severity}" — the template has drifted`);
+    }
+    for (const verdict of ['Implement', 'Defer', 'Decline']) {
+      assert.ok(templates.review.includes(verdict), `REVIEW_TEMPLATE drops the verdict "${verdict}"`);
+      assert.ok(prResponse.includes(verdict), `pr-response no longer uses "${verdict}" — the template has drifted`);
+    }
+    // Append-only rounds (#318) — the verdict trail is the product.
+    assert.match(templates.review, /append-only/i);
+  });
+
+  test('REVIEW_TEMPLATE never spells the automation markers out in copy-pasteable form', () => {
+    // It is a template: whatever it contains, a human WILL paste into a review body. A pasted
+    // review marker convinces the pr-green hook this commit is already reviewed (so the bot's
+    // review is skipped) and can dispatch a paid pr-response run. Name the markers; never write
+    // them. This is the same rule the two skills impose on their own bodies.
+    for (const marker of ['<!-- waffle-adversarial-review -->', '<!-- waffle-pr-response -->']) {
+      assert.ok(
+        !templates.review.includes(marker),
+        `REVIEW_TEMPLATE contains the literal marker ${marker} — a human will paste it into a review`,
+      );
+    }
+    // …while still warning about them by name.
+    assert.match(templates.review, /waffle-adversarial-review/);
+    assert.match(templates.review, /do not paste the automation markers/i);
+  });
 });
