@@ -70,13 +70,24 @@ jobs:
     # Fast-path gate on the event itself, evaluated before a runner is claimed:
     #   (1) FORK-HEAD GUARD (see the header) — the PR head must live in this repo. This is the
     #       security boundary of the whole workflow; it stays first and stays at job level.
-    #   (2) the review carries pr-green's adversarial-review marker — v1 answers the bot, not humans.
-    #   (3) the review does NOT carry this hook's own marker — defense in depth against a self-trigger.
-    # `contains()` here is an Actions expression over event data, not a shell splice, so no event
-    # content ever reaches a command line. The in-job gate adds the per-PR loop bound.
+    #   (2) TRIGGER — the review IS an adversarial review: its body BEGINS with pr-green's marker.
+    #       `startsWith()`, not `contains()` (#211/#332): this clause AUTHORIZES a paid,
+    #       `contents: write` run, so it must UNDER-match. Under a substring match, any review that
+    #       merely QUOTED the literal in prose fired this job — and that is not hypothetical: a QA
+    #       review of a hooks PR naturally cites the marker (PR #296 carries one, literal at offset
+    #       1103), so the hook dispatched on the QA review and spent the PR's ONE automated reply on
+    #       it. A false NEGATIVE here merely leaves a review unanswered — visible, cheap, and a human
+    #       can run /pr-response by hand. The marker-LED contract is the same one pr-response/SKILL.md
+    #       and adversarial-review/SKILL.md mandate (first line) and the delivery check below enforces.
+    #   (3) SELF-TRIGGER BLOCK — the review does not carry this hook's own marker anywhere. This one
+    #       stays TOLERANT (`!contains`) on purpose: it is a *blocking* clause, so over-matching is
+    #       its safe direction (it refuses more). Tightening it to `!startsWith` would let a body that
+    #       buries this hook's marker mid-prose through — the exact class (2) exists to keep out.
+    # These are Actions expressions over event data, not a shell splice, so no event content ever
+    # reaches a command line. The in-job gate adds the per-PR loop bound.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(github.event.review.body, '<!-- waffle-adversarial-review -->') &&
+      startsWith(github.event.review.body, '<!-- waffle-adversarial-review -->') &&
       !contains(github.event.review.body, '<!-- waffle-pr-response -->')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -118,18 +129,26 @@ jobs:
           #     #211): a PR whose conversation merely MENTIONS "waffle-pr-response" in prose has not
           #     been replied to, and must still get its one automated reply.
           #
-          #     This site DELIBERATELY keeps the tolerant substring `index()` while the delivery
-          #     check below takes the strict `startswith()`. They are not inconsistent — they fail in
-          #     OPPOSITE directions, and each matches in the direction that fails SAFE:
+          #     THIS IS THE ONE TOLERANT MARKER PREDICATE in either hook, and it is tolerant because
+          #     it is the one whose false negative is catastrophic. The rule everywhere else is a
+          #     single sentence (#332): a predicate that ADMITS work demands a marker-LED body; the
+          #     loop bound OVER-matches because it BOUNDS work.
           #
-          #       here  — a false POSITIVE skips one reply (wrong, cheap). A false NEGATIVE re-arms
-          #               an unbounded paid, COMMITTING loop (catastrophic). ⇒ OVER-match.
-          #       there — a false POSITIVE excuses a blocked git push/curl/rm and greens the job
-          #               (fail-open). A false NEGATIVE just reds a delivered run. ⇒ UNDER-match.
+          #       here (bounds work) — a false POSITIVE skips one reply (wrong, cheap). A false
+          #               NEGATIVE re-arms an unbounded paid, COMMITTING loop (catastrophic).
+          #               ⇒ OVER-match, tolerant `index()`.
+          #       the job-level trigger `if:` above (admits work) — a false POSITIVE dispatches this
+          #               paid, committing job on a review that is not the bot's (a QA review quoting
+          #               the literal did exactly this, PR #296). ⇒ UNDER-match, `startsWith()`.
+          #       check_delivered below (admits evidence) — a false POSITIVE excuses a blocked
+          #               git push/curl/rm and greens the job (fail-open). A false NEGATIVE just reds
+          #               a delivered run. ⇒ UNDER-match, `startswith()`.
           #
           #     So a comment that merely QUOTES the literal mid-prose still bounds the loop here (it
-          #     costs this PR its one automated reply — see #333) but can no longer masquerade as
-          #     delivery below. Do NOT "unify" the two predicates; the asymmetry is the design.
+          #     costs this PR its one automated reply — wrong, but safe; tracked in **#333**, which
+          #     covers this site and this site only) while it can no longer trigger the job above or
+          #     masquerade as delivery below. Do NOT "unify" the three predicates by relaxing those
+          #     two to match this one — the asymmetry is the design, and it runs one way only.
           #
           #     FAIL-CLOSED, and note the direction — the opposite of pr-green's dedup. There, an
           #     API error yields an empty list and the review posts again (a duplicate review is

@@ -3491,29 +3491,46 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     // the workflow's gate + guard both query for the SAME marker text
     const wf = read(cwd, REL);
     assert.equal((wf.match(/waffle-adversarial-review/g) || []).length >= 3, true, 'gate, guard, and prompt agree on the marker');
+
+    // …and they agree on WHERE it goes, not just WHICH it is (#332). The gate and check_delivered
+    // both demand a marker-LED body, so a dispatch prompt that authorizes the weaker "on its own
+    // line" placement asks the agent for a body that reds the job as undelivered. This assertion is
+    // the only thing pinning that prose-to-prose coupling: the prompt is the instruction the CI
+    // harness actually receives, and P5 pins the predicates it must satisfy.
+    const promptLine = /^\s*prompt: '(.+)'\s*$/m.exec(wf);
+    assert.ok(promptLine, 'the workflow ships a dispatch prompt');
+    const prompt = promptLine[1];
+    assert.match(prompt, /FIRST line is the exact literal marker/, 'the dispatch prompt mandates the marker as the review body FIRST line');
+    assert.doesNotMatch(prompt, /on its own line/, 'the prompt must not authorize the weaker placement the gate and guard reject');
+    assert.match(prompt, /delivery check/, 'the prompt states that the delivery check keys on the marker too');
   });
 
-  test('P5 the gate keeps the tolerant literal; the guard requires a MARKER-LED body (#211)', () => {
+  test('P5 BOTH of this hook\'s marker sites require a MARKER-LED body (#211/#332)', () => {
     renderBoth();
     const wf = read(cwd, REL);
     // The skill emits the marker as a full HTML comment; the workflow used to look for the bare word,
     // so a review merely NAMING it satisfied both the idempotency gate (⇒ skip a real review) and
-    // check_delivered (⇒ excuse a denial). Both sites now match the literal.
+    // check_delivered (⇒ excuse a denial). Neither site takes a regex any more.
     assert.doesNotMatch(wf, /test\("waffle-/, '#211: markers must be full literals, not bare-word regexes');
-    // #211 round 2 — the two sites match ASYMMETRICALLY, each in the direction that fails safe.
-    // check_delivered UNDER-matches: delivery evidence must LEAD the body, so a review that merely
-    // QUOTES the literal cannot excuse a denial (the fail-OPEN direction).
+    // #332 — BOTH of this hook's predicates ADMIT work off the evidence (one dispatches a paid
+    // review, one certifies delivery), so for both the false POSITIVE is the expensive direction and
+    // both must UNDER-match. A review that merely QUOTES the literal mid-prose is not the bot's
+    // review: it must neither suppress the real one (the gate) nor excuse a denial (check_delivered).
+    //
+    // The gate was tolerant `index()` until #332, and its false positive was DEMONSTRATED LIVE — PR
+    // #296's QA review quotes the literal at offset 1103 on the head the real review was due on, so
+    // the gate skipped and the adversarial review never ran. Do NOT relax either site back to
+    // `index()`: the ONE tolerant marker predicate in this pair of hooks is pr-response's per-PR loop
+    // bound, which over-matches because it BOUNDS work rather than admitting it.
     assert.equal(
       (wf.match(/startswith\("<!-- waffle-adversarial-review -->"\)/g) || []).length,
-      1,
-      '#211: check_delivered must require a MARKER-LED body (startswith), not a loose substring',
+      2,
+      '#332: the idempotency gate AND check_delivered both require a MARKER-LED body (startswith)',
     );
-    // The idempotency gate OVER-matches: its false-positive direction is fail-CLOSED (skip a review)
-    // while a false negative posts a DUPLICATE review, so it keeps the tolerant substring.
     assert.equal(
       (wf.match(/index\("<!-- waffle-adversarial-review -->"\)/g) || []).length,
-      1,
-      '#211: the idempotency gate keeps the TOLERANT index() — a false negative there duplicates a review',
+      0,
+      '#332: no tolerant substring match survives in this hook — a quoting review is not a review',
     );
     // narrowing and literal-matching are independent — the commit_id filter survives at BOTH sites
     assert.equal(
@@ -3521,9 +3538,6 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
       2,
       '#211: the per-head-commit narrowing is preserved alongside the literal match',
     );
-    // the offset-0 trap: index() returns 0 for a marker on line 1, which is TRUTHY in jq. Comparing
-    // the offset (`> 0`) would drop exactly the real review. Never compare it.
-    assert.doesNotMatch(wf, /index\("<!-- waffle-adversarial-review -->"\)\s*[<>]/, '#211: never compare the index() offset');
   });
 });
 
@@ -8907,8 +8921,21 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
 
     // the security boundary itself: same-repo head, evaluated before a runner is claimed
     assert.match(cond, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
-    // scoped to marker-carrying reviews, and never to its own marker (self-trigger)
-    assert.match(cond, /contains\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
+
+    // THE TRIGGER for this paid, `contents: write` job: the review must BEGIN with the marker —
+    // `startsWith()`, not `contains()` (#332). This clause ADMITS work, so its false positive is the
+    // expensive direction, and it was demonstrated live: PR #296's QA review quotes the
+    // adversarial-review literal at offset 1103, so under `contains()` a QA review dispatched this
+    // hook and spent the PR's ONE automated reply triaging it. A false negative merely leaves a
+    // review unanswered (visible; a human can run /pr-response). Same marker-LED contract the
+    // delivery checks in both hooks already depend on. Do NOT relax this back to `contains()`.
+    assert.match(cond, /startsWith\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
+    assert.doesNotMatch(cond, /[^!]contains\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
+
+    // The self-trigger BLOCK stays tolerant, and that is not an inconsistency: it is a *blocking*
+    // clause, so over-matching is ITS safe direction — it refuses more. `!startsWith` here would let
+    // a body burying this hook's own marker mid-prose through, which is what the clause exists to
+    // keep out.
     assert.match(cond, /!contains\(github\.event\.review\.body, '<!-- waffle-pr-response -->'\)/);
 
     // the checkout is a step, so it can only run once the job-level `if:` admitted the event —
