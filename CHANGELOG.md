@@ -81,6 +81,24 @@ is what you reach for across a breaking one.
   - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
     read is best-effort by design: getting it wrong costs a redundant round, while getting the
     *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **The triage gate certifies the responder's READ CUTOFF, not its finish time (#354, QA round 3).**
+  Comparing the status's own `created_at` against a review's `submitted_at` closes the *early*-write
+  hole but leaves the other end open, and that end is inherent to writing the status last.
+  `pr-response` reads the findings at the **start** of a run and stamps the status at the **end** —
+  score, fix, pre-flight, push, reply, some **15–20 minutes**. A review landing *inside* that window
+  is never seen by the responder, yet its status is stamped later than that review, so a clock-based
+  gate calls it **triaged by a run that never read it** — and autopilot arms auto-merge over it. The
+  window is not exotic: the gate exists precisely to catch *another gate's* review and *a human's*,
+  and a hook-armed `pr-green` posts adversarial reviews asynchronously on green — a designed-for
+  concurrent producer landing straight into it. **A clock reading taken after a finding cannot certify
+  that finding.** `pr-response` now captures `$CUTOFF` (the newest `submitted_at` it saw *when it
+  read*) and stamps it into the status as `description=triaged-through=<ISO-8601>`; the gate triages a
+  review **iff** a status on its `commit_id` carries a cutoff **at or after** its `submitted_at`. A
+  review that lands mid-run reads as untriaged, earns its own round, and that round writes a new
+  status whose later cutoff covers it — self-healing, and no new signal: a status description takes
+  push access to write, exactly like the status. Fail-closed on a missing or unparseable cutoff.
+  (Re-reading the reviews just before stamping was the other candidate; it only *narrows* the window
+  to the gap between re-read and write rather than closing it.)
 - **The triage gate compares timestamps, not mere existence — an existence test merged over live
   findings (#354, QA round 2).** The first cut keyed triage on *"is there a `waffle/pr-response`
   status on this review's head SHA?"*. But a status certifies a **SHA**, while findings belong to a

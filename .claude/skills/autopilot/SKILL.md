@@ -166,25 +166,31 @@ Auto-merge is **not yet armed** on this PR — Step 3 deferred arming precisely 
 
 - **Round 1 spawns them.** `Agent(name: "qa-pr<N>", …)` runs `qa <pr>`; `Agent(name: "respond-qa-pr<N>", …)` runs `pr-response <pr> --yes`. Each agent's prompt is exactly the skill invocation the round below specifies — nothing about what the skills do changes. A bare `name:` is all they need: no team, and **no `isolation`** (`pr-response` fixes belong in the PR's own checkout). Name them per PR and per loop (`<N>` in these names is the **PR** number — the same number the commands write as `<pr>`, not an issue number) so the execution log shows which loop an agent belongs to and shows the *same* agent recurring across rounds. Spawn the reviewer at the round's start; spawn the **responder lazily**, at the first round whose head carries **findings to triage** — **any untriaged review with findings**: its own review's, another gate's review already sitting on that head (a hook-armed repo's — see below), *or a human's*. The trigger is *untriaged findings on the PR*, never merely *this round's reviewer surfaced some*: a QA pass that finds nothing of its own does not license merging someone else's untriaged findings. A review is a trigger only when it **carries findings** — a bare approval, or a comment raising none, is nothing to triage. And a human's review is unmarked, so **no marker test could find it anyway**: read the PR's reviews, not just the marked ones (`pr-response` triages human findings when it runs and records them in the same verdict table). Only a round whose head has **nothing left to triage** converges with the responder never spawned.
 
-  **Read triage state from the `waffle/pr-response` COMMIT STATUS — never from a comment body — and compare TIMESTAMPS, never mere existence.** A review `R` (with `commit_id` and `submitted_at`) is **triaged** if and only if a `waffle/pr-response` success status on `R.commit_id` was **created after `R` was submitted**:
+  **Read triage state from the `waffle/pr-response` COMMIT STATUS — never from a comment body — and compare it against the responder's READ CUTOFF, never against mere existence and never against the status's own clock.** A review `R` (with `commit_id` and `submitted_at`) is **triaged** if and only if a `waffle/pr-response` success status on `R.commit_id` carries a `triaged-through` cutoff **at or after `R.submitted_at`**:
 
   ```bash
   # R.commit_id → $SHA ; R.submitted_at → $SINCE  (both straight off the reviews API)
   gh api "repos/$OWNER/$REPO/commits/$SHA/statuses" --paginate \
-    | jq -s --arg since "$SINCE" 'add // [] | [ .[] | select(.context=="waffle/pr-response" and .state=="success" and .created_at > $since) ] | length'
+    | jq -s --arg since "$SINCE" 'add // []
+        | [ .[]
+            | select(.context=="waffle/pr-response" and .state=="success")
+            | (.description // "")
+            | select(startswith("triaged-through="))
+            | ltrimstr("triaged-through=")
+            | select(. >= $since)
+          ] | length'
   ```
 
-  Expect **≥ 1** for triaged. Both timestamps are ISO-8601 UTC (`2026-07-12T22:02:22Z`), so a plain string `>` orders them correctly. A status created in the *same second* as the review reads as **untriaged** — a redundant round, which is the safe direction.
+  Expect **≥ 1** for triaged. `pr-response` writes `description=triaged-through=<ISO-8601 UTC>`, where the cutoff is the newest `submitted_at` it saw **when it read the findings** — so the status asserts *"I read every review submitted up to this moment"*, which is exactly the question this gate asks. Both values are ISO-8601 UTC (`2026-07-12T22:02:22Z`), so a plain string `>=` orders them. A status description takes repo **push access** to write, exactly like the status itself: no body can forge it.
 
-  **The `created_at > submitted_at` clause is load-bearing; an existence test is a MERGE-OVER-FINDINGS BUG.** The status certifies a *SHA*, but findings belong to a *review*, and the two diverge the moment a review lands on a head that already carries a status. It takes only the most ordinary outcome to get there — **the last responder deferred everything**:
+  **Fail closed: no status, no parseable cutoff, or a cutoff older than the review ⇒ UNTRIAGED ⇒ spawn the responder.** A redundant triage round costs one cheap round; a skipped one merges live findings.
 
-  1. Step 5's final round: `pr-response` triages `qa`'s findings on head `H` and **defers or declines them all** → it implements **0**, so it **pushes nothing** and the head stays `H` → it writes `waffle/pr-response` on `H` → autopilot reads *0 implemented* and converges.
-  2. Step 6 opens on that same head `H`. `adversarial-review` finds genuine holes and posts a review whose `commit_id` is `H`.
-  3. An **existence** test asks "is there a status on `H`?" — there is, from step 1 → the review reads **triaged** → the responder never spawns → nothing is left to triage → autopilot **arms auto-merge over live, undisposed findings.**
+  **Why the cutoff, and not the status's `created_at`.** Two ways a weaker test merges over live findings — the gate must defeat both:
 
-  The timestamp clause kills it: step 1's status predates step 2's review, so the review is correctly **untriaged**. `pr-response` writes its status only *after* its reply lands, which is what makes the ordering meaningful — a status written early would falsely pre-triage every later review on that head.
+  1. **Existence alone (`is there a status on H?`).** A status certifies a *SHA*; findings belong to a *review*. They diverge on the most ordinary outcome there is — **the last responder deferred everything**: it implements **0**, so it **pushes nothing**, the head stays `H`, and the status it left pre-triages the *next* review to land there. Step 5 converges; Step 6's `adversarial-review` posts real holes on `H`; an existence test says "already triaged"; the responder never spawns; **auto-merge is armed over them.**
+  2. **The status's own `created_at`.** `pr-response` reads the findings at the **start** of its run and stamps the status at the **end** — a 15–20 minute window covering score, fix, pre-flight, push, reply. A review `B` landing *inside* that window is never seen by the responder, yet `created_at(status) > submitted_at(B)`, so a clock-based test calls `B` **triaged by a run that never read it**. And this is not exotic: the gate exists precisely to catch *another gate's* review and *a human's*, and a hook-armed repo's `pr-green` posts adversarial reviews asynchronously on green — a designed-for concurrent producer landing straight into that window. **A clock reading taken after a finding cannot certify that finding.**
 
-  **Fail closed: no *qualifying* status ⇒ untriaged ⇒ spawn the responder.** A redundant triage round costs one cheap round; a skipped one merges live findings. Neither timestamp is a body, and forging either still takes push access — every property #338 wants survives.
+  The cutoff defeats both, because it certifies *what was read* rather than *when the writing stopped*: in (1) the old status's cutoff predates the new review; in (2) `B.submitted_at > $CUTOFF`. Either way `B` reads **untriaged**, earns its own round, and that round writes a **new** status whose later cutoff does cover it. Self-healing, and no new signal is needed.
 
   **This gate must never key on a marker in a body**, and that is not a style preference — it is the merge path. The rule this replaces was *"no marked `<!-- waffle-pr-response -->` reply has disposed of it"*, which asked a **free-text body anyone can write**. Any comment that merely **quoted** the marker — a human discussing the hooks, a verdict table *about* markers — read as *already triaged*, so the responder was never spawned, the findings were never disposed of, and this skill went on to **arm auto-merge over them**. Silent, and on the one path that ships code. That is #338's thesis applied where it actually bites: decide on an artifact that takes write access to forge, never on prose. (PR #207 and PR #296 are that bug, observed, on the CI half.)
 

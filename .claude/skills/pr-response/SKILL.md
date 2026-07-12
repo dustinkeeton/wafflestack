@@ -69,6 +69,19 @@ Issue-style comments on the PR conversation can also carry findings:
 gh api "repos/$OWNER/$REPO/issues/$N/comments" --jq '.[] | {id, user: .user.login, body}'
 ```
 
+**Capture your read cutoff, `$CUTOFF`, right here** — the newest `submitted_at` among **all** reviews
+on the PR at the moment you read them:
+
+```bash
+CUTOFF=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[].submitted_at' | sort | tail -1)
+```
+
+That one value is what your delivery status will certify (step 6): *"I read every review submitted up
+to `$CUTOFF`."* It is **not** the time you finish — a review can land while you are scoring, fixing
+and pushing, and a status stamped with a completion time would certify a review that never crossed
+your desk. Take it from GitHub's own timestamps, not a local clock, so no skew can push it forward.
+If the PR carries no reviews yet, there is nothing to triage — stop.
+
 Then **enumerate the findings** as discrete, individually-decidable items. One review body listing
 four bullets is **four findings**, not one. Give each a stable number (`F1`, `F2`, …) and carry
 that number through scoring, the commits, and the reply.
@@ -279,11 +292,15 @@ paper trail this skill exists to produce.
 ### After the reply lands — emit the delivery signal
 
 **Once the reply has posted, and only then**, write a `waffle/pr-response` **commit status** on the
-head SHA you responded to:
+head SHA you responded to — carrying **the cutoff you read the findings at** (`$CUTOFF`, captured in
+step 2):
 
 ```bash
-gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/pr-response -f description="Automated response posted"
+gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/pr-response -f "description=triaged-through=$CUTOFF"
 ```
+
+The description format is **exact and machine-read** — `triaged-through=<ISO-8601 UTC>`, nothing else
+in it. Consumers parse it; prose there breaks the gate.
 
 This is **this skill's delivery signal, on every path** — a local `/pr-response` run emits it exactly
 as a CI-dispatched one does. It is not a CI implementation detail you may skip when a human invoked
@@ -294,7 +311,30 @@ else: `waffle-pr-response-hook`'s delivery check, and — critically — **`auto
 which arms auto-merge**. A commit status takes repo **push access** to write, so no comment body can
 forge one; that is the entire reason the gate keys on it instead of on a marker in prose (#338).
 
-Four rules, each load-bearing:
+> [!IMPORTANT]
+> **The status must certify *what you disposed of*, not *when you finished*.** This is why it carries
+> a cutoff rather than relying on its own `created_at`.
+>
+> You read the findings at the **start** of the run and write the status at the **end** — score, fix,
+> pre-flight, push, reply. That is a **15–20 minute window**, and the design *expects* concurrent
+> reviewers: a hook-armed repo's `pr-green` posts adversarial reviews asynchronously on green, and a
+> human reviewing while you work is the ordinary case. So a review `B` can land on your head **after
+> you read but before you stamp**.
+>
+> A gate keyed on the status's own `created_at` would then compare `created_at(B's status) >
+> submitted_at(B)` → **true** → `B` reads as **triaged**, by a run that never saw it. The responder
+> never spawns for `B`, nothing is "left to triage", and autopilot **arms auto-merge over B's
+> findings**. A clock reading taken *after* a finding cannot certify that finding.
+>
+> The cutoff fixes it exactly: `triaged-through=$CUTOFF` asserts *"I read every review submitted up to
+> `$CUTOFF`"*. `B.submitted_at > $CUTOFF`, so `B` reads **untriaged** and earns its own round — which
+> then writes a **new** status with a later cutoff that does cover it. Self-healing, and it needs no
+> new signal: a status description takes push access to write, exactly like the status itself.
+>
+> Re-reading the reviews just before stamping is **not** sufficient — it narrows the window to the gap
+> between that re-read and the write, rather than closing it. Certify the cutoff instead.
+
+Five rules, each load-bearing:
 
 - **Only after the reply is actually on the PR — and prove that independently.** The status asserts
   *"the findings on this head were disposed of"*. Writing it first, or writing it when the post
@@ -302,16 +342,17 @@ Four rules, each load-bearing:
   that is self-attesting — it proves you wrote a status, not that a reply exists. Read back the
   **comment** the post returned (`gh api "repos/$OWNER/$REPO/issues/comments/<id>"`, using the id from
   `gh pr comment`'s output URL), and only then write the status.
-- **Your status's TIMESTAMP is a gate, not just its existence.** `autopilot` triages a review only
-  when a `waffle/pr-response` status on that review's `commit_id` is **newer than the review's
-  `submitted_at`**. So writing the status early — before the reply, or speculatively — silently
-  **pre-triages every review that lands on that head afterwards**, and autopilot will arm auto-merge
-  over them. Write it last, once, after the reply.
+- **Your status's CUTOFF is the gate — not its existence, and not its `created_at`.** `autopilot`
+  triages a review only when a `waffle/pr-response` status on that review's `commit_id` carries a
+  `triaged-through` **at or after that review's `submitted_at`**. So the cutoff must be the moment you
+  **read** the findings, never the moment you finished. Stamping a later cutoff than you actually read
+  — or padding it "to be safe" — silently pre-triages reviews you never saw, and autopilot will arm
+  auto-merge over them. **Under-claiming is safe; over-claiming merges live findings.**
 - **Against the SHA you responded to**, even if the fixes you pushed have since moved the head. The
-  status marks *the head whose findings you triaged*. That is what makes convergence work: a review
-  on a new head has no status newer than itself, so it reads as untriaged and earns another round —
-  and so does a **later** review on the *same* head, which is the case that matters when you
-  implement 0 and push nothing.
+  status marks *the head whose findings you triaged*. That is what makes convergence work: a review on
+  a new head has no status at all, so it reads as untriaged and earns another round — and so does a
+  **later** review on the *same* head, which is the case that matters both when you implement 0 and
+  push nothing, and when a review lands mid-run.
 - **Fail closed.** If the reply POST errors, or its read-back finds no comment, or the status POST
   errors, say so and do **not** report success — an untriaged PR that *looks* triaged is the one
   failure this skill must never produce.

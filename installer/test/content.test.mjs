@@ -1461,7 +1461,9 @@ describe('gate loops: lazy-responder coherence + cold-start recovery (#297)', ()
     }
     // F7 tightened this from "no status" to "no QUALIFYING status" — existence alone is unsafe
     // (see the timestamp test below). The fail-closed direction is what this pins.
-    assert.match(qaStep, /no \*?qualifying\*? status ⇒ untriaged ⇒ spawn the responder/i);
+    // F9 restated the fail-closed clause around the cutoff: a status with no parseable cutoff, or a
+    // cutoff older than the review, is as good as no status at all.
+    assert.match(qaStep, /no status, no parseable cutoff, or a cutoff older than the review ⇒ UNTRIAGED ⇒ spawn the responder/i);
     assert.match(qaStep, /A redundant triage round costs one cheap round; a skipped one merges live findings/);
     // Step 6 names the cap-hatch path that reaches it with an untriaged review and no responder,
     // and says plainly why a pre-existing reply proves nothing.
@@ -2921,14 +2923,53 @@ describe('issue / PR / review templates (#337)', () => {
     // i.e. F6's exact failure mode, reintroduced by F6's fix. The status must be NEWER than the
     // review it claims to have disposed of.
     const md = readSkill('autopilot');
-    assert.match(md, /created_at > \$since/, 'the triage gate must qualify the status by created_at > the review submitted_at');
+    // F9 SUPERSEDED the mechanism: the gate now compares the responder's READ CUTOFF rather than the
+    // status's created_at (a clock stamped after the run cannot certify a review that landed during
+    // it — see the F9 test). What this test still owns is the SCENARIO, which the cutoff must also
+    // defeat: an existence-only gate merges over live findings on the routine deferred-everything
+    // path, and the skill must keep NAMING it or the next refactor "simplifies" the clause away.
     assert.match(md, /submitted_at/, 'the gate must read the review submitted_at');
-    assert.match(md, /created AFTER that review was submitted|created after \*\*|created after `R` was submitted/i, 'the gate must state the ordering in prose, not only in the snippet');
-    // The specific trap must be named, or the next refactor "simplifies" the clause away as noise.
-    assert.match(md, /implements \*\*0\*\*|implements \*\*0\*\*, so it \*\*pushes nothing\*\*|deferred everything/i, 'the gate must name the deferred-everything path that makes an existence test unsafe');
+    assert.doesNotMatch(md, /select\(\.context=="waffle\/pr-response" and \.state=="success"\) \] \| length/, 'the gate is existence-only again — any status on the head reads as triaged');
+    assert.match(md, /implements \*\*0\*\*|deferred everything/i, 'the gate must name the deferred-everything path that makes an existence test unsafe');
+    assert.match(md, /pre-triages the \*next\* review|arms auto-merge over them|AUTO-MERGE/i, 'the gate must name the consequence — a merge over undisposed findings');
     // And the stale claim that a cap-hatch head carries NO status must be gone — it assumed the
     // responder always pushes.
     assert.doesNotMatch(md, /so that head carries findings and \*\*no status\*\*/, 'Step 6 still assumes the head always moves — false whenever the responder implements 0');
+  });
+
+  test('#338: the gate compares the responder’s READ CUTOFF, not the status clock (F9)', () => {
+    // F7 fixed "existence" → "status.created_at > review.submitted_at". That still merges over live
+    // findings, because the two timestamps answer different questions:
+    //
+    //   T0  pr-response READS the findings on head H. Its verdict table covers exactly this set.
+    //   T1  review B (real findings) is submitted against H. The responder is mid-run; never sees it.
+    //   T2  the responder finishes — score, fix, pre-flight, push, reply — and stamps the status.
+    //
+    // A clock test asks `created_at(T2) > submitted_at(T1)` → TRUE → B reads TRIAGED, by a run that
+    // never read it → responder never spawns → autopilot ARMS AUTO-MERGE over B's findings. The
+    // window is the whole run (15-20 min here), and concurrent reviewers are DESIGNED FOR — the gate
+    // exists to catch another gate's review and a human's, and a hook-armed pr-green posts reviews
+    // asynchronously on green. A clock reading taken AFTER a finding cannot certify that finding.
+    //
+    // The status must certify WHAT WAS READ, not WHEN THE WRITING STOPPED.
+    const ap = readSkill('autopilot');
+    const pr = readSkill('pr-response');
+    // The gate parses the cutoff out of the status description and compares it to submitted_at…
+    assert.match(ap, /triaged-through=/, 'the gate must read the triaged-through cutoff from the status description');
+    assert.match(ap, /ltrimstr\("triaged-through="\)/, 'the gate must parse the cutoff, not just detect it');
+    assert.match(ap, /select\(\. >= \$since\)/, 'the gate must compare the CUTOFF against the review submitted_at');
+    // …and must NOT fall back to the status's own clock, which is the defect being removed.
+    assert.doesNotMatch(ap, /\.created_at > \$since/, 'the gate still keys on the status clock — a review landing mid-run reads as falsely triaged');
+    // Fail-closed on an unparseable/absent cutoff — an unreadable certificate is not a certificate.
+    assert.match(ap, /no parseable cutoff.*⇒ UNTRIAGED|no status, no parseable cutoff/i, 'the gate must fail closed when the cutoff is missing or unparseable');
+    // The responder must capture the cutoff AT READ TIME and stamp exactly that.
+    assert.match(pr, /CUTOFF=\$\(gh api "repos\/\$OWNER\/\$REPO\/pulls\/\$N\/reviews" --paginate --jq '\.\[\]\.submitted_at'/, 'pr-response must capture the cutoff from the reviews it read');
+    assert.match(pr, /description=triaged-through=\$CUTOFF/, 'pr-response must stamp the read cutoff into the status description');
+    assert.match(pr, /Under-claiming is safe; over-claiming merges live findings/, 'pr-response must state which direction of error is safe');
+    // The CI dispatch prompt writes the same status, so it must carry the same format — otherwise a
+    // CI-written status is unparseable and every review on that head fails closed forever.
+    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
+    assert.match(wf, /description=triaged-through=\$CUTOFF/, 'the CI dispatch prompt must stamp the cutoff too, or CI-written statuses never parse');
   });
 
   test('#338: a delivery check never reads back its own status — that is self-attesting (F8)', () => {
