@@ -31,6 +31,46 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **CI hooks key delivery and idempotency on out-of-band signals, never on a marker pasted in prose
+  (#338, closes #333).** Both review hooks decided "the bot did a thing" by string-matching a marker
+  literal inside a **free-text body anyone can write**. #211, #332 and #333 are not three bugs but
+  three faces of that one mechanism: a human comment on PR #207 read as "the bot already replied", and
+  a QA review on PR #296 read as "this head is already reviewed" **and** "this IS the bot's review" —
+  so the security review silently never ran while a paid, *committing* job dispatched on the QA review.
+  Each previous fix only *narrowed* the match (bare word → full literal → marker-**led**), and a
+  marker-led body is still prose: a human can type a marker on line 1 as easily as at offset 1103.
+  The mechanism is now gone rather than narrowed. Every predicate keys on an artifact that takes
+  **repo push access** to write, and **no hook reads a body**:
+  - **pr-green** — its dedup gate and its delivery check both key on a `waffle/adversarial-review`
+    **commit status** on the reviewed head SHA, which the harness writes once its review lands.
+  - **pr-response** — its **trigger** moves from `pull_request_review` to `workflow_run` on
+    `waffle-pr-green-hook`, so a review body cannot raise the event *at all*; its delivery check keys
+    on a `waffle/pr-response` commit status; and its **loop bound** becomes a per-PR **label the
+    workflow applies before the paid dispatch**.
+  - **A commit status, not the check run the issue proposed.** Creating a check run is
+    GitHub-App-only ("OAuth apps and authenticated users are not able to create a check suite") and
+    the harness may authenticate with a PAT (`WAFFLE_HYGIENE_TOKEN`) — so a check run would be
+    uncreatable in the *recommended* configuration. A status needs only push access and is otherwise
+    identical: keyed to the SHA, structured, visible in the checks list, unforgeable without repo
+    write. Always written `state=success`, so it never reddens the rollup.
+  - **The loop bound got tighter, not looser.** It is a *label* rather than a status because a rebase
+    or force-push would orphan a status and silently **re-arm** the paid loop. And the *workflow*
+    claims it **before the money** — so a harness that crashes, times out, or is denied its tools is
+    still bounded, where the old marked-comment bound simply went unset and the next review
+    re-dispatched.
+  - The markers **stay** in review/reply bodies — they are how a human recognizes a bot post and how
+    the skills dedup their own — but nothing in CI reads them, so quoting one is now harmless. The
+    prose-to-prose coupling (a workflow's `jq startswith()` depending on a SKILL.md sentence to a
+    model) is gone: both ends of the contract are now code in the workflow, and pinned by tests that
+    feed the real #296 and #207 bodies through every predicate.
+  - **Consumer impact:** re-render. New config key `prResponse.responseLabel` (default
+    `waffle:pr-response`, additive — no migration). **If you installed the pr-response hook, create
+    that label** (`gh label create 'waffle:pr-response'`): the loop bound is fail-closed, so without
+    it the job reds rather than dispatching an unbounded run (`doctor` reports it as an unmet
+    prerequisite). Its job now also takes `statuses: write` (still **no** `issues: write`), and
+    pr-green takes `statuses: write`.
+
 ### Added
 - **Issue, PR, and review templates — a hand-filed issue now lands in the shape the automation
   already assumes (#337).** The `issue` skill drafts every issue into Problem / Proposed Solution /

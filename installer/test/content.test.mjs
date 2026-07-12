@@ -758,11 +758,12 @@ describe('token spend telemetry (#227)', () => {
       const steps = tokenSteps(wfSource(name));
       assert.ok(steps.length > 0, 'no Record token spend step found');
       for (const step of steps) {
-        // Load-bearing: waffle-pr-response-hook keys its LOOP BOUND and delivery check on
-        // the substring `waffle-pr-response` appearing in ANY comment on the PR, and
-        // waffle-pr-green-hook dedups reviews on `waffle-adversarial-review`. Nothing the
-        // token step could put in its comment — hook labels, prose, warnings — may contain
-        // either literal, or a token comment would cap the response loop / fake a review.
+        // Hygiene, not safety, since #338: no hook keys a predicate on a comment body any more
+        // (the loop bound is a LABEL, delivery is a COMMIT STATUS), so a marker in this comment can
+        // no longer cap the response loop or fake a review. But the markers still mean "a bot wrote
+        // this" to a human and to the skills' own dedup, so the token comment must not impersonate
+        // one. Keeping the assertion also keeps the belt: if a body predicate is ever reintroduced,
+        // this collision class does not come back with it.
         assert.doesNotMatch(step, /waffle-pr-response/);
         assert.doesNotMatch(step, /waffle-adversarial-review/);
         // The row's hook label is a short word, never a waffle-* workflow name.
@@ -2818,10 +2819,11 @@ describe('issue / PR / review templates (#337)', () => {
   });
 
   test('REVIEW_TEMPLATE never spells the automation markers out in copy-pasteable form', () => {
-    // It is a template: whatever it contains, a human WILL paste into a review body. A pasted
-    // review marker convinces the pr-green hook this commit is already reviewed (so the bot's
-    // review is skipped) and can dispatch a paid pr-response run. Name the markers; never write
-    // them. This is the same rule the two skills impose on their own bodies.
+    // It is a template: whatever it contains, a human WILL paste into a review body. Since #338 a
+    // pasted marker is harmless to CI (no hook reads a body — the predicates key on commit statuses
+    // and a label, which take repo write to forge), but it still muddies the record the skills and
+    // humans read: a pr-response run recovers its own verdict history from its markers. Name the
+    // markers; never write them. Same rule the two skills impose on their own bodies.
     for (const marker of ['<!-- waffle-adversarial-review -->', '<!-- waffle-pr-response -->']) {
       assert.ok(
         !templates.review.includes(marker),

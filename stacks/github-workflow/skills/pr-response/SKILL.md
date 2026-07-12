@@ -163,26 +163,25 @@ marker is how this skill (and any automation wrapping it) recognizes its own rep
 **reads** to recover verdict history on a cold start (see [Being resumed across
 rounds](#when-called-by-agents)).
 
-> [!IMPORTANT]
-> **The first-line placement is LOAD-BEARING — it is not a formatting convention you may relax.**
-> `waffle-pr-response-hook`'s delivery check matches the marker with jq **`startswith()`**, so it
-> asks whether the reply *begins* with the marker, not whether it merely contains one. A marker
-> moved off line 1 — behind a heading, a blank line, a BOM — makes any run that was denied a **hard**
-> (delivery-class) tool call red as "the response did NOT post", even though the reply is sitting
-> right there on the PR. (A run with only soft, read-only denials never reds either way — the red
-> path is gated on a hard denial *and* `delivered != 1`.) Nothing but this paragraph enforces the
-> coupling: it is prose-to-prose, and no test can pin a skill's output shape against a workflow's
-> predicate. (The sibling `adversarial-review` skill carries the same rule for the same reason.)
+> [!NOTE]
+> **No workflow keys on this marker (#338), and quoting it anywhere is harmless.** The marker is a
+> convention for *humans* (it is how you spot a bot reply in the UI) and for *this skill* (it is how
+> a cold-start run recovers its own verdict history). CI does not read it. `waffle-pr-response-hook`
+> keys its **delivery check** on a `waffle/pr-response` **commit status** the CI dispatch prompt tells
+> the harness to write on the responded-to head SHA, and its **loop bound** on a label the *workflow*
+> applies before it spends a token. Both take repo push access to write, so no body text can forge
+> either — and this skill may quote the literal freely in a verdict table about a hooks PR.
 >
-> **Never paste the raw marker literal into the middle of a body, either.** This skill writes verdict
-> tables *about* findings, so on a PR that touches the hooks it will be tempted to quote the marker in
-> prose. The hook's **loop bound** still matches a quoted literal as a substring — and it counts the
-> comments **on the PR being replied to** (`issues/{N}/comments`, so the effect is strictly *per-PR*;
-> a literal quoted on PR X cannot bound PR Y). The hazard therefore lands on **the PR the comment
-> lives on**: any comment carrying the literal — anywhere in its body — makes that PR look already
-> answered, so if it arrives *before* the automated reply does, that PR silently forfeits its one
-> reply. Name the marker, or break the literal, rather than pasting it. Your own reply's **leading**
-> marker is exempt in effect: it is the reply, so bounding the loop is exactly what it should do.
+> That is the point of #338 and it is worth understanding, because the old design is a trap that will
+> look reasonable again. The hooks used to decide "the bot did a thing" by string-matching this
+> literal inside a free-text body that anyone can write. So a human comment (PR #207, literal at
+> offset 1084) and a QA review (PR #296, offset 1103) that merely *quoted* the marker read as "the
+> bot already replied" and "this head is already reviewed" — the second silently suppressing the
+> security review. Tightening the match (bare word → full literal → marker-*led*) only shrank the
+> target; a marker-led body is still prose. And it left a coupling **nothing could pin**: a
+> workflow's `jq startswith()` depending on a sentence in *this file* instructing a model where to
+> put a marker. If CI ever needs to know that this skill did something, it must ask GitHub for an
+> out-of-band artifact — never parse a body.
 
 **Append. Never edit a previous reply.** A second round posts a **new** comment; it does not
 rewrite the last one:

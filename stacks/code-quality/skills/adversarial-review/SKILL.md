@@ -169,17 +169,21 @@ gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/t
 
 Notes on mechanics:
 
-- **The marker is load-bearing, and it must LEAD the body.** Every review this skill posts —
-  findings *or* no-holes — must **begin** with the exact literal
-  `<!-- waffle-adversarial-review -->` as the **first line** of the summary body. The
-  `waffle-pr-green-hook` workflow keys its duplicate-review guard on that marker (matched
-  against the review's `commit_id`) and its delivery check on it; the delivery check matches
-  with `startswith()`, so a marker buried mid-body does **not** count as delivery. Omitting,
-  altering, or merely *quoting* it causes duplicate reviews and a falsely-red job.
-- **Never quote the raw marker mid-body.** Discussing the hook in a review is fine, but writing
-  the bare literal inside prose is what the `startswith()` rule exists to disarm — and in a
-  *comment* (which the sibling pr-response hook matches as a substring) it can still trip that
-  hook's loop bound. Refer to it by name, or break the literal, rather than pasting it.
+- **Begin the body with the marker.** Every review this skill posts — findings *or* no-holes —
+  should **begin** with the exact literal `<!-- waffle-adversarial-review -->`. It is how a human
+  recognizes a bot review in the UI, and how this skill recognizes its own prior posts. **No
+  workflow keys on it** (#338): the `waffle-pr-green-hook` duplicate-review guard and delivery
+  check both read a `waffle/adversarial-review` **commit status** on the reviewed head SHA, which
+  the CI dispatch prompt tells the harness to write after its review lands. So the marker is a
+  human/skill convention, not a CI contract — quoting it anywhere, at any offset, is harmless and
+  changes nothing about which jobs fire.
+- That decoupling is deliberate and is the whole point of #338. Until then the hooks decided "the
+  bot did a thing" by string-matching this literal inside a free-text body anyone can write, so a
+  human comment (PR #207) or a QA review (PR #296) that merely *quoted* it read as "already
+  replied" / "already reviewed" — silently suppressing the security review. A workflow predicate
+  that depends on a sentence in *this file* telling a model where to put a marker is a coupling no
+  test can pin. Do not reintroduce it: if CI needs to know something, it asks GitHub for an
+  artifact that takes push access to write.
 - Use **`event: "COMMENT"`** — an honest, non-approving review. Escalate to
   `event: "REQUEST_CHANGES"` **only** when you found a genuine **blocker**; never as a default
   posture. GitHub forbids `REQUEST_CHANGES`/`APPROVE` on your **own** PR, so if the review

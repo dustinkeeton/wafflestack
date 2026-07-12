@@ -75,12 +75,17 @@ and does not re-argue a finding it already declined with a reason the reviewer a
 
 The `adversarial-review` and `pr-response` skills open the reviews and replies they post with an
 HTML-comment marker (named, not written out here: `waffle-adversarial-review` and
-`waffle-pr-response`). Those markers are **load-bearing machinery**, not decoration — the CI hooks
-match them with `startswith()` to decide whether a head commit has already been reviewed, whether a
-review was actually delivered, and whether to dispatch a paid response run.
+`waffle-pr-response`). They are how a **human** tells a bot post from a human one at a glance, and
+how each skill recognizes its **own** prior posts — a `pr-response` run reads them to recover the
+verdict history it has already given, so a marker in someone else's body muddles that record.
 
-So: **write your review body without them.** A hand-pasted review marker makes the pr-green hook
-believe this commit is already reviewed (the bot's own review is then skipped) and can dispatch a
-paid pr-response run at the same time. The skills emit their own markers automatically; a human
+So: **write your review body without them.** The skills emit their own markers automatically; a human
 review needs none, and the automation handles an unmarked human review just fine — run
 `/pr-response` by hand to answer one.
+
+Note this is now **hygiene, not a safety rule**. Since #338 no CI hook reads a body: pr-green's
+dedup and delivery check key on a `waffle/adversarial-review` **commit status**, pr-response's
+delivery check on a `waffle/pr-response` commit status, and its loop bound on a **label** the
+workflow applies. All three take repo push access to write, so a pasted marker cannot suppress the
+bot's review or dispatch a paid run — which is exactly what it *could* do before (a human comment on
+PR #207 and a QA review on PR #296 each did it by quoting a literal in prose).

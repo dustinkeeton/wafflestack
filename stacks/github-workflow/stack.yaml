@@ -175,6 +175,17 @@ prerequisites:
     items: [files/.github/workflows/waffle-hygiene.yml]
     description: Paper-trail label applied after auto-merge is armed (default autoMerge.label). Must pre-exist — gh will not create it.
   - kind: label
+    name: "waffle:pr-response"
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:pr-response'"
+    items: [files/.github/workflows/waffle-pr-response-hook.yml]
+    description: >-
+      The loop bound for the pr-response hook (default prResponse.responseLabel). The workflow
+      applies it to a PR BEFORE dispatching the paid, committing harness, and skips any PR that
+      already carries it — one automated response per PR, ever. Must pre-exist — the API will not
+      create it, and the bound is FAIL-CLOSED: without the label the job reds rather than dispatching
+      an unbounded run. Create with `gh label create 'waffle:pr-response'`.
+  - kind: label
     name: Needs Inference
     level: recommend
     check: "gh label list --limit 500 2>/dev/null | grep -q 'Needs Inference'"
@@ -695,12 +706,27 @@ setup: |-
   the completed run's commit and targets the default branch, then skips: draft PRs, bot-authored
   PRs (a bot's own PR is not reviewed), fork-head PRs (a fork's green checks must not spend this
   repo's budget — the `workflow_run` token is read/write even for forks, so this gate is the
-  guard), a PR that isn't fully green yet, and — the dedup — a head commit that already carries an
-  adversarial review (detected by a stable `<!-- waffle-adversarial-review -->` marker the skill
-  itself embeds in every review it posts, matched against the review's `commit_id`). So a re-run of
-  checks on an already-reviewed head posts no duplicate, while a new commit (new head SHA, no
-  marker) is reviewed afresh — once per green transition. The review posts findings only (no
-  commits, no file edits), so it can't itself retrigger CI.
+  guard), a PR that isn't fully green yet, and — the dedup — a head commit that already carries the
+  `waffle/adversarial-review` **commit status**, which the harness writes on the reviewed SHA right
+  after its review lands. So a re-run of checks on an already-reviewed head posts no duplicate, while
+  a new commit (new head SHA, no status) is reviewed afresh — once per green transition. The review
+  posts findings only (no commits, no file edits), so it can't itself retrigger CI.
+  **The delivery signal is out-of-band, not a marker in prose (#338).** Both hooks used to decide
+  "the bot did a thing" by string-matching a marker literal inside a free-text body anyone can write.
+  That is the common root of #211, #332 and #333: a human comment on PR #207 and a QA review on
+  PR #296 each quoted the literal, and the hooks read them as "already replied" / "already reviewed"
+  — silently suppressing the security review. Narrowing the match only shrank the target; a
+  marker-led body is still prose. Both hooks now key on artifacts that take **push access** to write:
+  a `waffle/adversarial-review` commit status on the reviewed head (pr-green), a `waffle/pr-response`
+  commit status (pr-response delivery), and the `prResponse.responseLabel` label (the loop bound). No
+  comment or review body — however it quotes any marker, at any offset — changes which jobs fire.
+  A **commit status** rather than the check run #338 proposed, because creating a check run is
+  GitHub-App-only ("OAuth apps and authenticated users are not able to create a check suite") and the
+  harness may authenticate with a PAT (`WAFFLE_HYGIENE_TOKEN`); a status needs only push access and
+  is otherwise identical — keyed to the SHA, structured, visible in the PR's checks list. It is always
+  written `state=success`, so it never reddens the rollup. The markers themselves **stay** in the
+  bodies: they are how a human recognizes a bot post and how the skills dedup their own. They are
+  simply no longer workflow predicates, so quoting one is now harmless.
   **What the harness may do (baked-in allowlist).** The workflow's `claude_args` ships a default
   `--allowedTools 'Write,Bash(gh pr:*),Bash(gh api:*),Bash(gh repo:*),Bash(git log:*),Bash(git
   diff:*),Bash(git show:*),Bash(git status:*)'` — enough for the skill to read the PR (`gh pr
@@ -721,11 +747,10 @@ setup: |-
   the execution log as DATA (jq) and classifies its `permission_denials`. A `dangerouslyDisableSandbox`
   attempt is **unconditionally red** — never downgraded, whatever else the run did. For every other
   hard (delivery-classified) denial the guard asks **GitHub** whether the review actually landed,
-  re-running the gate's own query: *is a review carrying the `<!-- waffle-adversarial-review -->`
-  marker present on this head commit?* Where the sibling hooks downgrade on a **PR URL in the run's
-  final text**, that proof is worthless here (the reviewed PR's URL pre-exists), so this hook checks
-  the source of truth instead. Review present ⇒ the denial provably blocked nothing ⇒ **warning**;
-  review absent ⇒ **red**. The check is **fail-closed** (any API hiccup ⇒ treated as not delivered)
+  re-running the gate's own query: *is the `waffle/adversarial-review` commit status on this head?*
+  Where the sibling hooks downgrade on a **PR URL in the run's final text**, that proof is worthless
+  here (the reviewed PR's URL pre-exists), so this hook checks the source of truth instead. Status
+  present ⇒ the denial provably blocked nothing ⇒ **warning**; status absent ⇒ **red**. The check is **fail-closed** (any API hiccup ⇒ treated as not delivered)
   and it replaces the old free-text no-op heuristic outright. The upshot: a denied read-only
   `git log` / `git tag` no longer reds a run that posted its review, while a genuinely blocked post
   still does. This is why the marker is emitted by the **skill** on both post paths, not just
@@ -767,23 +792,43 @@ setup: |-
   answers the review **bot** only — a human review is answered by running `/pr-response` by hand.
   That is a deliberate scope limit: auto-dispatching a paid, committing harness at every human
   comment is a cost and trust surface nobody asked for.
-  **Fork-head guard (security boundary).** `pull_request_review` runs in **base-repo context** — it
-  gets this repo's secrets and a write-scoped token even for a fork's PR. Checking out a fork head
-  and handing it to an agent holding `contents: write` would be arbitrary code execution plus secret
-  exfiltration. The job-level `if:` therefore requires
-  `github.event.pull_request.head.repo.full_name == github.repository`. Never relax it to a label or
-  an author association; the checkout must never happen for a fork head. Consequence: **fork PRs get
-  no automated response** — answer them by running `/pr-response` locally after reading the diff.
-  **Loop bound — per PR, not per head commit.** pr-green's dedup is keyed per head SHA, so it cannot
-  bound this cycle: review → response commits a fix → new head SHA → CI green → pr-green posts a
-  *new* review (new SHA, no marker) → response again. The bound lives in this workflow and is
-  **per PR**: it skips when ANY `<!-- waffle-pr-response -->` comment already exists on the PR,
-  whatever SHA it was posted against — one automated response per pull request, ever. A later round
-  of findings is a human's call (run `/pr-response` by hand; it updates the same marked comment in
-  place). The gate also skips a review whose own body carries that marker (self-trigger), plus draft
-  and bot-authored PRs, and it is **fail-closed**: if it cannot list the PR's comments it declines to
-  dispatch. Do not "optimize" the guard back to per-SHA — that reintroduces an unbounded paid loop in
-  which every individual fire looks locally correct.
+  **Trigger — `workflow_run` on waffle-pr-green-hook (#338).** This hook consumes exactly one
+  producer, so it waits for that workflow to finish and asks GitHub what it produced (the
+  `waffle/adversarial-review` commit status on the head), rather than watching every submitted review
+  and telling the bot's apart by reading its body. The old `pull_request_review` trigger keyed on a
+  marker literal at the head of the review body — which is how PR #296's QA review dispatched this
+  paid, committing job simply by quoting it. **A body cannot raise a `workflow_run` event**, so the
+  whole quote/mention class is gone rather than narrowed. GitHub refuses to chain more than three
+  levels of `workflow_run`; the chain here is waffle-doctor (root) → pr-green (1) → pr-response (2),
+  so pointing `prGreen.watchWorkflows` at a workflow that is itself `workflow_run`-triggered spends
+  the slack and silently stops this hook firing.
+  **Fork-head guard (security boundary).** `workflow_run` runs in **base-repo context** — exactly
+  like the `pull_request_review` it replaces, it gets this repo's secrets and a write-scoped token
+  even for a fork's PR. Checking out a fork head and handing it to an agent holding `contents: write`
+  would be arbitrary code execution plus secret exfiltration. The job-level `if:` therefore requires
+  `github.event.workflow_run.head_repository.full_name == github.repository`. Never relax it to a
+  label or an author association; the checkout must never happen for a fork head. Consequence:
+  **fork PRs get no automated response** — answer them by running `/pr-response` locally.
+  **Loop bound — per PR, not per head commit, and written before the money.** pr-green's dedup is
+  keyed per head SHA, so it cannot bound this cycle: review → response commits a fix → new head SHA →
+  CI green → pr-green reviews the *new* SHA → response again. The bound lives in this workflow, and
+  it is the `prResponse.responseLabel` label (default `waffle:pr-response`). The **workflow** applies
+  it — never the harness — in a step that runs **before the paid dispatch**, and the gate skips any PR
+  already carrying it: one automated response per pull request, ever. A later round of findings is a
+  human's call (run `/pr-response` by hand).
+  Three properties, each load-bearing, and together strictly tighter than the marked-comment bound it
+  replaces (#333): it is **out-of-band** (applying a label takes repo write, so a comment quoting the
+  marker can no longer cost a PR its one reply); it is **per PR** (it survives the fresh head SHA each
+  fix mints — and a rebase or force-push, which would orphan a commit status and silently re-arm the
+  loop, which is why the bound is a label and not the status the delivery check uses); and it is
+  **claimed up front** (a harness that crashes, times out, or is denied its tools is still bounded —
+  the old bound depended on the harness actually posting its marked comment). It is **fail-closed** in
+  both directions: an unresolvable PR skips, and a label that cannot be applied **reds** the job
+  rather than dispatching an unbounded run — so the label must pre-exist
+  (`gh label create 'waffle:pr-response'`). Re-running a failed response therefore means removing the
+  label by hand first: deliberate friction, since re-arming a paid committing run is a human
+  decision. Do not "optimize" the guard back to per-SHA and do not move it into the harness — either
+  reintroduces an unbounded paid loop in which every individual fire looks locally correct.
   **What the harness may do (baked-in allowlist).** `claude_args` ships a default
   `--allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh repo view:*)'` plus
   the four `project.*` pre-flight commands the skill runs before pushing. `Write` is load-bearing
@@ -794,23 +839,28 @@ setup: |-
   filing to a human. Append cost-control or allowlist-widening flags via `prResponse.claudeArgs` (the
   CLI unions repeated `--allowedTools`). A **`Check harness result`** step (`always()`) reads the
   execution log as DATA (jq) and classifies denials: a sandbox-escape attempt is always red; a
-  blocked edit/git/gh call reds the run **unless** the marked reply is verifiably on the PR (asked of
-  the API, fail-closed); read-only denials warn. The log uploads as the
-  **`claude-execution-log-pr-response`** artifact.
+  blocked edit/git/gh call reds the run **unless** the `waffle/pr-response` commit status is verifiably
+  on the responded-to head SHA (asked of the API, fail-closed); read-only denials warn. The log
+  uploads as the **`claude-execution-log-pr-response`** artifact.
   **Token spend accounting (#227).** The job ends with a **`Record token spend`** step
   (`always()` + gated on the same should_respond + `continue-on-error: true`, exit-0-only
   script): it jq-extracts `usage` and `total_cost_usd` from the same execution log and
   creates-or-updates ONE marker-keyed comment (`<!-- waffle-token-count -->`) on the
   responded-to PR — one row per `run_id.run_attempt` (hook label `response` — deliberately
-  short, so the comment never contains this hook's own marker substring and cannot trip the
-  loop bound), totals always recomputed, never double-counted. A missing/malformed log or a
+  short, so the comment never carries another hook's marker text; since #338 no predicate reads
+  a comment body, but the markers still mean "a bot wrote this" to a human and to the skills'
+  own dedup), totals always recomputed, never double-counted. A missing/malformed log or a
   zero-usage run skips silently; the step can never red the job. Rows on a merged PR roll
   into the global counter + badge via the post-merge hook (see its section).
   **Opt-ins to arm it.** It stays inert until (1) the `ANTHROPIC_API_KEY` secret is set (with the
   user's go-ahead — `gh secret set ANTHROPIC_API_KEY`; the same secret the hygiene/pr-green hooks
   bill); (2) the `pr-response` skill is rendered and committed under `.claude/skills/` (the
   `requires:` edge does this on install); and (3) a token carrying **`contents: write` +
-  `pull-requests: write`** is available. The default `GITHUB_TOKEN` has both, but a push made with it
+  `pull-requests: write`** is available (the job also takes `statuses: write` for its delivery
+  signal, and labels a PR under the `pull-requests` scope — it needs **no `issues: write`**); and
+  (4) the `prResponse.responseLabel` label exists (`gh label create 'waffle:pr-response'`) — the loop
+  bound is fail-closed, so without it the job reds instead of dispatching. The default
+  `GITHUB_TOKEN` carries the write scopes, but a push made with it
   does **not** trigger new workflow runs — the PR would sit green against a stale SHA — so set
   `WAFFLE_HYGIENE_TOKEN` to a PAT/GitHub App token so the pushed fixes re-run the PR's required
   checks. (That PAT is also what makes the pr-green ↔ pr-response cycle live; the per-PR loop bound
@@ -1883,6 +1933,25 @@ config:
       (enforced at render by the pattern above; single quotes are allowed). Security-sensitive: an
       unvalidated passthrough to the harness CLI — flags here can widen the authority of a job that
       already holds `contents: write`, so set only what you understand and trust.
+  prResponse.responseLabel:
+    required: false
+    default: "waffle:pr-response"
+    pattern: '^(?!.*\$\{\{)[A-Za-z0-9:._ -]+$'
+    description: >-
+      Label that BOUNDS the pr-response loop (.github/workflows/waffle-pr-response-hook.yml).
+      Applied to a PR by the workflow itself immediately BEFORE it dispatches the paid, committing
+      harness — never by the harness, and never after the fact — so a run that crashes, times out,
+      or is denied its tools is still bounded. The gate skips any PR already carrying it: one
+      automated response per pull request, ever (answer a later round by running /pr-response by
+      hand). This is the single fact that keeps the pr-green ↔ pr-response cycle finite, since every
+      fix the harness pushes mints a fresh head SHA that pr-green is obliged to review (#338/#333).
+      It is a LABEL rather than a commit status precisely because it must be per-PR: a status would
+      be orphaned by a rebase or force-push, silently RE-ARMING the loop. Must pre-exist in the repo
+      — the API will not mint one here, and the bound is fail-closed, so a missing label REDS the job
+      rather than dispatching an unbounded run (`gh label create 'waffle:pr-response'`). Rendered
+      into a YAML `env:` scalar and compared with jq, so it is restricted to a label charset (letters,
+      digits, spaces, and `: . _ -`) and must be non-empty — the pattern rejects quotes, `${{`, and
+      newlines so no value can break out of the scalar, and a bad value fails the render loudly.
   evals.cron:
     required: false
     default: "0 8 * * *"
