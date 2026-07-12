@@ -4262,7 +4262,14 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     // it must NOT re-assert the old prose contract: no predicate reads the body any more, so telling
     // the model the workflow "keys on the marker" would be a lie that invites the old design back.
     assert.doesNotMatch(prompt, /FIRST line is the exact literal marker/, '#338: the prompt must not claim a workflow keys on the marker');
-    assert.match(prompt, /harmless/, 'the prompt states that quoting the marker elsewhere is harmless');
+    // …and it must NOT overshoot in the other direction either. "No WORKFLOW reads the marker" is
+    // true; "quoting it is harmless" is FALSE — the skills and autopilot still read markers, and
+    // autopilot's triage gate arms auto-merge. A prompt that tells the harness quoting is harmless
+    // is instructing it to paste the very literal that can read as "already triaged" on the merge
+    // path. The do-not-paste rule must survive #338, scoped to the half that still reads bodies.
+    assert.doesNotMatch(prompt, /quoting it elsewhere in the body is harmless/, '#338: the prompt must not tell the harness that quoting a marker is harmless — the skills and autopilot still read them');
+    assert.match(prompt, /Do NOT paste that marker/, 'the prompt keeps the do-not-paste rule');
+    assert.match(prompt, /autopilot still do/, 'the prompt says WHY: the skills and autopilot still read markers');
   });
 
   test('P5 NO predicate in this hook reads a body — both sites key on the commit status (#338)', () => {

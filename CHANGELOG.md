@@ -60,10 +60,32 @@ is what you reach for across a breaking one.
     still bounded, where the old marked-comment bound simply went unset and the next review
     re-dispatched.
   - The markers **stay** in review/reply bodies — they are how a human recognizes a bot post and how
-    the skills dedup their own — but nothing in CI reads them, so quoting one is now harmless. The
-    prose-to-prose coupling (a workflow's `jq startswith()` depending on a SKILL.md sentence to a
-    model) is gone: both ends of the contract are now code in the workflow, and pinned by tests that
-    feed the real #296 and #207 bodies through every predicate.
+    the skills recognize their own — and the **do-not-paste rule stands**: no *workflow* reads them,
+    but the *skills and `autopilot` still do*. The prose-to-prose coupling (a workflow's
+    `jq startswith()` depending on a SKILL.md sentence to a model) is gone: both ends of the contract
+    are now code in the workflow, and pinned by tests that feed the real #296 and #207 bodies through
+    every predicate.
+- **The same discipline now covers the local skill path, which is where it actually bites (#338).**
+  CI was only half the system. `autopilot` decided *"have these findings been triaged?"* — and then
+  **armed auto-merge** — by substring-matching a marker in a comment body, and `qa` proved its own
+  review had posted the same way. So a comment that merely *quoted* a marker read as "already
+  triaged", the responder was never spawned, and a PR could merge with findings nobody answered.
+  That is a strictly worse failure than the CI one it mirrors, because it ships code.
+  - `qa`, `adversarial-review` and `pr-response` each now write a **commit status**
+    (`waffle/qa`, `waffle/adversarial-review`, `waffle/pr-response`) on the head SHA they acted on,
+    **after** their post lands — on *every* path, local runs included, not just when CI's dispatch
+    prompt asks for one.
+  - `autopilot`'s triage gate and both convergence gates key on the `waffle/pr-response` status on
+    the **review's own head SHA**, never on a comment body. Fail-closed: no status ⇒ untriaged ⇒
+    spawn the responder.
+  - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
+    read is best-effort by design: getting it wrong costs a redundant round, while getting the
+    *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **Known defect, recorded rather than advertised away:** `waffle-pr-response-hook` does **not**
+  currently dispatch on any PR. At the second `workflow_run` hop, `head_sha` is the default branch's
+  tip rather than the PR head, so the gate resolves no PR and always skips. The signal design above
+  is correct but, in the hook, **unexercised**. Tracked as a follow-up; the hook header carries the
+  measurement and the fix sketch.
   - **Consumer impact:** re-render. New config key `prResponse.responseLabel` (default
     `waffle:pr-response`, additive — no migration). **If you installed the pr-response hook, create
     that label** (`gh label create 'waffle:pr-response'`): the loop bound is fail-closed, so without

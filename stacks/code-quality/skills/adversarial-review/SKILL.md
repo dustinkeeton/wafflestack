@@ -171,19 +171,33 @@ Notes on mechanics:
 
 - **Begin the body with the marker.** Every review this skill posts — findings *or* no-holes —
   should **begin** with the exact literal `<!-- waffle-adversarial-review -->`. It is how a human
-  recognizes a bot review in the UI, and how this skill recognizes its own prior posts. **No
-  workflow keys on it** (#338): the `waffle-pr-green-hook` duplicate-review guard and delivery
-  check both read a `waffle/adversarial-review` **commit status** on the reviewed head SHA, which
-  the CI dispatch prompt tells the harness to write after its review lands. So the marker is a
-  human/skill convention, not a CI contract — quoting it anywhere, at any offset, is harmless and
-  changes nothing about which jobs fire.
-- That decoupling is deliberate and is the whole point of #338. Until then the hooks decided "the
-  bot did a thing" by string-matching this literal inside a free-text body anyone can write, so a
-  human comment (PR #207) or a QA review (PR #296) that merely *quoted* it read as "already
-  replied" / "already reviewed" — silently suppressing the security review. A workflow predicate
-  that depends on a sentence in *this file* telling a model where to put a marker is a coupling no
-  test can pin. Do not reintroduce it: if CI needs to know something, it asks GitHub for an
-  artifact that takes push access to write.
+  recognizes a bot review in the UI, and how this skill recognizes its own prior posts.
+- **Emit the delivery signal once the review lands.** After the review has posted — and only then —
+  write a `waffle/adversarial-review` **commit status** on the reviewed head SHA:
+
+  ```bash
+  gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/adversarial-review -f description="Adversarial review posted"
+  ```
+
+  This is the skill's delivery signal **on every path** — a local run emits it exactly as a
+  CI-dispatched one does; it is not a CI detail to skip when a human invoked you. Everything that
+  needs to know *"has this head been reviewed?"* reads that status: `waffle-pr-green-hook`'s
+  duplicate-review guard and delivery check, and `autopilot`. A status takes repo **push access** to
+  write, so no body can forge one. **Fail closed** — if the POST errors, report it and do not claim
+  the review posted.
+- **Never paste another skill's raw marker literal — or this one — into a body.** No *workflow*
+  reads a marker any more (#338), but the **skills and `autopilot` still do**, and `autopilot`'s
+  triage gate is what **arms auto-merge**. So a review that merely *quotes* a marker can still read
+  as "already reviewed" or "already triaged". Refer to a marker **by name**, or break the literal,
+  when a review must discuss it — reviewing a hooks PR is exactly when the temptation arrives. Your
+  own *leading* marker is exempt: it is the review.
+- That split is the point of #338, and the old design is a trap that will look reasonable again.
+  The hooks used to decide "the bot did a thing" by string-matching this literal inside a free-text
+  body anyone can write, so a human comment (PR #207) or a QA review (PR #296) that merely *quoted*
+  it read as "already replied" / "already reviewed" — silently suppressing the security review.
+  Tightening the match only shrank the target; a marker-led body is still prose. Anything that needs
+  to know this skill acted asks GitHub for an artifact that takes push access to write — it never
+  parses a body.
 - Use **`event: "COMMENT"`** — an honest, non-approving review. Escalate to
   `event: "REQUEST_CHANGES"` **only** when you found a genuine **blocker**; never as a default
   posture. GitHub forbids `REQUEST_CHANGES`/`APPROVE` on your **own** PR, so if the review

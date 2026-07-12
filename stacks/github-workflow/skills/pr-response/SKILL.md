@@ -163,25 +163,42 @@ marker is how this skill (and any automation wrapping it) recognizes its own rep
 **reads** to recover verdict history on a cold start (see [Being resumed across
 rounds](#when-called-by-agents)).
 
-> [!NOTE]
-> **No workflow keys on this marker (#338), and quoting it anywhere is harmless.** The marker is a
-> convention for *humans* (it is how you spot a bot reply in the UI) and for *this skill* (it is how
-> a cold-start run recovers its own verdict history). CI does not read it. `waffle-pr-response-hook`
-> keys its **delivery check** on a `waffle/pr-response` **commit status** the CI dispatch prompt tells
-> the harness to write on the responded-to head SHA, and its **loop bound** on a label the *workflow*
-> applies before it spends a token. Both take repo push access to write, so no body text can forge
-> either — and this skill may quote the literal freely in a verdict table about a hooks PR.
+> [!IMPORTANT]
+> **No *workflow* keys on this marker (#338) — but the *skills and autopilot still do*. Never paste
+> the raw literal into a body.** The distinction is the whole rule, and getting it backwards is how a
+> PR merges with findings nobody triaged.
 >
-> That is the point of #338 and it is worth understanding, because the old design is a trap that will
-> look reasonable again. The hooks used to decide "the bot did a thing" by string-matching this
-> literal inside a free-text body that anyone can write. So a human comment (PR #207, literal at
-> offset 1084) and a QA review (PR #296, offset 1103) that merely *quoted* the marker read as "the
-> bot already replied" and "this head is already reviewed" — the second silently suppressing the
-> security review. Tightening the match (bare word → full literal → marker-*led*) only shrank the
-> target; a marker-led body is still prose. And it left a coupling **nothing could pin**: a
-> workflow's `jq startswith()` depending on a sentence in *this file* instructing a model where to
-> put a marker. If CI ever needs to know that this skill did something, it must ask GitHub for an
-> out-of-band artifact — never parse a body.
+> What no longer reads a body: **CI**. `waffle-pr-response-hook` keys its **delivery check** on a
+> `waffle/pr-response` **commit status** and its **loop bound** on a **label the workflow applies**
+> before it spends a token; `waffle-pr-green-hook` keys its dedup and delivery on a
+> `waffle/adversarial-review` status. All take repo push access to write, so no body text can forge
+> them.
+>
+> What still reads a body — **the path that merges code**:
+> - **`autopilot` gates triage on it.** It spawns the responder for findings no marked reply has
+>   disposed of, and converges → **arms auto-merge** when nothing is left to triage.
+> - **This skill's cold-start recovery reads it** to recover verdict history and F-numbering.
+> - **`adversarial-review` and `qa` recognize their own prior posts by theirs.**
+>
+> So a comment that merely *quotes* a marker can still read as *already triaged* — and this skill
+> writes verdict tables **about** markers, on exactly the PRs where that is most likely. **Name the
+> marker, or break the literal; never paste it.** Your own reply's *leading* marker is exempt: it is
+> the reply.
+>
+> The failure directions differ, and that is why the rule is asymmetric rather than absolute. A
+> body-read for **history recovery** can only cost a redundant round or a renumber — cheap, visible,
+> fail-safe. A body-read for **"has this been triaged?"** costs a silent merge over live findings. So
+> the *gates* key on commit statuses (below); only history recovery reads prose, and it is
+> best-effort by construction.
+>
+> That is the point of #338, and the old design is a trap that will look reasonable again. The hooks
+> used to decide "the bot did a thing" by string-matching this literal inside a free-text body anyone
+> can write: a human comment (PR #207, literal at offset 1084) and a QA review (PR #296, offset 1103)
+> that merely *quoted* it read as "the bot already replied" and "this head is already reviewed" — the
+> second silently suppressing the security review. Tightening the match (bare word → full literal →
+> marker-*led*) only shrank the target; a marker-led body is still prose. If anything needs to know
+> that this skill did something, it asks GitHub for an artifact that takes push access to write —
+> never parses a body.
 
 **Append. Never edit a previous reply.** A second round posts a **new** comment; it does not
 rewrite the last one:
@@ -241,6 +258,36 @@ F-numbers you just dispositioned. If it holds anything else — another PR's ver
 round's body, an empty or truncated file — **stop and do not post**: rewrite it, re-read, then post.
 The marker makes a wrong-PR reply indistinguishable from a real one, and these replies are the
 paper trail this skill exists to produce.
+
+### After the reply lands — emit the delivery signal
+
+**Once the reply has posted, and only then**, write a `waffle/pr-response` **commit status** on the
+head SHA you responded to:
+
+```bash
+gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/pr-response -f description="Automated response posted"
+```
+
+This is **this skill's delivery signal, on every path** — a local `/pr-response` run emits it exactly
+as a CI-dispatched one does. It is not a CI implementation detail you may skip when a human invoked
+you.
+
+Everything that needs to know *"were this head's findings triaged?"* reads that status and nothing
+else: `waffle-pr-response-hook`'s delivery check, and — critically — **`autopilot`'s triage gate,
+which arms auto-merge**. A commit status takes repo **push access** to write, so no comment body can
+forge one; that is the entire reason the gate keys on it instead of on a marker in prose (#338).
+
+Three rules, each load-bearing:
+
+- **Only after the reply is actually on the PR.** The status asserts *"the findings on this head were
+  disposed of"*. Writing it first — or writing it when the post failed — is a lie that arms a merge.
+- **Against the SHA you responded to**, even if the fixes you pushed have since moved the head. The
+  status marks *the head whose findings you triaged*. That is what makes convergence work: a new
+  review on the new head carries no status, so it reads as untriaged and earns another round.
+- **Fail closed.** If the status POST errors, say so and do **not** report success — an untriaged PR
+  that *looks* triaged is the one failure this skill must never produce.
+
+`$HEAD_SHA` is the head at the time you read the findings: `gh pr view "$N" --json headRefOid -q .headRefOid`.
 
 ### Label each round
 

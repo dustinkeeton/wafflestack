@@ -83,9 +83,18 @@ So: **write your review body without them.** The skills emit their own markers a
 review needs none, and the automation handles an unmarked human review just fine — run
 `/pr-response` by hand to answer one.
 
-Note this is now **hygiene, not a safety rule**. Since #338 no CI hook reads a body: pr-green's
-dedup and delivery check key on a `waffle/adversarial-review` **commit status**, pr-response's
-delivery check on a `waffle/pr-response` commit status, and its loop bound on a **label** the
-workflow applies. All three take repo push access to write, so a pasted marker cannot suppress the
-bot's review or dispatch a paid run — which is exactly what it *could* do before (a human comment on
-PR #207 and a QA review on PR #296 each did it by quoting a literal in prose).
+**This is a safety rule, not hygiene.** What changed in #338 is *which half* of the system it
+protects, not whether it matters.
+
+- **CI no longer reads bodies.** pr-green's dedup and delivery check key on a
+  `waffle/adversarial-review` **commit status**, pr-response's delivery check on a
+  `waffle/pr-response` status, and its loop bound on a **label the workflow applies**. All take repo
+  push access to write, so a pasted marker can no longer suppress the bot's review or dispatch a paid
+  run — which is exactly what it *could* do before (a human comment on PR #207 and a QA review on
+  PR #296 each did it by quoting a literal in prose).
+- **The skills and `autopilot` still do.** `autopilot` decides which findings have been triaged, and
+  then **arms auto-merge**; the skills recognize their own prior posts. A pasted marker still muddles
+  that record — and on the merge path a body that reads as *"already triaged"* is how findings get
+  merged with nobody having answered them.
+
+So the rule stands, and it is now guarding the more expensive failure, not the cheaper one.
