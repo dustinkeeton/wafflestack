@@ -10,6 +10,19 @@ files:
   - .github/workflows/waffle-evals.yml
   - .github/workflows/waffle-pr-green-hook.yml
   - .github/workflows/waffle-pr-response-hook.yml
+  - .github/ISSUE_TEMPLATE/config.yml
+  - .github/ISSUE_TEMPLATE/bug.yml
+  - .github/ISSUE_TEMPLATE/feature.yml
+  - .github/ISSUE_TEMPLATE/rough-idea.yml
+  - .github/PULL_REQUEST_TEMPLATE.md
+  - .github/REVIEW_TEMPLATE.md
+# The six templates above are **default render, not opt-in** (#337). Every other footprint
+# argument below is about permissions and API spend; a template has neither. They are inert
+# markdown/YAML that GitHub reads only when a HUMAN opens the new-issue or new-PR form — no job,
+# no token, no dispatch, no cent. Withholding them behind an opt-in would just guarantee that the
+# hand-filed issues keep arriving in a shape the `issue` skill and the enrichment path do not
+# recognize, which is the whole problem they exist to close. The one thing they must never do is
+# auto-apply a label that DISPATCHES a paid run — see the rough-idea note in the setup block.
 # optIn: sensitive syrup poured only on request. The label-hook workflow's jobs need repo
 # write permissions (issues/contents/pull-requests) and the "create and approve PRs" repo
 # setting; the release-hook and post-merge-hook workflows each hold `contents: write` (to push
@@ -213,6 +226,62 @@ setup: |-
   Pushing this file needs the `workflow` credential
   scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
+
+  **Issue / PR / review templates (default render, #337).** This stack ships six inert templates
+  that pour with the stack — no opt-in, because unlike every workflow above they hold no
+  permissions, run no job, and spend no money: `.github/ISSUE_TEMPLATE/{config,bug,feature,
+  rough-idea}.yml`, `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/REVIEW_TEMPLATE.md`. They exist
+  so a HAND-FILED issue or PR arrives in the same shape the skills produce — before them, the `issue`
+  skill drafted every issue into Problem / Proposed Solution / Sub-issues / Context while anything
+  filed through the web UI started from a blank box.
+  **The forms mirror the `issue` skill's body template**, not a shape of their own: bug and feature
+  ask for Problem / Proposed Solution / Context (feature adds Sub-issues), and they apply the type
+  label from `issue.bugLabel` / `issue.featureLabel` — keep those in step with `issue.typeLabels`, or
+  a form will apply a label the skill would never choose (GitHub silently drops a label that does not
+  exist in the repo, so the mismatch fails quietly). One honest seam: GitHub issue-forms render a
+  field label as an `###` heading, while the skill's canonical template uses `##`. Section names
+  match; heading level does not. The enrich pass re-drafts the whole body into the canonical template
+  anyway, so it normalizes on the way through — do not "fix" it by renaming the fields.
+  **The rough-idea form is the enrichment on-ramp, and it is safe by construction.** It takes a
+  one-line idea and auto-applies `issue.inferenceLabel` (default `Needs Inference`) via the form's
+  `labels:` key, so filing a one-liner IS the request to enrich it: `/issue` with no argument batch-
+  enriches every open issue carrying that label. That label is a **queue marker** — no workflow
+  dispatches on it, it spends nothing, and a human picks the queue up when they choose to. This is
+  the ONLY label a template may auto-apply, and the distinction is the whole safety argument: a
+  form-applied label is attributed to the human who filed the issue and therefore PASSES the
+  label-hook's bot-sender gate, so auto-applying `labelHook.enrichLabel` / `labelHook.implementLabel`
+  / `labelHook.releaseLabel` from a template would hand any drive-by issue author a button that
+  dispatches a paid harness run against your repo. **Never add a trigger label to a template's
+  `labels:` key.** (A test pins this; see the templates section in installer/test/content.test.mjs.)
+  **The chooser** (`config.yml`) keeps the blank-issue escape hatch on by default
+  (`issue.blankIssuesEnabled: true`) — the forms are the paved path, not a wall — and takes
+  `issue.contactLinks` to route discussion-shaped traffic off the tracker (the default is a comment
+  block, since a toolkit default cannot know your repo's Discussions URL).
+  **The PR template** mirrors the PR body the `git-workflow` skill writes — Summary, a `Closes #N`
+  linked issue (one closing keyword PER issue: `Closes #1, #2` closes only #1), and a Test plan whose
+  four rows render from `project.lintCmd` / `project.typecheckCmd` / `project.testCmd` /
+  `project.buildCmd`, so changing a pre-flight command and re-rendering updates the checklist with no
+  separate edit. An agent opening a PR passes `--body-file` and bypasses the template entirely — it
+  renders the same sections from the skill — so this file serves the human path.
+  **Review templates are SKILL-rendered, and `REVIEW_TEMPLATE.md` is deliberately not a second source
+  of truth.** GitHub has no native review template, so a file in `.github/` can only ever be a
+  reference doc — nothing reads it and nothing enforces it. The canonical finding shape (severity
+  ladder) already lives in the `adversarial-review` skill and the canonical verdict shape (the
+  four-dimension rubric, the composite thresholds, the override rules) in `pr-response`, and those
+  ARE load-bearing: the pr-green / pr-response hooks key their dedup and delivery guards on the
+  markers those skills emit. Duplicating the rubric into `.github/` would create a copy that drifts
+  out from under the guards. So the skills stay the enforcement point, and `REVIEW_TEMPLATE.md` is a
+  thin human-facing companion: it carries the round's *skeleton* (the finding block, the verdict
+  table, the append-only rule) and the stable vocabulary (blocker / should-fix / nit,
+  Implement / Defer / Decline), and it POINTS at the skills for the scoring anchors and thresholds
+  rather than restating them. It also tells a human reviewer the one thing they cannot learn from
+  GitHub: **do not paste the automation markers into a review body** — a hand-pasted
+  `waffle-adversarial-review` marker convinces the pr-green hook this commit is already reviewed
+  (suppressing the bot's own review) and can dispatch a paid pr-response run. A human review needs no
+  marker; answer one by running `/pr-response` by hand.
+  To opt out of any template, `eject: [files/.github/PULL_REQUEST_TEMPLATE.md]` (which releases the
+  file as project-owned rather than deleting it) or drop it from your selection. These files need no
+  `workflow` credential scope — they are not under `.github/workflows/`.
 
   **Label hook workflow (opt-in syrup).** This stack also carries
   `.github/workflows/waffle-label-hook.yml`, but it is **opt-in syrup**: enabling the stack does
@@ -1526,7 +1595,71 @@ config:
   issue.inferenceLabel:
     required: false
     default: Needs Inference
-    description: Lifecycle label marking an issue as awaiting AI enrichment; removed once enriched.
+    # Label-name allowlist, shared byte-for-byte with issue.bugLabel / issue.featureLabel below.
+    # A label value is spliced into (a) a DOUBLE-QUOTED shell word — `gh issue list --label
+    # "{{issue.inferenceLabel}}"` in the issue skill — and, since #337, (b) a DOUBLE-QUOTED YAML
+    # scalar in an issue form's `labels: ["…"]` key. `"` is therefore fatal in both landing sites
+    # (it closes the quote and corrupts the command or the form), and a newline is fatal in the
+    # second, so the class is an allowlist, not a denylist. `$`, backtick and `\` are excluded for
+    # the shell site (and `$` alone kills a surviving `${{ … }}`); `{`/`}` for the YAML flow-scalar
+    # site and any nested-placeholder trickery. Single interior spaces only, no leading/trailing —
+    # same idiom as git.botName. GitHub's own label taxonomy fits: `bug`, `type/bug`,
+    # `priority: medium`, `Needs Inference`.
+    pattern: '^[A-Za-z0-9][A-Za-z0-9:._/+#()-]*(?: [A-Za-z0-9:._/+#()-]+)*$'
+    description: >-
+      Lifecycle label marking an issue as awaiting AI enrichment; removed once enriched. It is a
+      QUEUE MARKER, not a CI trigger — the `issue` skill's batch mode enriches every open issue
+      carrying it, and no workflow dispatches on it — which is precisely why the rough-idea issue
+      form may auto-apply it (a form must never auto-apply labelHook.enrichLabel /
+      labelHook.implementLabel, which DO dispatch a paid run; see the setup note).
+  issue.bugLabel:
+    required: false
+    default: bug
+    # Same allowlist as issue.inferenceLabel — see its comment for why.
+    pattern: '^[A-Za-z0-9][A-Za-z0-9:._/+#()-]*(?: [A-Za-z0-9:._/+#()-]+)*$'
+    description: >-
+      Type label the bug issue form applies on submit. Defaults to `bug`, matching the default
+      issue.typeLabels table — override BOTH together when the repo's taxonomy differs (e.g.
+      type/bug), or the form applies a label the skill never chooses. A label that does not exist
+      in the repo is silently not applied by GitHub, so a mismatch fails quietly.
+  issue.featureLabel:
+    required: false
+    default: enhancement
+    # Same allowlist as issue.inferenceLabel — see its comment for why.
+    pattern: '^[A-Za-z0-9][A-Za-z0-9:._/+#()-]*(?: [A-Za-z0-9:._/+#()-]+)*$'
+    description: >-
+      Type label the feature issue form applies on submit. Defaults to `enhancement`, matching the
+      default issue.typeLabels table — override BOTH together when the repo's taxonomy differs
+      (e.g. type/feature).
+  issue.blankIssuesEnabled:
+    required: false
+    default: "true"
+    # Renders as a bare YAML boolean in .github/ISSUE_TEMPLATE/config.yml — anything but the two
+    # literals would make GitHub reject the chooser config outright.
+    pattern: '^(?:true|false)$'
+    description: >-
+      Whether the "Open a blank issue" escape hatch stays on the issue-form chooser. Defaults to
+      `true`: the forms are the paved path, not a wall, and disabling the blank box REMOVES a
+      capability a consumer already had — not something enabling this stack should do silently. Set
+      `false` to force every hand-filed issue through a form (the rough-idea form is then the
+      zero-friction path).
+  issue.contactLinks:
+    required: false
+    default: |-
+      # contact_links: route discussion-shaped traffic off the issue tracker. Override
+      # issue.contactLinks in .waffle/waffle.yaml with a real YAML block — the value is
+      # spliced in verbatim, so it must be valid YAML at column 0:
+      #
+      # contact_links:
+      #   - name: Questions and ideas
+      #     url: https://github.com/OWNER/REPO/discussions
+      #     about: Ask a question or float an idea — no issue needed.
+    description: >-
+      Verbatim YAML spliced into .github/ISSUE_TEMPLATE/config.yml to route discussion-shaped
+      traffic elsewhere (Discussions, a forum, a chat). The default is a COMMENT block — valid
+      YAML that adds no links — because a toolkit default cannot know a consumer's repo URL, and an
+      empty `contact_links:` key is not valid chooser config. Unvalidated by pattern (it is a
+      multi-line YAML block, like issue.typeLabels): bad YAML here breaks your own chooser page.
   issue.typeLabels:
     required: false
     default: |-
