@@ -5160,6 +5160,180 @@ describe('the lock hashes the canonical render, not the local overlay (#317)', (
       assert.doesNotMatch(result.errors.join('\n'), /CANONICAL render/, 'no overlay is involved — do not blame one');
     });
   });
+
+  // ── Every working-tree check must read the TREE lock (#308 review). ────────────────────────────
+  //
+  // #317 splits one lock in two: the COMMITTED lock records the canonical render (the shared
+  // contract) and the gitignored LOCAL lock records what THIS machine actually wrote. Five seams
+  // have to read the tree lock — `doctor`, `list`, `setup`, `render`'s prune-and-clobber
+  // bookkeeping, and the canonical toolkit `sameExternalStacks` gates. Only `doctor`'s was pinned:
+  // each of the other four could be reverted to the canonical lock with all 839 tests still green,
+  // which is exactly how a correct implementation rots. Each test below was written against its
+  // mutation FIRST — revert the line it names and it fails, and nothing else does.
+  //
+  // The seams diverge in two different ways, which is why the fixture above is not enough:
+  //   - by HASH — the overlay changes a rendered VALUE. `list` compares per-item hashes, so this
+  //     alone breaks it. This is the everyday case (`git.botEmail` in the overlay).
+  //   - by KEY  — the overlay changes the rendered file SET. `setup`'s syrup gate and `render`'s
+  //     prune/clobber only ever read `Object.keys(lock.files)`, so a value-only overlay leaves them
+  //     identical and proves nothing. They need an overlay that moves the SELECTION — a private
+  //     stack, or an `include:` that pours syrup.
+  describe('every working-tree check reads the TREE lock, not the canonical one', () => {
+    let cacheDir;
+
+    const SYRUP = 'poured.yml';
+    const PRIVATE_SKILL = '.claude/skills/private-skill/SKILL.md';
+    const EXT_SKILL = '.claude/skills/ext-skill/SKILL.md';
+
+    const makeSeamFixture = (root) => {
+      write(root, 'toolkit.yaml', 'name: fixture\ndescription: seam fixture\nstacks: [demo, private]\n');
+      write(root, 'stacks/demo/stack.yaml', [
+        'name: demo', 'description: Demo stack.', 'skills: [demo-skill]',
+        'files:', `  - ${SYRUP}`,
+        'optIn:', `  - files/${SYRUP}`,
+        'config:', '  git.botEmail:', '    required: false', '    default: bot@wafflenet.io', '    description: bot email',
+        '',
+      ].join('\n'));
+      write(root, 'stacks/demo/skills/demo-skill/SKILL.md', [
+        '---', 'name: demo-skill', 'description: A demo skill.', '---', '', 'Email {{git.botEmail}}.', '',
+      ].join('\n'));
+      write(root, `stacks/demo/files/${SYRUP}`, 'sensitive: true\n');
+      // A stack the COMMITTED config never enables — only a private overlay does. That is what makes
+      // the two locks disagree about which files EXIST, not merely about what is inside them.
+      write(root, 'stacks/private/stack.yaml', [
+        'name: private', 'description: Private tooling.', 'skills: [private-skill]',
+        'config:', '  git.botEmail:', '    required: false', '    default: bot@wafflenet.io', '    description: bot email',
+        '',
+      ].join('\n'));
+      write(root, 'stacks/private/skills/private-skill/SKILL.md', [
+        '---', 'name: private-skill', 'description: Private.', '---', '', 'Private tooling for {{git.botEmail}}.', '',
+      ].join('\n'));
+      write(root, 'schema/SETUP.md', '# fixture playbook\n\nFirst-install prose.\n');
+    };
+
+    beforeEach(() => {
+      fs.rmSync(toolkitRoot, { recursive: true, force: true }); // the outer fixture; this block brings its own
+      toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-317-seam-'));
+      makeSeamFixture(toolkitRoot);
+      cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wafflestack-seam-cache-'));
+      dirs.push(cacheDir);
+    });
+
+    const renderSeam = (cwd) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+    const overlay = (cwd, lines) => write(cwd, OVERLAY, [...lines, ''].join('\n'));
+    const keysOf = (cwd, rel) => Object.keys(JSON.parse(read(cwd, rel)).files);
+    const email = (addr) => ['config:', '  git:', `    botEmail: ${addr}`];
+
+    // `list.mjs:53` — diverges by HASH. This is the one the docs promise out loud: AGENTS.md and
+    // docs/gitignore.md both say "`doctor` AND `list` compare your files against the local lock."
+    test('list — an overlay-touched item is `current`, not `outdated` (list.mjs:53)', () => {
+      const cwd = machine('dev');
+      overlay(cwd, email('dustin+bot@myaddress.com'));
+      assert.equal(renderSeam(cwd).ok, true);
+
+      const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+      const row = model.stacks.flatMap((s) => s.rows).find((r) => r.ref === 'skills/demo-skill');
+      assert.equal(
+        row.status,
+        STATUS.CURRENT,
+        'answering from the canonical lock reports every overlay-touched item as hand-edited',
+      );
+    });
+
+    // `setup.mjs:72` — diverges by KEY, through the opt-in syrup gate.
+    test('setup — syrup my overlay poured reads as installed, not as still-to-pour (setup.mjs:72)', () => {
+      const cwd = machine('dev');
+      // The overlay pours the syrup AND moves a value, so the two renders disagree about which files
+      // exist: my tree has poured.yml, the canonical render never selected it.
+      overlay(cwd, [...email('dustin+bot@myaddress.com'), `include: [files/${SYRUP}]`]);
+      assert.equal(renderSeam(cwd).ok, true);
+      assert.ok(keysOf(cwd, LOCAL_LOCK).includes(SYRUP), 'precondition: my tree poured it');
+      assert.ok(!keysOf(cwd, LOCK).includes(SYRUP), 'precondition: the canonical render never selected it');
+
+      // Drop the `include:`, keep the overlay. An explicit `include:` bypasses the opt-in gate
+      // outright (refs.mjs:391), so while it is there `trackedFiles` proves nothing; with it gone,
+      // the tracked paths of the lock are the ONLY thing keeping the poured syrup selected.
+      overlay(cwd, email('dustin+bot@myaddress.com'));
+
+      const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
+      assert.ok(
+        guide.includes(`\`files/${SYRUP}\` (demo) — installed —`),
+        'answering from the canonical lock tells me to pour a file I already have',
+      );
+    });
+
+    // `render.mjs:161` (`treeLock = localLock ?? lock`) — diverges by KEY. Its docblock makes two
+    // claims; this is the first: reading the canonical lock "would prune files it never wrote", and
+    // conversely leave forever the ones it did.
+    test('render — a file only MY overlay rendered is still pruned when I stop rendering it (render.mjs:161)', () => {
+      const cwd = machine('dev');
+      overlay(cwd, ['stacks: [demo, private]', ...email('dustin+bot@myaddress.com')]);
+      assert.equal(renderSeam(cwd).ok, true);
+      assert.ok(fs.existsSync(path.join(cwd, PRIVATE_SKILL)), 'precondition: my overlay rendered it');
+      assert.ok(!keysOf(cwd, LOCK).includes(PRIVATE_SKILL), 'precondition: the canonical lock never tracked it');
+
+      // Turn the private stack back off. Only the LOCAL lock knows this file was ever ours, so only
+      // the local lock can prune it — from the canonical lock's seat it is a stranger's file.
+      overlay(cwd, email('dustin+bot@myaddress.com'));
+      assert.equal(renderSeam(cwd).ok, true);
+      assert.ok(
+        !fs.existsSync(path.join(cwd, PRIVATE_SKILL)),
+        'answering from the canonical lock orphans it on disk forever',
+      );
+    });
+
+    // …and the second claim of that docblock: it would "refuse to overwrite files it did [write]".
+    test('render — …and re-rendering that file is not a clobber of someone else\'s (render.mjs:161)', () => {
+      const cwd = machine('dev');
+      overlay(cwd, ['stacks: [demo, private]', ...email('dustin+bot@myaddress.com')]);
+      assert.equal(renderSeam(cwd).ok, true);
+
+      // A DIFFERENT value, so the second render produces different bytes at the same path — a
+      // byte-identical file is adopted silently by the clobber guard and would prove nothing.
+      overlay(cwd, ['stacks: [demo, private]', ...email('dustin+other@myaddress.com')]);
+      const result = renderSeam(cwd);
+      assert.equal(
+        result.ok,
+        true,
+        `answering from the canonical lock makes render refuse to overwrite a file it wrote itself: ${JSON.stringify(result.errors)}`,
+      );
+      assert.match(read(cwd, PRIVATE_SKILL), /dustin\+other@myaddress\.com/);
+    });
+
+    // `render.mjs:123` (`sameExternalStacks`) — the same leak, one level up. The canonical render
+    // must resolve its STACKS from the committed config too, or an overlay that redeclares a
+    // `source:`/`ref:` walks into the shared lock through the toolkit registry, by the back door.
+    test('sameExternalStacks — an overlay that redeclares an external source stays out of the lock (render.mjs:123)', () => {
+      const [srcA, srcB] = ['A', 'B'].map((label) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), `ext-${label.toLowerCase()}-`));
+        dirs.push(root);
+        write(root, 'stacks/ext/stack.yaml', 'name: ext\ndescription: External.\nskills: [ext-skill]\n');
+        write(root, 'stacks/ext/skills/ext-skill/SKILL.md',
+          `---\nname: ext-skill\ndescription: Ext.\n---\n\nFrom source ${label}.\n`);
+        return root;
+      });
+      const configWith = (src) => ['targets: [claude]', 'stacks:', '  - demo', '  - name: ext', `    source: ${src}`, ''].join('\n');
+
+      // Both machines COMMIT the same external source (A). One developer's private overlay points
+      // their own checkout at B — a fork they are testing against, on their machine alone.
+      const dev = machine('dev');
+      const ci = machine('ci');
+      for (const dir of [dev, ci]) write(dir, CONFIG, configWith(srcA));
+      write(dev, OVERLAY, ['stacks:', '  - demo', '  - name: ext', `    source: ${srcB}`, ''].join('\n'));
+
+      assert.equal(renderSeam(dev).ok, true);
+      assert.equal(renderSeam(ci).ok, true);
+
+      assert.match(read(dev, EXT_SKILL), /From source B/, 'my tree renders MY source — the overlay still works');
+      assert.match(read(ci, EXT_SKILL), /From source A/);
+      assert.equal(
+        lockBytes(dev),
+        lockBytes(ci),
+        'reuse the effective toolkit for the canonical render and the overlay\'s source: — its ' +
+          'provenance AND its rendered bytes — lands in the committed lock',
+      );
+    });
+  });
 });
 
 // #308 review — the lock is copied into the temp render as an INPUT, not just a comparison target, because
