@@ -3484,9 +3484,14 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     const mdBlock = /```markdown\n([\s\S]*?)```/.exec(skill);
     assert.ok(mdBlock, 'step 6 ships a markdown summary block');
     assert.ok(mdBlock[1].includes(MARKER), `step 6's no-holes body carries the marker:\n${mdBlock[1]}`);
-    // the marker sits on its own line, both times
+    // the marker LEADS the body, both times — not merely "sits on its own line" somewhere in it
+    // (#332). The step-6 assertion used to carry the `/m` flag, i.e. it matched the marker on ANY
+    // line: the exact semantics this PR abolished, left sitting in the assertion meant to enforce
+    // the new one. And step 6 is the "no holes found" path — the one a CLEAN PR takes, so the
+    // least-exercised path was also the least-pinned. Burying either marker under a heading now
+    // fails here, which is the only half of the workflow↔skill prose coupling a test CAN pin.
     assert.match(jsonBlock[1], new RegExp(`"body": "${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\\\n`));
-    assert.match(mdBlock[1], new RegExp(`^${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    assert.ok(mdBlock[1].startsWith(`${MARKER}\n`), `step 6's no-holes body is MARKER-LED, not merely marker-bearing:\n${mdBlock[1].slice(0, 120)}`);
 
     // the workflow's gate + guard both query for the SAME marker text
     const wf = read(cwd, REL);
@@ -8932,11 +8937,18 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     assert.match(cond, /startsWith\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
     assert.doesNotMatch(cond, /[^!]contains\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
 
-    // The self-trigger BLOCK stays tolerant, and that is not an inconsistency: it is a *blocking*
-    // clause, so over-matching is ITS safe direction — it refuses more. `!startsWith` here would let
-    // a body burying this hook's own marker mid-prose through, which is what the clause exists to
-    // keep out.
-    assert.match(cond, /!contains\(github\.event\.review\.body, '<!-- waffle-pr-response -->'\)/);
+    // …and there is NO self-trigger clause, deliberately (#332). A `!contains(<this hook's own
+    // marker>)` clause sat here as "defense in depth". The marker-LED trigger above SUBSUMES it —
+    //   * a self-trigger cannot even REACH this `if:`: the hook fires on `pull_request_review`, and
+    //     its own reply is posted with `gh pr comment` (an ISSUE COMMENT, no review event); and
+    //   * two markers cannot both sit at offset 0, so anything satisfying the trigger is an
+    //     adversarial review by construction, never a reply.
+    // — while its only REACHABLE effect was a false negative: it silently dropped a genuine
+    // adversarial review that QUOTED the pr-response literal in prose, i.e. a review of a hooks PR,
+    // the population this hook most needs to answer. ("The skill forbids quoting it" is not a
+    // guarantee — that is the very assurance #296 disproved for the sibling marker, and #296 is the
+    // evidence base for this whole fix.) Do not reinstate it without a reachable true positive.
+    assert.doesNotMatch(cond, /waffle-pr-response/, 'no self-trigger clause: the marker-LED trigger subsumes it (#332)');
 
     // the checkout is a step, so it can only run once the job-level `if:` admitted the event —
     // pin that it is gated on the gate step too, and that nothing checks out ahead of the gate.

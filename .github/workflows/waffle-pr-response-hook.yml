@@ -44,9 +44,10 @@
 # with the default GITHUB_TOKEN does not trigger new workflow runs (a GitHub anti-recursion rule), so
 # CI never re-runs and pr-green never re-fires; but a PAT/App token in WAFFLE_HYGIENE_TOKEN (the
 # recommended setting, so the PR's required checks actually run) restores the cycle in full. The
-# per-PR guard is what holds in BOTH configurations. Two further skips harden it: a review whose own
-# body carries the pr-response marker (self-trigger), and — as pr-green does — draft PRs and
-# bot-authored PRs.
+# per-PR guard is what holds in BOTH configurations. Further skips harden it — as pr-green does,
+# draft PRs and bot-authored PRs are skipped — and a self-trigger is impossible twice over: this hook
+# fires on `pull_request_review` while its own reply is an ISSUE COMMENT, and the job-level trigger
+# demands a body LED by the adversarial-review marker, which a reply never is (see the `if:`).
 #
 # Opt-in syrup: this spends real Anthropic API money on every reviewed PR AND holds `contents: write`
 # to commit the fixes it accepts, so enabling the stack does NOT render it — install it explicitly
@@ -79,16 +80,33 @@ jobs:
     #       it. A false NEGATIVE here merely leaves a review unanswered — visible, cheap, and a human
     #       can run /pr-response by hand. The marker-LED contract is the same one pr-response/SKILL.md
     #       and adversarial-review/SKILL.md mandate (first line) and the delivery check below enforces.
-    #   (3) SELF-TRIGGER BLOCK — the review does not carry this hook's own marker anywhere. This one
-    #       stays TOLERANT (`!contains`) on purpose: it is a *blocking* clause, so over-matching is
-    #       its safe direction (it refuses more). Tightening it to `!startsWith` would let a body that
-    #       buries this hook's marker mid-prose through — the exact class (2) exists to keep out.
+    # There is NO third clause, and its absence is deliberate (#332). A `!contains(review.body, <this
+    # hook's own marker>)` clause used to sit here as "defense in depth against a self-trigger". Once
+    # (2) became marker-LED it was DEAD, and worse than dead:
+    #
+    #   * A self-trigger cannot reach this `if:` AT ALL. This hook fires on `pull_request_review`;
+    #     its own reply is posted with `gh pr comment`, i.e. an ISSUE COMMENT, which raises no
+    #     `pull_request_review` event. Ruled out on the event, before any predicate runs.
+    #   * And it is ruled out AGAIN on the marker: two different markers cannot both sit at offset 0,
+    #     so anything satisfying (2) is an adversarial review by construction, never a reply.
+    #   * So the clause's ONLY reachable effect was a false NEGATIVE: it silently dropped a genuine
+    #     adversarial review that happened to QUOTE the pr-response literal in prose — i.e. an
+    #     adversarial review OF A HOOKS PR, exactly the population this hook most needs to answer.
+    #     That is not a hypothetical class: #296's QA review quoted the *sibling* literal for exactly
+    #     the same reason (it was reviewing this code), and that body is the evidence base for the
+    #     whole fix. A skill's prose contract is not a guarantee — that premise cuts both ways.
+    #
+    # What actually stands between this hook and an unbounded self-trigger is (a) the event type,
+    # (b) the marker-LED trigger in (2), and (c) the per-PR LOOP BOUND in the gate step below.
+    # ⚠️ If this hook is ever changed to post its reply as a REVIEW rather than a comment, it is the
+    # LOOP BOUND that must move with it (it counts issue comments today) — the deleted clause would
+    # not have saved you: a reply is led by its own marker, so (2) already refuses it.
+    #
     # These are Actions expressions over event data, not a shell splice, so no event content ever
     # reaches a command line. The in-job gate adds the per-PR loop bound.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.review.body, '<!-- waffle-adversarial-review -->') &&
-      !contains(github.event.review.body, '<!-- waffle-pr-response -->')
+      startsWith(github.event.review.body, '<!-- waffle-adversarial-review -->')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Least privilege for a job that COMMITS: contents: write to push the accepted fixes onto the

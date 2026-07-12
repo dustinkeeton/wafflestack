@@ -1350,6 +1350,27 @@ describe('gate skills: documented as resumable across rounds (#295)', () => {
     assert.match(md, /<!-- waffle-pr-response -->/);
     assert.match(md, /read-only history|Read them; do not touch them\./);
   });
+
+  // #332/F11: waffle-pr-response-hook's delivery check matches this skill's reply with jq
+  // `startswith()` — the marker must LEAD the reply, not merely appear in it. That coupling is
+  // workflow-jq → skill-prose, and it was pinned on NEITHER side here: every marker assertion in the
+  // suite was workflow-side, so burying the marker under a heading in the template below passed the
+  // whole suite. On THIS hook that is the loudest possible break — it holds `contents: write` and a
+  // single-tier denial classifier, so a non-led reply reds every hard-denial-bearing run as "the
+  // response did NOT post" while the reply sits on the PR. Pin the half that can be pinned: the
+  // template the skill tells the responder to emit.
+  test('pr-response: the reply template is MARKER-LED — the hook\'s delivery check uses startswith() (#332)', () => {
+    const md = readSkill('pr-response');
+    const MARKER = '<!-- waffle-pr-response -->';
+    const template = /```markdown\n([\s\S]*?)```/.exec(md);
+    assert.ok(template, 'the skill ships a reply-format template block');
+    assert.ok(
+      template[1].startsWith(`${MARKER}\n`),
+      `the reply template must BEGIN with the marker (jq startswith), not merely carry it:\n${template[1].slice(0, 120)}`,
+    );
+    // and the prose must say so — the template is an example, the rule is what a responder follows
+    assert.match(md, /first line|FIRST line|first-line/, 'the skill states the first-line rule');
+  });
 });
 
 // #297: #295's lazy responder spawn (round 1 spawns it only when the review surfaces findings)

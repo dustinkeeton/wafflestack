@@ -40,17 +40,24 @@ is what you reach for across a breaking one.
   human comment, a review discussing the hook — matched. Every call site now matches the full
   literal (`test()` takes a **regex**, which is the wrong tool for a marker containing `<!--` /
   `-->`), which closes the bare-word class outright.
-  **There are SIX marker predicates across the two hooks, not four**, and the fix is one sentence:
-  **a predicate that ADMITS work requires a marker-LED body (`startswith()` / `startsWith()`); the
-  one predicate that BOUNDS work over-matches (`index()`).** The five admitting sites — pr-green's
-  idempotency gate, pr-green's `check_delivered`, pr-response's job-level trigger `if:`,
-  pr-response's `check_delivered`, and the self-trigger *block* in that same `if:` — each fail
-  expensively on a **false positive**: a silently-skipped security review, a fail-open green over a
-  blocked `git push`, a paid `contents: write` dispatch on a review that is not the bot's. The one
-  exception is **pr-response's per-PR loop bound**, whose false *negative* re-arms an unbounded paid,
-  committing loop; it therefore keeps the **tolerant** substring match on purpose. (The self-trigger
-  block is a *negation*, so over-matching is ITS safe direction — it refuses more; it stays
-  `!contains`.)
+  **The audit found SIX marker predicates across the two hooks, not the four originally analyzed —
+  and FIVE survive**, under one sentence: **a predicate that ADMITS work requires a marker-LED body
+  (`startswith()` / `startsWith()`); the one predicate that BOUNDS work over-matches (`index()`).**
+  The four admitting sites — pr-green's idempotency gate, pr-green's `check_delivered`,
+  pr-response's job-level trigger `if:`, and pr-response's `check_delivered` — each fail expensively
+  on a **false positive**: a silently-skipped security review, a fail-open green over a blocked
+  `git push`, a paid `contents: write` dispatch on a review that is not the bot's. The one exception
+  is **pr-response's per-PR loop bound**, whose false *negative* re-arms an unbounded paid,
+  committing loop; it keeps the **tolerant** substring match on purpose.
+  The sixth predicate — a `!contains(<own marker>)` **self-trigger block** in pr-response's job `if:`
+  — is **deleted**, because once the trigger beside it became marker-LED the block was dead *and*
+  harmful. A self-trigger cannot reach that `if:` at all (the hook fires on `pull_request_review`;
+  its own reply is an **issue comment**), and two markers cannot both sit at offset 0, so anything
+  satisfying the trigger is an adversarial review by construction. Its only **reachable** effect was
+  a false negative: silently dropping a genuine adversarial review that *quoted* the pr-response
+  literal in prose — i.e. a review **of a hooks PR**, the population this hook most needs to answer.
+  "The skill forbids quoting it" is not a guarantee: that is the exact assurance PR #296 disproved
+  for the sibling marker, and #296 is the evidence base for this whole fix.
   **Scope, precisely:** matching the full literal closes bodies that *name* the marker; requiring the
   marker to **lead** the body closes bodies that *quote* it. Neither class is hypothetical. PR #207
   (the evidence PR for #211) carries a **human comment with the literal at offset 1084**, which under
