@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sha256, exists } from './util.mjs';
-import { readLock, readTreeLock, renderProject } from './render.mjs';
+import { readLock, readLocalLock, readTreeLock, renderProject } from './render.mjs';
 import {
   LOCK_FILE,
   LOCAL_LOCK_FILE,
@@ -88,7 +88,12 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
   // The manifest of what is actually on disk (see the docblock). Identical to `lock` unless a local
   // overlay shaped this machine's render.
   const tree = readTreeLock(cwd);
-  const localRender = tree !== lock;
+  // NOT `tree !== lock`. `readLock` parses the file afresh on every call, so on the overwhelmingly
+  // common machine — no overlay, no local lock — `readTreeLock`'s fallback returns a *different
+  // object* with identical content, and that comparison is true on every repo in existence. It told
+  // every consumer their overlay fed the render and their files had been checked against a
+  // `.waffle/waffle.local.lock.json` they do not have. Ask the question that was meant.
+  const localRender = readLocalLock(cwd) !== null;
 
   const attribution = {};
   for (const src of tree.sources ?? []) {

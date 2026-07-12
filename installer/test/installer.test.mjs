@@ -5065,6 +5065,31 @@ describe('the lock hashes the canonical render, not the local overlay (#317)', (
       assert.equal(check(cwd).ok, true);
     });
 
+    // Found while mutation-testing the seams above, not raised in review. `doctor` decided "does an
+    // overlay feed this render" with `readTreeLock(cwd) !== readLock(cwd)` — but `readLock` parses
+    // the file on every call, so with no overlay the fallback returns a *different object* holding
+    // identical content, and the comparison was true on every repo in existence. The note fired
+    // universally, telling consumers who have no overlay that their files were checked against a
+    // local lock they do not have. It gates nothing else, so the drift verdict was always right —
+    // the ANSWER was fine, the explanation under it was fiction.
+    test('the note fires for an overlay machine — and stays silent for everyone else', () => {
+      const overlaid = machine('dev', 'dustin+bot@myaddress.com');
+      assert.equal(render(overlaid).ok, true);
+      assert.ok(fs.existsSync(path.join(overlaid, LOCAL_LOCK)), 'precondition: this machine has one');
+      assert.ok(
+        check(overlaid).notes.some((n) => n.includes(LOCAL_LOCK)),
+        'an overlay machine must be told which lock answered, or a drift report is mystifying',
+      );
+
+      const plain = machine('ci');
+      assert.equal(render(plain).ok, true);
+      assert.ok(!fs.existsSync(path.join(plain, LOCAL_LOCK)), 'precondition: the common machine has none');
+      assert.ok(
+        !check(plain).notes.some((n) => n.includes(LOCAL_LOCK) || n.includes(OVERLAY)),
+        'do not send a consumer with no overlay looking for a local lock that does not exist',
+      );
+    });
+
     test('render warns when .gitignore does not cover the local lock it just wrote', () => {
       const cwd = machine('dev', 'dustin+bot@myaddress.com');
       const warned = render(cwd).warnings.some((w) => w.includes(LOCAL_LOCK));
