@@ -136,7 +136,8 @@ in the path is what keeps two concurrent gates from ever touching the same file.
 
 Write this JSON to that path — `line` must be a line that appears in the
 PR's diff, `side: RIGHT` for added/context lines and `LEFT` for removed lines. The `body` MUST
-carry the literal marker `<!-- waffle-adversarial-review -->` on its own line (see below):
+**begin** with the literal marker `<!-- waffle-adversarial-review -->` as its **first line** (see
+below):
 
 ```json
 {
@@ -168,11 +169,17 @@ gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/t
 
 Notes on mechanics:
 
-- **The marker is load-bearing.** Every review this skill posts — findings *or* no-holes —
-  must contain the exact literal `<!-- waffle-adversarial-review -->` on its own line in the
-  summary body. The `waffle-pr-green-hook` workflow keys its duplicate-review guard on that
-  marker (matched against the review's `commit_id`) and its delivery check on its presence;
-  omitting or altering it causes duplicate reviews and a falsely-red job.
+- **The marker is load-bearing, and it must LEAD the body.** Every review this skill posts —
+  findings *or* no-holes — must **begin** with the exact literal
+  `<!-- waffle-adversarial-review -->` as the **first line** of the summary body. The
+  `waffle-pr-green-hook` workflow keys its duplicate-review guard on that marker (matched
+  against the review's `commit_id`) and its delivery check on it; the delivery check matches
+  with `startswith()`, so a marker buried mid-body does **not** count as delivery. Omitting,
+  altering, or merely *quoting* it causes duplicate reviews and a falsely-red job.
+- **Never quote the raw marker mid-body.** Discussing the hook in a review is fine, but writing
+  the bare literal inside prose is what the `startswith()` rule exists to disarm — and in a
+  *comment* (which the sibling pr-response hook matches as a substring) it can still trip that
+  hook's loop bound. Refer to it by name, or break the literal, rather than pasting it.
 - Use **`event: "COMMENT"`** — an honest, non-approving review. Escalate to
   `event: "REQUEST_CHANGES"` **only** when you found a genuine **blocker**; never as a default
   posture. GitHub forbids `REQUEST_CHANGES`/`APPROVE` on your **own** PR, so if the review
@@ -192,7 +199,7 @@ Post a short approving-in-spirit summary (still `event: "COMMENT"` unless you're
 approve and aren't the author). Same rule as step 5: the body goes in a **file**, never inline
 after `--body` — a multi-line body inside the command is the same allowlist trap. `Write` the
 summary to the **per-PR** path `${TMPDIR:-/tmp}/waffle-adversarial-review-summary-$N.md` (same
-namespacing rule and same literal-path caveat as step 5), marker on its own line:
+namespacing rule and same literal-path caveat as step 5), marker as the first line:
 
 ```markdown
 <!-- waffle-adversarial-review -->

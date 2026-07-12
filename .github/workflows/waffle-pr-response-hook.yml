@@ -118,6 +118,19 @@ jobs:
           #     #211): a PR whose conversation merely MENTIONS "waffle-pr-response" in prose has not
           #     been replied to, and must still get its one automated reply.
           #
+          #     This site DELIBERATELY keeps the tolerant substring `index()` while the delivery
+          #     check below takes the strict `startswith()`. They are not inconsistent — they fail in
+          #     OPPOSITE directions, and each matches in the direction that fails SAFE:
+          #
+          #       here  — a false POSITIVE skips one reply (wrong, cheap). A false NEGATIVE re-arms
+          #               an unbounded paid, COMMITTING loop (catastrophic). ⇒ OVER-match.
+          #       there — a false POSITIVE excuses a blocked git push/curl/rm and greens the job
+          #               (fail-open). A false NEGATIVE just reds a delivered run. ⇒ UNDER-match.
+          #
+          #     So a comment that merely QUOTES the literal mid-prose still bounds the loop here (it
+          #     costs this PR its one automated reply — see #333) but can no longer masquerade as
+          #     delivery below. Do NOT "unify" the two predicates; the asymmetry is the design.
+          #
           #     FAIL-CLOSED, and note the direction — the opposite of pr-green's dedup. There, an
           #     API error yields an empty list and the review posts again (a duplicate review is
           #     cheap). Here an unverifiable bound could authorize an unbounded paid, committing
@@ -256,15 +269,32 @@ jobs:
           # makes it unambiguous — it SKIPPED the dispatch unless zero marked comments existed, so a
           # marked comment now IS this run's reply. It cannot be stale.
           #
-          # The match is the FULL LITERAL marker via jq `index()` (a literal substring search), NOT a
-          # bare-word regex (#211). This query has NO commit_id narrowing — it counts any comment on
-          # the PR — so a loose match would let ANY passing mention of "waffle-pr-response" (a human
-          # comment, a changelog quote, this very sentence) masquerade as delivery, and delivery
-          # downgrades a blocked git push/curl/rm to a warning in a job holding contents: write. That
-          # is the fail-OPEN direction, so the literal is load-bearing here. `index()` returns an
-          # OFFSET, and the skill puts the marker on the FIRST line ⇒ offset 0 — in jq only null/false
-          # are falsy, so a bare `select(…|index(…))` correctly keeps a 0 hit. Do NOT "harden" this to
-          # `index(…) > 0`; that drops exactly the real reply.
+          # Delivery evidence must be a marker-LED body: `startswith()`, not a substring search.
+          #
+          # Two false-positive classes had to die here, and they die differently (#211):
+          #   (a) a body that merely NAMES the marker word ("the waffle-pr-response hook is broken").
+          #       Killed by matching the FULL LITERAL rather than a bare-word regex.
+          #   (b) a body that QUOTES the full literal mid-prose — a human comment discussing this
+          #       hook, a changelog entry, a review citing the marker. A substring search (`index()`)
+          #       still matches those, and one such comment demonstrably exists on PR #207. Killed by
+          #       requiring the marker to LEAD the body.
+          #
+          # Why this site takes the strict form while the loop-bound gate above keeps the tolerant
+          # `index()`: the two sites fail in OPPOSITE directions, so each matches in the direction
+          # that fails SAFE. This query has NO commit_id narrowing — it counts any comment on the PR —
+          # and a false positive here downgrades a blocked git push/curl/rm to a warning in a job
+          # holding contents: write. That is the fail-OPEN direction, so it must UNDER-match: a body
+          # that isn't marker-led is not this hook's reply. (The gate over-matches for the same
+          # reason in reverse — see there.) A false NEGATIVE here is merely a red job on a run that
+          # did deliver: loud, visible, and safe.
+          #
+          # `startswith()` is the skill's own contract, not a tightening of it: pr-response/SKILL.md
+          # mandates the marker as the reply's FIRST line, and the dispatch prompt above repeats it.
+          # Verified against every real reply this hook has posted — all marker-led, offset 0.
+          #
+          # Do NOT "relax" this back to `index(…)` to be forgiving, and do NOT "harden" the gate's
+          # `index(…)` to `index(…) > 0` — that drops exactly the real, marker-led reply (offset 0 is
+          # TRUTHY in jq; only null/false are falsy). Both mistakes are pinned by tests.
           #
           # Memoized + LAZY: queried at most once, and only when a caller actually needs the answer.
           # FAIL-CLOSED at every step — a failed API call, malformed JSON, or a non-numeric count all
@@ -274,7 +304,7 @@ jobs:
             if [ -n "$delivered" ]; then return 0; fi
             delivered=0
             comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate 2>/dev/null || echo '[]')"
-            n="$(printf '%s' "$comments" | jq '[ .[] | select((.body//"")|index("<!-- waffle-pr-response -->")) ] | length' 2>/dev/null || echo 0)"
+            n="$(printf '%s' "$comments" | jq '[ .[] | select((.body//"")|startswith("<!-- waffle-pr-response -->")) ] | length' 2>/dev/null || echo 0)"
             case "$n" in ''|*[!0-9]*) n=0 ;; esac
             if [ "$n" -gt 0 ]; then delivered=1; fi
           }

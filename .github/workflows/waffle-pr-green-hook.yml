@@ -223,12 +223,27 @@ jobs:
           # paths, so a marked review whose commit_id is this head IS the review this run posted —
           # the gate already skipped the dispatch if one existed beforehand, so it cannot be stale.
           #
-          # The match is the FULL LITERAL marker via jq `index()` (a literal substring search), NOT a
-          # bare-word regex (#211): a review that merely MENTIONS "waffle-adversarial-review" in prose
-          # is not delivery evidence, and reading proof-of-delivery out of a passing mention is a
-          # fail-OPEN error. `index()` returns an OFFSET, and the marker is usually at offset 0 — in jq
-          # only null/false are falsy, so a bare `select(…|index(…))` correctly keeps a 0 hit. Do NOT
-          # "harden" this to `index(…) > 0`; that drops exactly the real, marker-on-line-1 review.
+          # Delivery evidence must be a marker-LED body: `startswith()`, not a substring search. Two
+          # false-positive classes, killed differently (#211):
+          #   (a) a review merely NAMING the marker word — killed by matching the FULL LITERAL rather
+          #       than a bare-word regex.
+          #   (b) a review QUOTING the full literal mid-prose (a human citing the marker, a reviewer
+          #       discussing this hook). A substring `index()` still matches those. Killed by
+          #       requiring the marker to LEAD the body.
+          # Reading proof-of-delivery out of either is a fail-OPEN error, so this site must
+          # UNDER-match. A false NEGATIVE here only reds a run that did deliver — loud and safe.
+          #
+          # The idempotency gate above deliberately keeps the tolerant `index()`: its false-positive
+          # direction is fail-CLOSED (skip a review) while its false-NEGATIVE direction posts a
+          # DUPLICATE review. Opposite risk ⇒ opposite match. Each site matches in the direction that
+          # fails safe; do NOT "unify" them.
+          #
+          # `startswith()` is the skill's contract, not a tightening: adversarial-review/SKILL.md
+          # mandates the marker as the summary body's FIRST line, and both post templates emit it
+          # there. Verified against every real review this hook has posted — all marker-led, offset 0.
+          #
+          # Do NOT "harden" the gate's `index(…)` to `index(…) > 0`; that drops exactly the real,
+          # marker-led review (offset 0 is TRUTHY in jq — only null/false are falsy). Pinned by tests.
           #
           # Memoized + LAZY: queried at most once, and only when a caller actually needs the answer.
           # FAIL-CLOSED at every step — a failed API call, malformed JSON, or a non-numeric count all
@@ -238,7 +253,7 @@ jobs:
             if [ -n "$delivered" ]; then return 0; fi
             delivered=0
             reviews="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate 2>/dev/null || echo '[]')"
-            n="$(printf '%s' "$reviews" | jq --arg sha "$HEAD_SHA" '[ .[] | select(.commit_id==$sha) | select((.body//"")|index("<!-- waffle-adversarial-review -->")) ] | length' 2>/dev/null || echo 0)"
+            n="$(printf '%s' "$reviews" | jq --arg sha "$HEAD_SHA" '[ .[] | select(.commit_id==$sha) | select((.body//"")|startswith("<!-- waffle-adversarial-review -->")) ] | length' 2>/dev/null || echo 0)"
             case "$n" in ''|*[!0-9]*) n=0 ;; esac
             if [ "$n" -gt 0 ]; then delivered=1; fi
           }
