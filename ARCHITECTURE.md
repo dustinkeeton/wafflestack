@@ -234,7 +234,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
 | `render` | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, then re-render + `doctor`. |
-| `doctor` | Compare rendered files to the lock and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. |
+| `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline: register each agent's deterministic avatar for its verified commit email (`sync`), or report roster drift without writing (`status`, exit 1 on drift). Owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`. |
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
@@ -255,8 +255,12 @@ A render is a straight-line flow:
    item and its dependency closure, minus anything in `eject:`.
 4. For every selected item and every target, **substitute** placeholders and
    **append** any project extension.
-5. **Write** the harness-native files and record each file's hash in
-   `.waffle/waffle.lock.json`.
+5. **Write** the harness-native files, then record hashes in the lock. The committed
+   `.waffle/waffle.lock.json` hashes the **canonical** render — what the committed inputs
+   produce on their own, overlay excluded — so it is byte-identical on every machine and
+   a private overlay value never propagates through it. When the overlay changed an
+   output byte, the hashes of the files actually written go to the gitignored
+   `.waffle/waffle.local.lock.json` instead.
 6. **Prune** any previously-managed file that is no longer rendered.
 
 Two safety checks guard the write step: two enabled sources emitting the *same*
@@ -265,8 +269,10 @@ overwrite a pre-existing file the lock doesn't track (a consumer's hand-written
 file) is refused before any write — a byte-identical file is adopted silently, and
 `--force` overrides the guard.
 
-Later, `doctor` re-hashes the files and compares them to the lock — that is how it
-knows if someone hand-edited a generated file or an update changed the output.
+Later, `doctor` re-hashes the files and compares them to the lock that describes the
+tree (the local one when your overlay shaped this machine's render, else the committed
+one) — that is how it knows if someone hand-edited a generated file or an update changed
+the output, even on a machine whose render legitimately differs from the committed lock.
 
 ## Configuration overview
 
@@ -275,9 +281,10 @@ Everything a consuming project owns:
 | File | Tracked in git? | Purpose |
 |------|-----------------|---------|
 | `.waffle/waffle.yaml` | ✅ committed | Version pin, targets, enabled stacks, individual items (`include`), config values, `eject` list |
-| `.waffle/waffle.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins |
-| `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments |
-| `.waffle/waffle.lock.json` | generated | Map of each rendered file to its hash; `doctor` reads it, `render` rewrites it |
+| `.waffle/waffle.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins. Private by design (#317): it shapes the bytes on *your* disk but never reaches the committed lock |
+| `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments — committed, therefore canonical, therefore it *does* propagate (the deliberate contrast with the overlay) |
+| `.waffle/waffle.lock.json` | ✅ committed (generated) | The **canonical** render's hashes — what the committed inputs alone produce, overlay excluded — so it is byte-identical on every machine. `doctor --verify-render` reproduces it; `render` rewrites it |
+| `.waffle/waffle.local.lock.json` | 🚫 gitignored (generated) | The render *this machine* actually wrote, overlay values included. Exists only while the overlay changes an output byte; `doctor`, `list`, and `render`'s prune/overwrite checks read it in preference to the committed lock, so a hand-edit is still caught locally |
 | `.waffle/CHEATSHEET.md`, `TEAM.md` + `cheatsheet.html`, `team.html` | generated (usually committed) | Overview docs of your installed selection — a cheat sheet of user-invocable skills and a team intro of agents, in Markdown plus a branded, self-contained HTML page each. Managed like any rendered file (lock-tracked, doctor-checked, pruned) |
 
 **Rule of thumb:** never edit files under `.claude/` (etc.) — a re-render will
@@ -305,6 +312,16 @@ against a render + lock that live in git. So after any `stacks/**` change you mu
 node installer/cli.mjs render
 ```
 
+Two required checks then guard the committed render from different angles. The
+`waffle-doctor` drift gate re-hashes the committed files against the committed lock. But a
+forgotten re-render leaves files and lock stale *together* — they agree with each other,
+so that gate stays green — which is why the `tests` workflow ends with
+`node installer/cli.mjs doctor --allow-missing --verify-render`, run with the checkout's
+own CLI: it re-renders the PR's committed inputs into a temp dir and diffs the result
+against the committed lock (#314/#316). It uses the checkout's CLI (not the shipped
+`doctor.flags` route) because the shipped workflow fetches the toolkit from `main` — the
+wrong toolkit for the toolkit's own PRs.
+
 A few things stay deliberately untracked (and `doctor` runs with `--allow-missing`
 to tolerate them): `.claude/worktrees/` (throwaway working state), `.codex/` and
 `.agents/` (non-targets — this repo only renders `claude`), the
@@ -326,6 +343,7 @@ dispatch), and the generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md
    npm run validate      # manifests + placeholder checks
    npm test              # installer test suite
    node installer/cli.mjs doctor   # rendered output matches the lock
+   node installer/cli.mjs doctor --allow-missing --verify-render   # committed inputs reproduce the lock (the CI render gate)
    ```
 4. **Documentation is generated by agents.** The machine registry (`AGENTS.md`)
    and these human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) are
