@@ -98,9 +98,18 @@ jobs:
     #
     # What actually stands between this hook and an unbounded self-trigger is (a) the event type,
     # (b) the marker-LED trigger in (2), and (c) the per-PR LOOP BOUND in the gate step below.
-    # ⚠️ If this hook is ever changed to post its reply as a REVIEW rather than a comment, it is the
-    # LOOP BOUND that must move with it (it counts issue comments today) — the deleted clause would
-    # not have saved you: a reply is led by its own marker, so (2) already refuses it.
+    #
+    # ⚠️ If this hook is ever changed to post its reply as a REVIEW rather than a comment, TWO sites
+    # must move with it — both key on this hook's own marker over `issues/{N}/comments`, and both
+    # would silently stop seeing the reply:
+    #     * the LOOP BOUND (gate step, `index()`) — it stops bounding, and the pr-green ↔ pr-response
+    #       cycle becomes an unbounded paid, committing loop. This is the catastrophic one.
+    #     * `check_delivered` (guard step, `startswith()`) — it would count ZERO marked comments, so
+    #       `delivered=0` always, and EVERY hard-denial-bearing run reds as "the response did NOT
+    #       post" while the reply sits on the PR.
+    #   (The token-count telemetry step also reads that endpoint, but on the disjoint token-count
+    #   marker — it is unaffected.) The deleted clause would not have saved you in that future
+    #   either: a reply is led by its own marker, so (2) already refuses it.
     #
     # These are Actions expressions over event data, not a shell splice, so no event content ever
     # reaches a command line. The in-job gate adds the per-PR loop bound.
