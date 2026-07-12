@@ -1219,7 +1219,15 @@ config:
   project.buildCmd:
     required: false
     default: npm run build
-    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    # Unquoted operators only: a `|` or `;` INSIDE a quoted argument (`jest -t "foo|bar"`) is not
+    # an operator — the command is still one program, and rejecting it would make this guard
+    # worse than the hole it closes.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?:''[^''\r\n]*''|"[^"\r\n]*"|[^;|&\r\n])*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, so an
+      unquoted `&&` / `||` / `;` / `|` / `&`, a `cd ` prefix, a `$(…)`/backtick substitution or a
+      newline can never match and the call is silently denied. Split a compound into an
+      npm-script-style single entry point (e.g. `npm run ci`) and set that here (#218).
     description: >-
       Production build command run in the pre-flight checklist and PR test plan. Must be ONE program
       the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
@@ -1228,7 +1236,15 @@ config:
   project.testCmd:
     required: false
     default: npm test
-    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    # Unquoted operators only: a `|` or `;` INSIDE a quoted argument (`jest -t "foo|bar"`) is not
+    # an operator — the command is still one program, and rejecting it would make this guard
+    # worse than the hole it closes.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?:''[^''\r\n]*''|"[^"\r\n]*"|[^;|&\r\n])*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, so an
+      unquoted `&&` / `||` / `;` / `|` / `&`, a `cd ` prefix, a `$(…)`/backtick substitution or a
+      newline can never match and the call is silently denied. Split a compound into an
+      npm-script-style single entry point (e.g. `npm run ci`) and set that here (#218).
     description: >-
       Test command run in the pre-flight checklist and PR test plan. Must be ONE program the
       allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
@@ -1236,7 +1252,15 @@ config:
   project.typecheckCmd:
     required: false
     default: npx tsc --noEmit --skipLibCheck
-    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    # Unquoted operators only: a `|` or `;` INSIDE a quoted argument (`jest -t "foo|bar"`) is not
+    # an operator — the command is still one program, and rejecting it would make this guard
+    # worse than the hole it closes.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?:''[^''\r\n]*''|"[^"\r\n]*"|[^;|&\r\n])*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, so an
+      unquoted `&&` / `||` / `;` / `|` / `&`, a `cd ` prefix, a `$(…)`/backtick substitution or a
+      newline can never match and the call is silently denied. Split a compound into an
+      npm-script-style single entry point (e.g. `npm run ci`) and set that here (#218).
     description: >-
       Type-check command run in the pre-flight checklist and PR test plan. Must be ONE program the
       allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no
@@ -1244,7 +1268,15 @@ config:
   project.lintCmd:
     required: false
     default: npm run lint --if-present
-    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    # Unquoted operators only: a `|` or `;` INSIDE a quoted argument (`jest -t "foo|bar"`) is not
+    # an operator — the command is still one program, and rejecting it would make this guard
+    # worse than the hole it closes.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?:''[^''\r\n]*''|"[^"\r\n]*"|[^;|&\r\n])*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, so an
+      unquoted `&&` / `||` / `;` / `|` / `&`, a `cd ` prefix, a `$(…)`/backtick substitution or a
+      newline can never match and the call is silently denied. Split a compound into an
+      npm-script-style single entry point (e.g. `npm run ci`) and set that here (#218).
     description: >-
       Lint/format check command run in the pre-flight checklist and PR test plan. Must be ONE program
       the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`, no `cd ` prefix, no

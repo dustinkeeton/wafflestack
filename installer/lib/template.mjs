@@ -73,8 +73,8 @@ export function substitute(text, resolve, declared, errors, context, guards) {
  * (render's compileGuards, validate's default self-check) builds the same shape a
  * rejection message can then cite (#244 F1). Throws on an invalid regex, like compilePattern.
  */
-export function makeGuard(pattern, source) {
-  return { re: compilePattern(pattern), pattern, source };
+export function makeGuard(pattern, source, hint = '') {
+  return { re: compilePattern(pattern), pattern, source, hint };
 }
 
 /**
@@ -110,8 +110,23 @@ const describeGuards = (failing) => {
   return [...byPattern].map(([pattern, sources]) => `\`${pattern}\` (declared by ${sources.join('; ')})`).join('; ');
 };
 
+/**
+ * The REMEDY, when the key declares one (`patternHint:`, #218). A raw PCRE lookahead is not an
+ * upgrade path: a guard that newly rejects a consumer's value hands them this message and nothing
+ * else — there is no migration, because no tool can safely split `tsc --noEmit && eslint .` for
+ * them. So the key may declare, in prose, what shape it wants and how to get there; the pattern
+ * stays in the message (it is the precise contract, and #244 F1's tests pin it), and the hint
+ * follows it. Deduped: byte-identical guards in several stacks carry the same hint, and the reader
+ * needs it once. Silent when no failing guard declares a hint, so every other guard's message is
+ * unchanged.
+ */
+const describeHints = (failing) => {
+  const hints = [...new Set(failing.map((g) => g.hint).filter(Boolean))];
+  return hints.length ? ` — ${hints.join(' ')}` : '';
+};
+
 function patternFailure(context, key, failing) {
-  return `${context}: config value for {{${key}}} does not match its declared pattern ${describeGuards(failing)}`;
+  return `${context}: config value for {{${key}}} does not match its declared pattern ${describeGuards(failing)}${describeHints(failing)}`;
 }
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);

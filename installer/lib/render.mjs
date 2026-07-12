@@ -809,7 +809,9 @@ function compileGuards(toolkit, errors) {
       const source = `stack "${stackName}"`;
       if (typeof spec?.pattern === 'string') {
         try {
-          add(key, makeGuard(spec.pattern, source));
+          // `patternHint:` (#218) — optional prose remedy carried on the guard, printed after the
+          // pattern when it fires. See describeHints (template.mjs): the message IS the upgrade path.
+          add(key, makeGuard(spec.pattern, source, typeof spec.patternHint === 'string' ? spec.patternHint : ''));
         } catch (err) {
           errors.push(`stack "${stackName}" config key ${key} has an invalid pattern: ${err.message}`);
         }
@@ -828,6 +830,62 @@ function compileGuards(toolkit, errors) {
     }
   }
   return { patterns, entryPatterns };
+}
+
+/**
+ * The config-value guard failures a render WOULD produce — evaluated WITHOUT rendering anything
+ * (#218). This is what lets `doctor` enforce a `pattern:` guard in the form the toolkit actually
+ * ships.
+ *
+ * A guard is a property of the config VALUE, not of the render: `render` only *notices* it because
+ * substitution is where a value is read. But `doctor` (bare — the shipped `waffle-doctor.yml`
+ * invocation, since `doctor.flags` defaults to `""`) only hashes the tree against the lock, so it
+ * structurally could not see one — and `--verify-render` is opt-in by design (#314), so it is not
+ * the gate a consumer actually runs. That left the population this class of guard exists for
+ * silently unprotected: a repo whose config ALREADY carries a compound has a lock and renders,
+ * produced by the OLD toolkit, that match each other. Hash-comparison doctor is green; the dead
+ * `Bash(cmd1 && cmd2:*)` grant stays live in their rendered workflow; their CI keeps silently
+ * denying the check. The guard closed the door on new dead grants and left the existing ones behind
+ * a passing check — which is the original bug's own failure shape.
+ *
+ * FAITHFULNESS IS THE WHOLE POINT, so this does not re-implement the check: it runs the real
+ * `substitute()` — the same resolver, the same `declared` set, the same compiled guards — against a
+ * text that is exactly `{{key}}`. A doctor that rejected what render accepts (or vice versa) would
+ * be worse than no doctor check at all, and the only way to guarantee they agree is to run the same
+ * code. It reports one problem per KEY, not one per substitution site.
+ *
+ * Deliberately NOT the missing-value gate: an unresolved key is `missingRequiredKeys`' business
+ * (and render's), and a key whose value lives only in the gitignored local overlay must not read as
+ * missing here. So an undefined value is skipped, and only a RESOLVED value is guarded.
+ */
+export function configGuardProblems({ toolkit, project, selection }) {
+  const problems = [];
+  // A guard that fails to compile is a toolkit-authoring bug; surfacing it here matches render,
+  // which fails loudly rather than silently skipping the check.
+  const guards = compileGuards(toolkit, problems);
+
+  const groups = new Map();
+  for (const { stackName, stack, kind, item } of selection.items) {
+    if (!groups.has(stackName)) groups.set(stackName, { stack, items: [] });
+    groups.get(stackName).items.push({ kind, item });
+  }
+
+  const reported = new Set();
+  for (const [stackName, { stack, items }] of groups) {
+    // The primary target, exactly as render's `primaryResolver` does — only the reserved `harness.*`
+    // keys resolve per-target, and none of those is a stack-declared, pattern-guarded config key.
+    const target = project.targets?.[0] ?? 'claude';
+    const resolve = makeResolver(stack, project.values, target);
+    for (const key of collectUsedKeys(items)) {
+      if (reported.has(key)) continue;
+      if (!guards.patterns.has(key) && !guards.entryPatterns.has(key)) continue;
+      if (resolve(key) === undefined) continue; // see above — not this check's business
+      const before = problems.length;
+      substitute(`{{${key}}}`, resolve, stack.declared, problems, `stack "${stackName}"`, guards);
+      if (problems.length > before) reported.add(key);
+    }
+  }
+  return problems;
 }
 
 /** Placeholder keys referenced by a set of selected items' source content. */

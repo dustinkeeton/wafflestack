@@ -1481,6 +1481,13 @@ describe('project commands never join with && (#218)', () => {
         r.errors.some((e) => e.includes(`project.${key}`) && /does not match its declared pattern/.test(e)),
         `the error must NAME the offending key: ${JSON.stringify(r.errors)}`,
       );
+      // …and it must carry the REMEDY, not just a PCRE lookahead. There is no migration for this
+      // guard — no tool can safely split `tsc --noEmit && eslint .` — so this message IS the entire
+      // upgrade path for every consumer it newly rejects. A raw regex is not an upgrade path.
+      assert.ok(
+        r.errors.some((e) => e.includes(`project.${key}`) && /npm-script-style single entry point/.test(e)),
+        `the error must carry the patternHint remedy: ${JSON.stringify(r.errors)}`,
+      );
     };
 
     // (a) all FOUR keys are guarded — not just the one the bug happened to ship in.
@@ -1498,20 +1505,78 @@ describe('project commands never join with && (#218)', () => {
       'npm test `date`',
       'npm test\nnpm run build',    // a newline is a compound too (the jq classifier says so)
       'npm install ${{ secrets.NPM_TOKEN }}', // lands in the workflow — GitHub would interpolate it
+      'jest -t "foo" | tee out.log', // a quoted ARG plus a REAL operator is still a compound
+      'jest -t "a|b" && npm run build',
+      'npm test -- "unbalanced | quote', // no valid parse — an unbalanced quote fails closed
     ]) failsNaming(renderWith({ ...CMDS, typecheckCmd: bad }), 'typecheckCmd');
 
-    // (c) …and it must NOT fire on an ordinary single-program command. A guard that rejects
-    // `pytest -k 'not slow'` gets deleted by the first annoyed consumer, and then guards nothing.
+    // (c) …and it must NOT fire on an ordinary single-program command. **Rejecting a valid command
+    // is the one way this guard ends up worse than the hole it closes** — the annoyed consumer
+    // deletes it, and then it guards nothing. So the operator ban is scoped to UNQUOTED operators:
+    // a `|` or `;` inside a quoted argument is not an operator, the command is still one program,
+    // and `Bash(<cmd>:*)` matches it on its leading program exactly as intended.
     for (const good of [
       'npm test', 'npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm pack --dry-run',
-      "pytest -k 'not slow'", 'go test ./...', 'cargo test --all-features', './gradlew test',
+      'go test ./...', 'cargo test --all-features', './gradlew build --no-daemon', 'make -j4 build',
       'npm run test:ci', 'true',
+      'cdk deploy --all',        // starts with "cd" — but the guard requires the trailing space
+      'npm test -- ${FLAGS}',    // variable expansion is not `$(…)` and not `${{ }}`
+      // quoted shell metacharacters — single-program commands, every one:
+      "pytest -k 'not slow'", 'jest -t "foo|bar"', 'npm test -- --reporters="a;b"', 'jest -t "a&b"',
     ]) {
       assert.equal(
         renderWith({ ...CMDS, typecheckCmd: good }).ok, true,
         `an ordinary single-program command must render: ${good}`,
       );
     }
+  });
+
+  // A6 is A5's other half, and the one that reaches the consumers this guard is FOR.
+  //
+  // A5 pins that a compound fails the RENDER. But the shipped CI gate is `waffle-doctor.yml`, which
+  // runs `doctor <doctor.flags>` — and `doctor.flags` defaults to `""`. So the gate a consumer
+  // actually runs is BARE doctor, which only hashes the tree against the lock and never re-renders.
+  // (`--verify-render` sees a bad value, but it is opt-in by design, #314.)
+  //
+  // That left the exact population #218's guard exists for silently unprotected: a repo whose config
+  // ALREADY carries a compound has renders and a lock — produced by the OLD toolkit — that match
+  // each other. They upgrade; hash-comparison doctor stays GREEN; the dead grant
+  // `Bash(tsc --noEmit && eslint .:*)` stays live in their rendered workflow; their CI keeps silently
+  // denying the check. The guard would have closed the door on new dead grants while leaving the
+  // existing ones behind a passing check — the original bug's own failure shape.
+  //
+  // A `pattern:` guard polices the config VALUE, so it needs no re-render to evaluate. It now runs
+  // unconditionally, in every doctor mode.
+  test('A6 the SHIPPED gate sees it: bare `doctor` fails on a compound config value, no flags needed', () => {
+    // A clean render first — this is the upgrade path: the tree and lock are valid and agree.
+    renderAll();
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot }).ok, true, 'clean config: doctor green');
+
+    // Now the config carries a compound, exactly as an existing consumer's would. The rendered files
+    // and the lock still hash-match — nothing on disk changed — so the drift check alone sees nothing.
+    write(cwd, '.waffle/waffle.yaml', read(cwd, '.waffle/waffle.yaml').replace('"ztypecheck"', '"ztypecheck && zbuild"'));
+
+    // EVERY doctor mode must fail, above all the two that ship: bare, and --allow-missing.
+    for (const flags of [{}, { allowMissing: true }, { verifyRender: true }, { allowMissing: true, verifyRender: true }]) {
+      const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot, ...flags });
+      const label = JSON.stringify(flags);
+      assert.equal(dr.ok, false, `doctor ${label} must fail on a compound config value`);
+      assert.ok(
+        dr.notes.some((n) => n.includes('project.typecheckCmd') && /does not match its declared pattern/.test(n)),
+        `doctor ${label} must NAME the offending key: ${JSON.stringify(dr.notes)}`,
+      );
+      assert.ok(
+        dr.notes.some((n) => /npm-script-style single entry point/.test(n)),
+        `doctor ${label} must carry the remedy: ${JSON.stringify(dr.notes)}`,
+      );
+    }
+
+    // The drift check itself must stay quiet: this is a CONFIG fault, not a hand-edited file. A
+    // doctor that blamed the tree here would send the consumer hunting the wrong thing.
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot });
+    assert.deepEqual(dr.modified, [], 'no file was hand-edited — the fault is the config value');
+    // One problem per KEY, not one per substitution site (the value lands in several files).
+    assert.equal(dr.configProblems.length, 1, `one problem per key: ${JSON.stringify(dr.configProblems)}`);
   });
 
   test('A2 every PR-body checklist item is ONE command, and each is covered by an allowlist prefix', () => {

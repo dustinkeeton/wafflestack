@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sha256, exists } from './util.mjs';
-import { readLock, readLocalLock, readTreeLock, renderProject } from './render.mjs';
+import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems } from './render.mjs';
 import {
   LOCK_FILE,
   LOCAL_LOCK_FILE,
@@ -163,10 +163,12 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
     notes.push(`the lock does not match what ${CONFIG_FILE} (+ ${EXTENSIONS_DIR}/) would render — re-render and commit the result`);
   }
 
-  // Typed-prerequisite gate (#129). Best-effort: any failure to load the toolkit/config/selection
-  // is surfaced as a note and skips the gate rather than breaking the drift check (which needs
-  // neither). Only an unmet `require`-level prerequisite of a SELECTED stack fails doctor.
+  // Typed-prerequisite gate (#129) and the config-value guard gate (#218). Best-effort: any failure
+  // to load the toolkit/config/selection is surfaced as a note and skips both gates rather than
+  // breaking the drift check (which needs neither). Only an unmet `require`-level prerequisite of a
+  // SELECTED stack fails doctor.
   let prerequisites = noPrereqs();
+  let configProblems = [];
   if (toolkitRoot) {
     try {
       const project = loadProjectConfig(cwd);
@@ -182,6 +184,18 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
       const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
       const applicable = applicablePrerequisites(toolkit, selection);
       prerequisites = { evaluated: true, ...evaluatePrerequisites(applicable, cwd) };
+
+      // A `pattern:` guard polices the config VALUE, so it does not need a re-render to evaluate —
+      // and it must not, because `--verify-render` is opt-in (#314) while the shipped
+      // `waffle-doctor.yml` runs bare `doctor` (`doctor.flags` defaults to ""). Without this, a repo
+      // whose committed config carries a value the toolkit now rejects sails through its own doctor
+      // gate — tree and lock still hash-match, because they were rendered before the guard existed.
+      // That is the population #218's guard is FOR. Runs unconditionally, in every doctor mode.
+      configProblems = configGuardProblems({ toolkit, project, selection });
+      for (const problem of configProblems) notes.push(`invalid config value: ${problem}`);
+      if (configProblems.length) {
+        notes.push(`fix the value(s) in ${CONFIG_FILE}, then re-render — the current render was produced before this guard and may carry the bad value`);
+      }
     } catch (err) {
       notes.push(`could not evaluate prerequisites: ${err.message}`);
     }
@@ -196,9 +210,11 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
     : modified.length === 0 && missing.length === 0;
   // An unmet `require` prerequisite is drift-equivalent — it fails the gate; `recommend` never does.
   // So is a render that no longer reproduces the lock — and so is a *failed* verification: the flag
-  // asked a question that could not be answered, which must never read as a pass.
-  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok;
-  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render };
+  // asked a question that could not be answered, which must never read as a pass. And so is a config
+  // value the toolkit's own guards reject (#218): it cannot render, and the render on disk that
+  // still hash-matches the lock is precisely the stale artifact that hides it.
+  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0;
+  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems };
 }
 
 /**

@@ -18,7 +18,15 @@ config:
     default: npm test
     # #218: a project command is only grantable as a single-program `Bash(<cmd>:*)` prefix, so a
     # compound value renders a DEAD grant that matches nothing. Rejected at render, not linted later.
-    pattern: '^(?!.*(?:&&|\|\||\$\(|\$\{\{|[;|&`]))(?!\s*cd\s)[^\r\n]*$'
+    # Unquoted operators only: a `|` or `;` INSIDE a quoted argument (`jest -t "foo|bar"`) is not
+    # an operator — the command is still one program, and rejecting it would make this guard
+    # worse than the hole it closes.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?:''[^''\r\n]*''|"[^"\r\n]*"|[^;|&\r\n])*$'
+    patternHint: >-
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, so an
+      unquoted `&&` / `||` / `;` / `|` / `&`, a `cd ` prefix, a `$(…)`/backtick substitution or a
+      newline can never match and the call is silently denied. Split a compound into an
+      npm-script-style single entry point (e.g. `npm run ci`) and set that here (#218).
     description: >-
       Test command that runs the project's full suite (referenced throughout the TDD skill).
       Must be ONE program the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`,
