@@ -1628,6 +1628,7 @@ describe('project commands never join with && (#218)', () => {
       let lang = null;
       let fenceAt = 0;
       let fenceCmds = [];
+      let fencePH = false;
       let heredoc = null;
 
       lines.forEach((line, i) => {
@@ -1637,10 +1638,18 @@ describe('project commands never join with && (#218)', () => {
             lang = fence[1] || 'text';
             fenceAt = i;
             fenceCmds = [];
+            fencePH = false;
             heredoc = null;
           } else {
-            // A bash fence holding 2+ project commands IS a newline-separated compound.
-            if (BASH.test(lang) && fenceCmds.length > 1) {
+            // A bash fence reads as ONE Bash call, so a project command sharing it with ANY second
+            // command is a newline-separated compound — the shape F1 fixed in delegate, and the one
+            // the jq denial classifier names by putting `\n` in its separator class.
+            //
+            // Counting only PLACEHOLDER-BEARING lines (the earlier cut) missed the common half of
+            // that: a fence holding `{{project.testCmd}}` and then `git push` never reached
+            // `length > 1`. Count every runnable line; flag only when the fence actually carries a
+            // project command, so unrelated bash fences stay out of reach by construction.
+            if (BASH.test(lang) && fencePH && fenceCmds.length > 1) {
               flag(file, fenceAt, 'newline-compound fence', fenceCmds.join(' \\n '));
             }
             lang = null;
@@ -1678,8 +1687,10 @@ describe('project commands never join with && (#218)', () => {
           if (open) heredoc = open[1];
 
           const cmd = line.split('#')[0].trim();                        // drop any trailing comment
+          if (!cmd) return;                                             // blank / comment-only
+          fenceCmds.push(cmd);                                          // EVERY runnable line — see the fence close
           if (!PH.test(cmd)) return;
-          fenceCmds.push(cmd);
+          fencePH = true;
           if (OP.test(cmd.replace(PH_G, '')) || cmd.includes('`')) flag(file, i, 'compound', cmd);
           else if (CD.test(cmd) || SUBST.test(cmd)) flag(file, i, 'cd/substitution', cmd);
           return;
