@@ -234,40 +234,75 @@ jobs:
             if [ "$n" -gt 0 ]; then delivered=1; fi
           }
           if [ "$denials" -gt 0 ]; then
-            # Classify denials. HARD: a sandbox-escape attempt (dangerouslyDisableSandbox:true —
-            # ALWAYS hard, NEVER downgraded), a blocked file edit (Edit/MultiEdit/NotebookEdit — this
-            # job grants Write for the review payload but never edits a tracked file), or a blocked
-            # delivery shell command — gh (the review post) or a mutating/exfil program (git/rm/curl/
-            # …), matched ONLY at a command boundary so a program name inside a path or an echo string
-            # is never a false hit. SOFT (warn, does NOT fail): everything else — ad-hoc READ-ONLY
-            # shell (ls/cat/grep/find/sed/…). Only a bare count (no array) ⇒ every denial HARD.
+            # Classify denials into THREE tiers, because the delivery-aware downgrade below exists for
+            # exactly ONE reason: to excuse the CLASSIFIER'S IMPRECISION. A denial is downgradeable if
+            # and only if the classifier genuinely cannot tell a read from a mutation. It is NOT
+            # downgradeable when the tool name or the verb says plainly what it is (#208).
             #
-            # The program-name heuristic cannot read intent: `git tag` lists but `git tag v1.0`
-            # mutates, and a read-only `git log`/`gh api` GET is indistinguishable from a mutating
-            # one. Rather than chase regex precision, a hard denial is checked against the API: if the
-            # review IS on the PR, the denial provably blocked nothing and is downgraded to a warning.
+            #   ESCAPE  — dangerouslyDisableSandbox:true. Red, always. Never authorized.
+            #   DANGER  — the denial no delivery evidence may excuse: an exfil/destructive program
+            #             (curl/wget/ssh/rm/dd/…), a MUTATING git or gh verb (git push, git commit,
+            #             `git tag <name>`, gh secret, gh repo delete, gh pr merge, …), or a blocked
+            #             file edit (Edit/Write/MultiEdit/NotebookEdit). Red, always — see below.
+            #   AMB     — HARD minus the two above: the genuinely ambiguous residue, i.e. a git/gh call
+            #             the program-name heuristic cannot tell from a mutating one (`git log`,
+            #             `git tag -l`, `gh api …`, `gh pr view`). Red if the review did NOT post;
+            #             downgraded to a warning if it DID (#188 — the denial provably blocked
+            #             nothing, because the review is on the head commit).
+            #   SOFT    — everything else: ad-hoc READ-ONLY shell (ls/cat/grep/find/sed/…). Warn.
+            #
+            # Why DANGER is never downgraded even though the call was BLOCKED (so nothing escaped):
+            # this job chews on UNTRUSTED PR content, and a blocked exfil/destructive attempt is
+            # precisely the signal we must not swallow. Before #208 a delivered review downgraded the
+            # WHOLE hard class, so a denied `curl … -d @hosts.yml`, `rm -rf`, `git push` or
+            # `gh secret list` went GREEN with only a warning — a lost-signal bug in the one job that
+            # most needs the signal. Splitting DANGER out of HARD keeps #188's fix for the ambiguous
+            # half while restoring the red for the half that was never ambiguous at all.
+            #
+            # Boundary-anchored, so a program name inside a path or an echo string is never a hit. A
+            # bare count (no array to classify) ⇒ every denial HARD, DANGER=0 — i.e. exactly the
+            # pre-#208 behaviour, gated on delivery.
+            #
+            # git/gh are classified by VERB, fail-closed via negative lookahead: an unknown verb is
+            # DANGER. `gh api --method POST …` is deliberately AMBIGUOUS, not DANGER — it IS the
+            # review-post path (`Bash(gh api:*)` is granted, so an injected mutation would never be
+            # denied and never reach this classifier anyway); redding it would false-red the exact
+            # shape #188 fixed. The gsub normalizes `git --no-pager log` ⇒ `git log` before matching:
+            # widening the lookahead with an optional flag prefix instead would let a backtracking
+            # engine take the zero-flag path and misread `git -c x=y push` as ambiguous.
             hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(gh|git|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
             case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
             escapes="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end' 2>/dev/null || echo 0)"
             case "$escapes" in ''|*[!0-9]*) escapes=0 ;; esac
+            danger="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox != true) and ((.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and (((.tool_input.command // "") | gsub("git\\s+(--no-pager|--paginate)\\s+"; "git ")) as $c | ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*git\\s+(?!(log|diff|show|status|tag|blame|shortlog|describe|rev-parse|rev-list|ls-files|cat-file)\\b)")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*git\\s+tag\\s+(-[adfmsu]|--(delete|force|annotate|sign|message|file)|[^-\\s])")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*gh\\s+(?!(pr|api|repo|issue|search|run|label|browse|status)\\b)")) or ($c | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*gh\\s+(repo\\s+(create|delete|fork|rename|archive|edit|sync|deploy-key)|pr\\s+(merge|close|reopen))\\b")))))) ] | length else 0 end' 2>/dev/null || echo 0)"
+            case "$danger" in ''|*[!0-9]*) danger=0 ;; esac
             soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
+            # DANGER ⊆ HARD \ ESCAPES by construction, so this cannot go negative — clamped anyway.
+            amb=$(( hard - escapes - danger )); if [ "$amb" -lt 0 ]; then amb=0; fi
             # (1) A sandbox escape is UNCONDITIONALLY red — never authorized, never downgraded, not
             #     even by a delivered review. This must stay AHEAD of the delivery-aware downgrade.
             if [ "$escapes" -gt 0 ]; then
               echo "::error title=waffle-pr-green-hook::Harness attempted ${escapes} sandbox escape(s) (dangerouslyDisableSandbox) of ${denials} denied tool call(s) — a sandbox escape is NEVER authorized and ALWAYS fails the run, regardless of whether the review posted. Detail: the claude-execution-log-pr-green artifact."
               exit 1
             fi
-            # (2) A hard denial with NO review on the head commit reds the run — the review really
-            #     did not post. Widen claude_args --allowedTools (see the stack setup note) and rerun.
-            if [ "$hard" -gt 0 ]; then check_delivered; fi
-            if [ "$hard" -gt 0 ] && [ "$delivered" -ne 1 ]; then
-              echo "::error title=waffle-pr-green-hook::Harness was denied ${hard} delivery tool call(s) of ${denials} total — a blocked gh review post, file write, or git/destructive call — and no adversarial review carrying the marker is present on ${HEAD_SHA}, so the review did NOT post. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-pr-green artifact."
+            # (2) An exfil/destructive/mutating denial is NEVER downgraded — not even by a delivered
+            #     review, so this rung deliberately does NOT consult check_delivered. The call WAS
+            #     blocked, but the attempt is the signal (#208).
+            if [ "$danger" -gt 0 ]; then
+              echo "::error title=waffle-pr-green-hook::Harness was denied ${danger} exfil/destructive tool call(s) of ${denials} total — a blocked curl/wget/ssh/rm/…, a mutating git/gh verb (git push, git tag <name>, gh secret, gh pr merge, …), or a blocked file edit. The call WAS blocked, so nothing escaped — but this job reviews UNTRUSTED PR content, and such an attempt is NEVER downgraded, not even when the marked review posted. Inspect the claude-execution-log-pr-green artifact; do NOT widen claude_args --allowedTools to make this green."
               exit 1
             fi
-            # (3) A hard denial on a run whose review DID post blocked nothing — warn, don't red.
-            #     This is what stops a denied read-only `git log`/`git tag` from failing the job.
-            if [ "$hard" -gt 0 ]; then
-              echo "::warning title=waffle-pr-green-hook::Harness was denied ${hard} delivery-classified tool call(s), but the marked adversarial review IS present on ${HEAD_SHA}, so the review posted — treating them as non-blocking (likely a read-only git/gh call the program-name classifier could not distinguish from a mutating one). Review the claude-execution-log-pr-green artifact if the review looks incomplete."
+            # (3) An AMBIGUOUS denial with NO review on the head commit reds the run — the review
+            #     really did not post. Widen claude_args --allowedTools (the stack setup note) + rerun.
+            if [ "$amb" -gt 0 ]; then check_delivered; fi
+            if [ "$amb" -gt 0 ] && [ "$delivered" -ne 1 ]; then
+              echo "::error title=waffle-pr-green-hook::Harness was denied ${amb} delivery tool call(s) of ${denials} total — a blocked gh review post, file write, or read-only git/gh call — and no adversarial review carrying the marker is present on ${HEAD_SHA}, so the review did NOT post. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-pr-green artifact."
+              exit 1
+            fi
+            # (4) An ambiguous denial on a run whose review DID post blocked nothing — warn, don't red.
+            #     This is what stops a denied read-only `git log`/`git tag -l` from failing the job.
+            if [ "$amb" -gt 0 ]; then
+              echo "::warning title=waffle-pr-green-hook::Harness was denied ${amb} delivery-classified tool call(s), but the marked adversarial review IS present on ${HEAD_SHA}, so the review posted — treating them as non-blocking (likely a read-only git/gh call the program-name classifier could not distinguish from a mutating one). Review the claude-execution-log-pr-green artifact if the review looks incomplete."
             fi
             if [ "$soft" -gt 0 ]; then
               echo "::warning title=waffle-pr-green-hook::Harness was denied ${soft} read-only tool call(s) (ad-hoc shell exploration); none blocked the review, so this does not fail the job. Review the claude-execution-log-pr-green artifact if the result looks incomplete."

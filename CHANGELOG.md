@@ -31,6 +31,29 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Fixed
+- **pr-green: a blocked exfil/destructive call no longer goes green just because the review posted
+  (#208).** #204 taught the `waffle-pr-green-hook` guard to downgrade a denied tool call to a warning
+  when a marker-carrying adversarial review is on the head commit. The motivation was narrow — the
+  program-name classifier cannot tell a read-only `git log` from a mutating `git push`, so a denied
+  *read* was false-redding runs that had demonstrably posted their review. **The implementation was
+  much wider than the motivation:** the downgrade excused the entire hard class, so a **denied**
+  `curl … -d @…/gh/hosts.yml`, `rm -rf`, `git push`, or `gh secret list` warned and the job went
+  **green** — in the one job whose whole purpose is chewing on untrusted PR content. Nothing ever
+  escaped (the call *was* blocked; the allowlist is the control), but CI stopped telling us the
+  attempt happened — a lost-signal bug. The hard class is now split into three tiers: a **sandbox
+  escape** (unconditionally red, unchanged and still first), a new **exfil/destructive/mutating**
+  tier — an exfil program, a mutating `git`/`gh` verb (`git push`, `git tag <name>`, `gh secret`,
+  `gh pr merge`, …), or a blocked file edit — which is **never** downgraded, not even by a delivered
+  review; and the genuinely **ambiguous** residue, which keeps #188's delivery-aware downgrade. The
+  governing principle: *the downgrade exists only to excuse the classifier's imprecision* — a denial
+  is downgradeable iff the classifier truly cannot tell read from mutate, never when the tool name or
+  the verb says plainly what it is. `git`/`gh` are classified by verb, fail-closed (an unknown verb is
+  treated as dangerous); a bare `permission_denials_count` (no array to classify) behaves exactly as
+  before. **Consumer impact:** re-render to pick this up. This will newly **red** some runs that are
+  green today — that is the point; inspect the `claude-execution-log-pr-green` artifact rather than
+  widening `--allowedTools` to make it green.
+
 ## [0.12.0] - 2026-07-11
 
 ### Added

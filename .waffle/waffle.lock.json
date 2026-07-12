@@ -64,7 +64,7 @@
     ".github/workflows/waffle-hygiene.yml": "7d9ceda3f086a1a484af1067a03a4a63b0e5529575ed847c91686ae281edf66a",
     ".github/workflows/waffle-label-hook.yml": "9984d89d0dcb725e6739e84020d24fea428b0dc3e6de8179827d0fb3bc0401a2",
     ".github/workflows/waffle-post-merge-hook.yml": "c31dc4b919a78e9543a4245f6991838d10d70c8443b7e7e71ff5a2dd4dd6b6ec",
-    ".github/workflows/waffle-pr-green-hook.yml": "7fb7e2c5ec23500c03a1ded733a8f92b72fcb7721ceb7faab754107de954147e",
+    ".github/workflows/waffle-pr-green-hook.yml": "36b52fd4f5e6a940ca61121c3d02d6fa9bd60f91b51543bf700bf42ed3303b91",
     ".github/workflows/waffle-pr-response-hook.yml": "b8bf54f9c51f37134cb5f3cc936d93e76d5c993b9b4da97438a613528b55b6cc",
     ".github/workflows/waffle-release-hook.yml": "a0893b02e7cb8bf1bae3bcad0eb57a05f1f1985e8ffa006b9ea49fe9884d85ab",
     ".waffle/AVATARS.md": "2282ef4ccad3fbee811c6363b26aa6e061b2bcedb7dc9401b94876d43404321d",
