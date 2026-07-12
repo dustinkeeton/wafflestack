@@ -52,7 +52,9 @@ is what you reach for across a breaking one.
   flag, `doctor` behaves exactly as before. It does make render determinism load-bearing, so a test
   now renders identical inputs twice and asserts identical hashes, failing loudly if a future
   nondeterminism (a timestamp, a map ordering) creeps in.
-  **Consumer impact:** additive; no behavior change unless you pass the flag. Adopt it with
+  **Consumer impact:** additive; no behavior change unless you pass the flag. **Pin
+  `doctor.toolkitRef` to a release tag before you adopt it** (see the docs entry under *Changed*):
+  this is the one flag that makes the toolkit load-bearing. Then adopt with
   `doctor: { flags: --verify-render }` in `.waffle/waffle.yaml` (or `--allow-missing
   --verify-render` if you gitignore your whole render), then re-render to update the workflow.
 - **Dedicated writing-craft skills for the two docs agents (#224).** The docs agents' writing
@@ -372,6 +374,21 @@ is what you reach for across a breaking one.
     `WAFFLE_HYGIENE_TOKEN` so the pushed fixes re-run the PR's required checks.
 
 ### Changed
+- **Docs — pin `doctor.toolkitRef` *before* arming `--verify-render` (#322).** `--verify-render` is
+  the only part of the doctor gate that makes the **toolkit load-bearing**: it re-renders your
+  committed config using whatever toolkit `npx --yes <doctor.toolkitRef>` fetched at that moment.
+  The plain drift check never reads the toolkit (it hashes files against the lock), which is why a
+  floating ref had been harmless. On the **unpinned default** (`github:dustinkeeton/wafflestack`,
+  no `#tag`) an upstream content release now re-renders a consumer's config with a newer toolkit
+  than their lock was built from — turning **their next, unrelated pull request red for a change
+  nobody on their side made**. We recommended arming the flag and never said to pin first. Now the
+  `doctor.flags` and `doctor.toolkitRef` setup notes both say *pin first, arm second*, and
+  [`docs/gitignore.md`](docs/gitignore.md) Posture 2b leads with the pinned ref (its CI-gate recipe
+  is honestly "two config lines", not one). Prose only — no engine change; the flag itself is
+  unchanged and still correctly catches a consumer's own forgotten re-render.
+  **Consumer impact:** if you already run `--verify-render` against an unpinned `doctor.toolkitRef`,
+  pin it to a release tag (`github:dustinkeeton/wafflestack#v0.11.0`) and re-render; take new
+  toolkit content deliberately via `wafflestack upgrade` instead of on our release cadence.
 - **⚠️ Behavior change — `doctor --allow-missing` now fails when *every* managed file is absent
   (#311).** The flag exists so a repo that deliberately gitignores **a subset** of its renders can
   still run the CI drift gate: absent files are informational, only modified ones fail. But with

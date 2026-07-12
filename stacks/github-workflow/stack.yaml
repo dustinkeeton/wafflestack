@@ -1278,8 +1278,17 @@ config:
     default: github:dustinkeeton/wafflestack
     description: >-
       npx spec the doctor CI workflow (.github/workflows/waffle-doctor.yml) invokes
-      as `npx --yes <ref> doctor <flags>`. Pin to a release tag to freeze the toolkit version
-      and silence doctor's version-skew note, e.g. "github:dustinkeeton/wafflestack#v0.5.0".
+      as `npx --yes <ref> doctor <flags>`. Pin to a release tag to freeze the toolkit version,
+      e.g. "github:dustinkeeton/wafflestack#v0.5.0". The default is UNPINNED — it resolves to
+      whatever is on the toolkit's default branch at the moment CI runs. That is merely untidy
+      for the plain drift check (which never reads the toolkit, only hashes files against the
+      lock) and it costs you a version-skew note. But it is REQUIRED PRACTICE to pin once
+      `doctor.flags` includes `--verify-render`: that flag re-renders your committed config
+      using whatever toolkit npx just fetched, so the toolkit becomes load-bearing. Leave it
+      floating and any upstream content release re-renders your config differently from the
+      toolkit your lock was built with — turning the next unrelated PR red for a change nobody
+      on your side made. Pin first, arm second; bump the pin deliberately (`wafflestack upgrade`)
+      and commit the re-render with it.
   doctor.flags:
     required: false
     default: ""
@@ -1295,7 +1304,11 @@ config:
       extension change that was never re-rendered — invisible to the plain check, since the files
       and the lock go stale together. `--allow-missing --verify-render` is therefore the gate for
       a repo that gitignores its whole render: nothing is present to compare, so the render is
-      reproduced and checked against the lock instead. Empty by default.
+      reproduced and checked against the lock instead. PIN BEFORE YOU ARM: `--verify-render` is
+      the one flag that makes the toolkit load-bearing — it renders from whatever toolkit
+      `doctor.toolkitRef` resolved to, so on the unpinned default an upstream release can turn
+      your next unrelated PR red with no change on your side. Set `doctor.toolkitRef` to a
+      release tag (see its description) before you add this flag. Empty by default.
   labelHook.enrichLabel:
     required: false
     default: "waffle:enrich"
