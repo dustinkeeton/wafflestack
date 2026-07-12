@@ -650,10 +650,13 @@ After each agent completes, verify the build still passes in the main working di
 
 ```bash
 {{project.typecheckCmd}}
+```
+
+```bash
 {{project.testCmd}}
 ```
 
-Run them as **separate commands**, not joined with `&&` — a single Bash call containing `cmd1 && cmd2` matches no single-program tool-allowlist entry and is silently denied.
+Run each as its **own Bash call** — one command per call, which is why each gets its own fence above. A single Bash call whose text joins commands matches no single-program tool-allowlist entry and is silently denied, and that is true of a **newline-separated** pair (`cmd1\ncmd2`) exactly as it is of `cmd1 && cmd2`: this repo's own dispatch prompts warn against both, and the hygiene workflow's denial classifier counts a newline as a compound separator. Two commands in one fence read as one call, so they get two fences.
 
 If verification fails after a parallel agent's worktree merge, stop and report the conflict.
 
