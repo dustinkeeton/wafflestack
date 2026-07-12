@@ -3492,6 +3492,29 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     const wf = read(cwd, REL);
     assert.equal((wf.match(/waffle-adversarial-review/g) || []).length >= 3, true, 'gate, guard, and prompt agree on the marker');
   });
+
+  test('P5 the gate and guard match the marker as a full literal, not a bare-word regex (#211)', () => {
+    renderBoth();
+    const wf = read(cwd, REL);
+    // The skill emits the marker as a full HTML comment; the workflow used to look for the bare word,
+    // so a review merely NAMING it satisfied both the idempotency gate (⇒ skip a real review) and
+    // check_delivered (⇒ excuse a denial). Both sites now match the literal.
+    assert.doesNotMatch(wf, /test\("waffle-/, '#211: markers must be full literals, not bare-word regexes');
+    assert.equal(
+      (wf.match(/index\("<!-- waffle-adversarial-review -->"\)/g) || []).length,
+      2,
+      '#211: both the idempotency gate and check_delivered match the full literal marker',
+    );
+    // narrowing and literal-matching are independent — the commit_id filter survives at BOTH sites
+    assert.equal(
+      (wf.match(/select\(\.commit_id==\$sha\)/g) || []).length,
+      2,
+      '#211: the per-head-commit narrowing is preserved alongside the literal match',
+    );
+    // the offset-0 trap: index() returns 0 for a marker on line 1, which is TRUTHY in jq. Comparing
+    // the offset (`> 0`) would drop exactly the real review. Never compare it.
+    assert.doesNotMatch(wf, /index\("<!-- waffle-adversarial-review -->"\)\s*[<>]/, '#211: never compare the index() offset');
+  });
 });
 
 // #82: the Check harness result guard no longer fails on EVERY permission denial — it CLASSIFIES
@@ -3792,6 +3815,24 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       },
     });
     assert.equal(res.status, 1, `an API failure is fail-closed (red), never a silent pass: ${res.stdout}${res.stderr}`);
+  });
+
+  test('pr-green: a review MENTIONING the marker word is not delivery proof (#211)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // #211: the marker query matched a bare word, so a review that merely NAMES the marker in prose
+    // (a human quoting it, a reviewer discussing the hook) read as "the review posted". Here the
+    // review POST was denied — an `amb`-tier denial, the only tier #208 still lets delivery downgrade
+    // — so a false delivered=1 would turn a genuine "the review did not post" red into a warning.
+    const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
+    const r = runPrGreenGuard(g.prGreen, log, [
+      { commit_id: HEAD, body: 'the waffle-adversarial-review hook mis-fires on this PR' },
+    ]);
+    assert.equal(r.code, 1, `a mere mention of the marker is not delivery proof: ${r.out}`);
+    assert.match(r.out, /::error/);
+    // and the true positive still lands: the FULL literal marker on this head IS delivery
+    const real = runPrGreenGuard(g.prGreen, log, [MARKED]);
+    assert.equal(real.code, 0, `the full literal marker must still prove delivery: ${real.out}`);
   });
 
   // #208: #188's downgrade was WIDER than its motivation. It excused the whole hard class whenever a
@@ -8725,6 +8766,9 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
       'case "${FAKE_GH:-empty}" in',
       `  delivered) printf '%s' '[{"id":1,"body":"<!-- waffle-pr-response -->\\nverdict table"}]' ;;`,
       `  unmarked)  printf '%s' '[{"id":1,"body":"LGTM, ship it"}]' ;;`,
+      // #211: a body that merely MENTIONS the marker word in prose — exactly what a human comment,
+      // a changelog quote, or this very issue's own discussion looks like. It is NOT a reply.
+      `  mention)   printf '%s' '[{"id":1,"body":"the waffle-pr-response hook is broken"}]' ;;`,
       `  empty)     printf '%s' '[]' ;;`,
       '  error)     echo "gh: HTTP 502" >&2; exit 1 ;;',
       'esac',
@@ -8880,6 +8924,13 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const unmarked = runGate(doc, { fakeGh: 'unmarked' });
     assert.match(unmarked.outputs, /should_respond=true/, `an unmarked comment must not bound: ${unmarked.out}`);
 
+    // #211: a comment merely MENTIONING the marker word must not bound the loop — only the full
+    // literal marker does. The old bare-word `test("waffle-pr-response")` matched this and silently
+    // withheld the reply from any PR whose conversation named the marker.
+    const mentioned = runGate(doc, { fakeGh: 'mention' });
+    assert.equal(mentioned.code, 0, mentioned.out);
+    assert.match(mentioned.outputs, /should_respond=true/, `a mere mention must not bound the loop: ${mentioned.out}`);
+
     // THE LOOP BOUND: a marked reply already on the PR stops the next dispatch dead, whatever SHA
     // it was posted against — this is the single fact that keeps pr-green ↔ pr-response finite.
     const bounded = runGate(doc, { fakeGh: 'delivered' });
@@ -8944,6 +8995,31 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const noop = runGuard(doc, RESULT([], 'responded to 4 findings'), 'empty');
     assert.equal(noop.code, 0, noop.out);
     assert.match(noop.out, /may have silently no-op'd/);
+
+    // (8) #211 — THE FAIL-OPEN. A comment that merely MENTIONS the marker word is not delivery
+    // evidence. The blocked `git push` means the reply never landed, so the run must RED. Under the
+    // old bare-word `test("waffle-pr-response")` this comment set delivered=1, which downgraded the
+    // whole hard class — a blocked push/curl/rm — to a warning and turned the job GREEN, in a job
+    // holding contents: write. This query has no commit_id narrowing, so ANY such comment did it.
+    const mention = runGuard(doc, RESULT([B('git push')]), 'mention');
+    assert.equal(mention.code, 1, `a mere mention of the marker is not delivery: ${mention.out}`);
+    assert.match(mention.out, /did NOT post/);
+  });
+
+  test('R6 the dedup marker is matched as a full literal, not a bare-word regex (#211)', () => {
+    renderHook();
+    const wf = read(cwd, REL);
+    // Pin the fix against reintroduction, on the RENDERED workflow: no bare-word marker regex
+    // survives anywhere, and both marker queries (loop bound + check_delivered) use the literal.
+    assert.doesNotMatch(wf, /test\("waffle-/, '#211: markers must be full literals, not bare-word regexes');
+    assert.equal(
+      (wf.match(/index\("<!-- waffle-pr-response -->"\)/g) || []).length,
+      2,
+      '#211: both the loop bound and check_delivered match the full literal marker',
+    );
+    // and the offset-0 trap stays shut: `index()` returns 0 for a marker on line 1 (where the skill
+    // puts it), which is TRUTHY in jq. A `> 0` comparison would drop exactly the real reply.
+    assert.doesNotMatch(wf, /index\("<!-- waffle-pr-response -->"\)\s*[<>]/, '#211: never compare the index() offset');
   });
 });
 
