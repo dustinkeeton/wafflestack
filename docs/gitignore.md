@@ -381,34 +381,54 @@ out of git and out of review. That is a genuine preference, held by real teams, 
 enough to justify the posture. It is not enough to make this the default. Posture 1 is the
 default; this is for a team that specifically does not want generated output in review.
 
-#### The CI gate: one config line
+#### The CI gate: two config lines
 
-Set both flags. That is the whole setup — the shipped `waffle-doctor.yml` needs no editing and
-no ejecting:
+Pin the toolkit, then set both flags. That is the whole setup — the shipped `waffle-doctor.yml`
+needs no editing and no ejecting:
 
 ```yaml
 # .waffle/waffle.yaml
 doctor:
+  toolkitRef: github:dustinkeeton/wafflestack#v0.11.0   # pin FIRST — see below
   flags: --allow-missing --verify-render
 ```
 
-The two do exactly opposite halves of the job, which is why the pair is the answer:
+The two flags do exactly opposite halves of the job, which is why the pair is the answer:
 
 - **`--allow-missing`** — nothing is on disk to compare, and that is on purpose, so don't fail
   on the absences.
 - **`--verify-render`** — *but check something anyway*: re-render the committed config into a
   temp dir and hold the result against the committed lock.
 
-You get a real gate. A config change that was never re-rendered, an edited extension, a floating
-toolkit ref that quietly changed your agents — each one produces a `stale render:` line and a red
-build. Without `--verify-render` the same run fails for a different and much less useful reason
-(*"this check verified nothing"*), because a green build that inspected nothing is worse than a
-red one — it looks like protection.
+You get a real gate. A config change that was never re-rendered, or an edited extension, produces
+a `stale render:` line and a red build. Without `--verify-render` the same run fails for a
+different and much less useful reason (*"this check verified nothing"*), because a green build
+that inspected nothing is worse than a red one — it looks like protection.
 
 > [!IMPORTANT]
 > **`--verify-render` never writes to your working tree**, which is what makes it trustworthy
 > here. It renders to a scratch directory and compares against your **unmodified, committed**
 > lock. Contrast that with the homemade version below, which mutates the checkout.
+
+##### Pin `doctor.toolkitRef` *before* you arm `--verify-render`
+
+This is the one flag that makes the **toolkit itself load-bearing**, and that changes what an
+unpinned ref costs you. The plain drift check never reads the toolkit at all — it just hashes
+your files against your lock — so a floating `doctor.toolkitRef` is merely untidy. But
+`--verify-render` *re-renders your committed config*, using whatever toolkit `npx --yes <ref>`
+just fetched. On the unpinned default (`github:dustinkeeton/wafflestack`, no `#tag`) that is
+**whatever is on our default branch the moment your CI runs**.
+
+So: we ship any content change to a stack, and your next pull request goes red — for a change
+nobody on your side made, on a PR that has nothing to do with it. Your CI is hostage to our
+release cadence, and the red lands on an innocent bystander. Pin to a release tag and that
+whole failure mode disappears; you take new toolkit content when *you* run `wafflestack upgrade`,
+review the render diff, and commit the new lock with the bump.
+
+Note what this is *not*. It is not a hole in the gate — the check still correctly catches your
+own forgotten re-render, which is what it is for. And it is not an argument for floating "so I
+notice upstream changes": you will notice them, at the worst possible moment, in the least
+actionable place. Pin first, arm second.
 
 #### The manual recipe (older toolkits, or if you'd rather see the render)
 
@@ -437,11 +457,13 @@ differs" rather than naming the drifted files.
 > compares against the lock **as committed**, which the render never touches. Run it *instead of*
 > the in-place render, or before it — never after.
 
-**Pin the toolkit ref to a tag** (`#v0.11.0`, not a floating branch). If it floats, an
-upstream toolkit change can alter your agents' behavior with no commit in your repo at all.
-The gate *will* catch that as a red build — but only if whoever fixes the red actually
-reads the diff, rather than committing the new lock to make it go away. That temptation is
-the posture's second-order risk, and it is a human one.
+**Pin the toolkit ref to a tag here too** (`#v0.11.0`, not a floating branch) — same reason as
+[above](#pin-doctortoolkitref-before-you-arm---verify-render), and it bites harder in this recipe
+because CI renders in place. If it floats, an upstream toolkit change alters your agents'
+behavior with no commit in your repo at all, and you meet it as a red build on an unrelated pull
+request. Whoever fixes that red then has to actually read the diff rather than committing the new
+lock to make it go away — and that temptation is the posture's second-order risk, a human one.
+Pinning is what keeps you from having to rely on human discipline at the worst moment.
 
 #### What it still does not buy back: reviewability
 
