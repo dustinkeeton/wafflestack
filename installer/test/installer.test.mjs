@@ -1606,6 +1606,47 @@ describe('project commands never join with && (#218)', () => {
     }
   });
 
+  // A7 is the TYPE half of A5. A5 polices the command STRING; a value that is not a string never
+  // becomes one until `formatValue` has already flattened it — joining a list with `', '` and
+  // running anything else through `YAML.stringify` — so the pattern ended up policing the
+  // FLATTENING's output instead of the value, and the guard was dodged entirely (#341 review).
+  //
+  // This is not a hypothetical: the list form is precisely the idiom a consumer REJECTED for `&&`
+  // reaches for next, and the guard's own error message pushes them off the string form while
+  // saying nothing about the list. `[tsc --noEmit, tsc -p tsconfig.test.json]` rendered `ok` and
+  // shipped `Bash(tsc --noEmit, tsc -p tsconfig.test.json:*)` — a dead grant, bare doctor green.
+  // The map form (`{a: npm test}`) carries NO comma at all, so the comma ban does not cover it.
+  // `entryPatternProblems` already type-checks its leaves; this is the scalar path's half of that.
+  test('A7 TYPE DOOR: a non-string value cannot dodge the pattern by being flattened into one', () => {
+    for (const [label, bad] of [
+      ['a list (joined with ", " → a comma-shattered dead grant)', ['tsc --noEmit', 'tsc -p tsconfig.test.json']],
+      ['a single-element list', ['npm test']],
+      ['a map (YAML.stringify → "a: npm test" — NO comma, so the comma ban cannot see it)', { a: 'npm test' }],
+      ['a number', 42],
+      ['a boolean', true],
+    ]) {
+      const r = renderWith({ ...CMDS, typecheckCmd: bad });
+      assert.equal(r.ok, false, `render must reject ${label}: ${JSON.stringify(r.errors)}`);
+      assert.ok(
+        r.errors.some((e) => e.includes('project.typecheckCmd') && /must be a string/.test(e)),
+        `the error must NAME the key and say it must be a string (${label}): ${JSON.stringify(r.errors)}`,
+      );
+    }
+
+    // …and the SHIPPED gate sees it too — bare `doctor`, no flags, same clean-room upgrade path as
+    // A6: render under a valid config, then swap the value a consumer would actually reach for.
+    renderAll();
+    write(cwd, '.waffle/waffle.yaml',
+      read(cwd, '.waffle/waffle.yaml').replace('"ztypecheck"', '["tsc --noEmit", "eslint ."]'));
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot });
+    assert.equal(dr.ok, false, 'bare doctor must fail on a list-valued project command');
+    assert.ok(
+      dr.configProblems.some((n) => n.includes('project.typecheckCmd') && /must be a string/.test(n)),
+      `bare doctor must name the key: ${JSON.stringify(dr.configProblems)}`,
+    );
+    assert.deepEqual(dr.modified, [], 'no file was hand-edited — the fault is the config value');
+  });
+
   // A6 is A5's other half, and the one that reaches the consumers this guard is FOR.
   //
   // A5 pins that a compound fails the RENDER. But the shipped CI gate is `waffle-doctor.yml`, which

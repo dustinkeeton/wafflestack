@@ -48,6 +48,13 @@ export function substitute(text, resolve, declared, errors, context, guards) {
       errors.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
+    // …and a key declaring a SCALAR `pattern:` must be handed a string, checked on the RAW value
+    // for the same reason (see scalarTypeProblem).
+    const typeProblem = scalarTypeProblem(guards, key, v);
+    if (typeProblem) {
+      errors.push(`${context}: config value for {{${key}}} ${typeProblem}`);
+      return match;
+    }
     const value = expandNested(formatValue(v), resolve, 1, guards, errors, context);
     // Optional render-time value validation: a declared `pattern:` must fully match the
     // fully-expanded value that actually lands in the output. Textual substitution cannot
@@ -88,6 +95,28 @@ const failingOf = (guardList, value) => guardList.filter((g) => !g.re.test(value
 function failingGuards(guards, key, value) {
   const gs = guards?.patterns?.get(key);
   return gs ? failingOf(gs, value) : [];
+}
+
+/**
+ * A key declaring a scalar `pattern:` must be handed a STRING — checked on the RAW value, before
+ * `formatValue` gets near it. Otherwise the type dodges the guard entirely: `formatValue` flattens
+ * a list by joining it with `', '` and sends anything else through `YAML.stringify`, so the pattern
+ * ends up policing the FLATTENING's output rather than the value the consumer wrote.
+ *
+ * That is a bypass, not a nicety. `typecheckCmd: [tsc --noEmit, tsc -p tsconfig.test.json]` flattens
+ * to `tsc --noEmit, tsc -p tsconfig.test.json` and `typecheckCmd: {a: npm test}` to `a: npm test` —
+ * both rendered `ok` and shipped exactly the dead grant the pattern exists to reject (#341 review).
+ * The list form is the idiom a consumer rejected for `&&` reaches for NEXT, so the scalar path must
+ * close it. `entryPatternProblems` already type-checks its leaves for precisely this reason; this is
+ * the scalar path's half of the same rule.
+ *
+ * Scoped to GUARDED keys only — an unguarded key may still take a list or a map, and `formatValue`
+ * keeps flattening those exactly as before.
+ */
+function scalarTypeProblem(guards, key, v) {
+  if (!guards?.patterns?.has(key) || typeof v === 'string') return null;
+  const kind = Array.isArray(v) ? 'a list' : v !== null && typeof v === 'object' ? 'a map' : `a ${typeof v}`;
+  return `must be a string, not ${kind} (the key declares a pattern:, and a non-string value would be flattened into text before the pattern could police it — quote it, or set one command)`;
 }
 
 /**
@@ -196,6 +225,11 @@ function expandNested(text, resolve, depth, guards, errors, context) {
     const entryProblems = entryPatternProblems(guards, key, v);
     if (entryProblems.length) {
       errors?.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
+      return match;
+    }
+    const typeProblem = scalarTypeProblem(guards, key, v);
+    if (typeProblem) {
+      errors?.push(`${context}: config value for {{${key}}} ${typeProblem}`);
       return match;
     }
     const value = expandNested(formatValue(v), resolve, depth + 1, guards, errors, context);
