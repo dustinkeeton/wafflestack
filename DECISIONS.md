@@ -9,6 +9,211 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-11: Pin `doctor.toolkitRef` to a release tag *before* arming `--verify-render` (#322)
+
+**Context**: `--verify-render` (below) is the one doctor feature that makes the **toolkit itself
+load-bearing**: it re-renders a consumer's committed config using whatever toolkit
+`npx --yes <doctor.toolkitRef>` fetched at that moment. The default ref is **unpinned** — it
+resolves to the toolkit's default branch at CI time. For the plain drift check that was merely
+untidy (it never reads the toolkit, only hashes files against the lock), but with the flag armed an
+upstream content release re-renders the consumer's config with a **newer toolkit than their lock was
+built from** — turning their next, unrelated PR red with no change on their side. We recommended
+arming the flag and never said to pin first.
+
+**Decision**: A documented policy — **pin first, arm second**. The `doctor.flags` and
+`doctor.toolkitRef` setup notes in `stacks/github-workflow/stack.yaml` both now say to set
+`doctor.toolkitRef` to a release tag (e.g. `github:dustinkeeton/wafflestack#v0.11.0`) *before*
+adding `--verify-render`, and the gitignore guide's lock-only recipe leads with the pinned ref —
+honestly "two config lines", not one.
+
+**Alternatives considered**: Changing the flag itself — rejected. The flag is behaving correctly
+(it still catches a consumer's own forgotten re-render); the failure mode is the floating ref, and
+pinning already solves it. Prose only, no engine change.
+
+**Rationale**: A consumer should take new toolkit content deliberately, via `wafflestack upgrade` —
+not on the toolkit's release cadence, through a red check on an unrelated PR.
+
+**Impact**: `stack.yaml` config descriptions and `docs/gitignore.md` only. A consumer already
+running `--verify-render` against an unpinned ref should pin to a release tag and re-render.
+
+---
+
+## 2026-07-11: PR-gate scratch paths are namespaced per PR, with a read-back-before-post rule (#324)
+
+**Context**: The three PR-gate skills — `qa`, `adversarial-review`, and `pr-response` — each staged
+their review/reply payload at a **fixed, shared** `/tmp` path (e.g. `/tmp/qa-review.json`) and
+handed that path straight to `gh` as `--input`/`--body-file`. Nothing in the path identified the PR,
+so every invocation across every PR reused the same files. A near-miss made it concrete: during the
+autopilot run on PR #321, the `qa` gate found `/tmp/qa-review.json` still holding a payload from an
+earlier run on **PR #285** — one step from posting it to #321 as a legitimate-looking gate review.
+Only the agent's own read-before-post habit caught it. Worse, autopilot runs these gates *per PR,
+concurrently*, so two runs interleaving a write and a post can put PR A's findings onto PR B — and
+those findings then steer `pr-response`'s implement/defer/decline verdicts on the wrong PR.
+
+**Decision**: Two changes in each of the three skills:
+
+- **Namespace every staging path by PR number** — `${TMPDIR:-/tmp}/waffle-<skill>-<artifact>-$N.<ext>`
+  (`$N` was already in scope at every call site), so two concurrent gates can never touch the same
+  file. The skills now call an un-namespaced path a correctness bug, not a style nit.
+- **Make the read-back rule explicit** — immediately before posting, `Read` the exact file about to
+  be handed to `gh`, confirm it is *this* PR's payload, and **stop rather than post** if it is not.
+  The habit that caught the near-miss by luck is now an instruction.
+
+Each skill also warns that the `Write` tool does not expand `$N`/`${TMPDIR:-/tmp}` — pass it a
+literal, already-substituted path.
+
+**Alternatives considered**: Keeping the fixed paths and relying on the read-back habit alone —
+rejected. The near-miss showed the habit is a lucky last line, and it cannot stop the concurrent
+interleaving case at all; only distinct paths do.
+
+**Rationale**: A review payload is one `gh` call away from being public and steering code changes.
+The path must make cross-PR contamination impossible; the read-back makes staleness on the *right*
+path visible too.
+
+**Impact**: `qa`, `adversarial-review`, and `pr-response` SKILL.md staging paths and post
+procedure. Consumers re-render to pick it up; every documented `gh` command stays single-line.
+
+---
+
+## 2026-07-11: This repo gates its own committed render with `doctor --verify-render` (#314, #316)
+
+**Context**: The plain `waffle-doctor` drift gate asks one question — do the committed files still
+hash to the committed lock? — and never asks whether *either* still reflects the inputs. So a
+`stacks/**` or `.waffle/waffle.yaml` edit that is never re-rendered leaves the files and the lock
+stale **together**: they agree with each other and the gate goes green. In this repo that is a live
+hazard, not a hypothetical — 113 of the 223 commits before the fix touched `stacks/`.
+
+**Decision**: Two pieces:
+
+- **A new doctor flag, `--verify-render` (#314)** — re-renders the **committed** inputs (config +
+  extensions + toolkit, no local overlay) into a **temp directory** and diffs the result against the
+  committed, canonical lock. The working tree is never touched, which is what makes it non-circular:
+  gating on an in-place `render` would rewrite the very lock it then checks. It composes with
+  `--allow-missing`, making `--allow-missing --verify-render` the real gate for the lock-only
+  posture (commit nothing but the lock, verify by re-rendering).
+- **A dogfood gate in `tests.yml` (#316)** — this repo's project-owned `.github/workflows/tests.yml`
+  now ends with `node installer/cli.mjs doctor --allow-missing --verify-render`, run with the
+  **checkout's own CLI**, so the render under test is the PR's own `stacks/**`.
+
+**Alternatives considered**: Arming the flag via `doctor.flags` on the shipped `waffle-doctor`
+workflow, like a consumer would — rejected for this repo. That workflow fetches its toolkit via
+`npx github:dustinkeeton/wafflestack`, i.e. from main — the wrong toolkit for the toolkit's own PRs
+in **both directions**: a PR that edits `stacks/**` and correctly re-renders false-REDs (its lock is
+ahead of main), and one that forgets to re-render false-GREENs (main's unchanged stacks still
+reproduce the stale lock exactly).
+
+**Rationale**: `tests.yml` is the workflow that already runs `npm ci` and is already a required
+check — and only the checkout's own CLI renders the PR's own inputs.
+
+**Impact**: `installer/lib/doctor.mjs` (+ render's temp-dir mode) and `.github/workflows/tests.yml`.
+For consumers the flag is opt-in via the existing `doctor.flags` key — but see the pin-before-arm
+policy (#322, above) first.
+
+---
+
+## 2026-07-11: Delegate's specialists get the report-back tools they were told to use (#320)
+
+**Context**: `delegate`'s routing table names exactly three specialists — `harness-architect`,
+`docs-agent`, and `docs-human` — and its agent-prompt template closes by telling each to report with
+`SendMessage(to: "team-lead", …)` and close its task with `TaskUpdate(…, status: "completed")`.
+**None of the three was granted either tool.** A delegated specialist finished silently: it could
+not hand back its PR URL, could not close its task, and could not answer the orchestrator's
+`shutdown_request`. The skill had even grown a "Silent specialists" section telling the orchestrator
+to go verify the branch by hand — a documented workaround for a missing capability.
+
+**Decision**: Grant `SendMessage` + `TaskUpdate` in all three agents' frontmatter, and pin
+delegate's roster against its toolset with a content test so the two cannot drift apart again.
+
+**Alternatives considered**:
+
+- **Keep the "Silent specialists" workaround.** Rejected — naming an agent in-scope for a protocol
+  it provably cannot execute is the bug (the same defect #303 fixed for the `issue` skill's callers,
+  one layer down).
+- **Grant the full task-tool set.** Deliberately not done: no `TaskCreate` (a worker doesn't open
+  work — that's `task-planner`'s job) and no `TaskList`/`TaskGet` (the orchestrator injects the task
+  id; a worker has no business browsing the board).
+
+**Rationale**: A delegated run was stalling with its work complete but unreported, and the
+orchestrator only noticed by polling the worktree. The fix is the capability, not more workaround
+prose.
+
+**Impact**: The three agents' frontmatter `tools:` lists and the delegate skill (workaround section
+removed). Consumers re-render; delegated specialists now report their PR and close their task.
+
+---
+
+## 2026-07-11: The committed lock records the canonical render; a local lock records yours (#317)
+
+**Context**: `.waffle/waffle.local.yaml` is a developer's private, gitignored, per-machine overlay —
+and it leaked anyway. `render` hashed the **effective** render (overlay values baked in) into the
+**committed** `.waffle/waffle.lock.json`, so any overlay value that fed a template was fingerprinted
+into git. Two teammates with different personal `git.botEmail` overrides produced *different*
+committed lock hashes from the same source; each one's commit reverted the other's, and the loser's
+`doctor` went red. Gitignoring the render didn't help (the locks still diverged); committing it was
+worse (the personal address landed literally in git).
+
+**Decision**: **Split the lock in two.**
+
+- **`.waffle/waffle.lock.json` (committed) is now canonical** — it hashes what the committed inputs
+  alone (`.waffle/waffle.yaml` + `.waffle/extensions/`) produce, overlay excluded. That makes it
+  **byte-identical on every machine**, and `doctor --verify-render` can reproduce it in CI.
+  Extensions still propagate — committed, therefore canonical, is the whole contrast with the
+  overlay.
+- **`.waffle/waffle.local.lock.json` (gitignored) records the render this machine actually wrote**,
+  overlay included. It exists only while the overlay changes an output byte. Every working-tree
+  check — `doctor` drift, `list` status, `render`'s prune/clobber bookkeeping — reads it in
+  preference via `readTreeLock()`, so a hand-edit is still caught locally. `--verify-render`
+  deliberately does *not*: it stays on the canonical pair.
+- **One value may no longer hide in the overlay**: a `required:` key with no `default:`, since the
+  canonical render must be buildable from committed inputs. `render` fails loudly and names the key.
+
+**Alternatives considered**:
+
+- **#308's way-station** — a `lock.renderedWithLocalOverlay` flag plus a doctor "cannot verify the
+  render" refusal. Superseded and removed: with a canonical lock there is nothing ambiguous left to
+  refuse.
+- **"Commit the values your render reads."** The #308-era guidance is withdrawn — nobody should be
+  red-gated into committing a personal value.
+- **Gitignore or commit the render.** Both were shown not to help: private renders still diverged
+  the locks; a committed render carried the personal value literally.
+
+**Rationale**: Integrity isn't relaxed, it's measured against the right thing twice: the committed
+lock against what the *repo* says, the local lock against what *your machine* wrote.
+
+**Impact**: `render` (computes both renders), `doctor`/`list` (read the tree lock), new
+`readTreeLock`/`readLocalLock` in the installer API, and `.gitignore` (`render --gitignore` adds the
+new entry; `render` warns if missing). A repo whose overlay affects the render sees a one-time
+committed-lock diff; a repo with no render-affecting overlay is entirely unaffected.
+
+---
+
+## 2026-07-11: `pr-response` appends a comment per round — it never PATCHes its prior reply (#318)
+
+**Context**: The skill's idempotency section told the responder to find its last
+`<!-- waffle-pr-response -->`-marked comment and **`PATCH`** it, so one comment would carry "the
+current, complete verdict table." Following that destroys the paper trail: round 2 silently replaces
+round 1, and the record of what was found, how it scored, and why it was disposed of *on the
+evidence available at the time* is gone. That record is the skill's entire product — the rubric
+exists to make judgment legible and recalibratable, and you cannot recalibrate against verdicts you
+deleted. The rule also contradicted the skill's own cold-start step, which reads the prior reply as
+history.
+
+**Decision**: **Append-only.** Each round posts a **new** marked comment, labelled with its round
+and the head SHA it answers. Marked comments are read-only history — read them all, oldest first,
+write only new ones. A verdict that genuinely changes is stated in the new comment with the new
+evidence named, never retconned into the old one.
+
+**Alternatives considered**: Keeping the single always-current comment — rejected. Tidiness was the
+whole argument for PATCH, and it costs the verdict history that reviews are recalibrated against.
+
+**Rationale**: The trail of per-round verdicts *is* the product. A multi-round PR growing one
+comment per round is the point, not clutter.
+
+**Impact**: `pr-response` SKILL.md (PATCH section removed). Consumers re-render; expect one
+`waffle-pr-response` comment per round on multi-round PRs.
+
+---
+
 ## 2026-07-10: The default co-author trailer credits the consuming repo's owner (#284, refined by #291)
 
 **Context**: Agent-authored commits carried a `Co-authored-by:` trailer whose default named the

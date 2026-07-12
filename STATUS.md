@@ -5,8 +5,8 @@
 
 - **Version**: v0.11.0 (pre-1.0 — the file contract can still change between minor
   releases). See Current focus for what this release adds.
-- **Last updated**: 2026-07-10
-- **Health**: 🟢 tests 363/363 (62 suites) · `validate` clean · `doctor --allow-missing` clean
+- **Last updated**: 2026-07-11
+- **Health**: 🟢 tests 858/858 (121 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -47,6 +47,22 @@ tested. All 10 commands work:
 
 **Unreleased (CHANGELOG `[Unreleased]`):**
 
+- **The committed lock is now canonical (#317).** `.waffle/waffle.lock.json` hashes the render the
+  *committed* inputs produce (no `.local` overlay), so it's byte-identical on every machine and a
+  private overlay value can never propagate through it. A machine whose overlay changes an output
+  byte gets a gitignored `.waffle/waffle.local.lock.json`; working-tree checks read that one
+  (`readTreeLock()`), so hand-edits are still caught locally. See
+  [DECISIONS.md](DECISIONS.md#2026-07-11-the-committed-lock-records-the-canonical-render-a-local-lock-records-yours-317).
+- **`doctor --verify-render` + this repo's own render gate (#314/#316).** The new flag re-renders
+  the committed inputs into a temp dir and diffs against the canonical lock — catching an edit whose
+  re-render was forgotten (files and lock go stale *together*, so the plain drift gate stays green).
+  This repo dogfoods it in `tests.yml`. **Pin `doctor.toolkitRef` to a release tag before arming the
+  flag (#322)** — it's the one flag that makes the toolkit load-bearing.
+- **Gate-skill fixes (#318, #320, #324).** `pr-response` now appends one comment per round (never
+  PATCHes its prior reply); delegate's three specialists finally hold the `SendMessage`/`TaskUpdate`
+  tools they were told to report with; the `qa`/`adversarial-review`/`pr-response` staging paths are
+  namespaced per PR (a stale payload nearly cross-posted between PRs #285 and #321), each with a
+  read-back-before-post rule.
 - **Default co-author trailer credits the repo owner (#284, refined by #291).** Two new lockstep keys
   — **`git.ownerName`** / **`git.ownerEmail`** (in `github-workflow` + `orchestration`) — and the
   **`git.coAuthorTrailer` default flips** from the harness-noreply form to
@@ -91,7 +107,9 @@ Shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
 - **The self-render is committed.** After editing anything under `stacks/**`,
   `schema/**`, or `installer/**`, re-run `node installer/cli.mjs render` and commit the
-  updated files + lock — the `waffle-doctor` required check fails PRs on drift.
+  updated files + lock — the `waffle-doctor` required check fails PRs on drift, and the
+  `tests` workflow's `doctor --allow-missing --verify-render` step (#316) fails PRs whose
+  committed inputs no longer reproduce the committed lock (a forgotten re-render).
 - **Deliberately gitignored here** (tolerated by `doctor --allow-missing`):
   `.claude/worktrees/` (throwaway), `.codex/`/`.agents/` (non-targets), the
   `waffle-label-hook.yml` workflow (would arm a live label→harness dispatch), and the generated
@@ -110,9 +128,10 @@ Shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (363 tests, 62 suites)
+npm test                          # installer test suite (858 tests, 121 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock
+node installer/cli.mjs doctor --allow-missing --verify-render   # committed inputs reproduce the lock
 npm run evals -- --dry-run        # Layer-2 eval harness, mock model (free); --max-calls N for a live run
 ```

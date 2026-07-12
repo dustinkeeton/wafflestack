@@ -362,7 +362,9 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   (committed, optional) — appended to the rendered item inside marked
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
   project-specific guidance to a toolkit item.
-- `.waffle/waffle.lock.json` (generated) — manifest of every rendered file with its hash.
+- `.waffle/waffle.lock.json` (generated, committed) — manifest of every rendered file with
+  its hash. It is **canonical**: hashed from the committed inputs only, with
+  `waffle.local.yaml` excluded, so it is byte-identical on every machine and safe to share.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
   It is also what tells *your* managed files apart from a hand-written file at the same
@@ -371,6 +373,17 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `wafflestack doctor --allow-missing` treats absent managed files as informational (only
   *modified* files fail) — for use as a CI drift gate in repos that deliberately gitignore
   some renders; a missing lock still fails, since that means the repo was never rendered.
+  `wafflestack doctor --verify-render` goes further: it re-renders the committed config
+  into a temp dir (the working tree is never touched) and checks the result against this
+  lock — catching a config or extension edit that was never re-rendered, which the plain
+  check misses because the files and the lock go stale *together*. `--allow-missing
+  --verify-render` is therefore the gate for a repo that gitignores its whole render.
+- `.waffle/waffle.local.lock.json` (generated, gitignored) — manifest of the render *this
+  machine* actually wrote. It exists only while `waffle.local.yaml` changes an output byte
+  (and is removed when that stops). Working-tree checks — `doctor` drift, `list`,
+  `render`'s prune and overwrite bookkeeping — read it in preference to the committed
+  lock, so a hand-edit is still caught locally while the committed lock stays canonical
+  and your private overlay values never reach a teammate or CI through it.
 - `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.html`, `.waffle/team.html`
   (generated) — overview docs describing the installed selection (see *Generated overview
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
@@ -386,7 +399,9 @@ file toolkit-generated or mine?" is answered by **the lock manifest, not by the 
   **repo-relative path → content hash**. A path present in that map is wafflestack-managed;
   a path absent from it is yours. This is authoritative and complete — it covers **all three
   render kinds** (agents, skills, and syrup `files/`) uniformly, including files that land at
-  load-bearing platform paths.
+  load-bearing platform paths. (On a machine where `waffle.local.yaml` changed an output
+  byte, the gitignored `waffle.local.lock.json` carries the hashes of what is actually on
+  disk — same `files` shape, same query — while the committed lock stays canonical.)
 - **`render` enforces it.** Before writing, the renderer refuses to overwrite a pre-existing
   file the lock does **not** track — your hand-written file is never silently clobbered (a
   byte-identical file is adopted silently; `--force` overwrites; see *Pre-existing (unmanaged)
