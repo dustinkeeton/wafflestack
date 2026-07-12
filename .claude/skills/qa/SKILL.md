@@ -198,14 +198,24 @@ gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/t
 Notes on mechanics:
 
 - **The marker is load-bearing — and it is this skill's own.** Every review this skill posts —
-  findings *or* no-concerns — must contain the exact literal `<!-- waffle-qa -->` on its own
-  line at the top of the summary body. It is how this skill and any automation wrapping it
+  findings *or* no-concerns — must **begin** with the exact literal `<!-- waffle-qa -->` as the
+  **first line** of the summary body. It is how this skill and any automation wrapping it
   recognize a QA review. It is deliberately **distinct from the adversarial-review skill's
   marker**: the `waffle-pr-green-hook` workflow keys its duplicate-review guard on that
   skill's marker, and the opt-in pr-response hook dispatches on reviews carrying it — a QA
   review that carried that other marker would falsely satisfy the pr-green dedup (skipping the
   real adversarial review) and fire a paid dispatch. Never put the adversarial-review skill's
   marker in a QA review.
+- **Never quote another skill's raw marker literal mid-body, either — naming it is not carrying
+  it, but pasting it is.** This is the rule the sibling skills carry, and QA needs it most: a QA
+  review of a hooks PR naturally *discusses* those markers. Pasting the raw
+  `adversarial-review` literal anywhere in a QA review body — a code fence, a blockquote, a table
+  cell — is enough. **This is not hypothetical: PR #296's QA review did it** (literal at offset
+  1103, in prose about the hook) and, on the tolerant predicates that shipped before #332, that one
+  body suppressed the real adversarial review *and* spent the PR's one automated pr-response reply.
+  Refer to a marker **by name** (`the adversarial-review marker`), or break the literal, when the
+  review must discuss it. Your own leading `waffle-qa` marker is exempt — that is the review, and
+  identifying it is what the marker is for.
 - Use **`event: "COMMENT"`** — an honest, non-approving review. Escalate to
   `event: "REQUEST_CHANGES"` **only** for a genuine **blocker**; never as a default posture.
   GitHub forbids `REQUEST_CHANGES`/`APPROVE` on your **own** PR, so if the review identity

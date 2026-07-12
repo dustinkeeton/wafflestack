@@ -3484,13 +3484,65 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     const mdBlock = /```markdown\n([\s\S]*?)```/.exec(skill);
     assert.ok(mdBlock, 'step 6 ships a markdown summary block');
     assert.ok(mdBlock[1].includes(MARKER), `step 6's no-holes body carries the marker:\n${mdBlock[1]}`);
-    // the marker sits on its own line, both times
+    // the marker LEADS the body, both times — not merely "sits on its own line" somewhere in it
+    // (#332). The step-6 assertion used to carry the `/m` flag, i.e. it matched the marker on ANY
+    // line: the exact semantics this PR abolished, left sitting in the assertion meant to enforce
+    // the new one. And step 6 is the "no holes found" path — the one a CLEAN PR takes, so the
+    // least-exercised path was also the least-pinned. Burying either marker under a heading now
+    // fails here, which is the only half of the workflow↔skill prose coupling a test CAN pin.
     assert.match(jsonBlock[1], new RegExp(`"body": "${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\\\n`));
-    assert.match(mdBlock[1], new RegExp(`^${MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    assert.ok(mdBlock[1].startsWith(`${MARKER}\n`), `step 6's no-holes body is MARKER-LED, not merely marker-bearing:\n${mdBlock[1].slice(0, 120)}`);
 
     // the workflow's gate + guard both query for the SAME marker text
     const wf = read(cwd, REL);
     assert.equal((wf.match(/waffle-adversarial-review/g) || []).length >= 3, true, 'gate, guard, and prompt agree on the marker');
+
+    // …and they agree on WHERE it goes, not just WHICH it is (#332). The gate and check_delivered
+    // both demand a marker-LED body, so a dispatch prompt that authorizes the weaker "on its own
+    // line" placement asks the agent for a body that reds the job as undelivered. This assertion is
+    // the only thing pinning that prose-to-prose coupling: the prompt is the instruction the CI
+    // harness actually receives, and P5 pins the predicates it must satisfy.
+    const promptLine = /^\s*prompt: '(.+)'\s*$/m.exec(wf);
+    assert.ok(promptLine, 'the workflow ships a dispatch prompt');
+    const prompt = promptLine[1];
+    assert.match(prompt, /FIRST line is the exact literal marker/, 'the dispatch prompt mandates the marker as the review body FIRST line');
+    assert.doesNotMatch(prompt, /on its own line/, 'the prompt must not authorize the weaker placement the gate and guard reject');
+    assert.match(prompt, /delivery check/, 'the prompt states that the delivery check keys on the marker too');
+  });
+
+  test('P5 BOTH of this hook\'s marker sites require a MARKER-LED body (#211/#332)', () => {
+    renderBoth();
+    const wf = read(cwd, REL);
+    // The skill emits the marker as a full HTML comment; the workflow used to look for the bare word,
+    // so a review merely NAMING it satisfied both the idempotency gate (⇒ skip a real review) and
+    // check_delivered (⇒ excuse a denial). Neither site takes a regex any more.
+    assert.doesNotMatch(wf, /test\("waffle-/, '#211: markers must be full literals, not bare-word regexes');
+    // #332 — BOTH of this hook's predicates ADMIT work off the evidence (one dispatches a paid
+    // review, one certifies delivery), so for both the false POSITIVE is the expensive direction and
+    // both must UNDER-match. A review that merely QUOTES the literal mid-prose is not the bot's
+    // review: it must neither suppress the real one (the gate) nor excuse a denial (check_delivered).
+    //
+    // The gate was tolerant `index()` until #332, and its false positive was DEMONSTRATED LIVE — PR
+    // #296's QA review quotes the literal at offset 1103 on the head the real review was due on, so
+    // the gate skipped and the adversarial review never ran. Do NOT relax either site back to
+    // `index()`: the ONE tolerant marker predicate in this pair of hooks is pr-response's per-PR loop
+    // bound, which over-matches because it BOUNDS work rather than admitting it.
+    assert.equal(
+      (wf.match(/startswith\("<!-- waffle-adversarial-review -->"\)/g) || []).length,
+      2,
+      '#332: the idempotency gate AND check_delivered both require a MARKER-LED body (startswith)',
+    );
+    assert.equal(
+      (wf.match(/index\("<!-- waffle-adversarial-review -->"\)/g) || []).length,
+      0,
+      '#332: no tolerant substring match survives in this hook — a quoting review is not a review',
+    );
+    // narrowing and literal-matching are independent — the commit_id filter survives at BOTH sites
+    assert.equal(
+      (wf.match(/select\(\.commit_id==\$sha\)/g) || []).length,
+      2,
+      '#211: the per-head-commit narrowing is preserved alongside the literal match',
+    );
   });
 });
 
@@ -3792,6 +3844,43 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       },
     });
     assert.equal(res.status, 1, `an API failure is fail-closed (red), never a silent pass: ${res.stdout}${res.stderr}`);
+  });
+
+  test('pr-green: a review MENTIONING the marker word is not delivery proof (#211)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // #211: the marker query matched a bare word, so a review that merely NAMES the marker in prose
+    // (a human quoting it, a reviewer discussing the hook) read as "the review posted". Here the
+    // review POST was denied — an `amb`-tier denial, the only tier #208 still lets delivery downgrade
+    // — so a false delivered=1 would turn a genuine "the review did not post" red into a warning.
+    const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
+    const r = runPrGreenGuard(g.prGreen, log, [
+      { commit_id: HEAD, body: 'the waffle-adversarial-review hook mis-fires on this PR' },
+    ]);
+    assert.equal(r.code, 1, `a mere mention of the marker is not delivery proof: ${r.out}`);
+    assert.match(r.out, /::error/);
+    // and the true positive still lands: the FULL literal marker on this head IS delivery
+    const real = runPrGreenGuard(g.prGreen, log, [MARKED]);
+    assert.equal(real.code, 0, `the full literal marker must still prove delivery: ${real.out}`);
+  });
+
+  test('pr-green: a review QUOTING the literal marker mid-body is not delivery proof (#211)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // #211 round 2: matching the FULL literal closed the bare-word mention above, but `index()` is a
+    // SUBSTRING search — so a review that QUOTES the literal in prose (a human citing the marker, a
+    // reviewer discussing this very hook) still read as "the review posted". Delivery must be
+    // MARKER-LED. Same `amb`-tier denial as above (the only tier #208 still lets delivery downgrade),
+    // so a false delivered=1 would turn a genuine "the review did not post" red into a warning.
+    const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
+    const quoted = runPrGreenGuard(g.prGreen, log, [
+      { commit_id: HEAD, body: 'Discussing the hook: it greps for <!-- waffle-adversarial-review --> in the body.' },
+    ]);
+    assert.equal(quoted.code, 1, `a QUOTED marker is not delivery proof: ${quoted.out}`);
+    assert.match(quoted.out, /::error/);
+    // the true positive is untouched — a real, marker-LED review on this head still proves delivery
+    const real = runPrGreenGuard(g.prGreen, log, [MARKED]);
+    assert.equal(real.code, 0, `a marker-led review must still prove delivery: ${real.out}`);
   });
 
   // #208: #188's downgrade was WIDER than its motivation. It excused the whole hard class whenever a
@@ -8725,6 +8814,14 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
       'case "${FAKE_GH:-empty}" in',
       `  delivered) printf '%s' '[{"id":1,"body":"<!-- waffle-pr-response -->\\nverdict table"}]' ;;`,
       `  unmarked)  printf '%s' '[{"id":1,"body":"LGTM, ship it"}]' ;;`,
+      // #211: a body that merely MENTIONS the marker word in prose — exactly what a human comment,
+      // a changelog quote, or this very issue's own discussion looks like. It is NOT a reply.
+      `  mention)   printf '%s' '[{"id":1,"body":"the waffle-pr-response hook is broken"}]' ;;`,
+      // #211 (round 2): a body that QUOTES the full literal MID-PROSE. The literal match closed the
+      // bare word above but NOT this — and a real one exists on PR #207 (the evidence PR from #211),
+      // a human comment carrying the literal at offset 1084. It is prose ABOUT the hook, not a reply.
+      // The marker is deliberately NOT at offset 0 here; that is the whole point of the fixture.
+      `  quoted)    printf '%s' '[{"id":1,"body":"Merging; the bot keys on <!-- waffle-pr-response --> which I am quoting here."}]' ;;`,
       `  empty)     printf '%s' '[]' ;;`,
       '  error)     echo "gh: HTTP 502" >&2; exit 1 ;;',
       'esac',
@@ -8829,9 +8926,29 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
 
     // the security boundary itself: same-repo head, evaluated before a runner is claimed
     assert.match(cond, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
-    // scoped to marker-carrying reviews, and never to its own marker (self-trigger)
-    assert.match(cond, /contains\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
-    assert.match(cond, /!contains\(github\.event\.review\.body, '<!-- waffle-pr-response -->'\)/);
+
+    // THE TRIGGER for this paid, `contents: write` job: the review must BEGIN with the marker —
+    // `startsWith()`, not `contains()` (#332). This clause ADMITS work, so its false positive is the
+    // expensive direction, and it was demonstrated live: PR #296's QA review quotes the
+    // adversarial-review literal at offset 1103, so under `contains()` a QA review dispatched this
+    // hook and spent the PR's ONE automated reply triaging it. A false negative merely leaves a
+    // review unanswered (visible; a human can run /pr-response). Same marker-LED contract the
+    // delivery checks in both hooks already depend on. Do NOT relax this back to `contains()`.
+    assert.match(cond, /startsWith\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
+    assert.doesNotMatch(cond, /[^!]contains\(github\.event\.review\.body, '<!-- waffle-adversarial-review -->'\)/);
+
+    // …and there is NO self-trigger clause, deliberately (#332). A `!contains(<this hook's own
+    // marker>)` clause sat here as "defense in depth". The marker-LED trigger above SUBSUMES it —
+    //   * a self-trigger cannot even REACH this `if:`: the hook fires on `pull_request_review`, and
+    //     its own reply is posted with `gh pr comment` (an ISSUE COMMENT, no review event); and
+    //   * two markers cannot both sit at offset 0, so anything satisfying the trigger is an
+    //     adversarial review by construction, never a reply.
+    // — while its only REACHABLE effect was a false negative: it silently dropped a genuine
+    // adversarial review that QUOTED the pr-response literal in prose, i.e. a review of a hooks PR,
+    // the population this hook most needs to answer. ("The skill forbids quoting it" is not a
+    // guarantee — that is the very assurance #296 disproved for the sibling marker, and #296 is the
+    // evidence base for this whole fix.) Do not reinstate it without a reachable true positive.
+    assert.doesNotMatch(cond, /waffle-pr-response/, 'no self-trigger clause: the marker-LED trigger subsumes it (#332)');
 
     // the checkout is a step, so it can only run once the job-level `if:` admitted the event —
     // pin that it is gated on the gate step too, and that nothing checks out ahead of the gate.
@@ -8880,12 +8997,34 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const unmarked = runGate(doc, { fakeGh: 'unmarked' });
     assert.match(unmarked.outputs, /should_respond=true/, `an unmarked comment must not bound: ${unmarked.out}`);
 
+    // #211: a comment merely MENTIONING the marker word must not bound the loop — only the full
+    // literal marker does. The old bare-word `test("waffle-pr-response")` matched this and silently
+    // withheld the reply from any PR whose conversation named the marker.
+    const mentioned = runGate(doc, { fakeGh: 'mention' });
+    assert.equal(mentioned.code, 0, mentioned.out);
+    assert.match(mentioned.outputs, /should_respond=true/, `a mere mention must not bound the loop: ${mentioned.out}`);
+
     // THE LOOP BOUND: a marked reply already on the PR stops the next dispatch dead, whatever SHA
     // it was posted against — this is the single fact that keeps pr-green ↔ pr-response finite.
     const bounded = runGate(doc, { fakeGh: 'delivered' });
     assert.equal(bounded.code, 0, bounded.out);
     assert.match(bounded.outputs, /should_respond=false/, `a prior reply must bound the loop: ${bounded.out}`);
     assert.match(bounded.out, /already carries an automated pr-response reply/);
+
+    // #211 (round 2) — the ASYMMETRY, pinned. A comment that QUOTES the literal mid-prose still
+    // bounds the loop here, and that is DELIBERATE, not an oversight: this site's false-positive
+    // direction is fail-CLOSED (it withholds one reply — cheap) while its false-NEGATIVE direction
+    // re-arms an unbounded paid, COMMITTING loop (catastrophic). So it must OVER-match. The delivery
+    // guard (R5) faces the opposite risk and therefore UNDER-matches with startswith(). Anyone
+    // "unifying" the two predicates breaks one of them; this assertion is the tripwire. Residual
+    // (a quoting comment costs that PR its one reply) tracked in #333.
+    const quotedBound = runGate(doc, { fakeGh: 'quoted' });
+    assert.equal(quotedBound.code, 0, quotedBound.out);
+    assert.match(
+      quotedBound.outputs,
+      /should_respond=false/,
+      `the loop bound must stay TOLERANT (over-match): a false negative here re-arms a paid committing loop: ${quotedBound.out}`,
+    );
 
     // fail-closed: if the bound cannot be verified, no paid committing run is authorized
     const errored = runGate(doc, { fakeGh: 'error' });
@@ -8944,6 +9083,59 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const noop = runGuard(doc, RESULT([], 'responded to 4 findings'), 'empty');
     assert.equal(noop.code, 0, noop.out);
     assert.match(noop.out, /may have silently no-op'd/);
+
+    // (8) #211 — THE FAIL-OPEN. A comment that merely MENTIONS the marker word is not delivery
+    // evidence. The blocked `git push` means the reply never landed, so the run must RED. Under the
+    // old bare-word `test("waffle-pr-response")` this comment set delivered=1, which downgraded the
+    // whole hard class — a blocked push/curl/rm — to a warning and turned the job GREEN, in a job
+    // holding contents: write. This query has no commit_id narrowing, so ANY such comment did it.
+    const mention = runGuard(doc, RESULT([B('git push')]), 'mention');
+    assert.equal(mention.code, 1, `a mere mention of the marker is not delivery: ${mention.out}`);
+    assert.match(mention.out, /did NOT post/);
+
+    // (9) #211 (round 2) — THE FAIL-OPEN, second class. A comment QUOTING the full literal mid-prose
+    // is prose ABOUT the hook, not the hook's reply. The literal match closed (8) but NOT this, and a
+    // real instance lives on PR #207 (a human comment, marker at offset 1084) — so on the very PR
+    // #211 cites as its evidence, the guard still read "a reply was delivered" out of a human
+    // comment. Delivery must be MARKER-LED (startswith), because a false positive here downgrades a
+    // blocked git push/curl/rm to a warning in a job holding contents: write.
+    const quoted = runGuard(doc, RESULT([B('git push')]), 'quoted');
+    assert.equal(quoted.code, 1, `a QUOTED marker is not delivery — this is the fail-open: ${quoted.out}`);
+    assert.match(quoted.out, /did NOT post/);
+
+    // ...and the true positive is untouched: a real, marker-LED reply still proves delivery. This is
+    // the assertion that makes startswith() safe — if it ever stopped holding, the guard would red
+    // every delivered run.
+    const stillDelivers = runGuard(doc, RESULT([B('git push')]), 'delivered');
+    assert.equal(stillDelivers.code, 0, `a marker-led reply must still prove delivery: ${stillDelivers.out}`);
+    assert.doesNotMatch(stillDelivers.out, /::error/);
+  });
+
+  test('R6 delivery is MARKER-LED (startswith); the loop bound stays a tolerant literal (#211)', () => {
+    renderHook();
+    const wf = read(cwd, REL);
+    // Pin the fix against reintroduction, on the RENDERED workflow: no bare-word marker regex
+    // survives anywhere (#211 round 1)...
+    assert.doesNotMatch(wf, /test\("waffle-/, '#211: markers must be full literals, not bare-word regexes');
+
+    // ...and the two sites match ASYMMETRICALLY, each in the direction that fails safe (#211 round 2).
+    // check_delivered UNDER-matches — delivery evidence must LEAD the body, so a quoted literal in a
+    // human comment cannot excuse a blocked push (fail-OPEN direction).
+    assert.equal(
+      (wf.match(/startswith\("<!-- waffle-pr-response -->"\)/g) || []).length,
+      1,
+      '#211: check_delivered must require a MARKER-LED body (startswith), not a loose substring',
+    );
+    // The loop bound OVER-matches — a false negative there re-arms an unbounded paid, committing
+    // loop, so it keeps the tolerant substring. Exactly one site may use it.
+    assert.equal(
+      (wf.match(/index\("<!-- waffle-pr-response -->"\)/g) || []).length,
+      1,
+      '#211: the loop bound keeps the TOLERANT index() — a false negative there re-arms the paid loop',
+    );
+    // and the offset-0 trap stays shut: `index()` returns 0 for a marker on line 1 (where the skill
+    // puts it), which is TRUTHY in jq. A `> 0` comparison would drop exactly the real reply.
+    assert.doesNotMatch(wf, /index\("<!-- waffle-pr-response -->"\)\s*[<>]/, '#211: never compare the index() offset');
   });
 });
 

@@ -32,6 +32,66 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Fixed
+- **The hooks' dedup markers are matched on the full literal, not a loose substring (#211).** Both
+  `waffle-pr-response-hook` and `waffle-pr-green-hook` looked for their marker with a **bare-word
+  regex** — `test("waffle-pr-response")` / `test("waffle-adversarial-review")` — while the skills
+  they wrap, and the workflows' own job-level `if:`, key on the full literal HTML comment
+  (`<!-- waffle-pr-response -->`). So any PR whose conversation *merely named the marker word* — a
+  human comment, a review discussing the hook — matched. Every call site now matches the full
+  literal (`test()` takes a **regex**, which is the wrong tool for a marker containing `<!--` /
+  `-->`), which closes the bare-word class outright.
+  **The audit found SIX marker predicates across the two hooks, not the four originally analyzed —
+  and FIVE survive**, under one sentence: **a predicate that ADMITS work requires a marker-LED body
+  (`startswith()` / `startsWith()`); the one predicate that BOUNDS work over-matches (`index()`).**
+  The four admitting sites — pr-green's idempotency gate, pr-green's `check_delivered`,
+  pr-response's job-level trigger `if:`, and pr-response's `check_delivered` — each fail expensively
+  on a **false positive**: a silently-skipped security review, a fail-open green over a blocked
+  `git push`, a paid `contents: write` dispatch on a review that is not the bot's. The one exception
+  is **pr-response's per-PR loop bound**, whose false *negative* re-arms an unbounded paid,
+  committing loop; it keeps the **tolerant** substring match on purpose.
+  The sixth predicate — a `!contains(<own marker>)` **self-trigger block** in pr-response's job `if:`
+  — is **deleted**, because once the trigger beside it became marker-LED the block was dead *and*
+  harmful. A self-trigger cannot reach that `if:` at all (the hook fires on `pull_request_review`;
+  its own reply is an **issue comment**), and two markers cannot both sit at offset 0, so anything
+  satisfying the trigger is an adversarial review by construction. Its only **reachable** effect was
+  a false negative: silently dropping a genuine adversarial review that *quoted* the pr-response
+  literal in prose — i.e. a review **of a hooks PR**, the population this hook most needs to answer.
+  "The skill forbids quoting it" is not a guarantee: that is the exact assurance PR #296 disproved
+  for the sibling marker, and #296 is the evidence base for this whole fix.
+  **Scope, precisely:** matching the full literal closes bodies that *name* the marker; requiring the
+  marker to **lead** the body closes bodies that *quote* it. Neither class is hypothetical. PR #207
+  (the evidence PR for #211) carries a **human comment with the literal at offset 1084**, which under
+  a substring match read as proof the bot had replied. PR **#296**'s QA review carries the
+  adversarial-review literal at **offset 1103**, in prose *about* the hook — and that single body
+  defeated **both halves** of the review loop: pr-green's gate read it as "this head is already
+  reviewed" (so the real adversarial review never posted) while pr-response's job-level `if:` read it
+  as the bot's review (so the paid, committing job fired on the QA review and spent the PR's one
+  automated reply). Both are now closed at all five admitting sites.
+  At the loop bound the quoting class remains **deliberately** open (a comment quoting the literal
+  costs that PR its one automated reply — wrong, but safe), and that residual — **that site and no
+  other** — is tracked in **#333**; narrowing by comment *author* was evaluated and **does not
+  discriminate here**, because the hook posts under the same identity humans comment under.
+  The three marker-posting skills now all carry the same rule: the marker **leads** the body, and a
+  raw marker literal is **never** pasted mid-body — name it or break it. `qa` was the one skill that
+  never got that rule, and it is the skill that demonstrably produced the offending body on #296.
+  In `waffle-pr-response-hook` the fail-open was the live, high-severity one: a single-tier classifier
+  holding `contents: write`, so a false `delivered=1` excused the whole hard class — a blocked
+  `git push`, `curl`, `rm -rf` — *and its query has no `commit_id` narrowing at all*, so **any**
+  comment on the PR satisfied it. In `waffle-pr-green-hook` the severity is smaller after #208 — only
+  the `amb` tier is still downgradeable, and both of its sites also filter `commit_id == HEAD_SHA` —
+  but the loose match was wrong there too. The `commit_id` narrowing is preserved: narrowing and
+  literal-matching are independent, and both are wanted.
+  *Note for anyone touching the one remaining `index()` (the loop bound):* it returns an **offset**,
+  and the marker sits on the body's **first line** ⇒ offset **`0`**. In jq only `null`/`false` are
+  falsy, so the bare `select((.body // "") | index("…"))` form correctly keeps a `0` hit. Do **not**
+  "harden" it to `index(…) > 0` — that drops exactly the real reply. Guard and gate tests now pin
+  mention-vs-quote-vs-literal for both hooks, pin the asymmetry in both directions, pin the
+  job-level trigger as `startsWith()`, pin that the offset is never compared, and pin that pr-green's
+  **dispatch prompt** demands the marker as the review's FIRST line — the prompt is the instruction
+  the CI harness actually receives, and it had been left saying "on its own line", the weaker
+  placement its own delivery check rejects.
+  Back-porting #208's three-tier denial classifier to `waffle-pr-response-hook` (the *other* half of
+  this fail-open) is tracked separately in **#331**.
 - **pr-green: a blocked exfil/destructive call no longer goes green just because the review posted
   (#208).** #204 taught the `waffle-pr-green-hook` guard to downgrade a denied tool call to a warning
   when a marker-carrying adversarial review is on the head commit. The motivation was narrow — the

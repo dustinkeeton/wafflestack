@@ -44,9 +44,10 @@
 # with the default GITHUB_TOKEN does not trigger new workflow runs (a GitHub anti-recursion rule), so
 # CI never re-runs and pr-green never re-fires; but a PAT/App token in WAFFLE_HYGIENE_TOKEN (the
 # recommended setting, so the PR's required checks actually run) restores the cycle in full. The
-# per-PR guard is what holds in BOTH configurations. Two further skips harden it: a review whose own
-# body carries the pr-response marker (self-trigger), and — as pr-green does — draft PRs and
-# bot-authored PRs.
+# per-PR guard is what holds in BOTH configurations. Further skips harden it — as pr-green does,
+# draft PRs and bot-authored PRs are skipped — and a self-trigger is impossible twice over: this hook
+# fires on `pull_request_review` while its own reply is an ISSUE COMMENT, and the job-level trigger
+# demands a body LED by the adversarial-review marker, which a reply never is (see the `if:`).
 #
 # Opt-in syrup: this spends real Anthropic API money on every reviewed PR AND holds `contents: write`
 # to commit the fixes it accepts, so enabling the stack does NOT render it — install it explicitly
@@ -70,14 +71,51 @@ jobs:
     # Fast-path gate on the event itself, evaluated before a runner is claimed:
     #   (1) FORK-HEAD GUARD (see the header) — the PR head must live in this repo. This is the
     #       security boundary of the whole workflow; it stays first and stays at job level.
-    #   (2) the review carries pr-green's adversarial-review marker — v1 answers the bot, not humans.
-    #   (3) the review does NOT carry this hook's own marker — defense in depth against a self-trigger.
-    # `contains()` here is an Actions expression over event data, not a shell splice, so no event
-    # content ever reaches a command line. The in-job gate adds the per-PR loop bound.
+    #   (2) TRIGGER — the review IS an adversarial review: its body BEGINS with pr-green's marker.
+    #       `startsWith()`, not `contains()` (#211/#332): this clause AUTHORIZES a paid,
+    #       `contents: write` run, so it must UNDER-match. Under a substring match, any review that
+    #       merely QUOTED the literal in prose fired this job — and that is not hypothetical: a QA
+    #       review of a hooks PR naturally cites the marker (PR #296 carries one, literal at offset
+    #       1103), so the hook dispatched on the QA review and spent the PR's ONE automated reply on
+    #       it. A false NEGATIVE here merely leaves a review unanswered — visible, cheap, and a human
+    #       can run /pr-response by hand. The marker-LED contract is the same one pr-response/SKILL.md
+    #       and adversarial-review/SKILL.md mandate (first line) and the delivery check below enforces.
+    # There is NO third clause, and its absence is deliberate (#332). A `!contains(review.body, <this
+    # hook's own marker>)` clause used to sit here as "defense in depth against a self-trigger". Once
+    # (2) became marker-LED it was DEAD, and worse than dead:
+    #
+    #   * A self-trigger cannot reach this `if:` AT ALL. This hook fires on `pull_request_review`;
+    #     its own reply is posted with `gh pr comment`, i.e. an ISSUE COMMENT, which raises no
+    #     `pull_request_review` event. Ruled out on the event, before any predicate runs.
+    #   * And it is ruled out AGAIN on the marker: two different markers cannot both sit at offset 0,
+    #     so anything satisfying (2) is an adversarial review by construction, never a reply.
+    #   * So the clause's ONLY reachable effect was a false NEGATIVE: it silently dropped a genuine
+    #     adversarial review that happened to QUOTE the pr-response literal in prose — i.e. an
+    #     adversarial review OF A HOOKS PR, exactly the population this hook most needs to answer.
+    #     That is not a hypothetical class: #296's QA review quoted the *sibling* literal for exactly
+    #     the same reason (it was reviewing this code), and that body is the evidence base for the
+    #     whole fix. A skill's prose contract is not a guarantee — that premise cuts both ways.
+    #
+    # What actually stands between this hook and an unbounded self-trigger is (a) the event type,
+    # (b) the marker-LED trigger in (2), and (c) the per-PR LOOP BOUND in the gate step below.
+    #
+    # ⚠️ If this hook is ever changed to post its reply as a REVIEW rather than a comment, TWO sites
+    # must move with it — both key on this hook's own marker over `issues/{N}/comments`, and both
+    # would silently stop seeing the reply:
+    #     * the LOOP BOUND (gate step, `index()`) — it stops bounding, and the pr-green ↔ pr-response
+    #       cycle becomes an unbounded paid, committing loop. This is the catastrophic one.
+    #     * `check_delivered` (guard step, `startswith()`) — it would count ZERO marked comments, so
+    #       `delivered=0` always, and EVERY hard-denial-bearing run reds as "the response did NOT
+    #       post" while the reply sits on the PR.
+    #   (The token-count telemetry step also reads that endpoint, but on the disjoint token-count
+    #   marker — it is unaffected.) The deleted clause would not have saved you in that future
+    #   either: a reply is led by its own marker, so (2) already refuses it.
+    #
+    # These are Actions expressions over event data, not a shell splice, so no event content ever
+    # reaches a command line. The in-job gate adds the per-PR loop bound.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(github.event.review.body, '<!-- waffle-adversarial-review -->') &&
-      !contains(github.event.review.body, '<!-- waffle-pr-response -->')
+      startsWith(github.event.review.body, '<!-- waffle-adversarial-review -->')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Least privilege for a job that COMMITS: contents: write to push the accepted fixes onto the
@@ -113,7 +151,31 @@ jobs:
           # (2) THE LOOP BOUND (see the header comment). Skip when ANY marked pr-response reply
           #     already exists on this PR, regardless of the head SHA it was posted against. The
           #     skill posts its reply as a PR conversation comment (`gh pr comment`), i.e. the
-          #     issues/{n}/comments endpoint, so that is what we count.
+          #     issues/{n}/comments endpoint, so that is what we count. "Marked" means the FULL
+          #     LITERAL marker (jq `index()`, a literal substring search — not a bare-word regex,
+          #     #211): a PR whose conversation merely MENTIONS "waffle-pr-response" in prose has not
+          #     been replied to, and must still get its one automated reply.
+          #
+          #     THIS IS THE ONE TOLERANT MARKER PREDICATE in either hook, and it is tolerant because
+          #     it is the one whose false negative is catastrophic. The rule everywhere else is a
+          #     single sentence (#332): a predicate that ADMITS work demands a marker-LED body; the
+          #     loop bound OVER-matches because it BOUNDS work.
+          #
+          #       here (bounds work) — a false POSITIVE skips one reply (wrong, cheap). A false
+          #               NEGATIVE re-arms an unbounded paid, COMMITTING loop (catastrophic).
+          #               ⇒ OVER-match, tolerant `index()`.
+          #       the job-level trigger `if:` above (admits work) — a false POSITIVE dispatches this
+          #               paid, committing job on a review that is not the bot's (a QA review quoting
+          #               the literal did exactly this, PR #296). ⇒ UNDER-match, `startsWith()`.
+          #       check_delivered below (admits evidence) — a false POSITIVE excuses a blocked
+          #               git push/curl/rm and greens the job (fail-open). A false NEGATIVE just reds
+          #               a delivered run. ⇒ UNDER-match, `startswith()`.
+          #
+          #     So a comment that merely QUOTES the literal mid-prose still bounds the loop here (it
+          #     costs this PR its one automated reply — wrong, but safe; tracked in **#333**, which
+          #     covers this site and this site only) while it can no longer trigger the job above or
+          #     masquerade as delivery below. Do NOT "unify" the three predicates by relaxing those
+          #     two to match this one — the asymmetry is the design, and it runs one way only.
           #
           #     FAIL-CLOSED, and note the direction — the opposite of pr-green's dedup. There, an
           #     API error yields an empty list and the review posts again (a duplicate review is
@@ -122,7 +184,7 @@ jobs:
           #     as "a reply already exists" and the job skips.
           comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${N}/comments" --paginate 2>/dev/null || echo 'API_ERROR')"
           if [ "$comments" = "API_ERROR" ]; then skip "could not list comments on PR #${N} — refusing to dispatch (fail-closed: an unverifiable loop bound must never authorize a paid, committing run)."; fi
-          seen="$(printf '%s' "$comments" | jq '[ .[] | select((.body//"")|test("waffle-pr-response")) ] | length' 2>/dev/null || echo 1)"
+          seen="$(printf '%s' "$comments" | jq '[ .[] | select((.body//"")|index("<!-- waffle-pr-response -->")) ] | length' 2>/dev/null || echo 1)"
           case "$seen" in ''|*[!0-9]*) seen=1 ;; esac
           if [ "$seen" -ne 0 ]; then skip "PR #${N} already carries an automated pr-response reply — skipping (one automated response per PR; answer a later round by running /pr-response by hand)."; fi
           echo "should_respond=true" >> "$GITHUB_OUTPUT"
@@ -253,6 +315,33 @@ jobs:
           # makes it unambiguous — it SKIPPED the dispatch unless zero marked comments existed, so a
           # marked comment now IS this run's reply. It cannot be stale.
           #
+          # Delivery evidence must be a marker-LED body: `startswith()`, not a substring search.
+          #
+          # Two false-positive classes had to die here, and they die differently (#211):
+          #   (a) a body that merely NAMES the marker word ("the waffle-pr-response hook is broken").
+          #       Killed by matching the FULL LITERAL rather than a bare-word regex.
+          #   (b) a body that QUOTES the full literal mid-prose — a human comment discussing this
+          #       hook, a changelog entry, a review citing the marker. A substring search (`index()`)
+          #       still matches those, and one such comment demonstrably exists on PR #207. Killed by
+          #       requiring the marker to LEAD the body.
+          #
+          # Why this site takes the strict form while the loop-bound gate above keeps the tolerant
+          # `index()`: the two sites fail in OPPOSITE directions, so each matches in the direction
+          # that fails SAFE. This query has NO commit_id narrowing — it counts any comment on the PR —
+          # and a false positive here downgrades a blocked git push/curl/rm to a warning in a job
+          # holding contents: write. That is the fail-OPEN direction, so it must UNDER-match: a body
+          # that isn't marker-led is not this hook's reply. (The gate over-matches for the same
+          # reason in reverse — see there.) A false NEGATIVE here is merely a red job on a run that
+          # did deliver: loud, visible, and safe.
+          #
+          # `startswith()` is the skill's own contract, not a tightening of it: pr-response/SKILL.md
+          # mandates the marker as the reply's FIRST line, and the dispatch prompt above repeats it.
+          # Verified against every real reply this hook has posted — all marker-led, offset 0.
+          #
+          # Do NOT "relax" this back to `index(…)` to be forgiving, and do NOT "harden" the gate's
+          # `index(…)` to `index(…) > 0` — that drops exactly the real, marker-led reply (offset 0 is
+          # TRUTHY in jq; only null/false are falsy). Both mistakes are pinned by tests.
+          #
           # Memoized + LAZY: queried at most once, and only when a caller actually needs the answer.
           # FAIL-CLOSED at every step — a failed API call, malformed JSON, or a non-numeric count all
           # leave delivered=0 (⇒ the run reds). An error must never be read as proof of delivery.
@@ -261,7 +350,7 @@ jobs:
             if [ -n "$delivered" ]; then return 0; fi
             delivered=0
             comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate 2>/dev/null || echo '[]')"
-            n="$(printf '%s' "$comments" | jq '[ .[] | select((.body//"")|test("waffle-pr-response")) ] | length' 2>/dev/null || echo 0)"
+            n="$(printf '%s' "$comments" | jq '[ .[] | select((.body//"")|startswith("<!-- waffle-pr-response -->")) ] | length' 2>/dev/null || echo 0)"
             case "$n" in ''|*[!0-9]*) n=0 ;; esac
             if [ "$n" -gt 0 ]; then delivered=1; fi
           }
