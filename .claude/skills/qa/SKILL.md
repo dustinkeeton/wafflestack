@@ -251,32 +251,45 @@ gh pr review "$N" --comment --body-file "${TMPDIR:-/tmp}/waffle-qa-summary-$N.md
 
 ## 7. Verify delivery, then report back
 
-**Once the review has posted, and only then**, write a `waffle/qa` **commit status** on the head
-SHA you reviewed — then verify delivery by reading that status back:
+Two steps, in this order, and **neither substitutes for the other**:
 
 ```bash
+# 1. PROVE THE REVIEW LANDED — read back the artifact itself, by the id its POST returned.
+REVIEW_ID=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-qa-review-$N.json" --jq '.id')
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews/$REVIEW_ID" --jq '.id, .commit_id, .state'
+
+# 2. ONLY THEN, signal it — a waffle/qa commit status on the head you reviewed.
 HEAD_SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
 gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/qa -f description="QA review posted"
-gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/statuses" --paginate --jq '[ .[] | select(.context=="waffle/qa" and .state=="success") ] | length'
 ```
 
-Expect **at least 1**. **Fail closed:** if the POST in step 5/6 errored, or the status write or this
-read-back errors or yields 0, report the error verbatim and do **not** claim the review posted — a
-QA pass whose findings never landed is a failed pass, not a clean one.
+**Fail closed:** if the POST errored, or the read-back errors or returns no id, report the error
+verbatim, **do not write the status**, and do **not** claim the review posted — a QA pass whose
+findings never landed is a failed pass, not a clean one.
 
-**Why a commit status and not the marker in the review body.** This check used to be a
-`.body | contains(…)` test for this skill's own marker over the reviews on the head — a **tolerant
-substring over free text anyone can write**. That is the exact mechanism #338 excised from CI, and
-it was still live here: a *human* review that merely **quoted** the marker while discussing it — a
-review of a hooks PR, say — satisfied this check, so a QA run whose own POST was denied would read
-that stranger's body as proof of its own delivery and report a clean pass. **PR #296 is that bug,
+> [!IMPORTANT]
+> **A status must never be its own proof.** The obvious shortcut — write the status, then verify
+> delivery by reading *that status* back — is **self-attesting**: it proves "I wrote a status", which
+> is trivially true one line after writing one, and it never observes the review at all. If the
+> review POST errors and the run continues, the read-back still returns 1 and the pass reports
+> *clean and delivered* with nothing on the PR. The only thing binding such a status to a review
+> would be a sentence in this file telling a model to write it afterwards — **exactly the
+> prose-to-prose coupling #338 abolished in CI**, reintroduced one layer down. So step 1 reads the
+> **review**, by id, and step 2's status is a *signal for consumers*, never evidence for you.
+
+**Why the signal is a commit status and not this skill's marker in a body.** The delivery check used
+to be a `.body | contains(…)` test for this skill's own marker over the reviews on the head — a
+**tolerant substring over free text anyone can write**. That is the mechanism #338 excised from CI,
+and it was still live here: a *human* review that merely **quoted** the marker while discussing it —
+a review of a hooks PR, say — satisfied the check, so a QA run whose own POST was denied read that
+stranger's body as proof of its own delivery and reported a clean pass. **PR #296 is that bug,
 observed** (literal at offset 1103). A commit status takes repo **push access** to write, so no body
-can forge it.
+can forge it; a review id read back from the API cannot be forged by a body either.
 
-The head-scoping stays load-bearing either way: a status is keyed to the SHA, and an *unscoped*
-check would be satisfied by an **earlier round's** review — in a multi-round loop (autopilot runs
-`qa` → `pr-response` repeatedly) a silently denied POST from round 2 on would otherwise "verify"
-against round 1 and this round's findings would be lost.
+The head-scoping stays load-bearing: both the review's `commit_id` and the status are keyed to the
+SHA, so an **earlier round's** review can never satisfy a later round's check — in a multi-round loop
+(autopilot runs `qa` → `pr-response` repeatedly) a silently denied POST from round 2 on would
+otherwise "verify" against round 1 and this round's findings would be lost.
 
 Then return a concise summary to the caller: the PR URL, the count of findings by severity
 (blocker / should-fix / nit, or "none") — the per-severity count is what an orchestrating

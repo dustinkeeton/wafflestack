@@ -81,6 +81,27 @@ is what you reach for across a breaking one.
   - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
     read is best-effort by design: getting it wrong costs a redundant round, while getting the
     *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **The triage gate compares timestamps, not mere existence — an existence test merged over live
+  findings (#354, QA round 2).** The first cut keyed triage on *"is there a `waffle/pr-response`
+  status on this review's head SHA?"*. But a status certifies a **SHA**, while findings belong to a
+  **review**, and the two diverge on the most ordinary outcome there is — **the last responder
+  deferred everything**: it implements 0, pushes nothing, the head does not move, and the status it
+  leaves behind silently **pre-triages the next review to land on that head**. Step 5 converges,
+  Step 6's `adversarial-review` posts real holes onto the same head, the gate reads them as already
+  triaged, the responder never spawns, and autopilot **arms auto-merge over undisposed findings** —
+  the exact failure the status was introduced to prevent, reintroduced by its own fix. A review is
+  now triaged **iff** a `waffle/pr-response` success status on its `commit_id` was created **after**
+  its `submitted_at`. Both are plain API fields, neither is a body, and forging either still takes
+  push access — so nothing about #338's thesis is given up.
+- **A delivery check may never read back its own status (#354, QA round 2).** `qa` and
+  `adversarial-review` wrote their status and then "verified delivery" by reading *that same status*
+  back — **self-attesting**: it proves a status was written (trivially true, one line later) and
+  never observes the review at all, so an errored review POST still reported *clean and delivered*
+  with nothing on the PR. The only thing binding the status to the review was a sentence in a
+  SKILL.md telling a model to write it afterwards — **the prose-to-prose coupling #338 abolished in
+  CI, reintroduced one layer down.** Each skill now reads back the **artifact itself** (the review,
+  by the id its POST returned; for `pr-response`, the comment). The status remains the *consumers'*
+  signal for triage and dedup — it is simply no longer evidence for the writer.
 - **`pr-response` rubric bumped to v2 — a fifth dimension, `Reach` (#354).** A rubric change
   reinterprets every future verdict, so it is recorded here with its motivating evidence, per the
   skill's own recalibration rule.

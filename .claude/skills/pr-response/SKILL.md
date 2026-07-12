@@ -294,15 +294,27 @@ else: `waffle-pr-response-hook`'s delivery check, and — critically — **`auto
 which arms auto-merge**. A commit status takes repo **push access** to write, so no comment body can
 forge one; that is the entire reason the gate keys on it instead of on a marker in prose (#338).
 
-Three rules, each load-bearing:
+Four rules, each load-bearing:
 
-- **Only after the reply is actually on the PR.** The status asserts *"the findings on this head were
-  disposed of"*. Writing it first — or writing it when the post failed — is a lie that arms a merge.
+- **Only after the reply is actually on the PR — and prove that independently.** The status asserts
+  *"the findings on this head were disposed of"*. Writing it first, or writing it when the post
+  failed, is a lie that arms a merge. **Do not "verify" the reply by reading your own status back**:
+  that is self-attesting — it proves you wrote a status, not that a reply exists. Read back the
+  **comment** the post returned (`gh api "repos/$OWNER/$REPO/issues/comments/<id>"`, using the id from
+  `gh pr comment`'s output URL), and only then write the status.
+- **Your status's TIMESTAMP is a gate, not just its existence.** `autopilot` triages a review only
+  when a `waffle/pr-response` status on that review's `commit_id` is **newer than the review's
+  `submitted_at`**. So writing the status early — before the reply, or speculatively — silently
+  **pre-triages every review that lands on that head afterwards**, and autopilot will arm auto-merge
+  over them. Write it last, once, after the reply.
 - **Against the SHA you responded to**, even if the fixes you pushed have since moved the head. The
-  status marks *the head whose findings you triaged*. That is what makes convergence work: a new
-  review on the new head carries no status, so it reads as untriaged and earns another round.
-- **Fail closed.** If the status POST errors, say so and do **not** report success — an untriaged PR
-  that *looks* triaged is the one failure this skill must never produce.
+  status marks *the head whose findings you triaged*. That is what makes convergence work: a review
+  on a new head has no status newer than itself, so it reads as untriaged and earns another round —
+  and so does a **later** review on the *same* head, which is the case that matters when you
+  implement 0 and push nothing.
+- **Fail closed.** If the reply POST errors, or its read-back finds no comment, or the status POST
+  errors, say so and do **not** report success — an untriaged PR that *looks* triaged is the one
+  failure this skill must never produce.
 
 `$HEAD_SHA` is the head at the time you read the findings: `gh pr view "$N" --json headRefOid -q .headRefOid`.
 

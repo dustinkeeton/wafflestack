@@ -172,19 +172,26 @@ Notes on mechanics:
 - **Begin the body with the marker.** Every review this skill posts — findings *or* no-holes —
   should **begin** with the exact literal `<!-- waffle-adversarial-review -->`. It is how a human
   recognizes a bot review in the UI, and how this skill recognizes its own prior posts.
-- **Emit the delivery signal once the review lands.** After the review has posted — and only then —
-  write a `waffle/adversarial-review` **commit status** on the reviewed head SHA:
+- **Prove the review landed, THEN signal it — and never confuse the two.** Read back the **review
+  itself**, by the id its POST returned; only once that succeeds, write the
+  `waffle/adversarial-review` **commit status** on the reviewed head SHA:
 
   ```bash
+  REVIEW_ID=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-adversarial-review-$N.json" --jq '.id')
+  gh api "repos/$OWNER/$REPO/pulls/$N/reviews/$REVIEW_ID" --jq '.id, .commit_id, .state'
   gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/adversarial-review -f description="Adversarial review posted"
   ```
 
-  This is the skill's delivery signal **on every path** — a local run emits it exactly as a
-  CI-dispatched one does; it is not a CI detail to skip when a human invoked you. Everything that
-  needs to know *"has this head been reviewed?"* reads that status: `waffle-pr-green-hook`'s
-  duplicate-review guard and delivery check, and `autopilot`. A status takes repo **push access** to
-  write, so no body can forge one. **Fail closed** — if the POST errors, report it and do not claim
-  the review posted.
+  **Fail closed** — if the POST errors, or the read-back returns no id, report it, **do not write the
+  status**, and do not claim the review posted.
+
+  **A status must never be its own proof.** Writing the status and then "verifying delivery" by
+  reading *that status* back is self-attesting — it proves you wrote a status, not that a review
+  exists, so an errored POST would still report *delivered* with nothing on the PR. The status is a
+  **signal for consumers**, never evidence for you: everything that needs to know *"has this head
+  been reviewed?"* reads it — `waffle-pr-green-hook`'s duplicate-review guard and delivery check, and
+  `autopilot` — and it takes repo **push access** to write, so no body can forge one. This is the
+  skill's signal **on every path**: a local run emits it exactly as a CI-dispatched one does.
 - **Never paste another skill's raw marker literal — or this one — into a body.** No *workflow*
   reads a marker any more (#338), but the **skills and `autopilot` still do**, and `autopilot`'s
   triage gate is what **arms auto-merge**. So a review that merely *quotes* a marker can still read

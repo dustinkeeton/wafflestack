@@ -1459,7 +1459,9 @@ describe('gate loops: lazy-responder coherence + cold-start recovery (#297)', ()
       // The predicate it replaces must be gone from both loops.
       assert.doesNotMatch(step, /no marked `?<!-- waffle-pr-response -->`? reply has yet disposed/i);
     }
-    assert.match(qaStep, /no status ⇒ untriaged ⇒ spawn the responder/i);
+    // F7 tightened this from "no status" to "no QUALIFYING status" — existence alone is unsafe
+    // (see the timestamp test below). The fail-closed direction is what this pins.
+    assert.match(qaStep, /no \*?qualifying\*? status ⇒ untriaged ⇒ spawn the responder/i);
     assert.match(qaStep, /A redundant triage round costs one cheap round; a skipped one merges live findings/);
     // Step 6 names the cap-hatch path that reaches it with an untriaged review and no responder,
     // and says plainly why a pre-existing reply proves nothing.
@@ -1722,19 +1724,24 @@ describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
     assert.match(md, /Fail closed/i);
   });
 
-  test('delivery is proved by the waffle/qa commit status, not by reading a review body (#338)', () => {
-    // WAS: `select(.body | contains(<qa marker>))` over the reviews on the head — a tolerant
-    // substring over free text. PR #296, observed: a human review that merely QUOTED the marker
-    // satisfied it, so a qa run whose own POST was denied read a stranger's body as proof of its
-    // own delivery and reported a clean pass. A status takes repo push access to write.
-    assert.match(md, /context=waffle\/qa/, 'qa must WRITE its delivery status');
-    assert.match(md, /commits\/\$HEAD_SHA\/statuses/, 'qa must verify delivery by reading that status back');
+  test('delivery is proved by reading the REVIEW back — not a body, not qa’s own status (#338)', () => {
+    // Two failure modes, one test, because the fix for the first produced the second:
+    //   (a) #296 — `select(.body | contains(<qa marker>))` over the reviews on the head: a tolerant
+    //       substring over free text. A human review that merely QUOTED the marker satisfied it, so
+    //       a qa run whose own POST was denied read a stranger's body as proof of its own delivery.
+    //   (b) F8 — "write a status, then read that status back" is SELF-ATTESTING: it proves a status
+    //       was written (trivially true, one line later) and never observes the review at all. An
+    //       errored review POST still reads back 1 → "clean and delivered", nothing on the PR.
+    // Only the review, read back by the id its POST returned, answers the question actually asked.
+    assert.match(md, /REVIEW_ID=\$\(gh api "repos\/\$OWNER\/\$REPO\/pulls\/\$N\/reviews" --method POST/, 'qa must capture the review id from its POST');
+    assert.match(md, /pulls\/\$N\/reviews\/\$REVIEW_ID/, 'qa must read the REVIEW back by id to prove delivery');
+    assert.match(md, /context=waffle\/qa/, 'qa must still WRITE its status — the consumers signal, just not its own proof');
     assert.match(md, /Fail closed/i);
-    // #232 review, preserved through the mechanism change: the check stays HEAD-scoped, so an
+    // #232 review, preserved through both mechanism changes: the check stays HEAD-scoped, so an
     // earlier round's review can never satisfy a later round's check in autopilot's multi-round
-    // loop. A commit status is keyed to the SHA, which is head-scoping by construction.
+    // loop. The review's own commit_id and the status are both keyed to the SHA.
     assert.match(md, /HEAD_SHA=\$\(gh pr view "\$N" --json headRefOid/);
-    assert.match(md, /--paginate/, 'the status read stays paginated');
+    assert.match(md, /commit_id/, 'the read-back must surface commit_id — head-scoping is load-bearing');
   });
 
   test('the adversarial-review marker literal NEVER appears in this skill', () => {
@@ -2900,6 +2907,51 @@ describe('issue / PR / review templates (#337)', () => {
     assert.doesNotMatch(md, /no marked `?<!-- waffle-pr-response -->`? reply has yet disposed/i, 'autopilot still gates triage on a marked comment body — the #333 mechanism, relocated onto the merge path');
   });
 
+  test('#338: the triage gate compares TIMESTAMPS — an existence test merges over live findings (F7)', () => {
+    // The round-1 fix keyed triage on "is there a waffle/pr-response status on the review's head
+    // SHA?". That certifies a SHA; findings belong to a REVIEW. They diverge on the most ordinary
+    // outcome there is — the last responder DEFERRED EVERYTHING:
+    //
+    //   Step 5 final round → pr-response defers all of qa's findings → implements 0 → pushes
+    //   nothing → head stays H → writes waffle/pr-response on H → autopilot converges.
+    //   Step 6 opens on H → adversarial-review posts real holes, commit_id = H.
+    //   Existence test: "status on H?" → YES (from Step 5) → reads TRIAGED → responder never
+    //   spawns → nothing left to triage → AUTO-MERGE over live, undisposed findings.
+    //
+    // i.e. F6's exact failure mode, reintroduced by F6's fix. The status must be NEWER than the
+    // review it claims to have disposed of.
+    const md = readSkill('autopilot');
+    assert.match(md, /created_at > \$since/, 'the triage gate must qualify the status by created_at > the review submitted_at');
+    assert.match(md, /submitted_at/, 'the gate must read the review submitted_at');
+    assert.match(md, /created AFTER that review was submitted|created after \*\*|created after `R` was submitted/i, 'the gate must state the ordering in prose, not only in the snippet');
+    // The specific trap must be named, or the next refactor "simplifies" the clause away as noise.
+    assert.match(md, /implements \*\*0\*\*|implements \*\*0\*\*, so it \*\*pushes nothing\*\*|deferred everything/i, 'the gate must name the deferred-everything path that makes an existence test unsafe');
+    // And the stale claim that a cap-hatch head carries NO status must be gone — it assumed the
+    // responder always pushes.
+    assert.doesNotMatch(md, /so that head carries findings and \*\*no status\*\*/, 'Step 6 still assumes the head always moves — false whenever the responder implements 0');
+  });
+
+  test('#338: a delivery check never reads back its own status — that is self-attesting (F8)', () => {
+    // The round-1 fix had qa/adversarial-review WRITE the status and then "verify delivery" by
+    // reading THAT SAME STATUS back — which proves "I wrote a status" one line after writing one,
+    // and never observes the review at all. An errored review POST would still read back 1 and
+    // report clean+delivered with nothing on the PR. The only thing binding status to review was a
+    // SKILL.md sentence to a model: the prose-to-prose coupling #338 exists to abolish, one layer
+    // down. The artifact must be read back directly, by the id its POST returned.
+    for (const name of ['qa', 'adversarial-review']) {
+      const md = readSkill(name);
+      assert.match(md, /REVIEW_ID=\$\(gh api "repos\/\$OWNER\/\$REPO\/pulls\/\$N\/reviews" --method POST/, `${name} must capture the review id from its POST`);
+      assert.match(md, /pulls\/\$N\/reviews\/\$REVIEW_ID/, `${name} must read the REVIEW back by id — not its own status`);
+      assert.match(md, /never be its own proof|self-attesting/i, `${name} must say why a status cannot prove its own precondition`);
+      // The self-attesting shape: reading back the status this skill just wrote, as delivery proof.
+      assert.doesNotMatch(md, /then verify delivery by reading that status back/i, `${name} still treats its own status as proof of delivery`);
+    }
+    // pr-response has the same shape (it posts a comment, then a status) — same rule.
+    const pr = readSkill('pr-response');
+    assert.match(pr, /Do not "verify" the reply by reading your own status back/, 'pr-response must not self-attest either');
+    assert.match(pr, /issues\/comments\//, 'pr-response must read its posted comment back by id');
+  });
+
   test('#338: each review skill emits its own out-of-band delivery status, on every path', () => {
     // The enabler for the gate above. Before this, only the CI dispatch PROMPT told the harness to
     // write a status — so a LOCAL run (the path that actually runs today) emitted nothing, and any
@@ -2954,11 +3006,12 @@ describe('issue / PR / review templates (#337)', () => {
     assert.doesNotMatch(templates.review, /Score the four dimensions/, 'the template still teaches the v1 four');
   });
 
-  test('#338: qa proves delivery from the status, not by substring-matching a review body', () => {
+  test('#338: qa no longer substring-matches a review body to prove its own delivery (#296)', () => {
     const md = readSkill('qa');
-    // PR #296, observed: a human review quoting the qa marker satisfied this check, so a qa run
-    // whose own POST was denied read a stranger's body as proof of its own delivery.
+    // The original bug: a human review quoting the qa marker satisfied this check, so a qa run
+    // whose own POST was denied read a stranger's body as proof of its own delivery. What it is
+    // replaced BY is pinned above ("delivery is proved by reading the REVIEW back") — this one
+    // just holds the door shut on the body predicate.
     assert.doesNotMatch(md, /select\(\.body \| contains\("<!-- waffle-qa -->"\)\)/, 'qa still verifies its own delivery by substring-matching review bodies (#296)');
-    assert.match(md, /commits\/\$HEAD_SHA\/statuses/, 'qa must verify delivery by reading back its commit status');
   });
 });
