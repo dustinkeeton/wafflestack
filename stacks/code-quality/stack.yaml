@@ -18,15 +18,31 @@ config:
     default: npm test
     # #218: a project command is only grantable as a single-program `Bash(<cmd>:*)` prefix, so a
     # compound value renders a DEAD grant that matches nothing. Rejected at render, not linted later.
-    # Unquoted operators only: a `|` or `;` INSIDE a quoted argument (`jest -t "foo|bar"`) is not
-    # an operator — the command is still one program, and rejecting it would make this guard
-    # worse than the hole it closes.
-    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)(?:''[^''\r\n]*''|"[^"\r\n]*"|[^;|&\r\n])*$'
+    # NO QUOTE CHARACTERS, and no unquoted operators. The value is spliced VERBATIM into the
+    # single-quoted `--allowedTools '…'` shell word, and textual substitution cannot know its
+    # target context, so escaping is impossible in general (see template.mjs) — the toolkit's
+    # documented answer is a pattern that fails LOUDLY. `git.cmd` bans quotes for exactly this
+    # reason (#254: "a single quote must never reach a shell literal"); these four keys land in
+    # the same kind of shell literal, so they get the same rule.
+    #
+    # An earlier cut tried to be clever and allow a quoted `|`/`;` inside an argument. It was
+    # WRONG TWICE. (1) Its fallback class also matched a quote, so the alternation RE-PAIRED the
+    # quotes — in `eslint 'a' && prettier 'b'` the closing quote of the first argument and the
+    # opening quote of the second were read as one span, swallowing the `&&`, and an ordinary lint
+    # command rendered a DEAD GRANT. (2) Even parsed correctly, a single-quoted value cannot
+    # SURVIVE the render: `Bash(pytest -k 'not slow':*)` inside `--allowedTools '…'` terminates the
+    # shell word early and the grant is silently mangled — the same silent denial this key exists
+    # to prevent. A guard for a silent-denial bug must fail CLOSED: reject the value, name the
+    # remedy, and let the consumer wrap it in an npm script. A false reject is loud and trivially
+    # worked around; a false accept is a dead grant nobody ever sees.
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s*cd\s)[^;|&''"\r\n]*$'
     patternHint: >-
-      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, so an
-      unquoted `&&` / `||` / `;` / `|` / `&`, a `cd ` prefix, a `$(…)`/backtick substitution or a
-      newline can never match and the call is silently denied. Split a compound into an
-      npm-script-style single entry point (e.g. `npm run ci`) and set that here (#218).
+      a project command must be ONE program the allowlist can grant as `Bash(<cmd>:*)`, and it is
+      spliced verbatim into a single-quoted shell word — so `&&` / `||` / `;` / `|` / `&`, a `cd `
+      prefix, a `$(…)`/backtick substitution, a newline, or a QUOTE character can never match and the
+      call is silently denied. Wrap it in an npm-script-style single entry point — put the compound
+      (or the quoted argument, e.g. `pytest -k 'not slow'`) inside `package.json` or a Makefile and
+      set this to the one command that runs it, e.g. `npm run ci` (#218).
     description: >-
       Test command that runs the project's full suite (referenced throughout the TDD skill).
       Must be ONE program the allowlist can grant as `Bash(<cmd>:*)` — no `&&` / `||` / `;` / `|`,

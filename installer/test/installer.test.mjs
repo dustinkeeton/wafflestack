@@ -1505,24 +1505,48 @@ describe('project commands never join with && (#218)', () => {
       'npm test `date`',
       'npm test\nnpm run build',    // a newline is a compound too (the jq classifier says so)
       'npm install ${{ secrets.NPM_TOKEN }}', // lands in the workflow — GitHub would interpolate it
-      'jest -t "foo" | tee out.log', // a quoted ARG plus a REAL operator is still a compound
+      'jest -t "foo" | tee out.log',
       'jest -t "a|b" && npm run build',
-      'npm test -- "unbalanced | quote', // no valid parse — an unbalanced quote fails closed
+      'npm test -- "unbalanced | quote',
+
+      // THE OPERATOR BETWEEN TWO QUOTED ARGUMENTS — the arrangement whose absence let a bypass ship.
+      // An earlier cut tried to be clever and permit a quoted `|`/`;` inside an argument. Its fallback
+      // class also matched a quote, so the alternation RE-PAIRED the quotes: the CLOSING quote of the
+      // first argument and the OPENING quote of the second were read as one span, swallowing the
+      // operator between them. `eslint 'src/**/*.ts' && prettier --check 'src/**/*.ts'` — an utterly
+      // ordinary lint command — rendered `ok` and emitted a DEAD GRANT. Every probe above puts the
+      // operator AFTER the last quote, where there is no second span to re-pair with, so all of them
+      // stayed green while the guard was wide open. That is what an untested ARRANGEMENT costs.
+      "eslint 'src/**/*.ts' && prettier --check 'src/**/*.ts'",
+      "echo 'a' && echo 'b'",
+      'jest -t "a" && jest -t "b"',
+      "echo 'a' | tee 'b'",
+      "echo 'a' ; echo 'b'",
+      `echo "a" && echo 'b'`,        // …and with the quote STYLES mixed, in both directions
+      `echo 'a' && echo "b"`,
+
+      // A QUOTE CHARACTER AT ALL — even in a genuinely single-program command. The value is spliced
+      // VERBATIM into the single-quoted `--allowedTools '…'` shell word, so it cannot survive:
+      // `Bash(pytest -k 'not slow':*)` terminates that word early, and the grant is silently mangled
+      // into `Bash(pytest -k not slow:*)` — which the real command no longer prefix-matches. That is
+      // the SAME silent denial this key exists to prevent, so the value must fail loudly instead.
+      // Escaping is not available: substitution cannot know its target context (template.mjs), which
+      // is why `git.cmd` bans quotes for exactly this reason (#254). The remedy is in the
+      // patternHint: wrap it in an npm script and set THAT here.
+      "pytest -k 'not slow'", 'jest -t "foo|bar"', 'npm test -- --reporters="a;b"', 'jest -t "a&b"',
+      "grep -E 'a|b' src", "eslint 'src/**/*.ts'", "echo 'a' 'b'", `echo "it's fine"`,
     ]) failsNaming(renderWith({ ...CMDS, typecheckCmd: bad }), 'typecheckCmd');
 
-    // (c) …and it must NOT fire on an ordinary single-program command. **Rejecting a valid command
-    // is the one way this guard ends up worse than the hole it closes** — the annoyed consumer
-    // deletes it, and then it guards nothing. So the operator ban is scoped to UNQUOTED operators:
-    // a `|` or `;` inside a quoted argument is not an operator, the command is still one program,
-    // and `Bash(<cmd>:*)` matches it on its leading program exactly as intended.
+    // (c) …and it must NOT fire on an ordinary single-program command. A guard the consumer deletes
+    // guards nothing — but note which way this errs. A false REJECT is loud, and the consumer works
+    // around it in one line (`npm run ci`); a false ACCEPT is a dead grant nobody ever sees. A guard
+    // for a silent-denial bug must fail CLOSED, so where the two conflict, loudness wins.
     for (const good of [
       'npm test', 'npm run lint --if-present', 'npx tsc --noEmit --skipLibCheck', 'npm pack --dry-run',
       'go test ./...', 'cargo test --all-features', './gradlew build --no-daemon', 'make -j4 build',
-      'npm run test:ci', 'true',
+      'npm run test:ci', 'true', 'pytest -q', 'bundle exec rspec', 'python -m pytest',
       'cdk deploy --all',        // starts with "cd" — but the guard requires the trailing space
       'npm test -- ${FLAGS}',    // variable expansion is not `$(…)` and not `${{ }}`
-      // quoted shell metacharacters — single-program commands, every one:
-      "pytest -k 'not slow'", 'jest -t "foo|bar"', 'npm test -- --reporters="a;b"', 'jest -t "a&b"',
     ]) {
       assert.equal(
         renderWith({ ...CMDS, typecheckCmd: good }).ok, true,
