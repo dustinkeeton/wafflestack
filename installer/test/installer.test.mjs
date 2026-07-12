@@ -1649,11 +1649,29 @@ describe('project commands never join with && (#218)', () => {
         }
 
         if (lang !== null && BASH.test(lang)) {
-          // A heredoc BODY is data, not commands — git-workflow builds its PR body (whose test-plan
-          // checklist cites all four project commands) with `--body "$(cat <<'EOF' … EOF)"`. Those
-          // rows are prose in a PR description, not a compound; A2 is what pins them.
+          // A heredoc BODY is not a sequence of Bash calls — git-workflow builds its PR body with
+          // `--body "$(cat <<'EOF' … EOF)"`, and those lines are a PR description, so the
+          // fence/newline-compound rule genuinely must not apply to them.
+          //
+          // But its ROWS are instructions ABOUT commands, and that distinction is the whole bug:
+          // #218 WAS a compound in this very heredoc — the test-plan checklist — which the agent
+          // read out of a row and ran as one call. Skipping the body wholesale left A4 GREEN on the
+          // exact defect it exists to prevent (only A2 caught it), and A2 is hardcoded to
+          // git-workflow's path — so a NEW stack shipping its own `gh pr create --body "$(cat <<'EOF'`
+          // template with a compound row was guarded by nothing at all. The carve-out was added to
+          // kill a false positive and opened a false negative in the same stroke.
+          //
+          // So: keep the fence rule carved out, but still read every `code span` in the body — the
+          // same runnable-unit rule as everywhere else. Silent on today's heredoc (each row is a
+          // lone placeholder in its own span), red on the reintroduced #218 line.
           if (heredoc !== null) {
-            if (line.trim() === heredoc) heredoc = null;
+            if (line.trim() === heredoc) { heredoc = null; return; }
+            for (const m of line.matchAll(/`([^`]+)`/g)) {
+              const span = m[1];
+              if (!PH.test(span)) continue;
+              if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span (heredoc)', span);
+              else if (CD.test(span) || SUBST.test(span)) flag(file, i, 'cd/substitution span (heredoc)', span);
+            }
             return;
           }
           const open = line.match(/<<-?\s*['"]?(\w+)['"]?/);
