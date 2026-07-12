@@ -1318,13 +1318,34 @@ describe('gate skills: documented as resumable across rounds (#295)', () => {
     // The implemented count is the loop's stop signal — an honest 0 is load-bearing.
     assert.match(md, /not that you are tired of the round/);
     // The continuity rules must be satisfiable on a COLD start too (a vanished-agent re-spawn,
-    // or a later gate's responder): the existing marked reply is read as verdict history — the
+    // or a later gate's responder): the existing marked replies are read as verdict history — the
     // step-2 "skip your own reply" rule carves this read out — and F-numbering continues from
-    // its high-water mark.
+    // their high-water mark.
     assert.match(md, /Cold starts recover the history from the PR itself/);
-    assert.match(md, /seed your verdict history and F-numbering from it/);
+    assert.match(md, /seed your verdict history and F-numbering from them/);
     assert.match(md, /\*\*never renumber\*\*/);
     assert.match(md, /on a cold start you first \*read\* it as verdict history/);
+  });
+
+  // The verdict trail is the product of this skill, and for two rounds the skill's own step 6 told
+  // the responder to DESTROY it: find the last marked comment and PATCH it, "so a second run leaves
+  // one comment carrying the current, complete verdict table". Round 2 silently replaced round 1.
+  // It also contradicted the cold-start rule directly above, which reads that same comment as
+  // history. Each round now appends. Nothing in this skill may reintroduce an edit-in-place.
+  test('pr-response APPENDS each round — it must never edit a prior reply (the verdict trail is the product)', () => {
+    const md = readSkill('pr-response');
+    assert.match(md, /Append\. Never edit a previous reply\./);
+    assert.match(md, /paper trail/i);
+    // The posting mechanic must be `gh pr comment` — a plain append.
+    assert.match(md, /gh pr comment "\$N" --body-file/);
+    // And it must NOT be a comment-editing API call. This is the actual regression guard: the old
+    // instruction was `gh api …/issues/comments/$COMMENT_ID --method PATCH`, and it is what
+    // clobbered a real PR's history before anyone noticed.
+    assert.doesNotMatch(md, /--method PATCH/, 'pr-response must never PATCH a posted reply — that erases verdict history');
+    assert.doesNotMatch(md, /issues\/comments\/\$COMMENT_ID/, 'no comment-id lookup: there is nothing to overwrite');
+    // The marker survives — it is how a cold start finds the history — but only to READ.
+    assert.match(md, /<!-- waffle-pr-response -->/);
+    assert.match(md, /read-only history|Read them; do not touch them\./);
   });
 });
 
@@ -1594,7 +1615,7 @@ describe('gate loops: cold-start signal is invocation-carried; triggers cover an
     // always wants its history. Its inference-from-absence trigger is sound where it lives.
     const skill = readSkill('pr-response');
     assert.match(skill, /Cold starts recover the history from the PR itself/);
-    assert.match(skill, /seed your verdict history and F-numbering from it/);
+    assert.match(skill, /seed your verdict history and F-numbering from them/);
     for (const step of [qaStep, reviewStep]) {
       assert.match(step, /\*\*No `pr-response` follows it\*\*/);
     }
