@@ -1612,7 +1612,15 @@ describe('project commands never join with && (#218)', () => {
     // Same, minus the pipe: inside a markdown TABLE row `|` is the column separator, never a shell
     // pipe. A genuine compound in a cell still lands in a code span, which is checked on its own.
     const JOINED_IN_TABLE = /\{\{project\.\w*Cmd\}\}\s*(&&|[;&])\s*\{\{project\.\w*Cmd\}\}/;
-    const TABLE_ROW = /^\s*\|.*\|\s*$/;
+    // Table detection keys off the SEPARATOR row — the one row a table cannot omit. Keying it off
+    // each row's OWN punctuation (the earlier `/^\s*\|.*\|\s*$/`) demanded a TRAILING pipe, which
+    // GFM does not require: a valid row that omits it fell through to the pipe-bearing JOINED and
+    // was flagged as a compound. A false red is how a backstop dies — the annoyed author deletes it
+    // — and md-maximalist actively pushes authors toward tables, so this is the axis A4 lives on.
+    // TABLE_SEP needs a pipe (so a `---` horizontal rule or YAML front matter is not a table) and
+    // dashes, and nothing else; TABLE_ROW still catches the header row that PRECEDES the separator.
+    const TABLE_SEP = /^(?=[^|]*\|)(?=.*-{3,})[\s|:-]+$/;
+    const TABLE_ROW = /^\s*\|/;
     const CD = /\bcd\s+\S+\s*(&&|\|\||[;|])/;                            // hygiene.yml names this denial by name
     // A substitution that WRAPS a project command — `$({{project.buildCmd}})`. Scoped this way on
     // purpose: a bare /\$\(/ also fires on an unrelated `$(git rev-parse …)` sharing the line.
@@ -1638,10 +1646,12 @@ describe('project commands never join with && (#218)', () => {
       let fenceCmds = [];
       let fencePH = false;
       let heredoc = null;
+      let inTable = false;
 
       lines.forEach((line, i) => {
         const fence = line.match(/^```(\w*)/);
         if (fence) {
+          inTable = false;
           if (lang === null) {
             lang = fence[1] || 'text';
             fenceAt = i;
@@ -1708,6 +1718,9 @@ describe('project commands never join with && (#218)', () => {
 
         // Prose and YAML. Strip the allowlist grant grammar first: it is the one place a project
         // command legitimately sits inside parens, and it must never read as a compound.
+        if (!line.trim()) inTable = false;
+        else if (TABLE_SEP.test(line)) inTable = true;
+
         const l = line.replace(GRANT, '');
         if (!PH.test(l)) return;
         seen++;
@@ -1736,7 +1749,7 @@ describe('project commands never join with && (#218)', () => {
         // counts as a compound — see JOINED. In a table row the pipe is a column separator, so it
         // is not an operator there.
         const flat = l.replace(/`([^`]+)`/g, (m, inner) => (PH.test(inner) ? inner : ' '));
-        const joined = TABLE_ROW.test(line) ? JOINED_IN_TABLE : JOINED;
+        const joined = inTable || TABLE_ROW.test(line) ? JOINED_IN_TABLE : JOINED;
         if (joined.test(flat)) flag(file, i, 'joined', l);
         if (CD.test(flat)) flag(file, i, 'cd-prefixed', l);
         if (SUBST.test(flat)) flag(file, i, 'substitution', l);
