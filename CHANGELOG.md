@@ -44,11 +44,35 @@ is what you reach for across a breaking one.
   each, in pre-flight order (lint → typecheck → test → build), matching the allowlist 1:1 and the
   pre-flight section that was already correct a hundred lines below it; delegate's fence runs its
   two commands on separate lines; and the `lead-engineer` / `devops-engineer` agents no longer
-  hand the model a copy-pasteable 4-command compound to imitate. A source-level test now fails any
-  stack that joins two `{{project.*Cmd}}` placeholders with `&&`, so this cannot rot back in.
+  hand the model a copy-pasteable 4-command compound to imitate.
+  **But the templates were only one of the two doors.** The grant is
+  `Bash({{project.lintCmd}}:*)` — the **consumer's config value, interpolated verbatim** — and
+  `project.*Cmd` had no format validation, so an ordinary monorepo setting
+  (`typecheckCmd: tsc --noEmit && eslint .`) rendered **ok** and emitted
+  `Bash(tsc --noEmit && eslint .:*)`: a **dead grant that can match no command**, plus the verbatim
+  pre-fix checklist row. So `project.{lint,typecheck,test,build}Cmd` now carry a **`pattern:`
+  guard**: a value with a shell operator (`&&`, `||`, `;`, `|`, `&`), a `cd ` prefix, a
+  `$(…)`/backtick substitution, a newline, or a `${{ }}` expression **fails the render**, naming the
+  key. The invariant is a constraint on the command string — *a project command is only grantable as
+  a single-program prefix* — so it is enforced where the value **enters**, which makes the class
+  unrepresentable rather than merely linted downstream.
   (`&&` remains load-bearing — and untouched — in the prose that warns *against* compounds, the jq
-  denial classifier that *detects* them, GHA `if:` expressions, and git-family compounds.)
-  **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3.
+  denial classifier that *detects* them, GHA `if:` expressions, and git-family compounds. And in
+  `project.installCmd`, which lands in a `run:` shell GitHub executes directly — a compound there is
+  legitimate, which is why its guard bans only newlines and `${{ }}`.)
+  **What the tests guarantee**, precisely — the config guard above (`A5`); no compound allowlist
+  entry (`A1`); the PR-body checklist is exactly the four single commands, each covered by a grant
+  (`A2`); delegate runs one command per fence (`A3`); and a `stacks/**` source backstop (`A4`) that
+  fails a project command joined to more work inside a **code span** (including in a heredoc body),
+  inside a **`bash` fence** carrying any second command, joined to **another project placeholder** by
+  an operator, or `cd …`-prefixed / `$(…)`-wrapped — with a **positive control** so it cannot pass
+  vacuously. **What they do not guarantee:** a project command joined to non-project work in **bare,
+  un-backticked** template text. Nothing in `stacks/` occupies that gap today; closing it without
+  false-firing on ordinary prose is tracked in **#350**.
+  **Consumer impact:** re-render. PRs opened by the agent get a 4-item test plan instead of 3. **If
+  any of your four `project.*Cmd` values is a compound, `render` and `doctor` will now fail** and
+  name the key — split it into an npm-script-style single entry point (`npm run ci`). That failure
+  is the point: such a value was already producing a dead grant and a silently denied CI check.
 - **The hooks' dedup markers are matched on the full literal, not a loose substring (#211).** Both
   `waffle-pr-response-hook` and `waffle-pr-green-hook` looked for their marker with a **bare-word
   regex** — `test("waffle-pr-response")` / `test("waffle-adversarial-review")` — while the skills
