@@ -32,7 +32,7 @@ is to **show the full plan and wait for a yes** before touching anything.
 |---|---|
 | _(none)_ | Full sweep — git **and** harness — previewed, then confirmed. |
 | `git` / `branches` / `worktrees` | Git scope only. |
-| `agents` / `teams` / `tasks` | Harness scope only. |
+| `agents` / `tasks` | Harness scope only. |
 | `--yes` / `auto` | Skip the confirmation prompt. Intended for an **agent calling this right after it merges a PR** — not for interactive use unless the user explicitly says "no need to confirm". |
 
 `--yes` combines with a scope (e.g. `git --yes`).
