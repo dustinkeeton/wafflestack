@@ -950,7 +950,7 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
 // #221: the opt-in /audit gate as the FINAL pre-merge quality gate, after #220's review loop.
 // Each assertion pins a load-bearing piece — its separate per-run consent, the arming deferred
 // past the audit gate (armed only once it passes green), the diff-scoped composed audit with an
-// owned Team lifecycle torn down even on failure, the hard gate that blocks the merge on
+// owned audit-agent lifecycle torn down even on failure, the hard gate that blocks the merge on
 // unresolved Critical/High even under auto-merge consent, and the bounded failure handling — so a
 // meaning-breaking edit fails CI instead of shipping silently.
 describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () => {
@@ -980,16 +980,18 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /QA gate, review loop, or the audit step on/);
   });
 
-  test('the gate: wait-green then a diff-scoped composed /audit with an owned Team lifecycle', () => {
+  test('the gate: wait-green then a diff-scoped composed /audit with an owned agent lifecycle', () => {
     // Autopilot composes the audit playbook itself — never relies on auto-invocation.
     assert.match(md, /playbook itself/);
     assert.match(md, /disable-model-invocation: true/);
     // The focus is scoped to the PR's changed paths — architecture pass constrained to the diff.
     assert.match(md, /gh pr view <pr> --json files -q '\.files\[\]\.path'/);
     assert.match(md, /not\*\* a whole-repo refactor/);
-    // Autopilot owns the Team teardown even on failure — a leaked team is never acceptable.
+    // Autopilot owns the agents' teardown even on failure — a leaked agent is never acceptable.
+    // Teardown is shutdown-then-stop: the request is polite, TaskStop is what guarantees the kill.
     assert.match(md, /even if a pass errors/);
-    assert.match(md, /Team is always torn down/);
+    assert.match(md, /every audit agent is always torn down/);
+    assert.match(md, /`shutdown_request` each one and then `TaskStop` each one/);
   });
 
   test('hard gate: unresolved Critical/High blocks the merge even under auto-merge consent', () => {
@@ -1002,13 +1004,13 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /--add-label "waffle-manual-review"/);
   });
 
-  test('failure handling: audit fix leaving CI red stops-and-reports; chain errors bounded, Team torn down', () => {
+  test('failure handling: audit fix leaving CI red stops-and-reports; chain errors bounded, agents torn down', () => {
     // A red audit fix stops the gate — never arm a red PR.
     assert.match(md, /audit fix left the PR's CI red/);
-    // A chain error is retried once then stops — never loops forever; Team torn down regardless.
+    // A chain error is retried once then stops — never loops forever; agents torn down regardless.
     assert.match(md, /chain errored/);
     assert.match(md, /one retry, then stop/);
-    assert.match(md, /tear the Team down regardless/);
+    assert.match(md, /tear the audit agents down regardless/);
   });
 });
 
@@ -1178,7 +1180,7 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
     // Round 1 spawns; every later round resumes the SAME agent on the new head.
     assert.match(qaStep, /Round 1 spawns them/);
     assert.match(qaStep, /Every later round resumes the same agent/);
-    assert.match(qaStep, /SendMessage\(to: "qa-pr<N>", content: "the PR head moved to <sha>/);
+    assert.match(qaStep, /SendMessage\(to: "qa-pr<N>", message: "the PR head moved to <sha>/);
     // The point of persistence: no re-deriving the PR, no re-litigating settled verdicts.
     assert.match(qaStep, /why it settled each verdict/);
     assert.match(qaStep, /re-litigates?( a finding round 1 already declined| settled verdicts)/);
@@ -1188,7 +1190,7 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
     assert.match(reviewStep, /Agent\(name: "review-pr<N>"/);
     assert.match(reviewStep, /Agent\(name: "respond-rev-pr<N>"/);
     assert.match(reviewStep, /Every later round resumes the same agent/);
-    assert.match(reviewStep, /SendMessage\(to: "review-pr<N>", content: "the PR head moved to <sha>/);
+    assert.match(reviewStep, /SendMessage\(to: "review-pr<N>", message: "the PR head moved to <sha>/);
     // A resumed reviewer keeps its finding history but stays hostile to NEW code.
     assert.match(reviewStep, /new blood in the diff gets the same hostility/);
   });
@@ -3183,5 +3185,77 @@ describe('issue / PR / review templates (#337)', () => {
     // replaced BY is pinned above ("delivery is proved by reading the REVIEW back") — this one
     // just holds the door shut on the body predicate.
     assert.doesNotMatch(md, /select\(\.body \| contains\("<!-- waffle-qa -->"\)\)/, 'qa still verifies its own delivery by substring-matching review bodies (#296)');
+  });
+});
+
+// #360: the orchestration skills must stay in sync with the harness they actually run on.
+// They had drifted onto primitives that no longer exist — `TeamCreate`/`TeamDelete` (gone; the
+// session has a single implicit team and `Agent`'s `team_name` is deprecated and ignored), a
+// stale `TaskCreate` signature (it takes `subject` + `description`; `addBlockedBy` is a
+// `TaskUpdate` param, keyed `taskId`), `TaskStop(taskId:)` (the key is `task_id`), `TaskList`
+// called with arguments (it takes none), and `SendMessage(content:)` (the param is `message`,
+// plus a `summary` when the message is a string). An agent following those literally calls a
+// tool that is not in its tool list. These sweep EVERY rendered skill and agent so no future
+// edit can reintroduce a dead primitive — the guard that #360 wished it had.
+describe('rendered content: no dead harness primitives (#360)', () => {
+  const files = () => [...renderedSkillFiles(), ...renderedAgentFiles()];
+
+  // Call-shaped only: prose may still *name* a removed tool to say it is gone (clean-up does).
+  test('no skill or agent CALLS TeamCreate / TeamDelete / TeamList — the tools do not exist', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(md, /Team(Create|Delete|List)\s*\(/, `${path.basename(path.dirname(f))}: calls a Team* tool, which the harness does not have`);
+    }
+  });
+
+  test('no skill or agent PASSES team_name — it is deprecated and ignored', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(md, /team_name:/, `${path.basename(path.dirname(f))}: passes team_name, which the Agent tool ignores`);
+    }
+  });
+
+  test('task tools use their real parameter keys — taskId / task_id, and TaskList takes none', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      const who = path.basename(path.dirname(f));
+      // TaskUpdate's key is taskId, never id.
+      assert.doesNotMatch(md, /TaskUpdate\(\s*id:/, `${who}: TaskUpdate's key is taskId, not id`);
+      // TaskStop's key is task_id, never taskId.
+      assert.doesNotMatch(md, /TaskStop\(\s*taskId:/, `${who}: TaskStop's key is task_id, not taskId`);
+      // TaskList takes no parameters at all.
+      assert.doesNotMatch(md, /TaskList\(\s*[^)\s]/, `${who}: TaskList takes no parameters`);
+      // TaskCreate requires subject + description — it has no addBlockedBy.
+      assert.doesNotMatch(md, /TaskCreate\([^)]*addBlockedBy/s, `${who}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
+    }
+  });
+
+  test('SendMessage uses `message:`, never the nonexistent `content:`', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(md, /SendMessage\([^)]*content:/, `${path.basename(path.dirname(f))}: SendMessage takes message: (+ summary:), not content:`);
+    }
+  });
+
+  // Teardown is shutdown-then-stop. shutdown_request is the polite first step but is NOT reliable
+  // on its own — a requested agent can go idle and stay alive. TaskStop is what terminates it.
+  // Every skill that stands an agent down must do BOTH.
+  test('teardown is shutdown-then-stop in audit, delegate, autopilot, and clean-up', () => {
+    for (const name of ['audit', 'delegate', 'autopilot', 'clean-up']) {
+      const md = readSkill(name);
+      assert.match(md, /shutdown_request/, `${name}: lost the polite shutdown_request first step`);
+      assert.match(md, /TaskStop/, `${name}: shutdown_request alone does not reliably terminate an agent — TaskStop must follow it`);
+    }
+  });
+
+  // The audit chain is six NAMED agents; the name is the address for SendMessage and TaskStop.
+  test('audit spawns six named agents and stops every one of them', () => {
+    const md = readSkill('audit');
+    for (const agent of ['architecture-pass', 'security-pass1', 'docs-agent', 'docs-human', 'security-final']) {
+      assert.match(md, new RegExp(`name: "${agent}"`), `audit: no longer spawns ${agent} by name`);
+      assert.match(md, new RegExp(`TaskStop\\(task_id: "${agent}"\\)`), `audit: spawns ${agent} but never stops it — a leaked agent`);
+    }
+    // Dependencies are wired AFTER create, with TaskUpdate.
+    assert.match(md, /TaskUpdate\(taskId: task2\.id, addBlockedBy: \[task1\.id\]\)/);
   });
 });

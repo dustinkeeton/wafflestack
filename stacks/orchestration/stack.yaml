@@ -726,8 +726,9 @@ config:
       autopilot.reviewLoop: any combination may be on. When true, autopilot defers auto-merge
       arming past the review loop out to this gate — it waits for the PR to go green, composes the
       /audit playbook itself (the skill is disable-model-invocation: true, so it is never
-      auto-invoked) scoped to the PR's changed paths, owns the Team lifecycle end to end
-      (create → run the 6 passes → TeamDelete, even on failure), lands the audit's fixes on the PR
+      auto-invoked) scoped to the PR's changed paths, owns the audit agents' lifecycle end to end
+      (spawn → run the 6 passes → tear down with shutdown_request then TaskStop, even on failure),
+      lands the audit's fixes on the PR
       branch and re-waits for green, then HARD-GATES on unresolved Critical/High findings: such a
       finding blocks the merge (the PR is left for a human with an autopilot.holdLabel follow-up
       issue) EVEN IF auto-merge was consented — autopilot never merges past an unresolved security
@@ -777,7 +778,7 @@ config:
     description: Task/agent-prompt label for the compliance step (also used in the agent-prompt placeholder).
   audit.complianceAgentName:
     required: true
-    description: Team-member name used for the compliance-step agent instance (spawn + shutdown).
+    description: Agent name used for the compliance-step agent instance (spawn + address + shutdown).
   audit.complianceDescription:
     required: true
     description: One-line description of what the compliance step verifies (chain-order summary).
