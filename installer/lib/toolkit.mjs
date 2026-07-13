@@ -298,6 +298,24 @@ function loadStack(name, dir) {
       if (entry.targets !== undefined && !Array.isArray(entry.targets)) {
         throw new Error(`stack ${name}: files entry "${entry.path}" \`targets:\` must be a list of target names`);
       }
+      // An EMPTY list is the one manifest value whose only possible effect is DESTRUCTIVE: it scopes
+      // the file to nothing, so it can never render — and because the render prunes every lock path
+      // it no longer produces (#364), an already-poured copy is DELETED from the consumer's tree,
+      // with `ok: true` and no warning. Its two siblings above are hard errors and this one is worse
+      // than both, so it is one too. It also cannot mean anything an author intended: "scoped to no
+      // harness" is not a thing to want.
+      //
+      // `validate` still owns unknown target NAMES, and that split is not arbitrary — a stale name
+      // is INERT (nothing renders, nothing is destroyed), so the load-tolerant/validate-strict split
+      // (`optIn:`, `prerequisites:`) holds exactly where nothing can be destroyed. `validate` is
+      // toolkit-developer lint that consumers never run over built-in stacks, and the toolkit is
+      // explicitly forkable — a fork without that CI gate must not be able to ship a silent delete.
+      if (Array.isArray(entry.targets) && !entry.targets.length) {
+        throw new Error(
+          `stack ${name}: files entry "${entry.path}" declares an empty \`targets:\` list, so it can never render — ` +
+            `omit \`targets:\` to render it unconditionally`,
+        );
+      }
     }
     const rel = String(isMap ? entry.path : entry);
     if (path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === '..')) {

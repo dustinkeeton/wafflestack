@@ -217,18 +217,33 @@ is what you reach for across a breaking one.
   via the map form (`- path: .claude/workflows/audit.js` + `targets: [claude]`), and renders only when
   the consumer has enabled at least one of the listed targets. Disable the last of a poured file's
   targets and the next `render` **prunes** it — the same frozen-image contract as dropping a stack,
-  rather than leaving it orphaned. An unknown target name or an empty `targets: []` is a `validate`
-  error (both would scope a payload to nothing and silently never render); an unknown key on the map
-  form is a hard load error (a `target:` singular typo would otherwise leave the payload silently
-  unscoped). Scoping decides **whether** a file renders, never how many times — a file has no
-  per-harness variant, so unlike an agent or a skill it **filters** rather than fanning out. This is
-  the one additive manifest field the "no schema change" framing of the #184 spike (below) had to
-  retire, and the hard prerequisite for #363.
-  The **discovery surfaces agree with the scope instead of contradicting it**: `setup`'s playbook and
+  rather than leaving it orphaned. An unknown target *name* is a `validate` error (it would scope a
+  payload to nothing and silently never render). Three malformations are hard **load** errors: an
+  unknown key on the map form (a `target:` singular typo would otherwise leave the payload silently
+  unscoped), a non-list `targets:`, and an **empty `targets: []`** — the last because it is the one
+  value whose only possible effect is *destructive*: scoped to nothing, it can never render, so the
+  prune would **delete an already-poured copy out of a consumer's repo**, silently. A `validate`-only
+  check would have been no gate at all there, since `validate` is toolkit-developer lint that
+  consumers never run over built-in stacks and the toolkit is explicitly forkable. Scoping decides
+  **whether** a file renders, never how many times — a file has no per-harness variant, so unlike an
+  agent or a skill it **filters** rather than fanning out. This is the one additive manifest field the
+  "no schema change" framing of the #184 spike (below) had to retire, and the hard prerequisite for #363.
+  Because the prune deletes files, the gate is **loud everywhere silence would hide something**. The
+  **discovery surfaces agree with the scope instead of contradicting it**: `setup`'s playbook and
   `list` both report a scoped-out file as **not installable here**, naming the targets that would
   enable it, and `list --interactive` never offers it as a checkbox — toggling one on would persist an
-  `include:` that renders nothing and re-warns on every future render. An explicit `include:` of a
-  scoped-out file still **warns** rather than silently no-op'ing.
+  `include:` that renders nothing and re-warns on every future render. `list` goes further on the one
+  case that is *not* hypothetical: a file already poured under an older `targets:` is on disk and in
+  the lock right now, so it is reported as **PENDING REMOVAL — the next `render` DELETES it**, not as
+  "not installable". `list` is what a user runs after editing `targets:` and before re-rendering, and
+  it must not describe an installed file as absent. An explicit `include:` of a scoped-out file still
+  **warns** rather than silently no-op'ing; a `requires:` edge landing on a scoped-out file **warns**
+  too (the dependent would otherwise render declaring a dependency on a payload that will never exist
+  there, and the renderer only walks that edge forward, so nothing else would notice); and a scoped-out
+  **opt-in** file still states its #74 both/one/neither pairing — minus the pour command, which would
+  render nothing — rather than falling silent, which would be #74 all over again.
+  Two invariants hold throughout: an **unscoped** file can never be pruned, and an **ejected** file is
+  never pruned (it is project-owned, and `eject` drops it from both locks).
   **Consumer impact: none — purely additive.** Omitting `targets:` is byte-for-byte today's
   behaviour, no shipped stack declares one, and no re-render is required beyond the usual.
 - **A taxonomy that settles the word "workflow" — and the spike write-up behind it (#184, epic #347).**

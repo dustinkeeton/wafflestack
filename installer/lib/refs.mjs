@@ -50,6 +50,10 @@ import { VALID_TARGETS } from './project.mjs';
  * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
  *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
  *   silent (#364)
+ * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[] }[]}
+ *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
+ *   filtered out: the dependent renders, its declared dependency never does. Eject-filtered on both
+ *   ends. Newly possible with #364, and it must not be silent either (#74)
  */
 
 /**
@@ -482,7 +486,43 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
 
   const ejected = new Set((project.eject ?? []).map(normalizeItemRef));
   const items = [...chosen.values()].filter((c) => !ejected.has(`${c.kind}/${c.item.name}`));
-  return { items, closures, errors, targetSkipped };
+
+  // #364: a `requires:` edge onto a file the SCOPE filtered out is newly possible — before this
+  // change a `files/` item always rendered, so a strict edge was always satisfied at render time.
+  // Scope the file, and the dependent renders WITHOUT the thing it declares it needs. The renderer
+  // only ever walks that edge FORWARD (dep → dependent), so nothing downstream would ever notice:
+  // the consumer gets a half-wired flow and hears nothing — the same "half-installed and silent"
+  // failure #74 exists to prevent, and the one entry path into the gate that got neither a warning
+  // nor a lint. Collect each broken edge so the caller can SAY the flow is incomplete.
+  //
+  // Walked over `items` (post-eject), not `chosen`, for two reasons: an EJECTED dependent is not
+  // rendered, so its unsatisfied edge is nobody's problem; and an EJECTED dependency is handed to
+  // the project (it stays on disk, unmanaged, and `eject` drops it from both locks), so the edge is
+  // satisfied by a file wafflestack no longer owns — warning about either would be noise.
+  /** @type {{ ref: string, requiredBy: string, stackName: string, targets: string[] }[]} */
+  const targetBrokenRequires = [];
+  const seenEdges = new Set();
+  for (const { stackName, stack, kind, item } of items) {
+    const requiredBy = `${kind}/${item.name}`;
+    for (const depRef of stack?.requires?.[requiredBy] ?? []) {
+      /** @type {DepNode} */
+      let dep;
+      try {
+        dep = resolveDepStrict(toolkit, depRef, stackName);
+      } catch {
+        continue; // a dangling requires: is a toolkit bug `validate` reports; not this gate's business
+      }
+      if (dep.kind !== 'files' || fileMatchesTargets(dep.item, targets)) continue;
+      const ref = `files/${dep.name}`;
+      if (ejected.has(ref)) continue;
+      const edge = `${requiredBy}→${ref}`;
+      if (seenEdges.has(edge)) continue;
+      seenEdges.add(edge);
+      targetBrokenRequires.push({ ref, requiredBy, stackName, targets: dep.item.targets ?? [] });
+    }
+  }
+
+  return { items, closures, errors, targetSkipped, targetBrokenRequires };
 }
 
 /**
@@ -503,10 +543,14 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  * @param {Toolkit} toolkit loaded toolkit
  * @param {Selection} selection a `computeSelection` result ({ items, … })
  * @param {string[]} [targets] the consumer's enabled targets (`project.targets`) — a syrup file
- *   scoped away from all of them cannot render here, so it is never suggested (#364)
- * @returns {{ fileRef: string, stackName: string, companions: string[] }[]} one entry per skipped
- *   syrup file, `companions` naming the selected waffles that pull it into relevance. `fileRef` is
- *   a ready `wafflestack install <fileRef>` argument. Deterministic order (stack, then manifest).
+ *   scoped away from all of them cannot be POURED here (#364), so its entry comes back marked
+ *   (`scopedTo`) rather than dropped: the pairing is still real and must still be stated
+ * @returns {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]}
+ *   one entry per skipped syrup file, `companions` naming the selected waffles that pull it into
+ *   relevance. `scopedTo` is null for a pourable file — then `fileRef` is a ready
+ *   `wafflestack install <fileRef>` argument. When non-null it is the file's `targets:` scope, and
+ *   the pairing CANNOT be completed here: the caller must state it without offering an install
+ *   command (which would render nothing). Deterministic order (stack, then manifest).
  */
 export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGETS) {
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
@@ -520,7 +564,13 @@ export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGE
       const fileRef = `files/${f.name}`;
       if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
       if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
-      if (!fileMatchesTargets(f, targets)) continue; // #364: never suggest pouring what cannot render here
+      // #364: a syrup file scoped away from every enabled target cannot be poured here, so the
+      // caller must never hand out an `install` command for it — that command would render nothing.
+      // But dropping the whole NOTIFICATION is #74 wearing a new hat: the consumer keeps the manual
+      // half of the flow, can never get the automated half, and is told nothing. So do not suppress
+      // — RESTATE. `scopedTo` non-null means "this pairing is real AND uncompletable here", and the
+      // caller phrases it without a pour command, naming the scope instead.
+      const scopedTo = fileMatchesTargets(f, targets) ? null : (f.targets ?? []);
       /** @type {string[]} */
       const companions = [];
       for (const ref of stack.requires?.[fileRef] ?? []) {
@@ -534,7 +584,7 @@ export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGE
         const depRef = `${dep.kind}/${dep.name}`;
         if (selectedRefs.has(depRef)) companions.push(depRef);
       }
-      if (companions.length) results.push({ fileRef, stackName, companions });
+      if (companions.length) results.push({ fileRef, stackName, companions, scopedTo });
     }
   }
   return results;

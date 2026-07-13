@@ -401,18 +401,17 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     // An optional `targets:` on a files entry (#364) scopes a harness-specific payload to the
     // consumers who enabled that harness; absent, it renders unconditionally (the default, and what
     // a harness-independent `.github/` payload wants). Every declared name must be a real target: a
-    // typo would scope the file to NOTHING and it would silently never render — and an empty list is
-    // an authoring bug for the same reason. The loader stays tolerant of both and lets this report
-    // them precisely, the same split as `optIn:` and `prerequisites:`.
+    // typo would scope the file to NOTHING and it would silently never render. An unknown name is
+    // INERT — nothing renders, nothing is destroyed — so the loader stays tolerant and lets this
+    // report it precisely, the same load-tolerant/validate-strict split as `optIn:` and
+    // `prerequisites:`.
+    //
+    // The EMPTY list is NOT inert (it silently PRUNES an already-poured file out of a consumer's
+    // tree), so it is a hard LOAD error — `loadToolkit` rejects it alongside a `target:` typo and a
+    // non-list `targets:`, and it can never reach this lint. A `validate`-only check would have been
+    // no gate at all for a forked toolkit that does not run `validate` in CI.
     for (const file of stack.files) {
       if (file.targets === null) continue;
-      if (!file.targets.length) {
-        problems.push(
-          `${ctx}: files entry "${file.name}" declares an empty \`targets:\` list, so it can never render — ` +
-            `omit \`targets:\` to render it unconditionally`,
-        );
-        continue;
-      }
       for (const t of file.targets) {
         if (!VALID_TARGETS.includes(t)) {
           problems.push(

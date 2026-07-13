@@ -387,7 +387,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
   // gated out and silent. Surface each skipped pairing with the exact pour command. This is the
   // deliberately non-interactive CLI's stand-in for the both/one/neither question the setup
   // playbook (schema/SETUP.md step 2) now requires an agent to ask.
-  for (const { fileRef, stackName, companions } of skippedSyrupCompanions(toolkit, selection, project.targets)) {
+  for (const { fileRef, stackName, companions, scopedTo } of skippedSyrupCompanions(toolkit, selection, project.targets)) {
     // External opt-in syrup is doubly gated (#126): a paired external syrup file was authored
     // outside this repo, so its extra trust-boundary acknowledgement rides along with the
     // both/one/neither pairing note — distinct from a built-in companion, which needs only the
@@ -397,6 +397,19 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
       ? ` — this is EXTERNAL syrup from source "${stackName}" (${describeProvenance(prov)}), so pouring it ` +
         `additionally requires an explicit trust-boundary acknowledgement beyond the normal opt-in`
       : '';
+    // #364: the pairing is real, but the scope makes it UNCOMPLETABLE here — so state it without a
+    // pour command (`install` would render nothing, and persisting the `include:` would re-warn on
+    // every future render). Suppressing the notification instead would hand the consumer the manual
+    // half of the flow, deny them the automated half, and say nothing: #74, exactly.
+    if (scopedTo) {
+      warnings.push(
+        `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')}, but is scoped to ` +
+          `targets [${scopedTo.join(', ')}] and this project enables [${project.targets.join(', ')}] — it CANNOT ` +
+          `be poured here, so that flow stays incomplete. Enable one of its targets in ${CONFIG_FILE} to complete ` +
+          `the pairing, or leave it out on purpose${external}`,
+      );
+      continue;
+    }
     warnings.push(
       `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')} but was not ` +
         `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose${external}`,
@@ -412,6 +425,20 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
       `${ref} is scoped to targets [${targets.join(', ')}] and this project enables ` +
         `[${project.targets.join(', ')}] — it is not rendered. Enable one of its targets in ` +
         `${CONFIG_FILE}, or drop it from \`include:\`.`,
+    );
+  }
+
+  // #364: a SELECTED waffle whose `requires:` edge lands on a scoped-out file renders WITHOUT the
+  // dependency it declares. Before #364 that was impossible — a `files/` item always rendered, so a
+  // strict edge was always satisfied at render time — and the renderer walks the edge forward only,
+  // so nothing else can notice. Left silent, the consumer gets an agent declaring a dependency on a
+  // payload that will never exist in their repo: the "half-installed and silent" failure #74 exists
+  // to prevent, reached by the one entry path that had neither a warning nor a lint.
+  for (const { ref, requiredBy, targets } of selection.targetBrokenRequires ?? []) {
+    warnings.push(
+      `selected ${requiredBy} requires ${ref}, which is scoped to targets [${targets.join(', ')}] and this ` +
+        `project enables [${project.targets.join(', ')}] — the dependency is NOT rendered, so the flow is ` +
+        `incomplete. Enable one of its targets in ${CONFIG_FILE}, or expect ${requiredBy} to run without it.`,
     );
   }
 

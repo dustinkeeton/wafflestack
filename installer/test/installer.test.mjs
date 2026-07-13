@@ -5201,8 +5201,8 @@ describe('syrup target scoping (#364)', () => {
     const rowFor = (ref) => model.stacks.flatMap((s) => s.rows).find((r) => r.ref === ref);
 
     // The report says WHY, distinctly from a merely-not-poured file.
-    assert.equal(rowFor(`files/${SCOPED}`).status, STATUS.NOT_APPLICABLE);
-    assert.notEqual(rowFor('files/shared.txt').status, STATUS.NOT_APPLICABLE, 'the unscoped sibling is unaffected');
+    assert.equal(rowFor(`files/${SCOPED}`).status, STATUS.NOT_INSTALLABLE);
+    assert.notEqual(rowFor('files/shared.txt').status, STATUS.NOT_INSTALLABLE, 'the unscoped sibling is unaffected');
 
     // The picker does not offer it — this is the load-bearing half.
     const offered = selectableChoices(model).map((c) => c.ref);
@@ -5266,18 +5266,196 @@ describe('syrup target scoping (#364)', () => {
     assert.ok(problems.some((p) => /unknown target "claud"/.test(p)), JSON.stringify(problems));
   });
 
-  test('validate rejects an empty targets list — it could never render', () => {
+  // `targets: []` is the one manifest value whose ONLY possible effect is destructive: it scopes the
+  // file to nothing, so it can never render — and the prune then DELETES an already-poured copy out
+  // of the consumer's tree. It used to be tolerated by the loader and caught only by `validate`,
+  // which is toolkit-developer lint that consumers never run over built-in stacks — so a FORK
+  // without that CI gate shipped silent deletes. It is now a hard LOAD error, like its two sibling
+  // malformations (`target:` singular, non-list `targets:`). (F6)
+  const emptyTargetsStack = [
+    'name: sb',
+    'description: Scope fixture.',
+    'files:',
+    '  - shared.txt',
+    `  - path: ${SCOPED}`,
+    '    targets: []',
+    '',
+  ].join('\n');
+
+  test('the loader HARD-ERRORS on an empty targets list — it could never render', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', emptyTargetsStack);
+    assert.throws(() => loadToolkit(toolkitRoot), /empty `targets:` list, so it can never render/);
+    // …and `validate` still reports it, via the load error — the lint surface does not go quiet.
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /empty `targets:` list, so it can never render/.test(p)), JSON.stringify(problems));
+  });
+
+  // The reason the loader (not `validate`) has to own it: THE FILE IS ALREADY POURED. A built-in
+  // manifest that gains `targets: []` must not be able to quietly delete it from a consumer's repo.
+  test('an empty targets list CANNOT silently delete an already-poured file — the render fails, the tree is untouched', () => {
+    config('claude');
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: the file is poured');
+
+    write(toolkitRoot, 'stacks/sb/stack.yaml', emptyTargetsStack); // the malformation lands upstream
+    const result = render();
+
+    assert.equal(result.ok, false, 'the render REFUSES rather than pruning');
+    assert.ok(
+      result.errors.some((e) => /empty `targets:` list/.test(e)),
+      `expected a loud load error, got: ${JSON.stringify(result.errors)}`,
+    );
+    assert.ok(has(SCOPED), 'THE FILE SURVIVES — no silent delete');
+    assert.ok(SCOPED in lockFiles(), 'and its lock entry survives with it');
+  });
+
+  // (F4) The `requires:` edge is the third entry path into the gate, and it was the one that got
+  // neither a warning nor a lint: before #364 a `files/` item always rendered, so a strict edge was
+  // always satisfied at render time. Scope the file and the dependent renders WITHOUT it — the
+  // renderer only walks the edge forward, so nothing else would ever notice. The selection outcome
+  // is pinned above; this pins that the consumer is TOLD.
+  test('a `requires:` edge onto a scoped-out file WARNS — the flow is incomplete, not silent', () => {
     write(toolkitRoot, 'stacks/sb/stack.yaml', [
       'name: sb',
       'description: Scope fixture.',
+      'agents: [alpha]',
       'files:',
       '  - shared.txt',
       `  - path: ${SCOPED}`,
-      '    targets: []',
+      '    targets: [claude]',
+      'requires:',
+      `  agents/alpha: [files/${SCOPED}]`,
       '',
     ].join('\n'));
-    const problems = validateToolkit(toolkitRoot);
-    assert.ok(problems.some((p) => /empty `targets:` list, so it can never render/.test(p)), JSON.stringify(problems));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+
+    config('codex'); // the harness the file is not for
+    const result = render();
+    assert.equal(result.ok, true, 'a broken edge warns; it does not fail the render');
+    assert.equal(has(SCOPED), false, 'the dependency really is absent');
+    assert.ok(
+      result.warnings.some(
+        (w) => /selected agents\/alpha requires files\/.*audit\.js/.test(w) && /the flow is\s+incomplete/.test(w.replace(/\s+/g, ' ')),
+      ),
+      `expected a broken-requires warning, got: ${JSON.stringify(result.warnings)}`,
+    );
+
+    // The mirror: enable the target and the edge is satisfied, so there is nothing to warn about.
+    config('claude');
+    const ok = render();
+    assert.ok(has(SCOPED), 'in scope → the dependency renders');
+    assert.equal(
+      ok.warnings.some((w) => /requires files\//.test(w)),
+      false,
+      `a satisfied edge must not warn: ${JSON.stringify(ok.warnings)}`,
+    );
+  });
+
+  // (F5) #74's both/one/neither pairing warning must be RESTATED for a scoped-out opt-in file, not
+  // suppressed. Suppressing it hands the consumer the manual half of the flow, denies them the
+  // automated half, and says nothing — the exact "half-installed and silent" failure #74 exists to
+  // prevent. What must NOT appear is a pour command: `install` would render nothing here.
+  test('a scoped-out opt-in file RESTATES the #74 pairing instead of falling silent', () => {
+    const stack = (scopedLines) => [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      ...scopedLines,
+      'optIn:',
+      `  - files/${SCOPED}`,
+      'requires:',
+      `  files/${SCOPED}: [agents/alpha]`,
+      '',
+    ].join('\n');
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+
+    // (a) UNSCOPED — the #74 warning, with the pour command. Unchanged behaviour.
+    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - ${SCOPED}`]));
+    config('codex');
+    const unscoped = render().warnings;
+    assert.ok(
+      unscoped.some((w) => /pairs with selected agents\/alpha/.test(w) && /wafflestack install/.test(w)),
+      `expected the #74 pairing warning: ${JSON.stringify(unscoped)}`,
+    );
+
+    // (b) SCOPED — the pairing is still stated, and the pour command is withheld (it would render
+    // nothing). Same fixture; only the scope changed.
+    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
+    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - path: ${SCOPED}`, '    targets: [claude]']));
+    config('codex');
+    const scoped = render().warnings;
+    const pairing = scoped.find((w) => /pairs with selected agents\/alpha/.test(w));
+    assert.ok(pairing, `the pairing must NOT go silent when scoped: ${JSON.stringify(scoped)}`);
+    assert.match(pairing, /scoped to targets \[claude\]/, 'it names the scope that blocks it');
+    assert.doesNotMatch(pairing, /wafflestack install/, 'and never offers a pour command that would render nothing');
+  });
+
+  // (F5, setup) The setup playbook's scope note outranks its pairing note, so the pairing has to
+  // ride along with it — otherwise the surface that "asks the both/one/neither question" silently
+  // never learns the pairing exists.
+  test('the setup playbook states the pairing on a scoped-out opt-in file too', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'optIn:',
+      `  - files/${SCOPED}`,
+      'requires:',
+      `  files/${SCOPED}: [agents/alpha]`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+    write(toolkitRoot, 'schema/SETUP.md', '# Setup\n');
+    config('codex');
+
+    const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
+    assert.match(guide, /not installable here — scoped to targets \[claude\]/);
+    assert.match(guide, /pairs with selected agents\/alpha/, 'the pairing is stated, not swallowed by the scope note');
+  });
+
+  // (F7) `list` is the surface a user consults BEFORE re-rendering — editing `targets:` and running
+  // `list` to see what it did is the obvious move. A file poured under the old scope is on disk and
+  // in the lock RIGHT NOW, and the next render DELETES it. Reporting it as merely "not installable"
+  // is false (it IS installed) and hides an imminent, destructive operation.
+  test('list reports a poured-then-scoped-out file as PENDING REMOVAL, not merely not-installable', () => {
+    config('claude, codex');
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: poured under [claude, codex]');
+
+    config('codex'); // drop the only target that admitted it — and do NOT re-render yet
+    const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    const rowFor = (ref) => model.stacks.flatMap((s) => s.rows).find((r) => r.ref === ref);
+
+    assert.equal(rowFor(`files/${SCOPED}`).status, STATUS.PENDING_REMOVAL);
+    assert.ok(has(SCOPED), 'reality check: the file really is still on disk');
+    assert.ok(SCOPED in lockFiles(), 'and still in the lock');
+
+    // The table says the dangerous part out loud.
+    const table = formatListTable(model, { color: false });
+    assert.match(table, /PENDING REMOVAL/);
+    assert.match(table, /the next `render` DELETES it/);
+    assert.match(table, /scoped to targets \[claude\]/, 'and still names the scope that excludes it');
+    assert.match(table, /1 PENDING REMOVAL on the next render/, 'the summary carries it too');
+
+    // It is still not a CHOICE: installing it would persist an `include:` that renders nothing, and
+    // the file would be pruned anyway. Enabling a target is the only thing that keeps it.
+    const offered = selectableChoices(model).map((c) => c.ref);
+    assert.ok(!offered.includes(`files/${SCOPED}`), `a doomed file was offered as a choice: ${JSON.stringify(offered)}`);
+
+    // And once the render actually runs, it is gone — so the row drops back to not-installable.
+    assert.equal(render().ok, true);
+    const after = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(
+      after.stacks.flatMap((s) => s.rows).find((r) => r.ref === `files/${SCOPED}`).status,
+      STATUS.NOT_INSTALLABLE,
+      'after the prune it is merely not-installable — the pending-removal claim was about a REAL file',
+    );
   });
 
   // (f) The silent-unscoping guard: a `target:` (singular) typo must not be ignored, or the payload
@@ -5542,8 +5720,11 @@ describe('skipped syrup companions (#74)', () => {
     const toolkit = loadToolkit(toolkitRoot);
     // whole stack enabled → companion skill selected, danger syrup gated out
     const sel = computeSelection(toolkit, { stacks: ['sb'], include: [], values: {} });
+    // `scopedTo: null` = unscoped, so it is genuinely pourable here and the caller may offer the
+    // `install` command. A target-scoped file comes back with its scope instead, and the caller
+    // states the pairing WITHOUT a pour command (#364, F5) rather than falling silent.
     assert.deepEqual(skippedSyrupCompanions(toolkit, sel), [
-      { fileRef: 'files/danger.yml', stackName: 'sb', companions: ['skills/companion'] },
+      { fileRef: 'files/danger.yml', stackName: 'sb', companions: ['skills/companion'], scopedTo: null },
     ]);
   });
 
