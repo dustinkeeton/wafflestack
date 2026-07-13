@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit } from './toolkit.mjs';
-import { computeSelection, itemOutputMatcher } from './refs.mjs';
+import { computeSelection, itemOutputMatcher, fileMatchesTargets } from './refs.mjs';
 import { readTreeLock } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 
@@ -25,11 +25,27 @@ import { loadProjectConfig, resolveConfigFile } from './project.mjs';
  *   - lock.toolkitVersion vs the invoked CLI — toolkit version skew
  *
  * Each item is classified `current` (installed and byte-matching the lock, no skew), `outdated`
- * (installed but drifted or version-skewed), or `not-installed` (not in the selection). Built-in
- * surface only (like `setup`): external `source:` stacks are not expanded — an enabled external
- * name surfaces as a selection error rather than an inventory row.
+ * (installed but drifted or version-skewed), `not-installed` (not in the selection),
+ * `not-installable` (#364: a target-scoped syrup file none of whose targets this project enables —
+ * it CANNOT render here, so it is reported, but never offered as a choice), or `pending-removal`
+ * (#364: the same scoped-out file, but a previous render already POURED it — it is on disk and in
+ * the lock right now, and the next `render` will DELETE it). Built-in surface only (like `setup`):
+ * external `source:` stacks are not expanded — an enabled external name surfaces as a selection
+ * error rather than an inventory row.
+ *
+ * `pending-removal` exists because `list` is the surface a user consults BEFORE re-rendering, and
+ * the prune is the destructive operation in this feature. Reporting a file that is present on disk
+ * as merely `not-installable` would be false — it IS installed — and it would hide an imminent
+ * deletion behind a word that reads like "nothing to see here". A user must not learn about a
+ * deletion only after it happens.
  */
-export const STATUS = { CURRENT: 'current', OUTDATED: 'outdated', NOT_INSTALLED: 'not-installed' };
+export const STATUS = {
+  CURRENT: 'current',
+  OUTDATED: 'outdated',
+  NOT_INSTALLED: 'not-installed',
+  NOT_INSTALLABLE: 'not-installable',
+  PENDING_REMOVAL: 'pending-removal',
+};
 
 export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
   const toolkit = loadToolkit(toolkitRoot);
@@ -66,10 +82,53 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
 
   // Per-item drift against the lock, doctor-style: an installed item is outdated if any lock path
   // it owns is absent on disk or its sha256 no longer matches, or if the whole tree is skewed.
-  const classify = (stackName, kind, name) => {
-    if (!selectedKeys.has(`${stackName}::${kind}/${name}`)) return STATUS.NOT_INSTALLED;
+  const classify = (stackName, kind, name, item) => {
     const matcher = itemOutputMatcher(kind, name);
     const owned = Object.keys(lockFiles).filter(matcher);
+
+    // #364: a target-scoped syrup file none of whose targets this project enables cannot render
+    // here AT ALL — `computeSelection` gates it out of every entry path. So it is not merely "not
+    // installed" (which reads as *pourable*, and which the picker would offer as a checkbox):
+    // it is NOT INSTALLABLE, and installing it would persist an `include:` that renders nothing
+    // and re-warns on every future render. Same call the setup playbook makes, so the two
+    // discovery surfaces agree. Checked BEFORE the selection lookup — a scoped-out file is absent
+    // from the selection, so the NOT_INSTALLED branch would otherwise swallow it.
+    //
+    // But "cannot be installed" and "is not here" are different claims, and conflating them is how
+    // `list` came to hide a DELETION. A file poured under an old `targets:` is still on disk and
+    // still in the lock; the render prunes every lock path it no longer produces, so the next
+    // `render` DELETES it. Editing `targets:` and running `list` to see what it did is the obvious
+    // move, and `list` is documented as agent-parseable — so if the lock paths this item owns are
+    // still present, say PENDING REMOVAL, not "not installable". The prune is the dangerous
+    // operation in this feature and this is the only discovery surface consulted before it fires.
+    //
+    // `project` is null for an unconfigured or malformed-config repo; there is no target set to
+    // judge against, so every item stays NOT_INSTALLED exactly as before.
+    if (project && item && !fileMatchesTargets(item, project.targets)) {
+      const live = owned.filter((rel) => exists(path.join(cwd, rel)));
+      // "On disk" is NOT sufficient to claim a deletion, and claiming one wrongly is the very defect
+      // PENDING_REMOVAL was added to fix — so it is held to its own bar. `owned` matches the lock by
+      // PATH (`itemOutputMatcher('files', name)` is `rel === name`), which is stack-BLIND, and two
+      // stacks may legally declare the same output path (an error only when both are ENABLED). So a
+      // row in a stack that is not even in play can "own" a lock path another, enabled stack
+      // actually produces — and announcing PENDING REMOVAL for it would be a lie about a file the
+      // render KEEPS.
+      //
+      // Ask `render`'s own prune question instead of a bare existence check: the prune deletes a
+      // live lock path that NO SELECTED ITEM produces. If something in the selection still produces
+      // this path, nothing is being deleted — the row is merely not installable here.
+      //
+      // Deliberately scoped to THIS branch. The mirror-image gap on the NOT_INSTALLED path (a
+      // deselected stack's poured file IS pruned, and `list` still calls it "not-installed") is the
+      // same stack-blind root cause but a different defect — a hidden deletion, not an invented one
+      // — and it needs the offerability split and target fan-out that #371 carries. This does not
+      // pre-empt that work; it stops the status THIS PR adds from making a false claim.
+      const pruned = live.some(
+        (rel) => !selection.items.some((sel) => itemOutputMatcher(sel.kind, sel.item.name)(rel)),
+      );
+      return pruned ? STATUS.PENDING_REMOVAL : STATUS.NOT_INSTALLABLE;
+    }
+    if (!selectedKeys.has(`${stackName}::${kind}/${name}`)) return STATUS.NOT_INSTALLED;
     if (!owned.length) return STATUS.OUTDATED; // selected but never rendered (no lock entry yet)
     for (const rel of owned) {
       const abs = path.join(cwd, rel);
@@ -78,11 +137,19 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     return versionSkew ? STATUS.OUTDATED : STATUS.CURRENT;
   };
 
-  const counts = { [STATUS.CURRENT]: 0, [STATUS.OUTDATED]: 0, [STATUS.NOT_INSTALLED]: 0 };
-  const addRow = (rows, stackName, kind, name, optIn = false) => {
-    const status = classify(stackName, kind, name);
+  const counts = {
+    [STATUS.CURRENT]: 0,
+    [STATUS.OUTDATED]: 0,
+    [STATUS.NOT_INSTALLED]: 0,
+    [STATUS.NOT_INSTALLABLE]: 0,
+    [STATUS.PENDING_REMOVAL]: 0,
+  };
+  const addRow = (rows, stackName, kind, name, optIn = false, item = null) => {
+    const status = classify(stackName, kind, name, item);
     counts[status] += 1;
-    rows.push({ kind, name, ref: `${kind}/${name}`, status, optIn });
+    // #364: `targets` rides along on the row so the table can SAY which harnesses the file is
+    // scoped to, rather than just refusing it.
+    rows.push({ kind, name, ref: `${kind}/${name}`, status, optIn, targets: item?.targets ?? null });
   };
 
   const stacks = [];
@@ -90,7 +157,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     const rows = [];
     for (const a of stack.agents) addRow(rows, stack.name, 'agents', a.name);
     for (const s of stack.skills) addRow(rows, stack.name, 'skills', s.name);
-    for (const f of stack.files) addRow(rows, stack.name, 'files', f.name, stack.optIn.has(`files/${f.name}`));
+    for (const f of stack.files) addRow(rows, stack.name, 'files', f.name, stack.optIn.has(`files/${f.name}`), f);
     stacks.push({ name: stack.name, description: stack.description, enabled: enabledStacks.has(stack.name), rows });
   }
 
@@ -122,15 +189,23 @@ const ANSI = {
   showCursor: '\x1b[?25h',
 };
 
+// Every label stays no longer than `installed & current`, which sets STATUS_WIDTH: a longer one
+// would widen the status column for EVERY project, including the ones with no scoped syrup at all.
 const STATUS_LABEL = {
   [STATUS.CURRENT]: 'installed & current',
   [STATUS.OUTDATED]: 'out of date',
   [STATUS.NOT_INSTALLED]: 'not installed',
+  [STATUS.NOT_INSTALLABLE]: 'not installable',
+  [STATUS.PENDING_REMOVAL]: 'PENDING REMOVAL',
 };
 const STATUS_COLOR = {
   [STATUS.CURRENT]: ANSI.green,
   [STATUS.OUTDATED]: ANSI.yellow,
   [STATUS.NOT_INSTALLED]: ANSI.dim,
+  [STATUS.NOT_INSTALLABLE]: ANSI.dim,
+  // Not dim: this row is the only one announcing an imminent DELETION. It is a warning, not a
+  // shrug, and it must not read as quiet background state.
+  [STATUS.PENDING_REMOVAL]: ANSI.yellow,
 };
 const STATUS_WIDTH = Math.max(...Object.values(STATUS_LABEL).map((s) => s.length)); // 'installed & current'
 
@@ -173,15 +248,36 @@ export function formatListTable(model, { color = false } = {}) {
       const label = STATUS_LABEL[row.status].padEnd(STATUS_WIDTH);
       const status = paint(label, STATUS_COLOR[row.status]);
       const tag = row.optIn ? `  ${paint('(opt-in syrup)', ANSI.cyan)}` : '';
-      lines.push(`  ${status}  ${row.ref}${tag}`);
+      // #364: a scoped-out row names the scope that excludes it, so the reader sees WHY it is
+      // refused (and what to enable to get it) rather than just that it is.
+      const scopedOut = row.status === STATUS.NOT_INSTALLABLE || row.status === STATUS.PENDING_REMOVAL;
+      const scope =
+        scopedOut && row.targets
+          ? `  ${paint(`(scoped to targets [${row.targets.join(', ')}])`, ANSI.cyan)}`
+          : '';
+      // …and a PENDING REMOVAL row spells out the consequence, because the status word alone cannot
+      // convey that the file is on disk RIGHT NOW and that a render is what destroys it.
+      const doomed =
+        row.status === STATUS.PENDING_REMOVAL
+          ? `  ${paint('— installed here; the next `render` DELETES it', ANSI.yellow)}`
+          : '';
+      lines.push(`  ${status}  ${row.ref}${tag}${scope}${doomed}`);
     }
     lines.push('');
   }
 
   const c = model.counts;
+  // Each tail is appended only when there IS one, so a project with no target-scoped syrup (every
+  // project today — no shipped stack declares `targets:`) prints the summary unchanged.
+  const scoped = c[STATUS.NOT_INSTALLABLE]
+    ? `, ${c[STATUS.NOT_INSTALLABLE]} not installable here`
+    : '';
+  const doomed = c[STATUS.PENDING_REMOVAL]
+    ? `, ${c[STATUS.PENDING_REMOVAL]} PENDING REMOVAL on the next render`
+    : '';
   lines.push(
     paint(
-      `summary: ${c[STATUS.CURRENT]} current, ${c[STATUS.OUTDATED]} out of date, ${c[STATUS.NOT_INSTALLED]} not installed`,
+      `summary: ${c[STATUS.CURRENT]} current, ${c[STATUS.OUTDATED]} out of date, ${c[STATUS.NOT_INSTALLED]} not installed${scoped}${doomed}`,
       ANSI.bold,
     ),
   );
@@ -205,16 +301,28 @@ function lockLine(model, paint) {
 
 /**
  * The actionable rows for the interactive picker: everything not already `current` (nothing to do
- * for a current item). A `not-installed` item toggled on is installed; an `outdated` one is
- * refreshed — the latter is pre-checked, since applying re-renders anyway. `installRef` is the
- * stack-qualified ref handed to `installRefs`, which canonicalises it (dropping the qualifier when
- * the name is unambiguous). Pure and side-effect-free, so it is unit-tested directly.
+ * for a current item) and not scoped out — neither `not-installable` nor `pending-removal`, since
+ * nothing the picker can DO changes either one. A `not-installed` item toggled on is installed; an
+ * `outdated` one is refreshed — the latter is pre-checked, since applying re-renders anyway.
+ * `installRef` is the stack-qualified ref handed to `installRefs`, which canonicalises it (dropping
+ * the qualifier when the name is unambiguous). Pure and side-effect-free, so it is unit-tested
+ * directly.
+ *
+ * #364: a target-scoped syrup file this project cannot render is NOT a choice. `installRefs` would
+ * happily persist `include: [files/…]` for it — a permanent entry that renders nothing and re-emits
+ * the target-skip warning on every future render. The picker is the surface most literally about
+ * "a choice the user could make", so it is the one that must not offer a non-choice. That holds for
+ * `pending-removal` too, and MORE so: the file is on disk, but the only thing that would keep it
+ * there is enabling one of its targets in the config — installing it via the picker would persist an
+ * `include:` that still renders nothing, and the file would be pruned anyway.
  */
 export function selectableChoices(model) {
   const choices = [];
   for (const stack of model.stacks) {
     for (const row of stack.rows) {
       if (row.status === STATUS.CURRENT) continue;
+      if (row.status === STATUS.NOT_INSTALLABLE) continue;
+      if (row.status === STATUS.PENDING_REMOVAL) continue;
       choices.push({
         stack: stack.name,
         ref: row.ref,

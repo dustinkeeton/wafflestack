@@ -210,6 +210,58 @@ is what you reach for across a breaking one.
     pr-green takes `statuses: write`.
 
 ### Added
+- **A `files:` entry can scope itself to harness targets (#364).** Syrup used to render **once,
+  unconditionally** — right for a `.github/` payload (a GitHub Action has nothing to do with which
+  harness you run), wrong for a harness-specific one: a `.claude/workflows/*.js` would land in a
+  codex-only repo as dead weight. A `files:` entry may now declare an optional **`targets:`** scope
+  via the map form (`- path: .claude/workflows/audit.js` + `targets: [claude]`), and renders only when
+  the consumer has enabled at least one of the listed targets. Disable the last of a poured file's
+  targets and the next `render` **prunes** it — the same frozen-image contract as dropping a stack,
+  rather than leaving it orphaned. **Every** malformation of `targets:` is a hard **load** error —
+  four of them: an unknown key on the map form (a `target:` singular typo would otherwise leave the
+  payload silently unscoped), a non-list `targets:`, an **empty `targets: []`**, and an **unknown
+  target name**. The reason is one reason, applied consistently: because the prune deletes files, a
+  `targets:` the render cannot honour **deletes an already-poured copy out of a consumer's repo**,
+  silently and with `ok: true`. `targets: []` is scoped to nothing and can never render — and
+  `targets: [claud]` resolves to nothing too, so it *is* `targets: []` spelled differently, one
+  keystroke away. Even a **partially**-valid `targets: [claude, codxe]` deletes the poured file out
+  of a **codex** consumer's tree: a surviving valid name does not make the entry safe, it only
+  narrows *which* consumers it destroys. So there is no inert typo, and the loader checks every name.
+  A `validate`-only check would have been no gate at all here, since `validate` is toolkit-developer
+  lint that consumers never run over built-in stacks (`render` imports only `validateExternalStacks`)
+  and the toolkit is explicitly forkable. The consumer's own config has always hard-errored on an
+  unknown target name; the manifest is the side that can *destroy* a file, so it is not the side that
+  gets to be lenient. Scoping decides
+  **whether** a file renders, never how many times — a file has no per-harness variant, so unlike an
+  agent or a skill it **filters** rather than fanning out. This is the one additive manifest field the
+  "no schema change" framing of the #184 spike (below) had to retire, and the hard prerequisite for #363.
+  Because the prune deletes files, the gate is **loud everywhere silence would hide something**. The
+  **discovery surfaces agree with the scope instead of contradicting it**: `setup`'s playbook and
+  `list` both report a scoped-out file as **not installable here**, naming the targets that would
+  enable it, and `list --interactive` never offers it as a checkbox — toggling one on would persist an
+  `include:` that renders nothing and re-warns on every future render. `list` goes further on the one
+  case that is *not* hypothetical: a file already poured under an older `targets:` is on disk and in
+  the lock right now, so it is reported as **PENDING REMOVAL — the next `render` DELETES it**, not as
+  "not installable". `list` is what a user runs after editing `targets:` and before re-rendering, and
+  it must not describe an installed file as absent. That status is held to its own bar: it asks
+  `render`'s *own* prune question (is this live lock path produced by no selected item?) rather than
+  merely checking the file is on disk, because the lock is matched by **path** and is stack-blind —
+  two stacks may legally declare the same output path, and a bare check would announce a deletion for
+  a file an enabled stack still produces. A status that exists to prevent a false claim about a
+  deletion must not make one. An explicit `include:` of a scoped-out file still
+  **warns** rather than silently no-op'ing; a `requires:` edge landing on a scoped-out file **warns**
+  too (the dependent would otherwise render declaring a dependency on a payload that will never exist
+  there, and the renderer only walks that edge forward, so nothing else would notice) — and when that
+  dependency is **opt-in** syrup the warning names *both* steps, because enabling a target is necessary
+  but not sufficient there: the opt-in gate still holds the file back, so enabling only the target
+  renders nothing *and* clears the condition that produced the warning, leaving the consumer with no
+  file, no complaint, and every reason to think it worked; and a scoped-out
+  **opt-in** file still states its #74 both/one/neither pairing — minus the pour command, which would
+  render nothing — rather than falling silent, which would be #74 all over again.
+  Two invariants hold throughout: an **unscoped** file can never be pruned, and an **ejected** file is
+  never pruned (it is project-owned, and `eject` drops it from both locks).
+  **Consumer impact: none — purely additive.** Omitting `targets:` is byte-for-byte today's
+  behaviour, no shipped stack declares one, and no re-render is required beyond the usual.
 - **A taxonomy that settles the word "workflow" — and the spike write-up behind it (#184, epic #347).**
   The toolkit used "workflow" for three unrelated things: a **GitHub Actions workflow**, Claude Code's
   **`Workflow` primitive**, and **any generic multi-phase process**. Two of those senses belong to somebody

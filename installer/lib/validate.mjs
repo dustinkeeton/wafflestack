@@ -398,6 +398,21 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       }
     }
 
+    // An optional `targets:` on a files entry (#364) scopes a harness-specific payload to the
+    // consumers who enabled that harness; absent, it renders unconditionally (the default, and what
+    // a harness-independent `.github/` payload wants).
+    //
+    // There is deliberately NO `targets:` lint here. Every malformation of this field — a `target:`
+    // singular typo, a non-list value, an EMPTY list, and an UNKNOWN NAME — is a hard LOAD error in
+    // `loadToolkit`, so none of them can reach this lint. That is not a stylistic split: `targets:`
+    // is the only manifest field whose malformation is DESTRUCTIVE (the render prunes every lock
+    // path it no longer produces, so a mis-scoped entry DELETES an already-poured file out of a
+    // consumer's tree), and `validate` is toolkit-developer lint that consumers never run over
+    // built-in stacks — `render` imports only `validateExternalStacks`. A `validate`-only check
+    // would have been no gate at all for a forked toolkit that does not run `validate` in CI.
+    // `validate` still REPORTS every one of them, via the load error it catches, so the lint surface
+    // does not go quiet. See the block comment in `toolkit.mjs` for why an unknown name is not inert.
+
     // Text `files/` payloads are templated just like skills — every {{key}} they use must
     // be declared (GitHub Actions `${{ ... }}` is excluded by the placeholder grammar, so
     // workflow expressions don't register as config keys). Binaries are byte-copied, skip.

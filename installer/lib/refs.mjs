@@ -11,6 +11,7 @@
  */
 
 import path from 'node:path';
+import { VALID_TARGETS } from './project.mjs';
 
 /** @import { Toolkit, Stack, Item } from './toolkit.mjs' */
 
@@ -46,6 +47,22 @@ import path from 'node:path';
  * @property {SelectionItem[]} items deduped by stack+kind+name, eject-filtered
  * @property {{ rootRef: string, deps: string[] }[]} closures pulled-in dependencies, for reporting
  * @property {string[]} errors resolution errors (unknown stack, unknown/ambiguous ref)
+ * @property {string[]} targets the enabled targets this selection was computed against — the SAME
+ *   derived value the scope filter used (`project.targets`, defaulted to VALID_TARGETS when the key
+ *   is absent). Carried on the result so a downstream consumer of the selection (`render`'s syrup
+ *   pairing, `setup`'s playbook) cannot judge scope against a DIFFERENT target set than the one that
+ *   produced these items. It was a defaulted parameter first, and the default — "every target
+ *   enabled" — was the one value that silently restores pre-#364 behavior for a caller who forgets
+ *   it; there is now no argument to forget (#364)
+ * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
+ *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
+ *   silent (#364)
+ * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
+ *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
+ *   filtered out: the dependent renders, its declared dependency never does. Eject-filtered on both
+ *   ends. Newly possible with #364, and it must not be silent either (#74). `optIn` = the dependency
+ *   is opt-in syrup in its own stack, so enabling one of its targets is necessary but NOT sufficient
+ *   to render it — the caller must state BOTH steps or the remedy it prints does not work
  */
 
 /**
@@ -340,6 +357,25 @@ export function closureDeps(toolkit, root) {
 }
 
 /**
+ * Does a `files:` item render for a consumer whose enabled harness targets are `targets`? (#364)
+ *
+ * An UNSCOPED item (`item.targets === null` — no `targets:` on its manifest entry) renders
+ * unconditionally: that is the pre-#364 contract and the overwhelmingly common case, because a
+ * `.github/` payload is harness-independent. A SCOPED item renders iff at least one of the targets
+ * it declares is enabled here. Agents and skills are never filtered — they FAN OUT across the
+ * enabled targets (renderAgent/renderSkill emit one output each), they do not gate on them; a file
+ * has no per-harness variant, so a filter is the only coherent reading of a scope on one.
+ *
+ * @param {Item} item
+ * @param {string[]} targets the consumer's enabled targets (`project.targets`)
+ * @returns {boolean}
+ */
+export function fileMatchesTargets(item, targets) {
+  if (item.kind !== 'files' || !item.targets) return true;
+  return item.targets.some((t) => targets.includes(t));
+}
+
+/**
  * Does an `include:` entry (qualified or not) refer to the given kind/name?
  *
  * @param {string} includeRef
@@ -373,8 +409,24 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   const errors = [];
   /** @type {Map<string, SelectionItem>} */
   const chosen = new Map();
+  // `loadProjectConfig` always sets `targets` (defaulting to VALID_TARGETS when the key is absent),
+  // but a bare test-constructed project object may not — default here too, rather than filtering
+  // every scoped file out.
+  const targets = project.targets ?? VALID_TARGETS;
+  /** @type {{ ref: string, targets: string[] }[]} */
+  const targetSkipped = [];
   /** @type {(stackName: string, kind: ItemKind, item: Item) => void} */
   const addItem = (stackName, kind, item) => {
+    // #364: a target-scoped syrup file is not SELECTED when none of its targets is enabled — so it
+    // never renders, and (because the render prunes every lock path it no longer produces) an
+    // already-rendered copy is removed on the next render. Unscoped items are untouched.
+    //
+    // This gate belongs here, at the single choke point every entry path funnels through — stack
+    // expansion, the `include:` closure loop, and a `requires:` dependency edge — so an explicit
+    // include cannot bypass a scope. It must also sit AFTER addStack's opt-in/trackedFiles
+    // re-admission, which deliberately keeps an already-poured syrup file selected: scope has to
+    // override tracking, or a file that falls out of scope would never be pruned.
+    if (!fileMatchesTargets(item, targets)) return;
     const key = `${stackName}::${kind}/${item.name}`;
     if (!chosen.has(key)) chosen.set(key, { stackName, stack: toolkit.stacks.get(stackName), kind, item });
   };
@@ -416,6 +468,14 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       addStack(resolved.name);
       continue;
     }
+    // #364: an explicitly-included file scoped to targets this project has not enabled renders
+    // nothing. Record it so the caller can SAY so — a silent no-op on an explicit `include:` is
+    // precisely the "half-installed and silent" failure #74 exists to prevent. A stack-expansion
+    // skip stays silent (exactly like the `optIn:` gate); only an explicit include warns.
+    if (resolved.item.kind === 'files' && !fileMatchesTargets(resolved.item, targets)) {
+      targetSkipped.push({ ref: resolved.canonicalRef, targets: resolved.item.targets ?? [] });
+      continue; // do not walk its closure — nothing of it renders
+    }
     /** @type {DepNode[]} */
     let closure;
     try {
@@ -435,7 +495,59 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
 
   const ejected = new Set((project.eject ?? []).map(normalizeItemRef));
   const items = [...chosen.values()].filter((c) => !ejected.has(`${c.kind}/${c.item.name}`));
-  return { items, closures, errors };
+
+  // #364: a `requires:` edge onto a file the SCOPE filtered out is newly possible — before this
+  // change a `files/` item always rendered, so a strict edge was always satisfied at render time.
+  // Scope the file, and the dependent renders WITHOUT the thing it declares it needs. The renderer
+  // only ever walks that edge FORWARD (dep → dependent), so nothing downstream would ever notice:
+  // the consumer gets a half-wired flow and hears nothing — the same "half-installed and silent"
+  // failure #74 exists to prevent, and the one entry path into the gate that got neither a warning
+  // nor a lint. Collect each broken edge so the caller can SAY the flow is incomplete.
+  //
+  // Walked over `items` (post-eject), not `chosen`, for two reasons: an EJECTED dependent is not
+  // rendered, so its unsatisfied edge is nobody's problem; and an EJECTED dependency is handed to
+  // the project (it stays on disk, unmanaged, and `eject` drops it from both locks), so the edge is
+  // satisfied by a file wafflestack no longer owns — warning about either would be noise.
+  /** @type {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]} */
+  const targetBrokenRequires = [];
+  const seenEdges = new Set();
+  for (const { stackName, stack, kind, item } of items) {
+    const requiredBy = `${kind}/${item.name}`;
+    for (const depRef of stack?.requires?.[requiredBy] ?? []) {
+      /** @type {DepNode} */
+      let dep;
+      try {
+        dep = resolveDepStrict(toolkit, depRef, stackName);
+      } catch {
+        continue; // a dangling requires: is a toolkit bug `validate` reports; not this gate's business
+      }
+      // Narrowed on the ITEM's intrinsic kind, not the ref kind: `dep.kind` is the plural ref
+      // vocabulary and does not discriminate the `Item` union, so it cannot reach `targets` (a
+      // FileItem field). The two always agree — `resolveDepStrict` draws the item from
+      // `itemsOfKind(stack, kind)` — so this is the same runtime test, stated so tsc can see it.
+      // Same idiom as the explicit-include gate above.
+      if (dep.item.kind !== 'files' || fileMatchesTargets(dep.item, targets)) continue;
+      const ref = `files/${dep.name}`;
+      if (ejected.has(ref)) continue;
+      const edge = `${requiredBy}→${ref}`;
+      if (seenEdges.has(edge)) continue;
+      seenEdges.add(edge);
+      // Whether the dependency is OPT-IN syrup decides what the caller may tell the consumer to do
+      // about it, and getting that wrong is worse than saying nothing: for an opt-in file, enabling
+      // a target is NECESSARY BUT NOT SUFFICIENT (`addStack` still gates it out until it is
+      // explicitly installed), so a bare "enable one of its targets" is a remedy that does not work
+      // — and once the target IS enabled this edge stops being scope-broken, so the warning would
+      // VANISH while the dependency still does not render, reading as resolved. Opt-in is a property
+      // of the dependency's OWN stack, which is `dep.stack` and need not be the dependent's.
+      const optIn = Boolean(toolkit.stacks.get(dep.stack)?.optIn.has(ref));
+      targetBrokenRequires.push({ ref, requiredBy, stackName, targets: dep.item.targets ?? [], optIn });
+    }
+  }
+
+  // `targets` rides along on the result (see the Selection typedef): every downstream scope judgment
+  // must be made against the SAME set this selection was filtered by, and the only way to guarantee
+  // that is to stop asking the caller to pass it again.
+  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires };
 }
 
 /**
@@ -454,15 +566,26 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  * uninvolved stack is never suggested.
  *
  * @param {Toolkit} toolkit loaded toolkit
- * @param {Selection} selection a `computeSelection` result ({ items, … })
- * @returns {{ fileRef: string, stackName: string, companions: string[] }[]} one entry per skipped
- *   syrup file, `companions` naming the selected waffles that pull it into relevance. `fileRef` is
- *   a ready `wafflestack install <fileRef>` argument. Deterministic order (stack, then manifest).
+ * @param {Selection} selection a `computeSelection` result — its `targets` (the consumer's enabled
+ *   harnesses) are read straight off it. A syrup file scoped away from all of them cannot be POURED
+ *   here (#364), so its entry comes back marked (`scopedTo`) rather than dropped: the pairing is
+ *   still real and must still be stated. This was a defaulted third PARAMETER until the default —
+ *   `VALID_TARGETS`, i.e. "every target enabled" — was spotted as the one value that silently
+ *   restores pre-#364 behavior: a caller who forgot the argument would judge a scoped-out file
+ *   POURABLE and print an `install` command that renders nothing. Reading it off the selection that
+ *   was already argument #2 means the two can never disagree, and there is no argument to forget.
+ * @returns {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]}
+ *   one entry per skipped syrup file, `companions` naming the selected waffles that pull it into
+ *   relevance. `scopedTo` is null for a pourable file — then `fileRef` is a ready
+ *   `wafflestack install <fileRef>` argument. When non-null it is the file's `targets:` scope, and
+ *   the pairing CANNOT be completed here: the caller must state it without offering an install
+ *   command (which would render nothing). Deterministic order (stack, then manifest).
  */
 export function skippedSyrupCompanions(toolkit, selection) {
+  const targets = selection.targets;
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
   const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
-  /** @type {{ fileRef: string, stackName: string, companions: string[] }[]} */
+  /** @type {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]} */
   const results = [];
   for (const stackName of stacksInSelection) {
     const stack = toolkit.stacks.get(stackName);
@@ -471,6 +594,13 @@ export function skippedSyrupCompanions(toolkit, selection) {
       const fileRef = `files/${f.name}`;
       if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
       if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
+      // #364: a syrup file scoped away from every enabled target cannot be poured here, so the
+      // caller must never hand out an `install` command for it — that command would render nothing.
+      // But dropping the whole NOTIFICATION is #74 wearing a new hat: the consumer keeps the manual
+      // half of the flow, can never get the automated half, and is told nothing. So do not suppress
+      // — RESTATE. `scopedTo` non-null means "this pairing is real AND uncompletable here", and the
+      // caller phrases it without a pour command, naming the scope instead.
+      const scopedTo = fileMatchesTargets(f, targets) ? null : (f.targets ?? []);
       /** @type {string[]} */
       const companions = [];
       for (const ref of stack.requires?.[fileRef] ?? []) {
@@ -484,7 +614,7 @@ export function skippedSyrupCompanions(toolkit, selection) {
         const depRef = `${dep.kind}/${dep.name}`;
         if (selectedRefs.has(depRef)) companions.push(depRef);
       }
-      if (companions.length) results.push({ fileRef, stackName, companions });
+      if (companions.length) results.push({ fileRef, stackName, companions, scopedTo });
     }
   }
   return results;

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 import { normalizeItemRef } from './refs.mjs';
+import { VALID_TARGETS } from './project.mjs';
 import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
 
@@ -39,6 +40,12 @@ import { normalizePrerequisites } from './prerequisites.mjs';
  * @property {string} name the repo-relative output path (also the item's name)
  * @property {string} path absolute path to the source file under `files/`
  * @property {boolean} binary byte-copied when true, template-substituted when false
+ * @property {string[] | null} targets declared harness scope, or null when unscoped (#364).
+ *   null (no `targets:` key on the manifest entry) = renders unconditionally — the pre-#364
+ *   contract, and the overwhelmingly common case, since a `.github/` payload has nothing to do
+ *   with which harness you run. A list = renders only when the consumer has enabled at least one
+ *   of these targets. Unlike an agent or a skill, a file has no per-harness variant, so `targets:`
+ *   FILTERS it (whether it renders) rather than fanning it out (how many times).
  *
  * @typedef {AgentItem | SkillItem | FileItem} Item
  *
@@ -82,7 +89,8 @@ import { normalizePrerequisites } from './prerequisites.mjs';
  * @property {string} [description]
  * @property {string[]} [agents] bare agent names
  * @property {string[]} [skills] bare skill names
- * @property {string[]} [files] repo-relative output paths
+ * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths —
+ *   a bare string, or the map form `{ path, targets }` that scopes the payload to harnesses (#364)
  * @property {string[]} [optIn] item refs gated out of a default render
  * @property {Record<string, any>} [config] declared template keys (key → spec)
  * @property {Record<string, string>} [env] legacy harness env map
@@ -91,6 +99,9 @@ import { normalizePrerequisites } from './prerequisites.mjs';
  * @property {string} [setup]
  * @property {unknown} [syrup] removed in 0.10.0 — its presence is a hard error
  */
+
+/** The only keys a map-form `files:` entry may carry (#364). */
+const FILE_ENTRY_KEYS = new Set(['path', 'targets']);
 
 /**
  * Load the toolkit registry and every stack it lists.
@@ -265,15 +276,85 @@ function loadStack(name, dir) {
   // to that same path in the consuming project (CI workflows, scripts, config). Text files
   // are template-substituted, binaries byte-copied — text/binary is sniffed by content, so
   // any text type works, not just `.md`.
+  //
+  // An entry is a bare path string, or the map form `{ path, targets }` (#364) that scopes a
+  // harness-specific payload to the harnesses it is actually for.
   /** @type {FileItem[]} */
   const files = (manifest.files ?? []).map((entry) => {
-    const rel = String(entry);
+    const isMap = Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry);
+    if (isMap) {
+      // Reject an unknown key rather than ignoring it: a `target:` (singular) typo would otherwise
+      // leave the payload silently UNSCOPED — the exact failure this field exists to prevent. Same
+      // reasoning as STACK_ENTRY_KEYS (project.mjs) and the `syrup:` → `optIn:` hard error.
+      for (const k of Object.keys(entry)) {
+        if (!FILE_ENTRY_KEYS.has(k)) {
+          throw new Error(
+            `stack ${name}: files entry has unknown key "${k}" (allowed: ${[...FILE_ENTRY_KEYS].join(', ')})`,
+          );
+        }
+      }
+      if (typeof entry.path !== 'string') {
+        throw new Error(`stack ${name}: a mapping files entry needs a \`path:\` string (the repo-relative output path)`);
+      }
+      if (entry.targets !== undefined && !Array.isArray(entry.targets)) {
+        throw new Error(`stack ${name}: files entry "${entry.path}" \`targets:\` must be a list of target names`);
+      }
+      // A `targets:` list the render cannot honour is the one manifest shape whose only possible
+      // effect is DESTRUCTIVE: because the render prunes every lock path it no longer produces
+      // (#364), an already-poured copy is DELETED from the consumer's tree, with `ok: true` and no
+      // warning. So the loader — not `validate` — owns EVERY name in this list.
+      //
+      // An EMPTY list scopes the file to nothing, so it can never render. It also cannot mean
+      // anything an author intended: "scoped to no harness" is not a thing to want.
+      if (Array.isArray(entry.targets) && !entry.targets.length) {
+        throw new Error(
+          `stack ${name}: files entry "${entry.path}" declares an empty \`targets:\` list, so it can never render — ` +
+            `omit \`targets:\` to render it unconditionally`,
+        );
+      }
+      // An UNKNOWN NAME is the same hazard reached by a one-character typo, and it was once left to
+      // `validate` on the grounds that a stale name is "inert — nothing renders, nothing is
+      // destroyed". THAT PREMISE IS FALSE, in both directions, and each is reproduced in the tests:
+      //   - `targets: [claud]` resolves to NOTHING, so it is `targets: []` spelled differently: the
+      //     poured copy is pruned out of EVERY consumer's tree.
+      //   - `targets: [claude, codxe]` (partially valid — one real name survives) still deletes the
+      //     poured copy out of a CODEX consumer's tree. "One valid name survives" does not make the
+      //     entry safe; it only narrows WHICH consumers it destroys.
+      // So there is no inert case to be tolerant of, and a rule keyed on "resolves to zero valid
+      // names" would have closed only the first hole. `validate` is toolkit-developer lint that
+      // consumers never run over built-in stacks (`render` imports only `validateExternalStacks`),
+      // and the toolkit is explicitly forkable — a fork without that CI gate must not be able to
+      // ship a silent delete. The consumer's own config has always hard-errored on an unknown target
+      // name (project.mjs); the manifest is the side that can DESTROY a file, so it is not the side
+      // that gets to be lenient. A name outside VALID_TARGETS can only ever be an authoring bug:
+      // the set is closed and code-defined, not an open extension point.
+      if (Array.isArray(entry.targets)) {
+        // Widened to string[] deliberately: the whole point is to test UNTRUSTED manifest strings
+        // against the closed Target set, so `includes` must accept a plain string rather than
+        // presupposing the very thing being checked.
+        const known = /** @type {string[]} */ (VALID_TARGETS);
+        const bad = entry.targets.map(String).filter((t) => !known.includes(t));
+        if (bad.length) {
+          throw new Error(
+            `stack ${name}: files entry "${entry.path}" declares unknown target${bad.length > 1 ? 's' : ''} ` +
+              `${bad.map((t) => `"${t}"`).join(', ')} (valid: ${VALID_TARGETS.join(', ')}) — an unknown name scopes the ` +
+              `file away from the consumers it names, so an already-poured copy would be DELETED from their tree`,
+          );
+        }
+      }
+    }
+    const rel = String(isMap ? entry.path : entry);
     if (path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === '..')) {
       throw new Error(`stack ${name}: files entry "${rel}" must be a repo-relative path that stays inside the project`);
     }
     const file = path.join(dir, 'files', rel);
     if (!exists(file)) throw new Error(`stack ${name}: files entry "${rel}" not found under files/`);
-    return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)) };
+    // Target scoping (#364), optional: null = unscoped = renders regardless of the consumer's
+    // `targets:` (the pre-#364 contract). Every declared name is validated ABOVE, at load — unlike
+    // `optIn:` and `prerequisites:`, this field is load-strict, because it is the only one whose
+    // malformation deletes a file out of a consumer's repo.
+    const targets = isMap && entry.targets !== undefined ? entry.targets.map(String) : null;
+    return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)), targets };
   });
 
   // The `syrup:` gate key was renamed to `optIn:` in 0.10.0. Fail loudly on a stale manifest
