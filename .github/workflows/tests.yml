@@ -23,6 +23,17 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # #373: the toolkit refuses to WRITE FILES from toolkit content when it can prove it is not
+    # running at a release tag — an unpinned `npx github:…` fetch resolves the default branch, so
+    # `render`/`upgrade` would otherwise write unreleased content while stamping the last released
+    # version number into the consumer's lock. This checkout IS the default branch (and `actions/
+    # checkout` fetches no tags at all), so it is `unreleased` by construction, and both the CLI
+    # spawns in the test suite and the `--verify-render` step below are gated commands. Developing
+    # the toolkit is precisely the case the escape hatch exists for: rendering the working tree is
+    # the whole point here. It suppresses the REFUSAL, not the truth — the identity still resolves
+    # to `unreleased`, which is what keeps this repo's own dogfooded lock honest.
+    env:
+      WAFFLESTACK_ALLOW_UNRELEASED: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0

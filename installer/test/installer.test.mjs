@@ -34,6 +34,18 @@ import {
   HARNESS_BUILTINS,
 } from '../lib/project.mjs';
 
+// #373 — this suite spawns the REAL cli.mjs against temp projects ~a dozen times, and half of
+// those spawns are `render`/`install`/`upgrade`/`reinstall`/`doctor --verify-render`: the commands
+// that now REFUSE when the toolkit they are running from is provably not a release. The toolkit
+// they run from is this checkout, on a feature branch, which is exactly that. So set the escape
+// hatch once, here, and let every spawnSync inherit it (none of them pass an explicit `env`).
+//
+// Set on the whole FILE rather than on ~12 call sites so a spawn added later cannot silently
+// inherit a red. It is not a way of dodging the gate: the gate has its own tests (and its own
+// file), provenance.test.mjs, which clears this variable per spawn and asserts each command's
+// verdict. It is also what keeps this suite OFFLINE — the flag short-circuits the release lookup.
+process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
+
 describe('template', () => {
   const declared = new Set(['git.botEmail', 'project.testCmd']);
   const resolve = (key) => ({ 'git.botEmail': 'bot@example.com' }[key]);
