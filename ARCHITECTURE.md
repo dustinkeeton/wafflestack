@@ -134,7 +134,7 @@ silently arms a workflow you didn't ask for.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 32 skills** in total.
+one source can render everywhere. There are **14 agents and 37 skills** in total.
 
 A skill's **supporting files** copy into your repo alongside its `SKILL.md`, and
 they can do real work. The orchestration stack's `/delegate` skill is the

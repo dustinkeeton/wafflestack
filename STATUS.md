@@ -25,7 +25,7 @@ All 9 stacks are shipped and stable. Pick the ones a project needs.
 | `harness-architect` | ✅ Shipped | Single domain agent — expert in building agent harnesses (agent/skill/tool decomposition, subagent teams, hooks, MCP, multi-harness portability) |
 | `wafflestack` | ✅ Shipped | Self-referential (#70): eight `/waffle-*` skills, one per CLI command — thin `npx` wrappers with agent judgment on top. Now enabled/dogfooded in this repo |
 
-Totals: 14 agents and 32 skills across the 9 stacks.
+Totals: 14 agents and 37 skills across the 9 stacks.
 
 ## Installer & CLI
 

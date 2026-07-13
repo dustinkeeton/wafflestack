@@ -191,6 +191,36 @@ is what you reach for across a breaking one.
     pr-green takes `statuses: write`.
 
 ### Added
+- **A taxonomy that settles the word "workflow" — and the spike write-up behind it (#184, epic #347).**
+  The toolkit used "workflow" for three unrelated things: a **GitHub Actions workflow**, Claude Code's
+  **`Workflow` primitive**, and **any generic multi-phase process**. Two of those senses belong to somebody
+  else — GitHub mandates its path, Anthropic owns its product vocabulary — so the generic one is the only
+  lever there is, and it yields. **Bare "workflow" is now reserved for the Claude primitive**; GitHub's
+  sense is always qualified (as payloads they are already **syrup**); the generic sense is **banned** in
+  favour of the *phases*/*steps* of a skill. It gets **no replacement noun** — coining one would preserve
+  the ambiguity the decision exists to kill — and decomposes instead into *skills* and *orchestrator
+  skills* (all five of which turn out to live in the `orchestration` stack, so any future migration is
+  contained to one stack). New rule: **a skill is the unit of work; orchestration is only sequencing — a
+  skill invokes another skill, never duplicates one.** `github-workflow` and `git-workflow` **keep their
+  names** (the #59 precedent: rename vocabulary, never load-bearing surfaces). New
+  **`docs/skills-vs-workflows.md`** carries the analysis: all 37 skills classified, the `/audit` ⊃ `/docs`
+  collision — with evidence the two copies have **already drifted** — why prose orchestration rots
+  (nothing type-checks a `SKILL.md` against the harness's real tool list, so it fails at *runtime*; cf.
+  #360), the per-target degradation table (**no portable workflow primitive exists** — Codex and
+  agents-dir have none), and a **gated "not yet"** on adopting the primitive. That gate is **three items,
+  not five**: **#360 must land** (`/audit` is unrunnable as written today), **#364 must land** (optional
+  target scoping for syrup — a *hard* prerequisite, and an **additive, backward-compatible schema change**,
+  so adoption is *"no fourth item kind"* but **not** *"no schema change"*), and **`/audit`'s human
+  sign-off gate must be redesigned** — a workflow admits *"no mid-run user input,"* so a gate degrades to
+  a hard abort and **sign-off with a human override is inexpressible**. The other three did not survive:
+  one was **false** (the in-script API *is* specified — the `Workflow` tool entry documents `agent()`,
+  `pipeline()`, `parallel()`, `phase()`, `log()`, `workflow()`, `args`, `budget` under `Script body
+  hooks:`; an earlier draft had this right and a later one wrongly retracted it), one the write-up
+  **resolves itself** (opt-in syrup is path-specific, so #94 does not bite), and one — paid-plans-only,
+  version-gated, org-wide kill switch — **never clears** and is therefore a *permanent design constraint*,
+  not a gate: it is why the prose orchestrator stays the portable fallback forever. When it *is* adopted it
+  ships as **opt-in syrup**, not a fourth item kind. **Consumer impact: none** — docs-only; no `stacks/**`
+  change, no re-render, no lock churn.
 - **The CLI surface is complete: `help`, `uninstall`/`reinstall`, and a `bake` alias (epic #346, closes
   #187, #182, #176).** Three open issues, one `switch (command)` — so they were one change to one file,
   not three features, and the dispatch was edited once, coherently.
@@ -284,6 +314,9 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **The human docs' skill count (#184).** `STATUS.md` and `ARCHITECTURE.md` both claimed **32 skills**;
+  there are **37** on disk. `AGENTS.md` was already correct — the machine doc was right and the human docs
+  had gone stale.
 - **Project commands are never joined with `&&`, so the pre-flight can actually run (#218).** A
   `Bash(<prefix>:*)` allowlist entry matches a command by its **leading program**, and the hooks
   grant **one entry per project command** (`Bash(npm test:*)`, `Bash(npm run build:*)`, …). So a

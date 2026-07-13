@@ -9,6 +9,100 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-13: "Workflow" means the Claude primitive; our orchestrators are skills (#184, epic #347)
+
+**Context**: The toolkit said **"workflow"** to mean three unrelated things: a **GitHub Actions
+workflow** (`.github/workflows/*.yml`, plus the `github-workflow` stack and `git-workflow` skill), the
+**Claude Code `Workflow` primitive** (a JS script in `.claude/workflows/` that orchestrates subagents —
+real, documented, and unused by wafflestack), and **any deterministic multi-phase process** (prose only,
+scattered across `SKILL.md` bodies and the root docs). Two of those three senses belong to somebody else:
+GitHub mandates its path, and Anthropic owns its product vocabulary. Separately — and this turned out to
+be the real bug — the `/audit` skill duplicates `/docs`: both spawn the same three agents over the same
+doc sets, `stacks/orchestration/stack.yaml:484` already documents the shared roster as serving *"the audit
+chain and the docs pipeline"*, and yet `/audit` never once references `/docs`.
+
+**Decision**: **The bare word "workflow" is reserved for the Claude primitive.** GitHub's sense is
+**always qualified** on first use ("GitHub Actions workflow"); as installable payloads those already have
+a name — **syrup**. The generic sense is **banned**: say the **phases** or **steps** of a skill.
+
+**The generic category gets no replacement noun — it is decomposed, not renamed.** Every "deterministic
+multi-phase process" in the toolkit is already one of exactly two things: a **skill** (prose one agent
+context interprets) or an **orchestrator skill** (a skill that spawns and sequences other agents — `audit`,
+`docs`, `standup`, `delegate`, `autopilot`; all five live in the `orchestration` stack, and all 32 other
+skills are outside it). Coining a third noun would preserve the very ambiguity this decision kills.
+
+Two rules fall out of it:
+
+- **A skill is the unit of work; orchestration is only ever sequencing.** A skill **never duplicates
+  another skill's content — it invokes it.** An orchestrator holds only sequencing, gates, fan-out and
+  loops. This, not any new primitive, is what fixes `/audit` ⊃ `/docs`.
+- **Adopting the Claude `Workflow` primitive: not yet** — on a **three-item** gate, not the five-item one
+  this spike started with (see Rationale): **#360** must land, **#364** must land, and **`/audit`'s human
+  sign-off gate must be redesigned**. When it *is* adopted it ships as **opt-in syrup**
+  (`files/.claude/workflows/*.js`) whose phases each invoke a skill — **no fourth item kind, but one
+  additive, backward-compatible manifest field** (`targets:` on a `files:` entry, **#364**; *not* "no
+  schema change") — with the prose orchestrator retained as the portable fallback, permanently.
+
+Following the **#59** precedent (*rename the user-facing vocabulary; leave the load-bearing surfaces
+alone*), the **`github-workflow` stack and `git-workflow` skill keep their names**: they are consumer
+surfaces (lock keys, `.waffle/waffle.yaml` `stacks:` entries, `include:`/`eject:` refs), and "git workflow"
+is idiomatic English for a branching strategy — there is no ambiguity to gain and a migration to pay.
+
+**Alternatives considered**: (a) *Coin a food word — "recipe", "playbook", "pipeline" — for the generic
+sense.* Genuinely on-brand (waffles / stacks / syrup / `bake`), and #183 is already extending the metaphor
+(extension → topping). Rejected **here** and deferred **there**: minting a noun re-legitimises the third
+category, which is the thing this spike exists to abolish. If the owner wants a food word for "orchestrator
+skill", it belongs in the #347/#183 rename pass, not in a spike about disambiguation. (b) *Qualify every
+use* ("GitHub Actions workflow" / "Claude workflow" / "generic workflow") — rejected: it keeps three
+meanings alive and depends on every author remembering the adjective forever; discipline that requires
+perpetual vigilance is not discipline. (c) *Rename the GitHub sense* — rejected: the path is GitHub's, and
+the repo already has the right word for those payloads (syrup). (d) *Adopt workflows now as a fourth
+portable item kind* — rejected: it reintroduces exactly the half-covered harness that **#94** was fought to
+eliminate, and neither Codex nor agents-dir has any orchestration primitive to degrade to.
+
+**Rationale**: The three-way collision is decided by ownership, not taste — two of the senses are
+un-renameable, so the generic one is the only lever there is. The collision *between skills* is a
+different problem than the collision *of the word*, and conflating them is what made this look like a
+workflow question: **adopting the primitive would not have fixed `/audit` ⊃ `/docs`** — it would have moved
+the duplication from prose into JavaScript. Composition fixes it, today, for free.
+
+**On adoption, the honest gate is three items, not five** — and getting there cost this spike two
+corrections, one of them embarrassing. Of the five it started with, three do not survive scrutiny as
+*gates*, and a sixth had to be **added**: **②** claimed the
+in-script API had *"no public specification"* — **that was false.** The `Workflow` tool's own entry carries
+a section headed `Script body hooks:` specifying `agent()`, `pipeline()`, `parallel()`, `phase()`, `log()`,
+`workflow()`, `args` and `budget`, with signatures; an earlier draft had this right and a later one
+*retracted the true claim* on the strength of the narrative docs page alone. **A source that omits
+something is not a source that denies it** — the residual risk is only that the spec lives in a tool
+description rather than a *versioned* reference. **③** (a Claude-only kind breaks #94) the write-up
+**resolves itself**: ship as opt-in syrup, which is path-specific by definition, so #94 — which governs the
+two harness-neutral kinds — does not bite. **④** (paid-plans-only, version-gated v2.1.154+, org-wide kill
+switch, so a rendered workflow can be *silently inert* in a consumer repo) *"never fully"* clears: it is not
+a gate at all but a **permanent design constraint**, and it is exactly *why* the prose orchestrator must
+remain the portable fallback forever.
+
+What actually remains is **three items**: **⑤ #360 must land** — `/audit` is *unrunnable as written today*
+(`TeamCreate`/`TeamDelete` no longer exist in the harness), and converting a broken skill is building on
+sand; **⑥ #364 must land** — optional target scoping for syrup, without which "ship it as opt-in syrup"
+drops Claude-only files into a codex-only repo (the write-up calls it a **hard prerequisite**, and it is an
+*additive* schema change — it can and should land independently of the workflow decision); and **① a design
+decision we owe ourselves** — `/audit`'s hard human gate after security pass 1 cannot be expressed inside a
+workflow (*"No mid-run user input… For sign-off between stages, run each stage as its own workflow"*). A
+*gate* is expressible as a hard abort; **sign-off with a human override is not**. So: **revisit when #360
+and #364 have merged and ①'s gate is designed.** Point ⑤ is also the strongest argument *for* the
+primitive: **prose orchestration has no compiler**, so it rots silently and fails at runtime, whereas a
+workflow script is parsed before a single agent spawns and simply never runs.
+
+**Impact**: Docs-only. Adds `docs/skills-vs-workflows.md` — the full spike write-up: the three-sense table,
+what the Claude primitive actually is (verified against the live docs, including the constraints that
+decide the answer), an inventory classifying all 37 skills, the `/audit` ⊃ `/docs` collision with evidence
+that the two copies have **already drifted** (`/docs`'s architecture pass is read-only and threads its
+change report into the doc passes; `/audit`'s "fixes all issues" and threads nothing), the per-target
+degradation table, and an illustrative — **non-rendered** — JS sketch. No `stacks/**` change, so no
+re-render and no lock churn. The vocabulary sweep across `stacks/**`, the `/audit`-invokes-`/docs` fix, the
+workflow prototype, syrup target-scoping, and the owner-voiced-docs adoption all ship as follow-ups off
+#184 and epic #347.
+
 ## 2026-07-13: The lock decides what `uninstall` may delete (#182, epic #346)
 
 **Context**: `uninstall` / `reinstall` are the toolkit's **first destructive commands**. Everything
