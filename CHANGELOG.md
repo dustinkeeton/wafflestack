@@ -46,7 +46,11 @@ is what you reach for across a breaking one.
   are all the harness's to choose, not delegate's) — the two that did not survive are gone.
   **Consumer impact:** re-render picks it up; no migration. If you have *extended* any of these skills,
   re-check your additions for the same dead primitives — a regression sweep now guards every skill and
-  agent **source** under `stacks/**`, not just the subset a given repo renders.
+  agent **source** under `stacks/**` (plus the skills' JSON assets), not just the subset a given repo
+  renders. The sweep reads each call's **real argument list**, so a paren inside a string argument no
+  longer hides a dead primitive from it, and it asserts teardown as the **calls** an orchestrator
+  executes rather than the words appearing somewhere in the file — both holes were found by reintroducing
+  the bugs and watching the old guard pass green, and both are now pinned by regression fixtures.
 - **CI hooks key delivery and idempotency on out-of-band signals, never on a marker pasted in prose
   (#338, closes #333).** Both review hooks decided "the bot did a thing" by string-matching a marker
   literal inside a **free-text body anyone can write**. #211, #332 and #333 are not three bugs but
