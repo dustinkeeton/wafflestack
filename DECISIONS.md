@@ -187,6 +187,57 @@ committed-lock diff; a repo with no render-affecting overlay is entirely unaffec
 
 ---
 
+## 2026-07-12: CI hooks key on out-of-band signals, never on a marker pasted in prose (#338)
+
+**Context**: Both review hooks decided "the bot did a thing" by string-matching a marker literal
+inside a **free-text body anyone can write** — a review, a PR comment. Every failure in #211, #332
+and #333 is one variant of that single mechanism, not three bugs: a human comment on PR #207 (literal
+at offset 1084) read as "the bot already replied"; a QA review on PR #296 (offset 1103) read as "this
+head is already reviewed" **and** "this IS the bot's review", so the security review silently never
+ran while a paid, committing job dispatched on the QA review. Each fix narrowed the match — bare word
+→ full literal → marker-**led** — and each only shrank the target, because a marker-led body is still
+prose and a human can type a marker on line 1 as easily as at offset 1103. Worse, it created a
+**prose-to-prose coupling no test could pin**: a workflow's `jq startswith()` depending on a sentence
+in a SKILL.md instructing a model where to put a marker.
+
+**Decision**: Delivery and idempotency are decided by artifacts that take **repo push access** to
+write, and no hook predicate reads a body:
+- **pr-green** — dedup and delivery both key on a `waffle/adversarial-review` **commit status** on the
+  reviewed head SHA, which the harness writes after its review lands.
+- **pr-response** — its *trigger* becomes `workflow_run` on waffle-pr-green-hook (a body cannot raise
+  that event, so the whole quote class dies at the event layer); delivery keys on a `waffle/pr-response`
+  commit status; and the **loop bound** becomes a per-PR **label** that the *workflow* applies **before**
+  the paid dispatch.
+The markers **stay** in the bodies — they are how a human recognizes a bot post and how the skills
+dedup their own — but nothing in CI reads them, so quoting one is now harmless.
+
+**Alternatives considered**: A **check run** (#338's own proposal) — rejected on a hard blocker:
+creating one is GitHub-App-only ("OAuth apps and authenticated users are not able to create a check
+suite"), and the harness may authenticate with a PAT (`WAFFLE_HYGIENE_TOKEN`), so it would be
+uncreatable in the *recommended* configuration. A commit status needs only push access and is
+otherwise identical — keyed to the SHA, structured, visible in the checks list, unforgeable without
+repo write. A **commit status for the loop bound** — rejected: a rebase or force-push orphans it and
+silently **re-arms** the paid loop, which is weaker than what it replaced. The bound must survive
+history rewrites, so it is per-PR state (a label). Inferring delivery from a **review-ID delta** —
+rejected: a human review landing in the same window would fake delivery, and that fails *open*.
+
+**Rationale**: The asymmetry the old hooks documented ("do NOT unify them, the asymmetry **is** the
+design") was right *for the marker mechanism* only. It survives, but re-expressed structurally — not
+as loose-vs-strict string matching but as **who writes the signal, and when**: signals that ADMIT work
+(idempotency, delivery) are written by the harness *after* the work, so their absence errs toward
+doing it; the signal that BOUNDS work is written by the workflow *before the money*, so a crashed,
+timed-out, or tool-denied run is still bounded. The bound is therefore **strictly tighter** than the
+marked-comment bound it replaces, which a crashed harness simply failed to set.
+
+**Impact**: Both hook workflows, `adversarial-review` / `pr-response` SKILL.md (the coupling prose is
+gone), `REVIEW_TEMPLATE.md` (pasting a marker is now hygiene, not a safety hazard). New config key
+`prResponse.responseLabel` (default `waffle:pr-response`) and a matching `prerequisites:` entry — the
+label **must pre-exist**; the bound is fail-closed, so without it the job reds rather than dispatching
+an unbounded run. pr-response's job also takes `statuses: write` (still **no** `issues: write`).
+Consumers who installed the pr-response hook must create the label. Closes #333.
+
+---
+
 ## 2026-07-11: `pr-response` appends a comment per round — it never PATCHes its prior reply (#318)
 
 **Context**: The skill's idempotency section told the responder to find its last
@@ -456,7 +507,8 @@ instead. State as of this entry:
   uninstalled.
 - **waffle-pr-green-hook.yml (#112)** — ARMED: on every green PR it dispatches the `adversarial-review`
   skill to post a hostile pre-merge review (once per green transition, deduped by the
-  `<!-- waffle-adversarial-review -->` marker). Needs `ANTHROPIC_API_KEY` + a PR review-write token.
+  `waffle/adversarial-review` **commit status** on the reviewed head — #338, never by a marker in a
+  body). Needs `ANTHROPIC_API_KEY` + a PR review-write token.
 - **waffle-post-merge-hook.yml (#67/#114)** — installed here (#189): deterministic remote merged-head
   branch delete, `contents: write`, no Claude dispatch / no API spend.
 

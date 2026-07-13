@@ -6,7 +6,7 @@ automation already writes. A review round is two halves, and each has a canonica
 | Half | Who writes it | Canonical source (the enforcement point) |
 |---|---|---|
 | **Findings** — what is wrong with this PR | `adversarial-review` / `qa`, or a human reviewer | `.claude/skills/adversarial-review/SKILL.md` (§ "Rank findings by honest severity") |
-| **Verdicts** — what the author will do about each finding | `pr-response`, or the PR author | `.claude/skills/pr-response/SKILL.md` (§ "Score each finding — rubric v1") |
+| **Verdicts** — what the author will do about each finding | `pr-response`, or the PR author | `.claude/skills/pr-response/SKILL.md` (§ "Score each finding — rubric v2") |
 
 **The skills are canonical; this file is a convenience.** The scoring anchors, the composite
 thresholds, and the override rules live in the skills and are deliberately *not* restated here — one
@@ -46,11 +46,11 @@ thresholds tunable, and a verdict without its numbers is exactly the invisible j
 exists to replace.
 
 ```markdown
-| # | Finding | Severity | Validity | Effort/Risk | Alignment | Composite | Verdict | Reason |
-|---|---------|----------|----------|-------------|-----------|-----------|---------|--------|
-| F1 | <short restatement> | 3 | 3 | 2 | 3 | 11 | **Implement** | <one line: why> |
-| F2 | <short restatement> | 2 | 2 | 1 | 2 | 7  | **Defer**     | <one line + follow-up issue link> |
-| F3 | <short restatement> | 1 | 0 | 3 | 1 | 5  | **Decline**   | <one line: why it is a false positive> |
+| # | Finding | Severity | Reach | Validity | Effort/Risk | Alignment | Composite | Verdict | Reason |
+|---|---------|----------|-------|----------|-------------|-----------|-----------|---------|--------|
+| F1 | <short restatement> | 3 | 3 | 3 | 2 | 3 | 14 | **Implement** | <one line: why> |
+| F2 | <short restatement> | 2 | 2 | 2 | 1 | 2 | 9  | **Defer**     | <one line + follow-up issue link> |
+| F3 | <short restatement> | 1 | 1 | 0 | 3 | 1 | 6  | **Decline**   | <one line: why it is a false positive> |
 ```
 
 The three verdicts, and what each obliges you to do:
@@ -60,9 +60,14 @@ The three verdicts, and what each obliges you to do:
   reason.** A defer with no issue is a decline wearing a nicer word.
 - **Decline** — do not do it. Say why, once, and move on.
 
-Score the four dimensions (Severity · Validity · Effort/Risk · Alignment) against the anchors in the
-`pr-response` skill, apply its two override rules explicitly, and never round a score to reach the
-verdict you already wanted.
+Score the five dimensions (Severity · **Reach** · Validity · Effort/Risk · Alignment) against the
+anchors in the `pr-response` skill, apply its three override rules explicitly, and never round a
+score to reach the verdict you already wanted.
+
+**Severity and Reach are separate on purpose** (rubric v2): Severity is how bad it is *if hit*,
+Reach is whether it can be hit at all. A confirmed blocker in code that cannot execute keeps its
+Severity 3 and takes Reach 0 — it defers on the honest numbers instead of being talked down. And a
+real defect in dead code is always a **Defer with an issue**, never a Decline: dead code comes back.
 
 ## Rounds are append-only
 
@@ -75,12 +80,26 @@ and does not re-argue a finding it already declined with a reason the reviewer a
 
 The `adversarial-review` and `pr-response` skills open the reviews and replies they post with an
 HTML-comment marker (named, not written out here: `waffle-adversarial-review` and
-`waffle-pr-response`). Those markers are **load-bearing machinery**, not decoration — the CI hooks
-match them with `startswith()` to decide whether a head commit has already been reviewed, whether a
-review was actually delivered, and whether to dispatch a paid response run.
+`waffle-pr-response`). They are how a **human** tells a bot post from a human one at a glance, and
+how each skill recognizes its **own** prior posts — a `pr-response` run reads them to recover the
+verdict history it has already given, so a marker in someone else's body muddles that record.
 
-So: **write your review body without them.** A hand-pasted review marker makes the pr-green hook
-believe this commit is already reviewed (the bot's own review is then skipped) and can dispatch a
-paid pr-response run at the same time. The skills emit their own markers automatically; a human
+So: **write your review body without them.** The skills emit their own markers automatically; a human
 review needs none, and the automation handles an unmarked human review just fine — run
 `/pr-response` by hand to answer one.
+
+**This is a safety rule, not hygiene.** What changed in #338 is *which half* of the system it
+protects, not whether it matters.
+
+- **CI no longer reads bodies.** pr-green's dedup and delivery check key on a
+  `waffle/adversarial-review` **commit status**, pr-response's delivery check on a
+  `waffle/pr-response` status, and its loop bound on a **label the workflow applies**. All take repo
+  push access to write, so a pasted marker can no longer suppress the bot's review or dispatch a paid
+  run — which is exactly what it *could* do before (a human comment on PR #207 and a QA review on
+  PR #296 each did it by quoting a literal in prose).
+- **The skills and `autopilot` still do.** `autopilot` decides which findings have been triaged, and
+  then **arms auto-merge**; the skills recognize their own prior posts. A pasted marker still muddles
+  that record — and on the merge path a body that reads as *"already triaged"* is how findings get
+  merged with nobody having answered them.
+
+So the rule stands, and it is now guarding the more expensive failure, not the cheaper one.

@@ -31,6 +31,165 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **CI hooks key delivery and idempotency on out-of-band signals, never on a marker pasted in prose
+  (#338, closes #333).** Both review hooks decided "the bot did a thing" by string-matching a marker
+  literal inside a **free-text body anyone can write**. #211, #332 and #333 are not three bugs but
+  three faces of that one mechanism: a human comment on PR #207 read as "the bot already replied", and
+  a QA review on PR #296 read as "this head is already reviewed" **and** "this IS the bot's review" —
+  so the security review silently never ran while a paid, *committing* job dispatched on the QA review.
+  Each previous fix only *narrowed* the match (bare word → full literal → marker-**led**), and a
+  marker-led body is still prose: a human can type a marker on line 1 as easily as at offset 1103.
+  The mechanism is now gone rather than narrowed. Every predicate keys on an artifact that takes
+  **repo push access** to write, and **no hook reads a body**:
+  - **pr-green** — its dedup gate and its delivery check both key on a `waffle/adversarial-review`
+    **commit status** on the reviewed head SHA, which the harness writes once its review lands.
+  - **pr-response** — its **trigger** moves from `pull_request_review` to `workflow_run` on
+    `waffle-pr-green-hook`, so a review body cannot raise the event *at all*; its delivery check keys
+    on a `waffle/pr-response` commit status; and its **loop bound** becomes a per-PR **label the
+    workflow applies before the paid dispatch**.
+  - **A commit status, not the check run the issue proposed.** Creating a check run is
+    GitHub-App-only ("OAuth apps and authenticated users are not able to create a check suite") and
+    the harness may authenticate with a PAT (`WAFFLE_HYGIENE_TOKEN`) — so a check run would be
+    uncreatable in the *recommended* configuration. A status needs only push access and is otherwise
+    identical: keyed to the SHA, structured, visible in the checks list, unforgeable without repo
+    write. Always written `state=success`, so it never reddens the rollup.
+  - **The loop bound got tighter, not looser.** It is a *label* rather than a status because a rebase
+    or force-push would orphan a status and silently **re-arm** the paid loop. And the *workflow*
+    claims it **before the money** — so a harness that crashes, times out, or is denied its tools is
+    still bounded, where the old marked-comment bound simply went unset and the next review
+    re-dispatched.
+  - The markers **stay** in review/reply bodies — they are how a human recognizes a bot post and how
+    the skills recognize their own — and the **do-not-paste rule stands**: no *workflow* reads them,
+    but the *skills and `autopilot` still do*. The prose-to-prose coupling (a workflow's
+    `jq startswith()` depending on a SKILL.md sentence to a model) is gone: both ends of the contract
+    are now code in the workflow, and pinned by tests that feed the real #296 and #207 bodies through
+    every predicate.
+- **The same discipline now covers the local skill path, which is where it actually bites (#338).**
+  CI was only half the system. `autopilot` decided *"have these findings been triaged?"* — and then
+  **armed auto-merge** — by substring-matching a marker in a comment body, and `qa` proved its own
+  review had posted the same way. So a comment that merely *quoted* a marker read as "already
+  triaged", the responder was never spawned, and a PR could merge with findings nobody answered.
+  That is a strictly worse failure than the CI one it mirrors, because it ships code.
+  - `qa`, `adversarial-review` and `pr-response` each now write a **commit status**
+    (`waffle/qa`, `waffle/adversarial-review`, `waffle/pr-response`) on the head SHA they acted on,
+    **after** their post lands — on *every* path, local runs included, not just when CI's dispatch
+    prompt asks for one.
+  - `autopilot`'s triage gate and both convergence gates key on the `waffle/pr-response` status on
+    the **review's own head SHA**, never on a comment body. Fail-closed: no status ⇒ untriaged ⇒
+    spawn the responder.
+  - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
+    read is best-effort by design: getting it wrong costs a redundant round, while getting the
+    *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **The cutoff is persisted and recovered, never recomputed (#354, QA round 5).** The round-4 fix
+  told a responder that had lost the cutoff to *"re-run the command above"*. Re-running it at the
+  status-write step recomputes **"the newest review as of now"** — which includes any review that
+  landed *while the responder was working*: never read, never scored, not in the verdict table.
+  Stamping that certifies a finding nobody disposed of, and auto-merge is armed over it. **The format
+  guard is powerless here by construction:** a recomputed timestamp is a perfectly well-formed
+  ISO-8601 value and sails through the regex — it validates a *shape*, and this cutoff is well-formed
+  and simply **untrue**. A model following the instruction *correctly* produced the bug, which makes
+  it a spec defect rather than a model failure. **The cutoff is a fact about *when you read*, so it
+  cannot be recovered by reading again**: `pr-response` now persists it to a per-PR scratch file with
+  the `Write` tool and recovers it with `Read` (a pair that crosses the same `Bash`-call boundary
+  that kills a shell variable), and the only sanctioned fallback is the newest `submitted_at` **among
+  the reviews in its own verdict table** — never "whatever is newest now".
+- **The triage gate validates the cutoff's format, and the cutoff is written as a literal (#354, QA
+  round 4).** Two bugs in the round-3 plumbing, failing in **opposite** directions:
+  - **The writer could never deliver the cutoff (fail-closed).** The skill captured `CUTOFF=$(…)`
+    when it read the findings and spent `$CUTOFF` when it wrote the status — but those are **two
+    different shells**. The agent harness persists the working directory between `Bash` calls and
+    **not** shell state, and the status is written many tool calls later (after scoring, fixing, the
+    pre-flight, the push and the reply). So every status was stamped `triaged-through=` with nothing
+    after it, and the gate read *every* review as untriaged: the cutoff mechanism was **silently
+    inert**, and an always-untriaged gate is indistinguishable from a working one. The cutoff is now
+    a **literal** the responder substitutes from what it read (a compound `CUTOFF=$(…); gh api …` is
+    not the escape hatch — CI's allowlist matches on the leading program and rejects compounds, so
+    the literal is the only form that works on both paths). The same slip is called out in `qa` and
+    `adversarial-review`, which hand `$REVIEW_ID` and the head SHA across the same boundary.
+  - **The reader trusted the writer's format (fail-OPEN).** The gate checked only
+    `startswith("triaged-through=")` and compared whatever followed as a **raw string** — but ISO
+    dates begin with a digit, so any token sorting above ASCII digits (`now`, `null`, `unknown`)
+    certified **every review on that head**, including one submitted in 2099. The skill promised
+    *"no parseable cutoff ⇒ untriaged ⇒ fail closed"* and did not keep it. The gate now validates
+    `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$` before comparing. **The reader must
+    not trust the writer's format**: the status is unforgeable, but the string inside it is prose a
+    model was told to emit — which is the one place this design was still trusting prose.
+  - **The gate is now tested by being EXECUTED, not by being grepped.** The jq predicate is extracted
+    from `autopilot/SKILL.md` and run against real status payloads (valid, empty, malformed, stale,
+    wrong-context, wrong-state, null). No text assertion can tell a working gate from an inert one —
+    which is precisely how both bugs above shipped past a green suite.
+- **The triage gate certifies the responder's READ CUTOFF, not its finish time (#354, QA round 3).**
+  Comparing the status's own `created_at` against a review's `submitted_at` closes the *early*-write
+  hole but leaves the other end open, and that end is inherent to writing the status last.
+  `pr-response` reads the findings at the **start** of a run and stamps the status at the **end** —
+  score, fix, pre-flight, push, reply, some **15–20 minutes**. A review landing *inside* that window
+  is never seen by the responder, yet its status is stamped later than that review, so a clock-based
+  gate calls it **triaged by a run that never read it** — and autopilot arms auto-merge over it. The
+  window is not exotic: the gate exists precisely to catch *another gate's* review and *a human's*,
+  and a hook-armed `pr-green` posts adversarial reviews asynchronously on green — a designed-for
+  concurrent producer landing straight into it. **A clock reading taken after a finding cannot certify
+  that finding.** `pr-response` now captures `$CUTOFF` (the newest `submitted_at` it saw *when it
+  read*) and stamps it into the status as `description=triaged-through=<ISO-8601>`; the gate triages a
+  review **iff** a status on its `commit_id` carries a cutoff **at or after** its `submitted_at`. A
+  review that lands mid-run reads as untriaged, earns its own round, and that round writes a new
+  status whose later cutoff covers it — self-healing, and no new signal: a status description takes
+  push access to write, exactly like the status. Fail-closed on a missing or unparseable cutoff.
+  (Re-reading the reviews just before stamping was the other candidate; it only *narrows* the window
+  to the gap between re-read and write rather than closing it.)
+- **The triage gate compares timestamps, not mere existence — an existence test merged over live
+  findings (#354, QA round 2).** The first cut keyed triage on *"is there a `waffle/pr-response`
+  status on this review's head SHA?"*. But a status certifies a **SHA**, while findings belong to a
+  **review**, and the two diverge on the most ordinary outcome there is — **the last responder
+  deferred everything**: it implements 0, pushes nothing, the head does not move, and the status it
+  leaves behind silently **pre-triages the next review to land on that head**. Step 5 converges,
+  Step 6's `adversarial-review` posts real holes onto the same head, the gate reads them as already
+  triaged, the responder never spawns, and autopilot **arms auto-merge over undisposed findings** —
+  the exact failure the status was introduced to prevent, reintroduced by its own fix. A review is
+  now triaged **iff** a `waffle/pr-response` success status on its `commit_id` was created **after**
+  its `submitted_at`. Both are plain API fields, neither is a body, and forging either still takes
+  push access — so nothing about #338's thesis is given up.
+- **A delivery check may never read back its own status (#354, QA round 2).** `qa` and
+  `adversarial-review` wrote their status and then "verified delivery" by reading *that same status*
+  back — **self-attesting**: it proves a status was written (trivially true, one line later) and
+  never observes the review at all, so an errored review POST still reported *clean and delivered*
+  with nothing on the PR. The only thing binding the status to the review was a sentence in a
+  SKILL.md telling a model to write it afterwards — **the prose-to-prose coupling #338 abolished in
+  CI, reintroduced one layer down.** Each skill now reads back the **artifact itself** (the review,
+  by the id its POST returned; for `pr-response`, the comment). The status remains the *consumers'*
+  signal for triage and dedup — it is simply no longer evidence for the writer.
+- **`pr-response` rubric bumped to v2 — a fifth dimension, `Reach` (#354).** A rubric change
+  reinterprets every future verdict, so it is recorded here with its motivating evidence, per the
+  skill's own recalibration rule.
+  - **The gap.** v1's `Severity` anchor asked *"what does it cost to leave this unaddressed?"*, which
+    silently mixed **impact if hit** with **whether it can be hit at all**. So v1 had no way to say
+    *"this bug is real and serious, and it cannot execute."*
+  - **How it surfaced.** On this PR, a confirmed defect left a CI hook unable to fire on any PR. By
+    the Severity-3 anchor it was a blocker, and v1's blocker-override (`Severity 3 + Validity 3`)
+    would have **forced** an immediate fix — but the hook is opt-in, inert, and in a deprioritized
+    subsystem, so deferring was correct. The only way v1 could express that was to score Severity
+    **2**: talking the bug down to move the verdict. That is laundering a judgment, and it leaves a
+    false number in the very dataset the next recalibration reads.
+  - **The fix.** `Severity` now means *how bad if hit* (a blocker stays 3 even in dead code) and
+    **`Reach`** means *can it be hit, and by what* (0 = dormant · 3 = gates merges, ships code,
+    spends money, touches secrets). Composite is 0–15; thresholds rescale proportionally
+    (**≥10** Implement · **5–9** Defer · **≤4** Decline). The blocker-override gains a `Reach ≥ 2`
+    clause, and a new floor says a **real defect in dead code is a Defer with an issue, never a
+    Decline** — dormancy schedules the fix rather than forgetting the bug.
+  - **Old replies stay scored against the rubric that produced them.** Every reply names its version;
+    a v1 reply's four numbers are not comparable to a v2 reply's five.
+- **Known defect, recorded rather than advertised away:** `waffle-pr-response-hook` does **not**
+  currently dispatch on any PR. At the second `workflow_run` hop, `head_sha` is the default branch's
+  tip rather than the PR head, so the gate resolves no PR and always skips. The signal design above
+  is correct but, in the hook, **unexercised**. Tracked as a follow-up; the hook header carries the
+  measurement and the fix sketch.
+  - **Consumer impact:** re-render. New config key `prResponse.responseLabel` (default
+    `waffle:pr-response`, additive — no migration). **If you installed the pr-response hook, create
+    that label** (`gh label create 'waffle:pr-response'`): the loop bound is fail-closed, so without
+    it the job reds rather than dispatching an unbounded run (`doctor` reports it as an unmet
+    prerequisite). Its job now also takes `statuses: write` (still **no** `issues: write`), and
+    pr-green takes `statuses: write`.
+
 ### Added
 - **Issue, PR, and review templates — a hand-filed issue now lands in the shape the automation
   already assumes (#337).** The `issue` skill drafts every issue into Problem / Proposed Solution /

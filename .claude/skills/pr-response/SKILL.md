@@ -21,7 +21,10 @@ rather than guessing whether it was even read.
 
 Score honestly. The rubric exists to make your judgment legible and **recalibratable** — not to
 launder a decision you already made. If a finding is a true blocker, a low score means the rubric
-is wrong, not the finding; say so (see [Recalibrating the rubric](#recalibrating-the-rubric-v1)).
+is wrong, not the finding; say so (see [Recalibrating the rubric](#recalibrating-the-rubric-v2)).
+If you catch yourself shading one dimension down to move a verdict you have already decided, **stop
+and name the dimension you are actually missing** — that is the bug, and v2 exists because it went
+unnamed once.
 
 This is the consuming side of `adversarial-review`: that skill *produces* findings on a green PR,
 this one *disposes* of them.
@@ -66,6 +69,57 @@ Issue-style comments on the PR conversation can also carry findings:
 gh api "repos/$OWNER/$REPO/issues/$N/comments" --jq '.[] | {id, user: .user.login, body}'
 ```
 
+**Read your cutoff right here** — the newest `submitted_at` among **all** reviews on the PR at the
+moment you read them:
+
+```bash
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[].submitted_at' | sort | tail -1
+```
+
+It prints one timestamp, e.g. `2026-07-12T23:03:42Z`. **Persist it now, with the `Write` tool**, to a
+per-PR scratch file — for PR 354, the literal path `/tmp/waffle-cutoff-354.txt`:
+
+```
+/tmp/waffle-cutoff-<N>.txt      ← one line: 2026-07-12T23:03:42Z
+```
+
+Step 6 recovers it from that file with the **`Read` tool** and pastes it as a literal. That is the
+whole mechanism, and each half of it is load-bearing.
+
+> [!WARNING]
+> **Do not assign it to a shell variable.** `CUTOFF=$(…)` here and `…$CUTOFF` in step 6 are **two
+> different shells**: the agent harness persists the working directory between `Bash` calls but
+> **not shell state** — variables, exports, functions all die with the call. Step 6 runs many tool
+> calls later (after scoring, fixing, the pre-flight, the push and the reply), so `$CUTOFF` expands
+> to **empty**, the status is written as `triaged-through=` with nothing after it, and the gate reads
+> it as *no cutoff* — **untriaged, for every review, forever.** The mechanism silently does nothing,
+> and it looks exactly like a mechanism that works. A file written by `Write` and read by `Read`
+> crosses that boundary precisely because it is **not** shell state.
+>
+> **A compound is not the escape hatch either.** `CUTOFF=$(…); gh api …` in one call would work
+> locally but is **denied in CI**: the allowlist matches on the leading program, so a compound
+> matches no `Bash(gh api:*)` pattern and the status never posts. The literal is the only form that
+> works on **both** paths.
+>
+> **And if you lose the value, DO NOT RE-RUN THE QUERY ABOVE.** Re-running it at step 6 recomputes
+> *"the newest review as of now"* — which **includes any review that landed while you were working**,
+> and that review was never read, never scored, and is not in your verdict table. Stamping it would
+> certify a finding nobody triaged, and **auto-merge would be armed over it**. The format guard cannot
+> save you here: a recomputed timestamp is *perfectly well-formed* and simply **untrue**.
+>
+> **The cutoff is a fact about WHEN YOU READ. It cannot be recovered by reading again.** If the
+> scratch file is gone, the only safe recovery is the newest `submitted_at` **among the reviews in
+> your own verdict table** — the ones you actually triaged. Never *"whatever is newest now"*, and
+> never an improvised token (`now`, `unknown`, `null`): those sort *above* ASCII digits and would
+> certify **every** review on the head (the gate now rejects them, but do not lean on the reader to
+> cover for the writer).
+
+That one value is what your delivery status will certify (step 6): *"I read every review submitted up
+to this cutoff."* It is **not** the time you finish — a review can land while you are scoring, fixing
+and pushing, and a status stamped with a completion time would certify a review that never crossed
+your desk. Take it from GitHub's own timestamps, not a local clock, so no skew can push it forward.
+If the PR carries no reviews yet, there is nothing to triage — stop.
+
 Then **enumerate the findings** as discrete, individually-decidable items. One review body listing
 four bullets is **four findings**, not one. Give each a stable number (`F1`, `F2`, …) and carry
 that number through scoring, the commits, and the reply.
@@ -79,34 +133,48 @@ Before you score, **read the code each finding names**. A finding is a claim abo
 cannot judge its Validity from the comment text alone. Open the file, trace the call path, and
 check whether the claimed failure is real.
 
-## 3. Score each finding — rubric v1
+## 3. Score each finding — rubric v2
 
-Score every finding **0–3 on four dimensions**. The anchors are the contract; use them literally.
+Score every finding **0–3 on five dimensions**. The anchors are the contract; use them literally.
 
 | Dimension | Question | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|---|
-| **Severity** | What does it cost to leave this unaddressed? | Nothing — pure taste | nit — cosmetic, no behavior change | should-fix — real weakness, not merge-blocking | blocker — correctness bug, data loss, security hole, or untested load-bearing logic |
+| **Severity** | How bad is it **if it is hit**? | Nothing — pure taste | nit — cosmetic, no behavior change | should-fix — real weakness, not merge-blocking | blocker — correctness bug, data loss, security hole, or untested load-bearing logic |
+| **Reach** | **Can it be hit at all**, and by what? | Dead — unreachable, or an opt-in nobody has installed; no run can execute it today | Latent — a rare path, an unset flag, or a doc a maintainer may act on later | Live — most runs reach it | Live on a **critical path** — it gates merges, ships code, spends money, or touches secrets |
 | **Validity** | Is the finding actually correct? | False positive — the code already handles it | Speculative — no concrete failure or call site named | Plausible — likely right, not fully confirmed | Confirmed — you traced it and reproduced the reasoning |
 | **Effort/Risk** | What does the fix cost, and what could it break? *(inverted — low cost scores high)* | Large + risky — redesign, or touches load-bearing code with thin tests | Substantial — a day's work, or a wide blast radius | Moderate — contained change, tests exist | Trivial — a few lines, obviously safe, covered by tests |
 | **Alignment** | Does the fix match repo intent, conventions, and owner wishes? | Contradicts a documented decision or the PR's stated scope | Tangential — unrelated to this PR's purpose | Consistent with repo conventions | Directly advances the PR's stated intent or a documented convention |
 
-**Composite** = the four scores summed, 0–12:
+**Severity and Reach are a pair, and keeping them apart is the point of v2.** Severity is *impact if
+hit*; Reach is *exposure*. v1 had only Severity, so a defect that could never execute and one that
+gates every merge scored identically — and the only way to record "real bug, dormant code" was to
+talk Severity down, which is laundering a judgment, not making one. Score the bug honestly on
+Severity, and let Reach carry the dormancy.
+
+**Composite** = the five scores summed, 0–15:
 
 | Composite | Verdict | Meaning |
 |---|---|---|
-| **≥ 8** | **Implement** | Fix it in this PR, now. |
-| **4–7** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
-| **≤ 3** | **Decline** | Do not do it. Say why, once, and move on. |
+| **≥ 10** | **Implement** | Fix it in this PR, now. |
+| **5–9** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
+| **≤ 4** | **Decline** | Do not do it. Say why, once, and move on. |
 
-Two rules that override the arithmetic — apply them **explicitly**, never silently:
+Three rules that override the arithmetic — apply them **explicitly**, never silently:
 
-- **A confirmed blocker is always Implement.** If `Severity = 3` and `Validity = 3`, implement it
-  even when Effort/Risk drags the composite under 8. Note the override in the reason.
+- **A confirmed blocker on live code is always Implement.** If `Severity = 3`, `Validity = 3` **and
+  `Reach ≥ 2`**, implement it even when Effort/Risk drags the composite under 10. Note the override
+  in the reason. (v1 omitted the Reach clause, which would have forced a dormant, unreachable bug
+  to be fixed on the spot — see the CHANGELOG note for v2.)
 - **A false positive is always Decline.** If `Validity = 0`, decline regardless of Severity — the
   cost of a bug that does not exist is zero. Note the override in the reason.
+- **A real defect in dead code is a Defer, never a Decline.** If `Validity ≥ 2` and `Reach = 0`, the
+  verdict floor is Defer **with a filed issue**, whatever the arithmetic says. Dead code comes back
+  to life, and the evidence — the measurements, the repro, the reason — is never cheaper to
+  reconstruct than it is to write down now. "It cannot fire today" is a reason to schedule the fix,
+  not to forget the bug.
 
 Record every score, even for declines. The scores are the dataset that makes the thresholds
-tunable; a verdict without its four numbers is exactly the invisible judgment this skill exists to
+tunable; a verdict without its five numbers is exactly the invisible judgment this skill exists to
 replace.
 
 ## 4. Confirm the plan
@@ -164,25 +232,41 @@ marker is how this skill (and any automation wrapping it) recognizes its own rep
 rounds](#when-called-by-agents)).
 
 > [!IMPORTANT]
-> **The first-line placement is LOAD-BEARING — it is not a formatting convention you may relax.**
-> `waffle-pr-response-hook`'s delivery check matches the marker with jq **`startswith()`**, so it
-> asks whether the reply *begins* with the marker, not whether it merely contains one. A marker
-> moved off line 1 — behind a heading, a blank line, a BOM — makes any run that was denied a **hard**
-> (delivery-class) tool call red as "the response did NOT post", even though the reply is sitting
-> right there on the PR. (A run with only soft, read-only denials never reds either way — the red
-> path is gated on a hard denial *and* `delivered != 1`.) Nothing but this paragraph enforces the
-> coupling: it is prose-to-prose, and no test can pin a skill's output shape against a workflow's
-> predicate. (The sibling `adversarial-review` skill carries the same rule for the same reason.)
+> **No *workflow* keys on this marker (#338) — but the *skills and autopilot still do*. Never paste
+> the raw literal into a body.** The distinction is the whole rule, and getting it backwards is how a
+> PR merges with findings nobody triaged.
 >
-> **Never paste the raw marker literal into the middle of a body, either.** This skill writes verdict
-> tables *about* findings, so on a PR that touches the hooks it will be tempted to quote the marker in
-> prose. The hook's **loop bound** still matches a quoted literal as a substring — and it counts the
-> comments **on the PR being replied to** (`issues/{N}/comments`, so the effect is strictly *per-PR*;
-> a literal quoted on PR X cannot bound PR Y). The hazard therefore lands on **the PR the comment
-> lives on**: any comment carrying the literal — anywhere in its body — makes that PR look already
-> answered, so if it arrives *before* the automated reply does, that PR silently forfeits its one
-> reply. Name the marker, or break the literal, rather than pasting it. Your own reply's **leading**
-> marker is exempt in effect: it is the reply, so bounding the loop is exactly what it should do.
+> What no longer reads a body: **CI**. `waffle-pr-response-hook` keys its **delivery check** on a
+> `waffle/pr-response` **commit status** and its **loop bound** on a **label the workflow applies**
+> before it spends a token; `waffle-pr-green-hook` keys its dedup and delivery on a
+> `waffle/adversarial-review` status. All take repo push access to write, so no body text can forge
+> them.
+>
+> What still reads a body — **the path that merges code**:
+> - **`autopilot` gates triage on it.** It spawns the responder for findings no marked reply has
+>   disposed of, and converges → **arms auto-merge** when nothing is left to triage.
+> - **This skill's cold-start recovery reads it** to recover verdict history and F-numbering.
+> - **`adversarial-review` and `qa` recognize their own prior posts by theirs.**
+>
+> So a comment that merely *quotes* a marker can still read as *already triaged* — and this skill
+> writes verdict tables **about** markers, on exactly the PRs where that is most likely. **Name the
+> marker, or break the literal; never paste it.** Your own reply's *leading* marker is exempt: it is
+> the reply.
+>
+> The failure directions differ, and that is why the rule is asymmetric rather than absolute. A
+> body-read for **history recovery** can only cost a redundant round or a renumber — cheap, visible,
+> fail-safe. A body-read for **"has this been triaged?"** costs a silent merge over live findings. So
+> the *gates* key on commit statuses (below); only history recovery reads prose, and it is
+> best-effort by construction.
+>
+> That is the point of #338, and the old design is a trap that will look reasonable again. The hooks
+> used to decide "the bot did a thing" by string-matching this literal inside a free-text body anyone
+> can write: a human comment (PR #207, literal at offset 1084) and a QA review (PR #296, offset 1103)
+> that merely *quoted* it read as "the bot already replied" and "this head is already reviewed" — the
+> second silently suppressing the security review. Tightening the match (bare word → full literal →
+> marker-*led*) only shrank the target; a marker-led body is still prose. If anything needs to know
+> that this skill did something, it asks GitHub for an artifact that takes push access to write —
+> never parses a body.
 
 **Append. Never edit a previous reply.** A second round posts a **new** comment; it does not
 rewrite the last one:
@@ -243,6 +327,91 @@ round's body, an empty or truncated file — **stop and do not post**: rewrite i
 The marker makes a wrong-PR reply indistinguishable from a real one, and these replies are the
 paper trail this skill exists to produce.
 
+### After the reply lands — emit the delivery signal
+
+**Once the reply has posted, and only then**, write a `waffle/pr-response` **commit status** on the
+head SHA you responded to — carrying **the cutoff you read in step 2, pasted as a literal**:
+
+```bash
+gh api --method POST "repos/$OWNER/$REPO/statuses/<head-sha>" -f state=success -f context=waffle/pr-response -f "description=triaged-through=2026-07-12T23:03:42Z"
+```
+
+**Recover the cutoff with the `Read` tool** — `/tmp/waffle-cutoff-<N>.txt`, the file step 2 wrote —
+and **substitute both literals**: the head SHA, and that timestamp.
+
+**Never write `$CUTOFF` here**: that variable belonged to a shell that exited many tool calls ago, it
+expands to empty, and an empty cutoff makes the gate read *every* review on this head as untriaged —
+the whole mechanism silently inert (F10).
+
+**And never re-run step 2's query to "recover" it.** Re-running it *now* returns the newest review
+**as of now**, which includes anything that landed while you were scoring, fixing and pushing — a
+review you never read and never triaged. That cutoff is well-formed, sails through the gate's format
+check, and **certifies a finding nobody disposed of** (F12). If the scratch file is gone, use the
+newest `submitted_at` **among the reviews in your verdict table** — the ones you actually triaged.
+The cutoff is a fact about *when you read*; it cannot be recovered by reading again.
+
+The description format is **exact and machine-read** — `triaged-through=<ISO-8601 UTC>`, nothing else
+in it. Consumers parse it, and the gate validates it against
+`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`: prose there, or an improvised token, is
+rejected and the head reads as untriaged.
+
+This is **this skill's delivery signal, on every path** — a local `/pr-response` run emits it exactly
+as a CI-dispatched one does. It is not a CI implementation detail you may skip when a human invoked
+you.
+
+Everything that needs to know *"were this head's findings triaged?"* reads that status and nothing
+else: `waffle-pr-response-hook`'s delivery check, and — critically — **`autopilot`'s triage gate,
+which arms auto-merge**. A commit status takes repo **push access** to write, so no comment body can
+forge one; that is the entire reason the gate keys on it instead of on a marker in prose (#338).
+
+> [!IMPORTANT]
+> **The status must certify *what you disposed of*, not *when you finished*.** This is why it carries
+> a cutoff rather than relying on its own `created_at`.
+>
+> You read the findings at the **start** of the run and write the status at the **end** — score, fix,
+> pre-flight, push, reply. That is a **15–20 minute window**, and the design *expects* concurrent
+> reviewers: a hook-armed repo's `pr-green` posts adversarial reviews asynchronously on green, and a
+> human reviewing while you work is the ordinary case. So a review `B` can land on your head **after
+> you read but before you stamp**.
+>
+> A gate keyed on the status's own `created_at` would then compare `created_at(B's status) >
+> submitted_at(B)` → **true** → `B` reads as **triaged**, by a run that never saw it. The responder
+> never spawns for `B`, nothing is "left to triage", and autopilot **arms auto-merge over B's
+> findings**. A clock reading taken *after* a finding cannot certify that finding.
+>
+> The cutoff fixes it exactly: `triaged-through=$CUTOFF` asserts *"I read every review submitted up to
+> `$CUTOFF`"*. `B.submitted_at > $CUTOFF`, so `B` reads **untriaged** and earns its own round — which
+> then writes a **new** status with a later cutoff that does cover it. Self-healing, and it needs no
+> new signal: a status description takes push access to write, exactly like the status itself.
+>
+> Re-reading the reviews just before stamping is **not** sufficient — it narrows the window to the gap
+> between that re-read and the write, rather than closing it. Certify the cutoff instead.
+
+Five rules, each load-bearing:
+
+- **Only after the reply is actually on the PR — and prove that independently.** The status asserts
+  *"the findings on this head were disposed of"*. Writing it first, or writing it when the post
+  failed, is a lie that arms a merge. **Do not "verify" the reply by reading your own status back**:
+  that is self-attesting — it proves you wrote a status, not that a reply exists. Read back the
+  **comment** the post returned (`gh api "repos/$OWNER/$REPO/issues/comments/<id>"`, using the id from
+  `gh pr comment`'s output URL), and only then write the status.
+- **Your status's CUTOFF is the gate — not its existence, and not its `created_at`.** `autopilot`
+  triages a review only when a `waffle/pr-response` status on that review's `commit_id` carries a
+  `triaged-through` **at or after that review's `submitted_at`**. So the cutoff must be the moment you
+  **read** the findings, never the moment you finished. Stamping a later cutoff than you actually read
+  — or padding it "to be safe" — silently pre-triages reviews you never saw, and autopilot will arm
+  auto-merge over them. **Under-claiming is safe; over-claiming merges live findings.**
+- **Against the SHA you responded to**, even if the fixes you pushed have since moved the head. The
+  status marks *the head whose findings you triaged*. That is what makes convergence work: a review on
+  a new head has no status at all, so it reads as untriaged and earns another round — and so does a
+  **later** review on the *same* head, which is the case that matters both when you implement 0 and
+  push nothing, and when a review lands mid-run.
+- **Fail closed.** If the reply POST errors, or its read-back finds no comment, or the status POST
+  errors, say so and do **not** report success — an untriaged PR that *looks* triaged is the one
+  failure this skill must never produce.
+
+`$HEAD_SHA` is the head at the time you read the findings: `gh pr view "$N" --json headRefOid -q .headRefOid`.
+
 ### Label each round
 
 A round's comment should say which round it is and what it is answering, so the trail reads in
@@ -256,25 +425,30 @@ what stitches them together (see step 3 and the resumption rules).
 <!-- waffle-pr-response -->
 **PR response** — 4 findings: 2 implemented, 1 deferred, 1 declined.
 
-| # | Finding | Sev | Val | E/R | Align | Score | Verdict |
-|---|---|:---:|:---:|:---:|:---:|:---:|---|
-| F1 | `parseRange` returns the wrong bound on empty input | 3 | 3 | 3 | 3 | 12 | **Implement** |
-| F2 | No test for the `null`-config branch in `load.ts` | 2 | 3 | 3 | 3 | 11 | **Implement** |
-| F3 | `flush()` swallows the write error | 2 | 2 | 1 | 2 | 7 | **Defer** |
-| F4 | Rename `tmp2` to something meaningful | 1 | 1 | 3 | 1 | 6 | **Defer** |
-| F5 | `withTempDir` is already reimplemented here | 1 | 0 | 2 | 1 | 4 | **Decline** |
+| # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
+| F1 | `parseRange` returns the wrong bound on empty input | 3 | 3 | 3 | 3 | 3 | 15 | **Implement** |
+| F2 | No test for the `null`-config branch in `load.ts` | 2 | 2 | 3 | 3 | 3 | 13 | **Implement** |
+| F3 | `flush()` swallows the write error | 2 | 2 | 2 | 1 | 2 | 9 | **Defer** |
+| F4 | The retry cap is wrong in the disabled `legacy-sync` path | 3 | 0 | 3 | 1 | 1 | 8 | **Defer** |
+| F5 | Rename `tmp2` to something meaningful | 1 | 1 | 1 | 3 | 1 | 7 | **Defer** |
+| F6 | `withTempDir` is already reimplemented here | 1 | 1 | 0 | 2 | 1 | 5 | **Decline** |
 
-- **F1 — Implement (12).** Confirmed: `input === ""` yields `[0, -1]`. Fixed in `a1b2c3d` with a
+- **F1 — Implement (15).** Confirmed: `input === ""` yields `[0, -1]`. Fixed in `a1b2c3d` with a
   regression test pinning the bound.
-- **F2 — Implement (11).** Confirmed the branch had no coverage. Test added in `d4e5f6a`.
-- **F3 — Defer (7).** Real, but surfacing the error changes the caller contract — out of scope for
+- **F2 — Implement (13).** Confirmed the branch had no coverage. Test added in `d4e5f6a`.
+- **F3 — Defer (9).** Real, but surfacing the error changes the caller contract — out of scope for
   this PR. Tracked in #201.
-- **F4 — Defer (6).** Fair nit; batched into the naming pass in #202.
-- **F5 — Decline (4).** False positive (Validity 0 → auto-decline): this is a different helper
+- **F4 — Defer (8).** A genuine blocker (Severity 3, Confirmed) in code that **cannot execute**:
+  `legacy-sync` is disabled and has no caller. Reach 0, so the blocker-override does not fire — but
+  a real defect in dead code is a **Defer with an issue**, never a Decline. Tracked in #203, with
+  the repro, so it is not rediscovered the day that path is re-enabled.
+- **F5 — Defer (7).** Fair nit; batched into the naming pass in #202.
+- **F6 — Decline (5).** False positive (Validity 0 → auto-decline): this is a different helper
   with a different cleanup contract; `withTempDir` does not unlink on error.
 
-Scored with pr-response rubric **v1** (Severity · Validity · Effort/Risk · Alignment, 0–3 each;
-≥8 Implement · 4–7 Defer · ≤3 Decline).
+Scored with pr-response rubric **v2** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+each; ≥10 Implement · 5–9 Defer · ≤4 Decline).
 
 — posted by the pr-response bot
 ```
@@ -289,9 +463,9 @@ Return a concise summary to the caller: the PR URL, the finding count by verdict
 of the posted reply. Call out any rule-override you applied (blocker-implement, false-positive
 decline) and any finding you could not score confidently.
 
-## Recalibrating the rubric (v1)
+## Recalibrating the rubric (v2)
 
-**This section is the point of the skill.** The rubric is a guess: four dimensions, equal weight,
+**This section is the point of the skill.** The rubric is a guess: five dimensions, equal weight,
 two thresholds. Review quality drifts (a bot gets better or noisier) and the repo's own bar drifts
 (a prototype hardens into a dependency). A fixed rubric therefore goes wrong slowly and quietly.
 The scores in every posted reply are the record that lets you notice, and this file is the one
@@ -303,17 +477,48 @@ place to change it.
 |---|---|---|
 | Deferred/declined findings keep coming back as real bugs | Thresholds too high, or Severity anchors too generous | Lower the Implement threshold, or raise Severity anchors |
 | Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise the Implement threshold, or down-weight Effort/Risk |
-| Everything scores 6–8 and lands on Defer | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
+| Everything scores 7–10 and lands on Defer | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
 | Declines are argued down by the author every time | Alignment is being scored by the responder's taste, not repo intent | Re-anchor Alignment on *documented* decisions only |
-| A whole class of finding has no dimension | The rubric is missing a dimension | Add one — and bump the version |
+| A dimension's score is being argued *around* rather than *with* — a scorer keeps having to distort dimension A to express something A does not measure | The rubric is missing a dimension, and the missing one is whatever the distortion was standing in for | Add it — and bump the version. **This is how v2 happened; see below.** |
+
+### What changed in v2, and why (the worked example)
+
+v1 had **four** dimensions and no way to say *"this bug is real and serious, and it cannot execute."*
+Severity's anchor asked "what does it cost to leave this unaddressed?" — which silently mixed **impact
+if hit** with **whether it can be hit at all**.
+
+On PR #354 that broke, visibly. A confirmed defect made an entire CI hook unable to fire on any PR —
+by the Severity-3 anchor a blocker, and v1's blocker-override (`Severity 3 + Validity 3`) would have
+**forced** it to be fixed on the spot. But the hook was opt-in, inert, and in a subsystem the owner
+had just deprioritized: fixing it *now* was the wrong call, and the owner said so. The only way v1
+could express that was to score Severity **2** — talking the bug down to move the verdict. That is
+laundering a judgment, not recording one, and it leaves a false number in the dataset the next
+recalibration reads.
+
+v2 splits the two questions:
+
+- **Severity** — how bad *if hit*. Score the bug honestly. A blocker stays a 3 even in dead code.
+- **Reach** — can it be hit *at all*, and by what. Dormant code scores 0; code that gates merges
+  scores 3.
+
+Rescored under v2, that finding is `Severity 3 · Reach 0 · Validity 3 · E/R 1 · Alignment 1 = 8` →
+**Defer**. Same verdict as v1 produced, but for the reason that is actually true, with the blocker
+recorded at full weight and the dormancy carried by the dimension that means dormancy. The
+blocker-override gained its `Reach ≥ 2` clause for the same reason, and the new *"real defect in dead
+code is a Defer, never a Decline"* floor exists so that dormancy schedules the fix instead of
+forgetting the bug.
 
 **How to change it:** edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
-truth; the rendered copies are generated output. Bump the version (`v1` → `v2`) in the rubric
+truth; the rendered copies are generated output. Bump the version (`v2` → `v3`) in the rubric
 heading, the reply footer, and here. Note the change and its motivating evidence in the repo's
-`CHANGELOG.md`, because a rubric change silently reinterprets every future verdict.
+`CHANGELOG.md`, because a rubric change silently reinterprets every future verdict — and **old
+replies stay scored against the rubric that produced them**, which is why every reply names its
+version. A v1 reply's four numbers are not comparable to a v2 reply's five; do not restate them.
 
 **Do not** tune per-PR. A rubric adjusted to make one uncomfortable finding go away is not a rubric.
-Change it on a pattern across runs, never on a single verdict you dislike.
+Change it on a pattern across runs, never on a single verdict you dislike. v2 cleared that bar only
+because the distortion was structural — the rubric had no dimension for the thing being decided —
+and not because anyone disliked the verdict, which v1 and v2 in fact agree on.
 
 ## When called by agents
 

@@ -1,5 +1,6 @@
 import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -758,11 +759,12 @@ describe('token spend telemetry (#227)', () => {
       const steps = tokenSteps(wfSource(name));
       assert.ok(steps.length > 0, 'no Record token spend step found');
       for (const step of steps) {
-        // Load-bearing: waffle-pr-response-hook keys its LOOP BOUND and delivery check on
-        // the substring `waffle-pr-response` appearing in ANY comment on the PR, and
-        // waffle-pr-green-hook dedups reviews on `waffle-adversarial-review`. Nothing the
-        // token step could put in its comment — hook labels, prose, warnings — may contain
-        // either literal, or a token comment would cap the response loop / fake a review.
+        // Hygiene, not safety, since #338: no hook keys a predicate on a comment body any more
+        // (the loop bound is a LABEL, delivery is a COMMIT STATUS), so a marker in this comment can
+        // no longer cap the response loop or fake a review. But the markers still mean "a bot wrote
+        // this" to a human and to the skills' own dedup, so the token comment must not impersonate
+        // one. Keeping the assertion also keeps the belt: if a body predicate is ever reintroduced,
+        // this collision class does not come back with it.
         assert.doesNotMatch(step, /waffle-pr-response/);
         assert.doesNotMatch(step, /waffle-adversarial-review/);
         // The row's hook label is a short word, never a waffle-* workflow name.
@@ -1436,25 +1438,38 @@ describe('gate loops: lazy-responder coherence + cold-start recovery (#297)', ()
     assert.match(qaStep, /including the PR's \*initial\* green/);
   });
 
-  test('disposal is read from the verdict table, not from the reply existing (F2)', () => {
-    // The lazy-spawn trigger keys on findings "no marked waffle-pr-response reply has disposed
-    // of" — but pr-response keeps EXACTLY ONE reply, PATCHed in place across rounds, whose table
-    // names no review or head. So a reply exists as soon as any responder has run, and disposal
-    // cannot be read off its presence. Concrete failure it guards (no hook needed): Step 5's cap
-    // hatch posts a fresh QA review with NO pr-response after it (item 2 routes it to Step 6's
-    // triage) over a PR whose earlier rounds already left a reply → a Step 6 round 1 that finds
-    // no holes would read "a reply exists, so nothing is untriaged", skip the responder, and arm
-    // the merge over the QA findings Step 5 handed it. The table is the record; the tie-break is
-    // to spawn.
+  test('triage state is the waffle/pr-response commit status, never a marked body (F2, #338)', () => {
+    // This gate USED to key on findings "no marked waffle-pr-response reply has disposed of" — a
+    // substring over a free-text body anyone can write. Any comment merely QUOTING the marker read
+    // as "already triaged", so the responder was never spawned and this skill went on to ARM
+    // AUTO-MERGE over findings nobody answered. Same mechanism as #296/#333, relocated onto the one
+    // path that ships code — which is why it now keys on an artifact that takes push access to
+    // forge, exactly as #338 did for CI.
+    //
+    // Concrete failure it still guards: Step 5's cap hatch posts a fresh QA review with NO
+    // pr-response after it (item 2 routes it to Step 6's triage) over a PR whose earlier rounds
+    // already left a marked reply → a Step 6 round 1 that finds no holes would read "a reply
+    // exists, so nothing is untriaged", skip the responder, and arm the merge over the QA findings
+    // Step 5 handed it. The status is HEAD-SCOPED, so a reply from an earlier head cannot satisfy
+    // it; the tie-break is still to spawn.
     for (const step of [qaStep, reviewStep]) {
-      assert.match(step, /verdict table/);
-      assert.match(step, /never from the reply's (mere )?existence/);
-      assert.match(step, /\*\*spawn the responder\*\*/);
+      assert.match(step, /waffle\/pr-response/);
+      assert.match(step, /commit status/i);
+      assert.match(step, /never (from )?a comment body/i);
+      assert.match(step, /spawn the responder/);
+      // The predicate it replaces must be gone from both loops.
+      assert.doesNotMatch(step, /no marked `?<!-- waffle-pr-response -->`? reply has yet disposed/i);
     }
-    assert.match(qaStep, /disposes only of the findings \*\*its verdict table records\*\*/);
+    // F7 tightened this from "no status" to "no QUALIFYING status" — existence alone is unsafe
+    // (see the timestamp test below). The fail-closed direction is what this pins.
+    // F9 restated the fail-closed clause around the cutoff: a status with no parseable cutoff, or a
+    // cutoff older than the review, is as good as no status at all.
+    assert.match(qaStep, /no status, no parseable cutoff, or a cutoff older than the review ⇒ UNTRIAGED ⇒ spawn the responder/i);
     assert.match(qaStep, /A redundant triage round costs one cheap round; a skipped one merges live findings/);
-    // Step 6 names the cap-hatch path that reaches it with an untriaged review and no responder.
+    // Step 6 names the cap-hatch path that reaches it with an untriaged review and no responder,
+    // and says plainly why a pre-existing reply proves nothing.
     assert.match(reviewStep, /no `pr-response` after it/);
+    assert.match(reviewStep, /proves nothing about \*this\* head/);
   });
 
   test('teardown covers the spawned set — a never-green PR spawned neither agent (F3)', () => {
@@ -1679,10 +1694,11 @@ describe('gate loops: cold-start signal is invocation-carried; triggers cover an
       assert.match(step, /has \*\*not\*\* converged/);
     }
     assert.match(qaStep, /A review is a trigger only when it \*\*carries findings\*\* — a bare approval, or a comment raising none, is nothing to triage/);
-    // …and disposal is still read from the verdict table, never from a marked reply existing.
+    // …and "untriaged" is decided by the head-scoped commit status, never by a marked reply
+    // existing (#338 — see the triage-state test above).
     for (const step of [qaStep, reviewStep]) {
-      assert.match(step, /verdict table/);
-      assert.match(step, /never from the reply's (mere )?existence/);
+      assert.match(step, /waffle\/pr-response/);
+      assert.match(step, /commit status/i);
     }
   });
 });
@@ -1708,15 +1724,27 @@ describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
 
   test('every review the skill posts carries its own dedup marker', () => {
     assert.match(md, /<!-- waffle-qa -->/);
-    // Delivery is verified against the marker and the skill fails closed on a missed post.
-    assert.match(md, /contains\("<!-- waffle-qa -->"\)/);
-    assert.match(md, /Fail closed/);
-    // #232 review: the delivery check is HEAD-scoped (a review's commit_id is the PR head at
-    // submit time) so an earlier round's review can never satisfy a later round's check in
-    // autopilot's multi-round loop, and paginated so a marked review past page 1 of the
-    // reviews endpoint is not read as a false 0.
-    assert.match(md, /select\(\.commit_id == /);
-    assert.match(md, /\/reviews" --paginate/);
+    assert.match(md, /Fail closed/i);
+  });
+
+  test('delivery is proved by reading the REVIEW back — not a body, not qa’s own status (#338)', () => {
+    // Two failure modes, one test, because the fix for the first produced the second:
+    //   (a) #296 — `select(.body | contains(<qa marker>))` over the reviews on the head: a tolerant
+    //       substring over free text. A human review that merely QUOTED the marker satisfied it, so
+    //       a qa run whose own POST was denied read a stranger's body as proof of its own delivery.
+    //   (b) F8 — "write a status, then read that status back" is SELF-ATTESTING: it proves a status
+    //       was written (trivially true, one line later) and never observes the review at all. An
+    //       errored review POST still reads back 1 → "clean and delivered", nothing on the PR.
+    // Only the review, read back by the id its POST returned, answers the question actually asked.
+    assert.match(md, /REVIEW_ID=\$\(gh api "repos\/\$OWNER\/\$REPO\/pulls\/\$N\/reviews" --method POST/, 'qa must capture the review id from its POST');
+    assert.match(md, /pulls\/\$N\/reviews\/\$REVIEW_ID/, 'qa must read the REVIEW back by id to prove delivery');
+    assert.match(md, /context=waffle\/qa/, 'qa must still WRITE its status — the consumers signal, just not its own proof');
+    assert.match(md, /Fail closed/i);
+    // #232 review, preserved through both mechanism changes: the check stays HEAD-scoped, so an
+    // earlier round's review can never satisfy a later round's check in autopilot's multi-round
+    // loop. The review's own commit_id and the status are both keyed to the SHA.
+    assert.match(md, /HEAD_SHA=\$\(gh pr view "\$N" --json headRefOid/);
+    assert.match(md, /commit_id/, 'the read-back must surface commit_id — head-scoping is load-bearing');
   });
 
   test('the adversarial-review marker literal NEVER appears in this skill', () => {
@@ -2818,10 +2846,11 @@ describe('issue / PR / review templates (#337)', () => {
   });
 
   test('REVIEW_TEMPLATE never spells the automation markers out in copy-pasteable form', () => {
-    // It is a template: whatever it contains, a human WILL paste into a review body. A pasted
-    // review marker convinces the pr-green hook this commit is already reviewed (so the bot's
-    // review is skipped) and can dispatch a paid pr-response run. Name the markers; never write
-    // them. This is the same rule the two skills impose on their own bodies.
+    // It is a template: whatever it contains, a human WILL paste into a review body. Since #338 a
+    // pasted marker is harmless to CI (no hook reads a body — the predicates key on commit statuses
+    // and a label, which take repo write to forge), but it still muddies the record the skills and
+    // humans read: a pr-response run recovers its own verdict history from its markers. Name the
+    // markers; never write them. Same rule the two skills impose on their own bodies.
     for (const marker of ['<!-- waffle-adversarial-review -->', '<!-- waffle-pr-response -->']) {
       assert.ok(
         !templates.review.includes(marker),
@@ -2831,5 +2860,328 @@ describe('issue / PR / review templates (#337)', () => {
     // …while still warning about them by name.
     assert.match(templates.review, /waffle-adversarial-review/);
     assert.match(templates.review, /do not paste the automation markers/i);
+  });
+
+  // ── #338, second half: the LOCAL path. ───────────────────────────────────────────────────────
+  // #338 excised body-reading predicates from CI. It did NOT excise them from the skills, and the
+  // first cut of this PR generalized "no CI hook reads a body" into "nothing reads a body" — which
+  // is false, and false in the dangerous direction: `autopilot` decides which findings have been
+  // TRIAGED and then ARMS AUTO-MERGE. A comment merely QUOTING a marker read as "already triaged",
+  // so the responder was never spawned and a PR could merge with findings nobody answered. Strictly
+  // worse than the CI bug it mirrors, because it ships code.
+  //
+  // These tests pin the reconciliation. They are cross-file on purpose: the failure was three
+  // skills disagreeing with each other about one rule, and no single-file assertion can catch that.
+
+  test('#338: no skill claims that quoting a marker is harmless', () => {
+    // The exact overclaim that shipped: "quoting it anywhere is harmless", "quoting it anywhere, at
+    // any offset, is harmless", "may quote the literal freely". Each is a licence to paste the very
+    // literal autopilot's triage gate can mistake for a disposal — issued to a MODEL, in the file
+    // that tells it how to write bodies.
+    for (const name of ['qa', 'adversarial-review', 'pr-response', 'autopilot']) {
+      const md = readSkill(name);
+      assert.doesNotMatch(md, /quoting it anywhere[^.]*is harmless/i, `${name} tells a model that quoting a marker is harmless — the skills and autopilot still read markers`);
+      assert.doesNotMatch(md, /quote the literal freely/i, `${name} instructs a model to quote a raw marker literal`);
+    }
+  });
+
+  test('#338: all three review skills keep the do-not-paste rule, and say WHY it survived', () => {
+    // Reconciliation across the set autopilot composes. Before this PR, qa said "never quote another
+    // skill's raw marker literal" while adversarial-review and pr-response said quoting was harmless
+    // — three skills, one orchestrator, two contradictory rules.
+    for (const name of ['qa', 'adversarial-review', 'pr-response']) {
+      const md = readSkill(name);
+      assert.match(md, /never paste|do not paste|never quote/i, `${name} drops the do-not-paste rule`);
+      // …and the reason must name the half that still reads bodies. A rule with no reason is a rule
+      // the next refactor deletes — which is exactly what happened here.
+      assert.match(md, /autopilot/i, `${name} states the do-not-paste rule without naming autopilot, whose triage gate is why it still matters`);
+    }
+  });
+
+  test('#338: autopilot gates triage on the commit status, never on a marked body', () => {
+    const md = readSkill('autopilot');
+    // The gate that arms auto-merge must key on an artifact that takes push access to forge.
+    assert.match(md, /waffle\/pr-response/, 'autopilot no longer names the waffle/pr-response commit status its triage gate reads');
+    assert.match(md, /commit status/i, 'autopilot must decide triage from a commit status');
+    // Fail-closed direction: absence of the signal means UNTRIAGED (spawn the responder), never
+    // "nothing to do" — the expensive mistake is merging over live findings.
+    assert.match(md, /no status ⇒ untriaged|untriaged ⇒ spawn/i, 'autopilot must fail CLOSED: no status ⇒ untriaged ⇒ spawn the responder');
+    // The predicate it replaces must be gone: disposal may never be read from a reply's existence.
+    assert.doesNotMatch(md, /no marked `?<!-- waffle-pr-response -->`? reply has yet disposed/i, 'autopilot still gates triage on a marked comment body — the #333 mechanism, relocated onto the merge path');
+  });
+
+  test('#338: the triage gate compares TIMESTAMPS — an existence test merges over live findings (F7)', () => {
+    // The round-1 fix keyed triage on "is there a waffle/pr-response status on the review's head
+    // SHA?". That certifies a SHA; findings belong to a REVIEW. They diverge on the most ordinary
+    // outcome there is — the last responder DEFERRED EVERYTHING:
+    //
+    //   Step 5 final round → pr-response defers all of qa's findings → implements 0 → pushes
+    //   nothing → head stays H → writes waffle/pr-response on H → autopilot converges.
+    //   Step 6 opens on H → adversarial-review posts real holes, commit_id = H.
+    //   Existence test: "status on H?" → YES (from Step 5) → reads TRIAGED → responder never
+    //   spawns → nothing left to triage → AUTO-MERGE over live, undisposed findings.
+    //
+    // i.e. F6's exact failure mode, reintroduced by F6's fix. The status must be NEWER than the
+    // review it claims to have disposed of.
+    const md = readSkill('autopilot');
+    // F9 SUPERSEDED the mechanism: the gate now compares the responder's READ CUTOFF rather than the
+    // status's created_at (a clock stamped after the run cannot certify a review that landed during
+    // it — see the F9 test). What this test still owns is the SCENARIO, which the cutoff must also
+    // defeat: an existence-only gate merges over live findings on the routine deferred-everything
+    // path, and the skill must keep NAMING it or the next refactor "simplifies" the clause away.
+    assert.match(md, /submitted_at/, 'the gate must read the review submitted_at');
+    assert.doesNotMatch(md, /select\(\.context=="waffle\/pr-response" and \.state=="success"\) \] \| length/, 'the gate is existence-only again — any status on the head reads as triaged');
+    assert.match(md, /implements \*\*0\*\*|deferred everything/i, 'the gate must name the deferred-everything path that makes an existence test unsafe');
+    assert.match(md, /pre-triages the \*next\* review|arms auto-merge over them|AUTO-MERGE/i, 'the gate must name the consequence — a merge over undisposed findings');
+    // And the stale claim that a cap-hatch head carries NO status must be gone — it assumed the
+    // responder always pushes.
+    assert.doesNotMatch(md, /so that head carries findings and \*\*no status\*\*/, 'Step 6 still assumes the head always moves — false whenever the responder implements 0');
+  });
+
+  test('#338: the gate compares the responder’s READ CUTOFF, not the status clock (F9)', () => {
+    // F7 fixed "existence" → "status.created_at > review.submitted_at". That still merges over live
+    // findings, because the two timestamps answer different questions:
+    //
+    //   T0  pr-response READS the findings on head H. Its verdict table covers exactly this set.
+    //   T1  review B (real findings) is submitted against H. The responder is mid-run; never sees it.
+    //   T2  the responder finishes — score, fix, pre-flight, push, reply — and stamps the status.
+    //
+    // A clock test asks `created_at(T2) > submitted_at(T1)` → TRUE → B reads TRIAGED, by a run that
+    // never read it → responder never spawns → autopilot ARMS AUTO-MERGE over B's findings. The
+    // window is the whole run (15-20 min here), and concurrent reviewers are DESIGNED FOR — the gate
+    // exists to catch another gate's review and a human's, and a hook-armed pr-green posts reviews
+    // asynchronously on green. A clock reading taken AFTER a finding cannot certify that finding.
+    //
+    // The status must certify WHAT WAS READ, not WHEN THE WRITING STOPPED.
+    const ap = readSkill('autopilot');
+    const pr = readSkill('pr-response');
+    // The gate parses the cutoff out of the status description and compares it to submitted_at…
+    assert.match(ap, /triaged-through=/, 'the gate must read the triaged-through cutoff from the status description');
+    assert.match(ap, /ltrimstr\("triaged-through="\)/, 'the gate must parse the cutoff, not just detect it');
+    assert.match(ap, /select\(\. >= \$since\)/, 'the gate must compare the CUTOFF against the review submitted_at');
+    // …and must NOT fall back to the status's own clock, which is the defect being removed.
+    assert.doesNotMatch(ap, /\.created_at > \$since/, 'the gate still keys on the status clock — a review landing mid-run reads as falsely triaged');
+    // Fail-closed on an unparseable/absent cutoff — an unreadable certificate is not a certificate.
+    assert.match(ap, /no parseable cutoff.*⇒ UNTRIAGED|no status, no parseable cutoff/i, 'the gate must fail closed when the cutoff is missing or unparseable');
+    // The responder must capture the cutoff AT READ TIME and stamp exactly that.
+    assert.match(pr, /pulls\/\$N\/reviews" --paginate --jq '\.\[\]\.submitted_at'/, 'pr-response must read the cutoff from the reviews it saw');
+    assert.match(pr, /description=triaged-through=/, 'pr-response must stamp the read cutoff into the status description');
+    assert.match(pr, /Under-claiming is safe; over-claiming merges live findings/, 'pr-response must state which direction of error is safe');
+    // F10: the cutoff must be a LITERAL the model substitutes, never a shell variable. `CUTOFF=$(…)`
+    // in step 2 and `$CUTOFF` in step 6 are different shells — the harness persists cwd but not shell
+    // state — so the variable expands to EMPTY and the status certifies nothing. Both the skill and
+    // the CI dispatch prompt must show the literal form and say why.
+    assert.doesNotMatch(pr, /description=triaged-through=\$CUTOFF/, 'pr-response writes $CUTOFF into the status — shell state does not survive between Bash calls, so it expands to empty and the gate certifies nothing');
+    assert.doesNotMatch(pr, /^CUTOFF=\$\(/m, 'pr-response assigns the cutoff to a shell variable that cannot survive to step 6');
+    assert.match(pr, /shell state/i, 'pr-response must explain WHY the cutoff is a literal, or the next editor "tidies" it back into a variable');
+    assert.match(pr, /never (an )?improvised? (a )?(token|value)/i, 'pr-response must forbid improvising a cutoff — a plausible token fails OPEN');
+    // The CI dispatch prompt writes the same status, so it must carry the same format and the same
+    // literal-not-variable rule — the CI harness crosses the same Bash-call boundary.
+    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
+    assert.match(wf, /description=triaged-through=/, 'the CI dispatch prompt must stamp the cutoff too, or CI-written statuses never parse');
+    assert.doesNotMatch(wf, /description=triaged-through=\$CUTOFF"/, 'the CI dispatch prompt writes $CUTOFF — it expands to empty in the harness too');
+    assert.match(wf, /PASTE, AS A LITERAL/i, 'the CI dispatch prompt must tell the harness to paste the literal cutoff');
+  });
+
+  test('#338: a delivery check never reads back its own status — that is self-attesting (F8)', () => {
+    // The round-1 fix had qa/adversarial-review WRITE the status and then "verify delivery" by
+    // reading THAT SAME STATUS back — which proves "I wrote a status" one line after writing one,
+    // and never observes the review at all. An errored review POST would still read back 1 and
+    // report clean+delivered with nothing on the PR. The only thing binding status to review was a
+    // SKILL.md sentence to a model: the prose-to-prose coupling #338 exists to abolish, one layer
+    // down. The artifact must be read back directly, by the id its POST returned.
+    for (const name of ['qa', 'adversarial-review']) {
+      const md = readSkill(name);
+      assert.match(md, /REVIEW_ID=\$\(gh api "repos\/\$OWNER\/\$REPO\/pulls\/\$N\/reviews" --method POST/, `${name} must capture the review id from its POST`);
+      assert.match(md, /pulls\/\$N\/reviews\/\$REVIEW_ID/, `${name} must read the REVIEW back by id — not its own status`);
+      assert.match(md, /never be its own proof|self-attesting/i, `${name} must say why a status cannot prove its own precondition`);
+      // The self-attesting shape: reading back the status this skill just wrote, as delivery proof.
+      assert.doesNotMatch(md, /then verify delivery by reading that status back/i, `${name} still treats its own status as proof of delivery`);
+    }
+    // pr-response has the same shape (it posts a comment, then a status) — same rule.
+    const pr = readSkill('pr-response');
+    assert.match(pr, /Do not "verify" the reply by reading your own status back/, 'pr-response must not self-attest either');
+    assert.match(pr, /issues\/comments\//, 'pr-response must read its posted comment back by id');
+  });
+
+  test('#338: each review skill emits its own out-of-band delivery status, on every path', () => {
+    // The enabler for the gate above. Before this, only the CI dispatch PROMPT told the harness to
+    // write a status — so a LOCAL run (the path that actually runs today) emitted nothing, and any
+    // consumer had no artifact to read and would fall back to prose.
+    for (const [name, context] of [['qa', 'waffle/qa'], ['adversarial-review', 'waffle/adversarial-review'], ['pr-response', 'waffle/pr-response']]) {
+      const md = readSkill(name);
+      assert.match(md, /--method POST "repos\/\$OWNER\/\$REPO\/statuses\//, `${name} does not POST a commit status on the head it acted on`);
+      assert.ok(md.includes(`context=${context}`), `${name} does not write the ${context} status its consumers read`);
+      // F10, generalized: EVERY value these commands carry from one call's output into the next
+      // ($REVIEW_ID, the head SHA, the cutoff) crosses a Bash-call boundary, and shell state does not
+      // survive it. Each skill must say so where it hands one along, or the next editor "tidies" the
+      // literal back into a variable and the command silently posts an empty value.
+      assert.match(md, /shell state/i, `${name} carries a value between Bash calls without warning that shell state does not survive`);
+    }
+  });
+
+  test('rubric v2: Severity and Reach are separate dimensions, and the version is stated everywhere', () => {
+    // v2's reason for existing: v1's Severity anchor mixed "how bad IF hit" with "can it be hit at
+    // all", so the only way to express "real blocker, dead code" was to score Severity DOWN — i.e.
+    // to launder the judgment into a false number. Reach carries dormancy now; Severity stays honest.
+    const md = readSkill('pr-response');
+    assert.match(md, /## 3\. Score each finding — rubric v2/, 'the rubric heading must name v2');
+    assert.match(md, /\*\*Reach\*\*/, 'v2 adds the Reach dimension');
+    assert.match(md, /0–3 on five dimensions/, 'v2 scores five dimensions');
+    assert.match(md, /the five scores summed, 0–15/, 'v2 composite is 0–15');
+    // Thresholds rescaled proportionally from v1 (≥8/12 → ≥10/15; ≤3/12 → ≤4/15).
+    assert.match(md, /\*\*≥ 10\*\* \| \*\*Implement\*\*/);
+    assert.match(md, /\*\*5–9\*\* \| \*\*Defer\*\*/);
+    assert.match(md, /\*\*≤ 4\*\* \| \*\*Decline\*\*/);
+    // The reply footer names the version, so a v1 reply stays interpretable against v1.
+    assert.match(md, /rubric \*\*v2\*\* \(Severity · Reach · Validity · Effort\/Risk · Alignment/);
+    // …and every version reference moved together — a half-bumped rubric is worse than none.
+    assert.doesNotMatch(md, /## Recalibrating the rubric \(v1\)/, 'the recalibration section still says v1');
+    assert.doesNotMatch(md, /recalibrating-the-rubric-v1/, 'the in-page anchor still points at the v1 heading — a dead link');
+  });
+
+  test('rubric v2: the overrides encode WHY Reach exists — a dormant blocker must not auto-implement', () => {
+    const md = readSkill('pr-response');
+    // v1's blocker-override was `Severity 3 + Validity 3 ⇒ always Implement`. Under v2 that would
+    // force an unreachable, confirmed bug to be fixed on the spot — exactly the call PR #354 got
+    // right only by fudging Severity. The override must now require live code.
+    assert.match(md, /Reach ≥ 2/, 'the blocker-override must require live code (Reach ≥ 2)');
+    // …and the other direction: dormancy must SCHEDULE the fix, never discard it. "It cannot fire
+    // today" is how a real bug gets lost until the day that path is re-enabled.
+    assert.match(md, /real defect in dead code is a Defer, never a Decline/i, 'v2 must floor a real defect in dead code at Defer');
+    assert.match(md, /Validity ≥ 2` and `Reach = 0/, 'the dead-code floor must state its trigger condition');
+    // A false positive still auto-declines — unchanged from v1.
+    assert.match(md, /A false positive is always Decline/);
+  });
+
+  test('rubric v2: the REVIEW_TEMPLATE tracks the skill — five columns and the v2 pointer', () => {
+    // The template is the human-facing companion; if it keeps teaching four dimensions, a human
+    // reviewer and the bot are scoring different rubrics and the composites are incomparable.
+    assert.match(templates.review, /rubric v2/, 'the template still points at the v1 section');
+    assert.match(templates.review, /\| # \| Finding \| Severity \| Reach \| Validity \| Effort\/Risk \| Alignment \| Composite \| Verdict \| Reason \|/, 'the template verdict table must carry the Reach column');
+    assert.match(templates.review, /Score the five dimensions/, 'the template must teach five dimensions');
+    assert.doesNotMatch(templates.review, /Score the four dimensions/, 'the template still teaches the v1 four');
+  });
+
+  // ── The gate is CODE. Test it as code. ───────────────────────────────────────────────────────
+  // Every other test here asserts that the gate's TEXT contains the right things. Not one of them
+  // can tell a WORKING gate from an INERT one — which is precisely how F10 shipped (an empty
+  // `$CUTOFF` makes every status read as untriaged: the mechanism silently does nothing, and it
+  // looks exactly like a mechanism that works) and how F11 survived (an unvalidated cutoff makes
+  // every review read as TRIAGED: fail-OPEN, on the path that arms auto-merge).
+  //
+  // "Asserts presence, not meaning" was the reviewer's criticism two rounds running. This is the
+  // answer to it at the root: pull the jq predicate straight out of autopilot/SKILL.md and RUN it.
+  // If the documented gate is wrong, these fail — no reimplementation to drift out from under it.
+  const gateFilter = () => {
+    const md = readSkill('autopilot');
+    const m = /--arg since "\$SINCE" '([\s\S]*?)'/.exec(md);
+    assert.ok(m, 'could not extract the triage-gate jq filter from autopilot/SKILL.md');
+    return m[1];
+  };
+  const runGate = (statuses, since) => {
+    const r = spawnSync('jq', ['-s', '--arg', 'since', since, gateFilter()], {
+      input: JSON.stringify(statuses),
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, `the documented gate is not valid jq: ${r.stderr}`);
+    return Number(r.stdout.trim());
+  };
+  const mkStatus = (description, over = {}) => [
+    { context: 'waffle/pr-response', state: 'success', description, ...over },
+  ];
+  const SINCE = '2026-07-12T23:03:42Z'; // the review's submitted_at
+
+  test('GATE EXECUTED: a valid cutoff at or after the review triages it', () => {
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T23:03:42Z'), SINCE), 1, 'the exact cutoff must triage');
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-13T00:00:00Z'), SINCE), 1, 'a later cutoff must triage');
+  });
+
+  test('GATE EXECUTED: an EMPTY cutoff reads untriaged — the whole mechanism inert (F10)', () => {
+    // `CUTOFF=$(…)` in step 2 and `$CUTOFF` in step 6 are DIFFERENT SHELLS: the harness persists the
+    // working directory between Bash calls but not shell state. So the status was written as
+    // `triaged-through=` and every review on every head read as untriaged — fail-closed, so nothing
+    // merged, but the gate certified nothing and no text assertion could see it.
+    assert.equal(runGate(mkStatus('triaged-through='), SINCE), 0);
+  });
+
+  test('GATE EXECUTED: a MALFORMED cutoff reads untriaged — this one failed OPEN (F11)', () => {
+    // ISO dates begin with a DIGIT, and the gate compares raw strings. Any token sorting above ASCII
+    // digits therefore certified EVERYTHING on that head. Before the test() validation, each of
+    // these returned 1 — including against a review submitted in 2099. And it is reachable exactly
+    // because the writer is a model handed an empty cutoff (F10): `now` is the natural improvisation.
+    for (const bogus of ['now', 'null', 'unknown', 'pending', 'HEAD', 'latest']) {
+      assert.equal(runGate(mkStatus(`triaged-through=${bogus}`), SINCE), 0, `a cutoff of "${bogus}" must triage nothing`);
+      assert.equal(runGate(mkStatus(`triaged-through=${bogus}`), '2099-01-01T00:00:00Z'), 0, `a cutoff of "${bogus}" must not triage a review from 2099`);
+    }
+    // Near-misses must fail too — the reader does not get to be generous about the writer's format.
+    for (const bogus of ['2026-07-12', '2026-07-12T23:03:42', '2026-07-12T23:03:42+00:00', 'x2026-07-12T23:03:42Z']) {
+      assert.equal(runGate(mkStatus(`triaged-through=${bogus}`), SINCE), 0, `a cutoff of "${bogus}" is not the pinned format and must triage nothing`);
+    }
+  });
+
+  test('GATE EXECUTED: a cutoff OLDER than the review reads untriaged (F7 and F9)', () => {
+    // F7: the last responder deferred everything, so its status sits on a head that then receives a
+    // NEW review. F9: a review lands mid-run, after the read cutoff. Both are this case.
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T20:00:00Z'), SINCE), 0);
+  });
+
+  test('GATE EXECUTED: a well-formed but OVER-CLAIMING cutoff triages a review nobody read (F12)', () => {
+    // This is a characterization test, and the thing it characterizes is a LIMIT of the gate.
+    //
+    // F11 made the gate validate the cutoff's FORMAT. That catches `now` / `null` / garbage. It
+    // cannot catch a cutoff that is perfectly well-formed and simply UNTRUE — and the round-4 skill
+    // text produced exactly that, by telling a model to "re-run the command above" if it lost the
+    // value. Re-running at step 6 recomputes "newest review AS OF NOW", which includes a review that
+    // landed mid-run: never read, never scored, not in the verdict table.
+    //
+    // The gate does the right thing with the value it is given. So the WRITER must be right, and no
+    // reader-side validation can rescue it. That is why the cutoff is now persisted (Write) and
+    // recovered (Read) rather than recomputed — pinned by the writer-contract test below.
+    const B = '2026-07-12T22:15:00Z'; // review B: landed mid-run, never triaged
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T22:00:00Z'), B), 0, 'the TRUE cutoff (the read time) must leave a mid-run review untriaged');
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T22:15:00Z'), B), 1, 'a RECOMPUTED cutoff triages a review nobody read — the gate cannot detect this, so the writer must not produce it');
+    // …and it sails through F11's format guard, because a shape check cannot check a fact.
+    const r = spawnSync('jq', ['-rn', '"2026-07-12T22:15:00Z" | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")'], { encoding: 'utf8' });
+    assert.equal(r.stdout.trim(), 'true', 'the over-claiming cutoff is well-formed — F11 validates a SHAPE, not a FACT');
+  });
+
+  test('WRITER CONTRACT: the cutoff is persisted and recovered, never recomputed (F12)', () => {
+    // The cutoff is a fact about WHEN YOU READ. It cannot be recovered by reading again — so the
+    // recovery path must not be a re-query. Write it to a per-PR scratch file; Read it back. The
+    // Write/Read pair is what crosses the Bash-call boundary that killed $CUTOFF (F10), and it is
+    // the ONLY recovery that cannot over-claim.
+    const pr = readSkill('pr-response');
+    assert.match(pr, /waffle-cutoff-<N>\.txt|waffle-cutoff-354\.txt/, 'pr-response must persist the cutoff to a per-PR scratch file');
+    assert.match(pr, /`Write` tool/, 'pr-response must persist the cutoff with the Write tool');
+    assert.match(pr, /Recover the cutoff with the `Read` tool/, 'pr-response must recover the cutoff with the Read tool — it crosses the shell-call boundary');
+    // The round-4 recovery instruction, which silently restored F9. It must be gone from both sites.
+    assert.doesNotMatch(pr, /re-run the command above/i, 'pr-response still tells the model to re-run the cutoff query — that recomputes it and certifies a mid-run review nobody read (F12)');
+    assert.doesNotMatch(pr, /re-run step 2's command/i, 'pr-response still tells the model to re-run the cutoff query at step 6 (F12)');
+    // …and the safe fallback must be named, or a model with no file improvises.
+    assert.match(pr, /among the reviews in your (own )?verdict table/i, 'pr-response must name the safe fallback: the newest submitted_at among the reviews actually triaged');
+    assert.match(pr, /cannot be recovered by reading again/i, 'pr-response must say WHY a re-query is wrong, or the next editor restores it as a convenience');
+    // The CI dispatch prompt crosses the same boundary and carried the same bad recovery.
+    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
+    assert.doesNotMatch(wf, /If you have lost the value, re-run the command that printed it/i, 'the CI dispatch prompt still prescribes re-running the query (F12)');
+    assert.match(wf, /do NOT re-run the query/i, 'the CI dispatch prompt must forbid recomputing the cutoff');
+    assert.match(wf, /verdict table/i, 'the CI dispatch prompt must name the safe fallback');
+  });
+
+  test('GATE EXECUTED: no status, wrong context, wrong state, or prose description → untriaged', () => {
+    assert.equal(runGate([], SINCE), 0, 'no status must not triage');
+    assert.equal(runGate(mkStatus('triaged-through=2099-01-01T00:00:00Z', { context: 'waffle/qa' }), SINCE), 0, 'another skill’s status must not triage');
+    assert.equal(runGate(mkStatus('triaged-through=2099-01-01T00:00:00Z', { state: 'failure' }), SINCE), 0, 'a failed status must not triage');
+    assert.equal(runGate(mkStatus('Automated response posted'), SINCE), 0, 'a prose description must not triage');
+    assert.equal(runGate(mkStatus(null), SINCE), 0, 'a null description must not triage');
+  });
+
+  test('#338: qa no longer substring-matches a review body to prove its own delivery (#296)', () => {
+    const md = readSkill('qa');
+    // The original bug: a human review quoting the qa marker satisfied this check, so a qa run
+    // whose own POST was denied read a stranger's body as proof of its own delivery. What it is
+    // replaced BY is pinned above ("delivery is proved by reading the REVIEW back") — this one
+    // just holds the door shut on the body predicate.
+    assert.doesNotMatch(md, /select\(\.body \| contains\("<!-- waffle-qa -->"\)\)/, 'qa still verifies its own delivery by substring-matching review bodies (#296)');
   });
 });

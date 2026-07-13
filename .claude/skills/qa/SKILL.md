@@ -197,25 +197,22 @@ gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/t
 
 Notes on mechanics:
 
-- **The marker is load-bearing — and it is this skill's own.** Every review this skill posts —
+- **The marker is this skill's own, and it must lead the body.** Every review this skill posts —
   findings *or* no-concerns — must **begin** with the exact literal `<!-- waffle-qa -->` as the
-  **first line** of the summary body. It is how this skill and any automation wrapping it
-  recognize a QA review. It is deliberately **distinct from the adversarial-review skill's
-  marker**: the `waffle-pr-green-hook` workflow keys its duplicate-review guard on that
-  skill's marker, and the opt-in pr-response hook dispatches on reviews carrying it — a QA
-  review that carried that other marker would falsely satisfy the pr-green dedup (skipping the
-  real adversarial review) and fire a paid dispatch. Never put the adversarial-review skill's
-  marker in a QA review.
+  **first line** of the summary body. It is how a human, and each sibling skill, recognizes a QA
+  review. It is deliberately **distinct from the adversarial-review skill's marker**; never put that
+  other marker in a QA review.
 - **Never quote another skill's raw marker literal mid-body, either — naming it is not carrying
-  it, but pasting it is.** This is the rule the sibling skills carry, and QA needs it most: a QA
-  review of a hooks PR naturally *discusses* those markers. Pasting the raw
-  `adversarial-review` literal anywhere in a QA review body — a code fence, a blockquote, a table
-  cell — is enough. **This is not hypothetical: PR #296's QA review did it** (literal at offset
-  1103, in prose about the hook) and, on the tolerant predicates that shipped before #332, that one
-  body suppressed the real adversarial review *and* spent the PR's one automated pr-response reply.
-  Refer to a marker **by name** (`the adversarial-review marker`), or break the literal, when the
-  review must discuss it. Your own leading `waffle-qa` marker is exempt — that is the review, and
-  identifying it is what the marker is for.
+  it, but pasting it is.** No *workflow* reads a marker any more (#338 — CI keys on commit statuses
+  and a label), but the **skills and `autopilot` still do**, and `autopilot`'s triage gate is what
+  **arms auto-merge**. QA needs this rule most: a QA review of a hooks PR naturally *discusses* those
+  markers, and pasting a raw literal anywhere in the body — a code fence, a blockquote, a table cell
+  — is enough. **This is not hypothetical: PR #296's QA review did it** (literal at offset 1103, in
+  prose about the hook) and, on the tolerant predicates of the day, that one body suppressed the real
+  adversarial review *and* spent the PR's one automated pr-response reply. Refer to a marker **by
+  name** (`the adversarial-review marker`), or break the literal, when the review must discuss it.
+  Your own leading `waffle-qa` marker is exempt — that is the review, and identifying it is what the
+  marker is for.
 - Use **`event: "COMMENT"`** — an honest, non-approving review. Escalate to
   `event: "REQUEST_CHANGES"` **only** for a genuine **blocker**; never as a default posture.
   GitHub forbids `REQUEST_CHANGES`/`APPROVE` on your **own** PR, so if the review identity
@@ -254,24 +251,54 @@ gh pr review "$N" --comment --body-file "${TMPDIR:-/tmp}/waffle-qa-summary-$N.md
 
 ## 7. Verify delivery, then report back
 
-**Prove the review actually posted** before claiming success — an allowlist denial or an API
-error leaves all the work done and nothing delivered. Check that at least one review **on the
-current head commit** carries this skill's marker. The head-scoping is load-bearing: a
-review's `commit_id` is the PR head at submit time, and an *unscoped* check would be
-satisfied by an **earlier round's** review — in a multi-round loop (autopilot runs
-`qa` → `pr-response` repeatedly) a silently denied POST from round 2 on would still "verify"
-against round 1's review and this round's findings would be lost. `--paginate` matters in the
-other direction: the reviews endpoint pages at 30, so on a busy PR an unpaginated check can
-miss the marked review and fail falsely:
+Two steps, in this order, and **neither substitutes for the other**:
 
 ```bash
+# 1. PROVE THE REVIEW LANDED — read back the artifact itself, by the id its POST returned.
+REVIEW_ID=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-qa-review-$N.json" --jq '.id')
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews/$REVIEW_ID" --jq '.id, .commit_id, .state'
+
+# 2. ONLY THEN, signal it — a waffle/qa commit status on the head you reviewed.
 HEAD_SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
-gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[] | select(.commit_id == "'"$HEAD_SHA"'") | select(.body | contains("<!-- waffle-qa -->")) | .id'
+gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/qa -f description="QA review posted"
 ```
 
-Expect **at least one review id**. **Fail closed:** if the POST in step 5/6 errored, or this
-check errors or prints nothing, report the error verbatim and do **not** claim the review
-posted — a QA pass whose findings never landed is a failed pass, not a clean one.
+**Fail closed:** if the POST errored, or the read-back errors or returns no id, report the error
+verbatim, **do not write the status**, and do **not** claim the review posted — a QA pass whose
+findings never landed is a failed pass, not a clean one.
+
+> [!WARNING]
+> **If you run those as separate `Bash` calls, paste the LITERAL values — shell state does not
+> survive between calls.** The harness persists the working directory, but variables die with the
+> call, so a `$REVIEW_ID` or `$HEAD_SHA` captured in one call is **empty** in the next. Substitute
+> what the previous command actually printed (`…/reviews/2891…`, `…/statuses/8f2d3f1…`). Here that
+> fails loudly — an empty id makes a malformed URL and the API errors — but the sibling `pr-response`
+> skill has a value whose loss is **silent** (its `triaged-through` cutoff), so treat the rule as
+> absolute rather than learning it the expensive way.
+
+> [!IMPORTANT]
+> **A status must never be its own proof.** The obvious shortcut — write the status, then verify
+> delivery by reading *that status* back — is **self-attesting**: it proves "I wrote a status", which
+> is trivially true one line after writing one, and it never observes the review at all. If the
+> review POST errors and the run continues, the read-back still returns 1 and the pass reports
+> *clean and delivered* with nothing on the PR. The only thing binding such a status to a review
+> would be a sentence in this file telling a model to write it afterwards — **exactly the
+> prose-to-prose coupling #338 abolished in CI**, reintroduced one layer down. So step 1 reads the
+> **review**, by id, and step 2's status is a *signal for consumers*, never evidence for you.
+
+**Why the signal is a commit status and not this skill's marker in a body.** The delivery check used
+to be a `.body | contains(…)` test for this skill's own marker over the reviews on the head — a
+**tolerant substring over free text anyone can write**. That is the mechanism #338 excised from CI,
+and it was still live here: a *human* review that merely **quoted** the marker while discussing it —
+a review of a hooks PR, say — satisfied the check, so a QA run whose own POST was denied read that
+stranger's body as proof of its own delivery and reported a clean pass. **PR #296 is that bug,
+observed** (literal at offset 1103). A commit status takes repo **push access** to write, so no body
+can forge it; a review id read back from the API cannot be forged by a body either.
+
+The head-scoping stays load-bearing: both the review's `commit_id` and the status are keyed to the
+SHA, so an **earlier round's** review can never satisfy a later round's check — in a multi-round loop
+(autopilot runs `qa` → `pr-response` repeatedly) a silently denied POST from round 2 on would
+otherwise "verify" against round 1 and this round's findings would be lost.
 
 Then return a concise summary to the caller: the PR URL, the count of findings by severity
 (blocker / should-fix / nit, or "none") — the per-severity count is what an orchestrating
