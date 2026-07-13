@@ -207,10 +207,18 @@ is what you reach for across a breaking one.
   collision — with evidence the two copies have **already drifted** — why prose orchestration rots
   (nothing type-checks a `SKILL.md` against the harness's real tool list, so it fails at *runtime*; cf.
   #360), the per-target degradation table (**no portable workflow primitive exists** — Codex and
-  agents-dir have none), and a **gated "not yet"** on adopting the primitive: five checkable triggers, led
-  by the finding that `/audit`'s human sign-off gate is *illegal* inside a workflow ("No mid-run user
-  input"). When it *is* adopted it ships as **opt-in syrup**, not a fourth item kind. **Consumer impact:
-  none** — docs-only; no `stacks/**` change, no re-render, no lock churn.
+  agents-dir have none), and a **gated "not yet"** on adopting the primitive. That gate is **two items,
+  not five**: **#360 must land** (`/audit` is unrunnable as written today), and **`/audit`'s human
+  sign-off gate must be redesigned** — a workflow admits *"no mid-run user input,"* so a gate degrades to
+  a hard abort and **sign-off with a human override is inexpressible**. The other three did not survive:
+  one was **false** (the in-script API *is* specified — the `Workflow` tool entry documents `agent()`,
+  `pipeline()`, `parallel()`, `phase()`, `log()`, `workflow()`, `args`, `budget` under `Script body
+  hooks:`; an earlier draft had this right and a later one wrongly retracted it), one the write-up
+  **resolves itself** (opt-in syrup is path-specific, so #94 does not bite), and one — paid-plans-only,
+  version-gated, org-wide kill switch — **never clears** and is therefore a *permanent design constraint*,
+  not a gate: it is why the prose orchestrator stays the portable fallback forever. When it *is* adopted it
+  ships as **opt-in syrup**, not a fourth item kind. **Consumer impact: none** — docs-only; no `stacks/**`
+  change, no re-render, no lock churn.
 - **The CLI surface is complete: `help`, `uninstall`/`reinstall`, and a `bake` alias (epic #346, closes
   #187, #182, #176).** Three open issues, one `switch (command)` — so they were one change to one file,
   not three features, and the dispatch was edited once, coherently.

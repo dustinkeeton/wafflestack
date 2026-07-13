@@ -21,7 +21,7 @@ primitive, and adopting workflows would not have fixed it. See [§4](#4-the-coll
 
 | Sense | Where it lives | Who owns the word | Can we rename it? |
 |---|---|---|---|
-| **GitHub Actions workflow** | `.github/workflows/*.yml` (7 files); source in `stacks/github-workflow/files/.github/workflows/`. Plus the `github-workflow` stack and the `git-workflow` skill. | GitHub | **No.** GitHub mandates the path. The stack and skill names are consumer surfaces — lock keys, `include:`/`eject:` refs, `.waffle/waffle.yaml` entries. |
+| **GitHub Actions workflow** | `.github/workflows/*.yml` — **7 rendered in this repo** (6 toolkit syrup + `tests.yml`, which is the repo's own and not toolkit-managed). The source dir `stacks/github-workflow/files/.github/workflows/` holds **8**; `waffle-evals.yml` and `waffle-label-hook.yml` are not selected here. Plus the `github-workflow` stack and the `git-workflow` skill. | GitHub | **No.** GitHub mandates the path. The stack and skill names are consumer surfaces — lock keys, `include:`/`eject:` refs, `.waffle/waffle.yaml` entries. |
 | **Claude workflow** | `.claude/workflows/*.js` — a real, first-class primitive. **Unused by wafflestack today** (no `.claude/workflows/` exists in this repo). | Anthropic | **No.** It is the vendor's word for a vendor's feature. |
 | **"any deterministic multi-phase process"** | Prose only — `SKILL.md` bodies, `stack.yaml` descriptions, `DECISIONS.md`, `ARCHITECTURE.md`, `STATUS.md`, `AGENTS.md`. | **wafflestack** | **Yes — and it is the only one we own.** |
 
@@ -83,23 +83,51 @@ peer sessions. `/audit` literally calls `TeamCreate` and builds a task DAG. That
 This one line is load-bearing, and it lands directly on the skill the issue proposed converting.
 See [§8](#8-position-on-adoption-not-yet-and-here-is-the-trigger-list).
 
-**② The in-script API is documented by example, not by specification.** The docs name and
-demonstrate exactly two functions:
+**② The in-script API *is* specified — in the tool entry, not the narrative page.** The docs page
+names and demonstrates exactly two functions:
 
 > The body is plain JavaScript with top-level `await`. **`agent()` spawns one subagent and
 > `pipeline()` runs one per item in a list.**
 
-The worked example shows `agent(prompt, { schema })` and `agent(prompt, { label })`, and
-`pipeline(list, fn)`. For anything more the page defers to the Agent SDK reference "for the full
-set of options" — but that reference documents the *Workflow tool's* input fields
-(`script`, `name`, `scriptPath`, `args`, `resumeFromRunId`), not the in-script function
-signatures. **There is no public specification of the in-script API.** You can recognize a
-script; you cannot confidently compile against one.
+For anything beyond that it defers to the tool reference *"for the full set of options"* — and
+**that reference does specify the rest.** The `Workflow` tool's own entry carries a section headed
+literally **`Script body hooks:`**, with signatures:
 
-> [!WARNING]
-> An earlier draft of this spike asserted the API exposed `parallel()` and `phase()`. **It does
-> not** — those names appear nowhere in the current docs. The correction is itself the point: an
-> unspecified API is one whose surface you will get wrong, silently, in exactly this way.
+```
+agent(prompt, opts?: { label?, phase?, schema?, model?, effort?, isolation?, agentType? }): Promise<any>
+pipeline(items, stage1, stage2, ...): Promise<any[]>
+parallel(thunks: Array<() => Promise<any>>): Promise<any[]>   // barrier — awaits every thunk
+phase(title: string): void                                    // groups subsequent agent() calls
+log(message: string): void
+workflow(nameOrRef: string | { scriptPath: string }, args?: any): Promise<any>
+args: any
+budget: { total: number | null, spent(): number, remaining(): number }
+```
+
+…plus `meta`'s contract (required `name`/`description`; must be a **pure literal**), the
+**16-concurrent / 1,000-total** agent caps, the **4,096-item** cap on a single
+`parallel()`/`pipeline()` call, and `resumeFromRunId` resume semantics.
+
+> [!NOTE]
+> **Verified first-hand — the same method [§5](#5-why-prose-orchestration-rots) uses on the missing
+> team tools.** The agent that wrote this section read the `Workflow` tool's description in its own
+> session's tool schema and found `Script body hooks:` there verbatim, `parallel()` and `phase()`
+> included.
+>
+> An earlier draft of this spike asserted the API exposed `parallel()` and `phase()`. A later draft
+> **retracted that as an error**, on the strength of the narrative page alone. **The retraction was
+> the error — the earlier draft was right.** The lesson survives, but it is a different and better
+> one than the one this document nearly shipped: **a source that omits something is not a source
+> that denies it.** The specification is *fragmented* — the narrative page teaches by example, the
+> tool entry holds the spec — and the fix is to read the tool schema, which is the harness reporting
+> on itself. Introspection was already this document's authoritative method for `TeamCreate`; it
+> should have been pointed at `Workflow` too.
+
+So the residual risk is **not** an unspecified API. It is an API specified in a **tool description
+rather than a versioned reference** — no changelog, no deprecation policy, no compatibility
+contract. That is a real hazard for a compiler that renders against it, but it is a **much weaker**
+objection than the one this document originally raised, and
+[§8](#8-position-on-adoption-not-yet-and-here-is-the-trigger-list) now scores it accordingly.
 
 **③ The vendor says you are not supposed to hand-author these.**
 
@@ -128,8 +156,12 @@ explicitly opts out with `user-invocable: false`."* **No change needed, and do n
 
 ## 3. Inventory: which skills are really orchestrators
 
-**37 `SKILL.md` files** on disk. The test applied to each: *does it spawn agents, does it have
-fixed phases, does it do task bookkeeping?* Five say yes.
+**37 `SKILL.md` files** on disk. The test applied to each: *does it **create and sequence** agents
+or tasks, and does it have fixed phases?* Five say yes.
+
+The prong is **create and sequence**, not merely *touches the task tools* — teardown-only
+bookkeeping does not make an orchestrator. That distinction is not a hedge; it is load-bearing, and
+it names exactly one deliberate near-miss ([`clean-up`](#the-other-32-are-genuinely-skills), below).
 
 ### The five orchestrators
 
@@ -145,7 +177,22 @@ fixed phases, does it do task bookkeeping?* Five say yes.
 
 Zero agent spawns, zero phase machinery. (The apparent exceptions — `qa`,
 `adversarial-review`, `pr-response`, `issue`, `git-workflow` — match `spawn` only in prose
-*describing being spawned by* autopilot. They never fan out.) They fall in three groups:
+*describing being spawned by* autopilot. They never fan out.)
+
+> [!NOTE]
+> **The deliberate near-miss: `clean-up`.** It is the one skill outside the five that touches task
+> bookkeeping at all — it calls `TaskStop`
+> (`stacks/github-workflow/skills/clean-up/SKILL.md:124`) and `TeamDelete` (`:131`), and
+> [§5](#5-why-prose-orchestration-rots) names it among the four skills still calling the
+> now-dead team tools.
+>
+> It is still **not** an orchestrator, and the prong above is written to say so precisely: `clean-up`
+> only ever **tears down** what something else created. It spawns no agent, sequences no phase, and
+> creates no task. Bookkeeping *at the end of* someone else's fan-out is not orchestration — which is
+> why the test asks whether a skill **creates and sequences**, and not merely whether it touches the
+> task tools. Naming the near-miss is cheaper than leaving a reader to find it.
+
+They fall in three groups:
 
 - **Guidance** — prose standards a model interprets: `prose`, `accurate`, `md-maximalist`,
   `codebase-architecture`, `tdd`, `dry`, `docs-agent`, `docs-human`, `git-workflow`,
@@ -353,16 +400,55 @@ The orchestrators *are* workflow-shaped ([§3](#3-inventory-which-skills-are-rea
 Prose orchestration *does* provably rot ([§5](#5-why-prose-orchestration-rots)). The pull is real
 and should be acknowledged rather than argued away.
 
-But adopting workflows as a portable wafflestack item kind is **blocked on five things**, each
-independently checkable. This is a *gated yes*, not a shrug — when all five clear, revisit.
+An earlier draft of this section listed **five blockers** and promised to revisit *"when all five
+clear."* That promise was **unsatisfiable**, and the table said so itself: blocker ④'s own *"clears
+when"* column read **"Never fully."** A gate that can never open is the very shrug the section opens
+by disclaiming. Worse, the five were not the same *kind* of thing — a permanent constraint, a
+decision we owe ourselves, and a dated event do not belong in one column.
+
+So separate them. **One is a gate. One is already cleared. Three were never gates at all.**
+
+### The gate — one event, checkable and dated
 
 | # | Blocker | Clears when |
 |---|---|---|
-| **1** | **`/audit`'s human gate is illegal in a workflow.** The docs are explicit: *"No mid-run user input… For sign-off between stages, run each stage as its own workflow."* `/audit` has a **hard gate after security pass 1** — *"Do not auto-proceed if there are Critical or High findings."* A single `/audit` workflow **cannot express that gate**, and silently dropping it would convert a safety stop into an auto-proceed. The very skill the issue proposed converting is the one the constraint bites hardest. | Either `/audit` is split into staged workflows (gate *between* runs, per the docs' own remedy), or the gate moves out of the chain. **This is a design decision, not a wait.** |
-| **2** | **The in-script API has no public specification.** `agent()` and `pipeline()` are documented *by example only*; the "full set of options" cross-reference is a dead end ([§2](#2-what-a-claude-workflow-actually-is)). A compiler cannot target an unspecified API — and this spike already got the surface wrong once. | Anthropic publishes in-script function signatures. |
-| **3** | **It breaks [#94](../DECISIONS.md).** Claude-only ⇒ a half-covered harness. Codex and agents-dir have *no* equivalent to degrade to ([§7](#7-per-target-degradation-there-is-no-portable-workflow-primitive)). | Resolved by shipping as **opt-in syrup**, not a fourth item kind — see below. |
-| **4** | **Paid-plans-only, version-gated (v2.1.154+), with an org-wide kill switch.** A rendered workflow can be **silently inert** in a consumer's repo. Today's skills run on any plan. | Never fully — so the prose orchestrator must remain the fallback that runs everywhere. |
-| **5** | **[#360](https://github.com/dustinkeeton/wafflestack/issues/360) must land first.** `/audit` is unrunnable as written. Converting a broken skill is building on sand. | #360 merges. |
+| **⑤** | **[#360](https://github.com/dustinkeeton/wafflestack/issues/360) must land first.** `/audit` is unrunnable as written ([§5](#5-why-prose-orchestration-rots)) — it calls `TeamCreate`/`TeamDelete`, which no longer exist. Converting a broken skill is building on sand. | **#360 merges.** This is the trigger, and it is the whole trigger. |
+
+### Already cleared
+
+| # | Blocker | Status |
+|---|---|---|
+| **②** | ~~**The in-script API has no public specification.**~~ | **CLEARED — and it was never true.** The `Workflow` tool entry specifies the full in-script surface, `parallel()` and `phase()` included ([§2 ②](#2-what-a-claude-workflow-actually-is)). What remains is *weaker and different*: the spec lives in a **tool description, not a versioned reference** — no changelog, no deprecation policy. That argues for **pinning and testing** against the surface, not for staying away from it. |
+
+### Not gates — one permanent constraint, two decisions we owe ourselves
+
+| # | Blocker | What it actually is |
+|---|---|---|
+| **①** | **`/audit`'s human gate is illegal in a workflow.** The docs are explicit: *"No mid-run user input… For sign-off between stages, run each stage as its own workflow."* `/audit` has a **hard gate after security pass 1** — *"Do not auto-proceed if there are Critical or High findings."* A single `/audit` workflow **cannot express sign-off with a human override**, and silently dropping it would convert a safety stop into an auto-proceed. | **A design decision, not a wait.** Either `/audit` splits into staged workflows (gate *between* runs, per the docs' own remedy), or the gate leaves the chain. Nothing external blocks it; we can settle it any day we choose to. **It is the one piece of design work adoption genuinely owes.** |
+| **③** | **It breaks [#94](../DECISIONS.md).** Claude-only ⇒ a half-covered harness. Codex and agents-dir have *no* equivalent to degrade to ([§7](#7-per-target-degradation-there-is-no-portable-workflow-primitive)). | **Resolved in this document, below.** Ship as **opt-in syrup**, not a fourth item kind: #94 governs the two *harness-neutral* kinds (agents and skills), and syrup is path-specific by definition. Raised and answered in the same section — so it is not a thing to wait for. |
+| **④** | **Paid-plans-only, version-gated (v2.1.154+), with an org-wide kill switch.** A rendered workflow can be **silently inert** in a consumer's repo. Today's skills run on any plan. | **A permanent design constraint — "never fully" is the honest answer, and it is not a gate.** It bounds the *shape* of adoption, not its *timing*: it is precisely **why the prose orchestrator must remain the portable fallback forever.** It belongs in the design rationale, and that is where it now does its work. |
+
+### The honest position, restated
+
+**The verdict is unchanged — "not yet" — but the arithmetic behind it is not, and the change is
+worth stating plainly rather than burying.** ② is cleared (and was wrong). ③ this document resolves
+itself. ④ never opens and was never a gate. ① is ours to decide, not to await.
+
+**What is left is small and true:** *one* dated event (**#360**) and *one* piece of design work
+(**①'s gate**). That is a two-item list you can actually check — and it is a **weaker** "not yet"
+than the one this document opened with. It is still a "not yet":
+
+- **#360 has not merged**, and `/audit` — the skill the issue proposed converting — remains
+  unrunnable as written. That alone settles the timing.
+- **①'s gate design is unsettled**, and it is a *safety* gate. Adopting first and designing the
+  sign-off path afterwards is the wrong order.
+- **④ is permanent**, so adoption is opt-in-shaped forever, with the prose orchestrator retained
+  as the fallback that runs everywhere.
+- **The vendor still says not to hand-author these** ([§2 ③](#2-what-a-claude-workflow-actually-is)),
+  and the specified surface is **unversioned** — a toolkit that *renders* scripts is betting on a
+  contract nobody has promised to keep.
+
+**Revisit when #360 merges.** Not "when all five clear" — that day would never have come.
 
 ### The shape it takes when it *is* adopted — and it needs no new machinery
 
@@ -398,8 +484,8 @@ artifact is just a file. Concretely:
 > **This is an illustration, not an artifact.** It is a fenced code block inside a Markdown file.
 > It is **not** a real `.claude/workflows/` file, it is not rendered, not installed, and not in
 > any manifest. It exists to make [§8](#8-position-on-adoption-not-yet-and-here-is-the-trigger-list)
-> concrete. It uses only `agent()` and `pipeline()` — the two functions the docs actually
-> demonstrate — and it is **unverified against a real runtime.**
+> concrete. It uses `agent()` and `phase()` from the surface specified in
+> [§2 ②](#2-what-a-claude-workflow-actually-is), and it is **unverified against a real runtime.**
 
 Note what it demonstrates and what it cannot:
 
@@ -407,7 +493,11 @@ Note what it demonstrates and what it cannot:
   for its content. No duplicated prose.
 - ✅ **The `/docs` collision is gone** — one `docsPipeline()` helper, called once, threading the
   change report through exactly as `/docs` does today.
-- ❌ **The security gate is missing** — and it cannot be added. That is blocker ①, made visible.
+- ⚠️ **The security gate degrades to a hard abort.** A gate as such *is* expressible — the script
+  below stops the run cold on Critical/High. What is **not** expressible is **sign-off with a human
+  override**: the script can *stop*, but it cannot *ask*. Today's skill can. That is blocker ①, made
+  visible — and it is a narrower claim than "the gate cannot be added," which the code immediately
+  below would contradict.
 
 ```javascript
 export const meta = {
@@ -418,9 +508,13 @@ export const meta = {
 // `args` is the optional focus area — today's `$ARGUMENTS` / `argument-hint: [optional focus area]`.
 const focus = args ? `Pay special attention to: ${args}. Still perform your full audit.` : ''
 
+// `severity` MUST be required. If it is merely declared, a schema-conformant agent may omit it,
+// `security1.severity` is `undefined`, `includes(undefined)` is false — and the safety gate below
+// silently never fires, sailing straight past Critical findings. A gate keyed on an optional field
+// is decorative. (The earlier draft of this sketch made exactly that mistake.)
 const FINDINGS = {
   type: 'object',
-  required: ['findings', 'fixesApplied'],
+  required: ['findings', 'fixesApplied', 'severity'],
   properties: {
     findings: { type: 'array', items: { type: 'string' } },
     fixesApplied: { type: 'array', items: { type: 'string' } },
@@ -429,23 +523,27 @@ const FINDINGS = {
 }
 
 // Every phase delegates its CONTENT to a skill. The script owns only the SEQUENCE.
+phase('Architecture')
 const architecture = await agent(
   `Audit and improve codebase structure. Follow the codebase-architecture skill. ${focus}`,
   { schema: FINDINGS, label: 'architecture' },
 )
 
+phase('Security 1')
 const security1 = await agent(
   `Full security audit. Follow the security-audit skill for grep patterns and the severity rubric. ${focus}`,
   { schema: FINDINGS, label: 'security-1' },
 )
 
-// ⚠️ BLOCKER ①: today's skill STOPS HERE for human sign-off on Critical/High findings.
-//    A workflow cannot: "No mid-run user input." The gate would have to become either
-//    a separate workflow run, or a hard abort with no override:
+// ⚠️ BLOCKER ①: today's skill stops HERE for human SIGN-OFF on Critical/High findings — a human
+//    may review and choose to proceed. A workflow cannot ask: "No mid-run user input." A gate is
+//    expressible; an OVERRIDE is not. So it degrades to a hard abort — safe, but strictly less
+//    capable than the skill. The docs' own remedy is to make each stage its own workflow run.
 if (['high', 'critical'].includes(security1.severity)) {
   return { stoppedAt: 'security-1', reason: 'Critical/High findings — sign-off required', security1 }
 }
 
+phase('Compliance')
 const compliance = await agent(
   `Compliance pass. Follow the compliance skill. ${focus}`,
   { schema: FINDINGS, label: 'compliance' },
@@ -467,8 +565,10 @@ async function docsPipeline(changeReport) {
   )
 }
 
+phase('Docs')
 const docs = await docsPipeline(architecture.findings.join('\n'))
 
+phase('Security 2')
 const security2 = await agent(
   `Re-audit everything, including all changes made by the earlier agents. ` +
     `Focus on new files, anything written to the project root, and that prior fixes are intact.`,
@@ -495,7 +595,11 @@ the primitive's reach. That is the whole recommendation, in twelve lines of Java
    skill — it never duplicates one.
 5. **Fix `/audit` ⊃ `/docs` by composition, now.** It is a composition bug, not a workflow bug,
    and the two copies have already drifted.
-6. **Do not adopt the workflow primitive yet.** Five named, checkable triggers — the first being
-   that `/audit`'s own security gate is illegal inside a workflow. When it *is* adopted, it ships
-   as **opt-in syrup** whose phases invoke skills, with prose orchestrators as the portable
-   fallback.
+6. **Do not adopt the workflow primitive yet — but the case against it is weaker than it first
+   looked.** Of the five blockers this spike started with, one was **false** (the in-script API *is*
+   specified — `parallel()` and `phase()` are real), one this document **resolves itself**, and one
+   **never opens** and was never a gate. What survives is *one dated event* — **[#360](https://github.com/dustinkeeton/wafflestack/issues/360)
+   must land** — and *one piece of design work*: `/audit`'s human sign-off gate cannot be expressed
+   inside a workflow (a gate can; an **override** cannot). **Revisit when #360 merges.** When it *is*
+   adopted, it ships as **opt-in syrup** whose phases invoke skills, with prose orchestrators kept as
+   the portable fallback — permanently, because workflows are paid-plan and version-gated.

@@ -36,10 +36,10 @@ Two rules fall out of it:
 - **A skill is the unit of work; orchestration is only ever sequencing.** A skill **never duplicates
   another skill's content — it invokes it.** An orchestrator holds only sequencing, gates, fan-out and
   loops. This, not any new primitive, is what fixes `/audit` ⊃ `/docs`.
-- **Adopting the Claude `Workflow` primitive: not yet**, gated on five checkable triggers (below). When it
-  *is* adopted it ships as **opt-in syrup** (`files/.claude/workflows/*.js`) whose phases each invoke a
-  skill — **no fourth item kind, no schema change** — with the prose orchestrator retained as the portable
-  fallback.
+- **Adopting the Claude `Workflow` primitive: not yet** — but on a **two-item** gate, not the five-item
+  one this spike started with (see Rationale). When it *is* adopted it ships as **opt-in syrup**
+  (`files/.claude/workflows/*.js`) whose phases each invoke a skill — **no fourth item kind, no schema
+  change** — with the prose orchestrator retained as the portable fallback, permanently.
 
 Following the **#59** precedent (*rename the user-facing vocabulary; leave the load-bearing surfaces
 alone*), the **`github-workflow` stack and `git-workflow` skill keep their names**: they are consumer
@@ -62,18 +62,30 @@ eliminate, and neither Codex nor agents-dir has any orchestration primitive to d
 un-renameable, so the generic one is the only lever there is. The collision *between skills* is a
 different problem than the collision *of the word*, and conflating them is what made this look like a
 workflow question: **adopting the primitive would not have fixed `/audit` ⊃ `/docs`** — it would have moved
-the duplication from prose into JavaScript. Composition fixes it, today, for free. The five triggers
-blocking adoption: **①** `/audit`'s hard human gate after security pass 1 is *illegal* inside a workflow
-(the docs are explicit — *"No mid-run user input… For sign-off between stages, run each stage as its own
-workflow"*), so the very skill this spike was asked to convert is the one the constraint bites hardest;
-**②** the in-script API is documented *by example only* (`agent()`, `pipeline()`) with no public
-specification — a compiler cannot target it, and this spike itself got the surface wrong once before
-checking; **③** a Claude-only kind breaks #94; **④** workflows are paid-plans-only and version-gated
-(v2.1.154+) with an org-wide kill switch, so a rendered workflow can be silently inert in a consumer repo;
-**⑤** **#360** must land first — `/audit` is *unrunnable as written today* (`TeamCreate`/`TeamDelete` no
-longer exist in the harness), and converting a broken skill is building on sand. That last point is also
-the strongest argument *for* the primitive: **prose orchestration has no compiler**, so it rots silently
-and fails at runtime, whereas a script fails its syntax check and never runs.
+the duplication from prose into JavaScript. Composition fixes it, today, for free.
+
+**On adoption, the honest gate is two items, not five** — and saying so cost this spike its most
+embarrassing correction. The five it started with do not survive scrutiny as *gates*: **②** claimed the
+in-script API had *"no public specification"* — **that was false.** The `Workflow` tool's own entry carries
+a section headed `Script body hooks:` specifying `agent()`, `pipeline()`, `parallel()`, `phase()`, `log()`,
+`workflow()`, `args` and `budget`, with signatures; an earlier draft had this right and a later one
+*retracted the true claim* on the strength of the narrative docs page alone. **A source that omits
+something is not a source that denies it** — the residual risk is only that the spec lives in a tool
+description rather than a *versioned* reference. **③** (a Claude-only kind breaks #94) the write-up
+**resolves itself**: ship as opt-in syrup, which is path-specific by definition, so #94 — which governs the
+two harness-neutral kinds — does not bite. **④** (paid-plans-only, version-gated v2.1.154+, org-wide kill
+switch, so a rendered workflow can be *silently inert* in a consumer repo) *"never fully"* clears: it is not
+a gate at all but a **permanent design constraint**, and it is exactly *why* the prose orchestrator must
+remain the portable fallback forever.
+
+What actually remains: **⑤ #360 must land first** — `/audit` is *unrunnable as written today*
+(`TeamCreate`/`TeamDelete` no longer exist in the harness), and converting a broken skill is building on
+sand — and **① a design decision we owe ourselves**: `/audit`'s hard human gate after security pass 1
+cannot be expressed inside a workflow (*"No mid-run user input… For sign-off between stages, run each stage
+as its own workflow"*). A *gate* is expressible as a hard abort; **sign-off with a human override is not**.
+So the trigger is: **revisit when #360 merges.** Point ⑤ is also the strongest argument *for* the
+primitive: **prose orchestration has no compiler**, so it rots silently and fails at runtime, whereas a
+script fails its syntax check and never runs.
 
 **Impact**: Docs-only. Adds `docs/skills-vs-workflows.md` — the full spike write-up: the three-sense table,
 what the Claude primitive actually is (verified against the live docs, including the constraints that
