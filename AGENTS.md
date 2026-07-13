@@ -101,7 +101,7 @@ export function resolveAgentSkill(toolkit, name, preferStack)     // → { kind:
 export function closureFor(toolkit, root)            // → [{ kind,name,stack,item }] BFS closure, root first, deduped
 export function closureDeps(toolkit, root)           // → ["kind/name"…] non-root deps
 export function includeRefMatches(includeRef, kind, name) // → boolean
-export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items:[{stackName,stack,kind,item}], closures, errors, targetSkipped:[{ref,targets}], targetBrokenRequires:[{ref,requiredBy,stackName,targets}] }  (trackedFiles = prior lock's file paths; ungates already-installed opt-in syrup. targetSkipped = include:d files/ items every one of whose targets: is disabled — nothing renders, so render warns, #364. targetBrokenRequires = a SELECTED item whose requires: edge lands on a scoped-out files/ item: the dependent renders, its declared dependency never does — render warns, since the renderer only walks the edge forward and nothing else would notice, #364/#74. Both eject-filtered.)
+export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items:[{stackName,stack,kind,item}], closures, errors, targetSkipped:[{ref,targets}], targetBrokenRequires:[{ref,requiredBy,stackName,targets,optIn}] }  (trackedFiles = prior lock's file paths; ungates already-installed opt-in syrup. targetSkipped = include:d files/ items every one of whose targets: is disabled — nothing renders, so render warns, #364. targetBrokenRequires = a SELECTED item whose requires: edge lands on a scoped-out files/ item: the dependent renders, its declared dependency never does — render warns, since the renderer only walks the edge forward and nothing else would notice, #364/#74. optIn = the dependency is opt-in syrup in ITS OWN stack (dep.stack, not the dependent's), so enabling a target is necessary but NOT sufficient and the warning must state both steps: enabling only the target renders nothing AND clears this condition, so the warning would vanish while the dependency still does not exist. Both eject-filtered.)
 export function fileMatchesTargets(item, targets)                            // → boolean  (#364: a files/ item with no targets: renders unconditionally; a scoped one iff ≥1 declared target is enabled. Non-files items always match — agents/skills FAN OUT across targets, they do not gate on them)
 export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGETS) // → [{ fileRef, stackName, companions:["kind/name"…], scopedTo:string[]|null }]  (#74: reverse the requires: edge — opt-in syrup gated out of a selection whose companion waffle IS selected; drives the install/render warning + setup update-mode flag. scopedTo=null ⇒ pourable, offer `install <fileRef>`; non-null ⇒ its targets: scope excludes this project, so the pairing CANNOT be completed here — state it WITHOUT a pour command that would render nothing, and never suppress it: dropping the notification is #74 itself, #364)
 
@@ -360,7 +360,11 @@ rendered = union(items of enabled stacks:) ∪ closure(each include: item) − e
   The gate is **loud on every path where silence would hide something**, because the prune DELETES
   files from a consumer's repo: a `requires:` edge landing on a scoped-out file warns
   (`selection.targetBrokenRequires` — the dependent renders, its dependency never does, and the
-  renderer only walks that edge forward, so nothing else would notice); a scoped-out opt-in
+  renderer only walks that edge forward, so nothing else would notice), and when that dependency is
+  **opt-in** syrup the warning names BOTH steps — enabling a target is necessary but not sufficient,
+  since the opt-in gate still holds the file back, and doing only the first step renders nothing
+  while clearing the scope-broken condition that produced the warning (a remedy that silences its
+  own warning without fixing anything is worse than no remedy); a scoped-out opt-in
   companion still states its #74 pairing, minus the pour command; `list` reports an already-poured
   scoped-out file as `PENDING REMOVAL`, not "not installable", since it is on disk NOW and the next
   render destroys it; and an empty `targets: []` — the one value whose only possible effect is that

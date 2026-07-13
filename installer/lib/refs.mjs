@@ -50,10 +50,12 @@ import { VALID_TARGETS } from './project.mjs';
  * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
  *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
  *   silent (#364)
- * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[] }[]}
+ * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
  *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
  *   filtered out: the dependent renders, its declared dependency never does. Eject-filtered on both
- *   ends. Newly possible with #364, and it must not be silent either (#74)
+ *   ends. Newly possible with #364, and it must not be silent either (#74). `optIn` = the dependency
+ *   is opt-in syrup in its own stack, so enabling one of its targets is necessary but NOT sufficient
+ *   to render it — the caller must state BOTH steps or the remedy it prints does not work
  */
 
 /**
@@ -499,7 +501,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   // rendered, so its unsatisfied edge is nobody's problem; and an EJECTED dependency is handed to
   // the project (it stays on disk, unmanaged, and `eject` drops it from both locks), so the edge is
   // satisfied by a file wafflestack no longer owns — warning about either would be noise.
-  /** @type {{ ref: string, requiredBy: string, stackName: string, targets: string[] }[]} */
+  /** @type {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]} */
   const targetBrokenRequires = [];
   const seenEdges = new Set();
   for (const { stackName, stack, kind, item } of items) {
@@ -523,7 +525,15 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       const edge = `${requiredBy}→${ref}`;
       if (seenEdges.has(edge)) continue;
       seenEdges.add(edge);
-      targetBrokenRequires.push({ ref, requiredBy, stackName, targets: dep.item.targets ?? [] });
+      // Whether the dependency is OPT-IN syrup decides what the caller may tell the consumer to do
+      // about it, and getting that wrong is worse than saying nothing: for an opt-in file, enabling
+      // a target is NECESSARY BUT NOT SUFFICIENT (`addStack` still gates it out until it is
+      // explicitly installed), so a bare "enable one of its targets" is a remedy that does not work
+      // — and once the target IS enabled this edge stops being scope-broken, so the warning would
+      // VANISH while the dependency still does not render, reading as resolved. Opt-in is a property
+      // of the dependency's OWN stack, which is `dep.stack` and need not be the dependent's.
+      const optIn = Boolean(toolkit.stacks.get(dep.stack)?.optIn.has(ref));
+      targetBrokenRequires.push({ ref, requiredBy, stackName, targets: dep.item.targets ?? [], optIn });
     }
   }
 

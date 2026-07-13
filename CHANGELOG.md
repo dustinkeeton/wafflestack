@@ -239,7 +239,11 @@ is what you reach for across a breaking one.
   it must not describe an installed file as absent. An explicit `include:` of a scoped-out file still
   **warns** rather than silently no-op'ing; a `requires:` edge landing on a scoped-out file **warns**
   too (the dependent would otherwise render declaring a dependency on a payload that will never exist
-  there, and the renderer only walks that edge forward, so nothing else would notice); and a scoped-out
+  there, and the renderer only walks that edge forward, so nothing else would notice) — and when that
+  dependency is **opt-in** syrup the warning names *both* steps, because enabling a target is necessary
+  but not sufficient there: the opt-in gate still holds the file back, so enabling only the target
+  renders nothing *and* clears the condition that produced the warning, leaving the consumer with no
+  file, no complaint, and every reason to think it worked; and a scoped-out
   **opt-in** file still states its #74 both/one/neither pairing — minus the pour command, which would
   render nothing — rather than falling silent, which would be #74 all over again.
   Two invariants hold throughout: an **unscoped** file can never be pruned, and an **ejected** file is

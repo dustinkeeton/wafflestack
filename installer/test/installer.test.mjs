@@ -5351,6 +5351,82 @@ describe('syrup target scoping (#364)', () => {
     );
   });
 
+  // (F10) The warning above hands out a REMEDY, and a remedy that does not work is worse than
+  // silence. When the required file is ALSO opt-in syrup, the scope is only half of what gates it:
+  // `addStack` holds an opt-in file back until it is explicitly installed. So "enable one of its
+  // targets" renders nothing — and, because enabling the target clears the scope-broken condition,
+  // it also DELETES the warning that said so. The consumer follows the instructions, gets no file
+  // and no complaint, and reasonably reads that as resolved. Nothing else picks the flow up either:
+  // `skippedSyrupCompanions` walks the requires: edge from the FILE outward, so an agent→file edge
+  // is invisible to it. The warning must therefore state BOTH steps.
+  test('a `requires:` edge onto a scoped-out OPT-IN file states both steps of the remedy', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'optIn:',
+      `  - files/${SCOPED}`,
+      'requires:',
+      `  agents/alpha: [files/${SCOPED}]`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+
+    config('codex');
+    const warn = render().warnings.find((w) => /selected agents\/alpha requires files\//.test(w));
+    assert.ok(warn, 'the broken edge still warns');
+    // It must not hand out the enable-a-target remedy ALONE — that one renders nothing.
+    assert.match(warn, /necessary but NOT sufficient/);
+    assert.match(warn, /OPT-IN syrup/);
+    assert.match(warn, new RegExp(`wafflestack install files/${SCOPED.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.match(warn, /doing only the first renders nothing and silences this warning/);
+
+    // The trap the warning now predicts, pinned as real: doing ONLY the first step leaves the
+    // dependency absent AND the warning gone. This is the state F10 was raised about — the
+    // warning's job is to tell the consumer about it BEFORE they walk into it.
+    config('claude');
+    const half = render();
+    assert.equal(has(SCOPED), false, 'opt-in gate still holds the file back — the target alone did nothing');
+    assert.equal(
+      half.warnings.some((w) => /requires files\//.test(w)),
+      false,
+      'and the scope-broken warning is gone — exactly what the remedy text warned would happen',
+    );
+
+    // Following the remedy IN FULL — both steps — actually pours it. The remedy is now true.
+    config('claude', `include: [files/${SCOPED}]\n`);
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'target enabled AND installed → the dependency finally renders');
+  });
+
+  // The non-opt-in mirror: a plain scoped file needs only the target, so the remedy stays the
+  // one-step version. The opt-in clause must not leak onto it.
+  test('a scoped-out NON-opt-in dependency keeps the plain one-step remedy', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'requires:',
+      `  agents/alpha: [files/${SCOPED}]`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+
+    config('codex');
+    const warn = render().warnings.find((w) => /selected agents\/alpha requires files\//.test(w));
+    assert.ok(warn, 'the broken edge warns');
+    assert.doesNotMatch(warn, /OPT-IN syrup/, 'a plain scoped file is not opt-in — do not claim it is');
+    assert.doesNotMatch(warn, /wafflestack install/, 'and enabling the target IS sufficient, so offer no install step');
+    assert.match(warn, /Enable one of its targets/);
+  });
+
   // (F5) #74's both/one/neither pairing warning must be RESTATED for a scoped-out opt-in file, not
   // suppressed. Suppressing it hands the consumer the manual half of the flow, denies them the
   // automated half, and says nothing — the exact "half-installed and silent" failure #74 exists to

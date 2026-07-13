@@ -434,11 +434,24 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
   // so nothing else can notice. Left silent, the consumer gets an agent declaring a dependency on a
   // payload that will never exist in their repo: the "half-installed and silent" failure #74 exists
   // to prevent, reached by the one entry path that had neither a warning nor a lint.
-  for (const { ref, requiredBy, targets } of selection.targetBrokenRequires ?? []) {
+  //
+  // The REMEDY has to be true, not just the diagnosis. When the dependency is opt-in syrup, the
+  // scope is only HALF of what gates it: `addStack` skips an opt-in file until it is explicitly
+  // installed, so "enable one of its targets" alone renders nothing. Worse, enabling the target
+  // clears the scope-broken condition — this warning would disappear while the dependency still
+  // does not exist, and a warning that vanishes reads as RESOLVED. Unlike the pairing warning
+  // above, nothing else picks the flow up: `skippedSyrupCompanions` walks the requires: edge from
+  // the FILE to its companions, so an agent→file edge is invisible to it. State both steps.
+  for (const { ref, requiredBy, targets, optIn } of selection.targetBrokenRequires ?? []) {
+    const remedy = optIn
+      ? `${ref} is also OPT-IN syrup, so enabling a target is necessary but NOT sufficient: enable one of ` +
+        `its targets in ${CONFIG_FILE} AND install it (\`wafflestack install ${ref}\`) — doing only the ` +
+        `first renders nothing and silences this warning`
+      : `Enable one of its targets in ${CONFIG_FILE}`;
     warnings.push(
       `selected ${requiredBy} requires ${ref}, which is scoped to targets [${targets.join(', ')}] and this ` +
         `project enables [${project.targets.join(', ')}] — the dependency is NOT rendered, so the flow is ` +
-        `incomplete. Enable one of its targets in ${CONFIG_FILE}, or expect ${requiredBy} to run without it.`,
+        `incomplete. ${remedy}, or expect ${requiredBy} to run without it.`,
     );
   }
 
