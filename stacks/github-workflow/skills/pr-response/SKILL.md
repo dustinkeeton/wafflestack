@@ -76,8 +76,15 @@ moment you read them:
 gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[].submitted_at' | sort | tail -1
 ```
 
-It prints one timestamp, e.g. `2026-07-12T23:03:42Z`. **Read it off the output and carry it in your
-head — it is a literal you will paste in step 6, not a shell variable.**
+It prints one timestamp, e.g. `2026-07-12T23:03:42Z`. **Persist it now, with the `Write` tool**, to a
+per-PR scratch file — for PR 354, the literal path `/tmp/waffle-cutoff-354.txt`:
+
+```
+/tmp/waffle-cutoff-<N>.txt      ← one line: 2026-07-12T23:03:42Z
+```
+
+Step 6 recovers it from that file with the **`Read` tool** and pastes it as a literal. That is the
+whole mechanism, and each half of it is load-bearing.
 
 > [!WARNING]
 > **Do not assign it to a shell variable.** `CUTOFF=$(…)` here and `…$CUTOFF` in step 6 are **two
@@ -86,18 +93,26 @@ head — it is a literal you will paste in step 6, not a shell variable.**
 > calls later (after scoring, fixing, the pre-flight, the push and the reply), so `$CUTOFF` expands
 > to **empty**, the status is written as `triaged-through=` with nothing after it, and the gate reads
 > it as *no cutoff* — **untriaged, for every review, forever.** The mechanism silently does nothing,
-> and it looks exactly like a mechanism that works.
+> and it looks exactly like a mechanism that works. A file written by `Write` and read by `Read`
+> crosses that boundary precisely because it is **not** shell state.
 >
 > **A compound is not the escape hatch either.** `CUTOFF=$(…); gh api …` in one call would work
 > locally but is **denied in CI**: the allowlist matches on the leading program, so a compound
 > matches no `Bash(gh api:*)` pattern and the status never posts. The literal is the only form that
 > works on **both** paths.
 >
-> And do not improvise a value if you have lost it — **re-run the command above**. A plausible-looking
-> token (`now`, `unknown`, `null`) is far worse than an empty one: it sorts *above* ASCII digits, so
-> the gate certifies **every** review on that head as triaged and auto-merge is armed over all of
-> them. (The gate now validates the format and rejects such a token, but do not rely on the reader to
-> cover for the writer.)
+> **And if you lose the value, DO NOT RE-RUN THE QUERY ABOVE.** Re-running it at step 6 recomputes
+> *"the newest review as of now"* — which **includes any review that landed while you were working**,
+> and that review was never read, never scored, and is not in your verdict table. Stamping it would
+> certify a finding nobody triaged, and **auto-merge would be armed over it**. The format guard cannot
+> save you here: a recomputed timestamp is *perfectly well-formed* and simply **untrue**.
+>
+> **The cutoff is a fact about WHEN YOU READ. It cannot be recovered by reading again.** If the
+> scratch file is gone, the only safe recovery is the newest `submitted_at` **among the reviews in
+> your own verdict table** — the ones you actually triaged. Never *"whatever is newest now"*, and
+> never an improvised token (`now`, `unknown`, `null`): those sort *above* ASCII digits and would
+> certify **every** review on the head (the gate now rejects them, but do not lean on the reader to
+> cover for the writer).
 
 That one value is what your delivery status will certify (step 6): *"I read every review submitted up
 to this cutoff."* It is **not** the time you finish — a review can land while you are scoring, fixing
@@ -321,11 +336,19 @@ head SHA you responded to — carrying **the cutoff you read in step 2, pasted a
 gh api --method POST "repos/$OWNER/$REPO/statuses/<head-sha>" -f state=success -f context=waffle/pr-response -f "description=triaged-through=2026-07-12T23:03:42Z"
 ```
 
-**Substitute both literals** — the head SHA, and the exact timestamp step 2 printed. **Never write
-`$CUTOFF` here**: that variable belonged to a shell that exited many tool calls ago, it expands to
-empty, and an empty cutoff makes the gate read *every* review on this head as untriaged — the whole
-mechanism silently inert (see the warning in step 2). If you no longer have the value, **re-run step
-2's command**; never guess one.
+**Recover the cutoff with the `Read` tool** — `/tmp/waffle-cutoff-<N>.txt`, the file step 2 wrote —
+and **substitute both literals**: the head SHA, and that timestamp.
+
+**Never write `$CUTOFF` here**: that variable belonged to a shell that exited many tool calls ago, it
+expands to empty, and an empty cutoff makes the gate read *every* review on this head as untriaged —
+the whole mechanism silently inert (F10).
+
+**And never re-run step 2's query to "recover" it.** Re-running it *now* returns the newest review
+**as of now**, which includes anything that landed while you were scoring, fixing and pushing — a
+review you never read and never triaged. That cutoff is well-formed, sails through the gate's format
+check, and **certifies a finding nobody disposed of** (F12). If the scratch file is gone, use the
+newest `submitted_at` **among the reviews in your verdict table** — the ones you actually triaged.
+The cutoff is a fact about *when you read*; it cannot be recovered by reading again.
 
 The description format is **exact and machine-read** — `triaged-through=<ISO-8601 UTC>`, nothing else
 in it. Consumers parse it, and the gate validates it against

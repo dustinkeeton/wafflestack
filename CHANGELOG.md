@@ -81,6 +81,19 @@ is what you reach for across a breaking one.
   - Verdict **history** (what was decided, at what F-number) still reads the marked replies — that
     read is best-effort by design: getting it wrong costs a redundant round, while getting the
     *triage gate* wrong merges untriaged code. The failure directions differ, so the disciplines do.
+- **The cutoff is persisted and recovered, never recomputed (#354, QA round 5).** The round-4 fix
+  told a responder that had lost the cutoff to *"re-run the command above"*. Re-running it at the
+  status-write step recomputes **"the newest review as of now"** — which includes any review that
+  landed *while the responder was working*: never read, never scored, not in the verdict table.
+  Stamping that certifies a finding nobody disposed of, and auto-merge is armed over it. **The format
+  guard is powerless here by construction:** a recomputed timestamp is a perfectly well-formed
+  ISO-8601 value and sails through the regex — it validates a *shape*, and this cutoff is well-formed
+  and simply **untrue**. A model following the instruction *correctly* produced the bug, which makes
+  it a spec defect rather than a model failure. **The cutoff is a fact about *when you read*, so it
+  cannot be recovered by reading again**: `pr-response` now persists it to a per-PR scratch file with
+  the `Write` tool and recovers it with `Read` (a pair that crosses the same `Bash`-call boundary
+  that kills a shell variable), and the only sanctioned fallback is the newest `submitted_at` **among
+  the reviews in its own verdict table** — never "whatever is newest now".
 - **The triage gate validates the cutoff's format, and the cutoff is written as a literal (#354, QA
   round 4).** Two bugs in the round-3 plumbing, failing in **opposite** directions:
   - **The writer could never deliver the cutoff (fail-closed).** The skill captured `CUTOFF=$(…)`

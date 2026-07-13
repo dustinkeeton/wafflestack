@@ -2974,7 +2974,7 @@ describe('issue / PR / review templates (#337)', () => {
     assert.doesNotMatch(pr, /description=triaged-through=\$CUTOFF/, 'pr-response writes $CUTOFF into the status — shell state does not survive between Bash calls, so it expands to empty and the gate certifies nothing');
     assert.doesNotMatch(pr, /^CUTOFF=\$\(/m, 'pr-response assigns the cutoff to a shell variable that cannot survive to step 6');
     assert.match(pr, /shell state/i, 'pr-response must explain WHY the cutoff is a literal, or the next editor "tidies" it back into a variable');
-    assert.match(pr, /never improvise|never guess one/i, 'pr-response must forbid improvising a cutoff — a plausible token fails OPEN');
+    assert.match(pr, /never (an )?improvised? (a )?(token|value)/i, 'pr-response must forbid improvising a cutoff — a plausible token fails OPEN');
     // The CI dispatch prompt writes the same status, so it must carry the same format and the same
     // literal-not-variable rule — the CI harness crosses the same Bash-call boundary.
     const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
@@ -3124,6 +3124,48 @@ describe('issue / PR / review templates (#337)', () => {
     // F7: the last responder deferred everything, so its status sits on a head that then receives a
     // NEW review. F9: a review lands mid-run, after the read cutoff. Both are this case.
     assert.equal(runGate(mkStatus('triaged-through=2026-07-12T20:00:00Z'), SINCE), 0);
+  });
+
+  test('GATE EXECUTED: a well-formed but OVER-CLAIMING cutoff triages a review nobody read (F12)', () => {
+    // This is a characterization test, and the thing it characterizes is a LIMIT of the gate.
+    //
+    // F11 made the gate validate the cutoff's FORMAT. That catches `now` / `null` / garbage. It
+    // cannot catch a cutoff that is perfectly well-formed and simply UNTRUE — and the round-4 skill
+    // text produced exactly that, by telling a model to "re-run the command above" if it lost the
+    // value. Re-running at step 6 recomputes "newest review AS OF NOW", which includes a review that
+    // landed mid-run: never read, never scored, not in the verdict table.
+    //
+    // The gate does the right thing with the value it is given. So the WRITER must be right, and no
+    // reader-side validation can rescue it. That is why the cutoff is now persisted (Write) and
+    // recovered (Read) rather than recomputed — pinned by the writer-contract test below.
+    const B = '2026-07-12T22:15:00Z'; // review B: landed mid-run, never triaged
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T22:00:00Z'), B), 0, 'the TRUE cutoff (the read time) must leave a mid-run review untriaged');
+    assert.equal(runGate(mkStatus('triaged-through=2026-07-12T22:15:00Z'), B), 1, 'a RECOMPUTED cutoff triages a review nobody read — the gate cannot detect this, so the writer must not produce it');
+    // …and it sails through F11's format guard, because a shape check cannot check a fact.
+    const r = spawnSync('jq', ['-rn', '"2026-07-12T22:15:00Z" | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")'], { encoding: 'utf8' });
+    assert.equal(r.stdout.trim(), 'true', 'the over-claiming cutoff is well-formed — F11 validates a SHAPE, not a FACT');
+  });
+
+  test('WRITER CONTRACT: the cutoff is persisted and recovered, never recomputed (F12)', () => {
+    // The cutoff is a fact about WHEN YOU READ. It cannot be recovered by reading again — so the
+    // recovery path must not be a re-query. Write it to a per-PR scratch file; Read it back. The
+    // Write/Read pair is what crosses the Bash-call boundary that killed $CUTOFF (F10), and it is
+    // the ONLY recovery that cannot over-claim.
+    const pr = readSkill('pr-response');
+    assert.match(pr, /waffle-cutoff-<N>\.txt|waffle-cutoff-354\.txt/, 'pr-response must persist the cutoff to a per-PR scratch file');
+    assert.match(pr, /`Write` tool/, 'pr-response must persist the cutoff with the Write tool');
+    assert.match(pr, /Recover the cutoff with the `Read` tool/, 'pr-response must recover the cutoff with the Read tool — it crosses the shell-call boundary');
+    // The round-4 recovery instruction, which silently restored F9. It must be gone from both sites.
+    assert.doesNotMatch(pr, /re-run the command above/i, 'pr-response still tells the model to re-run the cutoff query — that recomputes it and certifies a mid-run review nobody read (F12)');
+    assert.doesNotMatch(pr, /re-run step 2's command/i, 'pr-response still tells the model to re-run the cutoff query at step 6 (F12)');
+    // …and the safe fallback must be named, or a model with no file improvises.
+    assert.match(pr, /among the reviews in your (own )?verdict table/i, 'pr-response must name the safe fallback: the newest submitted_at among the reviews actually triaged');
+    assert.match(pr, /cannot be recovered by reading again/i, 'pr-response must say WHY a re-query is wrong, or the next editor restores it as a convenience');
+    // The CI dispatch prompt crosses the same boundary and carried the same bad recovery.
+    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
+    assert.doesNotMatch(wf, /If you have lost the value, re-run the command that printed it/i, 'the CI dispatch prompt still prescribes re-running the query (F12)');
+    assert.match(wf, /do NOT re-run the query/i, 'the CI dispatch prompt must forbid recomputing the cutoff');
+    assert.match(wf, /verdict table/i, 'the CI dispatch prompt must name the safe fallback');
   });
 
   test('GATE EXECUTED: no status, wrong context, wrong state, or prose description → untriaged', () => {
