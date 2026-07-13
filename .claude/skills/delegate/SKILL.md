@@ -13,7 +13,7 @@ Fetch open GitHub issues, assign each to the right specialist agent, and orchest
 
 The phases below (Fetch → Classify → Plan → Execute → Report) hand state forward. Rather than trust that state to prose in the orchestrating context alone, each phase writes a **typed, schema-validated checkpoint** and validates its predecessor's before proceeding. The checkpoint is the **single source of truth** for load-bearing fields — issue numbers, branch names, worktree paths — a resume point after interruption, and the audit trail the Report phase reads.
 
-- **One JSON document per run**, at `.claude/worktrees/.delegate/<runId>.json`. `<runId>` is the team name for multi-issue runs (`delegate-<timestamp>`) or `delegate-single-<N>-<timestamp>` for the single-issue fast path. Create the directory first: `mkdir -p .claude/worktrees/.delegate`. It is gitignored throwaway run state.
+- **One JSON document per run**, at `.claude/worktrees/.delegate/<runId>.json`. `<runId>` is the run identifier — `delegate-<timestamp>` for multi-issue runs, or `delegate-single-<N>-<timestamp>` for the single-issue fast path. (It names the *run*, not a team: the session has a single implicit team and there is no team object to name.) Create the directory first: `mkdir -p .claude/worktrees/.delegate`. It is gitignored throwaway run state.
 - **Schema:** `.claude/skills/delegate/checkpoint.schema.json` — one section per phase (`scope`, `issues`, `classification`, `plan`, `execution`, `report`), each documented inline. Start the file with `{ "version": 1, "runId": "<runId>" }`, then append each phase's section as you complete it.
 - **Validator:** `.claude/skills/delegate/checkpoint.mjs` — dependency-free (Node built-ins only, runs in any consumer repo). At **every phase boundary**, after writing the current phase's section, run:
 
@@ -393,32 +393,28 @@ See the `github-project-management` skill for the full GraphQL query catalog, an
 
 ## Phase 4: Execute
 
-### Team Setup (multi-issue only)
+### Task Setup (multi-issue only)
 
-When delegating **2 or more issues**, create a team for coordination. Skip this for single-issue delegation.
+When delegating **2 or more issues**, create a task per issue so agents can report progress. Skip this bookkeeping for single-issue delegation.
 
-```
-TeamCreate(team_name: "delegate-{timestamp}")
-```
+There is **no team to create**: the session has a single implicit team, and the `Agent` tool's `team_name` parameter is deprecated and ignored. Coordination comes from **named agents** — an agent's `name:` is its address for `SendMessage(to:)` and `TaskStop(task_id:)`.
 
-Create a task per issue so agents can report progress:
+> **If a spawn is rejected because the roster is flat** (an agent cannot name its own spawns — only the main conversation loop can), omit `name:` and address the agent by the `agentId` the spawn returns. `SendMessage` and `TaskStop` both accept it in place of a name.
+
+`TaskCreate` takes `subject` **and** `description` (both required) — no `team_name`, and no `addBlockedBy` at create time:
 
 ```
 # For each issue:
 task_N = TaskCreate(
-  description: "Issue #{number}: {title}",
-  team_name: "delegate-{timestamp}"
+  subject: "Issue #{number}: {title}",
+  description: "{agent-type} implements issue #{number} on branch {branch}; opens a PR"
 )
 ```
 
-For serial dependencies (e.g., shared/ bottleneck), chain tasks:
+For serial dependencies (e.g., shared/ bottleneck), chain the tasks **afterwards** with `TaskUpdate` — `addBlockedBy` is a `TaskUpdate` parameter, and its key is `taskId`, not `id`:
 
 ```
-task_B = TaskCreate(
-  description: "Issue #{number}: {title}",
-  team_name: "delegate-{timestamp}",
-  addBlockedBy: [task_A.id]
-)
+TaskUpdate(taskId: task_B.id, addBlockedBy: [task_A.id])
 ```
 
 ### Branch naming
@@ -432,7 +428,15 @@ Each agent gets a branch named per git-workflow conventions:
 
 ### Worktree provisioning (parallel groups only)
 
-**KNOWN BUG:** the Agent tool's `isolation: "worktree"` parameter is silently ignored when `team_name` is also passed (see [anthropics/claude-code#33045](https://github.com/anthropics/claude-code/issues/33045)). Team-spawned agents end up sharing the main checkout and stomp on each other's branches. Always use the manual-worktree pattern below for parallel groups.
+**Delegate provisions its own worktrees — deliberately.** The `Agent` tool's `isolation: "worktree"` parameter *does* work today. It was previously ignored whenever `team_name` was also passed ([anthropics/claude-code#33045](https://github.com/anthropics/claude-code/issues/33045)); `team_name` is now deprecated and ignored outright, so that bug's precondition is gone. Isolation is nonetheless **not** what delegate wants, for three reasons — each **tested against the live harness**, by spawning a real `isolation: "worktree"` agent and reading back its `pwd`, branch, HEAD, and post-run `git worktree list` (2026-07-13), never inferred from the tool description:
+
+1. **The path is the harness's, not ours.** It lands the agent in `.claude/worktrees/agent-<agentId>`, and that id does not exist until spawn time (observed: `.claude/worktrees/agent-afbd147fc9066e7a4`). Delegate's `plan` checkpoint records each parallel issue's absolute worktree path **before** any agent is spawned, and the validator rejects a parallel assignment with no path.
+2. **The branch is the harness's, not ours.** It creates `worktree-agent-<agentId>` (observed), not the git-workflow-conventional `feat/issue-{N}-{short-desc}`. The checkpoint validator fails an executed branch that does not match the planned one — a harness-named branch trips delegate's own hallucinated-branch gate.
+3. **The base is the harness's, not ours.** `Agent` exposes no base parameter, so delegate cannot say what a worktree branches from. Observed: a spawn made from a feature branch's tip (`0af9cc4`) came up on **`main`** (`6384311`) — *not* the spawning checkout's HEAD. Delegate needs every worktree in a group cut from the same **freshly-fetched `origin/main`**, which it guarantees by fetching first (below); the harness gives it no way to ask for that. *(What this probe did not distinguish: local `main` vs `origin/main` — they were identical when it ran. Do not promote that into a claim about local `main` lagging without testing it.)*
+
+**Lifetime is _not_ a fourth reason** — recorded here so it is not re-inferred as one. The harness auto-cleans an isolated worktree **only if the agent left it unchanged** (the `Agent` tool's own wording — *"auto-cleaned if unchanged"* — and confirmed by probe: an unchanged agent's worktree was gone afterwards, while one that **committed** was **retained**, branch and all). Delegate's agents always commit, so the harness would not clean up after them regardless. Delegate does still retain a worktree while its PR is open, and retains a gate-rejected branch's worktree so its local commits can be salvaged — but that is delegate's own removal policy (see [Worktree cleanup](#worktree-cleanup-parallel-groups-only)), not a conflict with the harness.
+
+Delegate owns worktree naming and basing because its checkpoint contract depends on both being deterministic and known in advance. Use the manual pattern below for parallel groups.
 
 For each issue in a parallel group, before spawning its agent:
 
@@ -502,12 +506,11 @@ Errors in any step → log a warning and continue. Board updates must never bloc
 
 ### Spawning agents
 
-**Parallel groups** — each agent gets a pre-provisioned worktree. **Do NOT pass `isolation: "worktree"`** — it is silently ignored when `team_name` is set (see the known bug above). Inject the worktree path into the prompt; the agent will `cd` into it as its first action.
+**Parallel groups** — each agent gets a pre-provisioned worktree. **Do NOT pass `isolation: "worktree"`** — delegate provisions worktrees itself so the path, branch, and base commit are deterministic and match the checkpoint (see [Worktree provisioning](#worktree-provisioning-parallel-groups-only) above). Inject the worktree path into the prompt; the agent will `cd` into it as its first action.
 
 ```
 Agent(
   subagent_type: "{agent-type}",
-  team_name: "delegate-{timestamp}",
   name: "issue-3-{agent-type}",
   run_in_background: true,
   prompt: <agent prompt with WORKTREE_PATH baked in>,
@@ -517,7 +520,7 @@ Agent(
 
 Spawn all agents of the group in the same response (multiple `Agent` tool calls in one message) so they run truly concurrently.
 
-**Single-issue fast path** — skip team creation entirely. Run in the main checkout, no worktree needed:
+**Single-issue fast path** — skip the task bookkeeping entirely, and spawn without a `name:` (nothing needs to address it). Run in the main checkout, no worktree needed:
 
 ```
 Agent(
@@ -629,7 +632,7 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
      - On a **successful** arm, label the PR as a durable paper trail that automation (not a human) queued the merge: `gh pr edit <pr-number> --add-label "waffle-auto-merged"` — only when `--auto` actually armed (the label means "armed," not "attempted"); the label must already exist in the repo.
    - If the approval gate (step 5) was on and your push was **rejected**, there is no PR — skip this step.
    - State in your report whether auto-merge armed on the PR.
-7. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", content: <summary with PR URL and whether auto-merge armed, or the approval summary when the gate is on>). If you lack these tools, just ensure the PR exists (gate off) or the local commit is in place (gate on); the orchestrator verifies your work directly.
+7. If you have the tools, mark your task as completed — TaskUpdate(taskId: "<task_id>", status: "completed") — and report back: SendMessage(to: "team-lead", message: <summary with PR URL and whether auto-merge armed, or the approval summary when the gate is on>, summary: "issue #{N}: PR opened"). If you lack these tools, just ensure the PR exists (gate off) or the local commit is in place (gate on); the orchestrator verifies your work directly.
 
 Branch name: {branch-name}
 ```
@@ -763,16 +766,17 @@ git worktree remove .claude/worktrees/issue-{N}
 
 Do **not** remove worktrees while their PRs are still open — the user may want to push follow-up commits from there. A branch **rejected at the approval gate** has no PR and was never pushed: leave its worktree in place too, so the user can inspect or salvage the local commits. If `git worktree remove` complains about a dirty tree, leave it for the user to inspect and report it in the delegation summary.
 
-### Team Cleanup (multi-issue only)
+### Agent teardown (multi-issue only)
 
-After reporting, shut down the team:
+After reporting, stand every agent this run spawned down. **Teardown is shutdown-then-stop:** `shutdown_request` is the polite first step and an agent that honours it terminates cleanly, but it is **not** reliable on its own — a requested agent can go idle and stay alive. `TaskStop` is what actually terminates it, and it is safe to call on an agent that has already exited. Never treat a sent `shutdown_request` as proof the agent is gone.
 
 ```
 # For each agent:
-SendMessage(to: "issue-{N}-{agent-type}", type: "shutdown_request", content: "Delegation complete")
-
-TeamDelete(team_name: "delegate-{timestamp}")
+SendMessage(to: "issue-{N}-{agent-type}", message: {type: "shutdown_request", reason: "Delegation complete"})
+TaskStop(task_id: "issue-{N}-{agent-type}")
 ```
+
+There is no team to delete — the session has a single implicit team, so nothing was created and nothing is torn down but the agents themselves.
 
 ## Error Handling
 

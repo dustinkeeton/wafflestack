@@ -9,7 +9,7 @@ argument-hint: "[optional focus area]"
 
 Ask every **installed** agent for a quick, role-scoped read on the codebase, then print one compact digest. This is a **read-only pulse**: a single parallel wave of agents, each reporting from its own seat — no fixes, no file edits, no board writes, no task chains.
 
-Unlike `audit` and `docs` (fixed rosters run through a serial task chain), standup **discovers its roster at runtime** and fans out **once, with no barriers**. It reuses their spawn-and-collect scaffold minus the team and the task dependencies.
+Unlike `audit` and `docs` (fixed rosters run through a serial task chain), standup **discovers its roster at runtime** and fans out **once, with no barriers**. It reuses their spawn-and-collect scaffold minus the task dependencies.
 
 ## Step 1: Enumerate the roster (dynamic — never hard-coded)
 

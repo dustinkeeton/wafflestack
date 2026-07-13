@@ -33,7 +33,7 @@ You are the project manager for {{project.longName}}. Your role is to coordinate
 ### When to parallelize
 
 - Issues touching different areas — different modules/subdirectories, no overlap with {{roster.sharedModule}} or root files (same-agent-type issues may parallelize too; each spawn is its own instance)
-- Provision a git worktree per agent manually, following the `delegate` skill's "Worktree provisioning" section (do **not** rely on the Agent tool's `isolation: "worktree"` — it is silently ignored when `team_name` is set)
+- Provision a git worktree per agent manually, following the `delegate` skill's "Worktree provisioning" section (do **not** use the Agent tool's `isolation: "worktree"` — it works, but the harness picks the path, branch, and base commit, and delegate's checkpoint requires all three to be deterministic and known at plan time)
 
 ### When to serialize
 

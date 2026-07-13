@@ -3,7 +3,7 @@ name: clean-up
 description: >-
   Tidy up after a finished process: delete local git branches and worktrees
   whose pull request has already merged, prune stale remote-tracking refs, and
-  spin down background tasks and teams that have completed their work. Use this
+  spin down background tasks and agents that have completed their work. Use this
   whenever one or more PRs have just merged, after a /delegate run wraps up, or
   when the user says things like "clean up", "clean up the merged branches",
   "remove stale worktrees", "tidy up my branches", or "we're done, spin down the
@@ -18,12 +18,12 @@ argument-hint: "[git | agents | all]  [--yes]   — omit for a full preview-then
 Housekeeping after work has landed. Two independent domains:
 
 - **Git** — local branches and worktrees whose PR is merged, plus a `git fetch --prune`.
-- **Harness** — background tasks and teams that have finished their work.
+- **Harness** — background tasks and agents that have finished their work.
 
 The guiding principle is that cleanup should only ever remove things whose work is
 **already safe elsewhere** — a branch whose PR merged, a task that completed. Anything
 still in flight, or holding the only copy of some work, is left alone. Because the
-destructive half (force-deleting branches, deleting teams) can't be undone, the default
+destructive half (force-deleting branches, stopping agents) can't be undone, the default
 is to **show the full plan and wait for a yes** before touching anything.
 
 ## Arguments
@@ -32,7 +32,7 @@ is to **show the full plan and wait for a yes** before touching anything.
 |---|---|
 | _(none)_ | Full sweep — git **and** harness — previewed, then confirmed. |
 | `git` / `branches` / `worktrees` | Git scope only. |
-| `agents` / `teams` / `tasks` | Harness scope only. |
+| `agents` / `tasks` | Harness scope only. |
 | `--yes` / `auto` | Skip the confirmation prompt. Intended for an **agent calling this right after it merges a PR** — not for interactive use unless the user explicitly says "no need to confirm". |
 
 `--yes` combines with a scope (e.g. `git --yes`).
@@ -114,23 +114,53 @@ never landed — removing it is a judgment call the user should make deliberatel
 
 ## Harness scope
 
-Use the task/team tools to find work that has wrapped up. The aim mirrors the git side:
+Use the task and agent tools to find work that has wrapped up. The aim mirrors the git side:
 stop things that are **done**, never things still running.
 
-1. **Enumerate** with `TaskList`. Note each task's `status` and `owner`, and which `team` it belongs to.
+There are **no teams to hunt for**: the session has a single implicit team, and `TeamCreate` /
+`TeamDelete` no longer exist. What outlives its work is an **agent**, and an agent is stopped by
+name.
+
+1. **Enumerate the tasks** with `TaskList` (it takes no arguments and lists every task in the
+   session). Note each task's `subject`, `status`, and `owner`.
 2. **Finished background tasks** — for any task that is `completed` (or is plainly idle/abandoned
    with no further use), stop it:
    ```
-   TaskStop(taskId: "<id>")
+   TaskStop(task_id: "<id>")
    ```
    Never stop a task that is `in_progress` — that would kill live work.
-3. **Fully-completed teams** — for a team where **every** task is `completed`, shut it down the
-   same way `/delegate` does: message each member to wind down, then delete the team.
+3. **Finished agents.** An agent is stopped **by name** — so first you need the names, and this is
+   the step's real problem: **the harness has no agent enumeration.** There is no `AgentList`;
+   `TaskList` lists *tasks*, not agents, and it will not show you an agent that never held one
+   (autopilot's gate agents, for instance, are spawned without a task). A task's `owner` names an
+   agent **when something set it** — but nothing in this toolkit's flows does, so it is usually
+   empty. **Do not treat an empty `TaskList` as proof that no agent is running.**
+
+   The names therefore come from **the run that spawned them**, not from a discovery call. That is
+   exactly why each orchestrator here names its spawns deterministically:
+
+   | Run | Agent names | Where the record is |
+   |---|---|---|
+   | `/delegate` | `issue-<N>-<agent-type>` | the run's checkpoint — `execution[]` carries each issue's `number` and `agent` |
+   | `/audit` | the fixed six-agent chain: `architecture-pass`, `security-pass1`, the compliance agent, `docs-agent`, `docs-human`, `security-final` | the skill's roster |
+   | `/autopilot` | `qa-pr<N>`, `respond-qa-pr<N>`, `review-pr<N>`, `respond-rev-pr<N>` | keyed to the PR number |
+
+   So: reconstruct the candidate names from whichever run you are cleaning up after (and ask the
+   user if you are cleaning up after something else — an agent nobody recorded is **invisible** to
+   this skill). Then, for each agent that has completed its work or is plainly idle and abandoned,
+   ask it to wind down and confirm the kill:
    ```
-   SendMessage(to: "<member-name>", type: "shutdown_request", content: "Cleanup: work complete")
-   TeamDelete(team_name: "<team>")
+   SendMessage(to: "<agent-name>", message: {type: "shutdown_request", reason: "Cleanup: work complete"})
+   TaskStop(task_id: "<agent-name>")
    ```
-   If a team has even one open task, leave the whole team alone — it's still working.
+   `shutdown_request` alone is not reliable — an agent can go idle but stay alive. `TaskStop` is
+   what actually terminates it, and it is safe on an agent that has already exited (so a name you
+   are unsure about costs nothing to try). Never stop an agent that is still doing live work.
+
+   **Report what you could not see.** If you have no record of what was spawned, say so — *"no run
+   record available; agents not swept"* — rather than reporting `Agents stopped: (none)`. The two
+   read identically to a user and mean opposite things, and the second one is how a leaked agent
+   goes unnoticed.
 
 **Crons are out of scope.** Scheduled jobs (`CronList`) are almost always intentional recurring
 work, not leftover state, so cleanup never deletes them. If you suspect a cron is genuinely
@@ -154,15 +184,15 @@ Skipped (needs a human look):
 Default branch: fast-forwarded to <sha>   (or: skipped (not on <default> / diverged / dirty))
 
 Tasks stopped:
-  <task id / description>
-Teams shut down:
-  <team> — <n>/<n> tasks done
+  <task id / subject>
+Agents stopped:
+  <agent-name> — <what it finished>
 
 Left untouched: current branch, open/closed-unmerged PRs, crons.
 ```
 
 In dry-run/preview, end with **"Proceed? (y/N)"**. After executing, end with a one-line summary
-(e.g. "Removed 4 branches, 1 worktree; stopped 2 tasks; deleted 1 team.").
+(e.g. "Removed 4 branches, 1 worktree; stopped 2 tasks and 1 agent.").
 
 ## Edge cases
 

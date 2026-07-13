@@ -248,7 +248,7 @@ Two ways the tag gets pushed:
 
 Do **not** push a tag before the PR merges, and never as a substitute for the PR.
 
-## Parallel Work (Worktrees + Teams)
+## Parallel Work (Worktrees + Named Agents)
 
 When multiple agents work in parallel on files that might conflict:
 
@@ -260,9 +260,9 @@ When multiple agents work in parallel on files that might conflict:
 
    Keeping worktrees under `{{git.worktreesDir}}/` keeps them out of the repo's sibling directories and out of version control.
 
-2. **Lock files** — if two agents suspect they'll edit the same file, one should finish first. Use `TaskList(team_name: ...)` to check which files other agents are modifying.
+2. **Lock files** — if two agents suspect they'll edit the same file, one should finish first. Use `TaskList` (it takes no arguments) to see what every other agent has in flight — subject, status, and owner.
 
-3. **Conflict alerting** — if you detect a potential conflict with another agent's work, notify them immediately: `SendMessage(to: "<agent-name>", content: "Conflict: I'm editing <file>")`.
+3. **Conflict alerting** — if you detect a potential conflict with another agent's work, notify them immediately: `SendMessage(to: "<agent-name>", message: "Conflict: I'm editing <file>", summary: "conflict warning")`.
 
 4. **Clean up** worktrees after merging:
 
@@ -270,7 +270,7 @@ When multiple agents work in parallel on files that might conflict:
    git worktree remove {{git.worktreesDir}}/feat-x
    ```
 
-Teams and worktrees are orthogonal — teams provide coordination (task tracking, messaging), worktrees provide isolation (separate working directories). Use both together for parallel agent work.
+Coordination and isolation are orthogonal — **named agents** provide coordination (task tracking via `TaskCreate`/`TaskUpdate`, messaging via `SendMessage(to: "<name>")`), **worktrees** provide isolation (separate working directories). Use both together for parallel agent work. There is no team to set up: the session has a single implicit team, and the `Agent` tool's `team_name` parameter is deprecated and ignored — a bare `name:` is all an agent needs to be addressable.
 
 ## Pre-flight Checklist
 

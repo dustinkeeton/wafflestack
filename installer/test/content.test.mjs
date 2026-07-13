@@ -29,10 +29,15 @@ import { renderProject } from '../lib/render.mjs';
 //     it would arm a live label→harness dispatch), so it is NOT in the committed
 //     render. We render it into a temp dir via the installer's own render pipeline
 //     and assert on that — the exact form a consuming project commits.
+//   - EXCEPTION — the dead-primitive sweep (#360) reads the `stacks/**` SOURCES as
+//     well. The render only covers the stacks THIS repo installs; the sources are
+//     the edit surface and ship to every consuming repo, so a render-only guard
+//     misses a regression reintroduced in an uninstalled stack. See sourceSkillFiles().
 // -----------------------------------------------------------------------------
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const CLAUDE = path.join(REPO_ROOT, '.claude');
+const STACKS = path.join(REPO_ROOT, 'stacks');
 
 const readSkill = (name) =>
   fs.readFileSync(path.join(CLAUDE, 'skills', name, 'SKILL.md'), 'utf8');
@@ -55,6 +60,35 @@ const renderedAgentFiles = () =>
         .filter((f) => f.endsWith('.md'))
         .map((f) => path.join(CLAUDE, 'agents', f))
     : [];
+
+// Every SOURCE skill/agent under `stacks/**` — the EDIT surface, and a strict superset of the
+// render: this repo installs only SOME stacks (29 of 37 skills, 6 of 14 agents render here), so a
+// sweep of `.claude/**` alone leaves every source in an uninstalled stack unguarded. A guard that
+// only reads the render lets a dead primitive be reintroduced into e.g. `expo-dev` or `obsidian-dev`
+// and ship to a consuming repo with CI green (#360). Sweeping the sources subsumes the renders
+// anyway — `doctor --verify-render` already pins render↔source parity.
+const stackDirs = () =>
+  fs.existsSync(STACKS)
+    ? fs
+        .readdirSync(STACKS, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => path.join(STACKS, e.name))
+    : [];
+const sourceSkillFiles = () => stackDirs().flatMap((d) => glob(path.join(d, 'skills'), 'SKILL.md'));
+const sourceAgentFiles = () =>
+  stackDirs().flatMap((d) => {
+    const agents = path.join(d, 'agents');
+    return fs.existsSync(agents)
+      ? fs
+          .readdirSync(agents)
+          .filter((f) => f.endsWith('.md'))
+          .map((f) => path.join(agents, f))
+      : [];
+  });
+
+// Name a swept file by its repo-relative path: `stacks/orchestration/skills/delegate/SKILL.md` and
+// `.claude/skills/delegate/SKILL.md` share a basename, and a failure must say WHICH one to edit.
+const who = (f) => path.relative(REPO_ROOT, f);
 
 describe('rendered content: frontmatter present where required', () => {
   test('every rendered skill has name + description frontmatter', () => {
@@ -950,7 +984,7 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
 // #221: the opt-in /audit gate as the FINAL pre-merge quality gate, after #220's review loop.
 // Each assertion pins a load-bearing piece — its separate per-run consent, the arming deferred
 // past the audit gate (armed only once it passes green), the diff-scoped composed audit with an
-// owned Team lifecycle torn down even on failure, the hard gate that blocks the merge on
+// owned audit-agent lifecycle torn down even on failure, the hard gate that blocks the merge on
 // unresolved Critical/High even under auto-merge consent, and the bounded failure handling — so a
 // meaning-breaking edit fails CI instead of shipping silently.
 describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () => {
@@ -980,16 +1014,18 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /QA gate, review loop, or the audit step on/);
   });
 
-  test('the gate: wait-green then a diff-scoped composed /audit with an owned Team lifecycle', () => {
+  test('the gate: wait-green then a diff-scoped composed /audit with an owned agent lifecycle', () => {
     // Autopilot composes the audit playbook itself — never relies on auto-invocation.
     assert.match(md, /playbook itself/);
     assert.match(md, /disable-model-invocation: true/);
     // The focus is scoped to the PR's changed paths — architecture pass constrained to the diff.
     assert.match(md, /gh pr view <pr> --json files -q '\.files\[\]\.path'/);
     assert.match(md, /not\*\* a whole-repo refactor/);
-    // Autopilot owns the Team teardown even on failure — a leaked team is never acceptable.
+    // Autopilot owns the agents' teardown even on failure — a leaked agent is never acceptable.
+    // Teardown is shutdown-then-stop: the request is polite, TaskStop is what guarantees the kill.
     assert.match(md, /even if a pass errors/);
-    assert.match(md, /Team is always torn down/);
+    assert.match(md, /every audit agent is always torn down/);
+    assert.match(md, /`shutdown_request` each one and then `TaskStop` each one/);
   });
 
   test('hard gate: unresolved Critical/High blocks the merge even under auto-merge consent', () => {
@@ -1002,13 +1038,13 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /--add-label "waffle-manual-review"/);
   });
 
-  test('failure handling: audit fix leaving CI red stops-and-reports; chain errors bounded, Team torn down', () => {
+  test('failure handling: audit fix leaving CI red stops-and-reports; chain errors bounded, agents torn down', () => {
     // A red audit fix stops the gate — never arm a red PR.
     assert.match(md, /audit fix left the PR's CI red/);
-    // A chain error is retried once then stops — never loops forever; Team torn down regardless.
+    // A chain error is retried once then stops — never loops forever; agents torn down regardless.
     assert.match(md, /chain errored/);
     assert.match(md, /one retry, then stop/);
-    assert.match(md, /tear the Team down regardless/);
+    assert.match(md, /tear the audit agents down regardless/);
   });
 });
 
@@ -1178,7 +1214,7 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
     // Round 1 spawns; every later round resumes the SAME agent on the new head.
     assert.match(qaStep, /Round 1 spawns them/);
     assert.match(qaStep, /Every later round resumes the same agent/);
-    assert.match(qaStep, /SendMessage\(to: "qa-pr<N>", content: "the PR head moved to <sha>/);
+    assert.match(qaStep, /SendMessage\(to: "qa-pr<N>", message: "the PR head moved to <sha>/);
     // The point of persistence: no re-deriving the PR, no re-litigating settled verdicts.
     assert.match(qaStep, /why it settled each verdict/);
     assert.match(qaStep, /re-litigates?( a finding round 1 already declined| settled verdicts)/);
@@ -1188,7 +1224,7 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
     assert.match(reviewStep, /Agent\(name: "review-pr<N>"/);
     assert.match(reviewStep, /Agent\(name: "respond-rev-pr<N>"/);
     assert.match(reviewStep, /Every later round resumes the same agent/);
-    assert.match(reviewStep, /SendMessage\(to: "review-pr<N>", content: "the PR head moved to <sha>/);
+    assert.match(reviewStep, /SendMessage\(to: "review-pr<N>", message: "the PR head moved to <sha>/);
     // A resumed reviewer keeps its finding history but stays hostile to NEW code.
     assert.match(reviewStep, /new blood in the diff gets the same hostility/);
   });
@@ -3183,5 +3219,506 @@ describe('issue / PR / review templates (#337)', () => {
     // replaced BY is pinned above ("delivery is proved by reading the REVIEW back") — this one
     // just holds the door shut on the body predicate.
     assert.doesNotMatch(md, /select\(\.body \| contains\("<!-- waffle-qa -->"\)\)/, 'qa still verifies its own delivery by substring-matching review bodies (#296)');
+  });
+});
+
+// #360: the orchestration skills must stay in sync with the harness they actually run on.
+// They had drifted onto primitives that no longer exist — `TeamCreate`/`TeamDelete` (gone; the
+// session has a single implicit team and `Agent`'s `team_name` is deprecated and ignored), a
+// stale `TaskCreate` signature (it takes `subject` + `description`; `addBlockedBy` is a
+// `TaskUpdate` param, keyed `taskId`), `TaskStop(taskId:)` (the key is `task_id`), `TaskList`
+// called with arguments (it takes none), and `SendMessage(content:)` (the param is `message`,
+// plus a `summary` when the message is a string). An agent following those literally calls a
+// tool that is not in its tool list. These sweep every skill and agent SOURCE under `stacks/**` —
+// the edit surface, and the copy every consuming repo installs — as well as this repo's render, so
+// no future edit can reintroduce a dead primitive. That reach is the point: a render-only sweep
+// guards just the stacks THIS repo happens to install, and a regression in any other stack ships
+// green. This is the guard that #360 wished it had.
+// Extract the ARGUMENT TEXT of every `<tool>(...)` call in a markdown file.
+//
+// The first version of this guard matched `TaskCreate\([^)]*addBlockedBy` — and `[^)]*` stops at the
+// FIRST `)`, which is very often a paren *inside a string argument*, long before the call's own
+// closing paren. A dead primitive placed after one was invisible: `TaskCreate(description: "(validate
+// + test)", addBlockedBy: [...])` sailed through green. That is not a contrived shape — audit's own
+// task descriptions carry parenthesised asides. A guard that cannot fail is worse than no guard.
+//
+// So: walk the call, tracking paren DEPTH and treating QUOTED STRINGS as opaque, and return the real
+// body. Parens inside a string, and balanced parens inside an argument, both stop lying. An
+// unterminated `(` is not a call — drop it, so prose can never be mistaken for one.
+//
+// Both quote characters count. Handling only `"` left the identical hole one keystroke away:
+// `subject: 'smiley :)'` closed the scan early and hid every argument after it.
+//
+// But an apostrophe is not a quote — `message: <the agent's summary>` must not open a string and
+// swallow the rest of the call (which would DROP the call as unterminated and silently shrink the
+// guard's reach). So a quote opens a string only in VALUE POSITION: when the last non-whitespace
+// character before it opened or separated an argument (`:` `,` `(` `[` `{`). An apostrophe that
+// follows a letter is just an apostrophe.
+const OPENS_VALUE = new Set([':', ',', '(', '[', '{']);
+const callBodies = (md, tool) => {
+  const bodies = [];
+  const re = new RegExp(`\\b${tool}\\(`, 'g');
+  let m;
+  while ((m = re.exec(md)) !== null) {
+    let depth = 1;
+    let quote = null;
+    let closed = false;
+    let body = '';
+    let prev = '(';
+    for (let i = m.index + m[0].length; i < md.length; i++) {
+      const c = md[i];
+      if (quote) {
+        if (c === '\\') { body += c + (md[i + 1] ?? ''); i++; continue; }
+        if (c === quote) quote = null;
+        body += c;
+        continue;
+      }
+      if ((c === '"' || c === "'") && OPENS_VALUE.has(prev)) { quote = c; body += c; prev = c; continue; }
+      if (c === '(') depth++;
+      if (c === ')') {
+        depth--;
+        if (depth === 0) { closed = true; break; }
+      }
+      body += c;
+      if (!/\s/.test(c)) prev = c;
+    }
+    if (closed) bodies.push(body);
+  }
+  return bodies;
+};
+
+// A call-shaped `SendMessage(... "shutdown_request" ...)`, and a call-shaped `TaskStop(task_id: ...)`.
+const sendsShutdownRequest = (md) => callBodies(md, 'SendMessage').some((b) => /shutdown_request/.test(b));
+const stopsTask = (md) => callBodies(md, 'TaskStop').some((b) => /task_id:/.test(b));
+
+describe('source + rendered content: no dead harness primitives (#360)', () => {
+  // Sweep the SOURCES (`stacks/**`, the edit surface) *and* the render. Renders alone would guard
+  // only the stacks this repo happens to install — see the sourceSkillFiles() note above.
+  const files = () => [
+    ...sourceSkillFiles(),
+    ...sourceAgentFiles(),
+    ...renderedSkillFiles(),
+    ...renderedAgentFiles(),
+  ];
+
+  // The guard is only as good as its reach: if the source walk ever silently returns [] (a moved
+  // directory, a renamed layout), every assertion below would vacuously pass. Pin the coverage.
+  test('the sweep reaches every SOURCE skill and agent, not just the ones this repo renders', () => {
+    const sources = [...sourceSkillFiles(), ...sourceAgentFiles()];
+    assert.ok(sourceSkillFiles().length >= 37, `expected every stacks/**/skills/*/SKILL.md, found ${sourceSkillFiles().length}`);
+    assert.ok(sourceAgentFiles().length >= 14, `expected every stacks/**/agents/*.md, found ${sourceAgentFiles().length}`);
+    // The edit surface is strictly larger than what this repo renders — that gap IS the hole.
+    assert.ok(
+      sourceSkillFiles().length > renderedSkillFiles().length,
+      'sweeping only the render would leave the sources of uninstalled stacks unguarded',
+    );
+    const swept = files();
+    for (const f of sources) assert.ok(swept.includes(f), `${who(f)} is not swept by the #360 guard`);
+  });
+
+  // Call-shaped only: prose may still *name* a removed tool to say it is gone (clean-up does).
+  test('no skill or agent CALLS TeamCreate / TeamDelete / TeamList — the tools do not exist', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(md, /Team(Create|Delete|List)\s*\(/, `${who(f)}: calls a Team* tool, which the harness does not have`);
+    }
+  });
+
+  test('no skill or agent PASSES team_name — it is deprecated and ignored', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(md, /team_name:/, `${who(f)}: passes team_name, which the Agent tool ignores`);
+    }
+  });
+
+  test('task tools use their real parameter keys — taskId / task_id, and TaskList takes none', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      // TaskUpdate's key is taskId, never id.
+      assert.doesNotMatch(md, /TaskUpdate\(\s*id:/, `${who(f)}: TaskUpdate's key is taskId, not id`);
+      // TaskStop's key is task_id, never taskId.
+      assert.doesNotMatch(md, /TaskStop\(\s*taskId:/, `${who(f)}: TaskStop's key is task_id, not taskId`);
+      // TaskList takes no parameters at all.
+      assert.doesNotMatch(md, /TaskList\(\s*[^)\s]/, `${who(f)}: TaskList takes no parameters`);
+      // TaskCreate requires subject + description — it has no addBlockedBy. Read the REAL call body:
+      // a `)` inside a description string must not end the scan (see callBodies).
+      for (const body of callBodies(md, 'TaskCreate')) {
+        assert.doesNotMatch(body, /addBlockedBy/, `${who(f)}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
+      }
+    }
+  });
+
+  test('SendMessage uses `message:`, never the nonexistent `content:`', () => {
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      // Likewise on the real call body — a paren in a `summary:` string used to hide a `content:`.
+      for (const body of callBodies(md, 'SendMessage')) {
+        assert.doesNotMatch(body, /\bcontent:/, `${who(f)}: SendMessage takes message: (+ summary:), not content:`);
+      }
+    }
+  });
+
+  // Teardown is shutdown-then-stop. shutdown_request is the polite first step but is NOT reliable
+  // on its own — a requested agent can go idle and stay alive. TaskStop is what terminates it.
+  // Every skill that stands an agent down must do BOTH.
+  //
+  // This asserts the CALLS, not the words. The first version tested file-wide substring presence
+  // (`/shutdown_request/` and `/TaskStop/` anywhere in the file) — which every one of these skills
+  // satisfies from its explanatory PROSE alone. Deleting a skill's entire teardown code block, the
+  // actual calls an orchestrator executes, left the suite green. The words are not the instruction:
+  // require a real `SendMessage(...shutdown_request...)` and a real `TaskStop(task_id: ...)`, and
+  // require the stop to come AFTER the request — that is what "shutdown-THEN-stop" means.
+  test('teardown is shutdown-then-stop in audit, delegate, autopilot, and clean-up', () => {
+    for (const name of ['audit', 'delegate', 'autopilot', 'clean-up']) {
+      const md = readSkill(name);
+      assert.ok(sendsShutdownRequest(md), `${name}: lost the polite shutdown_request first step — the CALL, not just the word in prose`);
+      assert.ok(stopsTask(md), `${name}: shutdown_request alone does not reliably terminate an agent — a TaskStop(task_id:) CALL must follow it`);
+      const firstShutdown = md.search(/SendMessage\([^\n]*shutdown_request/);
+      const lastStop = md.lastIndexOf('TaskStop(task_id:');
+      assert.ok(
+        firstShutdown !== -1 && lastStop > firstShutdown,
+        `${name}: teardown is shutdown-THEN-stop — no TaskStop(task_id:) call follows the shutdown_request`,
+      );
+    }
+  });
+
+  // The audit chain is NAMED agents; the name is the address for SendMessage and TaskStop, and every
+  // agent spawned must be stood down. The roster is DERIVED FROM THE SKILL — read out of audit's own
+  // `Agent(... name: "X" ...)` calls — never maintained beside it.
+  //
+  // A hand-maintained list is how this went wrong twice, in both directions. First it lost an agent
+  // the skill HAS: the compliance agent was dropped (it is the one whose name is a placeholder —
+  // `{{audit.complianceAgentName}}` in the source, its configured value in the render — so no single
+  // literal matched both surfaces), leaving the only unasserted teardown in the chain, and the test
+  // named for catching a leak stayed green. Then, once the list's CONTENTS were fixed, the same hole
+  // opened in the opposite direction: the skill could GAIN an agent the list lacked. A seventh spawn
+  // with no TaskStop passed green, because `AUDIT_AGENTS.length === 6` pinned the LIST's length, not
+  // the SKILL's agent count.
+  //
+  // Deriving the roster closes both directions at once: whatever the skill spawns is what gets
+  // checked. The count pin below is now a change-DETECTOR on the skill, not a claim about a list.
+  // EVERY quote style, on every one of these — `(['"])(.+?)\1` and never `"([^"]+)"`.
+  //
+  // Reading only double-quoted names is how the derived roster reopened the very hole it closed: an
+  // agent spawned as `name: 'perf-pass'` is INVISIBLE to the roster, so it is never checked for
+  // teardown and leaks green — and the count pin cannot save it, because the pin is a change-detector
+  // that depends on the roster SEEING what the skill spawns. Invisible agent → roster.length still
+  // reads 6 → pin satisfied → detector detects nothing. The double-quoted form of the same
+  // regression goes red; only the quote style differed.
+  //
+  // The sting: the commit that introduced this roster is the same one that taught `callBodies` that
+  // `'` is a real quote character (F13). The extractor learned it; the consumer of its output did not.
+  //
+  // Note the asymmetry, verified rather than assumed: `name:` fails OPEN (a missed spawn is a spawn
+  // never checked), while `to:` and `task_id:` fail SAFE (a missed teardown reads as a MISSING
+  // teardown → red). Only the roster leaks — but a safe failure is still a wrong one: it would reject
+  // a perfectly valid single-quoted teardown. All three now accept both quote styles.
+  const QUOTED = (key) => new RegExp(`${key}:\\s*(['"])(.+?)\\1`);
+
+  const auditSpawnRoster = (md) =>
+    callBodies(md, 'Agent')
+      .map((body) => body.match(QUOTED('name')))
+      .filter(Boolean)
+      .map((m) => m[2]);
+
+  // Who actually gets a shutdown_request — read out of the SendMessage calls, so alignment padding
+  // and argument order cannot make a real teardown look missing (or a missing one look real).
+  const shutdownTargets = (md) =>
+    callBodies(md, 'SendMessage')
+      .filter((body) => /shutdown_request/.test(body))
+      .map((body) => body.match(QUOTED('to')))
+      .filter(Boolean)
+      .map((m) => m[2]);
+
+  // Every agent this file stops, whatever quote style the call uses.
+  const stoppedAgents = (md) =>
+    callBodies(md, 'TaskStop')
+      .map((body) => body.match(QUOTED('task_id')))
+      .filter(Boolean)
+      .map((m) => m[2]);
+
+  const auditFiles = () =>
+    [
+      path.join(STACKS, 'orchestration', 'skills', 'audit', 'SKILL.md'),
+      path.join(CLAUDE, 'skills', 'audit', 'SKILL.md'),
+    ].filter((f) => fs.existsSync(f));
+
+  test('audit stops every named agent it spawns — roster derived from the skill, not kept beside it', () => {
+    const files = auditFiles();
+    assert.ok(files.length > 0, 'the audit skill is on neither surface — this test would vacuously pass');
+
+    for (const f of files) {
+      const md = fs.readFileSync(f, 'utf8');
+      const roster = auditSpawnRoster(md);
+
+      // The skill's own spawn count. If audit really does gain or lose an agent, this fails and the
+      // number is updated DELIBERATELY — which is the point. It must never drift silently.
+      assert.equal(
+        roster.length,
+        6,
+        `${who(f)}: audit's chain is six named agents, but the skill spawns ${roster.length} (${roster.join(', ')}) — if the chain genuinely changed, update this pin on purpose`,
+      );
+
+      const shutdowns = shutdownTargets(md);
+      const stopped = stoppedAgents(md);
+      for (const name of roster) {
+        assert.ok(
+          shutdowns.includes(name),
+          `${who(f)}: spawns ${name} but never sends it shutdown_request — teardown is shutdown-THEN-stop`,
+        );
+        assert.ok(
+          stopped.includes(name),
+          `${who(f)}: spawns ${name} but never stops it — a leaked agent`,
+        );
+      }
+    }
+    // Dependencies are wired AFTER create, with TaskUpdate.
+    assert.match(readSkill('audit'), /TaskUpdate\(taskId: task2\.id, addBlockedBy: \[task1\.id\]\)/);
+  });
+});
+
+// #360 abolished the team CONCEPT, not just the Team* calls. The call-shaped sweep above cannot see
+// a team that survives in PROSE — and three did, in the very files this change rewrote: autopilot
+// still told clean-up to tear down "any delegate team" (a handoff to a skill that now says there are
+// "no teams to hunt for"), and delegate twice called its `<runId>` "the team name" after it had
+// stopped creating any team. Two were in SKILL.md; the third was in `checkpoint.schema.json` — a
+// skill ASSET, which the sweep above never reads, because it globs only SKILL.md and agent .md.
+// So this guard reads the skills' JSON assets too. A dead concept left describing live state is the
+// #360 bug in prose form: it reads as authoritative to the next agent that follows it.
+describe('source + rendered content: the abolished team concept does not survive in prose (#360)', () => {
+  // DENY BY DEFAULT. The first version of this guard was a denylist of the two phrasings that had
+  // happened to be found — `delegate team` and `the team name` — which is a guard that can only ever
+  // catch the regressions already fixed. A review restored git-workflow's pre-#360 paragraph
+  // VERBATIM ("Create a team per delegate run.") and the test named "the abolished team concept does
+  // not survive in prose" passed green. A denylist of known phrasings cannot back that name.
+  //
+  // So the polarity is inverted: the bare word `team` is BANNED across every swept file, and the
+  // legitimate uses are ALLOWLISTED — each one annotated with why it is legitimate. A new way of
+  // saying "create a team" now fails by default; admitting a genuinely new legitimate use is a
+  // deliberate edit to this list, which is exactly the decision that should be deliberate.
+  //
+  // Inverting it immediately found two stale references the denylist never could: clean-up still
+  // advertised a `teams` ARG, and standup called its scaffold audit's "minus the team" — implying
+  // audit has one. Both are fixed; that is the difference between the two polarities.
+  const ALLOWED_TEAM_USES = [
+    { pattern: /team-lead/gi, why: 'a live SendMessage recipient — the harness\'s own label for the main loop' },
+    { pattern: /the team lead/gi, why: 'the human/main-loop recipient, in prose' },
+    { pattern: /team_name/gi, why: 'the deprecated Agent parameter, named in order to say it is ignored' },
+    { pattern: /Team(Create|Delete|List)/g, why: 'the dead tools, named in order to say they no longer exist' },
+    { pattern: /single implicit team/gi, why: 'the harness\'s actual model — one implicit team per session' },
+    { pattern: /no teams?\b/gi, why: 'a negation: "there is no team to create", "no teams to hunt for"' },
+    { pattern: /not a team/gi, why: 'a negation: "<runId> names the run, not a team"' },
+    { pattern: /not create a team/gi, why: 'a negation: "do not create a team"' },
+    // Not about THIS harness's team lifecycle — general agent-harness design vocabulary. These are
+    // pinned to the SURROUNDING CONTEXT, not to the bare phrase: a bare `/subagent teams/` allowlist
+    // is a bypass, because it strips the word out of any sentence that happens to contain it —
+    // "spin up subagent teams for each parallel group" would sail straight through the guard. An
+    // allowlist entry must license the use it was written for, not a two-word substring of it.
+    { pattern: /subagent teams, hooks/gi, why: 'harness-architect: an item in its list of design topics' },
+    { pattern: /Subagent teams & orchestration/gi, why: 'harness-architect: a design-topic heading' },
+    { pattern: /team beats a single loop/gi, why: 'harness-architect: generic fan-out design advice' },
+    { pattern: /engineering-team/gi, why: 'a stack name that merely contains the word' },
+    { pattern: /Team Standup/gi, why: 'the standup skill\'s title' },
+  ];
+
+  // Markdown emphasis and line wrapping must not smuggle a phrase past the allowlist: "do **not**
+  // create a team" and a sentence broken across two lines are the same words to a reader.
+  const normalize = (s) => s.replace(/[*_`]/g, '').replace(/\s+/g, ' ');
+  const residualTeamUses = (md) => {
+    let t = normalize(md);
+    for (const { pattern } of ALLOWED_TEAM_USES) t = t.replace(pattern, '');
+    return t.match(/.{0,50}\bteams?\b.{0,30}/gi) ?? [];
+  };
+
+  const skillAssetFiles = () =>
+    stackDirs()
+      .flatMap((d) => {
+        const skills = path.join(d, 'skills');
+        return fs.existsSync(skills)
+          ? fs
+              .readdirSync(skills, { withFileTypes: true })
+              .filter((e) => e.isDirectory())
+              .flatMap((e) => {
+                const dir = path.join(skills, e.name);
+                return fs
+                  .readdirSync(dir)
+                  .filter((f) => f.endsWith('.json'))
+                  .map((f) => path.join(dir, f));
+              })
+          : [];
+      });
+
+  test('no skill, agent, or skill asset uses the word "team" outside an allowlisted, legitimate sense', () => {
+    const swept = [...sourceSkillFiles(), ...sourceAgentFiles(), ...skillAssetFiles(), ...renderedSkillFiles(), ...renderedAgentFiles()];
+    assert.ok(skillAssetFiles().length > 0, 'the asset walk returned [] — every assertion below would vacuously pass');
+    for (const f of swept) {
+      const residual = residualTeamUses(fs.readFileSync(f, 'utf8'));
+      assert.deepEqual(
+        residual,
+        [],
+        `${who(f)}: uses "team" in a sense that is not allowlisted — #360 abolished the team CONCEPT, not just the Team* calls. Either reword it, or, if this is a genuinely legitimate new use, add it to ALLOWED_TEAM_USES with a reason. Found: ${JSON.stringify(residual)}`,
+      );
+    }
+  });
+
+  // Deny-by-default earns its keep only if it does not over-match. Pin the legitimate uses so this
+  // stays a guard and never degenerates into a word ban that forces contorted prose.
+  test('the legitimate uses of "team" still pass — deny-by-default, not a word ban', () => {
+    const legit = [
+      'the session has a **single implicit team**, and `TeamCreate` / `TeamDelete` no longer exist',
+      "the `Agent` tool's `team_name` parameter is deprecated and ignored",
+      'SendMessage(to: "team-lead", message: <summary>, summary: "issue #1: PR opened")',
+      'Send a findings summary to the team lead.',
+      'There are **no teams to hunt for**.',
+      'There is **no team to create**.',
+      'It names the *run*, not a team.',
+      'Do **not** create a team and do **not** create tasks.',
+    ];
+    for (const line of legit) {
+      assert.deepEqual(residualTeamUses(line), [], `over-matched a legitimate use: ${line}`);
+    }
+  });
+
+  // ...and it must still catch the dead concept in any phrasing, including ones never seen before.
+  test('deny-by-default catches phrasings no denylist had ever seen', () => {
+    const dead = [
+      // git-workflow's pre-#360 paragraph, restored verbatim — the exact regression that passed green.
+      'Teams and worktrees are orthogonal — teams provide coordination (task tracking, messaging), worktrees provide isolation. **Create a team per delegate run.**',
+      // Phrasings no denylist would have listed.
+      'Spin up a team for the run and tear it down afterwards.',
+      'Each parallel group gets its own team.',
+      'The orchestrator owns the team lifecycle.',
+      // An allowlisted phrase is not a skeleton key: borrowing harness-architect's design vocabulary
+      // must not license an instruction to create a team. A bare `/subagent teams/` entry would have
+      // stripped the word right out of this sentence and passed it green.
+      'Spin up subagent teams for each parallel group and tear them down after.',
+    ];
+    for (const line of dead) {
+      assert.notDeepEqual(residualTeamUses(line), [], `let the abolished concept through: ${line}`);
+    }
+  });
+});
+
+// A guard is only worth its green if it can go red. The first version of the #360 sweep could not:
+// an adversarial review reintroduced this PR's OWN headline catches — and the suite passed, with the
+// very tests named for catching them reported `ok`. These are the shapes it smuggled past, pinned as
+// fixtures. If a future edit re-loosens the patterns, THESE fail — not a real regression six months
+// from now, on a PR nobody is reading closely.
+describe('the #360 guard can actually fail (regression fixtures)', () => {
+  // The exact shape the review slipped past `TaskCreate\([^)]*addBlockedBy`: the `)` closing the
+  // parenthesised aside in `description:` ended the old scan before `addBlockedBy` was ever reached.
+  test('a `)` inside a string argument no longer hides a dead TaskCreate(addBlockedBy:)', () => {
+    const smuggled = 'TaskCreate(subject: "audit", description: "run the gate (validate + test + render + doctor).", addBlockedBy: [task1.id])';
+    const bodies = callBodies(smuggled, 'TaskCreate');
+    assert.equal(bodies.length, 1, 'the call body must be extracted whole, not truncated at the first paren');
+    assert.match(bodies[0], /addBlockedBy/, 'the old [^)]* scan stopped at the paren inside description: and missed this');
+
+    // ...and a legitimate TaskCreate with a parenthesised aside stays clean (no false positive).
+    const clean = 'TaskCreate(subject: "audit", description: "run the gate (validate + test).")';
+    assert.doesNotMatch(callBodies(clean, 'TaskCreate')[0], /addBlockedBy/);
+  });
+
+  // Same hole, guarding this PR's own headline catch: a paren in `summary:` hid a `content:`.
+  test('a `)` inside a string argument no longer hides a dead SendMessage(content:)', () => {
+    const smuggled = 'SendMessage(to: "team-lead", summary: "audit pass (complete)", content: <summary>)';
+    const bodies = callBodies(smuggled, 'SendMessage');
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /\bcontent:/, 'the old [^)]* scan stopped at the paren inside summary: and missed this');
+
+    const clean = 'SendMessage(to: "team-lead", summary: "audit pass (complete)", message: <summary>)';
+    assert.doesNotMatch(callBodies(clean, 'SendMessage')[0], /\bcontent:/);
+  });
+
+  // The teardown assertion used to be file-wide substring presence, so the PROSE alone satisfied it
+  // and the actual calls could be deleted wholesale. Prose must no longer count as an instruction.
+  test('prose that merely NAMES shutdown_request and TaskStop no longer counts as a teardown', () => {
+    const proseOnly = [
+      'Teardown is shutdown-then-stop: `shutdown_request` is the polite first step, and it is not',
+      'reliable on its own — `TaskStop` is what actually terminates the agent.',
+    ].join('\n');
+    assert.ok(!sendsShutdownRequest(proseOnly), 'a paragraph mentioning shutdown_request is not a SendMessage call');
+    assert.ok(!stopsTask(proseOnly), 'a paragraph mentioning TaskStop is not a TaskStop(task_id:) call');
+
+    // The real teardown — the calls an orchestrator executes — still reads as one.
+    const realTeardown = [
+      'SendMessage(to: "issue-1-agent", message: {type: "shutdown_request", reason: "Delegation complete"})',
+      'TaskStop(task_id: "issue-1-agent")',
+    ].join('\n');
+    assert.ok(sendsShutdownRequest(realTeardown));
+    assert.ok(stopsTask(realTeardown));
+  });
+
+  // An unterminated `(` in prose is not a call — otherwise the extractor would run to EOF and any
+  // later `content:` in the document would read as an argument of it.
+  test('an unterminated paren in prose is not treated as a call', () => {
+    assert.deepEqual(callBodies('mention SendMessage( in passing\n\nlater content: here', 'SendMessage'), []);
+  });
+
+  // Round 2 of the review: handling only `"` left the F6 hole one keystroke away.
+  test("a `)` inside a SINGLE-quoted string no longer hides a dead primitive", () => {
+    const smuggled = "TaskCreate(subject: 'smiley :)', addBlockedBy: [task1.id])";
+    const bodies = callBodies(smuggled, 'TaskCreate');
+    assert.equal(bodies.length, 1, 'the single-quoted string must be opaque, not a scan terminator');
+    assert.match(bodies[0], /addBlockedBy/, "a `)` inside a '…' string used to truncate the body and hide everything after it");
+  });
+
+  // ...but an apostrophe is not a quote. If it opened a string, the call would run to EOF, be dropped
+  // as unterminated, and the guard would silently SHRINK — a weakened guard dressed as a fixed one.
+  test("an apostrophe in an unquoted argument does not swallow the call", () => {
+    const withApostrophe = 'SendMessage(to: "x", message: <the agent\'s summary>, content: bad)';
+    const bodies = callBodies(withApostrophe, 'SendMessage');
+    assert.equal(bodies.length, 1, "the apostrophe in \"agent's\" must not open a string and drop the call");
+    assert.match(bodies[0], /\bcontent:/, 'the dead content: param must still be visible after the apostrophe');
+  });
+
+  // The roster is derived from the skill, so the skill GAINING an unstopped agent must fail. The
+  // hand-maintained list could not see this: pinning the LIST's length says nothing about the SKILL's.
+  //
+  // And the roster must see the agent WHATEVER QUOTE STYLE spawns it. Reading only `name: "…"` let a
+  // `name: 'perf-pass'` spawn go invisible — never checked for teardown, and the count pin useless,
+  // since a pin that counts what the roster can see cannot detect what it cannot. Both styles, both
+  // directions.
+  const rosterOf = (md) =>
+    callBodies(md, 'Agent')
+      .map((b) => b.match(/name:\s*(['"])(.+?)\1/))
+      .filter(Boolean)
+      .map((m) => m[2]);
+
+  test('a seventh audit agent with no TaskStop is caught by the derived roster — in EITHER quote style', () => {
+    for (const [style, q] of [['double', '"'], ['single', "'"]]) {
+      const skill = [
+        `Agent(\n  subagent_type: "a",\n  name: "architecture-pass",\n  prompt: <p>\n)`,
+        `Agent(\n  subagent_type: "b",\n  name: ${q}perf-pass${q},\n  prompt: <p>\n)`,
+        'TaskStop(task_id: "architecture-pass")',
+      ].join('\n');
+      assert.deepEqual(
+        rosterOf(skill),
+        ['architecture-pass', 'perf-pass'],
+        `the ${style}-quoted spawn must be visible to the roster — an invisible agent is never checked for teardown`,
+      );
+      const stopped = callBodies(skill, 'TaskStop')
+        .map((b) => b.match(/task_id:\s*(['"])(.+?)\1/))
+        .filter(Boolean)
+        .map((m) => m[2]);
+      assert.ok(!stopped.includes('perf-pass'), `${style}-quoted: the seventh agent is spawned and never stopped — this is the leak`);
+    }
+  });
+
+  // A legitimate single-quoted teardown must be RECOGNISED, not rejected. `to:` and `task_id:` failed
+  // SAFE rather than open, but a safe failure is still a wrong one — it would have gone red on valid
+  // code. Symmetry is the fix, not just the leak.
+  test('a single-quoted teardown is recognised as a real teardown, not a missing one', () => {
+    const md = "SendMessage(to: 'a1', message: {type: \"shutdown_request\"})\nTaskStop(task_id: 'a1')";
+    const shutdowns = callBodies(md, 'SendMessage')
+      .filter((b) => /shutdown_request/.test(b))
+      .map((b) => b.match(/to:\s*(['"])(.+?)\1/))
+      .filter(Boolean)
+      .map((m) => m[2]);
+    const stopped = callBodies(md, 'TaskStop')
+      .map((b) => b.match(/task_id:\s*(['"])(.+?)\1/))
+      .filter(Boolean)
+      .map((m) => m[2]);
+    assert.deepEqual(shutdowns, ['a1']);
+    assert.deepEqual(stopped, ['a1']);
   });
 });
