@@ -5002,6 +5002,246 @@ describe('syrup gate — generic (#51)', () => {
   });
 });
 
+// #364: syrup target scoping — an OPTIONAL `targets:` on a files entry, via the map form
+// `- path: … / targets: [claude]`. Absent = renders unconditionally (the pre-#364 contract, and
+// what a harness-independent `.github/` payload wants). Present = renders only when the consumer
+// has enabled at least one listed target — and a file that FALLS OUT of scope is pruned, not
+// orphaned. `targets:` decides WHETHER a file renders, never how many times: unlike agents and
+// skills, which fan out across targets, a file has no per-harness variant.
+describe('syrup target scoping (#364)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  const SCOPED = '.claude/workflows/audit.js';
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-scope-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-scope-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: scope\nstacks: [sb]\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt', //                    unscoped, string form — the backward-compat case
+      `  - path: ${SCOPED}`, //               scoped, map form
+      '    targets: [claude]',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/files/shared.txt', 'shared payload\n');
+    write(toolkitRoot, `stacks/sb/files/${SCOPED}`, 'export const meta = {};\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const config = (targets, extra = '') =>
+    write(cwd, '.waffle/waffle.yaml', `targets: [${targets}]\nstacks: [sb]\n${extra}config: {}\n`);
+  const lockFiles = () => JSON.parse(read(cwd, '.waffle/waffle.lock.json')).files;
+  const has = (rel) => fs.existsSync(path.join(cwd, rel));
+
+  test('the fixture validates clean — the map form is not itself a lint error', () => {
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  // (a) The whole promise of this change: an entry with no `targets:` behaves exactly as before.
+  test('an UNSCOPED entry renders under every target set (backward compatibility)', () => {
+    for (const targets of ['claude', 'codex', 'agents-dir', 'claude, codex, agents-dir']) {
+      fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
+      config(targets);
+      assert.equal(render().ok, true, targets);
+      assert.ok(has('shared.txt'), `unscoped file renders under targets [${targets}]`);
+    }
+  });
+
+  test('a SCOPED entry renders when its target is enabled', () => {
+    config('claude');
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED));
+  });
+
+  test('a SCOPED entry does NOT render when its target is disabled — but its unscoped sibling does', () => {
+    config('codex');
+    assert.equal(render().ok, true);
+    assert.equal(has(SCOPED), false, 'claude-scoped file stays out of a codex-only repo');
+    assert.ok(has('shared.txt'), 'the filter is per-item, not per-stack');
+  });
+
+  // (d) THE PRUNE PATH. A file rendered under an old config that the new config filters out must be
+  // REMOVED, not orphaned. This is the test that fails if the filter is put in addStack rather than
+  // addItem — see the trackedFiles re-admission it has to override.
+  test('disabling the last of a rendered file\'s targets PRUNES it from disk and from the lock', () => {
+    config('claude');
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: rendered under [claude]');
+    assert.ok(SCOPED in lockFiles(), 'precondition: locked under [claude]');
+
+    config('codex'); // the harness the file is not for
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.equal(has(SCOPED), false, 'out-of-scope file is removed from disk');
+    assert.equal(SCOPED in lockFiles(), false, 'and its lock entry is gone');
+    assert.ok(result.removed.includes(SCOPED), `removed: ${JSON.stringify(result.removed)}`);
+    assert.ok(has('shared.txt'), 'the unscoped sibling survives');
+    assert.ok('shared.txt' in lockFiles(), 'and stays locked');
+  });
+
+  // (d2) Same, for the OPT-IN variant. addStack deliberately re-admits an already-poured opt-in
+  // syrup file because the lock tracks its path — scope must override that, or an opt-in file could
+  // never be scoped out once poured.
+  test('an opt-in scoped file, once poured, is still pruned when its target is disabled', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'optIn:',
+      `  - files/${SCOPED}`,
+      '',
+    ].join('\n'));
+    config('claude', `include: [files/${SCOPED}]\n`);
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: poured via an explicit include');
+
+    config('codex', `include: [files/${SCOPED}]\n`);
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.equal(has(SCOPED), false, 'tracked-but-out-of-scope opt-in syrup is pruned, not re-admitted');
+    assert.equal(SCOPED in lockFiles(), false);
+  });
+
+  // (h) An explicit `include:` must not be an escape hatch from the scope — and must not be silent
+  // about it either, which would repeat the "half-installed and silent" failure #74 fixed.
+  test('an explicit include cannot bypass the scope, and warns that nothing rendered', () => {
+    config('codex', `include: [files/${SCOPED}]\n`);
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.equal(has(SCOPED), false, 'include does not override targets');
+    assert.ok(
+      result.warnings.some((w) => /scoped to targets \[claude\]/.test(w)),
+      `expected a target-skip warning, got: ${JSON.stringify(result.warnings)}`,
+    );
+  });
+
+  // (i) A scoped file renders ONCE, with the identity of the primary-most target it DECLARES — not
+  // the project's primary target, which here is a harness the file is not even for.
+  test('a scoped file substitutes the identity of the target it declares, not the project primary', () => {
+    write(toolkitRoot, `stacks/sb/files/${SCOPED}`, '// assistant: {{harness.assistantName}}\n');
+    config('codex, claude'); // primary target is CODEX; the file is scoped to CLAUDE
+    assert.equal(render().ok, true);
+    assert.equal(read(cwd, SCOPED), `// assistant: ${HARNESS_BUILTINS.assistantName.claude}\n`);
+  });
+
+  // (g) OR semantics across a multi-target scope, at the selection layer.
+  test('computeSelection: a scoped file needs at least ONE enabled target (OR, not AND)', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude, codex]',
+      '',
+    ].join('\n'));
+    const toolkit = loadToolkit(toolkitRoot);
+    const names = (targets) =>
+      computeSelection(toolkit, { stacks: ['sb'], include: [], values: {}, targets })
+        .items.map((i) => `${i.kind}/${i.item.name}`)
+        .sort();
+    assert.deepEqual(names(['codex']), [`files/${SCOPED}`, 'files/shared.txt'], 'one of two enabled → selected');
+    assert.deepEqual(names(['agents-dir']), ['files/shared.txt'], 'neither enabled → not selected');
+  });
+
+  // (j) doctor is the required CI check that catches a lock left stale by a config change.
+  test('doctor --verify-render flags the file a targets change has left in the lock', () => {
+    config('claude');
+    assert.equal(render().ok, true);
+    config('codex'); // config now filters the file out, but no re-render has happened yet
+    const result = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, verifyRender: true });
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.render.absent.includes(SCOPED),
+      `expected ${SCOPED} under render.absent, got: ${JSON.stringify(result.render)}`,
+    );
+  });
+
+  // The setup playbook is a menu of what the agent may pour. An opt-in file scoped away from every
+  // enabled target is not on that menu — offering it would send the agent to `install` a ref that
+  // renders nothing.
+  test('the setup playbook never offers an opt-in file that cannot render here', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'optIn:',
+      `  - files/${SCOPED}`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'schema/SETUP.md', '# Setup\n'); // setupGuide prepends the playbook
+    config('codex');
+    const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
+    assert.match(guide, /not installable here — scoped to targets \[claude\]/);
+    assert.doesNotMatch(guide, /leave out unless the user asks for it/);
+  });
+
+  test('validate rejects an unknown target name', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claud]', // typo — would otherwise scope the file to NOTHING, silently
+      '',
+    ].join('\n'));
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /unknown target "claud"/.test(p)), JSON.stringify(problems));
+  });
+
+  test('validate rejects an empty targets list — it could never render', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: []',
+      '',
+    ].join('\n'));
+    const problems = validateToolkit(toolkitRoot);
+    assert.ok(problems.some((p) => /empty `targets:` list, so it can never render/.test(p)), JSON.stringify(problems));
+  });
+
+  // (f) The silent-unscoping guard: a `target:` (singular) typo must not be ignored, or the payload
+  // would render everywhere — the exact failure the field exists to prevent.
+  test('the loader rejects an unknown key on a map-form files entry', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      `  - path: ${SCOPED}`,
+      '    target: claude', // singular typo
+      '',
+    ].join('\n'));
+    assert.throws(() => loadToolkit(toolkitRoot), /unknown key "target"/);
+  });
+
+  test('the loader rejects a map-form entry with no path, and a non-list targets', () => {
+    const manifest = (...tail) =>
+      write(toolkitRoot, 'stacks/sb/stack.yaml', ['name: sb', 'description: Scope fixture.', 'files:', ...tail, ''].join('\n'));
+    manifest('  - targets: [claude]');
+    assert.throws(() => loadToolkit(toolkitRoot), /needs a `path:` string/);
+    manifest(`  - path: ${SCOPED}`, '    targets: claude');
+    assert.throws(() => loadToolkit(toolkitRoot), /`targets:` must be a list of target names/);
+  });
+});
+
 // #119: the `list` command. State model (loadToolkit ∪ selection ∪ lock ∪ doctor-style drift ∪
 // version skew), the plain non-TTY table, and the interactive picker's pure choice-builder — all
 // on a throwaway fixture, plus real-CLI spawns proving non-TTY safety (never blocks on readline).

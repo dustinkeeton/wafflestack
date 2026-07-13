@@ -3,7 +3,7 @@ import path from 'node:path';
 import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
 import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
-import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, fileMatchesTargets } from './refs.mjs';
 import { readTreeLock, collectUsedKeys } from './render.mjs';
 import {
   applicablePrerequisites,
@@ -204,7 +204,9 @@ function currentConfigSection(toolkit, cwd) {
     selection.items.filter((i) => i.kind === 'files').map((i) => i.item.name),
   );
   const companionsByRef = new Map(
-    skippedSyrupCompanions(toolkit, selection).map((s) => [s.fileRef, s.companions]),
+    // #364: pass the enabled targets, so the playbook never suggests pouring a target-scoped syrup
+    // file that could not render in this project anyway.
+    skippedSyrupCompanions(toolkit, selection, project.targets).map((s) => [s.fileRef, s.companions]),
   );
   const enabledStackNames = new Set([...project.stacks, ...groups.keys()]);
   const optInLines = [];
@@ -218,6 +220,12 @@ function currentConfigSection(toolkit, cwd) {
       let note;
       if (installedFiles.has(f.name)) {
         note = 'installed — renders on this selection (explicitly included or already tracked)';
+      } else if (!fileMatchesTargets(f, project.targets)) {
+        // #364: scoped to harnesses this project has not enabled — pouring it would render nothing,
+        // so say that outright rather than offering it as a choice the user could make.
+        note =
+          `not installable here — scoped to targets [${f.targets.join(', ')}], and this project ` +
+          `enables [${project.targets.join(', ')}]. Enable one of its targets to pour it.`;
       } else if (companions) {
         note = `not installed — **pairs with selected ${companions.join(', ')}**; ask the user both/one/neither, then pour with \`install ${fileRef}\` if they want the automated half`;
       } else {

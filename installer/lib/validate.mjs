@@ -5,7 +5,7 @@ import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems } from
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
-import { HARNESS_BUILTINS, HARNESS_PATTERNS } from './project.mjs';
+import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -395,6 +395,30 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       if (!data.description) problems.push(`${ctx}: skill ${skill.name} missing frontmatter description`);
       for (const rel of skill.files.filter((f) => f.endsWith('.md'))) {
         for (const k of placeholderKeys(fs.readFileSync(path.join(skill.dir, rel), 'utf8'))) usedKeys.add(k);
+      }
+    }
+
+    // An optional `targets:` on a files entry (#364) scopes a harness-specific payload to the
+    // consumers who enabled that harness; absent, it renders unconditionally (the default, and what
+    // a harness-independent `.github/` payload wants). Every declared name must be a real target: a
+    // typo would scope the file to NOTHING and it would silently never render — and an empty list is
+    // an authoring bug for the same reason. The loader stays tolerant of both and lets this report
+    // them precisely, the same split as `optIn:` and `prerequisites:`.
+    for (const file of stack.files) {
+      if (file.targets === null) continue;
+      if (!file.targets.length) {
+        problems.push(
+          `${ctx}: files entry "${file.name}" declares an empty \`targets:\` list, so it can never render — ` +
+            `omit \`targets:\` to render it unconditionally`,
+        );
+        continue;
+      }
+      for (const t of file.targets) {
+        if (!VALID_TARGETS.includes(t)) {
+          problems.push(
+            `${ctx}: files entry "${file.name}" declares unknown target "${t}" (valid: ${VALID_TARGETS.join(', ')})`,
+          );
+        }
       }
     }
 

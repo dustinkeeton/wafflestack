@@ -387,7 +387,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
   // gated out and silent. Surface each skipped pairing with the exact pour command. This is the
   // deliberately non-interactive CLI's stand-in for the both/one/neither question the setup
   // playbook (schema/SETUP.md step 2) now requires an agent to ask.
-  for (const { fileRef, stackName, companions } of skippedSyrupCompanions(toolkit, selection)) {
+  for (const { fileRef, stackName, companions } of skippedSyrupCompanions(toolkit, selection, project.targets)) {
     // External opt-in syrup is doubly gated (#126): a paired external syrup file was authored
     // outside this repo, so its extra trust-boundary acknowledgement rides along with the
     // both/one/neither pairing note — distinct from a built-in companion, which needs only the
@@ -400,6 +400,18 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     warnings.push(
       `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')} but was not ` +
         `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose${external}`,
+    );
+  }
+
+  // #364: an explicitly `include:`d syrup file scoped to targets this project has not enabled
+  // renders nothing. Say so — a silent no-op on an explicit include is the same "half-installed and
+  // silent" failure the pairing warning above exists to prevent. A stack-expansion skip stays
+  // silent, exactly like the `optIn:` gate: only an explicit ask earns an explicit answer.
+  for (const { ref, targets } of selection.targetSkipped) {
+    warnings.push(
+      `${ref} is scoped to targets [${targets.join(', ')}] and this project enables ` +
+        `[${project.targets.join(', ')}] — it is not rendered. Enable one of its targets in ` +
+        `${CONFIG_FILE}, or drop it from \`include:\`.`,
     );
   }
 
@@ -440,9 +452,20 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     const primaryTarget = project.targets[0] ?? 'claude';
     const resolvers = {};
     for (const target of project.targets) resolvers[target] = makeResolver(stack, project.values, target);
-    // Files render once (harness-independent) and the missing-required-key probe needs a
-    // single resolver — both use the primary target's identity for any `harness.*` refs.
+    // A file renders ONCE, with ONE identity (it has no per-harness variant), and the
+    // missing-required-key probe needs a single resolver — both use the primary target's identity
+    // for any `harness.*` refs. A `targets:`-scoped file (#364) is the one exception, and only on
+    // WHICH identity: see `resolverFor` below. `targets:` decides whether a file renders, never how
+    // many times.
     const primaryResolver = resolvers[primaryTarget] ?? makeResolver(stack, project.values, primaryTarget);
+    // #364: a scoped file substitutes with the identity of the primary-most target it DECLARES —
+    // not the project's primary target, which may be a harness the file is not even for. Rendering
+    // a `[claude]`-scoped payload in a `[codex, claude]` repo with the Codex identity would put the
+    // wrong `{{harness.*}}` values in a Claude-only file. An unscoped file keeps using
+    // primaryResolver, unchanged. A selected scoped file is guaranteed at least one enabled declared
+    // target by computeSelection's filter, so the `find` always hits; the fallback is belt-and-braces.
+    const resolverFor = (f) =>
+      (f.targets ? resolvers[project.targets.find((t) => f.targets.includes(t))] : primaryResolver) ?? primaryResolver;
     // Scope required-config to keys the *selected* items actually reference — installing
     // one skill from a stack must not demand config only its siblings use.
     const usedKeys = collectUsedKeys(items);
@@ -462,7 +485,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     for (const { kind, item } of items) {
       if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, guards });
       else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, guards });
-      else renderFiles({ file: item, stack, resolve: primaryResolver, emit, errors, guards });
+      else renderFiles({ file: item, stack, resolve: resolverFor(item), emit, errors, guards });
     }
     // Env prerequisites still warn when any item from this stack renders.
     checkEnvPrerequisites({ stack, project, cwd, warnings });
@@ -620,10 +643,13 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guar
 }
 
 /**
- * Emit a generic `files/` payload to its repo-relative path — independent of `targets:`,
- * since a file has no per-harness variant and renders once. Text is template-substituted
- * (declared keys + `harness.*` resolved against the primary target); binaries are copied
- * byte-for-byte. The rel path doubles as the cross-stack conflict key, so two enabled
+ * Emit a generic `files/` payload to its repo-relative path. A file has no per-harness variant, so
+ * it renders ONCE, never per-target — but an optional `targets:` on its manifest entry may decide
+ * WHETHER it renders at all (#364), which `computeSelection` settles before this is ever called: an
+ * out-of-scope file is not in the selection, so its path is not among the render's outputs and the
+ * stale-prune removes any copy an earlier config left behind. Text is template-substituted (declared
+ * keys + `harness.*` resolved against a single target's identity — the caller's `resolve`); binaries
+ * are copied byte-for-byte. The rel path doubles as the cross-stack conflict key, so two enabled
  * stacks emitting the same path fail loudly, exactly like same-named skills.
  */
 function renderFiles({ file, stack, resolve, emit, errors, guards }) {

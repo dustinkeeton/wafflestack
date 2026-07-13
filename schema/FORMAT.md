@@ -39,6 +39,8 @@ skills: [git-workflow, issue]        # directories under skills/
 files:                               # generic files under files/, by repo-relative path
   - .github/workflows/release.yml
   - scripts/check-format.mjs
+  - path: .claude/workflows/audit.js # optional map form: scope a harness-specific payload
+    targets: [claude]                #   to the harnesses it is actually for
 optIn:                               # optional: sensitive syrup that is opt-in, not default
   - files/.github/workflows/release.yml
 requires:                            # optional per-item dependency declarations
@@ -241,15 +243,26 @@ config. Each entry in the manifest's `files:` list is a **repo-relative path** u
 stack's `files/` directory; it renders **verbatim to that same path** in the consuming
 project. (Sensitive syrup gated behind `optIn:` is **opt-in syrup** — see above.)
 
-Files are **harness-independent**: they render **once** regardless of `targets:` (a file has
-no per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/check.mjs`.
+Files are **harness-independent**: they render **once**, never per-target (a file has no
+per-harness variant), so `files/scripts/check.mjs` always lands at `scripts/check.mjs`.
+
+A `files:` entry may nonetheless declare an optional **`targets:`** scope — the map form
+`- path: <repo-relative-path>` plus `targets: [claude]`. Omit it and the payload renders
+**unconditionally**, which is the right default and what a `.github/` workflow wants: a GitHub
+Action has nothing to do with which harness you run. Declare it and the payload renders only when
+the consumer has enabled **at least one** of the listed targets — which is what a harness-specific
+payload (a `.claude/workflows/*.js`) wants, so it does not land in a codex-only repo as dead
+weight. Scoping decides **whether** a file renders, never how many times: it still renders once,
+substituted with the identity of the primary-most target it declares. Disable the last of a poured
+file's targets and the next `render` **prunes** it — the same frozen-image contract as dropping a
+stack. An unknown target name, or an empty `targets: []`, is a `validate` error.
 
 - **Text vs. binary is sniffed by content** (a NUL byte in the head marks binary), not by
   extension — so any text type (`.yml`, `.mjs`, `.sh`, `.json`, …) is templated, and true
   binaries (`.png`, `.ico`) are copied byte-for-byte.
 - **Text files** get the same `{{dotted.key}}` substitution as skills — declared config keys
-  plus the `harness.*` namespace, resolved against the **first configured target** (files
-  render once, so there is a single identity to attribute to).
+  plus the `harness.*` namespace, resolved against the **first configured target the file applies
+  to** (files render once, so there is a single identity to attribute to).
 - **Binaries** are byte-copied untouched — a `{{...}}`-looking byte run inside one is never
   substituted.
 

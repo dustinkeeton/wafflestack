@@ -11,6 +11,7 @@
  */
 
 import path from 'node:path';
+import { VALID_TARGETS } from './project.mjs';
 
 /** @import { Toolkit, Stack, Item } from './toolkit.mjs' */
 
@@ -46,6 +47,9 @@ import path from 'node:path';
  * @property {SelectionItem[]} items deduped by stack+kind+name, eject-filtered
  * @property {{ rootRef: string, deps: string[] }[]} closures pulled-in dependencies, for reporting
  * @property {string[]} errors resolution errors (unknown stack, unknown/ambiguous ref)
+ * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
+ *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
+ *   silent (#364)
  */
 
 /**
@@ -340,6 +344,25 @@ export function closureDeps(toolkit, root) {
 }
 
 /**
+ * Does a `files:` item render for a consumer whose enabled harness targets are `targets`? (#364)
+ *
+ * An UNSCOPED item (`item.targets === null` — no `targets:` on its manifest entry) renders
+ * unconditionally: that is the pre-#364 contract and the overwhelmingly common case, because a
+ * `.github/` payload is harness-independent. A SCOPED item renders iff at least one of the targets
+ * it declares is enabled here. Agents and skills are never filtered — they FAN OUT across the
+ * enabled targets (renderAgent/renderSkill emit one output each), they do not gate on them; a file
+ * has no per-harness variant, so a filter is the only coherent reading of a scope on one.
+ *
+ * @param {Item} item
+ * @param {string[]} targets the consumer's enabled targets (`project.targets`)
+ * @returns {boolean}
+ */
+export function fileMatchesTargets(item, targets) {
+  if (item.kind !== 'files' || !item.targets) return true;
+  return item.targets.some((t) => targets.includes(t));
+}
+
+/**
  * Does an `include:` entry (qualified or not) refer to the given kind/name?
  *
  * @param {string} includeRef
@@ -373,8 +396,24 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   const errors = [];
   /** @type {Map<string, SelectionItem>} */
   const chosen = new Map();
+  // `loadProjectConfig` always sets `targets` (defaulting to VALID_TARGETS when the key is absent),
+  // but a bare test-constructed project object may not — default here too, rather than filtering
+  // every scoped file out.
+  const targets = project.targets ?? VALID_TARGETS;
+  /** @type {{ ref: string, targets: string[] }[]} */
+  const targetSkipped = [];
   /** @type {(stackName: string, kind: ItemKind, item: Item) => void} */
   const addItem = (stackName, kind, item) => {
+    // #364: a target-scoped syrup file is not SELECTED when none of its targets is enabled — so it
+    // never renders, and (because the render prunes every lock path it no longer produces) an
+    // already-rendered copy is removed on the next render. Unscoped items are untouched.
+    //
+    // This gate belongs here, at the single choke point every entry path funnels through — stack
+    // expansion, the `include:` closure loop, and a `requires:` dependency edge — so an explicit
+    // include cannot bypass a scope. It must also sit AFTER addStack's opt-in/trackedFiles
+    // re-admission, which deliberately keeps an already-poured syrup file selected: scope has to
+    // override tracking, or a file that falls out of scope would never be pruned.
+    if (!fileMatchesTargets(item, targets)) return;
     const key = `${stackName}::${kind}/${item.name}`;
     if (!chosen.has(key)) chosen.set(key, { stackName, stack: toolkit.stacks.get(stackName), kind, item });
   };
@@ -416,6 +455,14 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       addStack(resolved.name);
       continue;
     }
+    // #364: an explicitly-included file scoped to targets this project has not enabled renders
+    // nothing. Record it so the caller can SAY so — a silent no-op on an explicit `include:` is
+    // precisely the "half-installed and silent" failure #74 exists to prevent. A stack-expansion
+    // skip stays silent (exactly like the `optIn:` gate); only an explicit include warns.
+    if (resolved.item.kind === 'files' && !fileMatchesTargets(resolved.item, targets)) {
+      targetSkipped.push({ ref: resolved.canonicalRef, targets: resolved.item.targets ?? [] });
+      continue; // do not walk its closure — nothing of it renders
+    }
     /** @type {DepNode[]} */
     let closure;
     try {
@@ -435,7 +482,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
 
   const ejected = new Set((project.eject ?? []).map(normalizeItemRef));
   const items = [...chosen.values()].filter((c) => !ejected.has(`${c.kind}/${c.item.name}`));
-  return { items, closures, errors };
+  return { items, closures, errors, targetSkipped };
 }
 
 /**
@@ -455,11 +502,13 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  *
  * @param {Toolkit} toolkit loaded toolkit
  * @param {Selection} selection a `computeSelection` result ({ items, … })
+ * @param {string[]} [targets] the consumer's enabled targets (`project.targets`) — a syrup file
+ *   scoped away from all of them cannot render here, so it is never suggested (#364)
  * @returns {{ fileRef: string, stackName: string, companions: string[] }[]} one entry per skipped
  *   syrup file, `companions` naming the selected waffles that pull it into relevance. `fileRef` is
  *   a ready `wafflestack install <fileRef>` argument. Deterministic order (stack, then manifest).
  */
-export function skippedSyrupCompanions(toolkit, selection) {
+export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGETS) {
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
   const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
   /** @type {{ fileRef: string, stackName: string, companions: string[] }[]} */
@@ -471,6 +520,7 @@ export function skippedSyrupCompanions(toolkit, selection) {
       const fileRef = `files/${f.name}`;
       if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
       if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
+      if (!fileMatchesTargets(f, targets)) continue; // #364: never suggest pouring what cannot render here
       /** @type {string[]} */
       const companions = [];
       for (const ref of stack.requires?.[fileRef] ?? []) {

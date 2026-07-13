@@ -210,6 +210,22 @@ is what you reach for across a breaking one.
     pr-green takes `statuses: write`.
 
 ### Added
+- **A `files:` entry can scope itself to harness targets (#364).** Syrup used to render **once,
+  unconditionally** — right for a `.github/` payload (a GitHub Action has nothing to do with which
+  harness you run), wrong for a harness-specific one: a `.claude/workflows/*.js` would land in a
+  codex-only repo as dead weight. A `files:` entry may now declare an optional **`targets:`** scope
+  via the map form (`- path: .claude/workflows/audit.js` + `targets: [claude]`), and renders only when
+  the consumer has enabled at least one of the listed targets. Disable the last of a poured file's
+  targets and the next `render` **prunes** it — the same frozen-image contract as dropping a stack,
+  rather than leaving it orphaned. An unknown target name or an empty `targets: []` is a `validate`
+  error (both would scope a payload to nothing and silently never render); an unknown key on the map
+  form is a hard load error (a `target:` singular typo would otherwise leave the payload silently
+  unscoped). Scoping decides **whether** a file renders, never how many times — a file has no
+  per-harness variant, so unlike an agent or a skill it **filters** rather than fanning out. This is
+  the one additive manifest field the "no schema change" framing of the #184 spike (below) had to
+  retire, and the hard prerequisite for #363.
+  **Consumer impact: none — purely additive.** Omitting `targets:` is byte-for-byte today's
+  behaviour, no shipped stack declares one, and no re-render is required beyond the usual.
 - **A taxonomy that settles the word "workflow" — and the spike write-up behind it (#184, epic #347).**
   The toolkit used "workflow" for three unrelated things: a **GitHub Actions workflow**, Claude Code's
   **`Workflow` primitive**, and **any generic multi-phase process**. Two of those senses belong to somebody
