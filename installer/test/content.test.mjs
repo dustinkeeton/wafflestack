@@ -3229,8 +3229,11 @@ describe('issue / PR / review templates (#337)', () => {
 // `TaskUpdate` param, keyed `taskId`), `TaskStop(taskId:)` (the key is `task_id`), `TaskList`
 // called with arguments (it takes none), and `SendMessage(content:)` (the param is `message`,
 // plus a `summary` when the message is a string). An agent following those literally calls a
-// tool that is not in its tool list. These sweep EVERY rendered skill and agent so no future
-// edit can reintroduce a dead primitive — the guard that #360 wished it had.
+// tool that is not in its tool list. These sweep every skill and agent SOURCE under `stacks/**` —
+// the edit surface, and the copy every consuming repo installs — as well as this repo's render, so
+// no future edit can reintroduce a dead primitive. That reach is the point: a render-only sweep
+// guards just the stacks THIS repo happens to install, and a regression in any other stack ships
+// green. This is the guard that #360 wished it had.
 describe('source + rendered content: no dead harness primitives (#360)', () => {
   // Sweep the SOURCES (`stacks/**`, the edit surface) *and* the render. Renders alone would guard
   // only the stacks this repo happens to install — see the sourceSkillFiles() note above.
