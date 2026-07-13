@@ -121,24 +121,46 @@ There are **no teams to hunt for**: the session has a single implicit team, and 
 `TeamDelete` no longer exist. What outlives its work is an **agent**, and an agent is stopped by
 name.
 
-1. **Enumerate** with `TaskList` (it takes no arguments and lists every task in the session). Note
-   each task's `subject`, `status`, and `owner`.
+1. **Enumerate the tasks** with `TaskList` (it takes no arguments and lists every task in the
+   session). Note each task's `subject`, `status`, and `owner`.
 2. **Finished background tasks** — for any task that is `completed` (or is plainly idle/abandoned
    with no further use), stop it:
    ```
    TaskStop(task_id: "<id>")
    ```
    Never stop a task that is `in_progress` — that would kill live work.
-3. **Finished agents** — an agent that has completed its work (or is plainly idle and abandoned)
-   is stopped by name, the same way `/delegate` and `/audit` tear theirs down. Ask it to wind
-   down, then confirm the kill:
+3. **Finished agents.** An agent is stopped **by name** — so first you need the names, and this is
+   the step's real problem: **the harness has no agent enumeration.** There is no `AgentList`;
+   `TaskList` lists *tasks*, not agents, and it will not show you an agent that never held one
+   (autopilot's gate agents, for instance, are spawned without a task). A task's `owner` names an
+   agent **when something set it** — but nothing in this toolkit's flows does, so it is usually
+   empty. **Do not treat an empty `TaskList` as proof that no agent is running.**
+
+   The names therefore come from **the run that spawned them**, not from a discovery call. That is
+   exactly why each orchestrator here names its spawns deterministically:
+
+   | Run | Agent names | Where the record is |
+   |---|---|---|
+   | `/delegate` | `issue-<N>-<agent-type>` | the run's checkpoint — `execution[]` carries each issue's `number` and `agent` |
+   | `/audit` | the fixed six-agent chain: `architecture-pass`, `security-pass1`, the compliance agent, `docs-agent`, `docs-human`, `security-final` | the skill's roster |
+   | `/autopilot` | `qa-pr<N>`, `respond-qa-pr<N>`, `review-pr<N>`, `respond-rev-pr<N>` | keyed to the PR number |
+
+   So: reconstruct the candidate names from whichever run you are cleaning up after (and ask the
+   user if you are cleaning up after something else — an agent nobody recorded is **invisible** to
+   this skill). Then, for each agent that has completed its work or is plainly idle and abandoned,
+   ask it to wind down and confirm the kill:
    ```
    SendMessage(to: "<agent-name>", message: {type: "shutdown_request", reason: "Cleanup: work complete"})
    TaskStop(task_id: "<agent-name>")
    ```
    `shutdown_request` alone is not reliable — an agent can go idle but stay alive. `TaskStop` is
-   what actually terminates it, and it is safe on an agent that has already exited. Never stop an
-   agent that is still doing live work.
+   what actually terminates it, and it is safe on an agent that has already exited (so a name you
+   are unsure about costs nothing to try). Never stop an agent that is still doing live work.
+
+   **Report what you could not see.** If you have no record of what was spawned, say so — *"no run
+   record available; agents not swept"* — rather than reporting `Agents stopped: (none)`. The two
+   read identically to a user and mean opposite things, and the second one is how a leaked agent
+   goes unnoticed.
 
 **Crons are out of scope.** Scheduled jobs (`CronList`) are almost always intentional recurring
 work, not leftover state, so cleanup never deletes them. If you suspect a cron is genuinely
