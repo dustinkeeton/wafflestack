@@ -3397,20 +3397,45 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
   //
   // Deriving the roster closes both directions at once: whatever the skill spawns is what gets
   // checked. The count pin below is now a change-DETECTOR on the skill, not a claim about a list.
+  // EVERY quote style, on every one of these — `(['"])(.+?)\1` and never `"([^"]+)"`.
+  //
+  // Reading only double-quoted names is how the derived roster reopened the very hole it closed: an
+  // agent spawned as `name: 'perf-pass'` is INVISIBLE to the roster, so it is never checked for
+  // teardown and leaks green — and the count pin cannot save it, because the pin is a change-detector
+  // that depends on the roster SEEING what the skill spawns. Invisible agent → roster.length still
+  // reads 6 → pin satisfied → detector detects nothing. The double-quoted form of the same
+  // regression goes red; only the quote style differed.
+  //
+  // The sting: the commit that introduced this roster is the same one that taught `callBodies` that
+  // `'` is a real quote character (F13). The extractor learned it; the consumer of its output did not.
+  //
+  // Note the asymmetry, verified rather than assumed: `name:` fails OPEN (a missed spawn is a spawn
+  // never checked), while `to:` and `task_id:` fail SAFE (a missed teardown reads as a MISSING
+  // teardown → red). Only the roster leaks — but a safe failure is still a wrong one: it would reject
+  // a perfectly valid single-quoted teardown. All three now accept both quote styles.
+  const QUOTED = (key) => new RegExp(`${key}:\\s*(['"])(.+?)\\1`);
+
   const auditSpawnRoster = (md) =>
     callBodies(md, 'Agent')
-      .map((body) => body.match(/name:\s*"([^"]+)"/))
+      .map((body) => body.match(QUOTED('name')))
       .filter(Boolean)
-      .map((m) => m[1]);
+      .map((m) => m[2]);
 
   // Who actually gets a shutdown_request — read out of the SendMessage calls, so alignment padding
   // and argument order cannot make a real teardown look missing (or a missing one look real).
   const shutdownTargets = (md) =>
     callBodies(md, 'SendMessage')
       .filter((body) => /shutdown_request/.test(body))
-      .map((body) => body.match(/to:\s*"([^"]+)"/))
+      .map((body) => body.match(QUOTED('to')))
       .filter(Boolean)
-      .map((m) => m[1]);
+      .map((m) => m[2]);
+
+  // Every agent this file stops, whatever quote style the call uses.
+  const stoppedAgents = (md) =>
+    callBodies(md, 'TaskStop')
+      .map((body) => body.match(QUOTED('task_id')))
+      .filter(Boolean)
+      .map((m) => m[2]);
 
   const auditFiles = () =>
     [
@@ -3435,15 +3460,14 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
       );
 
       const shutdowns = shutdownTargets(md);
+      const stopped = stoppedAgents(md);
       for (const name of roster) {
-        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         assert.ok(
           shutdowns.includes(name),
           `${who(f)}: spawns ${name} but never sends it shutdown_request — teardown is shutdown-THEN-stop`,
         );
-        assert.match(
-          md,
-          new RegExp(`TaskStop\\(task_id: "${esc}"\\)`),
+        assert.ok(
+          stopped.includes(name),
           `${who(f)}: spawns ${name} but never stops it — a leaked agent`,
         );
       }
@@ -3485,8 +3509,13 @@ describe('source + rendered content: the abolished team concept does not survive
     { pattern: /no teams?\b/gi, why: 'a negation: "there is no team to create", "no teams to hunt for"' },
     { pattern: /not a team/gi, why: 'a negation: "<runId> names the run, not a team"' },
     { pattern: /not create a team/gi, why: 'a negation: "do not create a team"' },
-    // Not about THIS harness's team lifecycle — general agent-harness design vocabulary.
-    { pattern: /subagent teams/gi, why: 'harness-architect: a design topic, not an instruction to create one' },
+    // Not about THIS harness's team lifecycle — general agent-harness design vocabulary. These are
+    // pinned to the SURROUNDING CONTEXT, not to the bare phrase: a bare `/subagent teams/` allowlist
+    // is a bypass, because it strips the word out of any sentence that happens to contain it —
+    // "spin up subagent teams for each parallel group" would sail straight through the guard. An
+    // allowlist entry must license the use it was written for, not a two-word substring of it.
+    { pattern: /subagent teams, hooks/gi, why: 'harness-architect: an item in its list of design topics' },
+    { pattern: /Subagent teams & orchestration/gi, why: 'harness-architect: a design-topic heading' },
     { pattern: /team beats a single loop/gi, why: 'harness-architect: generic fan-out design advice' },
     { pattern: /engineering-team/gi, why: 'a stack name that merely contains the word' },
     { pattern: /Team Standup/gi, why: 'the standup skill\'s title' },
@@ -3559,6 +3588,10 @@ describe('source + rendered content: the abolished team concept does not survive
       'Spin up a team for the run and tear it down afterwards.',
       'Each parallel group gets its own team.',
       'The orchestrator owns the team lifecycle.',
+      // An allowlisted phrase is not a skeleton key: borrowing harness-architect's design vocabulary
+      // must not license an instruction to create a team. A bare `/subagent teams/` entry would have
+      // stripped the word right out of this sentence and passed it green.
+      'Spin up subagent teams for each parallel group and tear them down after.',
     ];
     for (const line of dead) {
       assert.notDeepEqual(residualTeamUses(line), [], `let the abolished concept through: ${line}`);
@@ -3640,17 +3673,52 @@ describe('the #360 guard can actually fail (regression fixtures)', () => {
 
   // The roster is derived from the skill, so the skill GAINING an unstopped agent must fail. The
   // hand-maintained list could not see this: pinning the LIST's length says nothing about the SKILL's.
-  test('a seventh audit agent with no TaskStop is caught by the derived roster', () => {
-    const skill = [
-      'Agent(\n  subagent_type: "a",\n  name: "architecture-pass",\n  prompt: <p>\n)',
-      'Agent(\n  subagent_type: "b",\n  name: "perf-pass",\n  prompt: <p>\n)',
-      'TaskStop(task_id: "architecture-pass")',
-    ].join('\n');
-    const roster = callBodies(skill, 'Agent')
-      .map((b) => b.match(/name:\s*"([^"]+)"/))
+  //
+  // And the roster must see the agent WHATEVER QUOTE STYLE spawns it. Reading only `name: "…"` let a
+  // `name: 'perf-pass'` spawn go invisible — never checked for teardown, and the count pin useless,
+  // since a pin that counts what the roster can see cannot detect what it cannot. Both styles, both
+  // directions.
+  const rosterOf = (md) =>
+    callBodies(md, 'Agent')
+      .map((b) => b.match(/name:\s*(['"])(.+?)\1/))
       .filter(Boolean)
-      .map((m) => m[1]);
-    assert.deepEqual(roster, ['architecture-pass', 'perf-pass'], 'the roster must be read out of the skill itself');
-    assert.doesNotMatch(skill, /TaskStop\(task_id: "perf-pass"\)/, 'the seventh agent is spawned and never stopped — this is the leak');
+      .map((m) => m[2]);
+
+  test('a seventh audit agent with no TaskStop is caught by the derived roster — in EITHER quote style', () => {
+    for (const [style, q] of [['double', '"'], ['single', "'"]]) {
+      const skill = [
+        `Agent(\n  subagent_type: "a",\n  name: "architecture-pass",\n  prompt: <p>\n)`,
+        `Agent(\n  subagent_type: "b",\n  name: ${q}perf-pass${q},\n  prompt: <p>\n)`,
+        'TaskStop(task_id: "architecture-pass")',
+      ].join('\n');
+      assert.deepEqual(
+        rosterOf(skill),
+        ['architecture-pass', 'perf-pass'],
+        `the ${style}-quoted spawn must be visible to the roster — an invisible agent is never checked for teardown`,
+      );
+      const stopped = callBodies(skill, 'TaskStop')
+        .map((b) => b.match(/task_id:\s*(['"])(.+?)\1/))
+        .filter(Boolean)
+        .map((m) => m[2]);
+      assert.ok(!stopped.includes('perf-pass'), `${style}-quoted: the seventh agent is spawned and never stopped — this is the leak`);
+    }
+  });
+
+  // A legitimate single-quoted teardown must be RECOGNISED, not rejected. `to:` and `task_id:` failed
+  // SAFE rather than open, but a safe failure is still a wrong one — it would have gone red on valid
+  // code. Symmetry is the fix, not just the leak.
+  test('a single-quoted teardown is recognised as a real teardown, not a missing one', () => {
+    const md = "SendMessage(to: 'a1', message: {type: \"shutdown_request\"})\nTaskStop(task_id: 'a1')";
+    const shutdowns = callBodies(md, 'SendMessage')
+      .filter((b) => /shutdown_request/.test(b))
+      .map((b) => b.match(/to:\s*(['"])(.+?)\1/))
+      .filter(Boolean)
+      .map((m) => m[2]);
+    const stopped = callBodies(md, 'TaskStop')
+      .map((b) => b.match(/task_id:\s*(['"])(.+?)\1/))
+      .filter(Boolean)
+      .map((m) => m[2]);
+    assert.deepEqual(shutdowns, ['a1']);
+    assert.deepEqual(stopped, ['a1']);
   });
 });
