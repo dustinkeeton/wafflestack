@@ -249,6 +249,90 @@ export function ensureGitignoreEntries(cwd, entries) {
 }
 
 /**
+ * The exact inverse of `ensureGitignoreEntries` — strip the entries wafflestack itself offered,
+ * for `uninstall` (#182). Deliberately as literal as its twin, and for the same reason: this
+ * function edits a file the toolkit does not own.
+ *
+ * Only a line whose trimmed text EXACTLY equals one of `entries` is removed. There is no
+ * "delete from the marker to the next blank line" heuristic, because the marker does not in fact
+ * bound the block: `ensureGitignoreEntries` appends later batches at EOF, and any line the
+ * consumer wrote afterwards lands inside that span too. Eating it would be the one unrecoverable
+ * mistake an uninstall can make in a file it did not write.
+ *
+ * The `# wafflestack` marker is removed only when it has been left labelling nothing — i.e. the
+ * next line is blank or end-of-file — together with the blank separator line its twin wrote above
+ * it. A marker that still has lines under it (a stale entry from a stack no longer enabled, a
+ * consumer line appended below) keeps them company and survives. Every other byte of the file is
+ * preserved verbatim, including the original trailing-newline habit and the line terminator the
+ * file actually uses — a CRLF `.gitignore` comes back CRLF, not silently normalised to LF.
+ *
+ * Returns the entries actually removed; [] when none were present (idempotent, so a second
+ * `uninstall` is a clean no-op rather than an error).
+ *
+ * @param {string} cwd
+ * @param {Iterable<string>} entries
+ * @returns {string[]} the entries actually removed
+ */
+export function removeGitignoreEntries(cwd, entries) {
+  const gi = path.join(cwd, '.gitignore');
+  if (!exists(gi)) return [];
+  /** @type {Set<string>} */
+  const targets = new Set();
+  for (const raw of entries) {
+    const entry = String(raw).trim();
+    if (entry) targets.add(entry);
+  }
+  if (!targets.size) return [];
+
+  const text = fs.readFileSync(gi, 'utf8');
+  const endsWithNewline = text.endsWith('\n');
+  // Rejoin with the terminator the file ACTUALLY uses. `split(/\r?\n/)` drops the `\r` from every
+  // line, so a bare `join('\n')` rewrote every line of a CRLF `.gitignore` — a Windows checkout with
+  // `core.autocrlf=true` — to LF: a whole-file diff in a file the toolkit does not own, from the one
+  // function whose entire stated design is not to do that. Its twin `ensureGitignoreEntries` gets it
+  // for free by being append-only (it never rewrites an existing line); the inverse has to ask.
+  //
+  // The FIRST terminator wins — the file's established habit — not the majority. Counting would get
+  // the round-trip exactly backwards on the case that matters most: `ensureGitignoreEntries` appends
+  // its block with LF even to a CRLF file, so after an ensure the LF lines are usually the majority,
+  // and a dominance rule would then "helpfully" rewrite the consumer's CRLF lines on the way out.
+  const eol = text.match(/\r\n|\n/)?.[0] === '\r\n' ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  // `split` leaves a trailing '' for a newline-terminated file; drop it so it cannot be mistaken
+  // for a blank line, and restore the habit on the way out.
+  if (endsWithNewline) lines.pop();
+
+  /** @type {string[]} */
+  const removed = [];
+  /** @type {string[]} */
+  const kept = [];
+  for (const line of lines) {
+    if (targets.has(line.trim())) removed.push(line.trim());
+    else kept.push(line);
+  }
+  if (!removed.length) return [];
+
+  // Drop a marker that now labels an empty block (next line is blank, or end-of-file), plus the
+  // blank separator line its twin wrote above it. Marking indices and filtering in a second pass,
+  // rather than splicing in place: an in-place splice of two lines shifts every index after it,
+  // and the walk would then read past the end of its own array.
+  /** @type {Set<number>} */
+  const orphaned = new Set();
+  for (let i = 0; i < kept.length; i++) {
+    if (kept[i].trim() !== GITIGNORE_MARKER) continue;
+    const next = kept[i + 1];
+    if (next !== undefined && next.trim() !== '') continue; // still labelling something — keep it
+    orphaned.add(i);
+    if (i > 0 && kept[i - 1].trim() === '') orphaned.add(i - 1);
+  }
+  const final = kept.filter((_, i) => !orphaned.has(i));
+
+  const out = final.length ? final.join(eol) + (endsWithNewline ? eol : '') : '';
+  fs.writeFileSync(gi, out);
+  return removed;
+}
+
+/**
  * The `.gitignore` entries wafflestack recommends for a loaded `project` — the baseline offer
  * behind the `--gitignore` flag and the setup playbook. Always the local overlay
  * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed) and its

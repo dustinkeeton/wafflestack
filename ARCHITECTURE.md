@@ -232,17 +232,54 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
 | `list` | Show every stack/item as installed & current / out of date / not installed; `--interactive` multi-selects the ones to add/update and applies them. |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
-| `render` | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. |
+| `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
+| `uninstall` | Remove the whole install — the only destructive command. Deletes only what the lock tracks *and* whose content still matches; **a dry run until `--yes`**. See [Taking it back out](#taking-it-back-out-uninstall--reinstall). |
+| `reinstall` | Refresh in place: remove the rendered files, re-render the same selection. Keeps your config, overlay and extensions, so it needs no `--yes`. `--clean --yes` wipes the config too and re-scaffolds it. |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline: register each agent's deterministic avatar for its verified commit email (`sync`), or report roster drift without writing (`status`, exit 1 on drift). Owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`. |
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
+| `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 18 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 19 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
-the lock, check prerequisites, sync agent avatars, etc.). The full function-level
-registry is in the root `AGENTS.md`.
+the lock, check prerequisites, uninstall, sync agent avatars, etc.). The full
+function-level registry is in the root `AGENTS.md`.
+
+### Taking it back out (`uninstall` / `reinstall`)
+
+`uninstall` is the toolkit's **only destructive command**, and it answers one question
+conservatively: *which files are ours to delete?*
+
+**The lock decides.** A file is deleted only if `.waffle/waffle.lock.json` tracks it **and** its
+content still hashes to exactly what wafflestack rendered — the same check `doctor` uses to spot
+hand-edits. There is no directory glob and no "looks generated" guess, so a file the toolkit cannot
+prove it wrote *and* prove is unchanged is a file it does not touch:
+
+- **A file you hand-edited is kept** and reported, not deleted (`--force` deletes it too). Rendered
+  output is often gitignored, so your edit may be the only copy of that work anywhere.
+- **A file you authored is never touched** — it isn't in the lock, so the rule never reaches it.
+- **An ejected item stays** and is announced as project-owned. `eject` already removed it from the
+  lock.
+- **A lock entry pointing outside the repo aborts the whole run**, deleting nothing — including one
+  that escapes through a symlinked parent directory. The lock is a file *you* can edit, so it is
+  treated as untrusted input.
+
+**It only reports until you pass `--yes`.** The CLI is non-interactive by design — agents and CI
+drive it — so the flag is the consent, not a prompt. Run it bare to preview exactly what would go.
+
+It then clears the `.waffle/` metadata (`--keep-config` spares your `waffle.yaml`, `extensions/` and
+the lock), prunes directories that genuinely emptied out, and strips its own `.gitignore` lines.
+
+`reinstall` is the non-scary sibling: remove the rendered files and re-render the same selection. It
+snapshots the bytes it deletes and restores them if the re-render fails, and it needs no `--yes`
+because every file it removes the render writes straight back.
+
+> [!NOTE]
+> Four rough edges ship with the first release of these commands and are tracked in **#359** —
+> most notably, an uninstall that skipped a hand-edited file still removes your config, and it
+> still exits 0. See [DECISIONS.md](DECISIONS.md#2026-07-13-the-lock-decides-what-uninstall-may-delete-182-epic-346).
 
 ## How the pieces interact
 

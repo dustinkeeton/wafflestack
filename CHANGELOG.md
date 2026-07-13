@@ -191,6 +191,50 @@ is what you reach for across a breaking one.
     pr-green takes `statuses: write`.
 
 ### Added
+- **The CLI surface is complete: `help`, `uninstall`/`reinstall`, and a `bake` alias (epic #346, closes
+  #187, #182, #176).** Three open issues, one `switch (command)` — so they were one change to one file,
+  not three features, and the dispatch was edited once, coherently.
+- **`help`, plus `--help` / `-h` (#187).** Asking for help was an *error*: every one of those tokens fell
+  through to `default:`, which printed the usage banner via `fail()` and exited **1**. Now they print the
+  banner, the usage line and a one-line description of every command and flag to **stdout**, and exit
+  **0** — so `wafflestack help | less` works, and a script can tell "I asked" from "I fumbled". An unknown
+  command still prints usage to **stderr** and exits non-zero, unchanged; so does bare `wafflestack` with
+  no command at all, deliberately — that is a bad invocation and a script needs to see it fail.
+  `--help` *after* a command explains that command instead of running it, checked before dispatch, so
+  `wafflestack uninstall --help` cannot delete anything.
+- **`bake` — a pure alias for `render` (#176).** A fall-through case sharing render's body, flags and
+  no-refs guard (which now names whichever word you actually typed). The metaphor, all the way down.
+- **`uninstall` / `reinstall` (#182).** wafflestack rendered files into `.claude/`, `.github/`, `.waffle/`
+  and any syrup path, and shipped no way to take them back out: you hand-deleted across several
+  directories, guessing which files were yours and which were ours. Now the lock does the guessing,
+  because it already knew — **a rendered path is deleted only if `.waffle/waffle.lock.json` tracks it
+  *and* its sha256 still equals what wafflestack rendered.** No globbing, no "looks generated"
+  heuristic. A **hand-edited** file is kept and reported (`--force` deletes it too), an **unreadable**
+  one is kept the same way (an unverifiable hash cannot prove the file is ours, and the read-only
+  preview classifies it rather than crashing), an **absent** one is a no-op, an **ejected** one is
+  project-owned and announced as left in place, and a lock key pointing outside the repo aborts the
+  entire run. It then clears the `.waffle/` metadata — the one thing outside the lock's authority,
+  since `extensions/` holds render *inputs you wrote*, so **`--keep-config`** takes the rendered output
+  and spares your selection: `waffle.yaml`, your extensions **and the lock**, because the lock is the
+  half of the selection that remembers which opt-in syrups you had poured, and a `render` from a
+  config without it would quietly lay down a *different* install — prunes only the directories that genuinely emptied
+  (a `.claude/` still holding your `settings.json` survives untouched), and strips wafflestack's own
+  `.gitignore` lines by exact-line match — never a "marker to the next blank line" span, which would
+  eat the lines you appended under it, and never rewriting the line endings of a CRLF file it does not
+  own. **Anything left behind keeps the lock behind with it** — a skip, or a file it could not remove:
+  the lock is the only record that those files were ever wafflestack's, so deleting it would strand
+  them as exactly the orphans this command exists to prevent, and the `--force` re-run it advertises
+  would die on `no lock`. Fix the cause, re-run, and the uninstall finishes. That is **one** decision,
+  taken once, after the removals actually run — so the report can never tell you a file is "yours now,
+  delete it by hand" while the lock that still tracks it sits on disk. What it prints afterwards is
+  what it **actually** did, not what it planned to do. **It is a dry run until `--yes`**: the CLI is
+  non-interactive by design, so the flag is the consent and the bare command is the preview of exactly
+  what would go.
+  `reinstall` refreshes in place — remove the rendered files, re-render the same selection — keeping your
+  config, overlay, extensions **and lock**. Keeping the lock is load-bearing, not tidy: it is what keeps
+  an already-poured opt-in syrup file selected, so dropping it would silently un-pour any syrup not also
+  named in `include:`. It needs no `--yes`, because every file it removes the render writes straight back.
+  `--clean --yes` is the reset: wipe everything including the config, then `init` a fresh scaffold.
 - **Issue, PR, and review templates — a hand-filed issue now lands in the shape the automation
   already assumes (#337).** The `issue` skill drafts every issue into Problem / Proposed Solution /
   Sub-issues / Context, and `Needs Inference` is the entry point to the enrichment path — but

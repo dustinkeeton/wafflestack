@@ -9,6 +9,7 @@ import { eject, init, installRefs } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { upgrade } from './lib/upgrade.mjs';
+import { uninstall, reinstall } from './lib/uninstall.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
 import { formatPrereq } from './lib/prerequisites.mjs';
 import { computeListModel, formatListTable, interactiveSelect } from './lib/list.mjs';
@@ -27,13 +28,32 @@ const pkg = JSON.parse(fs.readFileSync(path.join(toolkitRoot, 'package.json'), '
 const [, , command, ...args] = process.argv;
 const cwd = extractCwd(args) ?? process.cwd();
 
+// Declared ABOVE the dispatch, not beside helpText() with the other helpers: `const` is not
+// hoisted, and the switch below reads it. Left at the bottom it would be in the temporal dead zone
+// on every help and unknown-command path — a ReferenceError the catch would quietly turn into a
+// baffling exit 1. (`banner()`/`helpText()` are function declarations, so they hoist and may stay.)
+const USAGE =
+  'usage: wafflestack <init|setup|list|install|render|bake|upgrade|doctor|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+
+// `--help`/`-h` AFTER a command (`wafflestack uninstall --help`) prints the help instead of running
+// the command — the same full help text as bare `help`, not a per-command page. Checked before the
+// switch so a destructive command can never be reached by someone who was asking a question — and
+// before the flag reaches any "takes no refs" guard, which would otherwise reject it as a stray
+// ref. Bare `--help`/`-h` (no command) lands in the switch.
+if (args.includes('--help') || args.includes('-h')) {
+  process.stdout.write(helpText());
+  process.exit(0);
+}
+
 try {
   switch (command) {
+    // `bake` is a pure alias for `render` — the baking metaphor, all the way down (#176).
+    case 'bake':
     case 'render': {
       const force = extractFlag(args, '--force');
       const gitignore = extractFlag(args, '--gitignore');
       if (args.length) {
-        fail('render takes no refs — use `wafflestack install <ref…>` to add a stack or item (it persists the choice, then re-renders); bare `render` re-renders the current selection');
+        fail(`${command} takes no refs — use \`wafflestack install <ref…>\` to add a stack or item (it persists the choice, then re-renders); bare \`${command}\` re-renders the current selection`);
       }
       runRender(force);
       if (gitignore) offerGitignore();
@@ -112,6 +132,51 @@ try {
       console.log('the files remain in place and are now project-owned');
       break;
     }
+    // The toolkit's only destructive command (#182). Every delete is gated on the lock: a path is
+    // removed only if `.waffle/waffle.lock.json` tracks it AND its sha256 still matches what we
+    // rendered. It is a DRY RUN until `--yes` — the CLI is deliberately non-interactive (see the
+    // `--interactive` note under `list`), so the flag IS the consent, and a preview by default is
+    // the safer default for the agents and CI jobs that drive this toolkit.
+    case 'uninstall': {
+      const yes = extractFlag(args, '--yes');
+      const force = extractFlag(args, '--force');
+      const allowMissing = extractFlag(args, '--allow-missing');
+      // `.waffle/extensions/` holds files the CONSUMER wrote (render reads them as render sources),
+      // and a full uninstall deletes them with the rest of `.waffle/`. `keepConfig` is the library's
+      // answer to "take the rendered output, keep my authored inputs" — it has always been there; the
+      // CLI simply never let anyone ask for it, so the only way to keep an authored extension was to
+      // hope it was committed. It keeps the LOCK too (planUninstall) — the lock carries the poured
+      // syrup that `waffle.yaml` alone does not name, so a config without it re-renders a different
+      // install than the one you uninstalled.
+      const keepConfig = extractFlag(args, '--keep-config');
+      if (args.length) {
+        fail(`uninstall takes no refs (got ${args.join(', ')}) — it removes the whole install; use \`wafflestack eject <ref>\` to release a single item to project ownership`);
+      }
+      const result = uninstall({ cwd, toolkitRoot, force, allowMissing, keepConfig, dryRun: !yes, log: console.log });
+      for (const e of result.errors) console.error(`error: ${e}`);
+      if (result.ok && result.dryRun) console.log('\nnothing was removed — re-run with `--yes` to apply');
+      process.exit(result.ok ? 0 : 1);
+      break;
+    }
+    case 'reinstall': {
+      const clean = extractFlag(args, '--clean');
+      const yes = extractFlag(args, '--yes');
+      const force = extractFlag(args, '--force');
+      if (args.length) {
+        fail(`reinstall takes no refs (got ${args.join(', ')}) — it removes the rendered files and re-renders the current selection`);
+      }
+      // No `--yes` for a plain refresh: every file it removes is written straight back by the
+      // render that follows. `--clean` deletes the config — authored input, nothing restores it.
+      if (clean && !yes) {
+        fail(`reinstall --clean deletes ${CONFIG_FILE} and your whole selection, and does not re-render — re-run with \`--yes\` to confirm (plain \`reinstall\` refreshes in place and keeps your config)`);
+      }
+      const result = reinstall({ toolkitRoot, cwd, toolkitVersion: pkg.version, clean, force, log: console.log });
+      for (const w of result.render?.warnings ?? []) console.warn(`warning: ${w}`);
+      for (const e of result.errors) console.error(`error: ${e}`);
+      if (result.ok && !clean) console.log(`reinstalled — ${result.render.written.length} files re-rendered into ${cwd}`);
+      process.exit(result.ok ? 0 : 1);
+      break;
+    }
     case 'init': {
       const gitignore = extractFlag(args, '--gitignore');
       const file = init({ cwd });
@@ -173,20 +238,73 @@ try {
       process.exit(problems.length ? 1 : 0);
       break;
     }
+    // Asking for help is not an error (#187). Prints to STDOUT and exits 0 — so `wafflestack help
+    // | less` works and a script can tell "I asked" from "I fumbled". The unknown-command path
+    // below still prints usage to STDERR and exits 1, which is what scripts gate on.
+    case 'help':
+    case '--help':
+    case '-h':
+      process.stdout.write(helpText());
+      process.exit(0);
+      break;
     default:
-      fail(
-        [
-          '┏━┳━┳━┓',
-          `┣━╋━╋━┫  wafflestack v${pkg.version}`,
-          '┣━╋━╋━┫  one batter, every repo',
-          '┗━┻━┻━┛',
-          '',
-          'usage: wafflestack <init|setup|list|install|render|upgrade|doctor|eject|avatars|validate> [refs…] [--cwd DIR]',
-        ].join('\n'),
-      );
+      // Includes bare `wafflestack` (no command at all): deliberately an error, not a help screen.
+      // A script that invokes the CLI with an empty argument still gets a non-zero exit, which is
+      // the failure it needs to see. `wafflestack help` is one word away for a human.
+      fail([banner(), USAGE, '', 'run `wafflestack help` for what each command does'].join('\n'));
   }
 } catch (err) {
   fail(err.message);
+}
+
+function banner() {
+  return [
+    '┏━┳━┳━┓',
+    `┣━╋━╋━┫  wafflestack v${pkg.version}`,
+    '┣━╋━╋━┫  one batter, every repo',
+    '┗━┻━┻━┛',
+    '',
+  ].join('\n');
+}
+
+// One line per subcommand, in lifecycle order — the order you meet them, not alphabetical.
+function helpText() {
+  return [
+    banner(),
+    USAGE,
+    '',
+    'commands:',
+    '  init        scaffold .waffle/waffle.yaml so you can pick stacks and config values',
+    '  setup       print the install playbook to hand to your coding agent',
+    '  list        show every stack and item in the toolkit, and what this repo has selected',
+    '  install     add stacks/items to the selection (persists them), then render',
+    '  render      re-render the current selection into .claude/, .codex/, .agents/ and files/ paths',
+    '  bake        alias for render — same command, better metaphor',
+    '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
+    '  doctor      check the rendered files still match the lock manifest (drift check)',
+    '  eject       release one item to project ownership; the files stay, the lock forgets them',
+    '  uninstall   remove every wafflestack-managed file this repo has (dry run without --yes)',
+    '  reinstall   remove the rendered files and re-render the same selection (--clean wipes config)',
+    '  avatars     owner-side Gravatar pipeline for agent commit identities (sync|status)',
+    '  validate    check the toolkit source itself — manifests, placeholders, refs',
+    '  help        print this help and exit 0',
+    '',
+    'flags:',
+    '  --cwd DIR         run against DIR instead of the current directory (every command)',
+    '  --help, -h        print this help and exit 0; after a command, explain instead of running it',
+    '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
+    '                    uninstall: also delete files that were hand-edited after rendering',
+    '  --gitignore       init/render/install: append the recommended .gitignore entries',
+    '  --yes             uninstall: actually delete (without it, uninstall only reports)',
+    '                    reinstall: required by --clean, the one path that deletes your config',
+    '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
+    '                    only the rendered output, so `render` can lay the same install back down',
+    '  --clean           reinstall: also delete the config and re-scaffold it empty (needs --yes)',
+    '  --allow-missing   doctor/uninstall: tolerate managed files that are absent from disk',
+    '  --verify-render   doctor: also check the config still renders what the lock records',
+    '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
+    '',
+  ].join('\n');
 }
 
 function runRender(force = false) {
