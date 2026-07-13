@@ -3788,30 +3788,50 @@ const extensionFiles = () =>
       : [];
   });
 
+// The four root docs. `AGENTS.md` and `.waffle/waffle.yaml` are machine-consumed (the command
+// registry harness-architect is told to read first; the config whose `extraPreflight` /
+// `compliancePrompt` / `auditChecklist` blocks are prompts verbatim). `ARCHITECTURE.md` and
+// `STATUS.md` are human docs — swept anyway, because the hazard is the COMMAND, not the reader:
+// a fenced `node installer/cli.mjs render` exits 1 whoever pastes it, and a reader copying a
+// fenced command cannot tell "order" from "prose" either. Leaving them out made the F4 half of
+// #373 unpinned — reverting STATUS.md's flag left the suite green, which QA caught by mutation.
+//
+// `DECISIONS.md` is deliberately NOT swept: it is an append-only log of DATED ADRs, and one of
+// them records the since-superseded decision to gitignore the render, quoting the bare `render`
+// of its day. That quote is the historical record being correct, not a live order. A guard that
+// forced a flag into it would falsify the log to satisfy a lint.
+const ROOT_DOCS = () => [
+  path.join(REPO_ROOT, 'AGENTS.md'),
+  path.join(REPO_ROOT, 'ARCHITECTURE.md'),
+  path.join(REPO_ROOT, 'STATUS.md'),
+  WAFFLE_YAML,
+];
+
 describe('repo-local prompts: no bare gated toolkit command (#373)', () => {
-  // Sweep everything an agent reads AS AN ORDER in this repo: the render (what the harness
-  // actually loads), the stack sources (the edit surface), the extension sources, and the two
-  // machine-consumed root files — `AGENTS.md` (the command registry: harness-architect's own
-  // prompt says "read it first") and `.waffle/waffle.yaml` (whose `extraPreflight` /
-  // `compliancePrompt` / `auditChecklist` blocks are prompts verbatim).
+  // Sweep everything this repo reads as a runnable command: the render (what the harness actually
+  // loads), the stack sources (the edit surface), the extension sources, and the root docs.
   const files = () => [
     ...renderedSkillFiles(),
     ...renderedAgentFiles(),
     ...sourceSkillFiles(),
     ...sourceAgentFiles(),
     ...extensionFiles(),
-    path.join(REPO_ROOT, 'AGENTS.md'),
-    WAFFLE_YAML,
+    ...ROOT_DOCS(),
   ].filter((f) => fs.existsSync(f));
 
   // Reach guard: if the walks silently return [] (a moved dir, a renamed layout), every
   // assertion below passes vacuously. Pin the coverage — same lesson as the #360 sweep.
-  test('the sweep reaches the extension sources and the machine-consumed root files', () => {
+  test('the sweep reaches the extension sources and every swept root doc', () => {
     const swept = files();
     assert.ok(extensionFiles().length >= 1, 'no .waffle/extensions/** source found — the sweep would pass vacuously');
     for (const f of extensionFiles()) assert.ok(swept.includes(f), `${who(f)} is not swept by the #373 guard`);
-    assert.ok(swept.includes(path.join(REPO_ROOT, 'AGENTS.md')), 'AGENTS.md is not swept');
-    assert.ok(swept.includes(WAFFLE_YAML), '.waffle/waffle.yaml is not swept');
+    // Each root doc named individually: dropping one is how the F4 fixes went unpinned the first
+    // time — the gap was invisible precisely because no test asserted the coverage.
+    for (const f of ROOT_DOCS()) {
+      assert.ok(fs.existsSync(f), `${who(f)} does not exist — the sweep would skip it silently`);
+      assert.ok(swept.includes(f), `${who(f)} is not swept by the #373 guard`);
+    }
+    assert.equal(ROOT_DOCS().length, 4, 'expected AGENTS.md + ARCHITECTURE.md + STATUS.md + waffle.yaml');
     assert.ok(renderedAgentFiles().length >= 3, `expected the committed agent render, found ${renderedAgentFiles().length}`);
   });
 

@@ -358,9 +358,13 @@ Two required checks then guard the committed render from different angles. The
 `waffle-doctor` drift gate re-hashes the committed files against the committed lock. But a
 forgotten re-render leaves files and lock stale *together* — they agree with each other,
 so that gate stays green — which is why the `tests` workflow ends with
-`node installer/cli.mjs doctor --allow-missing --verify-render`, run with the checkout's
-own CLI: it re-renders the PR's committed inputs into a temp dir and diffs the result
-against the committed lock (#314/#316). It uses the checkout's CLI (not the shipped
+`WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs doctor --allow-missing --verify-render`,
+run with the checkout's own CLI: it re-renders the PR's committed inputs into a temp dir and
+diffs the result against the committed lock (#314/#316). The env twin is shown inline because
+that is what *executes* — the job supplies it once at the `env:` block rather than per-step, so
+`tests.yml:72` itself carries no flag. Running that step **by hand** from a branch needs
+`--allow-unreleased`, since `--verify-render` renders and is gated (#373). It uses the
+checkout's CLI (not the shipped
 `doctor.flags` route) because the shipped workflow fetches the toolkit from `main` — the
 wrong toolkit for the toolkit's own PRs.
 
