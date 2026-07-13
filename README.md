@@ -73,12 +73,17 @@ renders, runs `doctor`, and reports what it did.
 
 ```bash
 cd your-project
-npx github:dustinkeeton/wafflestack init     # writes a starter .waffle/waffle.yaml
+npx github:dustinkeeton/wafflestack init              # writes a starter .waffle/waffle.yaml
 # edit .waffle/waffle.yaml: pick stacks, fill in config values
-npx github:dustinkeeton/wafflestack render   # renders all harness files + lock manifest
+npx github:dustinkeeton/wafflestack#v0.12.0 render    # renders all harness files + lock manifest
 ```
 
-Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
+**Pin the tag on anything that writes files.** An `npx github:` spec with no `#ref` resolves the
+repository's **default branch**, not the latest release — so an unpinned `render` would write
+whatever is on `main` right now while stamping the last *released* version number into your lock.
+Since v0.13.0 the CLI knows the difference and **refuses** rather than doing that: `render`,
+`install`, `upgrade`, `reinstall` and `doctor --verify-render` stop with an error naming the exact
+pinned command to run. See [Release resolution](#release-resolution-what-toolkit-am-i-running).
 
 ## Commands
 
@@ -176,6 +181,10 @@ consumer's point of view**:
 | minor | `0.5.0 → 0.6.0` | new stacks/items, additive config | `… render` |
 | major / breaking | renamed or removed item, new **required** config key, changed file layout | needs a migration | `… upgrade` |
 
+In every row the `…` is a **pinned** spec — `npx github:dustinkeeton/wafflestack#vX.Y.Z`. An
+unpinned one names the default branch, and these commands refuse it; see
+[Release resolution](#release-resolution-what-toolkit-am-i-running).
+
 **Canonical upgrade command** — three copyable forms:
 
 **Agent prompt** — paste to your coding agent:
@@ -218,6 +227,37 @@ in one pass — and reminds you to update the matching `.gitignore` entries (the
 never edits `.gitignore` — swap them yourself, or run `wafflestack install --gitignore` to
 re-add the `.waffle/` paths). Until you re-render, the old names keep working with a
 deprecation note.
+
+### Release resolution: what toolkit am I running?
+
+`npx github:dustinkeeton/wafflestack <cmd>` — with no `#ref` — fetches the **default branch**.
+Both the branch and the tag behind it report the same `version` in `package.json`, so for a long
+time nothing distinguished them: a bare `upgrade` would announce `0.8.0 → 0.12.0` and then write
+`0.12.0` *plus every unreleased commit since*, stamping `toolkitVersion: 0.12.0` into your lock.
+If your CI then ran `doctor --verify-render` through a **pinned** ref (the required practice), it
+re-rendered the same config from the tag, got different bytes, and went red on a lock that was
+perfectly correct from your side.
+
+The CLI now works out **what it is** before it writes anything:
+
+| It resolves as | When | What happens |
+|---|---|---|
+| `release` | the commit it is running IS a `vX.Y.Z` tag | everything works, as always |
+| `unreleased` | the commit provably is **not** a release (a default-branch fetch, a branch pin, a working tree) | write commands **refuse**, naming the pinned command to run |
+| `unverified` | it could not find out (offline, GitHub unreachable) | it **warns and proceeds** — your CI never depends on our reachability |
+
+The check is on the **commit**, not on whether you typed a `#ref` — which is strictly stronger: a
+re-cut or force-pushed tag stops matching, and is caught. It costs at most one `git ls-remote` on
+the `npx` path, and **nothing at all** when the toolkit is a git checkout (`git describe` answers
+it offline).
+
+Commands that read no toolkit content are untouched: plain `doctor` (it only hashes your files
+against your lock), `init`, `eject`, `uninstall`, `validate`. `list` and `setup` report rather than
+write, so they warn and carry on.
+
+**Developing the toolkit itself?** Rendering from a working tree is the whole point there — pass
+`--allow-unreleased` (or set `WAFFLESTACK_ALLOW_UNRELEASED=1`). It suppresses the *refusal*, not
+the *truth*: the toolkit still reports itself as unreleased.
 
 Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guidelines:
 [assets/](assets/).

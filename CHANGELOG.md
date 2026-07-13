@@ -385,6 +385,49 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **An unpinned `npx github:` invocation renders the DEFAULT BRANCH, not the latest release — the
+  write path now refuses instead (#373).** `npx github:dustinkeeton/wafflestack <cmd>` with no
+  `#ref` fetches whatever is on `main`. `main` and the tag behind it report the same `version` in
+  `package.json`, so a bare `upgrade` would announce `0.8.0 → 0.12.0` and then write `0.12.0` *plus
+  every unreleased commit since*, stamping `toolkitVersion: 0.12.0` into the consumer's lock. A CI
+  job re-rendering the same config through a **pinned** ref — the required practice for
+  `doctor --verify-render` (#314) — then produced different bytes and went red on a lock that was
+  perfectly correct. The gate designed to catch a stale render failed on a fresh one, opaquely
+  (exit 1, empty output, 1.2s).
+
+  The CLI now establishes **what it is** before it writes anything (`installer/lib/toolkit-ref.mjs`,
+  `resolveToolkitIdentity()`): `release` (the commit it runs IS a `vX.Y.Z` tag), `unreleased`
+  (provably is not), or `unverified` (could not find out). Commands that **write files from toolkit
+  content** — `render`/`bake`, `install`, `upgrade`, `reinstall`, `doctor --verify-render`, and
+  `list --interactive` once a selection is applied — **refuse when `unreleased`**, exit 1, and print
+  the exact pinned command to run instead. `unverified` **warns and proceeds**: failing closed on
+  ignorance would make every consumer's CI depend on the toolkit's reachability, which is a worse
+  bug than the one being fixed.
+
+  The check is on the **commit**, not on whether a `#ref` was typed — strictly stronger, since it
+  also catches a re-cut or force-pushed tag. A checkout answers it with `git describe`, **offline**;
+  an `npx` install reads the cloned SHA from npm's hidden lockfile (offline) and classifies it with
+  one `git ls-remote --tags` (not the GitHub REST API — its 60/hr unauthenticated limit is a live
+  hazard on shared CI IPs). When the lookup fails, a shipped `CHANGELOG.md` carrying a non-empty
+  `## [Unreleased]` section still proves the build is past the tag.
+
+  **Consumer impact — read this if you invoke wafflestack unpinned.** Pin the tag on anything that
+  writes: `npx --yes github:dustinkeeton/wafflestack#vX.Y.Z render`. Set `doctor.toolkitRef` and
+  `waffle.toolkitRef` in `.waffle/waffle.yaml` to the same pinned spec (unpinned is now a hard error
+  for `--verify-render`, where it was previously a silent trap). **Plain `doctor` is deliberately
+  NOT gated** — it only hashes your files against your lock, reads no toolkit content, and is
+  correct from any toolkit — so the shipped, unpinned-by-default `waffle-doctor.yml` keeps working
+  unchanged for every consumer. `init`, `eject`, `uninstall`, `validate` and `help` are untouched;
+  `list` and `setup` report rather than write, so they warn and carry on. Developing the toolkit
+  itself, where rendering a working tree is the point? Pass `--allow-unreleased`, or set
+  `WAFFLESTACK_ALLOW_UNRELEASED=1` — it suppresses the *refusal*, not the *truth* (identity still
+  resolves to `unreleased`), and short-circuits the network lookup, so local runs stay offline.
+
+  Groundwork for the rest of the provenance epic (#377): `resolveToolkitIdentity()` returns
+  `{status, version, commit, tag, ref, origin, repo, latestTag, lookupError}` with `ref` exactly
+  `github:<owner>/<repo>#<tag>`, threaded through to `renderProject` / `upgrade` / `reinstall` and
+  echoed on their results. #374 writes it into the lock; #372 writes it into the pinned config keys.
+  This change adds **no** lock field, so no lock bytes move.
 - **The human docs' skill count (#184).** `STATUS.md` and `ARCHITECTURE.md` both claimed **32 skills**;
   there are **37** on disk. `AGENTS.md` was already correct — the machine doc was right and the human docs
   had gone stale.
