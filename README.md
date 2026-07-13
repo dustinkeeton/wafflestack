@@ -95,7 +95,7 @@ Pin a version with `npx github:dustinkeeton/wafflestack#v0.1.0 render`.
 | `uninstall` | Remove the whole install. It deletes only what `.waffle/waffle.lock.json` says it wrote **and** whose content still matches — a file you hand-edited is kept and reported (`--force` to delete it too), an already-deleted one is fine, and a file the lock never tracked is never touched. Then it clears the `.waffle/` metadata, prunes the directories that emptied out, and strips its own `.gitignore` lines. Ejected items are project-owned, so they stay (and it tells you). **It only reports until you pass `--yes`** — run it bare first to see exactly what would go. |
 | `reinstall` | Put the install back the way it should be: remove the rendered files and re-render the same selection. Keeps your `.waffle/waffle.yaml`, your overlay and your `extensions/` — it is a refresh, not a reset — so it needs no `--yes`. Add `--clean --yes` for the reset: wipe everything, including the config, and scaffold a fresh starter one. |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
-| `help` | Print the banner, usage, and a one-line description of every command and flag. Also `--help` / `-h`, before or after a command (`wafflestack uninstall --help` explains it instead of running it). Exits 0. |
+| `help` | Print the banner, usage, and a one-line description of every command and flag. Also `--help` / `-h`, before or after a command (`wafflestack uninstall --help` prints this help instead of running the command). Exits 0. |
 
 ## Rules of the road
 

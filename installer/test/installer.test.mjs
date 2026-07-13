@@ -10226,7 +10226,7 @@ describe('help command (#187)', () => {
     assert.match(r.stderr, /usage: wafflestack </);
   });
 
-  test('`--help` AFTER a command explains it instead of running it', () => {
+  test('`--help` AFTER a command prints the help instead of running the command', () => {
     // The load-bearing case: `uninstall --help` must not be able to delete anything, and the flag
     // must not reach the "takes no refs" guard and be rejected as a stray ref.
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');

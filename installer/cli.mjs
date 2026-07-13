@@ -35,10 +35,11 @@ const cwd = extractCwd(args) ?? process.cwd();
 const USAGE =
   'usage: wafflestack <init|setup|list|install|render|bake|upgrade|doctor|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
-// `--help`/`-h` AFTER a command (`wafflestack uninstall --help`) explains that command's job
-// instead of doing it. Checked before the switch so a destructive command can never be reached by
-// someone who was asking a question — and before the flag reaches any "takes no refs" guard, which
-// would otherwise reject it as a stray ref. Bare `--help`/`-h` (no command) lands in the switch.
+// `--help`/`-h` AFTER a command (`wafflestack uninstall --help`) prints the help instead of running
+// the command — the same full help text as bare `help`, not a per-command page. Checked before the
+// switch so a destructive command can never be reached by someone who was asking a question — and
+// before the flag reaches any "takes no refs" guard, which would otherwise reject it as a stray
+// ref. Bare `--help`/`-h` (no command) lands in the switch.
 if (args.includes('--help') || args.includes('-h')) {
   process.stdout.write(helpText());
   process.exit(0);

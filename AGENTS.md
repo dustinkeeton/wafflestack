@@ -257,8 +257,8 @@ Bin `wafflestack` → `installer/cli.mjs`. Global flag `--cwd DIR` targets a pro
 Usage: `wafflestack <init|setup|list|install|render|bake|upgrade|doctor|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`.
 `help` / `--help` / `-h` print the banner, usage and per-command descriptions to **stdout** and exit **0**;
 an unknown command (and bare `wafflestack`) still prints usage to **stderr** and exits **1** (#187).
-A `--help`/`-h` anywhere after a command explains it instead of running it (checked before dispatch, so
-`uninstall --help` cannot delete).
+A `--help`/`-h` anywhere after a command prints that same help instead of running the command (checked
+before dispatch, so `uninstall --help` cannot delete). It is the full help text, not a per-command page.
 
 | Command | Behavior |
 |---------|----------|
