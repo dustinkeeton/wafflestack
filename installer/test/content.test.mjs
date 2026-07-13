@@ -3414,6 +3414,63 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
   });
 });
 
+// #360 abolished the team CONCEPT, not just the Team* calls. The call-shaped sweep above cannot see
+// a team that survives in PROSE — and three did, in the very files this change rewrote: autopilot
+// still told clean-up to tear down "any delegate team" (a handoff to a skill that now says there are
+// "no teams to hunt for"), and delegate twice called its `<runId>` "the team name" after it had
+// stopped creating any team. Two were in SKILL.md; the third was in `checkpoint.schema.json` — a
+// skill ASSET, which the sweep above never reads, because it globs only SKILL.md and agent .md.
+// So this guard reads the skills' JSON assets too. A dead concept left describing live state is the
+// #360 bug in prose form: it reads as authoritative to the next agent that follows it.
+describe('source + rendered content: the abolished team concept does not survive in prose (#360)', () => {
+  // Narrow by design. The legitimate uses — "a single implicit team", `team_name` (naming the
+  // deprecated param to say it is ignored), and `team-lead` (a live SendMessage recipient) — must
+  // keep passing; only phrasings that describe a team as a thing that EXISTS are forbidden.
+  const ABOLISHED = [
+    { pattern: /\bdelegate team\b/i, why: 'delegate creates no team — the session has a single implicit team' },
+    { pattern: /\bthe team name\b/i, why: 'there is no team to name — <runId> identifies the run, not a team' },
+  ];
+
+  const skillAssetFiles = () =>
+    stackDirs()
+      .flatMap((d) => {
+        const skills = path.join(d, 'skills');
+        return fs.existsSync(skills)
+          ? fs
+              .readdirSync(skills, { withFileTypes: true })
+              .filter((e) => e.isDirectory())
+              .flatMap((e) => {
+                const dir = path.join(skills, e.name);
+                return fs
+                  .readdirSync(dir)
+                  .filter((f) => f.endsWith('.json'))
+                  .map((f) => path.join(dir, f));
+              })
+          : [];
+      });
+
+  test('no skill, agent, or skill asset describes a team that exists', () => {
+    const swept = [...sourceSkillFiles(), ...sourceAgentFiles(), ...skillAssetFiles(), ...renderedSkillFiles(), ...renderedAgentFiles()];
+    assert.ok(skillAssetFiles().length > 0, 'the asset walk returned [] — every assertion below would vacuously pass');
+    for (const f of swept) {
+      const md = fs.readFileSync(f, 'utf8');
+      for (const { pattern, why } of ABOLISHED) {
+        assert.doesNotMatch(md, pattern, `${who(f)}: ${why}`);
+      }
+    }
+  });
+
+  test('the legitimate uses of "team" still pass — this guard is narrow, not a word ban', () => {
+    const legit = [
+      'the session has a single implicit team, and `TeamCreate` no longer exists',
+      "the `Agent` tool's `team_name` parameter is deprecated and ignored",
+      'SendMessage(to: "team-lead", message: <summary>, summary: "issue #1: PR opened")',
+      'There are **no teams to hunt for**.',
+    ].join('\n');
+    for (const { pattern } of ABOLISHED) assert.doesNotMatch(legit, pattern);
+  });
+});
+
 // A guard is only worth its green if it can go red. The first version of the #360 sweep could not:
 // an adversarial review reintroduced this PR's OWN headline catches — and the suite passed, with the
 // very tests named for catching them reported `ok`. These are the shapes it smuggled past, pinned as

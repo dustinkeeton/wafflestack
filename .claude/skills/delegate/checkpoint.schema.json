@@ -21,7 +21,7 @@
     "runId": {
       "type": "string",
       "pattern": "^.+$",
-      "description": "Stable id for this delegation run — reuse the team name (delegate-<timestamp>) for multi-issue runs, or delegate-single-<N>-<timestamp> for the single-issue fast path."
+      "description": "Stable id for this delegation run — delegate-<timestamp> for multi-issue runs, or delegate-single-<N>-<timestamp> for the single-issue fast path. It names the run, not a team: the session has a single implicit team and there is no team object to name."
     },
     "scope": {
       "type": "object",

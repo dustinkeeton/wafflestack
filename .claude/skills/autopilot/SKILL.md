@@ -396,7 +396,7 @@ Then continue to the next issue (serial) or finish the group (parallel).
 
 ## End-of-run housekeeping
 
-After the last issue, do a **final `clean-up` sweep** for anything the per-merge passes left — a full preview-then-confirm sweep (git **and** harness) so any delegate team, background tasks, and merged worktrees created during the run are torn down:
+After the last issue, do a **final `clean-up` sweep** for anything the per-merge passes left — a full preview-then-confirm sweep (git **and** harness) so any agents `delegate` left running, background tasks, and merged worktrees created during the run are torn down:
 
 ```
 clean-up            # full sweep, previewed then confirmed — or `clean-up all --yes` for an unattended run
