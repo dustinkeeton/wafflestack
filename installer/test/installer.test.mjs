@@ -19,6 +19,7 @@ import { computeListModel, formatListTable, selectableChoices, STATUS } from '..
 import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
+import { uninstall, reinstall, planUninstall } from '../lib/uninstall.mjs';
 import { agentAvatarSvg, agentFlavor, extractBaseEmail, deriveAgentEmail, withIdentity } from '../lib/waffledocs.mjs';
 import { enumerateAgentAvatars, runAvatarsSync, TOKEN_ENV } from '../lib/avatars-sync.mjs';
 import {
@@ -26,6 +27,7 @@ import {
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   ensureGitignoreEntries,
+  removeGitignoreEntries,
   recommendedGitignoreEntries,
   normalizeStackEntries,
   classifyStackSource,
@@ -10179,3 +10181,496 @@ function write(root, rel, content) {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
   fs.writeFileSync(path.join(root, rel), content);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Epic #346 — completing the CLI surface: help (#187), bake (#176),
+// uninstall/reinstall (#182). All three are cases in the one dispatch switch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CLI = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+const runCli = (args, cwd) => spawnSync(process.execPath, [CLI, ...args, '--cwd', cwd], { encoding: 'utf8' });
+
+describe('help command (#187)', () => {
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-help-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  // The whole point of the issue: asking for help is not an error.
+  for (const form of [['help'], ['--help'], ['-h']]) {
+    test(`\`${form[0]}\` prints banner + usage + every subcommand, and exits 0`, () => {
+      const r = runCli(form, cwd);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /wafflestack v\d+\.\d+\.\d+/, 'the ASCII banner');
+      assert.match(r.stdout, /usage: wafflestack </, 'the usage block');
+      // #187 names these explicitly; the epic adds the rest of the surface.
+      for (const cmd of [
+        'init', 'setup', 'list', 'install', 'render', 'bake',
+        'upgrade', 'doctor', 'eject', 'uninstall', 'reinstall', 'avatars', 'validate', 'help',
+      ]) {
+        assert.match(r.stdout, new RegExp(`^\\s+${cmd}\\s+\\S.*$`, 'm'), `a description line for \`${cmd}\``);
+      }
+      assert.equal(r.stderr, '', 'help goes to stdout, not stderr — so it can be piped');
+    });
+  }
+
+  test('an unknown command still prints usage on STDERR and exits non-zero', () => {
+    const r = runCli(['frobnicate'], cwd);
+    assert.notEqual(r.status, 0, 'scripts must still be able to detect a bad invocation');
+    assert.match(r.stderr, /usage: wafflestack </);
+    assert.equal(r.stdout, '', 'nothing on stdout — this is the error path');
+  });
+
+  test('bare `wafflestack` (no command) stays on the error path, deliberately', () => {
+    const r = spawnSync(process.execPath, [CLI], { encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /usage: wafflestack </);
+  });
+
+  test('`--help` AFTER a command explains it instead of running it', () => {
+    // The load-bearing case: `uninstall --help` must not be able to delete anything, and the flag
+    // must not reach the "takes no refs" guard and be rejected as a stray ref.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const r = runCli(['uninstall', '--help'], cwd);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /usage: wafflestack </);
+    assert.doesNotMatch(r.stderr, /takes no refs/);
+  });
+});
+
+describe('bake alias (#176)', () => {
+  let toolkitRoot;
+  let cwd;
+  let other;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-bake-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-bake-'));
+    other = fs.mkdtempSync(path.join(os.tmpdir(), 'project-bake2-'));
+    makeFixtureToolkit(toolkitRoot);
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd, other]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('bake renders byte-identically to render', () => {
+    const config = 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n';
+    write(cwd, '.waffle/waffle.yaml', config);
+    write(other, '.waffle/waffle.yaml', config);
+
+    const baked = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    const rendered = renderProject({ toolkitRoot, cwd: other, toolkitVersion: '0.0.test' });
+    assert.equal(baked.ok && rendered.ok, true);
+    // The lib is shared, so assert the CLI wiring: `bake` must reach the same case.
+    assert.deepEqual(
+      JSON.parse(read(cwd, '.waffle/waffle.lock.json')).files,
+      JSON.parse(read(other, '.waffle/waffle.lock.json')).files,
+    );
+  });
+
+  test('CLI: `bake` dispatches (not an unknown command) and takes no refs — in its own name', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const ok = runCli(['bake'], cwd);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.doesNotMatch(ok.stderr, /usage: wafflestack </, 'bake is a real command, not a fall-through to usage');
+
+    const refused = runCli(['bake', 'skills/x'], cwd);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /^bake takes no refs/, 'the guard names the command the user actually typed');
+  });
+
+  test('bake appears in the usage banner and the help text', () => {
+    assert.match(runCli(['frobnicate'], cwd).stderr, /\|bake\|/);
+    assert.match(runCli(['help'], cwd).stdout, /^\s+bake\s+alias for render/m);
+  });
+});
+
+describe('uninstall / reinstall (#182)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-uninst-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-uninst-'));
+    makeFixtureToolkit(toolkitRoot);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const render = (opts = {}) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', ...opts });
+  const run = (opts = {}) => uninstall({ cwd, toolkitRoot, ...opts });
+  const managed = () => Object.keys(JSON.parse(read(cwd, '.waffle/waffle.lock.json')).files);
+  const AGENT = '.claude/agents/helper.md';
+  const SKILL = '.claude/skills/demo-skill/SKILL.md';
+
+  test('it is a DRY RUN by default: reports everything, removes nothing', () => {
+    render();
+    const before = managed();
+    const r = run(); // no dryRun:false — the CLI passes dryRun: !--yes
+    assert.equal(r.ok, true);
+    assert.equal(r.dryRun, true);
+    assert.deepEqual(r.removed, [], 'a dry run deletes nothing');
+    assert.deepEqual(r.plan.remove, before.slice().sort(), 'but it plans to remove every managed file');
+    for (const rel of before) assert.ok(fs.existsSync(path.join(cwd, rel)), `${rel} still on disk`);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')));
+  });
+
+  test('--yes removes every managed file and the .waffle/ meta, and prunes the emptied dirs', () => {
+    render();
+    const before = managed();
+    assert.ok(before.length > 0);
+
+    const r = run({ dryRun: false });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    for (const rel of before) assert.equal(fs.existsSync(path.join(cwd, rel)), false, `${rel} removed`);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle')), false, '.waffle/ is gone entirely');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/agents')), false, 'emptied dir pruned');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude')), false, 'and its emptied parent');
+  });
+
+  test('it never touches a file the lock does not name', () => {
+    render();
+    // Consumer-authored files living right alongside the rendered ones.
+    write(cwd, '.claude/settings.json', '{"mine": true}\n');
+    write(cwd, '.claude/skills/mine/SKILL.md', 'my own skill\n');
+    write(cwd, 'README.md', '# my project\n');
+
+    assert.equal(run({ dryRun: false }).ok, true);
+    assert.equal(read(cwd, '.claude/settings.json'), '{"mine": true}\n');
+    assert.equal(read(cwd, '.claude/skills/mine/SKILL.md'), 'my own skill\n');
+    assert.equal(read(cwd, 'README.md'), '# my project\n');
+    assert.ok(fs.existsSync(path.join(cwd, '.claude')), '.claude/ survives because it still holds theirs');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/agents')), false, 'but our emptied dir is pruned');
+  });
+
+  test('a DRIFTED (hand-edited) file is skipped and reported, not deleted', () => {
+    render();
+    write(cwd, SKILL, 'I edited this by hand\n');
+
+    const r = run({ dryRun: false });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.plan.drifted, [SKILL]);
+    assert.deepEqual(r.skipped, [SKILL]);
+    assert.equal(read(cwd, SKILL), 'I edited this by hand\n', 'the consumer edit survives');
+    assert.equal(fs.existsSync(path.join(cwd, AGENT)), false, 'the clean file still goes');
+  });
+
+  test('--force deletes the drifted file too', () => {
+    render();
+    write(cwd, SKILL, 'I edited this by hand\n');
+
+    const r = run({ dryRun: false, force: true });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.skipped, []);
+    assert.equal(fs.existsSync(path.join(cwd, SKILL)), false);
+    assert.equal(fs.existsSync(path.join(cwd, '.claude')), false, 'now everything empties out');
+  });
+
+  test('an already-absent managed file is a no-op, never an error (idempotent)', () => {
+    render();
+    fs.rmSync(path.join(cwd, AGENT)); // a gitignored render, or a hand-delete
+
+    const r = run({ dryRun: false });
+    assert.equal(r.ok, true, 'absence is not failure');
+    assert.ok(r.plan.absent.includes(AGENT));
+
+    // A second uninstall over the wreckage cannot fail on what is already gone — but it has no
+    // lock left to trust either, and refusing is exactly right: nothing here is knowably ours.
+    const again = run({ dryRun: false });
+    assert.equal(again.ok, false);
+    assert.equal(again.plan.lock, null);
+    assert.deepEqual(again.removed, []);
+  });
+
+  test('--allow-missing only silences the reporting; absence is tolerated either way', () => {
+    render();
+    fs.rmSync(path.join(cwd, AGENT));
+    const lines = [];
+    const r = uninstall({ cwd, toolkitRoot, dryRun: false, allowMissing: true, log: (m) => lines.push(m) });
+    assert.equal(r.ok, true);
+    assert.ok(r.plan.absent.includes(AGENT), 'still classified as absent');
+    assert.ok(!lines.some((l) => l.startsWith('absent')), 'just not narrated');
+  });
+
+  test('an emptied dir is swept even when the consumer deleted the file themselves', () => {
+    // The orphan-dir case #182 calls out: the file is absent (so never in `remove`), but the
+    // directory it left behind is still ours to sweep.
+    render();
+    fs.rmSync(path.join(cwd, SKILL));
+    fs.rmSync(path.join(cwd, '.claude/skills/demo-skill/ref/data.json'));
+
+    assert.equal(run({ dryRun: false }).ok, true);
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/demo-skill')), false, 'the orphan dir is gone');
+  });
+
+  test('with no lock it refuses outright and deletes nothing — it never guesses', () => {
+    write(cwd, '.claude/agents/helper.md', 'precious\n'); // same PATH a render would own
+    const r = run({ dryRun: false });
+    assert.equal(r.ok, false);
+    assert.equal(r.plan.lock, null);
+    assert.match(r.errors[0], /nothing is tracked as wafflestack-managed|no \.waffle\/waffle\.lock\.json/);
+    assert.equal(read(cwd, '.claude/agents/helper.md'), 'precious\n', 'a path is not a licence to delete');
+  });
+
+  test('a lock key escaping cwd is refused wholesale — nothing at all is deleted', () => {
+    render();
+    const outside = path.join(cwd, '..', `evil-${path.basename(cwd)}.txt`);
+    fs.writeFileSync(outside, 'DO NOT DELETE\n');
+    try {
+      // A hostile/corrupt lock, with a *correct* hash — only the traversal guard stands here.
+      const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+      lock.files[`../${path.basename(outside)}`] = sha256(fs.readFileSync(outside));
+      write(cwd, '.waffle/waffle.lock.json', JSON.stringify(lock, null, 2));
+
+      const r = run({ dryRun: false });
+      assert.equal(r.ok, false);
+      assert.ok(r.plan.refused.length, 'the escaping key is refused');
+      assert.equal(fs.readFileSync(outside, 'utf8'), 'DO NOT DELETE\n', 'the file outside the repo is untouched');
+      assert.ok(fs.existsSync(path.join(cwd, AGENT)), 'and it is all-or-nothing: nothing inside went either');
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
+  test('ejected files are left in place AND announced', () => {
+    render();
+    eject({ cwd, item: 'skills/demo-skill' });
+    const r = run({ dryRun: false });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.plan.ejected, ['skills/demo-skill']);
+    assert.equal(fs.existsSync(path.join(cwd, SKILL)), true, 'project-owned now — not ours to delete');
+  });
+
+  test('the LOCAL lock wins: an overlay-shaped file is deleted, not misread as hand-edited', () => {
+    // On a machine whose .waffle/waffle.local.yaml shapes the render, the canonical hashes do not
+    // describe the bytes on disk. Read the wrong lock and every overlay-touched file looks drifted,
+    // and the uninstall silently removes nothing (#317).
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n');
+    render();
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.local.lock.json')), 'the overlay moved a byte');
+    assert.match(read(cwd, AGENT), /local@example\.com/, 'and the tree carries the overlay value');
+
+    const r = run({ dryRun: false });
+    assert.equal(r.plan.lock, 'local', 'the tree lock answered');
+    assert.deepEqual(r.plan.drifted, [], 'an untouched overlay-shaped file is NOT drift');
+    assert.equal(fs.existsSync(path.join(cwd, AGENT)), false);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.local.lock.json')), false, 'both locks go');
+  });
+
+  test('.gitignore: exactly our offered lines and the marker go; everything else is verbatim', () => {
+    render();
+    fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.env\n');
+    ensureGitignoreEntries(cwd, recommendedGitignoreEntries(loadToolkit(toolkitRoot), loadProjectConfig(cwd)));
+    assert.match(read(cwd, '.gitignore'), /# wafflestack/);
+
+    assert.equal(run({ dryRun: false }).ok, true);
+    assert.equal(read(cwd, '.gitignore'), 'node_modules/\n.env\n', 'byte-for-byte the file we started with');
+  });
+
+  test('a dry run does not touch .gitignore either', () => {
+    render();
+    fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n');
+    ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']);
+    const before = read(cwd, '.gitignore');
+    run(); // dry run
+    assert.equal(read(cwd, '.gitignore'), before);
+  });
+
+  test('CLI: bare `uninstall` previews; `--yes` applies; refs are refused', () => {
+    render();
+    const dry = runCli(['uninstall'], cwd);
+    assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+    assert.match(dry.stdout, /dry run/);
+    assert.ok(fs.existsSync(path.join(cwd, AGENT)), 'preview removed nothing');
+
+    const refs = runCli(['uninstall', 'skills/demo-skill'], cwd);
+    assert.equal(refs.status, 1);
+    assert.match(refs.stderr, /takes no refs/);
+    assert.match(refs.stderr, /eject/, 'and it points at the command that DOES take a ref');
+
+    const real = runCli(['uninstall', '--yes'], cwd);
+    assert.equal(real.status, 0, real.stdout + real.stderr);
+    assert.equal(fs.existsSync(path.join(cwd, AGENT)), false);
+  });
+
+  test('CLI: uninstall with no lock exits non-zero', () => {
+    const r = runCli(['uninstall', '--yes'], cwd);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /error:/);
+  });
+
+  test('reinstall refreshes in place: restores drift AND deletions, keeps the config, doctors green', () => {
+    render();
+    write(cwd, SKILL, 'hand-edited\n');       // drift
+    fs.rmSync(path.join(cwd, AGENT));          // deleted
+
+    const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.equal(r.initialized, false);
+    assert.ok(fs.existsSync(path.join(cwd, AGENT)), 'the deleted file is back');
+    assert.doesNotMatch(read(cwd, SKILL), /hand-edited/, 'the drifted file is re-rendered from source');
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /stacks: \[demo\]/, 'the selection survives — it is authored input');
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true, 'and the install is whole again');
+  });
+
+  test('reinstall keeps the lock — poured syrup is not silently dropped', () => {
+    // The regression this guards: computeSelection keeps an opt-in `files/` item selected BECAUSE
+    // its path is tracked in the lock. Delete the lock before re-rendering and any syrup file not
+    // also named in `include:` vanishes from the render.
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: test fixture\nstacks: [demo, sb]\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', 'name: sb\ndescription: Syrup.\nfiles:\n  - danger.yml\noptIn:\n  - files/danger.yml\n');
+    write(toolkitRoot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'poured on the explicit include');
+
+    // Now drop the include: the file stays selected ONLY because the lock still tracks it.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
+    const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'still poured — reinstall preserved the lock');
+  });
+
+  test('reinstall --clean wipes to a fresh scaffold with an empty selection', () => {
+    render();
+    const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test', clean: true });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.equal(r.initialized, true);
+    assert.equal(r.render, null, 'nothing is selected, so nothing is rendered');
+    assert.equal(fs.existsSync(path.join(cwd, AGENT)), false, 'the rendered files are gone');
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'and so is the lock');
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')), 'but a starter config is scaffolded');
+    assert.doesNotMatch(read(cwd, '.waffle/waffle.yaml'), /stacks: \[demo\]/, 'with the old selection gone');
+  });
+
+  test('CLI: reinstall --clean without --yes refuses and changes nothing', () => {
+    render();
+    const r = runCli(['reinstall', '--clean'], cwd);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /--yes/);
+    assert.ok(fs.existsSync(path.join(cwd, AGENT)), 'the install is untouched');
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /stacks: \[demo\]/);
+  });
+
+  test('CLI: plain reinstall needs no --yes and dispatches cleanly', () => {
+    // The spawned CLI resolves the REAL toolkit, so drive it with an empty selection — the same
+    // trick the #14/upgrade and --force CLI tests use. What is under test here is the dispatch and
+    // the flag handling; the restore semantics are proven against the fixture toolkit above.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+
+    const r = runCli(['reinstall'], cwd);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stderr, /--yes/, 'a refresh in place asks for no confirmation');
+    assert.doesNotMatch(r.stderr, /usage: wafflestack </, 'reinstall is a real command');
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.yaml')), 'and it keeps the config');
+
+    const refs = runCli(['reinstall', 'skills/x'], cwd);
+    assert.equal(refs.status, 1);
+    assert.match(refs.stderr, /takes no refs/);
+  });
+});
+
+describe('removeGitignoreEntries (#182) — the inverse of ensureGitignoreEntries', () => {
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rmgi-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const gi = () => read(cwd, '.gitignore');
+  const seed = (text) => fs.writeFileSync(path.join(cwd, '.gitignore'), text);
+
+  test('round-trips ensureGitignoreEntries exactly: the file comes back byte-for-byte', () => {
+    const original = 'node_modules/\n.env\n';
+    seed(original);
+    const entries = ['.waffle/waffle.local.yaml', '.claude/worktrees/'];
+    ensureGitignoreEntries(cwd, entries);
+    assert.notEqual(gi(), original);
+
+    assert.deepEqual(removeGitignoreEntries(cwd, entries), entries);
+    assert.equal(gi(), original, 'marker, blank separator and entries all gone; the rest verbatim');
+  });
+
+  test('preserves unrelated lines, including ones that merely look like ours', () => {
+    seed('# wafflestack is great\n.waffle/waffle.local.yaml.bak\nnode_modules/\n.waffle/waffle.local.yaml\n');
+    assert.deepEqual(removeGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']), ['.waffle/waffle.local.yaml']);
+    assert.equal(
+      gi(),
+      '# wafflestack is great\n.waffle/waffle.local.yaml.bak\nnode_modules/\n',
+      'only the EXACT line match is removed — no substring, no prefix, no comment',
+    );
+  });
+
+  test('a marker still labelling a line the caller did not name survives with it', () => {
+    // The heuristic this rules out: "delete from the marker to the next blank line" would eat the
+    // consumer's line. A stale entry from a stack no longer enabled looks exactly like this.
+    seed('node_modules/\n\n# wafflestack\n.waffle/waffle.local.yaml\n.claude/worktrees/\n');
+    removeGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']);
+    assert.equal(gi(), 'node_modules/\n\n# wafflestack\n.claude/worktrees/\n', 'the marker keeps its remaining line company');
+  });
+
+  test('is idempotent and reports what it did', () => {
+    seed('node_modules/\n');
+    assert.deepEqual(removeGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']), [], 'nothing to remove');
+    assert.equal(gi(), 'node_modules/\n', 'and the file is not rewritten');
+    assert.deepEqual(removeGitignoreEntries(cwd, []), []);
+  });
+
+  test('absent .gitignore is a no-op, not a crash', () => {
+    assert.deepEqual(removeGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']), []);
+    assert.equal(fs.existsSync(path.join(cwd, '.gitignore')), false, 'and is not created');
+  });
+
+  test('a file that was ONLY our block collapses to empty, not to a stray newline', () => {
+    seed('');
+    ensureGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']);
+    assert.equal(gi(), '# wafflestack\n.waffle/waffle.local.yaml\n');
+    removeGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']);
+    assert.equal(gi(), '', 'marker included — it now labels nothing');
+  });
+
+  test('a file with no trailing newline keeps not having one', () => {
+    seed('node_modules/\n.waffle/waffle.local.yaml');
+    removeGitignoreEntries(cwd, ['.waffle/waffle.local.yaml']);
+    assert.equal(gi(), 'node_modules/', 'the original habit is preserved');
+  });
+});
+
+describe('planUninstall (#182) — the plan is the single source of truth', () => {
+  let toolkitRoot;
+  let cwd;
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-plan-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-plan-'));
+    makeFixtureToolkit(toolkitRoot);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('classifies without touching disk — the dry run cannot lie about the real run', () => {
+    const before = fs.readdirSync(path.join(cwd, '.claude'));
+    const plan = planUninstall({ cwd, toolkitRoot });
+    assert.equal(plan.lock, 'canonical');
+    assert.ok(plan.remove.length > 0);
+    assert.deepEqual(fs.readdirSync(path.join(cwd, '.claude')), before, 'planning is read-only');
+  });
+
+  test('--force changes which dirs the plan expects to empty out', () => {
+    write(cwd, '.claude/skills/demo-skill/SKILL.md', 'drifted\n');
+    const soft = planUninstall({ cwd, toolkitRoot, force: false });
+    const hard = planUninstall({ cwd, toolkitRoot, force: true });
+    assert.ok(!soft.prunedDirs.includes('.claude/skills/demo-skill/'), 'a kept drifted file holds its dir open');
+    assert.ok(hard.prunedDirs.includes('.claude/skills/demo-skill/'), 'once it goes, the dir goes');
+  });
+
+  test('keepConfig/keepLock keep the .waffle/ meta out of the plan (the reinstall path)', () => {
+    const full = planUninstall({ cwd, toolkitRoot });
+    const kept = planUninstall({ cwd, toolkitRoot, keepConfig: true, keepLock: true });
+    assert.ok(full.meta.some((m) => m.rel === '.waffle/waffle.yaml'));
+    assert.ok(full.meta.some((m) => m.rel === '.waffle/waffle.lock.json'));
+    assert.deepEqual(kept.meta, [], 'a refresh destroys neither the selection nor the lock it re-renders from');
+  });
+});
