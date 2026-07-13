@@ -32,6 +32,21 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **The orchestration skills call the tools the harness actually has (#360).** `audit`, `delegate`,
+  `autopilot`, `clean-up`, `git-workflow` and the `project-manager` agent had drifted onto primitives
+  that no longer exist, so an agent following them literally called a tool that was not in its tool
+  list. Removed `TeamCreate`/`TeamDelete`/`TeamList` and the deprecated `Agent` `team_name` parameter
+  (a session now has one implicit team; express lifecycle with **named** agents instead); corrected
+  `TaskCreate` (takes `subject` + `description`; `addBlockedBy` is a **`TaskUpdate`** parameter, keyed
+  `taskId`), `TaskStop` (keyed `task_id`), `TaskList` (takes no arguments) and `SendMessage` (the param
+  is `message`, not `content`). Teardown is now **shutdown-then-stop** everywhere — `shutdown_request`
+  is the polite first step, but only `TaskStop` reliably terminates an agent. `delegate` keeps
+  provisioning its own worktrees rather than adopting `isolation: "worktree"`, and its justification is
+  now the **three reasons that survive an empirical probe of the live harness** (path, branch and base
+  are all the harness's to choose, not delegate's) — the two that did not survive are gone.
+  **Consumer impact:** re-render picks it up; no migration. If you have *extended* any of these skills,
+  re-check your additions for the same dead primitives — a regression sweep now guards every skill and
+  agent **source** under `stacks/**`, not just the subset a given repo renders.
 - **CI hooks key delivery and idempotency on out-of-band signals, never on a marker pasted in prose
   (#338, closes #333).** Both review hooks decided "the bot did a thing" by string-matching a marker
   literal inside a **free-text body anyone can write**. #211, #332 and #333 are not three bugs but
