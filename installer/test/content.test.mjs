@@ -29,10 +29,15 @@ import { renderProject } from '../lib/render.mjs';
 //     it would arm a live label→harness dispatch), so it is NOT in the committed
 //     render. We render it into a temp dir via the installer's own render pipeline
 //     and assert on that — the exact form a consuming project commits.
+//   - EXCEPTION — the dead-primitive sweep (#360) reads the `stacks/**` SOURCES as
+//     well. The render only covers the stacks THIS repo installs; the sources are
+//     the edit surface and ship to every consuming repo, so a render-only guard
+//     misses a regression reintroduced in an uninstalled stack. See sourceSkillFiles().
 // -----------------------------------------------------------------------------
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const CLAUDE = path.join(REPO_ROOT, '.claude');
+const STACKS = path.join(REPO_ROOT, 'stacks');
 
 const readSkill = (name) =>
   fs.readFileSync(path.join(CLAUDE, 'skills', name, 'SKILL.md'), 'utf8');
@@ -55,6 +60,35 @@ const renderedAgentFiles = () =>
         .filter((f) => f.endsWith('.md'))
         .map((f) => path.join(CLAUDE, 'agents', f))
     : [];
+
+// Every SOURCE skill/agent under `stacks/**` — the EDIT surface, and a strict superset of the
+// render: this repo installs only SOME stacks (29 of 37 skills, 6 of 14 agents render here), so a
+// sweep of `.claude/**` alone leaves every source in an uninstalled stack unguarded. A guard that
+// only reads the render lets a dead primitive be reintroduced into e.g. `expo-dev` or `obsidian-dev`
+// and ship to a consuming repo with CI green (#360). Sweeping the sources subsumes the renders
+// anyway — `doctor --verify-render` already pins render↔source parity.
+const stackDirs = () =>
+  fs.existsSync(STACKS)
+    ? fs
+        .readdirSync(STACKS, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => path.join(STACKS, e.name))
+    : [];
+const sourceSkillFiles = () => stackDirs().flatMap((d) => glob(path.join(d, 'skills'), 'SKILL.md'));
+const sourceAgentFiles = () =>
+  stackDirs().flatMap((d) => {
+    const agents = path.join(d, 'agents');
+    return fs.existsSync(agents)
+      ? fs
+          .readdirSync(agents)
+          .filter((f) => f.endsWith('.md'))
+          .map((f) => path.join(agents, f))
+      : [];
+  });
+
+// Name a swept file by its repo-relative path: `stacks/orchestration/skills/delegate/SKILL.md` and
+// `.claude/skills/delegate/SKILL.md` share a basename, and a failure must say WHICH one to edit.
+const who = (f) => path.relative(REPO_ROOT, f);
 
 describe('rendered content: frontmatter present where required', () => {
   test('every rendered skill has name + description frontmatter', () => {
@@ -3197,43 +3231,64 @@ describe('issue / PR / review templates (#337)', () => {
 // plus a `summary` when the message is a string). An agent following those literally calls a
 // tool that is not in its tool list. These sweep EVERY rendered skill and agent so no future
 // edit can reintroduce a dead primitive — the guard that #360 wished it had.
-describe('rendered content: no dead harness primitives (#360)', () => {
-  const files = () => [...renderedSkillFiles(), ...renderedAgentFiles()];
+describe('source + rendered content: no dead harness primitives (#360)', () => {
+  // Sweep the SOURCES (`stacks/**`, the edit surface) *and* the render. Renders alone would guard
+  // only the stacks this repo happens to install — see the sourceSkillFiles() note above.
+  const files = () => [
+    ...sourceSkillFiles(),
+    ...sourceAgentFiles(),
+    ...renderedSkillFiles(),
+    ...renderedAgentFiles(),
+  ];
+
+  // The guard is only as good as its reach: if the source walk ever silently returns [] (a moved
+  // directory, a renamed layout), every assertion below would vacuously pass. Pin the coverage.
+  test('the sweep reaches every SOURCE skill and agent, not just the ones this repo renders', () => {
+    const sources = [...sourceSkillFiles(), ...sourceAgentFiles()];
+    assert.ok(sourceSkillFiles().length >= 37, `expected every stacks/**/skills/*/SKILL.md, found ${sourceSkillFiles().length}`);
+    assert.ok(sourceAgentFiles().length >= 14, `expected every stacks/**/agents/*.md, found ${sourceAgentFiles().length}`);
+    // The edit surface is strictly larger than what this repo renders — that gap IS the hole.
+    assert.ok(
+      sourceSkillFiles().length > renderedSkillFiles().length,
+      'sweeping only the render would leave the sources of uninstalled stacks unguarded',
+    );
+    const swept = files();
+    for (const f of sources) assert.ok(swept.includes(f), `${who(f)} is not swept by the #360 guard`);
+  });
 
   // Call-shaped only: prose may still *name* a removed tool to say it is gone (clean-up does).
   test('no skill or agent CALLS TeamCreate / TeamDelete / TeamList — the tools do not exist', () => {
     for (const f of files()) {
       const md = fs.readFileSync(f, 'utf8');
-      assert.doesNotMatch(md, /Team(Create|Delete|List)\s*\(/, `${path.basename(path.dirname(f))}: calls a Team* tool, which the harness does not have`);
+      assert.doesNotMatch(md, /Team(Create|Delete|List)\s*\(/, `${who(f)}: calls a Team* tool, which the harness does not have`);
     }
   });
 
   test('no skill or agent PASSES team_name — it is deprecated and ignored', () => {
     for (const f of files()) {
       const md = fs.readFileSync(f, 'utf8');
-      assert.doesNotMatch(md, /team_name:/, `${path.basename(path.dirname(f))}: passes team_name, which the Agent tool ignores`);
+      assert.doesNotMatch(md, /team_name:/, `${who(f)}: passes team_name, which the Agent tool ignores`);
     }
   });
 
   test('task tools use their real parameter keys — taskId / task_id, and TaskList takes none', () => {
     for (const f of files()) {
       const md = fs.readFileSync(f, 'utf8');
-      const who = path.basename(path.dirname(f));
       // TaskUpdate's key is taskId, never id.
-      assert.doesNotMatch(md, /TaskUpdate\(\s*id:/, `${who}: TaskUpdate's key is taskId, not id`);
+      assert.doesNotMatch(md, /TaskUpdate\(\s*id:/, `${who(f)}: TaskUpdate's key is taskId, not id`);
       // TaskStop's key is task_id, never taskId.
-      assert.doesNotMatch(md, /TaskStop\(\s*taskId:/, `${who}: TaskStop's key is task_id, not taskId`);
+      assert.doesNotMatch(md, /TaskStop\(\s*taskId:/, `${who(f)}: TaskStop's key is task_id, not taskId`);
       // TaskList takes no parameters at all.
-      assert.doesNotMatch(md, /TaskList\(\s*[^)\s]/, `${who}: TaskList takes no parameters`);
+      assert.doesNotMatch(md, /TaskList\(\s*[^)\s]/, `${who(f)}: TaskList takes no parameters`);
       // TaskCreate requires subject + description — it has no addBlockedBy.
-      assert.doesNotMatch(md, /TaskCreate\([^)]*addBlockedBy/s, `${who}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
+      assert.doesNotMatch(md, /TaskCreate\([^)]*addBlockedBy/s, `${who(f)}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
     }
   });
 
   test('SendMessage uses `message:`, never the nonexistent `content:`', () => {
     for (const f of files()) {
       const md = fs.readFileSync(f, 'utf8');
-      assert.doesNotMatch(md, /SendMessage\([^)]*content:/, `${path.basename(path.dirname(f))}: SendMessage takes message: (+ summary:), not content:`);
+      assert.doesNotMatch(md, /SendMessage\([^)]*content:/, `${who(f)}: SendMessage takes message: (+ summary:), not content:`);
     }
   });
 
