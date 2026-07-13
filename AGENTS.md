@@ -552,8 +552,8 @@ Node >= 18. Single runtime dependency: `yaml`.
 | test | `npm test` (node:test, `installer/test/*.test.mjs`; 966 tests, 128 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
-| render (dogfood) | `node installer/cli.mjs render` |
-| verify render | `node installer/cli.mjs doctor` (tree vs lock) / `node installer/cli.mjs doctor --allow-missing --verify-render` (committed inputs reproduce the committed lock — the CI gate in `.github/workflows/tests.yml`, #316) |
+| render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — the flag is **required** (#373): `render` refuses from a toolkit that is not at a release tag, and a working tree never is. Commit the updated render + lock (the `doctor` drift gate is a required check). |
+| verify render | `node installer/cli.mjs doctor` (tree vs lock — **not** gated, needs no flag) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate in `.github/workflows/tests.yml`, #316). `--verify-render` **renders**, so it is gated (#373) and needs `--allow-unreleased` when run by hand from a branch; the `tests` job supplies the env twin `WAFFLESTACK_ALLOW_UNRELEASED: '1'` instead, which is why line 72 there carries no flag. |
 | evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 9 cases across `github-workflow` (7) + `orchestration` (2); scheduled nightly by the opt-in `waffle-evals` syrup. **Not** in `npm test`. |
 
 Test files: `installer.test.mjs` (render pipeline machinery), `checkpoint.test.mjs` /
@@ -597,9 +597,13 @@ these deliberate absences are tolerated by doctor's `--allow-missing`.
 
 CI render gate (#314/#316): `.github/workflows/tests.yml` (project-owned — NOT lock-managed,
 edited directly) runs `npm test` + `npm run validate` + `npm run typecheck`, then
-`node installer/cli.mjs doctor --allow-missing --verify-render` with the checkout's OWN CLI —
-catching a `stacks/**` or config edit whose re-render was forgotten (files and lock go stale
-together, so the plain `waffle-doctor` drift gate stays green). This gate cannot live in
+`WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs doctor --allow-missing --verify-render`
+with the checkout's OWN CLI — catching a `stacks/**` or config edit whose re-render was forgotten
+(files and lock go stale together, so the plain `waffle-doctor` drift gate stays green). The env
+twin is shown inline here because that is what *executes*; the job supplies it once at the `env:`
+block rather than per-step (`tests.yml:72` therefore carries no flag — see below). Running that
+step **by hand** from a branch needs `--allow-unreleased`, since `--verify-render` renders and is
+gated (#373). This gate cannot live in
 `doctor.flags`: the shipped waffle-doctor workflow renders via
 `npx github:dustinkeeton/wafflestack` (main's toolkit), which is the wrong toolkit for the
 toolkit's own PRs in both directions (`tests.yml:37`).

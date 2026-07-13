@@ -9,7 +9,9 @@
 # workflow (committing it would arm a live label→harness dispatch) and the generated
 # .waffle/ overview docs — hence doctor runs with --allow-missing. After changing a
 # stack, re-render from the working tree and commit the updated render + lock:
-#   node installer/cli.mjs render
+#   node installer/cli.mjs render --allow-unreleased
+# The flag is required (#373): `render` refuses from a toolkit that is not at a
+# release tag, and a working tree never is. It suppresses the refusal, not the truth.
 targets: [ claude ]
 stacks:
   - github-workflow

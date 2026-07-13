@@ -22,7 +22,7 @@
   "files": {
     ".claude/agents/docs-agent.md": "2906db901f756096c6d40ab61bafc340f31d9a9664d508796789ee4c2933ac56",
     ".claude/agents/docs-human.md": "d204bd90ca07c4f5f1a075542779ea62c65cc56ed134a33ab0d9edaa8bc3f5e4",
-    ".claude/agents/harness-architect.md": "be832000f196fdaafa12207e99e1ff109d1ec32673ec32ad829cdc29c1c31086",
+    ".claude/agents/harness-architect.md": "4c0b3936a0ebac9fc57ed472fa154bb3036601489c2cff7b8e81d57dcf6fdc2a",
     ".claude/agents/product-manager.md": "0e31ef14c546e3e0994b04d2fbb34d74c8e8966601af3ec6cc57e68731727fcc",
     ".claude/agents/project-manager.md": "64ab733483180482ffd881d5f9587754ff7c3b89acedbb774ef3dc64eda90854",
     ".claude/agents/task-planner.md": "629b0f8e5c8ba1845a3e8086c4637ac75ec75e8c0c313e6f817c683103196604",

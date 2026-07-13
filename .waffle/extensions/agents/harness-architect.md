@@ -4,7 +4,13 @@ You are working inside **WaffleStack itself** — the toolkit that *renders* har
 
 ### Mental model
 
-The source of truth is `stacks/**` — canonical, harness-neutral agent/skill/file definitions. The `wafflestack` CLI (`installer/cli.mjs`, exports mapped in `AGENTS.md`) renders them into harness-native output (`.claude/`, `.codex/`, `.agents/`). Rendered files are generated output — **never hand-edit them**; change the source, project config, or a project extension instead. In *this* repo the rendered `.claude/` output and `.waffle/waffle.lock.json` are gitignored (see `.waffle/waffle.yaml`), so after any `stacks/**` or `toolkit.yaml` edit you must re-render from the working tree: `node installer/cli.mjs render`.
+The source of truth is `stacks/**` — canonical, harness-neutral agent/skill/file definitions. The `wafflestack` CLI (`installer/cli.mjs`, exports mapped in `AGENTS.md`) renders them into harness-native output (`.claude/`, `.codex/`, `.agents/`). Rendered files are generated output — **never hand-edit them**; change the source, project config, or a project extension instead. In *this* repo the rendered `.claude/` output and `.waffle/waffle.lock.json` are **committed** (see `.waffle/waffle.yaml`), so after any `stacks/**` or `toolkit.yaml` edit you must re-render from the working tree **and commit the updated render + lock** — the `doctor` drift gate is a required check on `main`:
+
+```
+node installer/cli.mjs render --allow-unreleased
+```
+
+The flag is **required** (#373): `render` refuses from a toolkit that is not at a release tag, and a working tree never is. It suppresses the refusal, not the truth — the identity still resolves to `unreleased`.
 
 ### The registries and where the truth lives
 
@@ -31,13 +37,13 @@ The source of truth is `stacks/**` — canonical, harness-neutral agent/skill/fi
 
 1. `npm run validate` — `node installer/cli.mjs validate`: manifests parse, frontmatter complete, placeholder↔declaration sync, agent-skill/`requires:` refs resolve, `pattern:`/`optIn:` integrity.
 2. `npm test` — the `node:test` installer suite under `installer/test/*.test.mjs`.
-3. `node installer/cli.mjs render && node installer/cli.mjs doctor` — regenerate all outputs, then confirm reality matches the lock (no drift, no hand-edits). In this repo pair with `--allow-missing` awareness since renders are gitignored.
+3. `node installer/cli.mjs render --allow-unreleased && node installer/cli.mjs doctor` — regenerate all outputs, then confirm reality matches the lock (no drift, no hand-edits), and **commit the updated render + lock**. `render` is gated (#373) and refuses without the flag from a non-release checkout; plain `doctor` is **not** gated and needs nothing. A few files stay deliberately gitignored (the label-hook workflow, the generated `.waffle/` overview docs), which is why CI runs `doctor --allow-missing`.
 4. `npm pack --dry-run` — the build/pack check the release flow uses.
 
 ### Worked answers
 
 **"How would I add a new payload type?"** (today there are three: agents, skills, files.) Touch, in order: (1) `installer/lib/toolkit.mjs` `loadStack` — parse the new manifest array into items `{ kind, name, … }`, mirroring how `files` is parsed; (2) `installer/lib/refs.mjs` — extend the `normalizeItemRef` prefix regex, `itemsOfKind`, both `parseRef` regexes, and the ref-collection loops so the kind is addressable and joins the dependency closure; (3) `installer/lib/render.mjs` — add a `renderX` function and wire it into the per-item dispatch alongside `renderAgent`/`renderSkill`/`renderFiles`; (4) `installer/lib/validate.mjs` — collect placeholders (and any per-kind checks) for the new payload; (5) document it in `schema/FORMAT.md`; (6) add coverage under `installer/test/`. Then re-render and run the gates.
 
-**"How would I add a new stack?"** (what *this* issue does.) Create `stacks/<name>/stack.yaml` plus its `agents/`/`skills/`/`files/`; register the stack name in `toolkit.yaml`'s `stacks:` list; enable it in a consumer's `.waffle/waffle.yaml` (`stacks:` or `include:`); add a row to the `AGENTS.md` stack registry and a `CHANGELOG.md` `[Unreleased]` entry (with a Consumer-impact line); then `npm run validate && npm test && node installer/cli.mjs render && node installer/cli.mjs doctor`.
+**"How would I add a new stack?"** (what *this* issue does.) Create `stacks/<name>/stack.yaml` plus its `agents/`/`skills/`/`files/`; register the stack name in `toolkit.yaml`'s `stacks:` list; enable it in a consumer's `.waffle/waffle.yaml` (`stacks:` or `include:`); add a row to the `AGENTS.md` stack registry and a `CHANGELOG.md` `[Unreleased]` entry (with a Consumer-impact line); then `npm run validate && npm test && node installer/cli.mjs render --allow-unreleased && node installer/cli.mjs doctor`.
 
 **"How would I add a new config key?"** Declare it under the stack's `config:` (`required`/`default`/`description`, optional `pattern:` for render-time value validation), then reference it as `{{dotted.key}}` in that stack's content — `validate` fails if a declared key is unreferenced or a referenced dotted key is undeclared. Account-specific values belong in the gitignored `.waffle/waffle.local.yaml`, reachable from a committed value via nested `{{…}}` substitution.
