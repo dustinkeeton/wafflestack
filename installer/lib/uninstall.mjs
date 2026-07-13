@@ -71,6 +71,10 @@ import {
  * @property {string[]} ejected item refs the project owns — left in place, announced
  * @property {boolean} lockRetained the lock survives this run — so a `--force` re-run can still
  *   find the files we skipped. False means the lock goes, and skipped files become project-owned.
+ *   From `planUninstall` this is the PREDICTION (a skip, or an explicit `keepLock`). From
+ *   `uninstall` it is the OUTCOME: a failed removal also keeps the lock, and that is only knowable
+ *   after the removals run, so `uninstall` returns the plan with this field reconciled. Read it off
+ *   the result, not off a bare plan, if what you mean is "is the lock still there?"
  * @property {string[]} notes
  */
 
@@ -158,8 +162,11 @@ function planPrunedDirs(cwd, removing, candidates) {
  * @param {string} opts.cwd
  * @param {string | null} [opts.toolkitRoot] needed only to compute the `.gitignore` offer
  * @param {boolean} [opts.force] drifted files will be deleted too — affects which dirs empty out
- * @param {boolean} [opts.keepConfig] preserve `.waffle/waffle.yaml`, the overlay, `extensions/`
- * @param {boolean} [opts.keepLock] preserve both lock files
+ * @param {boolean} [opts.keepConfig] preserve `.waffle/waffle.yaml`, the overlay, `extensions/` —
+ *   and the locks with them: the lock carries the half of the selection the config does not (see
+ *   `lockRetained` below), so keeping one without the other keeps a selection that no longer renders
+ *   the install it describes
+ * @param {boolean} [opts.keepLock] preserve both lock files (implied by `keepConfig`)
  * @param {boolean} [opts.keepLockOnSkip] when drifted files are SKIPPED, keep the lock anyway so the
  *   `--force` re-run we advertise can still reach them (default true) — see `lockRetained` below
  * @returns {UninstallPlan}
@@ -285,7 +292,17 @@ export function planUninstall({
   // deleted, with NO hash check — render.mjs) against the very hand-edited file we just kept. On
   // that path nothing can restore the file, so the lock goes and the file is announced as
   // project-owned instead — the promise is dropped rather than broken.
-  const lockRetained = keepLock || (keepLockOnSkip && !force && drifted.length > 0);
+  //
+  // KEEPING THE CONFIG KEEPS THE LOCK, because half a selection is not a selection. The lock is not
+  // merely a hash manifest: `computeSelection` keeps an already-poured opt-in ("syrup") `files/` item
+  // selected BECAUSE its path is in the lock (`refs.mjs` — `if (stack.optIn.has(...) &&
+  // !trackedFiles.has(f.name)) continue`). So a consumer left holding `waffle.yaml` with no lock has
+  // a config that no longer describes their install: the next `render` silently comes back without
+  // every syrup they had poured. `reinstall` has always known this — its refresh leg keeps both, and
+  // the docblock below calls it "load-bearing, not tidy" — but `keepConfig` alone did not, so the
+  // `--keep-config` flag whose whole promise is "take the rendered output, keep my authored inputs"
+  // walked straight into it. The two flags are one decision, so they are decided in one place.
+  const lockRetained = keepLock || keepConfig || (keepLockOnSkip && !force && drifted.length > 0);
   if (!lockRetained) {
     addMeta(resolveLockFile(cwd).file, 'file');
     addMeta(localLockPath(cwd), 'file');
@@ -341,8 +358,9 @@ export function planUninstall({
  * @param {string | null} [opts.toolkitRoot]
  * @param {boolean} [opts.force] also delete drifted (hand-edited) files
  * @param {boolean} [opts.allowMissing] silence the per-file "already absent" lines
- * @param {boolean} [opts.keepConfig] preserve the config, overlay and `extensions/`
- * @param {boolean} [opts.keepLock] preserve both locks
+ * @param {boolean} [opts.keepConfig] preserve the config, overlay and `extensions/` — and the locks
+ *   with them (a config without its lock is half a selection; see planUninstall)
+ * @param {boolean} [opts.keepLock] preserve both locks (implied by `keepConfig`)
  * @param {boolean} [opts.keepLockOnSkip] keep the lock when drifted files are skipped, so `--force`
  *   can still reach them (default true — see planUninstall)
  * @param {boolean} [opts.dryRun] report what would happen; touch nothing. DEFAULTS TRUE — see below
@@ -407,24 +425,16 @@ export function uninstall({
   log(
     `${dryRun ? 'would remove' : 'removing'} ${doomed.length} managed file(s) tracked by ${plan.lockFile}`,
   );
-  // Only promise the `--force` re-run on the path that can actually honour it — i.e. where the lock
-  // survives to tell that run these files were ours. Where it does not (reinstall --clean), say the
-  // true thing instead: they are the project's now.
-  for (const rel of skipped) {
-    log(
-      plan.lockRetained
-        ? `skipped (modified): ${rel} — hand-edited since it was rendered; re-run with --force to delete it`
-        : `skipped (modified): ${rel} — hand-edited since it was rendered; left in place and now project-owned (delete it by hand)`,
-    );
-  }
-  if (skipped.length && plan.lockRetained) {
-    log(
-      `${skipped.length} file(s) kept, so ${plan.lockFile} was kept too — it is the only record that they are wafflestack's. Re-run with --force to remove them and finish the uninstall.`,
-    );
-  }
   if (!allowMissing) {
     for (const rel of plan.absent) log(`absent (nothing to do): ${rel}`);
   }
+
+  // The skip messages USED to be emitted here, before the execution block — and that is precisely
+  // why they could not tell the truth. They read `plan.lockRetained`, decided at plan time, while a
+  // removal failure decides the lock's fate at EXECUTION time. On `--clean` + drift + a failed
+  // removal the two disagreed, and the run said both "now project-owned (delete it by hand)" AND
+  // "the lock was kept" — telling the consumer to hand-delete a file the tool could still manage.
+  // They now live below the execution block, and read the ONE answer it produces.
 
   /** @type {string[]} */
   const removed = [];
@@ -489,6 +499,37 @@ export function uninstall({
     }
   }
 
+  // DOES THE LOCK SURVIVE THIS RUN? ONE QUESTION, ONE ANSWER, ASKED ONCE — HERE.
+  //
+  // The rule has been amended three times (a skip keeps it; a failing render leg restores the tree;
+  // a failed removal keeps it), and each amendment added a *place* where retention was decided:
+  // `lockRetained` at plan time, `metaKeptOnError` at execution time. Two sources of truth is one
+  // too many, and the message layer read only the first — so the report contradicted itself on the
+  // one path where they disagree. This line is the reconciliation, and everything below it (and the
+  // `plan` we return) reads THIS value, never the plan's prediction.
+  //
+  // It is a plain OR because the two cases cannot conflict: when the plan does NOT retain the lock,
+  // the lock is necessarily in `plan.meta` (a lock we read is a lock on disk, so `addMeta` took it),
+  // and `metaKeptOnError` is exactly "the meta loop did not run". On a dry run nothing executes, so
+  // it collapses to the plan's answer — which is correct, because on a dry run the plan IS the run.
+  const lockKept = plan.lockRetained || metaKeptOnError;
+
+  // Only promise the `--force` re-run on a path that can actually honour it — i.e. where the lock
+  // survives to tell that run these files were ours. Where it does not (`reinstall --clean`, which
+  // opts out via `keepLockOnSkip`), say the true thing instead: they are the project's now.
+  for (const rel of skipped) {
+    log(
+      lockKept
+        ? `skipped (modified): ${rel} — hand-edited since it was rendered; re-run with --force to delete it`
+        : `skipped (modified): ${rel} — hand-edited since it was rendered; left in place and now project-owned (delete it by hand)`,
+    );
+  }
+  if (skipped.length && lockKept) {
+    log(
+      `${skipped.length} file(s) kept, so ${plan.lockFile} was kept too — it is the only record that they are wafflestack's. Re-run with --force to remove them and finish the uninstall.`,
+    );
+  }
+
   // REPORT WHAT HAPPENED, NOT WHAT WAS PLANNED. The plan IS the story on a dry run — that is the
   // whole design, and why the preview cannot drift from the execution. But once we have touched
   // disk, replaying it in the past tense tells the consumer their tree is clean when a failed
@@ -535,7 +576,12 @@ export function uninstall({
   // stderr, where an error belongs — and logging them here too would print each one twice: once to
   // stdout via `log`, once to stderr via the caller. That bit `reinstall` (which passes the CLI's
   // `log` straight through) and `uninstall` alike, on any per-file `failed to remove …`.
-  return { ok: errors.length === 0, dryRun, plan, removed, skipped, errors };
+  //
+  // The plan goes back RECONCILED: `lockRetained` is documented as "the lock survives this run", and
+  // a caller reading it off the result is asking about the run, not about the forecast. Leaving the
+  // plan-time prediction in place would hand them `false` while the lock sits on disk — the same
+  // two-sources-of-truth bug as the messages, just exported instead of printed.
+  return { ok: errors.length === 0, dryRun, plan: { ...plan, lockRetained: lockKept }, removed, skipped, errors };
 }
 
 /**
@@ -551,25 +597,36 @@ export function uninstall({
  * workflows) — small, and already fully in hand — and a temp-dir staging area would only add a
  * second thing that can fail halfway.
  *
+ * Returns what it COULD NOT read alongside what it could. That used to be a `catch {}` with a
+ * comment explaining why it did not matter — and the comment was true when it was written, because
+ * an unreadable managed file threw out of `planUninstall` and a refresh died during *planning*,
+ * deleting nothing. It stopped being true the moment an unreadable file became a classified,
+ * `--force`-deletable one (the refresh passes `force: true`, and `rmSync` needs the parent dir
+ * writable, not the file readable): the refresh can now delete a file the snapshot does not hold.
+ * A rollback that cannot restore it must SAY so, rather than certify "the tree is as it was".
+ *
  * @param {string} cwd
  * @param {string[]} rels
- * @returns {Snapshot[]}
+ * @returns {{ snapshot: Snapshot[], unreadable: string[] }}
  */
 function snapshotFiles(cwd, rels) {
   /** @type {Snapshot[]} */
-  const snap = [];
+  const snapshot = [];
+  /** @type {string[]} */
+  const unreadable = [];
   for (const rel of rels) {
     const abs = resolveInside(cwd, rel);
     if (!abs || !exists(abs)) continue;
     try {
-      snap.push({ rel, abs, body: fs.readFileSync(abs) });
+      snapshot.push({ rel, abs, body: fs.readFileSync(abs) });
     } catch {
-      // Unreadable now means unrestorable later, and there is nothing useful to do about it here:
-      // the render leg is overwhelmingly likely to succeed and rewrite it anyway. Skip it rather
-      // than abort a refresh over a file we may never need to put back.
+      // Do not abort the refresh over a file we will probably never need to put back — the render leg
+      // usually succeeds and rewrites it. But record it, so the one line whose job is to certify a
+      // total rollback cannot claim one it did not achieve.
+      unreadable.push(rel);
     }
   }
-  return snap;
+  return { snapshot, unreadable: unreadable.sort() };
 }
 
 /**
@@ -668,9 +725,11 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
   // on `--clean` — there is no render that could fail, and the wipe IS the point.
   /** @type {Snapshot[]} */
   let snapshot = [];
+  /** @type {string[]} */
+  let unsnapshotable = [];
   if (!clean) {
     const plan = planUninstall({ cwd, toolkitRoot, force: true, keepConfig: true, keepLock: true });
-    snapshot = snapshotFiles(cwd, [...plan.remove, ...plan.drifted]);
+    ({ snapshot, unreadable: unsnapshotable } = snapshotFiles(cwd, [...plan.remove, ...plan.drifted]));
   }
 
   const un = uninstall({
@@ -706,9 +765,16 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
    */
   const rollback = (errors, render, why) => {
     const { restored, failed } = restoreFiles(snapshot);
+    // Certify only what is true. A file the snapshot could not READ (and which the refresh, running
+    // `force: true`, may well have deleted anyway) is not restorable here — so this line must not
+    // claim the tree is as it was. It is a rendered file, so a later successful `render` rebuilds
+    // it; name it, and say that.
+    const lost = unsnapshotable.filter((rel) => !exists(path.join(cwd, rel)));
     if (restored.length) {
       log(
-        `${why} — restored the ${restored.length} file(s) the refresh had removed; the tree is as it was. Fix the error above and re-run.`,
+        lost.length
+          ? `${why} — restored the ${restored.length} file(s) the refresh could put back, but ${lost.length} unreadable file(s) could NOT be snapshotted and are gone: ${lost.join(', ')}. Fix the error above and re-run, or run \`wafflestack render\` to rebuild them.`
+          : `${why} — restored the ${restored.length} file(s) the refresh had removed; the tree is as it was. Fix the error above and re-run.`,
       );
     }
     // `failed` is returned, not logged: the caller prints what it is handed (see uninstall).

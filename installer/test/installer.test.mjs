@@ -10843,6 +10843,116 @@ describe('uninstall / reinstall (#182)', () => {
     assert.equal(fs.existsSync(path.join(cwd, AGENT)), false, 'while the rendered output still goes');
   });
 
+  test('lock retention is ONE decision: --clean + drift + a failed removal never contradicts itself', () => {
+    // The rule was amended three times (skip → failing render leg → failed removal) and ended up
+    // decided in two places at two times: `lockRetained` at plan time, `metaKeptOnError` at execution
+    // time. The messages read only the first, so on the one path where they disagree the run said
+    // BOTH "now project-owned (delete it by hand)" AND "the lock was kept" — telling the consumer to
+    // hand-delete a file the tool could still manage. These are the exact options reinstall's
+    // `--clean` leg passes.
+    render();
+    write(cwd, SKILL, 'I edited this by hand\n');            // drift → plan says the lock goes
+    const stuckDir = path.dirname(path.join(cwd, AGENT));
+    fs.chmodSync(stuckDir, 0o500);                            // …but a removal will fail → it stays
+
+    try {
+      const logs = [];
+      const r = uninstall({
+        cwd, toolkitRoot, dryRun: false, keepLockOnSkip: false, log: (m) => logs.push(m),
+      });
+      assert.equal(r.ok, false);
+      assert.ok(r.errors.some((e) => /failed to remove/.test(e)), JSON.stringify(r.errors));
+
+      // Ground truth: the lock is on disk, because the failed removal kept the whole `.waffle/` meta.
+      assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), 'the lock survived');
+
+      // So the message must promise the --force re-run (which now really can reach the file), and
+      // must NOT declare the file project-owned.
+      assert.ok(
+        logs.some((l) => /skipped \(modified\).*re-run with --force to delete it/.test(l)),
+        `expected the --force promise, got ${JSON.stringify(logs)}`,
+      );
+      assert.ok(
+        !logs.some((l) => /project-owned \(delete it by hand\)/.test(l)),
+        'and never "delete it by hand" for a file the lock still tracks',
+      );
+      // And the returned plan must not say `false` while the lock sits on disk.
+      assert.equal(r.plan.lockRetained, true, 'the returned plan is reconciled with what happened');
+    } finally {
+      fs.chmodSync(stuckDir, 0o700);
+    }
+  });
+
+  test('--clean + drift with NO failure still drops the lock and says project-owned', () => {
+    // The other side of the same single decision — the reconciliation must not quietly turn the
+    // `--clean` path into a lock-keeping one when nothing failed. (This is the F7 case, restated
+    // against the new code path, because it is exactly what a careless "just always keep it" fix
+    // would break.)
+    render();
+    write(cwd, SKILL, 'I edited this by hand\n');
+
+    const logs = [];
+    const r = uninstall({ cwd, toolkitRoot, dryRun: false, keepLockOnSkip: false, log: (m) => logs.push(m) });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.equal(r.plan.lockRetained, false);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'the lock goes');
+    assert.ok(logs.some((l) => /project-owned \(delete it by hand\)/.test(l)), 'and the file really is theirs now');
+    assert.ok(!logs.some((l) => /re-run with --force to delete it/.test(l)), 'no promise this path cannot keep');
+  });
+
+  test('--keep-config keeps the LOCK too — or the next render silently un-pours your syrup', () => {
+    // The lock is not just a hash manifest: `computeSelection` keeps an already-poured opt-in
+    // ("syrup") files/ item selected BECAUSE its path is in the lock. Keep `waffle.yaml` and drop the
+    // lock and the consumer's next `render` quietly comes back WITHOUT their syrup — the exact trap
+    // this PR documents on the `reinstall` path, which the new --keep-config flag walked into.
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: test fixture\nstacks: [demo, sb]\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', 'name: sb\ndescription: Syrup.\nfiles:\n  - danger.yml\noptIn:\n  - files/danger.yml\n');
+    write(toolkitRoot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'poured on the explicit include');
+
+    // Drop the include: from here on, only the lock keeps that syrup selected.
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
+
+    const r = uninstall({ cwd, toolkitRoot, dryRun: false, keepConfig: true });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false, 'the rendered output goes, as asked');
+    assert.equal(r.plan.lockRetained, true, 'but the lock is kept — it is half the selection');
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), 'really on disk');
+
+    // The point of the flag: `render` lays the SAME install back down.
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'syrup still poured — the selection survived intact');
+  });
+
+  test('a rollback that could not snapshot an unreadable file says so, instead of certifying the tree', () => {
+    // F9 made an unreadable managed file classified-and-deletable (the refresh runs force: true, and
+    // unlink needs the DIR writable, not the file readable) — but `snapshotFiles` cannot read it, so
+    // it is not in the snapshot. If the render leg then fails, `rollback` used to log "the tree is as
+    // it was" with that file gone. The restore is genuinely partial; the log must not claim otherwise.
+    render();
+    const target = path.join(cwd, SKILL);
+    fs.chmodSync(target, 0o000); // unreadable, but its parent dir is writable — so it can still be unlinked
+
+    try {
+      write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [nope]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+      const logs = [];
+      const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test', log: (m) => logs.push(m) });
+      assert.equal(r.ok, false, 'the broken selection still fails');
+      assert.equal(fs.existsSync(target), false, 'and the unreadable file really was deleted');
+
+      const line = logs.find((l) => /restored the/.test(l)) ?? '';
+      assert.ok(!/the tree is as it was/.test(line), `must not certify a total rollback — got ${JSON.stringify(line)}`);
+      assert.match(line, /could NOT be snapshotted/, 'it names the loss');
+      assert.match(line, /demo-skill/, 'and which file');
+      assert.match(line, /wafflestack render/, 'and how to get it back');
+      assert.ok(fs.existsSync(path.join(cwd, AGENT)), 'everything it COULD snapshot is still restored');
+    } finally {
+      if (fs.existsSync(target)) fs.chmodSync(target, 0o600);
+    }
+  });
+
   test('CLI: reinstall --clean without --yes refuses and changes nothing', () => {
     render();
     const r = runCli(['reinstall', '--clean'], cwd);

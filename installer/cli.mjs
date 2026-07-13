@@ -145,7 +145,9 @@ try {
       // and a full uninstall deletes them with the rest of `.waffle/`. `keepConfig` is the library's
       // answer to "take the rendered output, keep my authored inputs" — it has always been there; the
       // CLI simply never let anyone ask for it, so the only way to keep an authored extension was to
-      // hope it was committed.
+      // hope it was committed. It keeps the LOCK too (planUninstall) — the lock carries the poured
+      // syrup that `waffle.yaml` alone does not name, so a config without it re-renders a different
+      // install than the one you uninstalled.
       const keepConfig = extractFlag(args, '--keep-config');
       if (args.length) {
         fail(`uninstall takes no refs (got ${args.join(', ')}) — it removes the whole install; use \`wafflestack eject <ref>\` to release a single item to project ownership`);
@@ -294,7 +296,8 @@ function helpText() {
     '                    uninstall: also delete files that were hand-edited after rendering',
     '  --gitignore       init/render/install: append the recommended .gitignore entries',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
-    '  --keep-config     uninstall: keep .waffle/waffle.yaml and .waffle/extensions/ (your inputs)',
+    '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
+    '                    only the rendered output, so `render` can lay the same install back down',
     '  --clean           reinstall: also delete the config and re-scaffold it empty (needs --yes)',
     '  --allow-missing   doctor/uninstall: tolerate managed files that are absent from disk',
     '  --verify-render   doctor: also check the config still renders what the lock records',

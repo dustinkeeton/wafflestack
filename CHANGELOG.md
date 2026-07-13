@@ -215,15 +215,19 @@ is what you reach for across a breaking one.
   project-owned and announced as left in place, and a lock key pointing outside the repo aborts the
   entire run. It then clears the `.waffle/` metadata — the one thing outside the lock's authority,
   since `extensions/` holds render *inputs you wrote*, so **`--keep-config`** takes the rendered output
-  and spares your selection and your extensions — prunes only the directories that genuinely emptied
+  and spares your selection: `waffle.yaml`, your extensions **and the lock**, because the lock is the
+  half of the selection that remembers which opt-in syrups you had poured, and a `render` from a
+  config without it would quietly lay down a *different* install — prunes only the directories that genuinely emptied
   (a `.claude/` still holding your `settings.json` survives untouched), and strips wafflestack's own
   `.gitignore` lines by exact-line match — never a "marker to the next blank line" span, which would
   eat the lines you appended under it, and never rewriting the line endings of a CRLF file it does not
   own. **Anything left behind keeps the lock behind with it** — a skip, or a file it could not remove:
   the lock is the only record that those files were ever wafflestack's, so deleting it would strand
   them as exactly the orphans this command exists to prevent, and the `--force` re-run it advertises
-  would die on `no lock`. Fix the cause, re-run, and the uninstall finishes. What it prints afterwards
-  is what it **actually** did, not what it planned to do. **It is a dry run until `--yes`**: the CLI is
+  would die on `no lock`. Fix the cause, re-run, and the uninstall finishes. That is **one** decision,
+  taken once, after the removals actually run — so the report can never tell you a file is "yours now,
+  delete it by hand" while the lock that still tracks it sits on disk. What it prints afterwards is
+  what it **actually** did, not what it planned to do. **It is a dry run until `--yes`**: the CLI is
   non-interactive by design, so the flag is the consent and the bare command is the preview of exactly
   what would go.
   `reinstall` refreshes in place — remove the rendered files, re-render the same selection — keeping your
