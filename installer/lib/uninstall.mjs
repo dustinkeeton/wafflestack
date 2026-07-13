@@ -23,11 +23,11 @@ import {
 /**
  * `uninstall` / `reinstall` (#182) — removing a wafflestack install from a consumer repo.
  *
- * THE SAFETY MODEL, in one sentence: a file is deleted if and only if the lock says wafflestack
- * wrote it AND its sha256 still equals what the lock recorded. Nothing else is ever deleted —
- * no globbing of `.claude/**`, no "looks generated" heuristics, no path the lock does not name.
- * This is the toolkit's only destructive command, and rendered output is commonly gitignored, so
- * a file it deletes wrongly may be the consumer's only copy. Hence:
+ * THE SAFETY MODEL, in one sentence: a RENDERED file is deleted if and only if the lock says
+ * wafflestack wrote it AND its sha256 still equals what the lock recorded. No globbing of
+ * `.claude/**`, no "looks generated" heuristics, no path the lock does not name. This is the
+ * toolkit's only destructive command, and rendered output is commonly gitignored, so a file it
+ * deletes wrongly may be the consumer's only copy. Hence:
  *
  *   - The lock is the sole source of truth for WHAT is ours (`files{}`: path → sha256).
  *   - The hash is the sole source of truth for whether it is still ours to delete. A DRIFTED file
@@ -37,6 +37,15 @@ import {
  *   - Absence is never an error: an already-gone file is simply nothing to do (idempotent).
  *   - It is a DRY RUN until `--yes`. The plan below is computed once and used for both the preview
  *     and the execution, so what you are shown cannot drift from what would be done.
+ *
+ * THE ONE EXCEPTION, stated plainly rather than buried: `.waffle/` itself. The config, the overlay,
+ * the locks and `extensions/` are not rendered output — the lock does not track them and cannot,
+ * since `extensions/` holds files the CONSUMER wrote (render.mjs reads them as render *sources*).
+ * A full uninstall removes them, `extensions/` recursively, because leaving `.waffle/` behind is
+ * leaving the install behind. So they are hash-gated by nothing, and `--keep-config` is how you say
+ * "take the rendered output, keep my authored inputs" — the flag the library always had and the CLI
+ * did not expose. Both the dry run and the real run name every `.waffle/` path they will remove
+ * (`plan.meta`), so it is never a silent delete; it is just not one the lock can vouch for.
  */
 
 /** @typedef {'canonical' | 'local'} LockKind */
@@ -216,8 +225,29 @@ export function planUninstall({
       refused.push(rel);
       continue;
     }
-    if (!exists(abs)) absent.push(rel);
-    else if (sha256(fs.readFileSync(abs)) !== hash) drifted.push(rel); // the same compare doctor makes
+    if (!exists(abs)) {
+      absent.push(rel);
+      continue;
+    }
+    /** @type {Buffer} */
+    let body;
+    try {
+      body = fs.readFileSync(abs);
+    } catch (err) {
+      // CANNOT READ IT ⇒ CANNOT PROVE IT IS OURS ⇒ DO NOT DELETE IT. An unreadable managed file
+      // (chmod 000, a root-owned file — the same list `rollback` enumerates) used to throw a bare
+      // errno straight out of the plan, through `uninstall`, into the CLI's blanket catch: the
+      // documented "safe, read-only preview" crashed with `error: EACCES … open '…'` and no hint of
+      // which command failed or why. But an unverifiable hash is not an exception, it is a
+      // DISPOSITION — the drifted one. Keep it, report it, and let `--force` mean here what it means
+      // everywhere else: delete it anyway.
+      drifted.push(rel);
+      notes.push(
+        `could not read ${rel} to check it against ${lockFile} (${/** @type {Error} */ (err).message}) — treated as hand-edited and left in place`,
+      );
+      continue;
+    }
+    if (sha256(body) !== hash) drifted.push(rel); // the same compare doctor makes
     else remove.push(rel);
   }
   remove.sort();
@@ -400,6 +430,12 @@ export function uninstall({
   const removed = [];
   /** @type {string[]} */
   const errors = [];
+  /** @type {MetaTarget[]} */
+  const removedMeta = [];
+  /** @type {string[]} */
+  const prunedDirs = [];
+  // The `.waffle/` meta survived because the run could not FINISH — not because a flag asked for it.
+  let metaKeptOnError = false;
 
   if (!dryRun) {
     // The `exists()`-guarded rmSync of render's stale-prune loop: tolerant of an already-absent
@@ -414,38 +450,73 @@ export function uninstall({
         errors.push(`failed to remove ${rel}: ${/** @type {Error} */ (err).message}`);
       }
     }
-    for (const m of plan.meta) {
-      try {
-        if (exists(m.abs)) fs.rmSync(m.abs, m.type === 'dir' ? { recursive: true, force: true } : {});
-        removed.push(m.rel);
-      } catch (err) {
-        errors.push(`failed to remove ${m.rel}: ${/** @type {Error} */ (err).message}`);
+
+    // A FAILED REMOVAL IS AN INCOMPLETE UNINSTALL — so, exactly like a SKIP, it must not take the
+    // lock down with it. `lockRetained` is decided at PLAN time, from `drifted` alone; a removal
+    // failure (EACCES on a read-only checkout, a root-owned file, a file held open on Windows, an
+    // SMB/NAS mount) happens at EXECUTION time, where no plan can see it. Deleting the lock and the
+    // config anyway would strand the very file we could not delete with no record it was ever
+    // wafflestack's — #182's opening complaint ("guessing which are wafflestack-managed and which
+    // they authored"), produced by the command written to fix it — and it would close the one way
+    // back the tool advertises: the `--force` re-run dies on `no .waffle/waffle.lock.json`, and only
+    // a full re-install can regenerate a lock. So the meta outlives an error, and says so below.
+    metaKeptOnError = errors.length > 0 && plan.meta.length > 0;
+    if (!metaKeptOnError) {
+      for (const m of plan.meta) {
+        try {
+          if (exists(m.abs)) fs.rmSync(m.abs, m.type === 'dir' ? { recursive: true, force: true } : {});
+          removedMeta.push(m);
+          removed.push(m.rel);
+        } catch (err) {
+          errors.push(`failed to remove ${m.rel}: ${/** @type {Error} */ (err).message}`);
+        }
       }
     }
-    // Directories, deepest first — and only ones the plan proved empty.
+    // Directories, deepest first — and only ones the plan proved empty. The guard is what makes that
+    // safe, and it is also why the plan cannot double as the report: a dir the plan expected to empty
+    // out but which still holds the file a removal above failed on is SILENTLY skipped here. Collect
+    // what actually went.
     for (const rel of plan.prunedDirs) {
       const abs = path.join(cwd, rel);
       try {
-        if (exists(abs) && !fs.readdirSync(abs).length) fs.rmdirSync(abs);
+        if (exists(abs) && !fs.readdirSync(abs).length) {
+          fs.rmdirSync(abs);
+          prunedDirs.push(rel);
+        }
       } catch (err) {
         errors.push(`failed to prune ${rel}: ${/** @type {Error} */ (err).message}`);
       }
     }
   }
 
-  if (plan.meta.length) {
-    log(`${dryRun ? 'would remove' : 'removed'} ${plan.meta.map((m) => m.rel).join(', ')}`);
+  // REPORT WHAT HAPPENED, NOT WHAT WAS PLANNED. The plan IS the story on a dry run — that is the
+  // whole design, and why the preview cannot drift from the execution. But once we have touched
+  // disk, replaying it in the past tense tells the consumer their tree is clean when a failed
+  // removal left files (and their dirs) behind. On the toolkit's only destructive command the
+  // printed report is the consumer's sole audit trail of what became of their files, so it is the
+  // one output that must never say `pruned` about a directory still sitting on disk.
+  const reportMeta = dryRun ? plan.meta : removedMeta;
+  const reportPruned = dryRun ? plan.prunedDirs : prunedDirs;
+  if (reportMeta.length) {
+    log(`${dryRun ? 'would remove' : 'removed'} ${reportMeta.map((m) => m.rel).join(', ')}`);
+  }
+  if (metaKeptOnError) {
+    log(
+      `${errors.length} file(s) could not be removed, so ${plan.meta.map((m) => m.rel).join(', ')} ${plan.meta.length === 1 ? 'was' : 'were'} kept — the lock is the only record that what is left is wafflestack's. Fix the error(s) above and re-run to finish the uninstall.`,
+    );
   }
   if (keepConfig) log(`preserved ${CONFIG_FILE} and ${EXTENSIONS_DIR}/ — your selection and your authored inputs`);
-  if (plan.prunedDirs.length) {
-    log(`${dryRun ? 'would prune' : 'pruned'} empty dir(s): ${plan.prunedDirs.join(', ')}`);
+  if (reportPruned.length) {
+    log(`${dryRun ? 'would prune' : 'pruned'} empty dir(s): ${reportPruned.join(', ')}`);
   }
 
-  // .gitignore last: only wafflestack's own offered lines, matched exactly. Never on a dry run,
-  // and never when the config is being kept (the entries still describe a live install).
+  // .gitignore last: only wafflestack's own offered lines, matched exactly. Never on a dry run, and
+  // never when the config is being kept (the entries still describe a live install) — which now
+  // includes the config we kept BECAUSE the run failed: the install is still there, so its ignore
+  // lines still describe something true.
   /** @type {string[]} */
   let unignored = [];
-  if (!keepConfig && plan.gitignore.length) {
+  if (!keepConfig && !metaKeptOnError && plan.gitignore.length) {
     if (dryRun) {
       log(`would strip wafflestack's .gitignore entries: ${plan.gitignore.join(', ')}`);
     } else {
