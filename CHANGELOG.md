@@ -217,14 +217,21 @@ is what you reach for across a breaking one.
   via the map form (`- path: .claude/workflows/audit.js` + `targets: [claude]`), and renders only when
   the consumer has enabled at least one of the listed targets. Disable the last of a poured file's
   targets and the next `render` **prunes** it — the same frozen-image contract as dropping a stack,
-  rather than leaving it orphaned. An unknown target *name* is a `validate` error (it would scope a
-  payload to nothing and silently never render). Three malformations are hard **load** errors: an
-  unknown key on the map form (a `target:` singular typo would otherwise leave the payload silently
-  unscoped), a non-list `targets:`, and an **empty `targets: []`** — the last because it is the one
-  value whose only possible effect is *destructive*: scoped to nothing, it can never render, so the
-  prune would **delete an already-poured copy out of a consumer's repo**, silently. A `validate`-only
-  check would have been no gate at all there, since `validate` is toolkit-developer lint that
-  consumers never run over built-in stacks and the toolkit is explicitly forkable. Scoping decides
+  rather than leaving it orphaned. **Every** malformation of `targets:` is a hard **load** error —
+  four of them: an unknown key on the map form (a `target:` singular typo would otherwise leave the
+  payload silently unscoped), a non-list `targets:`, an **empty `targets: []`**, and an **unknown
+  target name**. The reason is one reason, applied consistently: because the prune deletes files, a
+  `targets:` the render cannot honour **deletes an already-poured copy out of a consumer's repo**,
+  silently and with `ok: true`. `targets: []` is scoped to nothing and can never render — and
+  `targets: [claud]` resolves to nothing too, so it *is* `targets: []` spelled differently, one
+  keystroke away. Even a **partially**-valid `targets: [claude, codxe]` deletes the poured file out
+  of a **codex** consumer's tree: a surviving valid name does not make the entry safe, it only
+  narrows *which* consumers it destroys. So there is no inert typo, and the loader checks every name.
+  A `validate`-only check would have been no gate at all here, since `validate` is toolkit-developer
+  lint that consumers never run over built-in stacks (`render` imports only `validateExternalStacks`)
+  and the toolkit is explicitly forkable. The consumer's own config has always hard-errored on an
+  unknown target name; the manifest is the side that can *destroy* a file, so it is not the side that
+  gets to be lenient. Scoping decides
   **whether** a file renders, never how many times — a file has no per-harness variant, so unlike an
   agent or a skill it **filters** rather than fanning out. This is the one additive manifest field the
   "no schema change" framing of the #184 spike (below) had to retire, and the hard prerequisite for #363.
@@ -236,7 +243,12 @@ is what you reach for across a breaking one.
   case that is *not* hypothetical: a file already poured under an older `targets:` is on disk and in
   the lock right now, so it is reported as **PENDING REMOVAL — the next `render` DELETES it**, not as
   "not installable". `list` is what a user runs after editing `targets:` and before re-rendering, and
-  it must not describe an installed file as absent. An explicit `include:` of a scoped-out file still
+  it must not describe an installed file as absent. That status is held to its own bar: it asks
+  `render`'s *own* prune question (is this live lock path produced by no selected item?) rather than
+  merely checking the file is on disk, because the lock is matched by **path** and is stack-blind —
+  two stacks may legally declare the same output path, and a bare check would announce a deletion for
+  a file an enabled stack still produces. A status that exists to prevent a false claim about a
+  deletion must not make one. An explicit `include:` of a scoped-out file still
   **warns** rather than silently no-op'ing; a `requires:` edge landing on a scoped-out file **warns**
   too (the dependent would otherwise render declaring a dependency on a payload that will never exist
   there, and the renderer only walks that edge forward, so nothing else would notice) — and when that

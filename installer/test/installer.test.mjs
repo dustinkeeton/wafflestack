@@ -5252,18 +5252,118 @@ describe('syrup target scoping (#364)', () => {
     assert.deepEqual(names(['codex']), ['agents/alpha'], 'out of scope → the requires: edge cannot bypass it');
   });
 
-  test('validate rejects an unknown target name', () => {
+  // (F12) An unknown target NAME used to be `validate`'s business, on the stated grounds that a
+  // stale name is "INERT — nothing renders, nothing is destroyed". THAT PREMISE WAS FALSE, and both
+  // halves of its falsity are pinned below. `validate` is toolkit-developer lint that consumers
+  // never run over built-in stacks (`render` imports only `validateExternalStacks`), so the lint it
+  // was delegated to is not in the destructive path at all. It is now a hard LOAD error, exactly
+  // where `targets: []` already fails — the two are the same hazard.
+  test('the loader HARD-ERRORS on an unknown target name', () => {
     write(toolkitRoot, 'stacks/sb/stack.yaml', [
       'name: sb',
       'description: Scope fixture.',
       'files:',
       '  - shared.txt',
       `  - path: ${SCOPED}`,
-      '    targets: [claud]', // typo — would otherwise scope the file to NOTHING, silently
+      '    targets: [claud]', // typo — scopes the file to NOTHING
       '',
     ].join('\n'));
+    assert.throws(() => loadToolkit(toolkitRoot), /declares unknown target "claud"/);
+    // …and `validate` still REPORTS it, via the load error — the lint surface does not go quiet.
     const problems = validateToolkit(toolkitRoot);
     assert.ok(problems.some((p) => /unknown target "claud"/.test(p)), JSON.stringify(problems));
+  });
+
+  // The reason the loader (not `validate`) has to own it: THE FILE IS ALREADY POURED. This is the
+  // `targets: []` test one door over, reached by a ONE-CHARACTER TYPO instead of an empty list —
+  // `targets: [claud]` resolves to nothing, so it IS `targets: []`, spelled differently.
+  test('an unknown target name CANNOT silently delete an already-poured file — the render refuses', () => {
+    config('claude');
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: the file is poured');
+
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claud]', // the fat-finger lands upstream, in the STACK manifest
+      '',
+    ].join('\n'));
+    const result = render();
+
+    assert.equal(result.ok, false, 'the render REFUSES rather than pruning');
+    assert.ok(
+      result.errors.some((e) => /unknown target "claud"/.test(e)),
+      `expected a loud load error, got: ${JSON.stringify(result.errors)}`,
+    );
+    assert.deepEqual(result.removed ?? [], [], 'nothing is pruned');
+    assert.ok(has(SCOPED), 'THE FILE SURVIVES — no silent delete');
+    assert.ok(SCOPED in lockFiles(), 'and its lock entry survives with it');
+  });
+
+  // The case that decided the SHAPE of the fix, and the one a "reject only when the list resolves to
+  // ZERO valid names" rule would have MISSED. `targets: [claude, codxe]` keeps one real name, so it
+  // can still render — for a CLAUDE consumer. For the CODEX consumer whose target got typo'd, the
+  // poured file is deleted just the same. "One valid name survives" does not make the entry safe; it
+  // only narrows WHICH consumers it destroys. So there is no inert case, and EVERY name is checked.
+  test('a PARTIALLY-valid targets list is destructive too — one surviving name does not make it safe', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude, codex]',
+      '',
+    ].join('\n'));
+    config('codex'); // this consumer is admitted by the `codex` name
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: poured into a codex repo under [claude, codex]');
+
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude, codxe]', // only the CODEX name is typo'd; `claude` is still valid
+      '',
+    ].join('\n'));
+    const result = render();
+
+    assert.equal(result.ok, false, 'a partially-valid list is rejected too — it can still destroy');
+    assert.ok(
+      result.errors.some((e) => /unknown target "codxe"/.test(e)),
+      `expected the unknown name to be named, got: ${JSON.stringify(result.errors)}`,
+    );
+    assert.ok(has(SCOPED), 'THE FILE SURVIVES — this is the delete the zero-valid rule would have missed');
+  });
+
+  // The over-rejection guard, and the other half of the contract: the load check must reject ONLY
+  // authoring bugs. Every legitimate shape a stack author can write still loads and renders clean.
+  test('every legitimate `targets:` shape still loads clean — the guard rejects only authoring bugs', () => {
+    const shapes = [
+      ['bare string (the pre-#364 form)', [`  - ${SCOPED}`]],
+      ['map form, no targets: key', [`  - path: ${SCOPED}`]],
+      ['one target', [`  - path: ${SCOPED}`, '    targets: [claude]']],
+      ['every target', [`  - path: ${SCOPED}`, '    targets: [claude, codex, agents-dir]']],
+      ['a duplicate name (redundant, not wrong)', [`  - path: ${SCOPED}`, '    targets: [claude, claude]']],
+      ['block sequence, not flow', [`  - path: ${SCOPED}`, '    targets:', '      - claude', '      - codex']],
+    ];
+    for (const [label, entry] of shapes) {
+      write(toolkitRoot, 'stacks/sb/stack.yaml', [
+        'name: sb', 'description: Scope fixture.', 'files:', '  - shared.txt', ...entry, '',
+      ].join('\n'));
+      assert.doesNotThrow(() => loadToolkit(toolkitRoot), `${label} must load`);
+      assert.deepEqual(validateToolkit(toolkitRoot), [], `${label} must validate clean`);
+
+      fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
+      config('claude');
+      assert.equal(render().ok, true, `${label} must render`);
+      assert.ok(has(SCOPED), `${label} must still pour the file`);
+    }
   });
 
   // `targets: []` is the one manifest value whose ONLY possible effect is destructive: it scopes the
@@ -5577,6 +5677,79 @@ describe('syrup target scoping (#364)', () => {
       STATUS.NOT_INSTALLABLE,
       'after the prune it is merely not-installable — the pending-removal claim was about a REAL file',
     );
+  });
+
+  // (F14) The `exists()` guard in `classify` is the ENTIRE difference between PENDING_REMOVAL and
+  // NOT_INSTALLABLE in the "in the lock, but NOT on disk" case — and it had no test: replacing it
+  // with `const live = owned;` left the whole suite green. The F7 test cannot catch it, because
+  // after a real prune the LOCK entry is gone too, so `owned` is empty either way and both the real
+  // code and the mutant agree. Only a lock entry WITHOUT its file tells them apart: a user who
+  // hand-deleted the file, or a half-finished render. Announcing "the next `render` DELETES it"
+  // about a file that is already gone is exactly the false deletion claim PENDING_REMOVAL exists to
+  // prevent — so the guard is pinned here.
+  test('a lock entry whose file is already GONE is not-installable, not PENDING REMOVAL', () => {
+    config('claude, codex');
+    assert.equal(render().ok, true);
+    assert.ok(has(SCOPED), 'precondition: poured');
+
+    // The file leaves the disk but its LOCK entry stays — the state the guard exists for.
+    fs.rmSync(path.join(cwd, SCOPED));
+    assert.ok(SCOPED in lockFiles(), 'precondition: the lock entry survives the hand-delete');
+    assert.equal(has(SCOPED), false, 'precondition: the file is NOT on disk');
+
+    config('codex'); // now scope it out, WITHOUT re-rendering
+    const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    const row = model.stacks.flatMap((s) => s.rows).find((r) => r.ref === `files/${SCOPED}`);
+
+    assert.equal(
+      row.status,
+      STATUS.NOT_INSTALLABLE,
+      'there is no file to delete, so nothing is PENDING REMOVAL — the claim would be false',
+    );
+    const table = formatListTable(model, { color: false });
+    assert.doesNotMatch(table, /PENDING REMOVAL/, 'and the table must not announce a deletion that cannot happen');
+  });
+
+  // (F13) PENDING_REMOVAL was added to this PR precisely BECAUSE a false status about a deletion is
+  // a defect — so it is held to its own bar. `owned` matches the lock by PATH
+  // (`itemOutputMatcher('files', name)` is `rel === name`), which is stack-BLIND, and two stacks may
+  // legally declare the same output path (an error only when BOTH are enabled). So a row in a stack
+  // that is not even in play could "own" a lock path an ENABLED stack actually produces — and
+  // announce PENDING REMOVAL for a file the render KEEPS. The status now asks `render`'s own prune
+  // question (is this live lock path produced by NO selected item?) instead of a bare existence
+  // check, so it cannot invent a deletion.
+  test('list does NOT announce PENDING REMOVAL for a path an enabled stack still produces', () => {
+    const SHARED = 'scripts/tool.sh';
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: scope\nstacks: [sb, sc]\n');
+    // sb (ENABLED): declares the path UNSCOPED, so it renders and keeps the file alive.
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb', 'description: Scope fixture.', 'files:', `  - ${SHARED}`, '',
+    ].join('\n'));
+    write(toolkitRoot, `stacks/sb/files/${SHARED}`, 'payload\n');
+    // sc (NOT enabled): declares the SAME path, scoped to a target this project does not have.
+    write(toolkitRoot, 'stacks/sc/stack.yaml', [
+      'name: sc', 'description: Other fixture.', 'files:', `  - path: ${SHARED}`, '    targets: [claude]', '',
+    ].join('\n'));
+    write(toolkitRoot, `stacks/sc/files/${SHARED}`, 'payload\n');
+
+    write(cwd, '.waffle/waffle.yaml', 'targets: [codex]\nstacks: [sb]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(has(SHARED), 'precondition: sb poured the file');
+
+    const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    const scRow = model.stacks.find((s) => s.name === 'sc').rows.find((r) => r.ref === `files/${SHARED}`);
+    assert.equal(
+      scRow.status,
+      STATUS.NOT_INSTALLABLE,
+      'sc cannot install it here — but nothing is being DELETED, so it is not pending removal',
+    );
+    assert.equal(model.counts[STATUS.PENDING_REMOVAL], 0, 'no invented deletion in the summary either');
+    assert.doesNotMatch(formatListTable(model, { color: false }), /PENDING REMOVAL/);
+
+    // Ground truth: the render agrees — it deletes nothing and the file stays.
+    const after = render();
+    assert.deepEqual(after.removed ?? [], [], 'the render deletes NOTHING — the row would have lied');
+    assert.ok(has(SHARED), 'and the file is still on disk');
   });
 
   // (f) The silent-unscoping guard: a `target:` (singular) typo must not be ignored, or the payload

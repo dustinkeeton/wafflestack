@@ -5,7 +5,7 @@ import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems } from
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
-import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
+import { HARNESS_BUILTINS, HARNESS_PATTERNS } from './project.mjs';
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -400,26 +400,18 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
 
     // An optional `targets:` on a files entry (#364) scopes a harness-specific payload to the
     // consumers who enabled that harness; absent, it renders unconditionally (the default, and what
-    // a harness-independent `.github/` payload wants). Every declared name must be a real target: a
-    // typo would scope the file to NOTHING and it would silently never render. An unknown name is
-    // INERT — nothing renders, nothing is destroyed — so the loader stays tolerant and lets this
-    // report it precisely, the same load-tolerant/validate-strict split as `optIn:` and
-    // `prerequisites:`.
+    // a harness-independent `.github/` payload wants).
     //
-    // The EMPTY list is NOT inert (it silently PRUNES an already-poured file out of a consumer's
-    // tree), so it is a hard LOAD error — `loadToolkit` rejects it alongside a `target:` typo and a
-    // non-list `targets:`, and it can never reach this lint. A `validate`-only check would have been
-    // no gate at all for a forked toolkit that does not run `validate` in CI.
-    for (const file of stack.files) {
-      if (file.targets === null) continue;
-      for (const t of file.targets) {
-        if (!VALID_TARGETS.includes(t)) {
-          problems.push(
-            `${ctx}: files entry "${file.name}" declares unknown target "${t}" (valid: ${VALID_TARGETS.join(', ')})`,
-          );
-        }
-      }
-    }
+    // There is deliberately NO `targets:` lint here. Every malformation of this field — a `target:`
+    // singular typo, a non-list value, an EMPTY list, and an UNKNOWN NAME — is a hard LOAD error in
+    // `loadToolkit`, so none of them can reach this lint. That is not a stylistic split: `targets:`
+    // is the only manifest field whose malformation is DESTRUCTIVE (the render prunes every lock
+    // path it no longer produces, so a mis-scoped entry DELETES an already-poured file out of a
+    // consumer's tree), and `validate` is toolkit-developer lint that consumers never run over
+    // built-in stacks — `render` imports only `validateExternalStacks`. A `validate`-only check
+    // would have been no gate at all for a forked toolkit that does not run `validate` in CI.
+    // `validate` still REPORTS every one of them, via the load error it catches, so the lint surface
+    // does not go quiet. See the block comment in `toolkit.mjs` for why an unknown name is not inert.
 
     // Text `files/` payloads are templated just like skills — every {{key}} they use must
     // be declared (GitHub Actions `${{ ... }}` is excluded by the placeholder grammar, so

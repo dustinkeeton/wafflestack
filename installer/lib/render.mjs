@@ -387,7 +387,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
   // gated out and silent. Surface each skipped pairing with the exact pour command. This is the
   // deliberately non-interactive CLI's stand-in for the both/one/neither question the setup
   // playbook (schema/SETUP.md step 2) now requires an agent to ask.
-  for (const { fileRef, stackName, companions, scopedTo } of skippedSyrupCompanions(toolkit, selection, project.targets)) {
+  for (const { fileRef, stackName, companions, scopedTo } of skippedSyrupCompanions(toolkit, selection)) {
     // External opt-in syrup is doubly gated (#126): a paired external syrup file was authored
     // outside this repo, so its extra trust-boundary acknowledgement rides along with the
     // both/one/neither pairing note — distinct from a built-in companion, which needs only the
@@ -442,7 +442,10 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
   // does not exist, and a warning that vanishes reads as RESOLVED. Unlike the pairing warning
   // above, nothing else picks the flow up: `skippedSyrupCompanions` walks the requires: edge from
   // the FILE to its companions, so an agent→file edge is invisible to it. State both steps.
-  for (const { ref, requiredBy, targets, optIn } of selection.targetBrokenRequires ?? []) {
+  // `computeSelection` ALWAYS sets both `targetSkipped` and `targetBrokenRequires` (they are plain
+  // accumulators on its return), so neither needs a `?? []` guard — and iterating one bare while
+  // guarding the other implied, falsely, that they differ. Both read bare.
+  for (const { ref, requiredBy, targets, optIn } of selection.targetBrokenRequires) {
     const remedy = optIn
       ? `${ref} is also OPT-IN syrup, so enabling a target is necessary but NOT sufficient: enable one of ` +
         `its targets in ${CONFIG_FILE} AND install it (\`wafflestack install ${ref}\`) — doing only the ` +

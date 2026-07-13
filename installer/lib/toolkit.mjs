@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readYaml, parseFrontmatter, exists, isBinary } from './util.mjs';
 import { normalizeItemRef } from './refs.mjs';
+import { VALID_TARGETS } from './project.mjs';
 import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
 
@@ -298,23 +299,48 @@ function loadStack(name, dir) {
       if (entry.targets !== undefined && !Array.isArray(entry.targets)) {
         throw new Error(`stack ${name}: files entry "${entry.path}" \`targets:\` must be a list of target names`);
       }
-      // An EMPTY list is the one manifest value whose only possible effect is DESTRUCTIVE: it scopes
-      // the file to nothing, so it can never render — and because the render prunes every lock path
-      // it no longer produces (#364), an already-poured copy is DELETED from the consumer's tree,
-      // with `ok: true` and no warning. Its two siblings above are hard errors and this one is worse
-      // than both, so it is one too. It also cannot mean anything an author intended: "scoped to no
-      // harness" is not a thing to want.
+      // A `targets:` list the render cannot honour is the one manifest shape whose only possible
+      // effect is DESTRUCTIVE: because the render prunes every lock path it no longer produces
+      // (#364), an already-poured copy is DELETED from the consumer's tree, with `ok: true` and no
+      // warning. So the loader — not `validate` — owns EVERY name in this list.
       //
-      // `validate` still owns unknown target NAMES, and that split is not arbitrary — a stale name
-      // is INERT (nothing renders, nothing is destroyed), so the load-tolerant/validate-strict split
-      // (`optIn:`, `prerequisites:`) holds exactly where nothing can be destroyed. `validate` is
-      // toolkit-developer lint that consumers never run over built-in stacks, and the toolkit is
-      // explicitly forkable — a fork without that CI gate must not be able to ship a silent delete.
+      // An EMPTY list scopes the file to nothing, so it can never render. It also cannot mean
+      // anything an author intended: "scoped to no harness" is not a thing to want.
       if (Array.isArray(entry.targets) && !entry.targets.length) {
         throw new Error(
           `stack ${name}: files entry "${entry.path}" declares an empty \`targets:\` list, so it can never render — ` +
             `omit \`targets:\` to render it unconditionally`,
         );
+      }
+      // An UNKNOWN NAME is the same hazard reached by a one-character typo, and it was once left to
+      // `validate` on the grounds that a stale name is "inert — nothing renders, nothing is
+      // destroyed". THAT PREMISE IS FALSE, in both directions, and each is reproduced in the tests:
+      //   - `targets: [claud]` resolves to NOTHING, so it is `targets: []` spelled differently: the
+      //     poured copy is pruned out of EVERY consumer's tree.
+      //   - `targets: [claude, codxe]` (partially valid — one real name survives) still deletes the
+      //     poured copy out of a CODEX consumer's tree. "One valid name survives" does not make the
+      //     entry safe; it only narrows WHICH consumers it destroys.
+      // So there is no inert case to be tolerant of, and a rule keyed on "resolves to zero valid
+      // names" would have closed only the first hole. `validate` is toolkit-developer lint that
+      // consumers never run over built-in stacks (`render` imports only `validateExternalStacks`),
+      // and the toolkit is explicitly forkable — a fork without that CI gate must not be able to
+      // ship a silent delete. The consumer's own config has always hard-errored on an unknown target
+      // name (project.mjs); the manifest is the side that can DESTROY a file, so it is not the side
+      // that gets to be lenient. A name outside VALID_TARGETS can only ever be an authoring bug:
+      // the set is closed and code-defined, not an open extension point.
+      if (Array.isArray(entry.targets)) {
+        // Widened to string[] deliberately: the whole point is to test UNTRUSTED manifest strings
+        // against the closed Target set, so `includes` must accept a plain string rather than
+        // presupposing the very thing being checked.
+        const known = /** @type {string[]} */ (VALID_TARGETS);
+        const bad = entry.targets.map(String).filter((t) => !known.includes(t));
+        if (bad.length) {
+          throw new Error(
+            `stack ${name}: files entry "${entry.path}" declares unknown target${bad.length > 1 ? 's' : ''} ` +
+              `${bad.map((t) => `"${t}"`).join(', ')} (valid: ${VALID_TARGETS.join(', ')}) — an unknown name scopes the ` +
+              `file away from the consumers it names, so an already-poured copy would be DELETED from their tree`,
+          );
+        }
       }
     }
     const rel = String(isMap ? entry.path : entry);
@@ -324,8 +350,9 @@ function loadStack(name, dir) {
     const file = path.join(dir, 'files', rel);
     if (!exists(file)) throw new Error(`stack ${name}: files entry "${rel}" not found under files/`);
     // Target scoping (#364), optional: null = unscoped = renders regardless of the consumer's
-    // `targets:` (the pre-#364 contract). Unknown target NAMES are `validate`'s business, not the
-    // loader's — the same load-tolerant / validate-strict split as `optIn:` and `prerequisites:`.
+    // `targets:` (the pre-#364 contract). Every declared name is validated ABOVE, at load — unlike
+    // `optIn:` and `prerequisites:`, this field is load-strict, because it is the only one whose
+    // malformation deletes a file out of a consumer's repo.
     const targets = isMap && entry.targets !== undefined ? entry.targets.map(String) : null;
     return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)), targets };
   });

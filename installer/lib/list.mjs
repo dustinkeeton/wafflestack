@@ -106,7 +106,27 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     // judge against, so every item stays NOT_INSTALLED exactly as before.
     if (project && item && !fileMatchesTargets(item, project.targets)) {
       const live = owned.filter((rel) => exists(path.join(cwd, rel)));
-      return live.length ? STATUS.PENDING_REMOVAL : STATUS.NOT_INSTALLABLE;
+      // "On disk" is NOT sufficient to claim a deletion, and claiming one wrongly is the very defect
+      // PENDING_REMOVAL was added to fix — so it is held to its own bar. `owned` matches the lock by
+      // PATH (`itemOutputMatcher('files', name)` is `rel === name`), which is stack-BLIND, and two
+      // stacks may legally declare the same output path (an error only when both are ENABLED). So a
+      // row in a stack that is not even in play can "own" a lock path another, enabled stack
+      // actually produces — and announcing PENDING REMOVAL for it would be a lie about a file the
+      // render KEEPS.
+      //
+      // Ask `render`'s own prune question instead of a bare existence check: the prune deletes a
+      // live lock path that NO SELECTED ITEM produces. If something in the selection still produces
+      // this path, nothing is being deleted — the row is merely not installable here.
+      //
+      // Deliberately scoped to THIS branch. The mirror-image gap on the NOT_INSTALLED path (a
+      // deselected stack's poured file IS pruned, and `list` still calls it "not-installed") is the
+      // same stack-blind root cause but a different defect — a hidden deletion, not an invented one
+      // — and it needs the offerability split and target fan-out that #371 carries. This does not
+      // pre-empt that work; it stops the status THIS PR adds from making a false claim.
+      const pruned = live.some(
+        (rel) => !selection.items.some((sel) => itemOutputMatcher(sel.kind, sel.item.name)(rel)),
+      );
+      return pruned ? STATUS.PENDING_REMOVAL : STATUS.NOT_INSTALLABLE;
     }
     if (!selectedKeys.has(`${stackName}::${kind}/${name}`)) return STATUS.NOT_INSTALLED;
     if (!owned.length) return STATUS.OUTDATED; // selected but never rendered (no lock entry yet)

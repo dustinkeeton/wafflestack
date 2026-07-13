@@ -255,7 +255,25 @@ payload (a `.claude/workflows/*.js`) wants, so it does not land in a codex-only 
 weight. Scoping decides **whether** a file renders, never how many times: it still renders once,
 substituted with the identity of the primary-most target it declares. Disable the last of a poured
 file's targets and the next `render` **prunes** it — the same frozen-image contract as dropping a
-stack. An unknown target name, or an empty `targets: []`, is a `validate` error.
+stack.
+
+> [!WARNING]
+> **`targets:` is the one field whose malformation DELETES a file from a consumer's repo**, because
+> the prune above removes every lock path the render no longer produces. So every malformation of it
+> is a hard **load** error — `loadToolkit` throws, `render` exits 1, and the consumer's tree is left
+> untouched. It is **not** a `validate` lint: `validate` is toolkit-developer lint that consumers
+> never run over built-in stacks, so a forked toolkit without it in CI would ship silent deletes.
+>
+> Four shapes are rejected at load:
+>
+> | Shape | Why |
+> |---|---|
+> | `target: [claude]` (singular key) | Unknown key — the typo'd payload would render **unscoped**, everywhere. |
+> | `targets: claude` (not a list) | Must be a list of names. |
+> | `targets: []` (empty list) | Scoped to nothing ⇒ can never render ⇒ the poured copy is deleted. "Scoped to no harness" is not a thing to want. |
+> | `targets: [claud]` (unknown name) | **Same hazard, one character away.** `[claud]` resolves to nothing, so it *is* `targets: []` spelled differently. |
+>
+> **A partially-valid list is rejected too**, and this is the part that surprises: `targets: [claude, codxe]` keeps one real name, so it still renders — for a *claude* consumer. For the **codex** consumer whose target name got typo'd, the already-poured file is deleted just the same. A surviving valid name does not make the entry safe; it only narrows *which* consumers it destroys. So **every** name must be one of `claude`, `codex`, `agents-dir` — there is no inert typo.
 
 - **Text vs. binary is sniffed by content** (a NUL byte in the head marks binary), not by
   extension — so any text type (`.yml`, `.mjs`, `.sh`, `.json`, …) is templated, and true

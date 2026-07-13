@@ -209,7 +209,7 @@ function currentConfigSection(toolkit, cwd) {
     // (`scopedTo`), not dropped — the pairing is real and the playbook must still state it; only the
     // `install` command is withheld. (Keyed by the whole entry, not just `companions`, so the note
     // below can tell the two cases apart.)
-    skippedSyrupCompanions(toolkit, selection, project.targets).map((s) => [s.fileRef, s]),
+    skippedSyrupCompanions(toolkit, selection).map((s) => [s.fileRef, s]),
   );
   const enabledStackNames = new Set([...project.stacks, ...groups.keys()]);
   const optInLines = [];

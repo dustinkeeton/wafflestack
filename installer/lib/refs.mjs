@@ -47,6 +47,13 @@ import { VALID_TARGETS } from './project.mjs';
  * @property {SelectionItem[]} items deduped by stack+kind+name, eject-filtered
  * @property {{ rootRef: string, deps: string[] }[]} closures pulled-in dependencies, for reporting
  * @property {string[]} errors resolution errors (unknown stack, unknown/ambiguous ref)
+ * @property {string[]} targets the enabled targets this selection was computed against — the SAME
+ *   derived value the scope filter used (`project.targets`, defaulted to VALID_TARGETS when the key
+ *   is absent). Carried on the result so a downstream consumer of the selection (`render`'s syrup
+ *   pairing, `setup`'s playbook) cannot judge scope against a DIFFERENT target set than the one that
+ *   produced these items. It was a defaulted parameter first, and the default — "every target
+ *   enabled" — was the one value that silently restores pre-#364 behavior for a caller who forgets
+ *   it; there is now no argument to forget (#364)
  * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
  *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
  *   silent (#364)
@@ -537,7 +544,10 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
     }
   }
 
-  return { items, closures, errors, targetSkipped, targetBrokenRequires };
+  // `targets` rides along on the result (see the Selection typedef): every downstream scope judgment
+  // must be made against the SAME set this selection was filtered by, and the only way to guarantee
+  // that is to stop asking the caller to pass it again.
+  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires };
 }
 
 /**
@@ -556,10 +566,14 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  * uninvolved stack is never suggested.
  *
  * @param {Toolkit} toolkit loaded toolkit
- * @param {Selection} selection a `computeSelection` result ({ items, … })
- * @param {string[]} [targets] the consumer's enabled targets (`project.targets`) — a syrup file
- *   scoped away from all of them cannot be POURED here (#364), so its entry comes back marked
- *   (`scopedTo`) rather than dropped: the pairing is still real and must still be stated
+ * @param {Selection} selection a `computeSelection` result — its `targets` (the consumer's enabled
+ *   harnesses) are read straight off it. A syrup file scoped away from all of them cannot be POURED
+ *   here (#364), so its entry comes back marked (`scopedTo`) rather than dropped: the pairing is
+ *   still real and must still be stated. This was a defaulted third PARAMETER until the default —
+ *   `VALID_TARGETS`, i.e. "every target enabled" — was spotted as the one value that silently
+ *   restores pre-#364 behavior: a caller who forgot the argument would judge a scoped-out file
+ *   POURABLE and print an `install` command that renders nothing. Reading it off the selection that
+ *   was already argument #2 means the two can never disagree, and there is no argument to forget.
  * @returns {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]}
  *   one entry per skipped syrup file, `companions` naming the selected waffles that pull it into
  *   relevance. `scopedTo` is null for a pourable file — then `fileRef` is a ready
@@ -567,7 +581,8 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  *   the pairing CANNOT be completed here: the caller must state it without offering an install
  *   command (which would render nothing). Deterministic order (stack, then manifest).
  */
-export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGETS) {
+export function skippedSyrupCompanions(toolkit, selection) {
+  const targets = selection.targets;
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
   const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
   /** @type {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]} */
