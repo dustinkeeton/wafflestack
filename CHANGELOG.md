@@ -224,6 +224,11 @@ is what you reach for across a breaking one.
   per-harness variant, so unlike an agent or a skill it **filters** rather than fanning out. This is
   the one additive manifest field the "no schema change" framing of the #184 spike (below) had to
   retire, and the hard prerequisite for #363.
+  The **discovery surfaces agree with the scope instead of contradicting it**: `setup`'s playbook and
+  `list` both report a scoped-out file as **not installable here**, naming the targets that would
+  enable it, and `list --interactive` never offers it as a checkbox — toggling one on would persist an
+  `include:` that renders nothing and re-warns on every future render. An explicit `include:` of a
+  scoped-out file still **warns** rather than silently no-op'ing.
   **Consumer impact: none — purely additive.** Omitting `targets:` is byte-for-byte today's
   behaviour, no shipped stack declares one, and no re-render is required beyond the usual.
 - **A taxonomy that settles the word "workflow" — and the spike write-up behind it (#184, epic #347).**
