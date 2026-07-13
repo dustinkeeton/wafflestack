@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit } from './toolkit.mjs';
-import { computeSelection, itemOutputMatcher } from './refs.mjs';
+import { computeSelection, itemOutputMatcher, fileMatchesTargets } from './refs.mjs';
 import { readTreeLock } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 
@@ -25,11 +25,18 @@ import { loadProjectConfig, resolveConfigFile } from './project.mjs';
  *   - lock.toolkitVersion vs the invoked CLI — toolkit version skew
  *
  * Each item is classified `current` (installed and byte-matching the lock, no skew), `outdated`
- * (installed but drifted or version-skewed), or `not-installed` (not in the selection). Built-in
- * surface only (like `setup`): external `source:` stacks are not expanded — an enabled external
- * name surfaces as a selection error rather than an inventory row.
+ * (installed but drifted or version-skewed), `not-installed` (not in the selection), or
+ * `not-applicable` (#364: a target-scoped syrup file none of whose targets this project enables —
+ * it CANNOT render here, so it is reported, but never offered as a choice). Built-in surface only
+ * (like `setup`): external `source:` stacks are not expanded — an enabled external name surfaces
+ * as a selection error rather than an inventory row.
  */
-export const STATUS = { CURRENT: 'current', OUTDATED: 'outdated', NOT_INSTALLED: 'not-installed' };
+export const STATUS = {
+  CURRENT: 'current',
+  OUTDATED: 'outdated',
+  NOT_INSTALLED: 'not-installed',
+  NOT_APPLICABLE: 'not-applicable',
+};
 
 export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
   const toolkit = loadToolkit(toolkitRoot);
@@ -66,7 +73,18 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
 
   // Per-item drift against the lock, doctor-style: an installed item is outdated if any lock path
   // it owns is absent on disk or its sha256 no longer matches, or if the whole tree is skewed.
-  const classify = (stackName, kind, name) => {
+  const classify = (stackName, kind, name, item) => {
+    // #364: a target-scoped syrup file none of whose targets this project enables cannot render
+    // here AT ALL — `computeSelection` gates it out of every entry path. So it is not merely "not
+    // installed" (which reads as *pourable*, and which the picker would offer as a checkbox):
+    // it is NOT INSTALLABLE, and installing it would persist an `include:` that renders nothing
+    // and re-warns on every future render. Same call the setup playbook makes, so the two
+    // discovery surfaces agree. Checked BEFORE the selection lookup — a scoped-out file is absent
+    // from the selection, so the NOT_INSTALLED branch would otherwise swallow it.
+    //
+    // `project` is null for an unconfigured or malformed-config repo; there is no target set to
+    // judge against, so every item stays NOT_INSTALLED exactly as before.
+    if (project && item && !fileMatchesTargets(item, project.targets)) return STATUS.NOT_APPLICABLE;
     if (!selectedKeys.has(`${stackName}::${kind}/${name}`)) return STATUS.NOT_INSTALLED;
     const matcher = itemOutputMatcher(kind, name);
     const owned = Object.keys(lockFiles).filter(matcher);
@@ -78,11 +96,18 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     return versionSkew ? STATUS.OUTDATED : STATUS.CURRENT;
   };
 
-  const counts = { [STATUS.CURRENT]: 0, [STATUS.OUTDATED]: 0, [STATUS.NOT_INSTALLED]: 0 };
-  const addRow = (rows, stackName, kind, name, optIn = false) => {
-    const status = classify(stackName, kind, name);
+  const counts = {
+    [STATUS.CURRENT]: 0,
+    [STATUS.OUTDATED]: 0,
+    [STATUS.NOT_INSTALLED]: 0,
+    [STATUS.NOT_APPLICABLE]: 0,
+  };
+  const addRow = (rows, stackName, kind, name, optIn = false, item = null) => {
+    const status = classify(stackName, kind, name, item);
     counts[status] += 1;
-    rows.push({ kind, name, ref: `${kind}/${name}`, status, optIn });
+    // #364: `targets` rides along on the row so the table can SAY which harnesses the file is
+    // scoped to, rather than just refusing it.
+    rows.push({ kind, name, ref: `${kind}/${name}`, status, optIn, targets: item?.targets ?? null });
   };
 
   const stacks = [];
@@ -90,7 +115,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     const rows = [];
     for (const a of stack.agents) addRow(rows, stack.name, 'agents', a.name);
     for (const s of stack.skills) addRow(rows, stack.name, 'skills', s.name);
-    for (const f of stack.files) addRow(rows, stack.name, 'files', f.name, stack.optIn.has(`files/${f.name}`));
+    for (const f of stack.files) addRow(rows, stack.name, 'files', f.name, stack.optIn.has(`files/${f.name}`), f);
     stacks.push({ name: stack.name, description: stack.description, enabled: enabledStacks.has(stack.name), rows });
   }
 
@@ -126,11 +151,13 @@ const STATUS_LABEL = {
   [STATUS.CURRENT]: 'installed & current',
   [STATUS.OUTDATED]: 'out of date',
   [STATUS.NOT_INSTALLED]: 'not installed',
+  [STATUS.NOT_APPLICABLE]: 'not installable',
 };
 const STATUS_COLOR = {
   [STATUS.CURRENT]: ANSI.green,
   [STATUS.OUTDATED]: ANSI.yellow,
   [STATUS.NOT_INSTALLED]: ANSI.dim,
+  [STATUS.NOT_APPLICABLE]: ANSI.dim,
 };
 const STATUS_WIDTH = Math.max(...Object.values(STATUS_LABEL).map((s) => s.length)); // 'installed & current'
 
@@ -173,15 +200,26 @@ export function formatListTable(model, { color = false } = {}) {
       const label = STATUS_LABEL[row.status].padEnd(STATUS_WIDTH);
       const status = paint(label, STATUS_COLOR[row.status]);
       const tag = row.optIn ? `  ${paint('(opt-in syrup)', ANSI.cyan)}` : '';
-      lines.push(`  ${status}  ${row.ref}${tag}`);
+      // #364: a not-installable row names the scope that excludes it, so the reader sees WHY it is
+      // refused (and what to enable to get it) rather than just that it is.
+      const scope =
+        row.status === STATUS.NOT_APPLICABLE && row.targets
+          ? `  ${paint(`(scoped to targets [${row.targets.join(', ')}])`, ANSI.cyan)}`
+          : '';
+      lines.push(`  ${status}  ${row.ref}${tag}${scope}`);
     }
     lines.push('');
   }
 
   const c = model.counts;
+  // The not-installable tail is appended only when there IS one, so a project with no target-scoped
+  // syrup (every project today — no shipped stack declares `targets:`) prints the summary unchanged.
+  const scoped = c[STATUS.NOT_APPLICABLE]
+    ? `, ${c[STATUS.NOT_APPLICABLE]} not installable here`
+    : '';
   lines.push(
     paint(
-      `summary: ${c[STATUS.CURRENT]} current, ${c[STATUS.OUTDATED]} out of date, ${c[STATUS.NOT_INSTALLED]} not installed`,
+      `summary: ${c[STATUS.CURRENT]} current, ${c[STATUS.OUTDATED]} out of date, ${c[STATUS.NOT_INSTALLED]} not installed${scoped}`,
       ANSI.bold,
     ),
   );
@@ -205,16 +243,23 @@ function lockLine(model, paint) {
 
 /**
  * The actionable rows for the interactive picker: everything not already `current` (nothing to do
- * for a current item). A `not-installed` item toggled on is installed; an `outdated` one is
- * refreshed — the latter is pre-checked, since applying re-renders anyway. `installRef` is the
- * stack-qualified ref handed to `installRefs`, which canonicalises it (dropping the qualifier when
- * the name is unambiguous). Pure and side-effect-free, so it is unit-tested directly.
+ * for a current item) and not `not-applicable` (nothing that CAN be done for it here). A
+ * `not-installed` item toggled on is installed; an `outdated` one is refreshed — the latter is
+ * pre-checked, since applying re-renders anyway. `installRef` is the stack-qualified ref handed to
+ * `installRefs`, which canonicalises it (dropping the qualifier when the name is unambiguous). Pure
+ * and side-effect-free, so it is unit-tested directly.
+ *
+ * #364: a target-scoped syrup file this project cannot render is NOT a choice. `installRefs` would
+ * happily persist `include: [files/…]` for it — a permanent entry that renders nothing and re-emits
+ * the target-skip warning on every future render. The picker is the surface most literally about
+ * "a choice the user could make", so it is the one that must not offer a non-choice.
  */
 export function selectableChoices(model) {
   const choices = [];
   for (const stack of model.stacks) {
     for (const row of stack.rows) {
       if (row.status === STATUS.CURRENT) continue;
+      if (row.status === STATUS.NOT_APPLICABLE) continue;
       choices.push({
         stack: stack.name,
         ref: row.ref,

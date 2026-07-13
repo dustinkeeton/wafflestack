@@ -5190,6 +5190,68 @@ describe('syrup target scoping (#364)', () => {
     assert.doesNotMatch(guide, /leave out unless the user asks for it/);
   });
 
+  // `list` is the OTHER discovery surface, and the one that is not merely a report: every non-
+  // `current` row it emits becomes a togglable checkbox in the interactive picker, and toggling one
+  // runs `installRefs`, which would persist `include: [files/<scoped>]` permanently — an entry that
+  // renders nothing and re-warns on every future render. So a file that cannot render here must be
+  // reported as NOT INSTALLABLE, and must never be offered as a choice. (F1)
+  test('list reports a scoped-out file as not-installable, and never offers it as a choice', () => {
+    config('codex'); // the harness the file is not for
+    const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    const rowFor = (ref) => model.stacks.flatMap((s) => s.rows).find((r) => r.ref === ref);
+
+    // The report says WHY, distinctly from a merely-not-poured file.
+    assert.equal(rowFor(`files/${SCOPED}`).status, STATUS.NOT_APPLICABLE);
+    assert.notEqual(rowFor('files/shared.txt').status, STATUS.NOT_APPLICABLE, 'the unscoped sibling is unaffected');
+
+    // The picker does not offer it — this is the load-bearing half.
+    const offered = selectableChoices(model).map((c) => c.ref);
+    assert.ok(!offered.includes(`files/${SCOPED}`), `scoped-out file was offered: ${JSON.stringify(offered)}`);
+    assert.ok(offered.includes('files/shared.txt'), 'the unscoped sibling is still offered');
+
+    // And the table names the scope rather than silently refusing it.
+    const table = formatListTable(model, { color: false });
+    assert.match(table, /not installable/);
+    assert.match(table, /scoped to targets \[claude\]/);
+  });
+
+  test('list DOES offer the scoped file once its target is enabled — the guard is scope, not syrup', () => {
+    config('claude');
+    const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    const offered = selectableChoices(model).map((c) => c.ref);
+    assert.ok(offered.includes(`files/${SCOPED}`), 'in-scope file is a real choice again');
+  });
+
+  // (e) The THIRD entry path into `addItem`. The commit message advertises the gate as the choke
+  // point all three funnel through — stack expansion and the `include:` closure are pinned above;
+  // this pins the `requires:` dependency edge, so a selected agent cannot smuggle a scoped-out file
+  // in through its closure. (F2)
+  test('a `requires:` edge cannot pull a scoped-out file into the selection', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'requires:',
+      `  agents/alpha: [files/${SCOPED}]`, // alpha depends on the scoped file
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+    const toolkit = loadToolkit(toolkitRoot);
+    const names = (targets) =>
+      computeSelection(toolkit, { stacks: [], include: ['agents/alpha'], values: {}, targets })
+        .items.map((i) => `${i.kind}/${i.item.name}`)
+        .sort();
+
+    // Target enabled: the requires: edge pulls the file in, as it always has.
+    assert.deepEqual(names(['claude']), ['agents/alpha', `files/${SCOPED}`], 'in scope → closure admits it');
+    // Target disabled: the agent still comes, the scoped file does NOT ride in on its closure.
+    assert.deepEqual(names(['codex']), ['agents/alpha'], 'out of scope → the requires: edge cannot bypass it');
+  });
+
   test('validate rejects an unknown target name', () => {
     write(toolkitRoot, 'stacks/sb/stack.yaml', [
       'name: sb',
