@@ -5403,6 +5403,51 @@ describe('syrup target scoping (#364)', () => {
     assert.ok(has(SCOPED), 'target enabled AND installed → the dependency finally renders');
   });
 
+  // (F11) `optIn` is read off the DEPENDENCY's stack (`dep.stack`), not the dependent's
+  // (`stackName`) — the two are the same only when the edge stays inside one stack, and `requires:`
+  // edges cross stacks freely (a bare `files/x` resolves toolkit-wide). Reading the wrong one is a
+  // silent downgrade: the dependency IS opt-in, the warning claims the one-step remedy, and the
+  // consumer is back in the F10 trap. The other F10 tests keep both ends in one stack, so they pass
+  // under that mutation — this is the one that does not.
+  test('optIn is read from the DEPENDENCY\'s stack, not the dependent\'s (cross-stack edge)', () => {
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: scope\nstacks: [sb, ext]\n');
+    // The dependent lives in `sb` — which declares NO optIn at all.
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      'requires:',
+      `  agents/alpha: [files/${SCOPED}]`, // bare ref → resolves toolkit-wide, into `ext`
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+    // The dependency lives in `ext`, and it is `ext` that declares it opt-in.
+    write(toolkitRoot, 'stacks/ext/stack.yaml', [
+      'name: ext',
+      'description: The dependency\'s own stack.',
+      'files:',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'optIn:',
+      `  - files/${SCOPED}`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, `stacks/ext/files/${SCOPED}`, 'export const meta = {};\n');
+
+    write(cwd, '.waffle/waffle.yaml', 'targets: [codex]\nstacks: [sb, ext]\nconfig: {}\n');
+    const warn = render().warnings.find((w) => /selected agents\/alpha requires files\//.test(w));
+    assert.ok(warn, 'the cross-stack broken edge warns');
+    assert.equal(has(SCOPED), false, 'and the dependency really is absent');
+
+    // Read from `stackName` (sb, which declares no optIn) this would be false, and the warning would
+    // hand out the one-step remedy that renders nothing — F10, restored, across a stack boundary.
+    assert.match(warn, /OPT-IN syrup/, 'the dependency IS opt-in — in ITS stack, not the dependent\'s');
+    assert.match(warn, /necessary but NOT sufficient/);
+    assert.match(warn, /doing only the first renders nothing and silences this warning/);
+  });
+
   // The non-opt-in mirror: a plain scoped file needs only the target, so the remedy stays the
   // one-step version. The opt-in clause must not leak onto it.
   test('a scoped-out NON-opt-in dependency keeps the plain one-step remedy', () => {
