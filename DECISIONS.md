@@ -9,6 +9,118 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-13: The lock decides what `uninstall` may delete (#182, epic #346)
+
+**Context**: `uninstall` / `reinstall` are the toolkit's **first destructive commands**. Everything
+before them only ever *wrote* files. wafflestack renders into `.claude/`, `.github/`, `.waffle/` and
+any syrup path, and shipped no way to take it back out — you hand-deleted across several
+directories, guessing which files were yours and which were the toolkit's. Any command that deletes
+needs an answer to one question: **which files are ours to delete?** Guess too wide and it eats the
+consumer's work; guess too narrow and it leaves the orphans it exists to prevent.
+
+**Decision**: **The lock is the only authority.** A path is deleted only if
+`.waffle/waffle.lock.json` tracks it **and** its sha256 still equals exactly what wafflestack
+rendered — the same comparison `doctor` makes. No globbing of known directories, no "looks
+generated" heuristic.
+
+Every other case follows from that one rule:
+
+| Case | What happens | Why |
+|------|--------------|-----|
+| **Hash still matches** | Deleted | The lock says we wrote it and the bytes prove nobody changed it since |
+| **Hand-edited** (*drifted*) | **Skipped** and reported; `--force` deletes it | The diff between the lock hash and the disk is the consumer's own work |
+| **Unreadable** | Skipped, same as drifted | A hash we cannot verify cannot prove the file is ours |
+| **Consumer-authored** | Never touched | It was never in the lock, so the rule never reaches it |
+| **Ejected** | Announced, left in place | `eject` drops the item from the lock by construction — it is already project-owned |
+| **Already gone** | No-op | Nothing to do |
+| **Resolves outside the repo** | **The whole run refuses**, deleting nothing | See the escape gate below |
+
+Three further choices fall out of it:
+
+- **It is a dry run until `--yes`.** The CLI is non-interactive by design — agents and CI drive it —
+  so the flag *is* the consent. There is no prompt to answer. Run it bare to see exactly what would
+  go.
+- **A lock key that escapes the repo refuses the entire run** — both a lexical `../…` and a key
+  whose parent directory is an **in-tree symlink pointing out of the tree**.
+- **`reinstall` snapshots before it deletes.** It removes the rendered files and re-renders the same
+  selection, holding the deleted bytes in memory; if either leg fails, it puts them back. It needs
+  no `--yes`, because every file it removes the render writes straight back.
+
+**Alternatives considered**:
+
+- **Delete by directory glob** (wipe `.claude/`, `.github/waffle-*.yml`, …) — rejected. Those
+  directories hold consumer files too. A `.claude/settings.json` the consumer wrote is not ours to
+  remove, and no glob can tell the difference.
+- **Delete anything that "looks generated"** — rejected. That is a guess, and this command's whole
+  problem is that guessing is what the consumer was already stuck doing by hand.
+- **Delete drifted files anyway** — rejected as the default. Rendered output is commonly gitignored,
+  so a hand-edited managed file may be the **only copy** of that work in existence. Skipping is
+  recoverable; deleting is not. `--force` is there for people who mean it.
+- **Prompt for confirmation** instead of `--yes` — rejected. A prompt is unanswerable in the CI and
+  agent contexts this CLI is built for; it would either hang or be auto-confirmed, which is worse
+  than a flag.
+
+**Rationale**: The lock already knew the answer. It records every byte the toolkit wrote, and
+`doctor` has always used it to detect hand-edits — so the safe deletion rule is the drift check the
+toolkit was already making, with a delete on the end. That is what makes it *conservative by
+construction*: a file the toolkit cannot prove it wrote, and prove is unchanged, is a file it does
+not touch. The consumer's work is safe not because we remembered to check for it, but because it
+can never satisfy the rule.
+
+The escape gate is the one place that reasoning needed reinforcing, and **this audit's security pass
+found the hole**: the lock is a **consumer-editable file**, so it is untrusted input. A hostile repo
+could ship a symlinked directory plus a matching lock entry and have the toolkit delete files
+*outside* the tree — and since `--force` drops the hash gate, the escape would not even need the
+content to match. `path.resolve` collapses `../` textually but does not follow links, so the lexical
+check alone was not enough. `resolveInside` now also canonicalises the deepest *existing* ancestor
+of each path, and the delete loop re-checks it.
+
+**Impact**: New module `installer/lib/uninstall.mjs` (19 lib modules, up from 18) and three new CLI
+commands — `uninstall`, `reinstall`, and `help`. Nothing existing changes behavior. Consumers get a
+supported way to remove the toolkit; before this, there was none.
+
+**Known gaps — tracked in #359, not fixed here.** Four rough edges ship with this:
+
+- An **interrupted uninstall** (one that skipped a hand-edited file) keeps the lock, but still
+  deletes the config and strips the `.gitignore` block — so the leftovers are recoverable, but the
+  selection around them is not.
+- **`reinstall` hard-fails** on a repo that has a config but no lock (configured, never rendered).
+- An **incomplete `uninstall --yes` still exits 0** — a skip is not currently an error.
+- **`--no-color` is missing** from the `help` flag list.
+
+---
+
+## 2026-07-13: Asking for help is a success; a bad invocation is still an error (#187, #176)
+
+**Context**: Asking wafflestack for help was an **error**. `help`, `--help` and `-h` all fell through
+to the dispatch switch's `default:` case, which printed the usage banner to **stderr** and exited
+**1**. `wafflestack help | less` showed nothing, and a script could not tell "the user asked for
+help" from "the user typed a command that doesn't exist."
+
+**Decision**: Split the two cases apart.
+
+- **`help` / `--help` / `-h`** print the banner, usage, and one line per command and per flag to
+  **stdout**, exit **0**.
+- **An unknown command** still prints usage to **stderr** and exits **1**.
+- **Bare `wafflestack`** (no command) also stays on the **error** path — deliberately.
+- **`--help` after a command** is caught *before* dispatch, so `wafflestack uninstall --help`
+  explains instead of deleting.
+- **`bake`** joins as a pure alias for `render` — a fall-through case sharing its body, flags and
+  guards. The metaphor, all the way down.
+
+**Alternatives considered**: Make bare `wafflestack` print help and exit 0, the way many CLIs do —
+rejected. A script that builds an argument list and ends up passing **nothing** has a bug, and a
+zero exit hides it. Typing the bare word at a prompt costs you a usage banner either way; the
+difference only shows up where it matters, in automation.
+
+**Rationale**: Exit codes are the API for the agents and CI jobs that drive this CLI. "I asked a
+question" and "I fumbled the command" are different outcomes and must not share an exit code.
+
+**Impact**: `installer/cli.mjs` only. The one command whose `--help` mattered most —
+`uninstall` — cannot now be triggered by someone trying to read about it.
+
+---
+
 ## 2026-07-11: Pin `doctor.toolkitRef` to a release tag *before* arming `--verify-render` (#322)
 
 **Context**: `--verify-render` (below) is the one doctor feature that makes the **toolkit itself

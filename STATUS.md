@@ -5,8 +5,8 @@
 
 - **Version**: v0.12.0 (pre-1.0 — the file contract can still change between minor
   releases). See Current focus for what this release adds.
-- **Last updated**: 2026-07-11
-- **Health**: 🟢 tests 858/858 (121 suites) · `validate` clean · `doctor --allow-missing` clean
+- **Last updated**: 2026-07-13
+- **Health**: 🟢 tests 966/966 (128 suites) · `validate` clean · `doctor --allow-missing` clean
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -29,13 +29,18 @@ Totals: 14 agents and 32 skills across the 9 stacks.
 
 ## Installer & CLI
 
-The `wafflestack` CLI (18 pipeline modules under `installer/lib/`) is complete and
-tested. All 10 commands work:
+**The CLI surface is now complete** (epic #346). The `wafflestack` CLI (19 pipeline
+modules under `installer/lib/`) is tested and all 13 commands work:
 
-`init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` · `eject` · `avatars` · `validate`
+`init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` · `eject` ·
+`uninstall` · `reinstall` · `avatars` · `validate` · `help`  (plus `bake`, an alias for `render`)
 
-- `avatars <sync|status>` (new, #285) is the owner-side Gravatar pipeline (see Current focus).
-- `list` (new, #119) reports every stack/item as installed & current / out of date / not
+- `uninstall` / `reinstall` (new, #182) are the toolkit's **first destructive commands** — the
+  lock decides what may be deleted, and `uninstall` is a dry run until `--yes`. See Current focus.
+- `help`, `--help`, `-h` (new, #187) print usage to stdout and exit 0; an unknown command (and
+  bare `wafflestack`) still fails to stderr.
+- `avatars <sync|status>` (#285) is the owner-side Gravatar pipeline.
+- `list` (#119) reports every stack/item as installed & current / out of date / not
   installed; `--interactive` drives a multi-select that installs the chosen refs and renders.
 - `install <ref…>` records a stack or a single item (`agents/`, `skills/`, or a
   `files/` syrup payload) in `.waffle/waffle.yaml`, resolving dependencies, then renders.
@@ -47,6 +52,15 @@ tested. All 10 commands work:
 
 **Unreleased (CHANGELOG `[Unreleased]`):**
 
+- **The CLI surface is complete — `help`, `uninstall`/`reinstall`, `bake` (epic #346).** The toolkit
+  can finally be **removed**, not just installed. `uninstall` deletes a file only if the lock tracks
+  it *and* its hash still matches what was rendered — so a file you hand-edited is kept and
+  reported, a file you authored is never touched, and a lock entry pointing outside the repo aborts
+  the run. **It is a dry run until `--yes`.** `reinstall` refreshes in place (snapshot → remove →
+  re-render, rolling back if the render fails). `help`/`--help`/`-h` now exit 0 on stdout instead of
+  failing. Why the lock is the safe authority:
+  [DECISIONS.md](DECISIONS.md#2026-07-13-the-lock-decides-what-uninstall-may-delete-182-epic-346).
+  **Four known gaps ship with it, tracked in #359** — see Known issues.
 - **The committed lock is now canonical (#317).** `.waffle/waffle.lock.json` hashes the render the
   *committed* inputs produce (no `.local` overlay), so it's byte-identical on every machine and a
   private overlay value can never propagate through it. A machine whose overlay changes an output
@@ -78,32 +92,19 @@ tested. All 10 commands work:
   defaults gets per-agent `bot+<slug>@…` emails and avatars on GitHub with zero setup. Trade-offs +
   manual verify-remainder: [DECISIONS.md](DECISIONS.md#2026-07-10-a-programmatic-gravatar-pipeline-for-per-agent-avatars-and-a-default-bot-email-flip-285).
 
-Shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
-
-- **External third-party stacks (new, #88/#124–#127).** A `stacks:` entry can now be a
-  `{name, source, ref}` mapping pointing at a third-party git (pinned ref) or local source.
-  External stacks flow through the same render/lock/`doctor` pipeline — per-source provenance in
-  the lock, per-source `doctor`/`upgrade`, install-time validation, a syrup-tier confirmation, and
-  a leading-dash source/ref security guard. New module `installer/lib/sources.mjs`; author's guide
-  `schema/AUTHORING-EXTERNAL-STACKS.md`.
-- **Prerequisites shipped (new, #129/#130/#131).** The design-only `prerequisites:` block (#47) is
-  now real: a typed per-stack list (tool/secret/scope/label/setting/service/env), gated by `doctor`
-  (an unmet `require` exits 1), surfaced in `setup`/SETUP.md, with the CI dispatcher parameterized
-  behind `harness.actionRef`/`actionVersion`/`apiKeySecret`. New module
-  `installer/lib/prerequisites.mjs`.
-- **code-quality: two new skills (#112/#116/#117/#180).** `adversarial-review` (hostile review of a
-  green PR, auto-triggered by the new `waffle-pr-green-hook` syrup) and `dry` (disciplined
-  de-duplication); the stack is now fully project-agnostic. Skill count **30 → 32**.
-- **Layer-2 evals (#109).** A metered, LLM-driven eval tier on top of the Layer-1 content
-  assertions — **8 behavioral cases** under `stacks/*/evals/` (github-workflow 6, orchestration 2),
-  run by `npm run evals` (never `npm test`) and nightly by the opt-in `waffle-evals` workflow.
-- **Live automation loop (backlog → merge).** Three loops run on this repo, all gated by the
-  required `doctor` check: **autopilot** (#100/#101 — end-to-end plan→implement→PR over a required
-  issue scope, per-run auto-merge consent, never sticky), the **daily hygiene run**, and the
-  **release-tag hook**. Auto-merged PRs are labeled `waffle-auto-merged` (#134).
+**Already shipped in v0.11.0** (2026-07-08): external third-party stacks (#88), typed
+`prerequisites:` gated by `doctor` (#129), the `adversarial-review` + `dry` skills (#112/#116),
+Layer-2 evals (#109), and the live backlog→merge automation loop (autopilot, daily hygiene, release
+hook). Full detail in the CHANGELOG's `[0.11.0]` section.
 
 ## Known issues & things to watch
 
+- **`uninstall`/`reinstall` ship with four rough edges (#359)** — known and deliberately deferred:
+  - **An uninstall that skips a hand-edited file** keeps the lock, but still deletes the config and
+    strips the `.gitignore` block — the leftovers are recoverable, the selection around them isn't.
+  - **An incomplete `uninstall --yes` still exits 0** — a skip isn't treated as an error.
+  - **`reinstall` hard-fails** (exit 1) on a repo with a config but no lock (never rendered).
+  - **`--no-color` is missing** from the `help` flag list; the flag itself works.
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
 - **The self-render is committed.** After editing anything under `stacks/**`,
   `schema/**`, or `installer/**`, re-run `node installer/cli.mjs render` and commit the
@@ -128,7 +129,7 @@ Shipped in v0.11.0 — additive, merged 2026-07-08 (CHANGELOG `[0.11.0]`):
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (858 tests, 121 suites)
+npm test                          # installer test suite (966 tests, 128 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render     # regenerate this repo's rendered files
 node installer/cli.mjs doctor     # confirm no drift vs. the lock
