@@ -67,12 +67,23 @@ import {
  * temp dir to check them against the lock: there `cwd` is the scratch dir, but a `source: ../foo`
  * in the config still names a path relative to the REAL repo. Nothing else in the render follows
  * it — outputs, extensions, and the lock all stay bound to `cwd`.
+ *
+ * `toolkitIdentity` (#373) is what the running CLI worked out about ITSELF — `release` /
+ * `unreleased` / `unverified`, plus the `commit`/`tag`/`ref` that reproduce it (see
+ * `toolkit-ref.mjs`). The render does not gate on it: the gate lives in `cli.mjs`, and by the time
+ * a write reaches here it has already been allowed. It is threaded to the lock write site below,
+ * and echoed back on the result, because `toolkitVersion` alone CANNOT identify what produced a
+ * render — the default branch and the tag 74 commits behind it both say `0.12.0`. #374 turns that
+ * into a lock field; this parameter is what will be sitting there when it does. Optional and
+ * inert everywhere: absent (every test that renders directly, `evals.mjs`), the lock is written
+ * byte-for-byte as it always was.
  */
 export function renderProject({
   toolkitRoot,
   cwd,
   sourceBaseDir = cwd,
   toolkitVersion,
+  toolkitIdentity = null,
   force = false,
   log = () => {},
   sourceCacheDir = defaultSourceCacheDir(),
@@ -298,6 +309,15 @@ export function renderProject({
   // the enabled built-in stack names; `sources` (when present) records each external source's
   // resolved provenance and the files it produced. External files also live in `files` so doctor
   // drift-checks them like any managed file.
+  //
+  // #373/#374 — `toolkitVersion` is the ONE piece of provenance the built-in toolkit gets, and it
+  // does not identify content: an unpinned `npx github:…` fetch resolves the default branch, whose
+  // package.json still carries the last released version number. `toolkitIdentity` (threaded in
+  // above) is the answer — `{ status, commit, tag, ref }` for the toolkit that ran this render, the
+  // same shape external stacks already record in `sources`. It is deliberately NOT written to the
+  // lock here: adding the field is #374, and doing it in this PR would change every consumer's lock
+  // bytes (and this repo's committed one) in a change whose subject is the GATE. The value is
+  // resolved, carried to the write site, and returned — the next issue only has to name it.
   writeLockFile(path.join(cwd, LOCK_FILE), {
     toolkitVersion,
     targets: canonicalProject.targets,
@@ -339,7 +359,9 @@ export function renderProject({
   }
 
   log(`rendered ${effective.outputs.size} files${removed.length ? `, removed ${removed.length} stale` : ''}`);
-  return { ok: true, errors: [], warnings, written: [...effective.outputs.keys()], removed, sources };
+  // `identity` rides back out with the result so a caller that did not resolve it (upgrade, and #372
+  // after it) can read the ref that produced this render without asking twice. Null when unthreaded.
+  return { ok: true, errors: [], warnings, written: [...effective.outputs.keys()], removed, sources, identity: toolkitIdentity };
 }
 
 /**
