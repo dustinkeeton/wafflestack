@@ -512,7 +512,12 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       } catch {
         continue; // a dangling requires: is a toolkit bug `validate` reports; not this gate's business
       }
-      if (dep.kind !== 'files' || fileMatchesTargets(dep.item, targets)) continue;
+      // Narrowed on the ITEM's intrinsic kind, not the ref kind: `dep.kind` is the plural ref
+      // vocabulary and does not discriminate the `Item` union, so it cannot reach `targets` (a
+      // FileItem field). The two always agree — `resolveDepStrict` draws the item from
+      // `itemsOfKind(stack, kind)` — so this is the same runtime test, stated so tsc can see it.
+      // Same idiom as the explicit-include gate above.
+      if (dep.item.kind !== 'files' || fileMatchesTargets(dep.item, targets)) continue;
       const ref = `files/${dep.name}`;
       if (ejected.has(ref)) continue;
       const edge = `${requiredBy}→${ref}`;
@@ -555,7 +560,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
 export function skippedSyrupCompanions(toolkit, selection, targets = VALID_TARGETS) {
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
   const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
-  /** @type {{ fileRef: string, stackName: string, companions: string[] }[]} */
+  /** @type {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]} */
   const results = [];
   for (const stackName of stacksInSelection) {
     const stack = toolkit.stacks.get(stackName);
