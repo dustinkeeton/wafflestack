@@ -10367,6 +10367,42 @@ describe('uninstall / reinstall (#182)', () => {
     assert.equal(fs.existsSync(path.join(cwd, '.claude')), false, 'now everything empties out');
   });
 
+  test('a SKIP keeps the lock, so the advertised `--force` re-run can still reach the file', () => {
+    // The message we print on a skip ("re-run with --force to delete it") promises a second run.
+    // Deleting the lock in the same breath would make that run impossible — it is the only record
+    // that the skipped file was ever ours — stranding the file as exactly the orphan #182 exists to
+    // prevent. This is the documented workflow: preview bare, apply, then finish the job.
+    render();
+    write(cwd, SKILL, 'I edited this by hand\n');
+
+    const first = run({ dryRun: false });
+    assert.equal(first.ok, true);
+    assert.deepEqual(first.skipped, [SKILL]);
+    assert.equal(first.plan.lockRetained, true);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), 'the lock outlives a skip');
+    assert.ok(
+      !first.removed.includes('.waffle/waffle.lock.json'),
+      'and is not reported as removed either',
+    );
+
+    // The re-run the tool told the user to make. It must WORK.
+    const second = run({ dryRun: false, force: true });
+    assert.equal(second.ok, true, JSON.stringify(second.errors));
+    assert.equal(fs.existsSync(path.join(cwd, SKILL)), false, 'the drifted file finally goes');
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle')), false, 'and now the lock goes with it');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude')), false, 'emptied dirs swept on the way out');
+  });
+
+  test('a clean uninstall (nothing skipped) still removes the lock', () => {
+    // The other half of the rule above: the lock is kept only BECAUSE something was skipped.
+    render();
+    const r = run({ dryRun: false });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.skipped, []);
+    assert.equal(r.plan.lockRetained, false);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false);
+  });
+
   test('an already-absent managed file is a no-op, never an error (idempotent)', () => {
     render();
     fs.rmSync(path.join(cwd, AGENT)); // a gitignored render, or a hand-delete
@@ -10530,6 +10566,29 @@ describe('uninstall / reinstall (#182)', () => {
     const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
     assert.equal(r.ok, true, JSON.stringify(r.errors));
     assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'still poured — reinstall preserved the lock');
+  });
+
+  test('a FAILING render leg restores the tree — a refresh is never more destructive than the render it wraps', () => {
+    // reinstall deletes, then renders. `render` validates before it writes, so a broken selection
+    // leaves the tree intact and exits 1 — but the refresh has already deleted by then, and it asks
+    // for no `--yes` at all. Corrupting the selection is exactly the edit a user makes right BEFORE
+    // reaching for reinstall, and rendered output is commonly gitignored, so git may not save them.
+    render();
+    const before = managed();
+    assert.ok(before.length > 0);
+    const bytesBefore = Object.fromEntries(before.map((rel) => [rel, read(cwd, rel)]));
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [nope]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+
+    const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, false, 'the broken selection is still a failure');
+    assert.ok(r.errors.length > 0, 'and it is reported as one');
+
+    // The whole point: everything the refresh removed is back, byte for byte.
+    for (const rel of before) {
+      assert.ok(fs.existsSync(path.join(cwd, rel)), `${rel} restored after the failed render`);
+      assert.equal(read(cwd, rel), bytesBefore[rel], `${rel} restored byte-for-byte`);
+    }
+    assert.deepEqual(r.restored, before.slice().sort(), 'and it says which files it put back');
   });
 
   test('reinstall --clean wipes to a fresh scaffold with an empty selection', () => {

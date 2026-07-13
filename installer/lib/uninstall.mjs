@@ -60,6 +60,8 @@ import {
  * @property {string[]} prunedDirs directories left empty once `remove`/`meta` are gone
  * @property {string[]} gitignore `.gitignore` lines wafflestack offered and would strip
  * @property {string[]} ejected item refs the project owns — left in place, announced
+ * @property {boolean} lockRetained the lock survives this run — so a `--force` re-run can still
+ *   find the files we skipped. False means the lock goes, and skipped files become project-owned.
  * @property {string[]} notes
  */
 
@@ -149,9 +151,18 @@ function planPrunedDirs(cwd, removing, candidates) {
  * @param {boolean} [opts.force] drifted files will be deleted too — affects which dirs empty out
  * @param {boolean} [opts.keepConfig] preserve `.waffle/waffle.yaml`, the overlay, `extensions/`
  * @param {boolean} [opts.keepLock] preserve both lock files
+ * @param {boolean} [opts.keepLockOnSkip] when drifted files are SKIPPED, keep the lock anyway so the
+ *   `--force` re-run we advertise can still reach them (default true) — see `lockRetained` below
  * @returns {UninstallPlan}
  */
-export function planUninstall({ cwd, toolkitRoot = null, force = false, keepConfig = false, keepLock = false }) {
+export function planUninstall({
+  cwd,
+  toolkitRoot = null,
+  force = false,
+  keepConfig = false,
+  keepLock = false,
+  keepLockOnSkip = true,
+}) {
   /** @type {string[]} */
   const notes = [];
 
@@ -166,6 +177,7 @@ export function planUninstall({ cwd, toolkitRoot = null, force = false, keepConf
       lock: null,
       lockFile: LOCK_FILE,
       remove: [], drifted: [], absent: [], refused: [], meta: [], prunedDirs: [], gitignore: [], ejected: [],
+      lockRetained: false,
       notes,
     };
   }
@@ -229,7 +241,22 @@ export function planUninstall({ cwd, toolkitRoot = null, force = false, keepConf
     if (!exists(abs)) return;
     meta.push({ rel: posix(path.relative(path.resolve(cwd), abs)), abs, type });
   };
-  if (!keepLock) {
+  // THE LOCK OUTLIVES A SKIP. A drifted file we keep is still ours, and the lock is the ONLY record
+  // saying so — `--force` re-reads it to find that file again. Deleting the lock in the very run
+  // that skips a file therefore strands the file with no record it was ever wafflestack's (#182's
+  // opening complaint: "leaves orphans… guessing which are wafflestack-managed and which they
+  // authored") AND closes the one recovery path the skip message names: the advertised `--force`
+  // re-run dies on `no .waffle/waffle.lock.json`. It bites the workflow the README recommends —
+  // preview bare, then apply — hardest of all. So a skip means the uninstall is INCOMPLETE, and the
+  // lock stays behind to say so.
+  //
+  // `keepLockOnSkip: false` opts out, and reinstall's `--clean` leg needs it to: there, a retained
+  // lock would arm render's stale-prune (a lock-tracked path this render no longer produces is
+  // deleted, with NO hash check — render.mjs) against the very hand-edited file we just kept. On
+  // that path nothing can restore the file, so the lock goes and the file is announced as
+  // project-owned instead — the promise is dropped rather than broken.
+  const lockRetained = keepLock || (keepLockOnSkip && !force && drifted.length > 0);
+  if (!lockRetained) {
     addMeta(resolveLockFile(cwd).file, 'file');
     addMeta(localLockPath(cwd), 'file');
   }
@@ -258,6 +285,7 @@ export function planUninstall({ cwd, toolkitRoot = null, force = false, keepConf
     prunedDirs: prunedDirs.map((d) => `${posix(path.relative(path.resolve(cwd), d))}/`),
     gitignore,
     ejected,
+    lockRetained,
     notes,
   };
 }
@@ -285,6 +313,8 @@ export function planUninstall({ cwd, toolkitRoot = null, force = false, keepConf
  * @param {boolean} [opts.allowMissing] silence the per-file "already absent" lines
  * @param {boolean} [opts.keepConfig] preserve the config, overlay and `extensions/`
  * @param {boolean} [opts.keepLock] preserve both locks
+ * @param {boolean} [opts.keepLockOnSkip] keep the lock when drifted files are skipped, so `--force`
+ *   can still reach them (default true — see planUninstall)
  * @param {boolean} [opts.dryRun] report what would happen; touch nothing. DEFAULTS TRUE — see below
  * @param {(msg: string) => void} [opts.log]
  * @returns {UninstallResult}
@@ -296,6 +326,7 @@ export function uninstall({
   allowMissing = false,
   keepConfig = false,
   keepLock = false,
+  keepLockOnSkip = true,
   // Deleting is opt-in at the LIBRARY boundary too, not just behind the CLI's `--yes`. The usual
   // convention would be `dryRun = false` — an explicit call means do the thing — but this is the
   // one function in the toolkit that destroys consumer files, and the cost of the two defaults is
@@ -305,7 +336,7 @@ export function uninstall({
   dryRun = true,
   log = () => {},
 }) {
-  const plan = planUninstall({ cwd, toolkitRoot, force, keepConfig, keepLock });
+  const plan = planUninstall({ cwd, toolkitRoot, force, keepConfig, keepLock, keepLockOnSkip });
 
   // No lock, no uninstall. Without it we have no record of what is ours, and guessing is the one
   // thing this command must never do.
@@ -346,8 +377,20 @@ export function uninstall({
   log(
     `${dryRun ? 'would remove' : 'removing'} ${doomed.length} managed file(s) tracked by ${plan.lockFile}`,
   );
+  // Only promise the `--force` re-run on the path that can actually honour it — i.e. where the lock
+  // survives to tell that run these files were ours. Where it does not (reinstall --clean), say the
+  // true thing instead: they are the project's now.
   for (const rel of skipped) {
-    log(`skipped (modified): ${rel} — hand-edited since it was rendered; re-run with --force to delete it`);
+    log(
+      plan.lockRetained
+        ? `skipped (modified): ${rel} — hand-edited since it was rendered; re-run with --force to delete it`
+        : `skipped (modified): ${rel} — hand-edited since it was rendered; left in place and now project-owned (delete it by hand)`,
+    );
+  }
+  if (skipped.length && plan.lockRetained) {
+    log(
+      `${skipped.length} file(s) kept, so ${plan.lockFile} was kept too — it is the only record that they are wafflestack's. Re-run with --force to remove them and finish the uninstall.`,
+    );
   }
   if (!allowMissing) {
     for (const rel of plan.absent) log(`absent (nothing to do): ${rel}`);
@@ -423,11 +466,69 @@ export function uninstall({
 }
 
 /**
+ * @typedef {object} Snapshot
+ * @property {string} rel
+ * @property {string} abs
+ * @property {Buffer} body
+ */
+
+/**
+ * Read the bytes of every path a refresh is about to delete, so a failing render leg can put them
+ * back. In memory on purpose: these are the toolkit's own rendered text files (skills, agents,
+ * workflows) — small, and already fully in hand — and a temp-dir staging area would only add a
+ * second thing that can fail halfway.
+ *
+ * @param {string} cwd
+ * @param {string[]} rels
+ * @returns {Snapshot[]}
+ */
+function snapshotFiles(cwd, rels) {
+  /** @type {Snapshot[]} */
+  const snap = [];
+  for (const rel of rels) {
+    const abs = resolveInside(cwd, rel);
+    if (!abs || !exists(abs)) continue;
+    try {
+      snap.push({ rel, abs, body: fs.readFileSync(abs) });
+    } catch {
+      // Unreadable now means unrestorable later, and there is nothing useful to do about it here:
+      // the render leg is overwhelmingly likely to succeed and rewrite it anyway. Skip it rather
+      // than abort a refresh over a file we may never need to put back.
+    }
+  }
+  return snap;
+}
+
+/**
+ * Put a snapshot back, recreating any parent directory the uninstall pruned.
+ *
+ * @param {Snapshot[]} snapshot
+ * @returns {{ restored: string[], failed: string[] }}
+ */
+function restoreFiles(snapshot) {
+  /** @type {string[]} */
+  const restored = [];
+  /** @type {string[]} */
+  const failed = [];
+  for (const { rel, abs, body } of snapshot) {
+    try {
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, body);
+      restored.push(rel);
+    } catch (err) {
+      failed.push(`failed to restore ${rel}: ${/** @type {Error} */ (err).message}`);
+    }
+  }
+  return { restored: restored.sort(), failed };
+}
+
+/**
  * @typedef {object} ReinstallResult
  * @property {boolean} ok
  * @property {UninstallResult} uninstall
  * @property {any} render the `renderProject` result, or null on `--clean` (nothing is selected yet)
  * @property {boolean} initialized true when `--clean` scaffolded a fresh config
+ * @property {string[]} restored files put back after a failing render leg (see reinstall)
  * @property {string[]} errors
  */
 
@@ -475,6 +576,26 @@ export function uninstall({
  * @returns {ReinstallResult}
  */
 export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, force = false, log = () => {} }) {
+  // CRASH-SAFETY ON THE REFRESH PATH, which is delete-THEN-render.
+  //
+  // `render` validates its whole selection before it writes a byte: a bad stack name, an unset
+  // required config value, a `pattern:` guard, an unresolvable `source:` pin — each returns
+  // `ok: false` with the tree untouched. A refresh must not be MORE destructive than the render it
+  // wraps, least of all while deliberately asking for no `--yes` (see the docblock above). But it
+  // deletes first, so a render leg that fails would leave the tree stripped and restore nothing —
+  // and rendered output is commonly gitignored, so git may not put it back either. The user reaches
+  // for `reinstall` precisely when they have been editing `waffle.yaml`, which is exactly when the
+  // render is most likely to fail.
+  //
+  // So: snapshot the bytes before deleting, and put them back if the render leg fails. Nothing to do
+  // on `--clean` — there is no render that could fail, and the wipe IS the point.
+  /** @type {Snapshot[]} */
+  let snapshot = [];
+  if (!clean) {
+    const plan = planUninstall({ cwd, toolkitRoot, force: true, keepConfig: true, keepLock: true });
+    snapshot = snapshotFiles(cwd, [...plan.remove, ...plan.drifted]);
+  }
+
   const un = uninstall({
     cwd,
     toolkitRoot,
@@ -484,15 +605,21 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
     allowMissing: true, // a missing file is exactly what a reinstall is here to put back
     keepConfig: !clean,
     keepLock: !clean,
+    // On `--clean` the lock must go even when a drifted file is skipped: keeping it would leave
+    // render's stale-prune (no hash check) armed against that very file on the next render. The
+    // kept files are announced as project-owned instead — uninstall says so when the lock goes.
+    keepLockOnSkip: false,
     dryRun: false,
     log,
   });
-  if (!un.ok) return { ok: false, uninstall: un, render: null, initialized: false, errors: un.errors };
+  if (!un.ok) {
+    return { ok: false, uninstall: un, render: null, initialized: false, restored: [], errors: un.errors };
+  }
 
   if (clean) {
     const file = init({ cwd });
     log(`wrote ${file} — pick stacks in it, then run \`wafflestack render\``);
-    return { ok: true, uninstall: un, render: null, initialized: true, errors: [] };
+    return { ok: true, uninstall: un, render: null, initialized: true, restored: [], errors: [] };
   }
 
   log('re-rendering the current selection…');
@@ -501,12 +628,35 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
   // assigned to. The cast says what is actually true (it is called with one string) and costs
   // nothing; it comes out when render.mjs takes the pragma.
   const renderLog = /** @type {(...args: any[]) => void} */ (log);
-  const render = renderProject({ toolkitRoot, cwd, toolkitVersion, force, log: renderLog });
+
+  /** Put the tree back and explain — the refresh failed, so it must leave nothing behind. */
+  const rollback = (/** @type {string[]} */ errors, /** @type {any} */ render) => {
+    const { restored, failed } = restoreFiles(snapshot);
+    if (restored.length) {
+      log(
+        `the re-render failed — restored the ${restored.length} file(s) the refresh had removed; the tree is as it was. Fix ${CONFIG_FILE} and re-run.`,
+      );
+    }
+    for (const f of failed) log(`error: ${f}`);
+    return { ok: false, uninstall: un, render, initialized: false, restored, errors: [...errors, ...failed] };
+  };
+
+  let render;
+  try {
+    render = renderProject({ toolkitRoot, cwd, toolkitVersion, force, log: renderLog });
+  } catch (err) {
+    // renderProject reports its known failures as `ok: false`, but an unexpected throw must not be
+    // the one path that leaves the tree stripped.
+    return rollback([`the re-render failed: ${/** @type {Error} */ (err).message}`], null);
+  }
+  if (!render.ok) return rollback(render.errors, render);
+
   return {
-    ok: render.ok,
+    ok: true,
     uninstall: un,
     render,
     initialized: false,
-    errors: render.ok ? [] : render.errors,
+    restored: [],
+    errors: [],
   };
 }
