@@ -296,6 +296,7 @@ function helpText() {
     '                    uninstall: also delete files that were hand-edited after rendering',
     '  --gitignore       init/render/install: append the recommended .gitignore entries',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
+    '                    reinstall: required by --clean, the one path that deletes your config',
     '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
     '                    only the rendered output, so `render` can lay the same install back down',
     '  --clean           reinstall: also delete the config and re-scaffold it empty (needs --yes)',

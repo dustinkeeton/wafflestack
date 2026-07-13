@@ -88,6 +88,22 @@ const posix = (/** @type {string} */ p) => p.split(path.sep).join('/');
  * function is the only thing between that string and an `fs.rmSync`. Treat `../` as hostile and
  * return null rather than trusting the file we are about to obey.
  *
+ * LEXICAL CONTAINMENT IS NOT ENOUGH — a symlink defeats it. `path.resolve` only collapses `.`/`..`
+ * textually; it does not follow links. So a lock key `evil/id_rsa` whose `evil/` is a symlink
+ * *committed inside the repo* pointing at `~/.ssh` resolves to `<cwd>/evil/id_rsa`, passes the
+ * `startsWith(root)` test, and then `fs.rmSync` follows the link and deletes the real file OUTSIDE
+ * the tree. Symlinks travel in a git checkout, so a hostile repo (or a malicious PR to a trusted
+ * one) ships the link and the lock together; `--force` even drops the hash gate, making the escape
+ * content-independent. The `../` guard above is therefore necessary but not sufficient.
+ *
+ * So we also verify the REAL path: resolve symlinks on the deepest existing ancestor of `abs` and
+ * require the result to still sit inside the real `cwd`. The final component is resolved by its
+ * PARENT, not itself — a managed file that is itself a symlink is fine to `unlink` (rmSync removes
+ * the link, never the target), but a symlinked *parent directory* would carry the delete out of the
+ * tree, and that is what must be refused. Re-checked at execution time too (the plan calls this and
+ * so does the delete loop), which also narrows the TOCTOU window: a parent swapped for a symlink
+ * between plan and delete is caught by the second call.
+ *
  * @param {string} cwd
  * @param {string} rel
  * @returns {string | null} the absolute path, or null when it is not strictly inside `cwd`
@@ -95,7 +111,35 @@ const posix = (/** @type {string} */ p) => p.split(path.sep).join('/');
 function resolveInside(cwd, rel) {
   const root = path.resolve(cwd);
   const abs = path.resolve(root, rel);
-  return abs !== root && abs.startsWith(root + path.sep) ? abs : null;
+  if (abs === root || !abs.startsWith(root + path.sep)) return null;
+
+  // The lexical check passed; now defeat symlink escape. Canonicalise `cwd`, then canonicalise the
+  // deepest ANCESTOR of `abs` that exists on disk (walking up past the not-yet-created tail) and
+  // re-attach the missing segments. If any real ancestor directory is a link out of the tree, the
+  // canonical target lands outside `realRoot` and we refuse it.
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch {
+    return null; // cannot even canonicalise cwd — cannot prove anything is inside it
+  }
+  /** @type {string[]} */
+  const tail = [];
+  let probe = path.dirname(abs); // the leaf may be a symlink we intend to unlink — resolve its PARENT
+  while (probe !== path.dirname(probe)) {
+    if (exists(probe)) break; // deepest existing ancestor found
+    tail.unshift(path.basename(probe));
+    probe = path.dirname(probe);
+  }
+  let realProbe;
+  try {
+    realProbe = fs.realpathSync(probe);
+  } catch {
+    return null;
+  }
+  const realAbs = path.resolve(realProbe, ...tail, path.basename(abs));
+  if (realAbs !== realRoot && realAbs.startsWith(realRoot + path.sep)) return abs;
+  return null;
 }
 
 /**
@@ -723,28 +767,42 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
   //
   // So: snapshot the bytes before deleting, and put them back if the render leg fails. Nothing to do
   // on `--clean` — there is no render that could fail, and the wipe IS the point.
-  /** @type {Snapshot[]} */
-  let snapshot = [];
-  /** @type {string[]} */
-  let unsnapshotable = [];
-  if (!clean) {
-    const plan = planUninstall({ cwd, toolkitRoot, force: true, keepConfig: true, keepLock: true });
-    ({ snapshot, unreadable: unsnapshotable } = snapshotFiles(cwd, [...plan.remove, ...plan.drifted]));
-  }
-
-  const un = uninstall({
+  //
+  // ONE options object, shared by the snapshot's plan and the uninstall leg that does the deleting,
+  // because the snapshot is only a rollback if it covers EXACTLY the files that leg removes. Spelled
+  // out twice — as it was — the two arg lists have to be kept in sync by hand forever: change what
+  // `uninstall` is asked to delete, forget the plan above it, and the snapshot silently under-covers
+  // the difference. Nothing would fail loudly; the tree would simply come back short of a file the
+  // refresh had already deleted, on the one path whose whole job is that this cannot happen. So the
+  // options are stated once and both callers read them.
+  const unOpts = {
     cwd,
     toolkitRoot,
     // Refresh: every managed file is about to be rewritten, so drift protection buys nothing and
     // costs a false warning. Clean: nothing will restore it, so the drift skip stands (see above).
     force: clean ? force : true,
-    allowMissing: true, // a missing file is exactly what a reinstall is here to put back
     keepConfig: !clean,
     keepLock: !clean,
     // On `--clean` the lock must go even when a drifted file is skipped: keeping it would leave
     // render's stale-prune (no hash check) armed against that very file on the next render. The
     // kept files are announced as project-owned instead — uninstall says so when the lock goes.
     keepLockOnSkip: false,
+  };
+
+  /** @type {Snapshot[]} */
+  let snapshot = [];
+  /** @type {string[]} */
+  let unsnapshotable = [];
+  if (!clean) {
+    // `remove` + `drifted` is every file this leg will delete: the refresh runs `force: true`, so
+    // the drifted ones go too — which is precisely why they must be snapshotted with the rest.
+    const plan = planUninstall(unOpts);
+    ({ snapshot, unreadable: unsnapshotable } = snapshotFiles(cwd, [...plan.remove, ...plan.drifted]));
+  }
+
+  const un = uninstall({
+    ...unOpts,
+    allowMissing: true, // a missing file is exactly what a reinstall is here to put back
     dryRun: false,
     log,
   });

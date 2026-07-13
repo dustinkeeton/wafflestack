@@ -10469,6 +10469,36 @@ describe('uninstall / reinstall (#182)', () => {
     }
   });
 
+  test('a lock key whose parent is an in-tree SYMLINK out of the tree is refused — no realpath escape', () => {
+    // The `../` guard is lexical; a symlink is not textual, so `path.resolve` cannot see it. A repo
+    // can commit a symlink pointing outside itself, so a hostile lock ships the link and a key under
+    // it together: `evil/victim.txt` where `evil/` → an outside dir resolves LEXICALLY inside cwd,
+    // passes the startsWith(cwd) test, and then rmSync follows the link and deletes the real file
+    // outside. `--force` even drops the hash gate, making it content-independent. resolveInside must
+    // canonicalise the parent chain and refuse it.
+    render();
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uninst-victim-'));
+    const victim = path.join(outsideDir, 'victim.txt');
+    fs.writeFileSync(victim, 'PRECIOUS out-of-tree file\n');
+    try {
+      fs.symlinkSync(outsideDir, path.join(cwd, 'evil')); // an in-tree link pointing OUT of the tree
+      const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+      lock.files['evil/victim.txt'] = sha256(fs.readFileSync(victim)); // correct hash — only the guard stands
+      write(cwd, '.waffle/waffle.lock.json', JSON.stringify(lock, null, 2));
+
+      // Both the plain path (hash matches) and --force (hash bypassed) must refuse it.
+      for (const force of [false, true]) {
+        const r = run({ dryRun: false, force });
+        assert.equal(r.ok, false, `force=${force}: the run fails wholesale`);
+        assert.ok(r.plan.refused.includes('evil/victim.txt'), `force=${force}: the symlink-parent key is refused`);
+        assert.equal(fs.readFileSync(victim, 'utf8'), 'PRECIOUS out-of-tree file\n', `force=${force}: the out-of-tree file is untouched`);
+        assert.ok(fs.existsSync(outsideDir), `force=${force}: the out-of-tree directory survives the prune`);
+      }
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test('ejected files are left in place AND announced', () => {
     render();
     eject({ cwd, item: 'skills/demo-skill' });
