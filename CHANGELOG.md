@@ -207,8 +207,10 @@ is what you reach for across a breaking one.
   collision — with evidence the two copies have **already drifted** — why prose orchestration rots
   (nothing type-checks a `SKILL.md` against the harness's real tool list, so it fails at *runtime*; cf.
   #360), the per-target degradation table (**no portable workflow primitive exists** — Codex and
-  agents-dir have none), and a **gated "not yet"** on adopting the primitive. That gate is **two items,
-  not five**: **#360 must land** (`/audit` is unrunnable as written today), and **`/audit`'s human
+  agents-dir have none), and a **gated "not yet"** on adopting the primitive. That gate is **three items,
+  not five**: **#360 must land** (`/audit` is unrunnable as written today), **#364 must land** (optional
+  target scoping for syrup — a *hard* prerequisite, and an **additive, backward-compatible schema change**,
+  so adoption is *"no fourth item kind"* but **not** *"no schema change"*), and **`/audit`'s human
   sign-off gate must be redesigned** — a workflow admits *"no mid-run user input,"* so a gate degrades to
   a hard abort and **sign-off with a human override is inexpressible**. The other three did not survive:
   one was **false** (the in-script API *is* specified — the `Workflow` tool entry documents `agent()`,

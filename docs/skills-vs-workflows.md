@@ -66,6 +66,16 @@ peer sessions. `/audit` literally calls `TeamCreate` and builds a task DAG. That
   (personal). Each file becomes a `/<name>` command.
 - **Body:** plain JavaScript with top-level `await`, opening with a literal
   `export const meta = { name, description }`.
+- **Execution model — and it is not a plain ES module.** This is easy to get wrong and the rest of
+  this document depends on it. `meta` **must be a pure literal** (no variables, calls, spreads, or
+  interpolation), which is what lets the runtime **extract it statically, before evaluating
+  anything**. The remaining body then **runs in an async context** — which is why top-level `await`
+  works. The consequence worth stating out loud: **top-level `return` is legal too**, and the
+  vendor's own documented scripts use it (their canonical example opens with `export const meta` and
+  ends `return { confirmed }`). So a workflow body is *"module header + async function body"*, not a
+  module. **`node --check` on a workflow script will reject it** — `SyntaxError: Illegal return
+  statement` — and that is the checker being wrong about the file's kind, not the file being wrong.
+  See the note in [§9](#9-illustrative-sketch-audit-as-a-workflow), which is exactly where this bites.
 - **Input:** a saved workflow reads invocation arguments from a global named `args`.
 - **Gates:** Claude Code **v2.1.154+**; **paid plans only** (Pro requires a `/config` toggle);
   also available on the Anthropic API, Bedrock, Google Cloud's Agent Platform, and Microsoft
@@ -286,8 +296,16 @@ literally calls tools that do not exist.
 > [!IMPORTANT]
 > **Prose orchestration has no compiler.** Nothing type-checks a `SKILL.md` against the harness's
 > actual tool list. So it drifts silently, and you discover the drift at runtime — in `/audit`'s
-> case, mid-audit, having already spawned agents. A workflow *script* fails its syntax check and
-> **never runs**. It breaks loudly, at the door, for free.
+> case, mid-audit, having already spawned agents. A workflow *script* is **parsed before a single
+> agent is spawned**: a syntax error fails it at the door, for free, and it **never runs**.
+>
+> **Precisely, though — it is the *runtime's* parser that must accept it, not `node --check`.** A
+> workflow body is not a standalone ES module ([§2, "Execution model"](#the-mechanics)), so `node
+> --check` rejects a perfectly valid script on its top-level `return`. The asymmetry this section
+> claims is real and survives intact — *something* mechanically checks a script and *nothing*
+> mechanically checks prose — but the checker is the workflow runtime, and this document should not
+> imply a guarantee from a tool that does not hold the right grammar. The argument is strong enough
+> without the overclaim.
 
 That asymmetry — silent rot vs. loud failure — is the strongest argument *for* the primitive.
 [§8](#8-position-on-adoption-not-yet-and-here-is-the-trigger-list) explains why it still is not
@@ -408,11 +426,22 @@ decision we owe ourselves, and a dated event do not belong in one column.
 
 So separate them. **One is a gate. One is already cleared. Three were never gates at all.**
 
-### The gate — one event, checkable and dated
+### The gate — two dated events and one piece of design work
 
 | # | Blocker | Clears when |
 |---|---|---|
-| **⑤** | **[#360](https://github.com/dustinkeeton/wafflestack/issues/360) must land first.** `/audit` is unrunnable as written ([§5](#5-why-prose-orchestration-rots)) — it calls `TeamCreate`/`TeamDelete`, which no longer exist. Converting a broken skill is building on sand. | **#360 merges.** This is the trigger, and it is the whole trigger. |
+| **⑤** | **[#360](https://github.com/dustinkeeton/wafflestack/issues/360) must land first.** `/audit` is unrunnable as written ([§5](#5-why-prose-orchestration-rots)) — it calls `TeamCreate`/`TeamDelete`, which no longer exist. Converting a broken skill is building on sand. | **#360 merges.** |
+| **⑥** | **[#364](https://github.com/dustinkeeton/wafflestack/issues/364) — optional target scoping for syrup — must land.** Syrup renders **once regardless of `targets:`**, so a Claude-only workflow shipped as syrup lands in a codex-only repo as dead weight. Point 3 below calls this a **hard prerequisite**, and it is: it is the thing that makes "ship it as opt-in syrup" actually work. | **#364 merges.** It is a *ship* prerequisite, not a *decide* one — by its own body it is **independently correct and should land even if the workflow decision slips** — but adoption cannot ship without it. |
+| **①** | **`/audit`'s human sign-off gate must be redesigned.** The docs are explicit: *"No mid-run user input… For sign-off between stages, run each stage as its own workflow."* `/audit` has a **hard gate after security pass 1** — *"Do not auto-proceed if there are Critical or High findings."* A gate as such *is* expressible (a hard abort); **sign-off with a human override is not**, and silently dropping it would convert a safety stop into an auto-proceed. | **A design decision, not a wait** — either `/audit` splits into staged workflows (gate *between* runs, per the docs' own remedy), or the gate leaves the chain. Nothing external blocks it. But it is **unsettled**, and it is a *safety* gate, so it is on the list. |
+
+> [!WARNING]
+> **This is a three-item gate, and an earlier draft of this section said "two".** It omitted **⑥**
+> — the one item §8 itself calls **hard**. That is the same failure the five-item table was
+> criticised for, in a smaller coat: a "list you can actually check" is worth nothing if it quietly
+> drops an item. **#364 is a schema change** — additive and backward-compatible, but real: by its own
+> body it touches `installer/lib/toolkit.mjs`, `installer/lib/render.mjs`, `installer/lib/validate.mjs`
+> and `schema/FORMAT.md`. Point 1 below is corrected accordingly: **no fourth item kind, one additive
+> manifest field** — *not* "no schema change".
 
 ### Already cleared
 
@@ -420,35 +449,37 @@ So separate them. **One is a gate. One is already cleared. Three were never gate
 |---|---|---|
 | **②** | ~~**The in-script API has no public specification.**~~ | **CLEARED — and it was never true.** The `Workflow` tool entry specifies the full in-script surface, `parallel()` and `phase()` included ([§2 ②](#2-what-a-claude-workflow-actually-is)). What remains is *weaker and different*: the spec lives in a **tool description, not a versioned reference** — no changelog, no deprecation policy. That argues for **pinning and testing** against the surface, not for staying away from it. |
 
-### Not gates — one permanent constraint, two decisions we owe ourselves
+### Not gates — one permanent constraint, one already resolved
 
 | # | Blocker | What it actually is |
 |---|---|---|
-| **①** | **`/audit`'s human gate is illegal in a workflow.** The docs are explicit: *"No mid-run user input… For sign-off between stages, run each stage as its own workflow."* `/audit` has a **hard gate after security pass 1** — *"Do not auto-proceed if there are Critical or High findings."* A single `/audit` workflow **cannot express sign-off with a human override**, and silently dropping it would convert a safety stop into an auto-proceed. | **A design decision, not a wait.** Either `/audit` splits into staged workflows (gate *between* runs, per the docs' own remedy), or the gate leaves the chain. Nothing external blocks it; we can settle it any day we choose to. **It is the one piece of design work adoption genuinely owes.** |
-| **③** | **It breaks [#94](../DECISIONS.md).** Claude-only ⇒ a half-covered harness. Codex and agents-dir have *no* equivalent to degrade to ([§7](#7-per-target-degradation-there-is-no-portable-workflow-primitive)). | **Resolved in this document, below.** Ship as **opt-in syrup**, not a fourth item kind: #94 governs the two *harness-neutral* kinds (agents and skills), and syrup is path-specific by definition. Raised and answered in the same section — so it is not a thing to wait for. |
+| **③** | **It breaks [#94](../DECISIONS.md).** Claude-only ⇒ a half-covered harness. Codex and agents-dir have *no* equivalent to degrade to ([§7](#7-per-target-degradation-there-is-no-portable-workflow-primitive)). | **Resolved in this document, below.** Ship as **opt-in syrup**, not a fourth item kind: #94 governs the two *harness-neutral* kinds (agents and skills), and syrup is path-specific by definition. Raised and answered in the same section — so it is not a thing to wait for. (It is resolved *in principle*; **⑥/#364 is what makes it work in practice**.) |
 | **④** | **Paid-plans-only, version-gated (v2.1.154+), with an org-wide kill switch.** A rendered workflow can be **silently inert** in a consumer's repo. Today's skills run on any plan. | **A permanent design constraint — "never fully" is the honest answer, and it is not a gate.** It bounds the *shape* of adoption, not its *timing*: it is precisely **why the prose orchestrator must remain the portable fallback forever.** It belongs in the design rationale, and that is where it now does its work. |
 
 ### The honest position, restated
 
 **The verdict is unchanged — "not yet" — but the arithmetic behind it is not, and the change is
 worth stating plainly rather than burying.** ② is cleared (and was wrong). ③ this document resolves
-itself. ④ never opens and was never a gate. ① is ours to decide, not to await.
+itself in principle. ④ never opens and was never a gate. What survives is **three items**:
 
-**What is left is small and true:** *one* dated event (**#360**) and *one* piece of design work
-(**①'s gate**). That is a two-item list you can actually check — and it is a **weaker** "not yet"
-than the one this document opened with. It is still a "not yet":
+- **⑤ — [#360](https://github.com/dustinkeeton/wafflestack/issues/360) has not merged**, and
+  `/audit` — the skill the issue proposed converting — remains unrunnable as written. That alone
+  settles the timing.
+- **⑥ — [#364](https://github.com/dustinkeeton/wafflestack/issues/364) has not merged.** Without
+  optional target scoping, "ship it as opt-in syrup" puts Claude-only files in a codex-only repo.
+  This document calls it a **hard prerequisite** and it is one. It can land **independently of the
+  workflow decision** — and should.
+- **① — the sign-off gate design is unsettled**, and it is a *safety* gate. Adopting first and
+  designing the sign-off path afterwards is the wrong order.
 
-- **#360 has not merged**, and `/audit` — the skill the issue proposed converting — remains
-  unrunnable as written. That alone settles the timing.
-- **①'s gate design is unsettled**, and it is a *safety* gate. Adopting first and designing the
-  sign-off path afterwards is the wrong order.
-- **④ is permanent**, so adoption is opt-in-shaped forever, with the prose orchestrator retained
-  as the fallback that runs everywhere.
-- **The vendor still says not to hand-author these** ([§2 ③](#2-what-a-claude-workflow-actually-is)),
-  and the specified surface is **unversioned** — a toolkit that *renders* scripts is betting on a
-  contract nobody has promised to keep.
+And two things that shape adoption without gating it: **④ is permanent**, so adoption is
+opt-in-shaped forever with the prose orchestrator retained as the fallback that runs everywhere; and
+**the vendor still says not to hand-author these** ([§2 ③](#2-what-a-claude-workflow-actually-is))
+against a surface that is specified but **unversioned** — a toolkit that *renders* scripts is betting
+on a contract nobody has promised to keep.
 
-**Revisit when #360 merges.** Not "when all five clear" — that day would never have come.
+**Revisit when #360 and #364 have merged and ①'s gate is designed.** Not "when all five clear" —
+that day would never have come. Three items, each of which can actually be checked off.
 
 ### The shape it takes when it *is* adopted — and it needs no new machinery
 
@@ -464,17 +495,24 @@ artifact is just a file. Concretely:
 
 1. **Ship it as opt-in syrup** — `files/.claude/workflows/audit.js`. Syrup is *already* the
    toolkit's kind for "a file rendered verbatim to a real load-bearing path," and **opt-in syrup**
-   is *already* the gate for target-specific payloads. **No fourth item kind, no schema change, no
-   #94 violation** — because #94 governs *agents and skills*, the two harness-neutral kinds. Syrup
-   is path-specific by definition.
+   is *already* the gate for target-specific payloads. **No fourth item kind and no #94 violation** —
+   because #94 governs *agents and skills*, the two harness-neutral kinds, and syrup is path-specific
+   by definition. **It does, however, need one additive manifest field** — see point 3, and do not
+   let this bullet imply otherwise: *"no fourth item kind"* is not *"no schema change."*
 2. **Each workflow phase invokes a skill.** The skills stay the single source of truth for *what a
    phase does*; the script encodes *only the sequencing*. The prose orchestrator remains the
    portable fallback that runs everywhere. Sequencing is then expressed twice (JS + prose) but the
    **content never is** — a far better trade than today, where the *content* is what's duplicated.
-3. **Fix one known wart first.** Syrup renders **once regardless of `targets:`**
-   (`schema/FORMAT.md`: *"Files are harness-independent: they render once regardless of
+3. **Fix one known wart first — and it is a schema change.** Syrup renders **once regardless of
+   `targets:`** (`schema/FORMAT.md`: *"Files are harness-independent: they render once regardless of
    `targets:`"*). A Claude-only workflow shipped as syrup would land in a codex-only repo as dead
-   weight. **Optional target scoping for syrup is a hard prerequisite**, and is filed as such.
+   weight. **Optional target scoping for syrup is a hard prerequisite**, filed as
+   [#364](https://github.com/dustinkeeton/wafflestack/issues/364) — and it is **trigger ⑥** of the
+   gate above, not a footnote. It adds an optional `targets:` filter to a `files:` manifest entry:
+   **additive and backward-compatible** (absent ⇒ today's behaviour exactly), but a change to
+   `installer/lib/toolkit.mjs`, `installer/lib/render.mjs`, `installer/lib/validate.mjs` and
+   `schema/FORMAT.md` all the same. It is **independently correct** and should land even if the
+   workflow decision slips.
 
 ---
 
@@ -486,6 +524,20 @@ artifact is just a file. Concretely:
 > any manifest. It exists to make [§8](#8-position-on-adoption-not-yet-and-here-is-the-trigger-list)
 > concrete. It uses `agent()` and `phase()` from the surface specified in
 > [§2 ②](#2-what-a-claude-workflow-actually-is), and it is **unverified against a real runtime.**
+
+> [!IMPORTANT]
+> **This block will NOT pass `node --check`, and that is expected — do not "fix" it.**
+> `node --check` reports `SyntaxError: Illegal return statement` on the two top-level `return`s
+> below (the safety abort, and the final result). That is **the checker applying the wrong grammar**,
+> not a bug in the sketch: a workflow body is *"module header + async function body"*, not a
+> standalone ES module ([§2, "Execution model"](#the-mechanics)). Top-level `return` is legal in the
+> real runtime, and **the vendor's own documented scripts use it** — theirs open with
+> `export const meta` and end with `return { confirmed }`, exactly as this one does.
+>
+> Spelled out because **[#363](https://github.com/dustinkeeton/wafflestack/issues/363) starts from
+> this sketch**, and the obvious "correction" — restructuring the `return`s away to satisfy a checker
+> that was never the right one — would make the artifact *less* faithful to the primitive, not more.
+> The honest gap is that this is **unverified against a real runtime**; the parse is not the gap.
 
 Note what it demonstrates and what it cannot:
 
@@ -598,8 +650,10 @@ the primitive's reach. That is the whole recommendation, in twelve lines of Java
 6. **Do not adopt the workflow primitive yet — but the case against it is weaker than it first
    looked.** Of the five blockers this spike started with, one was **false** (the in-script API *is*
    specified — `parallel()` and `phase()` are real), one this document **resolves itself**, and one
-   **never opens** and was never a gate. What survives is *one dated event* — **[#360](https://github.com/dustinkeeton/wafflestack/issues/360)
-   must land** — and *one piece of design work*: `/audit`'s human sign-off gate cannot be expressed
-   inside a workflow (a gate can; an **override** cannot). **Revisit when #360 merges.** When it *is*
-   adopted, it ships as **opt-in syrup** whose phases invoke skills, with prose orchestrators kept as
-   the portable fallback — permanently, because workflows are paid-plan and version-gated.
+   **never opens** and was never a gate. What survives is a **three-item gate**: **[#360](https://github.com/dustinkeeton/wafflestack/issues/360)
+   must land** (`/audit` is unrunnable as written), **[#364](https://github.com/dustinkeeton/wafflestack/issues/364)
+   must land** (optional target scoping for syrup — a *hard* prerequisite, and an additive schema
+   change), and **`/audit`'s human sign-off gate must be redesigned** (a gate is expressible inside a
+   workflow; an **override** is not). When it *is* adopted, it ships as **opt-in syrup** whose phases
+   invoke skills — **no fourth item kind, but one additive manifest field** — with prose orchestrators
+   kept as the portable fallback, permanently, because workflows are paid-plan and version-gated.

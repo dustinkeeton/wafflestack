@@ -36,10 +36,12 @@ Two rules fall out of it:
 - **A skill is the unit of work; orchestration is only ever sequencing.** A skill **never duplicates
   another skill's content — it invokes it.** An orchestrator holds only sequencing, gates, fan-out and
   loops. This, not any new primitive, is what fixes `/audit` ⊃ `/docs`.
-- **Adopting the Claude `Workflow` primitive: not yet** — but on a **two-item** gate, not the five-item
-  one this spike started with (see Rationale). When it *is* adopted it ships as **opt-in syrup**
-  (`files/.claude/workflows/*.js`) whose phases each invoke a skill — **no fourth item kind, no schema
-  change** — with the prose orchestrator retained as the portable fallback, permanently.
+- **Adopting the Claude `Workflow` primitive: not yet** — on a **three-item** gate, not the five-item one
+  this spike started with (see Rationale): **#360** must land, **#364** must land, and **`/audit`'s human
+  sign-off gate must be redesigned**. When it *is* adopted it ships as **opt-in syrup**
+  (`files/.claude/workflows/*.js`) whose phases each invoke a skill — **no fourth item kind, but one
+  additive, backward-compatible manifest field** (`targets:` on a `files:` entry, **#364**; *not* "no
+  schema change") — with the prose orchestrator retained as the portable fallback, permanently.
 
 Following the **#59** precedent (*rename the user-facing vocabulary; leave the load-bearing surfaces
 alone*), the **`github-workflow` stack and `git-workflow` skill keep their names**: they are consumer
@@ -64,8 +66,9 @@ different problem than the collision *of the word*, and conflating them is what 
 workflow question: **adopting the primitive would not have fixed `/audit` ⊃ `/docs`** — it would have moved
 the duplication from prose into JavaScript. Composition fixes it, today, for free.
 
-**On adoption, the honest gate is two items, not five** — and saying so cost this spike its most
-embarrassing correction. The five it started with do not survive scrutiny as *gates*: **②** claimed the
+**On adoption, the honest gate is three items, not five** — and getting there cost this spike two
+corrections, one of them embarrassing. Of the five it started with, three do not survive scrutiny as
+*gates*, and a sixth had to be **added**: **②** claimed the
 in-script API had *"no public specification"* — **that was false.** The `Workflow` tool's own entry carries
 a section headed `Script body hooks:` specifying `agent()`, `pipeline()`, `parallel()`, `phase()`, `log()`,
 `workflow()`, `args` and `budget`, with signatures; an earlier draft had this right and a later one
@@ -78,14 +81,17 @@ switch, so a rendered workflow can be *silently inert* in a consumer repo) *"nev
 a gate at all but a **permanent design constraint**, and it is exactly *why* the prose orchestrator must
 remain the portable fallback forever.
 
-What actually remains: **⑤ #360 must land first** — `/audit` is *unrunnable as written today*
+What actually remains is **three items**: **⑤ #360 must land** — `/audit` is *unrunnable as written today*
 (`TeamCreate`/`TeamDelete` no longer exist in the harness), and converting a broken skill is building on
-sand — and **① a design decision we owe ourselves**: `/audit`'s hard human gate after security pass 1
-cannot be expressed inside a workflow (*"No mid-run user input… For sign-off between stages, run each stage
-as its own workflow"*). A *gate* is expressible as a hard abort; **sign-off with a human override is not**.
-So the trigger is: **revisit when #360 merges.** Point ⑤ is also the strongest argument *for* the
+sand; **⑥ #364 must land** — optional target scoping for syrup, without which "ship it as opt-in syrup"
+drops Claude-only files into a codex-only repo (the write-up calls it a **hard prerequisite**, and it is an
+*additive* schema change — it can and should land independently of the workflow decision); and **① a design
+decision we owe ourselves** — `/audit`'s hard human gate after security pass 1 cannot be expressed inside a
+workflow (*"No mid-run user input… For sign-off between stages, run each stage as its own workflow"*). A
+*gate* is expressible as a hard abort; **sign-off with a human override is not**. So: **revisit when #360
+and #364 have merged and ①'s gate is designed.** Point ⑤ is also the strongest argument *for* the
 primitive: **prose orchestration has no compiler**, so it rots silently and fails at runtime, whereas a
-script fails its syntax check and never runs.
+workflow script is parsed before a single agent spawns and simply never runs.
 
 **Impact**: Docs-only. Adds `docs/skills-vs-workflows.md` — the full spike write-up: the three-sense table,
 what the Claude primitive actually is (verified against the live docs, including the constraints that
