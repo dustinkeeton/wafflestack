@@ -10591,6 +10591,62 @@ describe('uninstall / reinstall (#182)', () => {
     assert.deepEqual(r.restored, before.slice().sort(), 'and it says which files it put back');
   });
 
+  test('a FAILING uninstall leg restores the tree too — the same invariant, the other branch', () => {
+    // The uninstall leg can fail as well: it reports a per-file `failed to remove …` only AFTER
+    // deleting everything it could. An early return there would strip the tree and restore nothing —
+    // worse than the render leg, because nothing gets rendered back either. Undeletable happens for
+    // real: a read-only checkout, a root-owned file, a file held open on Windows, an SMB/NAS mount.
+    render();
+    const before = managed();
+    const bytesBefore = Object.fromEntries(before.map((rel) => [rel, read(cwd, rel)]));
+    const stuck = path.join(cwd, SKILL);
+    const stuckDir = path.dirname(stuck);
+    fs.chmodSync(stuckDir, 0o500); // r-x: the file inside can no longer be unlinked
+
+    try {
+      const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+      assert.equal(r.ok, false, 'an undeletable managed file is still a failure');
+      assert.ok(
+        r.errors.some((e) => /failed to remove/.test(e)),
+        `expected a removal error, got ${JSON.stringify(r.errors)}`,
+      );
+      assert.equal(r.render, null, 'and the render never ran');
+
+      // The point: everything it DID delete is back, byte for byte — including the file it could
+      // not delete, which never left in the first place.
+      for (const rel of before) {
+        assert.ok(fs.existsSync(path.join(cwd, rel)), `${rel} still on disk after the failed refresh`);
+        assert.equal(read(cwd, rel), bytesBefore[rel], `${rel} byte-for-byte`);
+      }
+      assert.ok(!r.restored.includes(SKILL), 'the undeletable file is not "restored" — it never left');
+    } finally {
+      fs.chmodSync(stuckDir, 0o700); // so afterEach can clean up
+    }
+  });
+
+  test('an error is reported once, not twice: the library returns errors, the caller prints them', () => {
+    // reinstall passes the CLI's `log` straight through to uninstall, so a library that ALSO logged
+    // the errors it returns printed each one twice — once to stdout via `log`, once to stderr via
+    // the CLI. The library is now silent about them; `errors` is the channel.
+    render();
+    const stuckDir = path.dirname(path.join(cwd, SKILL));
+    fs.chmodSync(stuckDir, 0o500);
+
+    try {
+      const logs = [];
+      const r = uninstall({ cwd, toolkitRoot, dryRun: false, log: (m) => logs.push(m) });
+      assert.equal(r.ok, false);
+      assert.ok(r.errors.some((e) => /failed to remove/.test(e)), 'the error is returned');
+      assert.deepEqual(
+        logs.filter((l) => /^error:/.test(l)),
+        [],
+        'and NOT also logged — the caller owns presentation',
+      );
+    } finally {
+      fs.chmodSync(stuckDir, 0o700);
+    }
+  });
+
   test('reinstall --clean wipes to a fresh scaffold with an empty selection', () => {
     render();
     const r = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.0.test', clean: true });

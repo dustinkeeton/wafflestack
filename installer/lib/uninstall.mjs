@@ -460,8 +460,10 @@ export function uninstall({
     );
   }
   for (const n of plan.notes) log(`note: ${n}`);
-  for (const e of errors) log(`error: ${e}`);
-
+  // Errors are RETURNED, not logged. The caller prints what it is handed — the CLI sends them to
+  // stderr, where an error belongs — and logging them here too would print each one twice: once to
+  // stdout via `log`, once to stderr via the caller. That bit `reinstall` (which passes the CLI's
+  // `log` straight through) and `uninstall` alike, on any per-file `failed to remove …`.
   return { ok: errors.length === 0, dryRun, plan, removed, skipped, errors };
 }
 
@@ -512,6 +514,10 @@ function restoreFiles(snapshot) {
   const failed = [];
   for (const { rel, abs, body } of snapshot) {
     try {
+      // Still on disk, unchanged: the delete never reached it — a failing uninstall leg stops at the
+      // file it could not remove. Nothing to restore, and rewriting it would be a pointless write
+      // into the very directory that just refused one. Not counted as restored: it never left.
+      if (exists(abs) && fs.readFileSync(abs).equals(body)) continue;
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, body);
       restored.push(rel);
@@ -612,9 +618,35 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
     dryRun: false,
     log,
   });
-  if (!un.ok) {
-    return { ok: false, uninstall: un, render: null, initialized: false, restored: [], errors: un.errors };
-  }
+
+  /**
+   * Put the tree back and explain — the refresh failed, so it must leave nothing behind.
+   *
+   * Declared ABOVE the uninstall-leg check, because that leg can fail too and the snapshot is just
+   * as load-bearing there: `uninstall` reports a per-file `failed to remove …` (an EACCES on a
+   * read-only checkout, a root-owned file, a file held open on Windows, an SMB/NAS mount) only
+   * AFTER deleting everything it could. Returning early there would strip the tree and restore
+   * nothing — the very invariant the snapshot exists to hold, and worse than the render leg,
+   * because nothing has been rendered back either.
+   *
+   * @param {string[]} errors
+   * @param {any} render
+   * @param {string} why what failed, for the log line
+   */
+  const rollback = (errors, render, why) => {
+    const { restored, failed } = restoreFiles(snapshot);
+    if (restored.length) {
+      log(
+        `${why} — restored the ${restored.length} file(s) the refresh had removed; the tree is as it was. Fix the error above and re-run.`,
+      );
+    }
+    // `failed` is returned, not logged: the caller prints what it is handed (see uninstall).
+    return { ok: false, uninstall: un, render, initialized: false, restored, errors: [...errors, ...failed] };
+  };
+
+  // A failing uninstall leg gets the same restore as a failing render leg. On `--clean` the
+  // snapshot is empty by construction, so this correctly restores nothing.
+  if (!un.ok) return rollback(un.errors, null, 'the refresh could not remove every managed file, and did not re-render');
 
   if (clean) {
     const file = init({ cwd });
@@ -629,27 +661,15 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
   // nothing; it comes out when render.mjs takes the pragma.
   const renderLog = /** @type {(...args: any[]) => void} */ (log);
 
-  /** Put the tree back and explain — the refresh failed, so it must leave nothing behind. */
-  const rollback = (/** @type {string[]} */ errors, /** @type {any} */ render) => {
-    const { restored, failed } = restoreFiles(snapshot);
-    if (restored.length) {
-      log(
-        `the re-render failed — restored the ${restored.length} file(s) the refresh had removed; the tree is as it was. Fix ${CONFIG_FILE} and re-run.`,
-      );
-    }
-    for (const f of failed) log(`error: ${f}`);
-    return { ok: false, uninstall: un, render, initialized: false, restored, errors: [...errors, ...failed] };
-  };
-
   let render;
   try {
     render = renderProject({ toolkitRoot, cwd, toolkitVersion, force, log: renderLog });
   } catch (err) {
     // renderProject reports its known failures as `ok: false`, but an unexpected throw must not be
     // the one path that leaves the tree stripped.
-    return rollback([`the re-render failed: ${/** @type {Error} */ (err).message}`], null);
+    return rollback([`the re-render failed: ${/** @type {Error} */ (err).message}`], null, 'the re-render failed');
   }
-  if (!render.ok) return rollback(render.errors, render);
+  if (!render.ok) return rollback(render.errors, render, 'the re-render failed');
 
   return {
     ok: true,
