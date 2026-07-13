@@ -141,10 +141,16 @@ try {
       const yes = extractFlag(args, '--yes');
       const force = extractFlag(args, '--force');
       const allowMissing = extractFlag(args, '--allow-missing');
+      // `.waffle/extensions/` holds files the CONSUMER wrote (render reads them as render sources),
+      // and a full uninstall deletes them with the rest of `.waffle/`. `keepConfig` is the library's
+      // answer to "take the rendered output, keep my authored inputs" — it has always been there; the
+      // CLI simply never let anyone ask for it, so the only way to keep an authored extension was to
+      // hope it was committed.
+      const keepConfig = extractFlag(args, '--keep-config');
       if (args.length) {
         fail(`uninstall takes no refs (got ${args.join(', ')}) — it removes the whole install; use \`wafflestack eject <ref>\` to release a single item to project ownership`);
       }
-      const result = uninstall({ cwd, toolkitRoot, force, allowMissing, dryRun: !yes, log: console.log });
+      const result = uninstall({ cwd, toolkitRoot, force, allowMissing, keepConfig, dryRun: !yes, log: console.log });
       for (const e of result.errors) console.error(`error: ${e}`);
       if (result.ok && result.dryRun) console.log('\nnothing was removed — re-run with `--yes` to apply');
       process.exit(result.ok ? 0 : 1);
@@ -288,6 +294,7 @@ function helpText() {
     '                    uninstall: also delete files that were hand-edited after rendering',
     '  --gitignore       init/render/install: append the recommended .gitignore entries',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
+    '  --keep-config     uninstall: keep .waffle/waffle.yaml and .waffle/extensions/ (your inputs)',
     '  --clean           reinstall: also delete the config and re-scaffold it empty (needs --yes)',
     '  --allow-missing   doctor/uninstall: tolerate managed files that are absent from disk',
     '  --verify-render   doctor: also check the config still renders what the lock records',

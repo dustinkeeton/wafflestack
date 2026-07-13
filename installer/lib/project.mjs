@@ -263,7 +263,8 @@ export function ensureGitignoreEntries(cwd, entries) {
  * next line is blank or end-of-file — together with the blank separator line its twin wrote above
  * it. A marker that still has lines under it (a stale entry from a stack no longer enabled, a
  * consumer line appended below) keeps them company and survives. Every other byte of the file is
- * preserved verbatim, including the original trailing-newline habit.
+ * preserved verbatim, including the original trailing-newline habit and the line terminator the
+ * file actually uses — a CRLF `.gitignore` comes back CRLF, not silently normalised to LF.
  *
  * Returns the entries actually removed; [] when none were present (idempotent, so a second
  * `uninstall` is a clean no-op rather than an error).
@@ -285,6 +286,17 @@ export function removeGitignoreEntries(cwd, entries) {
 
   const text = fs.readFileSync(gi, 'utf8');
   const endsWithNewline = text.endsWith('\n');
+  // Rejoin with the terminator the file ACTUALLY uses. `split(/\r?\n/)` drops the `\r` from every
+  // line, so a bare `join('\n')` rewrote every line of a CRLF `.gitignore` — a Windows checkout with
+  // `core.autocrlf=true` — to LF: a whole-file diff in a file the toolkit does not own, from the one
+  // function whose entire stated design is not to do that. Its twin `ensureGitignoreEntries` gets it
+  // for free by being append-only (it never rewrites an existing line); the inverse has to ask.
+  //
+  // The FIRST terminator wins — the file's established habit — not the majority. Counting would get
+  // the round-trip exactly backwards on the case that matters most: `ensureGitignoreEntries` appends
+  // its block with LF even to a CRLF file, so after an ensure the LF lines are usually the majority,
+  // and a dominance rule would then "helpfully" rewrite the consumer's CRLF lines on the way out.
+  const eol = text.match(/\r\n|\n/)?.[0] === '\r\n' ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
   // `split` leaves a trailing '' for a newline-terminated file; drop it so it cannot be mistaken
   // for a blank line, and restore the habit on the way out.
@@ -315,7 +327,7 @@ export function removeGitignoreEntries(cwd, entries) {
   }
   const final = kept.filter((_, i) => !orphaned.has(i));
 
-  const out = final.length ? final.join('\n') + (endsWithNewline ? '\n' : '') : '';
+  const out = final.length ? final.join(eol) + (endsWithNewline ? eol : '') : '';
   fs.writeFileSync(gi, out);
   return removed;
 }

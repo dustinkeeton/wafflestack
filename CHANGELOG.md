@@ -207,16 +207,25 @@ is what you reach for across a breaking one.
 - **`uninstall` / `reinstall` (#182).** wafflestack rendered files into `.claude/`, `.github/`, `.waffle/`
   and any syrup path, and shipped no way to take them back out: you hand-deleted across several
   directories, guessing which files were yours and which were ours. Now the lock does the guessing,
-  because it already knew — **a path is deleted only if `.waffle/waffle.lock.json` tracks it *and* its
-  sha256 still equals what wafflestack rendered.** Nothing else is ever deleted: no globbing, no
-  "looks generated" heuristic. A **hand-edited** file is kept and reported (`--force` deletes it too), an
-  **absent** one is a no-op, an **ejected** one is project-owned and announced as left in place, and a
-  lock key pointing outside the repo aborts the entire run. It then clears the `.waffle/` metadata,
-  prunes only the directories that genuinely emptied (a `.claude/` still holding your `settings.json`
-  survives untouched), and strips wafflestack's own `.gitignore` lines by exact-line match — never a
-  "marker to the next blank line" span, which would eat the lines you appended under it. **It is a dry
-  run until `--yes`**: the CLI is non-interactive by design, so the flag is the consent and the bare
-  command is the preview of exactly what would go.
+  because it already knew — **a rendered path is deleted only if `.waffle/waffle.lock.json` tracks it
+  *and* its sha256 still equals what wafflestack rendered.** No globbing, no "looks generated"
+  heuristic. A **hand-edited** file is kept and reported (`--force` deletes it too), an **unreadable**
+  one is kept the same way (an unverifiable hash cannot prove the file is ours, and the read-only
+  preview classifies it rather than crashing), an **absent** one is a no-op, an **ejected** one is
+  project-owned and announced as left in place, and a lock key pointing outside the repo aborts the
+  entire run. It then clears the `.waffle/` metadata — the one thing outside the lock's authority,
+  since `extensions/` holds render *inputs you wrote*, so **`--keep-config`** takes the rendered output
+  and spares your selection and your extensions — prunes only the directories that genuinely emptied
+  (a `.claude/` still holding your `settings.json` survives untouched), and strips wafflestack's own
+  `.gitignore` lines by exact-line match — never a "marker to the next blank line" span, which would
+  eat the lines you appended under it, and never rewriting the line endings of a CRLF file it does not
+  own. **Anything left behind keeps the lock behind with it** — a skip, or a file it could not remove:
+  the lock is the only record that those files were ever wafflestack's, so deleting it would strand
+  them as exactly the orphans this command exists to prevent, and the `--force` re-run it advertises
+  would die on `no lock`. Fix the cause, re-run, and the uninstall finishes. What it prints afterwards
+  is what it **actually** did, not what it planned to do. **It is a dry run until `--yes`**: the CLI is
+  non-interactive by design, so the flag is the consent and the bare command is the preview of exactly
+  what would go.
   `reinstall` refreshes in place — remove the rendered files, re-render the same selection — keeping your
   config, overlay, extensions **and lock**. Keeping the lock is load-bearing, not tidy: it is what keeps
   an already-poured opt-in syrup file selected, so dropping it would silently un-pour any syrup not also
