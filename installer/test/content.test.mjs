@@ -3242,33 +3242,45 @@ describe('issue / PR / review templates (#337)', () => {
 // + test)", addBlockedBy: [...])` sailed through green. That is not a contrived shape — audit's own
 // task descriptions carry parenthesised asides. A guard that cannot fail is worse than no guard.
 //
-// So: walk the call, tracking paren DEPTH and treating double-quoted strings as opaque, and return
-// the real body. Parens inside a string, and balanced parens inside an argument, both stop lying.
-// An unterminated `(` is not a call — drop it, so prose can never be mistaken for one.
+// So: walk the call, tracking paren DEPTH and treating QUOTED STRINGS as opaque, and return the real
+// body. Parens inside a string, and balanced parens inside an argument, both stop lying. An
+// unterminated `(` is not a call — drop it, so prose can never be mistaken for one.
+//
+// Both quote characters count. Handling only `"` left the identical hole one keystroke away:
+// `subject: 'smiley :)'` closed the scan early and hid every argument after it.
+//
+// But an apostrophe is not a quote — `message: <the agent's summary>` must not open a string and
+// swallow the rest of the call (which would DROP the call as unterminated and silently shrink the
+// guard's reach). So a quote opens a string only in VALUE POSITION: when the last non-whitespace
+// character before it opened or separated an argument (`:` `,` `(` `[` `{`). An apostrophe that
+// follows a letter is just an apostrophe.
+const OPENS_VALUE = new Set([':', ',', '(', '[', '{']);
 const callBodies = (md, tool) => {
   const bodies = [];
   const re = new RegExp(`\\b${tool}\\(`, 'g');
   let m;
   while ((m = re.exec(md)) !== null) {
     let depth = 1;
-    let inString = false;
+    let quote = null;
     let closed = false;
     let body = '';
+    let prev = '(';
     for (let i = m.index + m[0].length; i < md.length; i++) {
       const c = md[i];
-      if (inString) {
+      if (quote) {
         if (c === '\\') { body += c + (md[i + 1] ?? ''); i++; continue; }
-        if (c === '"') inString = false;
+        if (c === quote) quote = null;
         body += c;
         continue;
       }
-      if (c === '"') { inString = true; body += c; continue; }
+      if ((c === '"' || c === "'") && OPENS_VALUE.has(prev)) { quote = c; body += c; prev = c; continue; }
       if (c === '(') depth++;
       if (c === ')') {
         depth--;
         if (depth === 0) { closed = true; break; }
       }
       body += c;
+      if (!/\s/.test(c)) prev = c;
     }
     if (closed) bodies.push(body);
   }
@@ -3370,42 +3382,69 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
     }
   });
 
-  // The audit chain is six NAMED agents; the name is the address for SendMessage and TaskStop.
+  // The audit chain is NAMED agents; the name is the address for SendMessage and TaskStop, and every
+  // agent spawned must be stood down. The roster is DERIVED FROM THE SKILL — read out of audit's own
+  // `Agent(... name: "X" ...)` calls — never maintained beside it.
   //
-  // This list said "six" and named FIVE. The missing one was the compliance agent — and it went
-  // missing precisely because it is the one agent whose name is a PLACEHOLDER: it is
-  // `{{audit.complianceAgentName}}` in the source and its configured value in the render, so a
-  // literal that matched one surface could not match the other, and it was quietly dropped instead.
-  // The result: the single agent in the chain whose teardown went unasserted could leak, and the
-  // test named for catching exactly that stayed green. Match EITHER form, check BOTH surfaces (the
-  // source is the edit surface — the F2 lesson), and pin the count so "six" is enforced, not merely
-  // claimed.
-  const AUDIT_AGENTS = [
-    { label: 'architecture-pass', name: 'architecture-pass' },
-    { label: 'security-pass1', name: 'security-pass1' },
-    // The compliance agent — a placeholder in the source, its configured value in the render.
-    { label: 'the compliance agent', name: '(?:\\{\\{audit\\.complianceAgentName\\}\\}|toolkit-integrity)' },
-    { label: 'docs-agent', name: 'docs-agent' },
-    { label: 'docs-human', name: 'docs-human' },
-    { label: 'security-final', name: 'security-final' },
-  ];
+  // A hand-maintained list is how this went wrong twice, in both directions. First it lost an agent
+  // the skill HAS: the compliance agent was dropped (it is the one whose name is a placeholder —
+  // `{{audit.complianceAgentName}}` in the source, its configured value in the render — so no single
+  // literal matched both surfaces), leaving the only unasserted teardown in the chain, and the test
+  // named for catching a leak stayed green. Then, once the list's CONTENTS were fixed, the same hole
+  // opened in the opposite direction: the skill could GAIN an agent the list lacked. A seventh spawn
+  // with no TaskStop passed green, because `AUDIT_AGENTS.length === 6` pinned the LIST's length, not
+  // the SKILL's agent count.
+  //
+  // Deriving the roster closes both directions at once: whatever the skill spawns is what gets
+  // checked. The count pin below is now a change-DETECTOR on the skill, not a claim about a list.
+  const auditSpawnRoster = (md) =>
+    callBodies(md, 'Agent')
+      .map((body) => body.match(/name:\s*"([^"]+)"/))
+      .filter(Boolean)
+      .map((m) => m[1]);
 
-  test('audit spawns six named agents and stops every one of them', () => {
-    assert.equal(AUDIT_AGENTS.length, 6, 'the audit chain is six agents — this list must name all six');
-    const auditFiles = [
+  // Who actually gets a shutdown_request — read out of the SendMessage calls, so alignment padding
+  // and argument order cannot make a real teardown look missing (or a missing one look real).
+  const shutdownTargets = (md) =>
+    callBodies(md, 'SendMessage')
+      .filter((body) => /shutdown_request/.test(body))
+      .map((body) => body.match(/to:\s*"([^"]+)"/))
+      .filter(Boolean)
+      .map((m) => m[1]);
+
+  const auditFiles = () =>
+    [
       path.join(STACKS, 'orchestration', 'skills', 'audit', 'SKILL.md'),
       path.join(CLAUDE, 'skills', 'audit', 'SKILL.md'),
     ].filter((f) => fs.existsSync(f));
-    assert.ok(auditFiles.length > 0, 'the audit skill is on neither surface — the sweep would vacuously pass');
 
-    for (const f of auditFiles) {
+  test('audit stops every named agent it spawns — roster derived from the skill, not kept beside it', () => {
+    const files = auditFiles();
+    assert.ok(files.length > 0, 'the audit skill is on neither surface — this test would vacuously pass');
+
+    for (const f of files) {
       const md = fs.readFileSync(f, 'utf8');
-      for (const { label, name } of AUDIT_AGENTS) {
-        assert.match(md, new RegExp(`name: "${name}"`), `${who(f)}: no longer spawns ${label} by name`);
+      const roster = auditSpawnRoster(md);
+
+      // The skill's own spawn count. If audit really does gain or lose an agent, this fails and the
+      // number is updated DELIBERATELY — which is the point. It must never drift silently.
+      assert.equal(
+        roster.length,
+        6,
+        `${who(f)}: audit's chain is six named agents, but the skill spawns ${roster.length} (${roster.join(', ')}) — if the chain genuinely changed, update this pin on purpose`,
+      );
+
+      const shutdowns = shutdownTargets(md);
+      for (const name of roster) {
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        assert.ok(
+          shutdowns.includes(name),
+          `${who(f)}: spawns ${name} but never sends it shutdown_request — teardown is shutdown-THEN-stop`,
+        );
         assert.match(
           md,
-          new RegExp(`TaskStop\\(task_id: "${name}"\\)`),
-          `${who(f)}: spawns ${label} but never stops it — a leaked agent`,
+          new RegExp(`TaskStop\\(task_id: "${esc}"\\)`),
+          `${who(f)}: spawns ${name} but never stops it — a leaked agent`,
         );
       }
     }
@@ -3423,13 +3462,44 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
 // So this guard reads the skills' JSON assets too. A dead concept left describing live state is the
 // #360 bug in prose form: it reads as authoritative to the next agent that follows it.
 describe('source + rendered content: the abolished team concept does not survive in prose (#360)', () => {
-  // Narrow by design. The legitimate uses — "a single implicit team", `team_name` (naming the
-  // deprecated param to say it is ignored), and `team-lead` (a live SendMessage recipient) — must
-  // keep passing; only phrasings that describe a team as a thing that EXISTS are forbidden.
-  const ABOLISHED = [
-    { pattern: /\bdelegate team\b/i, why: 'delegate creates no team — the session has a single implicit team' },
-    { pattern: /\bthe team name\b/i, why: 'there is no team to name — <runId> identifies the run, not a team' },
+  // DENY BY DEFAULT. The first version of this guard was a denylist of the two phrasings that had
+  // happened to be found — `delegate team` and `the team name` — which is a guard that can only ever
+  // catch the regressions already fixed. A review restored git-workflow's pre-#360 paragraph
+  // VERBATIM ("Create a team per delegate run.") and the test named "the abolished team concept does
+  // not survive in prose" passed green. A denylist of known phrasings cannot back that name.
+  //
+  // So the polarity is inverted: the bare word `team` is BANNED across every swept file, and the
+  // legitimate uses are ALLOWLISTED — each one annotated with why it is legitimate. A new way of
+  // saying "create a team" now fails by default; admitting a genuinely new legitimate use is a
+  // deliberate edit to this list, which is exactly the decision that should be deliberate.
+  //
+  // Inverting it immediately found two stale references the denylist never could: clean-up still
+  // advertised a `teams` ARG, and standup called its scaffold audit's "minus the team" — implying
+  // audit has one. Both are fixed; that is the difference between the two polarities.
+  const ALLOWED_TEAM_USES = [
+    { pattern: /team-lead/gi, why: 'a live SendMessage recipient — the harness\'s own label for the main loop' },
+    { pattern: /the team lead/gi, why: 'the human/main-loop recipient, in prose' },
+    { pattern: /team_name/gi, why: 'the deprecated Agent parameter, named in order to say it is ignored' },
+    { pattern: /Team(Create|Delete|List)/g, why: 'the dead tools, named in order to say they no longer exist' },
+    { pattern: /single implicit team/gi, why: 'the harness\'s actual model — one implicit team per session' },
+    { pattern: /no teams?\b/gi, why: 'a negation: "there is no team to create", "no teams to hunt for"' },
+    { pattern: /not a team/gi, why: 'a negation: "<runId> names the run, not a team"' },
+    { pattern: /not create a team/gi, why: 'a negation: "do not create a team"' },
+    // Not about THIS harness's team lifecycle — general agent-harness design vocabulary.
+    { pattern: /subagent teams/gi, why: 'harness-architect: a design topic, not an instruction to create one' },
+    { pattern: /team beats a single loop/gi, why: 'harness-architect: generic fan-out design advice' },
+    { pattern: /engineering-team/gi, why: 'a stack name that merely contains the word' },
+    { pattern: /Team Standup/gi, why: 'the standup skill\'s title' },
   ];
+
+  // Markdown emphasis and line wrapping must not smuggle a phrase past the allowlist: "do **not**
+  // create a team" and a sentence broken across two lines are the same words to a reader.
+  const normalize = (s) => s.replace(/[*_`]/g, '').replace(/\s+/g, ' ');
+  const residualTeamUses = (md) => {
+    let t = normalize(md);
+    for (const { pattern } of ALLOWED_TEAM_USES) t = t.replace(pattern, '');
+    return t.match(/.{0,50}\bteams?\b.{0,30}/gi) ?? [];
+  };
 
   const skillAssetFiles = () =>
     stackDirs()
@@ -3449,25 +3519,50 @@ describe('source + rendered content: the abolished team concept does not survive
           : [];
       });
 
-  test('no skill, agent, or skill asset describes a team that exists', () => {
+  test('no skill, agent, or skill asset uses the word "team" outside an allowlisted, legitimate sense', () => {
     const swept = [...sourceSkillFiles(), ...sourceAgentFiles(), ...skillAssetFiles(), ...renderedSkillFiles(), ...renderedAgentFiles()];
     assert.ok(skillAssetFiles().length > 0, 'the asset walk returned [] — every assertion below would vacuously pass');
     for (const f of swept) {
-      const md = fs.readFileSync(f, 'utf8');
-      for (const { pattern, why } of ABOLISHED) {
-        assert.doesNotMatch(md, pattern, `${who(f)}: ${why}`);
-      }
+      const residual = residualTeamUses(fs.readFileSync(f, 'utf8'));
+      assert.deepEqual(
+        residual,
+        [],
+        `${who(f)}: uses "team" in a sense that is not allowlisted — #360 abolished the team CONCEPT, not just the Team* calls. Either reword it, or, if this is a genuinely legitimate new use, add it to ALLOWED_TEAM_USES with a reason. Found: ${JSON.stringify(residual)}`,
+      );
     }
   });
 
-  test('the legitimate uses of "team" still pass — this guard is narrow, not a word ban', () => {
+  // Deny-by-default earns its keep only if it does not over-match. Pin the legitimate uses so this
+  // stays a guard and never degenerates into a word ban that forces contorted prose.
+  test('the legitimate uses of "team" still pass — deny-by-default, not a word ban', () => {
     const legit = [
-      'the session has a single implicit team, and `TeamCreate` no longer exists',
+      'the session has a **single implicit team**, and `TeamCreate` / `TeamDelete` no longer exist',
       "the `Agent` tool's `team_name` parameter is deprecated and ignored",
       'SendMessage(to: "team-lead", message: <summary>, summary: "issue #1: PR opened")',
+      'Send a findings summary to the team lead.',
       'There are **no teams to hunt for**.',
-    ].join('\n');
-    for (const { pattern } of ABOLISHED) assert.doesNotMatch(legit, pattern);
+      'There is **no team to create**.',
+      'It names the *run*, not a team.',
+      'Do **not** create a team and do **not** create tasks.',
+    ];
+    for (const line of legit) {
+      assert.deepEqual(residualTeamUses(line), [], `over-matched a legitimate use: ${line}`);
+    }
+  });
+
+  // ...and it must still catch the dead concept in any phrasing, including ones never seen before.
+  test('deny-by-default catches phrasings no denylist had ever seen', () => {
+    const dead = [
+      // git-workflow's pre-#360 paragraph, restored verbatim — the exact regression that passed green.
+      'Teams and worktrees are orthogonal — teams provide coordination (task tracking, messaging), worktrees provide isolation. **Create a team per delegate run.**',
+      // Phrasings no denylist would have listed.
+      'Spin up a team for the run and tear it down afterwards.',
+      'Each parallel group gets its own team.',
+      'The orchestrator owns the team lifecycle.',
+    ];
+    for (const line of dead) {
+      assert.notDeepEqual(residualTeamUses(line), [], `let the abolished concept through: ${line}`);
+    }
   });
 });
 
@@ -3524,5 +3619,38 @@ describe('the #360 guard can actually fail (regression fixtures)', () => {
   // later `content:` in the document would read as an argument of it.
   test('an unterminated paren in prose is not treated as a call', () => {
     assert.deepEqual(callBodies('mention SendMessage( in passing\n\nlater content: here', 'SendMessage'), []);
+  });
+
+  // Round 2 of the review: handling only `"` left the F6 hole one keystroke away.
+  test("a `)` inside a SINGLE-quoted string no longer hides a dead primitive", () => {
+    const smuggled = "TaskCreate(subject: 'smiley :)', addBlockedBy: [task1.id])";
+    const bodies = callBodies(smuggled, 'TaskCreate');
+    assert.equal(bodies.length, 1, 'the single-quoted string must be opaque, not a scan terminator');
+    assert.match(bodies[0], /addBlockedBy/, "a `)` inside a '…' string used to truncate the body and hide everything after it");
+  });
+
+  // ...but an apostrophe is not a quote. If it opened a string, the call would run to EOF, be dropped
+  // as unterminated, and the guard would silently SHRINK — a weakened guard dressed as a fixed one.
+  test("an apostrophe in an unquoted argument does not swallow the call", () => {
+    const withApostrophe = 'SendMessage(to: "x", message: <the agent\'s summary>, content: bad)';
+    const bodies = callBodies(withApostrophe, 'SendMessage');
+    assert.equal(bodies.length, 1, "the apostrophe in \"agent's\" must not open a string and drop the call");
+    assert.match(bodies[0], /\bcontent:/, 'the dead content: param must still be visible after the apostrophe');
+  });
+
+  // The roster is derived from the skill, so the skill GAINING an unstopped agent must fail. The
+  // hand-maintained list could not see this: pinning the LIST's length says nothing about the SKILL's.
+  test('a seventh audit agent with no TaskStop is caught by the derived roster', () => {
+    const skill = [
+      'Agent(\n  subagent_type: "a",\n  name: "architecture-pass",\n  prompt: <p>\n)',
+      'Agent(\n  subagent_type: "b",\n  name: "perf-pass",\n  prompt: <p>\n)',
+      'TaskStop(task_id: "architecture-pass")',
+    ].join('\n');
+    const roster = callBodies(skill, 'Agent')
+      .map((b) => b.match(/name:\s*"([^"]+)"/))
+      .filter(Boolean)
+      .map((m) => m[1]);
+    assert.deepEqual(roster, ['architecture-pass', 'perf-pass'], 'the roster must be read out of the skill itself');
+    assert.doesNotMatch(skill, /TaskStop\(task_id: "perf-pass"\)/, 'the seventh agent is spawned and never stopped — this is the leak');
   });
 });
