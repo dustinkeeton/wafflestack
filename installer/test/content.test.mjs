@@ -3234,6 +3234,51 @@ describe('issue / PR / review templates (#337)', () => {
 // no future edit can reintroduce a dead primitive. That reach is the point: a render-only sweep
 // guards just the stacks THIS repo happens to install, and a regression in any other stack ships
 // green. This is the guard that #360 wished it had.
+// Extract the ARGUMENT TEXT of every `<tool>(...)` call in a markdown file.
+//
+// The first version of this guard matched `TaskCreate\([^)]*addBlockedBy` — and `[^)]*` stops at the
+// FIRST `)`, which is very often a paren *inside a string argument*, long before the call's own
+// closing paren. A dead primitive placed after one was invisible: `TaskCreate(description: "(validate
+// + test)", addBlockedBy: [...])` sailed through green. That is not a contrived shape — audit's own
+// task descriptions carry parenthesised asides. A guard that cannot fail is worse than no guard.
+//
+// So: walk the call, tracking paren DEPTH and treating double-quoted strings as opaque, and return
+// the real body. Parens inside a string, and balanced parens inside an argument, both stop lying.
+// An unterminated `(` is not a call — drop it, so prose can never be mistaken for one.
+const callBodies = (md, tool) => {
+  const bodies = [];
+  const re = new RegExp(`\\b${tool}\\(`, 'g');
+  let m;
+  while ((m = re.exec(md)) !== null) {
+    let depth = 1;
+    let inString = false;
+    let closed = false;
+    let body = '';
+    for (let i = m.index + m[0].length; i < md.length; i++) {
+      const c = md[i];
+      if (inString) {
+        if (c === '\\') { body += c + (md[i + 1] ?? ''); i++; continue; }
+        if (c === '"') inString = false;
+        body += c;
+        continue;
+      }
+      if (c === '"') { inString = true; body += c; continue; }
+      if (c === '(') depth++;
+      if (c === ')') {
+        depth--;
+        if (depth === 0) { closed = true; break; }
+      }
+      body += c;
+    }
+    if (closed) bodies.push(body);
+  }
+  return bodies;
+};
+
+// A call-shaped `SendMessage(... "shutdown_request" ...)`, and a call-shaped `TaskStop(task_id: ...)`.
+const sendsShutdownRequest = (md) => callBodies(md, 'SendMessage').some((b) => /shutdown_request/.test(b));
+const stopsTask = (md) => callBodies(md, 'TaskStop').some((b) => /task_id:/.test(b));
+
 describe('source + rendered content: no dead harness primitives (#360)', () => {
   // Sweep the SOURCES (`stacks/**`, the edit surface) *and* the render. Renders alone would guard
   // only the stacks this repo happens to install — see the sourceSkillFiles() note above.
@@ -3283,37 +3328,144 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
       assert.doesNotMatch(md, /TaskStop\(\s*taskId:/, `${who(f)}: TaskStop's key is task_id, not taskId`);
       // TaskList takes no parameters at all.
       assert.doesNotMatch(md, /TaskList\(\s*[^)\s]/, `${who(f)}: TaskList takes no parameters`);
-      // TaskCreate requires subject + description — it has no addBlockedBy.
-      assert.doesNotMatch(md, /TaskCreate\([^)]*addBlockedBy/s, `${who(f)}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
+      // TaskCreate requires subject + description — it has no addBlockedBy. Read the REAL call body:
+      // a `)` inside a description string must not end the scan (see callBodies).
+      for (const body of callBodies(md, 'TaskCreate')) {
+        assert.doesNotMatch(body, /addBlockedBy/, `${who(f)}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
+      }
     }
   });
 
   test('SendMessage uses `message:`, never the nonexistent `content:`', () => {
     for (const f of files()) {
       const md = fs.readFileSync(f, 'utf8');
-      assert.doesNotMatch(md, /SendMessage\([^)]*content:/, `${who(f)}: SendMessage takes message: (+ summary:), not content:`);
+      // Likewise on the real call body — a paren in a `summary:` string used to hide a `content:`.
+      for (const body of callBodies(md, 'SendMessage')) {
+        assert.doesNotMatch(body, /\bcontent:/, `${who(f)}: SendMessage takes message: (+ summary:), not content:`);
+      }
     }
   });
 
   // Teardown is shutdown-then-stop. shutdown_request is the polite first step but is NOT reliable
   // on its own — a requested agent can go idle and stay alive. TaskStop is what terminates it.
   // Every skill that stands an agent down must do BOTH.
+  //
+  // This asserts the CALLS, not the words. The first version tested file-wide substring presence
+  // (`/shutdown_request/` and `/TaskStop/` anywhere in the file) — which every one of these skills
+  // satisfies from its explanatory PROSE alone. Deleting a skill's entire teardown code block, the
+  // actual calls an orchestrator executes, left the suite green. The words are not the instruction:
+  // require a real `SendMessage(...shutdown_request...)` and a real `TaskStop(task_id: ...)`, and
+  // require the stop to come AFTER the request — that is what "shutdown-THEN-stop" means.
   test('teardown is shutdown-then-stop in audit, delegate, autopilot, and clean-up', () => {
     for (const name of ['audit', 'delegate', 'autopilot', 'clean-up']) {
       const md = readSkill(name);
-      assert.match(md, /shutdown_request/, `${name}: lost the polite shutdown_request first step`);
-      assert.match(md, /TaskStop/, `${name}: shutdown_request alone does not reliably terminate an agent — TaskStop must follow it`);
+      assert.ok(sendsShutdownRequest(md), `${name}: lost the polite shutdown_request first step — the CALL, not just the word in prose`);
+      assert.ok(stopsTask(md), `${name}: shutdown_request alone does not reliably terminate an agent — a TaskStop(task_id:) CALL must follow it`);
+      const firstShutdown = md.search(/SendMessage\([^\n]*shutdown_request/);
+      const lastStop = md.lastIndexOf('TaskStop(task_id:');
+      assert.ok(
+        firstShutdown !== -1 && lastStop > firstShutdown,
+        `${name}: teardown is shutdown-THEN-stop — no TaskStop(task_id:) call follows the shutdown_request`,
+      );
     }
   });
 
   // The audit chain is six NAMED agents; the name is the address for SendMessage and TaskStop.
+  //
+  // This list said "six" and named FIVE. The missing one was the compliance agent — and it went
+  // missing precisely because it is the one agent whose name is a PLACEHOLDER: it is
+  // `{{audit.complianceAgentName}}` in the source and its configured value in the render, so a
+  // literal that matched one surface could not match the other, and it was quietly dropped instead.
+  // The result: the single agent in the chain whose teardown went unasserted could leak, and the
+  // test named for catching exactly that stayed green. Match EITHER form, check BOTH surfaces (the
+  // source is the edit surface — the F2 lesson), and pin the count so "six" is enforced, not merely
+  // claimed.
+  const AUDIT_AGENTS = [
+    { label: 'architecture-pass', name: 'architecture-pass' },
+    { label: 'security-pass1', name: 'security-pass1' },
+    // The compliance agent — a placeholder in the source, its configured value in the render.
+    { label: 'the compliance agent', name: '(?:\\{\\{audit\\.complianceAgentName\\}\\}|toolkit-integrity)' },
+    { label: 'docs-agent', name: 'docs-agent' },
+    { label: 'docs-human', name: 'docs-human' },
+    { label: 'security-final', name: 'security-final' },
+  ];
+
   test('audit spawns six named agents and stops every one of them', () => {
-    const md = readSkill('audit');
-    for (const agent of ['architecture-pass', 'security-pass1', 'docs-agent', 'docs-human', 'security-final']) {
-      assert.match(md, new RegExp(`name: "${agent}"`), `audit: no longer spawns ${agent} by name`);
-      assert.match(md, new RegExp(`TaskStop\\(task_id: "${agent}"\\)`), `audit: spawns ${agent} but never stops it — a leaked agent`);
+    assert.equal(AUDIT_AGENTS.length, 6, 'the audit chain is six agents — this list must name all six');
+    const auditFiles = [
+      path.join(STACKS, 'orchestration', 'skills', 'audit', 'SKILL.md'),
+      path.join(CLAUDE, 'skills', 'audit', 'SKILL.md'),
+    ].filter((f) => fs.existsSync(f));
+    assert.ok(auditFiles.length > 0, 'the audit skill is on neither surface — the sweep would vacuously pass');
+
+    for (const f of auditFiles) {
+      const md = fs.readFileSync(f, 'utf8');
+      for (const { label, name } of AUDIT_AGENTS) {
+        assert.match(md, new RegExp(`name: "${name}"`), `${who(f)}: no longer spawns ${label} by name`);
+        assert.match(
+          md,
+          new RegExp(`TaskStop\\(task_id: "${name}"\\)`),
+          `${who(f)}: spawns ${label} but never stops it — a leaked agent`,
+        );
+      }
     }
     // Dependencies are wired AFTER create, with TaskUpdate.
-    assert.match(md, /TaskUpdate\(taskId: task2\.id, addBlockedBy: \[task1\.id\]\)/);
+    assert.match(readSkill('audit'), /TaskUpdate\(taskId: task2\.id, addBlockedBy: \[task1\.id\]\)/);
+  });
+});
+
+// A guard is only worth its green if it can go red. The first version of the #360 sweep could not:
+// an adversarial review reintroduced this PR's OWN headline catches — and the suite passed, with the
+// very tests named for catching them reported `ok`. These are the shapes it smuggled past, pinned as
+// fixtures. If a future edit re-loosens the patterns, THESE fail — not a real regression six months
+// from now, on a PR nobody is reading closely.
+describe('the #360 guard can actually fail (regression fixtures)', () => {
+  // The exact shape the review slipped past `TaskCreate\([^)]*addBlockedBy`: the `)` closing the
+  // parenthesised aside in `description:` ended the old scan before `addBlockedBy` was ever reached.
+  test('a `)` inside a string argument no longer hides a dead TaskCreate(addBlockedBy:)', () => {
+    const smuggled = 'TaskCreate(subject: "audit", description: "run the gate (validate + test + render + doctor).", addBlockedBy: [task1.id])';
+    const bodies = callBodies(smuggled, 'TaskCreate');
+    assert.equal(bodies.length, 1, 'the call body must be extracted whole, not truncated at the first paren');
+    assert.match(bodies[0], /addBlockedBy/, 'the old [^)]* scan stopped at the paren inside description: and missed this');
+
+    // ...and a legitimate TaskCreate with a parenthesised aside stays clean (no false positive).
+    const clean = 'TaskCreate(subject: "audit", description: "run the gate (validate + test).")';
+    assert.doesNotMatch(callBodies(clean, 'TaskCreate')[0], /addBlockedBy/);
+  });
+
+  // Same hole, guarding this PR's own headline catch: a paren in `summary:` hid a `content:`.
+  test('a `)` inside a string argument no longer hides a dead SendMessage(content:)', () => {
+    const smuggled = 'SendMessage(to: "team-lead", summary: "audit pass (complete)", content: <summary>)';
+    const bodies = callBodies(smuggled, 'SendMessage');
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /\bcontent:/, 'the old [^)]* scan stopped at the paren inside summary: and missed this');
+
+    const clean = 'SendMessage(to: "team-lead", summary: "audit pass (complete)", message: <summary>)';
+    assert.doesNotMatch(callBodies(clean, 'SendMessage')[0], /\bcontent:/);
+  });
+
+  // The teardown assertion used to be file-wide substring presence, so the PROSE alone satisfied it
+  // and the actual calls could be deleted wholesale. Prose must no longer count as an instruction.
+  test('prose that merely NAMES shutdown_request and TaskStop no longer counts as a teardown', () => {
+    const proseOnly = [
+      'Teardown is shutdown-then-stop: `shutdown_request` is the polite first step, and it is not',
+      'reliable on its own — `TaskStop` is what actually terminates the agent.',
+    ].join('\n');
+    assert.ok(!sendsShutdownRequest(proseOnly), 'a paragraph mentioning shutdown_request is not a SendMessage call');
+    assert.ok(!stopsTask(proseOnly), 'a paragraph mentioning TaskStop is not a TaskStop(task_id:) call');
+
+    // The real teardown — the calls an orchestrator executes — still reads as one.
+    const realTeardown = [
+      'SendMessage(to: "issue-1-agent", message: {type: "shutdown_request", reason: "Delegation complete"})',
+      'TaskStop(task_id: "issue-1-agent")',
+    ].join('\n');
+    assert.ok(sendsShutdownRequest(realTeardown));
+    assert.ok(stopsTask(realTeardown));
+  });
+
+  // An unterminated `(` in prose is not a call — otherwise the extractor would run to EOF and any
+  // later `content:` in the document would read as an argument of it.
+  test('an unterminated paren in prose is not treated as a call', () => {
+    assert.deepEqual(callBodies('mention SendMessage( in passing\n\nlater content: here', 'SendMessage'), []);
   });
 });
