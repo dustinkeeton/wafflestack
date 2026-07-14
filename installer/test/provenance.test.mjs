@@ -277,6 +277,30 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.commit, head());
   });
 
+  test('A CHECKOUT NEVER QUERIES THE REMOTE — so the refusal must hedge, never assert', () => {
+    // The THIRD state that reaches `latestTag === null`, and the one the `origin === 'npm-install'`
+    // conjunct in `provablyNone` exists to catch. A checkout has `lookupError === null` — nothing
+    // FAILED; the checkout path simply never asks — so `lookupError` alone does NOT discriminate it.
+    // Only `origin` does. Delete that conjunct and this checkout asserts "acme/toolkit has no
+    // vX.Y.Z release tags" about a remote it never contacted: the exact over-claim class this PR has
+    // now shipped twice (round 1's "a bare `upgrade` would refuse"; round 2's "there is no release
+    // to pin to"). Without this test the whole guard rests on one conjunct a refactor can silently
+    // drop — and the suite stayed green when I dropped it.
+    git('tag', '-d', 'v0.9.0'); // no local release tags…
+    write(work, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n- work in progress\n'); // …and no `## [X.Y.Z]` to fall back on
+    const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+
+    assert.equal(id.status, 'unreleased');
+    assert.equal(id.origin, 'checkout');
+    assert.equal(id.latestTag, null, 'nothing can name a tag: no local v* tags, no version headings');
+    assert.equal(id.lookupError, null, 'and nothing FAILED — which is exactly why `lookupError` cannot discriminate this');
+
+    const msg = formatUnreleasedRefusal(id, 'render');
+    assert.doesNotMatch(msg, /has no `vX\.Y\.Z` release tags/, 'a checkout never asked the remote — it cannot say that');
+    assert.match(msg, /No `vX\.Y\.Z` release of acme\/toolkit is known to this CLI/);
+    assert.match(msg, /there may well be one to pin to that this run cannot see/);
+  });
+
   test('THE CONTRACT #374/#372 REST ON: `status: release` does NOT imply a non-null `ref`', () => {
     // The JSDoc says `ref` is non-null ONLY for a release. True — and one-directional, which is the
     // trap: it does not say non-null WHENEVER. `status` is fixed at 'release' by `git describe`
