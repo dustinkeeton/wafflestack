@@ -107,8 +107,10 @@ hook). Full detail in the CHANGELOG's `[0.11.0]` section.
   - **`--no-color` is missing** from the `help` flag list; the flag itself works.
 - **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
 - **The self-render is committed.** After editing anything under `stacks/**`,
-  `schema/**`, or `installer/**`, re-run `node installer/cli.mjs render` and commit the
-  updated files + lock — the `waffle-doctor` required check fails PRs on drift, and the
+  `schema/**`, or `installer/**`, re-run `node installer/cli.mjs render --allow-unreleased`
+  and commit the updated files + lock. The flag is **required** (#373): `render` refuses
+  from a toolkit that is not at a release tag, and a feature branch never is — it
+  suppresses the refusal, not the truth. The `waffle-doctor` required check fails PRs on drift, and the
   `tests` workflow's `doctor --allow-missing --verify-render` step (#316) fails PRs whose
   committed inputs no longer reproduce the committed lock (a forgotten re-render).
 - **Deliberately gitignored here** (tolerated by `doctor --allow-missing`):
@@ -131,8 +133,8 @@ hook). Full detail in the CHANGELOG's `[0.11.0]` section.
 ```bash
 npm test                          # installer test suite (966 tests, 128 suites)
 npm run validate                  # manifests + placeholders lint
-node installer/cli.mjs render     # regenerate this repo's rendered files
-node installer/cli.mjs doctor     # confirm no drift vs. the lock
-node installer/cli.mjs doctor --allow-missing --verify-render   # committed inputs reproduce the lock
+node installer/cli.mjs render --allow-unreleased   # regenerate this repo's rendered files (flag required, #373)
+node installer/cli.mjs doctor     # confirm no drift vs. the lock (not gated)
+node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # committed inputs reproduce the lock (--verify-render renders ⇒ gated, #373)
 npm run evals -- --dry-run        # Layer-2 eval harness, mock model (free); --max-calls N for a live run
 ```

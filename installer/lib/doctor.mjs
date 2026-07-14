@@ -79,8 +79,17 @@ function noVerify() {
  * lock when there is one, else the committed one — which is by construction the manifest of the
  * files that are actually there. The two coexist without overlapping: one asks "has anyone edited my
  * rendered files", the other "does the committed config still produce the committed lock".
+ *
+ * `toolkitIdentity` (#373, optional) is what the CLI worked out about ITSELF — release / unreleased /
+ * unverified, and the ref that reproduces it. Doctor does not gate on it (plain doctor reads no
+ * toolkit content, so it is correct from any toolkit, and gating it would red the unpinned-by-default
+ * `waffle-doctor.yml` for every consumer). It uses it for one thing: to keep the version-skew remedy
+ * pointing at a PINNED command, so the reader is not sent to re-fetch the default branch. Note that
+ * the identity plain doctor is handed is the OFFLINE one, which on an npx install cannot reach
+ * `release` at all — so the note describes the CLI in hand and never predicts what the gate will do
+ * (see the note itself). Absent, the remedy reads exactly as it always did.
  */
-export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
   const lock = readLock(cwd);
   if (!lock) {
     return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, prerequisites: noPrereqs(), render: noVerify() };
@@ -138,7 +147,25 @@ export function doctor({ cwd, toolkitVersion, allowMissing = false, verifyRender
       : `rendered by toolkit ${rendered}`,
   );
   if (toolkitVersion && lock.toolkitVersion && toolkitVersion !== lock.toolkitVersion) {
-    notes.push(`version skew — run \`wafflestack upgrade\` to apply migrations and re-render`);
+    // The remedy has to be a command that WORKS (#373). `wafflestack upgrade` is `npx
+    // github:dustinkeeton/wafflestack upgrade` for most people, which resolves the DEFAULT BRANCH —
+    // so whenever the CLI printing this note is not itself a verified release, the pinned command is
+    // the one to name: it both works and renders what its version claims.
+    //
+    // What this note must NOT do is predict the GATE (#373 review). It reasons from the identity
+    // plain `doctor` is handed, which is the OFFLINE one — and offline, an npx install can never
+    // reach `release` at all (the lookup is short-circuited, and `corroborate()` only ever tightens
+    // toward `unreleased`). So `status` here is `unverified` on essentially every npx path,
+    // INCLUDING one pinned to an exact release tag. Meanwhile `requireRelease()` refuses only on
+    // `unreleased`, and it resolves its OWN networked identity — which reclassifies that same commit
+    // as `release` and proceeds. The old text said "this CLI is unverified, so a bare `upgrade` would
+    // refuse": wrong in both directions, on the most common consumer path there is. State what is
+    // true of the CLI in hand, and let the gate speak for itself.
+    notes.push(
+      toolkitIdentity && toolkitIdentity.status !== 'release' && toolkitIdentity.latestTag && toolkitIdentity.repo
+        ? `version skew — run \`npx --yes github:${toolkitIdentity.repo}#${toolkitIdentity.latestTag} upgrade\` to apply migrations and re-render (this CLI is ${toolkitIdentity.status}; a bare \`upgrade\` re-fetches the default branch)`
+        : 'version skew — run `wafflestack upgrade` to apply migrations and re-render',
+    );
   }
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');

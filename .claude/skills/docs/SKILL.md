@@ -18,7 +18,9 @@ Spawn the `harness-architect` agent with this prompt:
 - Changed installer exports or template semantics (`installer/lib/*.mjs`)
 - `stack.yaml` config declarations out of sync with placeholder usage
 - Rendered-output drift: `node installer/cli.mjs doctor --allow-missing` clean
-  (committed render + lock in sync — re-render and commit after stack edits);
+  (committed render + lock in sync — re-render and commit after stack edits, with
+  `node installer/cli.mjs render --allow-unreleased`: #373 makes `render` refuse from a
+  non-release toolkit, and a branch checkout never is one; plain `doctor` needs no flag);
   `.gitignore` still covers the deliberately-untracked renders (label-hook
   workflow, worktrees, `.waffle/` overview docs)
 >

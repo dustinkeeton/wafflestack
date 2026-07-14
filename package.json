@@ -5,6 +5,10 @@
   "private": true,
   "description": "Canonical agent/skill definitions rendered into harness-native files (.claude/, .codex/, .agents/) for any consuming project",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dustinkeeton/wafflestack.git"
+  },
   "bin": {
     "wafflestack": "installer/cli.mjs"
   },

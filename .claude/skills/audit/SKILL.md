@@ -156,7 +156,7 @@ Run the toolkit's own checks in order and report violations:
 
 1. `npm run validate` — manifests parse, frontmatter is complete, every placeholder is declared
 2. `npm test` — installer suite passes
-3. `node installer/cli.mjs render && node installer/cli.mjs doctor` — rendered output matches the lock (no hand-edits to generated `.claude/` files)
+3. `node installer/cli.mjs render --allow-unreleased && node installer/cli.mjs doctor` — rendered output matches the lock (no hand-edits to generated `.claude/` files). The flag is required (#373): `render` refuses from a toolkit that is not at a release tag, and a branch checkout never is; plain `doctor` is not gated and needs nothing.
 4. Spot-check changed stacks: every placeholder used in content is declared in that `stack.yaml`; `setup:` notes contain no placeholders
 
 Fix what your role permits (source side only, then re-render); otherwise report each failure with the command output quoted.

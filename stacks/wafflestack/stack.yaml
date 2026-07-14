@@ -21,8 +21,16 @@ config:
     default: github:dustinkeeton/wafflestack
     description: >-
       npx spec every `/waffle-*` skill invokes as `npx --yes <ref> <subcommand>` —
-      the same knob as the doctor CI workflow's `doctor.toolkitRef`. Pin to a release
-      tag to freeze the toolkit version the wrappers run (and match the version this
-      repo is pinned to), e.g. "github:dustinkeeton/wafflestack#v0.10.0". Point it at
-      a local checkout path (or use `node installer/cli.mjs` directly) when developing
-      the toolkit itself.
+      the same knob as the doctor CI workflow's `doctor.toolkitRef`. PIN IT to a release
+      tag, e.g. "github:dustinkeeton/wafflestack#v0.10.0": that freezes the toolkit version
+      the wrappers run (and matches the version this repo is pinned to), and since #373 it is
+      the only value on which the writing skills work at all. The default is UNPINNED, which
+      resolves to the toolkit's DEFAULT BRANCH — not the latest release — so `/waffle-render`,
+      `/waffle-install`, `/waffle-upgrade` and `/waffle-reinstall` will REFUSE, with an error
+      naming the exact pinned command to run instead. (That refusal is the feature: an unpinned
+      render writes unreleased content while stamping the last released version number into your
+      lock, which is what silently breaks `doctor --verify-render` in CI.) `/waffle-doctor`,
+      `/waffle-setup`, `/waffle-init`, `/waffle-eject` and `/waffle-validate` read no toolkit
+      content and keep working either way. Developing the toolkit ITSELF? Point this at a local
+      checkout path, or use `node installer/cli.mjs --allow-unreleased` directly — rendering a
+      working tree is the one case where unreleased content is the point.

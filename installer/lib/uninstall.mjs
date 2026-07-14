@@ -748,12 +748,16 @@ function restoreFiles(snapshot) {
  * @param {string} opts.toolkitRoot
  * @param {string} opts.cwd
  * @param {string} opts.toolkitVersion
+ * @param {import('./toolkit-ref.mjs').ToolkitIdentity|null} [opts.toolkitIdentity] what the running
+ *   CLI IS (#373) — release/unreleased/unverified, plus the ref that reproduces it. Threaded to the
+ *   render leg's lock write site so a re-laid install records the toolkit that laid it, not merely a
+ *   version number. `reinstall` is a gated command, so the CLI always has one; null off the CLI path.
  * @param {boolean} [opts.clean]
  * @param {boolean} [opts.force] override whichever safety refusal is live on this path (above)
  * @param {(msg: string) => void} [opts.log]
  * @returns {ReinstallResult}
  */
-export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, force = false, log = () => {} }) {
+export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = null, clean = false, force = false, log = () => {} }) {
   // CRASH-SAFETY ON THE REFRESH PATH, which is delete-THEN-render.
   //
   // `render` validates its whole selection before it writes a byte: a bad stack name, an unset
@@ -858,7 +862,9 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, clean = false, for
 
   let render;
   try {
-    render = renderProject({ toolkitRoot, cwd, toolkitVersion, force, log: renderLog });
+    // `toolkitIdentity` (#373): what the CLI that authorized this reinstall IS — threaded to the
+    // lock write site so the re-laid install records the toolkit that laid it, not just a version.
+    render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, force, log: renderLog });
   } catch (err) {
     // renderProject reports its known failures as `ok: false`, but an unexpected throw must not be
     // the one path that leaves the tree stripped.

@@ -80,6 +80,7 @@ collision is resolved by the `electron-`/`webapp-` renames; the output-conflict 
 | `installer/lib/list.mjs` | `list` command (#119): compose `loadToolkit`/`loadProjectConfig`/`computeSelection`/`readTreeLock`/doctor-style sha256 into a per-stack per-item state model classifying each item `current`/`outdated`/`not-installed`/`not-installable`/`pending-removal` (the last two = target-scoped syrup none of whose `targets:` this project enables — it cannot render here, so it is reported but never offered as a choice, #364; `pending-removal` is that same file when a prior render already POURED it — it is on disk and in the lock right now, and the next `render` DELETES it, so `list`, the surface consulted BEFORE re-rendering, must announce the deletion rather than call an installed file "not installable". `pending-removal` asks `render`'s OWN prune question — is this live lock path produced by no selected item? — not a bare on-disk check: `itemOutputMatcher` matches the lock by path and is stack-BLIND, so two stacks legally declaring the same output path would otherwise make `list` announce a deletion for a file an enabled stack still produces); render it as a plain aligned agent-parseable table (default, TTY-gated ANSI) or drive a hand-rolled keypress multi-select (`--interactive`, needs a real TTY, applies via `installRefs`+render). Built-in surface only (external `source:` stacks list as a selection error, like `setup`). |
 | `installer/lib/prerequisites.mjs` | Typed external prerequisites (#47/#129): normalize a stack's `prerequisites:` list, scope it to a selection (`applicablePrerequisites`, like `requires:`), run each `check` shell command (`runCheck`, exit 0 = satisfied, stdio ignored, timeout-bounded) and bucket by level (`evaluatePrerequisites` → `{unmetRequired,unmetRecommended,met}`). `RENDER_PROBE_KINDS` = `{tool,env}` (the cheap kinds render probes; doctor probes all). Imported by `doctor.mjs` + `render.mjs`. |
 | `installer/lib/sources.mjs` | External `source:` resolution (#88/#125): turn a `{name,source,sourceType,ref}` entry into a local toolkit root — a local path read in place, or a git URL fetched at the pinned `ref` into a content-addressed cache (reused unless `refresh`), returning `{root,commit}` for lock provenance. Rejects a leading-`-` git source/ref (argument-injection guard, belt-and-braces with the `--` end-of-options marker). `gitFetch`/`gitResolveCommit` injectable for hermetic tests. |
+| `installer/lib/toolkit-ref.mjs` | Toolkit self-identification (#373) — "what am I, and what ref reproduces me?". `resolveToolkitIdentity({toolkitRoot, lsRemote, runGit, allowUnreleased, offline})` → `{status: 'release'\|'unreleased'\|'unverified', version, commit, tag, ref, origin: 'checkout'\|'npm-install'\|'unknown', repo, latestTag, lookupError}`, where `ref` is exactly `github:<owner>/<repo>#<tag>` and non-null **only** when `status === 'release'`. Two origins: a **checkout** (`<toolkitRoot>/.git` exists) resolves via `git describe --tags --exact-match HEAD` — **never touches the network**; an **npm-install** (`npx github:…`, no `.git`) reads the cloned SHA offline from npm's hidden lockfile (`../.package-lock.json` `resolved` `#<sha40>`), then classifies it with ONE `git ls-remote --tags` (**not** the GitHub REST API — its 60/hr unauthenticated limit is a live hazard on shared CI IPs). `lsRemote`/`runGit` are injectable (mirrors `sources.mjs`), so `npm test` is hermetic. Everything degrades to `unverified` rather than throwing: identity failure **fails OPEN** (warn + proceed) so no consumer's CI ever depends on the toolkit's reachability; fail-CLOSED applies only to a *successful* lookup that says "not a release". Offline corroborator: the SHIPPED `CHANGELOG.md` carrying a **non-empty** `## [Unreleased]` section proves the build is past the tag, tightening `unverified` → `unreleased`. Also exports `parseLsRemoteTags` (peeled `^{}` annotated-tag SHA wins; non-`vX.Y.Z` names filtered), `latestReleaseTag`, `toolkitRef`, `repoSlug`/`parseRepoSlug`/`httpsUrl` (normalizes npm's `git+ssh://` → https, or an unauthenticated `ls-remote` would demand an ssh key), `commitFromNpmLockfile`, `shaFromResolved`, `changelogHasUnreleasedEntries`, `changelogLatestRelease`, `formatUnreleasedRefusal(identity, command)`, `formatProvenanceWarning(identity)`. The GATE itself lives in `cli.mjs`, not here — this module only establishes the truth. |
 
 ```js
 // render.mjs
@@ -293,6 +294,23 @@ Dispatch and exit contract:
 | `--verify-render` | `doctor` | also check the committed config still renders what the lock records |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
 | `--no-color` | `list` | suppress ANSI (not listed in `help`'s flag block — #359) |
+| `--allow-unreleased` | every command (spliced globally, before any takes-no-refs guard) | #373: suppress the release gate's REFUSAL — write files from a toolkit that is not a release (a working tree, or an unpinned `npx github:…` fetch of the default branch). Env twin: `WAFFLESTACK_ALLOW_UNRELEASED=1` (`1`/`true`/`yes`). It suppresses the refusal, **not the truth** — identity still resolves to `unreleased` — and it short-circuits the network lookup, which is what keeps `npm test` and every local `render` offline. Toolkit development only; a consumer pins the ref instead. |
+
+Release gate (#373, `cli.mjs`; truth established in `toolkit-ref.mjs`). Before writing files from
+toolkit content, the CLI resolves what it IS and **refuses** when it is provably not a release,
+naming the exact pinned command. The scoping is the load-bearing decision — gate the write path
+only, or the shipped unpinned-by-default `waffle-doctor.yml` goes red for every consumer:
+
+| Gated (refuse when `unreleased`, exit 1) | Not gated |
+|---|---|
+| `render` / `bake`, `install`, `upgrade`, `reinstall` — they write files from toolkit content | plain `doctor` — pure hash-vs-lock, reads no toolkit content, correct from any toolkit. Gets the **offline** identity (no network) purely so its version-skew remedy names a command that works. |
+| `doctor --verify-render` — it *renders* (the #314 gate that #373 broke) | `list`, `setup` — read-only reports ⇒ `formatProvenanceWarning` to stderr, never a refusal |
+| `list --interactive`, only once a selection is applied (`installRefs` + `runRender`) | `init`, `eject`, `uninstall`, `validate`, `avatars`, `help` — never read toolkit content |
+
+`unverified` (offline / no git / unreadable npm lockfile) **proceeds with a warning** — fail open on
+ignorance. The resolved identity is threaded to `renderProject({toolkitIdentity})` /
+`upgrade({toolkitIdentity})` / `reinstall({toolkitIdentity})` and echoed on their results; the lock
+does **not** yet carry it (that is #374).
 
 | Command | Behavior |
 |---------|----------|
@@ -534,8 +552,8 @@ Node >= 18. Single runtime dependency: `yaml`.
 | test | `npm test` (node:test, `installer/test/*.test.mjs`; 966 tests, 128 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
-| render (dogfood) | `node installer/cli.mjs render` |
-| verify render | `node installer/cli.mjs doctor` (tree vs lock) / `node installer/cli.mjs doctor --allow-missing --verify-render` (committed inputs reproduce the committed lock — the CI gate in `.github/workflows/tests.yml`, #316) |
+| render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — the flag is **required** (#373): `render` refuses from a toolkit that is not at a release tag, and a working tree never is. Commit the updated render + lock (the `doctor` drift gate is a required check). |
+| verify render | `node installer/cli.mjs doctor` (tree vs lock — **not** gated, needs no flag) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate in `.github/workflows/tests.yml`, #316). `--verify-render` **renders**, so it is gated (#373) and needs `--allow-unreleased` when run by hand from a branch; the `tests` job supplies the env twin `WAFFLESTACK_ALLOW_UNRELEASED: '1'` instead, which is why line 72 there carries no flag. |
 | evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 9 cases across `github-workflow` (7) + `orchestration` (2); scheduled nightly by the opt-in `waffle-evals` syrup. **Not** in `npm test`. |
 
 Test files: `installer.test.mjs` (render pipeline machinery), `checkpoint.test.mjs` /
@@ -549,7 +567,17 @@ free inside `npm test`; the metered runner itself is `npm run evals`, never `npm
 `identity.test.mjs` (the delegate skill's shipped identity-preflight script, exercised directly),
 `telemetry.test.mjs` (#227: executes the rendered token-spend telemetry jq/bash programs against
 fixture logs + a stubbed `gh`), `avatars-sync.test.mjs` (Gravatar pipeline with injected HTTP +
-rasterizer, #285), `typecheck-gate.test.mjs` (guards the JSDoc typecheck gate itself, #177).
+rasterizer, #285), `typecheck-gate.test.mjs` (guards the JSDoc typecheck gate itself, #177),
+`provenance.test.mjs` (#373: toolkit self-identification and the release gate — identity from a
+real temp git repo and from a synthesized npm-install layout, the `ls-remote` parse, the offline
+CHANGELOG corroborator, the `github:<owner>/<repo>#<tag>` ref format, and the per-command gate
+matrix driven through real CLI spawns. Hermetic by construction: `lsRemote` is injected, or the
+origin is a checkout, which resolves offline. #374 and #372 extend this file rather than
+`installer.test.mjs`).
+
+`installer.test.mjs` sets `process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1'` at module scope: it
+spawns the real CLI ~a dozen times, half of them gated commands, from an untagged checkout. The
+gate is asserted in `provenance.test.mjs`, which strips the variable per spawn.
 
 ## Dogfood state
 
@@ -569,12 +597,27 @@ these deliberate absences are tolerated by doctor's `--allow-missing`.
 
 CI render gate (#314/#316): `.github/workflows/tests.yml` (project-owned — NOT lock-managed,
 edited directly) runs `npm test` + `npm run validate` + `npm run typecheck`, then
-`node installer/cli.mjs doctor --allow-missing --verify-render` with the checkout's OWN CLI —
-catching a `stacks/**` or config edit whose re-render was forgotten (files and lock go stale
-together, so the plain `waffle-doctor` drift gate stays green). This gate cannot live in
+`WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs doctor --allow-missing --verify-render`
+with the checkout's OWN CLI — catching a `stacks/**` or config edit whose re-render was forgotten
+(files and lock go stale together, so the plain `waffle-doctor` drift gate stays green). The env
+twin is shown inline here because that is what *executes*; the job supplies it once at the `env:`
+block rather than per-step (`tests.yml:72` therefore carries no flag — see below). Running that
+step **by hand** from a branch needs `--allow-unreleased`, since `--verify-render` renders and is
+gated (#373). This gate cannot live in
 `doctor.flags`: the shipped waffle-doctor workflow renders via
 `npx github:dustinkeeton/wafflestack` (main's toolkit), which is the wrong toolkit for the
 toolkit's own PRs in both directions (`tests.yml:37`).
+
+The `test` job sets `WAFFLESTACK_ALLOW_UNRELEASED: '1'` at the job `env:` (#373). Both the CLI
+spawns in `npm test` and the `--verify-render` step above are **gated commands run from an
+untagged checkout** — `actions/checkout` fetches no tags, so this checkout is `unreleased` by
+construction. Rendering the working tree is the entire point of a toolkit-development CI run, and
+the flag suppresses the refusal, not the truth (identity still resolves to `unreleased`, which is
+what keeps this repo's dogfooded lock honest). Removing it reds the whole job.
+
+Toolkit-local CLI calls in this repo's own config prompts (`.waffle/waffle.yaml`:
+`delegate.extraPreflight`, `audit.compliancePrompt`) pass `--allow-unreleased` on `render` for the
+same reason — they run in fresh worktrees and CI checkouts, which are never at a tag.
 
 ## Owner-voiced docs — do not rewrite
 

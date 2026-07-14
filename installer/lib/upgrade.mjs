@@ -34,6 +34,7 @@ export function upgrade({
   toolkitRoot,
   cwd,
   toolkitVersion,
+  toolkitIdentity = null, // #373: what the running CLI IS (release/unreleased/unverified + the ref)
   migrations = MIGRATIONS,
   changelog, // optional raw markdown override; defaults to reading toolkitRoot/CHANGELOG.md
   sourceCacheDir, // optional cache dir override (threaded to render); default keeps prod behavior
@@ -42,6 +43,10 @@ export function upgrade({
   const notes = [];
   const lock = readLock(cwd);
   const fromVersion = lock?.toolkitVersion ?? null;
+  // `toVersion` is the running CLI's own package.json version, and #373 is what finally makes that
+  // honest: the CLI now REFUSES to upgrade from a toolkit that is not a release, so by the time we
+  // are here, `toolkitVersion` names a tag whose content is exactly what we are about to render. It
+  // used to be a number the default branch merely carried around.
   const toVersion = toolkitVersion;
   // Snapshot the pre-render per-source provenance so we can diff resolved commits after re-render.
   const oldSources = new Map((lock?.sources ?? []).map((s) => [s.name, s]));
@@ -109,22 +114,26 @@ export function upgrade({
 
   // Re-render (re-resolving each external source at its pin — refreshSources re-fetches git
   // sources so a moved ref is observed, not served from the session cache), then doctor.
-  const render = renderProject({ toolkitRoot, cwd, toolkitVersion, sourceCacheDir, refreshSources: true, log });
+  const render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, sourceCacheDir, refreshSources: true, log });
   if (!render.ok) {
-    return { ok: false, status, fromVersion, toVersion, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], notes };
+    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], notes };
   }
 
   // Per-source version moves: diff the freshly-resolved commits against the lock's recorded ones.
   const sourceMoves = diffSources(oldSources, render.sources ?? []);
   for (const move of sourceMoves) log(describeSourceMove(move));
 
-  const dr = doctor({ cwd, toolkitVersion, toolkitRoot });
+  const dr = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot });
 
   return {
     ok: render.ok && dr.ok,
     status,
     fromVersion,
     toVersion,
+    // The resolved identity of the toolkit that did the upgrade — `{ ref, commit, tag }`. #372
+    // consumes it to bump `doctor.toolkitRef` / `waffle.toolkitRef` to the ref that just rendered,
+    // which is the pin a consumer's CI must use if it is to reproduce this render.
+    identity: toolkitIdentity,
     changelogDelta,
     migrationsRun,
     render,

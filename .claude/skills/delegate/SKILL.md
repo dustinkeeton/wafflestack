@@ -615,7 +615,7 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
    - npm test
    - npm pack --dry-run
    - `npm run validate` passes after any stack/manifest edit
-- If `stacks/**` changed: re-run `node installer/cli.mjs render` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output
+- If `stacks/**` changed: re-run `node installer/cli.mjs render --allow-unreleased` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output. The flag is required (#373): `render` refuses from a toolkit that is not at a release tag, and a feature branch never is. It suppresses the refusal, not the truth.
 4. Commit your work following the git-workflow skill — commit with `{agent-git-cmd} commit` (that is where your own agent identity, if this project configures one, is applied) and end every commit message with `Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>`. Commit everything **locally**; do not push yet.
 5. Push and open the PR — but first check the approval gate. The gate is ON when `delegate.approveBeforePush` is `true`; for this run it is **`false`**.
    - **Gate off (`false`, the default):** push and open the PR yourself, exactly as usual —

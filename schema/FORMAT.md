@@ -420,6 +420,84 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
   pruned by `render`. Commit them; never hand-edit them.
 
+## Release resolution — which toolkit ran?
+
+The lock is the provenance marker for the *inputs* of a render. This section is the provenance of
+the **renderer**, and it exists because a version number turned out not to be one.
+
+`npx github:<owner>/<repo> <cmd>` with **no `#ref`** resolves the repository's **default branch**.
+The default branch and the tag some commits behind it both report the same `version` in
+`package.json`, so an unpinned invocation would render unreleased content and stamp the last
+*released* version number into `.waffle/waffle.lock.json`. A CI job re-rendering the same config
+through a *pinned* ref then produces different bytes and fails `doctor --verify-render` — on a lock
+that is, from the consumer's side, correct.
+
+So the CLI resolves its own identity before it writes anything:
+
+| `status` | Established by | Effect |
+|---|---|---|
+| `release` | the commit being run IS a `vX.Y.Z` tag | commands run normally; `ref` is the npx spec that reproduces this toolkit |
+| `unreleased` | the commit provably is **not** a release tag | commands that write files from toolkit content **refuse**, naming the pinned command |
+| `unverified` | it could not be established (offline, unreadable npm metadata) | **warn and proceed** — failing closed on ignorance would make every consumer's CI depend on the toolkit's reachability |
+
+The question asked is *"is the code I am running a released commit"* — **not** *"was a `#ref`
+typed"*. That is deliberate, and stronger: the running CLI cannot see the ref it was fetched at,
+only the commit it landed on, and a re-cut or force-pushed tag is caught by the commit check while
+a command-line check would trust it.
+
+**Two origins, two ways of knowing:**
+
+- **A git checkout** (`<toolkitRoot>/.git` exists — i.e. toolkit development). `git describe --tags
+  --exact-match HEAD` answers it. **Never touches the network.**
+- **An `npx github:` install.** It has no `.git`, but npm's hidden lockfile — the sibling
+  `node_modules/.package-lock.json` — records the exact commit npm cloned:
+  `"resolved": "git+ssh://git@github.com/<owner>/<repo>.git#<40-char-sha>"`. That SHA is read
+  offline; a single `git ls-remote --tags` then says whether it is a release tag. (`git ls-remote`,
+  not the GitHub REST API: the API's 60/hr unauthenticated limit is a live hazard on a shared CI
+  IP; the smart-HTTP git protocol is not subject to it.) If npm's metadata is unreadable, the
+  result is `unverified`, never an error.
+
+When the lookup fails, one offline corroborator still applies: `CHANGELOG.md` **ships** with the
+package, and a release stamps `## [Unreleased]` down into `## [X.Y.Z]`. A shipped changelog carrying
+a **non-empty** `## [Unreleased]` section is therefore proof, needing no network, that the build is
+not a release — enough to tighten `unverified` to `unreleased`.
+
+**The gate is scoped to the write path**, which is the load-bearing decision:
+
+| Gated (refuses when `unreleased`) | Not gated |
+|---|---|
+| `render` / `bake`, `install`, `upgrade`, `reinstall` | plain `doctor` — pure hash-vs-lock; it reads no toolkit content, so it is correct from *any* toolkit. Gating it would red the unpinned-by-default `waffle-doctor.yml` for every consumer. |
+| `doctor --verify-render` — it *renders* | `list`, `setup` — read-only reports: they **warn**, naming the tag to pin |
+| `list --interactive`, once a selection is applied | `init`, `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
+
+**Escape hatch:** `--allow-unreleased`, or `WAFFLESTACK_ALLOW_UNRELEASED=1`. It suppresses the
+*refusal*, and it can never **manufacture** a release: identity is still resolved and still reported
+as `unreleased` whenever that can be established offline. It also short-circuits the network lookup,
+so toolkit development and `npm test` stay offline. Consumers should pin the ref instead.
+
+> **What the hatch does cost you.** On an **npx install**, short-circuiting the lookup means a
+> toolkit that genuinely *is* a pinned release resolves as `unverified`, with **`ref: null`** — the
+> hatch cannot invent a release, but it can forfeit one you really had. Same for a **pnpm/yarn
+> `dlx`** consumer, which has no `node_modules/.package-lock.json` for the commit to be read from at
+> all. Since `ref` is the provenance field the lock records, a consumer who sets the hatch to unblock
+> CI and *later* pins properly records **no** `toolkitRef`, silently. Read `ref != null` as *"no
+> provenance was captured"*, never as *"this is not a release."*
+
+The resolved identity is `{ status, version, commit, tag, ref, origin, repo, latestTag,
+lookupError }`, where `ref` is exactly `github:<owner>/<repo>#<tag>`.
+
+**`ref` is non-null only when `status` is `release` — but NOT whenever it is.** A release whose repo
+slug is unknowable (no npm `resolved`, no git `origin`, no `repository` field) is `status: 'release'`
+with `ref: null`. **Key on `ref != null`**, never on `status === 'release'`.
+
+**A release is the *commit* AND the *tree*.** A checkout sitting exactly on a release tag with
+uncommitted changes to tracked files is `unreleased`, not `release` — the tag no longer describes
+what would render, so no `ref` can reproduce it. Untracked files do not count.
+
+**The repo slug is read from PROVENANCE, not from the declaration:** npm's `resolved` URL, then the
+git `origin` remote, and only then `package.json` `repository`. A fork inherits the declared field
+verbatim, so trusting it first would ask the wrong remote about a fork's own release.
+
 ## How do I know a file is wafflestack-managed?
 
 Rendered files sit side-by-side with your hand-written ones — `.claude/agents/*.md` next to

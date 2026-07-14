@@ -1745,13 +1745,18 @@ config:
       e.g. "github:dustinkeeton/wafflestack#v0.5.0". The default is UNPINNED — it resolves to
       whatever is on the toolkit's default branch at the moment CI runs. That is merely untidy
       for the plain drift check (which never reads the toolkit, only hashes files against the
-      lock) and it costs you a version-skew note. But it is REQUIRED PRACTICE to pin once
-      `doctor.flags` includes `--verify-render`: that flag re-renders your committed config
-      using whatever toolkit npx just fetched, so the toolkit becomes load-bearing. Leave it
-      floating and any upstream content release re-renders your config differently from the
-      toolkit your lock was built with — turning the next unrelated PR red for a change nobody
-      on your side made. Pin first, arm second; bump the pin deliberately (`wafflestack upgrade`)
-      and commit the re-render with it.
+      lock) and it costs you a version-skew note: plain `doctor` is deliberately NOT gated on
+      the toolkit being a release, precisely so this default keeps working.
+      But it is a HARD ERROR, not merely required practice, once `doctor.flags` includes
+      `--verify-render`: that flag RE-RENDERS your committed config using whatever toolkit npx
+      just fetched, and since #373 the toolkit REFUSES to render when it can prove it is not
+      running at a release tag — which an unpinned fetch of the default branch always is. The
+      job will fail with a message naming the exact pinned command. That is the intended
+      outcome: it used to render unreleased content and stamp the last released version number
+      into your lock, so any upstream content release re-rendered your config differently from
+      the toolkit your lock was built with — turning the next unrelated PR red for a change
+      nobody on your side made, with no clue why. Pin first, arm second; bump the pin
+      deliberately (`wafflestack upgrade`) and commit the re-render with it.
   doctor.flags:
     required: false
     default: ""
@@ -1768,10 +1773,13 @@ config:
       and the lock go stale together. `--allow-missing --verify-render` is therefore the gate for
       a repo that gitignores its whole render: nothing is present to compare, so the render is
       reproduced and checked against the lock instead. PIN BEFORE YOU ARM: `--verify-render` is
-      the one flag that makes the toolkit load-bearing — it renders from whatever toolkit
-      `doctor.toolkitRef` resolved to, so on the unpinned default an upstream release can turn
-      your next unrelated PR red with no change on your side. Set `doctor.toolkitRef` to a
-      release tag (see its description) before you add this flag. Empty by default.
+      the one flag that makes the toolkit load-bearing — it RENDERS from whatever toolkit
+      `doctor.toolkitRef` resolved to, and since #373 the toolkit refuses to render at all when
+      it can prove it is not a release, which an unpinned fetch of the default branch always is.
+      So on the unpinned default this flag is now a HARD ERROR (a legible one, naming the pinned
+      command) rather than the silent trap it was — where an upstream release could turn your next
+      unrelated PR red with no change on your side. Set `doctor.toolkitRef` to a release tag (see
+      its description) before you add this flag. Empty by default.
   labelHook.enrichLabel:
     required: false
     default: "waffle:enrich"

@@ -3722,3 +3722,201 @@ describe('the #360 guard can actually fail (regression fixtures)', () => {
     assert.deepEqual(stopped, ['a1']);
   });
 });
+
+// -----------------------------------------------------------------------------
+// #373: no repo-local prompt may ORDER a gated toolkit command without the escape hatch.
+//
+// `render`/`bake`/`install`/`upgrade`/`reinstall` — and `doctor --verify-render`, which
+// renders — now REFUSE (exit 1) from a toolkit that is not at a release tag. A working
+// tree never is one. So every `node installer/cli.mjs <gated>` line in a prompt an agent
+// EXECUTES is a command that exits 1 the moment it is copy-pasted.
+//
+// This shipped broken and QA caught it by hand: `.waffle/extensions/agents/harness-architect.md`
+// ordered a bare `render` three times — and that is the agent whose whole job is editing
+// `stacks/**` and re-rendering, on the daily hygiene cron. A hand-check does not scale to the
+// next prompt that grows a bare `render`; this does.
+//
+// Scope — `node installer/cli.mjs` ONLY, deliberately. That shape drives the toolkit's own
+// working-tree CLI, which is unreleased BY CONSTRUCTION. A consumer never runs it: they run
+// `npx --yes github:owner/repo#vX.Y.Z render`, which is PINNED and must NOT carry the flag.
+// Requiring `--allow-unreleased` on every `render` everywhere would be wrong, and would red
+// the consumer-facing stack prompts that are correct as they stand.
+// -----------------------------------------------------------------------------
+
+const GATED_COMMANDS = new Set(['render', 'bake', 'install', 'upgrade', 'reinstall']);
+
+// Slice each `node installer/cli.mjs …` invocation to the end of ITS command: a chain break
+// (`&&`, `||`, `;`, `|`), a newline, or the backtick closing an inline-code span. Without the
+// slice, `render --allow-unreleased && … doctor` would read as one invocation and a bare
+// `render && doctor` would look escaped by a flag belonging to a different command.
+//
+// The optional leading capture is the ENV TWIN: `WAFFLESTACK_ALLOW_UNRELEASED=1 node …` is an
+// equally valid escape hatch (#373 ships both), so the guard must accept it rather than push
+// authors onto the flag by fiat.
+const cliInvocations = (md) =>
+  [...md.matchAll(/(WAFFLESTACK_ALLOW_UNRELEASED=\S+\s+)?node\s+installer\/cli\.mjs([^\n`&|;]*)/g)].map((m) => ({
+    argv: m[2].trim(),
+    envTwin: Boolean(m[1]),
+  }));
+
+// Either escape hatch clears the gate: the flag on the command, or the env twin in front of it.
+const isEscaped = ({ argv, envTwin }) => envTwin || /--allow-unreleased\b/.test(argv);
+
+// The gated set, plus the one flag that turns a NON-gated command into a gated one: plain
+// `doctor` is pure hash-vs-lock and reads no toolkit content, but `--verify-render` re-renders.
+const isGatedInvocation = (argv) => {
+  const cmd = argv.split(/\s+/).filter(Boolean)[0];
+  if (!cmd) return false;
+  if (GATED_COMMANDS.has(cmd)) return true;
+  return cmd === 'doctor' && /--verify-render\b/.test(argv);
+};
+
+const WAFFLE_YAML = path.join(REPO_ROOT, '.waffle', 'waffle.yaml');
+const EXTENSIONS = path.join(REPO_ROOT, '.waffle', 'extensions');
+
+// The project-extension SOURCES (`.waffle/extensions/{agents,skills}/<name>.md`). These are the
+// EDIT surface: the renderer appends them verbatim into the rendered agent, so a failure must
+// name the extension to fix, not the generated `.claude/` file that must never be hand-edited.
+const extensionFiles = () =>
+  ['agents', 'skills'].flatMap((kind) => {
+    const dir = path.join(EXTENSIONS, kind);
+    return fs.existsSync(dir)
+      ? fs
+          .readdirSync(dir)
+          .filter((f) => f.endsWith('.md'))
+          .map((f) => path.join(dir, f))
+      : [];
+  });
+
+// The four root docs. `AGENTS.md` and `.waffle/waffle.yaml` are machine-consumed (the command
+// registry harness-architect is told to read first; the config whose `extraPreflight` /
+// `compliancePrompt` / `auditChecklist` blocks are prompts verbatim). `ARCHITECTURE.md` and
+// `STATUS.md` are human docs — swept anyway, because the hazard is the COMMAND, not the reader:
+// a fenced `node installer/cli.mjs render` exits 1 whoever pastes it, and a reader copying a
+// fenced command cannot tell "order" from "prose" either. Leaving them out made the F4 half of
+// #373 unpinned — reverting STATUS.md's flag left the suite green, which QA caught by mutation.
+//
+// `DECISIONS.md` is deliberately NOT swept: it is an append-only log of DATED ADRs, and one of
+// them records the since-superseded decision to gitignore the render, quoting the bare `render`
+// of its day. That quote is the historical record being correct, not a live order. A guard that
+// forced a flag into it would falsify the log to satisfy a lint.
+const ROOT_DOCS = () => [
+  path.join(REPO_ROOT, 'AGENTS.md'),
+  path.join(REPO_ROOT, 'ARCHITECTURE.md'),
+  path.join(REPO_ROOT, 'STATUS.md'),
+  WAFFLE_YAML,
+];
+
+describe('repo-local prompts: no bare gated toolkit command (#373)', () => {
+  // Sweep everything this repo reads as a runnable command: the render (what the harness actually
+  // loads), the stack sources (the edit surface), the extension sources, and the root docs.
+  const files = () => [
+    ...renderedSkillFiles(),
+    ...renderedAgentFiles(),
+    ...sourceSkillFiles(),
+    ...sourceAgentFiles(),
+    ...extensionFiles(),
+    ...ROOT_DOCS(),
+  ].filter((f) => fs.existsSync(f));
+
+  // Reach guard: if the walks silently return [] (a moved dir, a renamed layout), every
+  // assertion below passes vacuously. Pin the coverage — same lesson as the #360 sweep.
+  test('the sweep reaches the extension sources and every swept root doc', () => {
+    const swept = files();
+    assert.ok(extensionFiles().length >= 1, 'no .waffle/extensions/** source found — the sweep would pass vacuously');
+    for (const f of extensionFiles()) assert.ok(swept.includes(f), `${who(f)} is not swept by the #373 guard`);
+    // Each root doc named individually: dropping one is how the F4 fixes went unpinned the first
+    // time — the gap was invisible precisely because no test asserted the coverage.
+    for (const f of ROOT_DOCS()) {
+      assert.ok(fs.existsSync(f), `${who(f)} does not exist — the sweep would skip it silently`);
+      assert.ok(swept.includes(f), `${who(f)} is not swept by the #373 guard`);
+    }
+    assert.equal(ROOT_DOCS().length, 4, 'expected AGENTS.md + ARCHITECTURE.md + STATUS.md + waffle.yaml');
+    assert.ok(renderedAgentFiles().length >= 3, `expected the committed agent render, found ${renderedAgentFiles().length}`);
+  });
+
+  test('every `node installer/cli.mjs <gated>` order carries an escape hatch', () => {
+    const offenders = [];
+    for (const f of files()) {
+      const md = fs.readFileSync(f, 'utf8');
+      for (const inv of cliInvocations(md)) {
+        if (!isGatedInvocation(inv.argv)) continue;
+        if (isEscaped(inv)) continue;
+        offenders.push(
+          `${who(f)}: \`node installer/cli.mjs ${inv.argv}\` — gated (#373), exits 1 without --allow-unreleased (or the WAFFLESTACK_ALLOW_UNRELEASED=1 env twin)`,
+        );
+      }
+    }
+    assert.deepEqual(offenders, [], `prompts ordering a gated command that now refuses:\n${offenders.join('\n')}`);
+  });
+
+  test('the env twin is accepted as an escape hatch, exactly like the flag', () => {
+    const [envForm] = cliInvocations('`WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs render`');
+    assert.equal(envForm.argv, 'render');
+    assert.ok(isGatedInvocation(envForm.argv), 'render is gated');
+    assert.ok(isEscaped(envForm), 'the env twin escapes the gate — #373 ships both hatches');
+
+    const [flagForm] = cliInvocations('`node installer/cli.mjs render --allow-unreleased`');
+    assert.ok(isEscaped(flagForm), 'the flag escapes the gate');
+
+    const [bare] = cliInvocations('`node installer/cli.mjs render`');
+    assert.ok(!isEscaped(bare), 'a bare render has no escape hatch — this is the regression');
+  });
+
+  // The guard must not fire on the commands that are deliberately NOT gated — otherwise the fix
+  // for a red is to bolt the flag onto plain `doctor`, which would be cargo-cult noise. Plain
+  // `doctor` is the load-bearing case: gating it would red every consumer's shipped drift check.
+  test('the ungated commands are not swept — plain doctor, validate, list, help', () => {
+    assert.ok(!isGatedInvocation('doctor'), 'plain doctor is pure hash-vs-lock — never gated');
+    assert.ok(!isGatedInvocation('doctor --allow-missing'), 'doctor --allow-missing is not gated');
+    assert.ok(!isGatedInvocation('validate'), 'validate reads no toolkit content');
+    assert.ok(!isGatedInvocation('list'), 'list is a read-only report — it warns, never refuses');
+    assert.ok(!isGatedInvocation('help'), 'help is never gated');
+    // …and it MUST fire on the ones that are.
+    for (const cmd of ['render', 'bake', 'install', 'upgrade', 'reinstall']) {
+      assert.ok(isGatedInvocation(cmd), `${cmd} is gated by #373`);
+    }
+    assert.ok(isGatedInvocation('doctor --allow-missing --verify-render'), '--verify-render RENDERS, so it is gated');
+  });
+
+  // The slice is the subtle part: a chained invocation must be judged per-command, or a flag on
+  // one command silently launders the bare command next to it.
+  test('a chained invocation is judged per-command, not as one blob', () => {
+    const chained = 'run `node installer/cli.mjs render --allow-unreleased && node installer/cli.mjs doctor` now';
+    assert.deepEqual(
+      cliInvocations(chained).map((i) => i.argv),
+      ['render --allow-unreleased', 'doctor'],
+    );
+
+    // The exact regression QA found: a bare `render` chained ahead of another command.
+    const bare = '`node installer/cli.mjs render && node installer/cli.mjs doctor`';
+    const gatedBare = cliInvocations(bare).filter((i) => isGatedInvocation(i.argv));
+    assert.deepEqual(
+      gatedBare.map((i) => i.argv),
+      ['render'],
+      'a bare chained render must be caught, not laundered by the doctor beside it',
+    );
+    assert.ok(!isEscaped(gatedBare[0]), 'the flag on a NEIGHBOURING command must not escape this one');
+
+    // An allowlist PATTERN is not an invocation — `Bash(node installer/cli.mjs:*)` must not trip it.
+    assert.deepEqual(
+      cliInvocations("--allowedTools 'Bash(node installer/cli.mjs:*)'").filter((i) => isGatedInvocation(i.argv)),
+      [],
+    );
+  });
+
+  // The consumer-facing form is PINNED and must stay flagless — the flag is toolkit-dev only.
+  // This pins the scope decision above, so a later "just require the flag everywhere" cannot land.
+  test('the pinned npx form consumers run is not swept and needs no flag', () => {
+    const consumer = 'npx --yes github:dustinkeeton/wafflestack#v0.12.0 render';
+    assert.deepEqual(cliInvocations(consumer), [], 'a pinned npx invocation is not a toolkit-local CLI call');
+    for (const f of sourceSkillFiles()) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(
+        md,
+        /npx[^\n`]*--allow-unreleased/,
+        `${who(f)}: a consumer-facing npx command must never carry --allow-unreleased — consumers pin a release ref instead`,
+      );
+    }
+  });
+});
