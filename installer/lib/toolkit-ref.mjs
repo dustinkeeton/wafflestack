@@ -69,7 +69,11 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  *                                      never reads `remote.origin.url`. **Which toolkit is this,
  *                                      given the pin?** A function of the npm `resolved` pin and the
  *                                      toolkit's own committed `package.json`, so two clones of one
- *                                      commit write a byte-identical lock (#384 F2, #317).
+ *                                      commit write a byte-identical lock (#384 F2, #317). The lock
+ *                                      records THIS, for **every** status — `release` included. It is
+ *                                      identical to `repo` on the npx path (no `.git`, so no origin
+ *                                      step), and on a checkout no remote is ever asked, so `repo`
+ *                                      there is an unverified property of the clone (#384 F11).
  * @property {string|null} latestTag    the release to pin to, for the remedy message
  * @property {string|null} lookupError  why we could not call this a release: the lookup that failed
  *                                      (status === 'unverified'), or the reason a release verdict was
@@ -475,31 +479,52 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
 }
 
 /**
- * Which repo does the **committed lock** name as the source of this render (#384 F2)? The two states
- * answer it from different evidence, and collapsing them is what let a machine-local value reach a
- * committed artifact.
+ * Which repo does the **committed lock** name as the source of this render (#384 F2, F11)? **Always
+ * `lockRepo` — the pin-derived slug — whatever the status.** There is no exception, and the exception
+ * this function used to make was the bug.
  *
- * - **`release`** → `identity.repo`, the slug the identity was **corroborated against**. `ls-remote`
- *   asked THAT remote and found THAT tag at THAT commit, so it is verified provenance rather than
- *   machine state — and `source`/`ref`/`commit` MUST name one repo together, or `toolkitPinFromLock`
- *   emits `github:<repo>#<tag>` for a repo that does not hold the tag. A fork that cuts its own
- *   release therefore still names ITSELF (#373 F14), on the checkout path as well as the npx one.
+ * F2's first fix carved out `release`, on the reasoning that `identity.repo` was "the slug the
+ * identity was **corroborated against** — `ls-remote` asked THAT remote". **That is false on a
+ * checkout**, and a checkout is exactly where `repo` and `lockRepo` can differ: `resolveToolkitIdentity`
+ * reaches `release` there via `git describe --exact-match` and returns BEFORE any lookup — **zero
+ * `ls-remote` calls**. So the carve-out re-admitted the very thing F2 removed: a clean checkout sitting
+ * on a release tag wrote the CLONE'S origin into the committed lock, and two clones of one commit, on
+ * one tag, rendering identical bytes, produced byte-different locks. The justification named evidence
+ * that was never gathered — the same over-claim class this epic keeps shipping, this time in a comment.
  *
- * - **`unreleased` / `unverified`** → `identity.lockRepo`, which never consults `remote.origin.url`.
- *   Nothing was verified here: `ref` and `commit` are already null, so `source` asserts no pin and is
- *   the ONLY field left that could vary — and on a checkout, `repo` varies with the renderer's clone.
- *   This is the churn the reviewer demonstrated, and it is the everyday path: every contributor's dev
- *   checkout of this very repo.
+ * The carve-out was also **pointless where it was supposed to help**. `repoSlug`'s `origin` step is
+ * gated on `.git`, which an npm-installed toolkit does not have — so on the npx path `repo` and
+ * `lockRepo` are computed from the SAME npm `resolved` URL and are always **identical**. #373 F14 (a
+ * fork must name ITSELF) lives on that path and is carried entirely by `resolved`, which `lockRepoSlug`
+ * keeps. The carve-out therefore changed nothing on npx and was wrong on the checkout: it had no
+ * correct case at all.
  *
- * The `?? identity.repo` tail keeps a synthetic identity (a library caller, a test fixture) that
- * carries no `lockRepo` behaving exactly as before.
+ * **What a checkout-release's `source` should name, so the triple stays coherent.** On a checkout NO
+ * remote is ever asked, so neither `origin` nor `repository` is *verified* — both are guesses, and only
+ * one of them is a function of the pin. `origin` is a property of the clone; `repository` ships with the
+ * toolkit's own content. The lock is a committed artifact that must be byte-identical across machines
+ * (#317) — **determinism wins**, which is the plan's own rule, and it is what makes `source`/`ref`/
+ * `commit` reproducible rather than merely plausible. A fork that renders from a checkout and wants its
+ * lock (and therefore `toolkitPinFromLock`'s pin) to name itself sets `repository` in `package.json`: a
+ * committed, content-bearing edit, and thus a function of the pin — precisely the property `origin` lacks.
+ *
+ * **The `repo` tail is gated on the same fact, or it reopens the hole it just closed.** When no
+ * pin-derived slug exists at all, falling back to `repo` is safe on every origin EXCEPT a checkout —
+ * because `repoSlug`'s origin step is `.git`-gated, so "not a checkout" is *exactly* the condition
+ * under which `repo` cannot be `remote.origin.url`. On a checkout it can be, and a toolkit whose
+ * `package.json` declares no `repository` (`lockRepo: null`, `repo:` the clone's origin) would walk
+ * straight back into F11 through the fallback. There, the honest answer is that we do not know which
+ * repo this came from: `source: null`, which `describeToolkitProvenance` already renders as "an
+ * unknown toolkit" and `toolkitPinFromLock` already declines to pin. **An unknown repo is recorded as
+ * unknown — never as the clone's.**
  *
  * @param {ToolkitIdentity} identity
  * @returns {string|null}
  */
 function lockSourceRepo(identity) {
-  if (identity.status === 'release') return identity.repo ?? null;
-  return identity.lockRepo ?? identity.repo ?? null;
+  if (identity.lockRepo) return identity.lockRepo;
+  if (identity.origin === 'checkout') return null;
+  return identity.repo ?? null;
 }
 
 /**
@@ -618,17 +643,31 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
   // upstream's genuine `v0.12.0` (two repos, neither tag touched) was told its tag had been
   // force-pushed. That is an assertion about a remote this code never queried, and the correct
   // diagnosis was sitting unread in `lockToolkit.source` and `identity.repo`.
+  //
+  // THE COMPARISON IS THREE-STATE, NOT TWO (#384 F12). `same` / `different` / **`unknown`** — and
+  // collapsing `unknown` into `same` is how F3's own fix reintroduced the over-claim it was fixing.
+  // `differentRepos` is false when a source is merely NULL, so a bare clone's release block
+  // (`source: null` — `toolkitLockEntry` emits these, and a test pins one) took the `recut` branch and
+  // was told the two "both report version 0.12.0 **from the same repository**" — in a sentence that had
+  // just named the lock "an unknown toolkit". Self-contradicting, and an assertion of a fact never
+  // established. Assert only what was checked: unknown gets a hedge, never membership in "same".
   const lockSource = lockToolkit.source ?? null;
   const cliSource = toolkitSource(identity.repo);
-  const differentRepos = Boolean(lockSource && cliSource && lockSource !== cliSource);
+  const comparable = Boolean(lockSource && cliSource);
+  const differentRepos = comparable && lockSource !== cliSource;
+  const sameRepo = comparable && lockSource === cliSource;
   if (lockVersion && identity.version && lockVersion === identity.version && !differentRepos) {
-    // THE HEADLINE (#374), and now only for the case it actually describes: ONE repository, one
-    // version, two commits. The bare version string collapses this into "no skew" and says nothing.
-    // Both provenances are named, so a reader can see the evidence rather than trust the verdict.
+    // THE HEADLINE (#374) — one version, two commits. The bare version string collapses this into "no
+    // skew" and says nothing. Both provenances are named, so a reader can see the evidence rather than
+    // trust the verdict; and the CAUSE is stated only as strongly as the evidence supports it.
+    const sameRepoClause = sameRepo ? ' from the same repository' : '';
+    const cause = sameRepo
+      ? 'the tag was re-cut or force-pushed, or one of them is not the release it claims to be'
+      : 'the two sources cannot be compared (at least one is unrecorded), so this may be a re-cut or force-pushed tag, or two different repositories';
     return {
       status: 'recut',
       notes: [
-        `toolkit provenance mismatch — the lock (${lockWho}) and this CLI (${cliWho}) both report version ${lockVersion} from the same repository but resolve to DIFFERENT commits: the tag was re-cut or force-pushed, or one of them is not the release it claims to be. \`--verify-render\` says whether the difference changes any file.`,
+        `toolkit provenance mismatch — the lock (${lockWho}) and this CLI (${cliWho}) both report version ${lockVersion}${sameRepoClause} but resolve to DIFFERENT commits: ${cause}. \`--verify-render\` says whether the difference changes any file.`,
       ],
     };
   }

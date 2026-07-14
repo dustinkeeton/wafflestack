@@ -562,16 +562,24 @@ The determinism above is worth nothing if the *repo slug* varies, so `source` is
 
 | The render was… | `source` comes from | Why it is a function of the pin |
 |---|---|---|
-| an npm/npx install | npm's `resolved` URL | the spec the operator typed — `npx github:acme/wafflestack#v1.0.0` resolves to `acme` on every machine |
-| a **release** checkout | the corroborated remote | `ls-remote` found *that* tag at *that* commit on *that* remote, so `source`/`ref`/`commit` name one repo together — a fork that cuts its own release names **itself** |
-| any **non-release** checkout | `package.json` `repository` | ships with the toolkit's content, so it is a function of the commit |
+| an npm/npx install | npm's `resolved` URL | the spec the operator typed — `npx github:acme/wafflestack#v1.0.0` resolves to `acme` on every machine. This is how a **fork names itself**: `resolved` records the repo npm actually cloned |
+| **any** checkout — release or not | `package.json` `repository` | ships with the toolkit's content, so it is a function of the commit |
 
-**`remote.origin.url` is never recorded.** It is a property of the clone the renderer happened to use,
-not of the toolkit: two contributors on the same commit, rendering identical bytes, would otherwise
-write different `source` values into the committed lock — churning it back and forth and redding the
-`render` + `git diff --exit-code` gate for a change that moved no rendered byte. A fork that renders
-from a checkout and wants its lock to name itself sets `repository` in `package.json`: a committed
-edit, and therefore a function of the pin, which is exactly the property `origin` lacks.
+**There is no exception for a release checkout**, and an earlier draft of this table claimed one — that
+`ls-remote` had "corroborated" the remote, so the clone's `origin` was safe to record. It had not: on a
+checkout, `release` is decided offline by `git describe --exact-match`, and **no remote is ever asked**.
+Neither `origin` nor `repository` is *verified* there; only one of them is a function of the pin.
+
+**`remote.origin.url` is never recorded** — *including when it is the only slug on offer*. It is a
+property of the clone the renderer happened to use, not of the toolkit: two contributors on the same
+commit, rendering identical bytes, would otherwise write different `source` values into the committed
+lock — churning it back and forth and redding the `render` + `git diff --exit-code` gate for a change
+that moved no rendered byte. So a checkout whose `package.json` declares no `repository` writes
+`"source": null` — **an unknown repo is recorded as unknown, never as the clone's** — and doctor reads
+that block as "an unknown toolkit" while `toolkitPinFromLock` declines to pin it. Determinism is kept by
+recording nothing, not by recording a guess. A fork that renders from a checkout and wants its lock to
+name itself sets `repository` in `package.json`: a committed edit, and therefore a function of the pin,
+which is exactly the property `origin` lacks.
 
 **An `unverified` render carries the previous block forward**, but only when doing so asserts nothing
 new: same `toolkitVersion`, and a freshly rendered `files` map *identical* to the one the recorded

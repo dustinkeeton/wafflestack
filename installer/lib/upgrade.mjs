@@ -239,8 +239,14 @@ function describeToolkitMove(move) {
   const { status, from, to, fromRef, toRef, fromSource, toSource, fromVersion, toVersion, toStatus } = move;
   const at = (ref, sha) => [ref, sha ? shortSha(sha) : null].filter(Boolean).join(' @ ') || 'no commit recorded';
   const v = (x) => x ?? 'unknown';
-  // Same unasked question as `describeToolkitProvenance`'s `recut`, at the second site (#384 F3).
-  const differentRepos = Boolean(fromSource && toSource && fromSource !== toSource);
+  // Same unasked question as `describeToolkitProvenance`'s `recut`, at the second site (#384 F3) —
+  // and the same THREE-STATE rule, because F3's fix collapsed `unknown` into `same` here too (#384
+  // F12). `differentRepos` is false when a source is merely NULL, so a lock whose `source` was never
+  // recorded (a bare clone; a lock written before #374) fell into the `re-cut or force-pushed` arm and
+  // was told a tag had moved — the very assertion-about-an-unqueried-remote F3 exists to stop. Same /
+  // different / unknown: the strong cause needs BOTH sources, and unknown gets the hedge.
+  const comparableRepos = Boolean(fromSource && toSource);
+  const differentRepos = comparableRepos && fromSource !== toSource;
   if (status === 'unchanged') return null;
   if (status === 'moved') {
     // The #372 trap, said out loud: same version, different commit. `upgrade` reports `current`
@@ -253,6 +259,12 @@ function describeToolkitMove(move) {
       // one of the two renders used an unreleased toolkit", which `moved` structurally cannot be:
       // `moved` requires both commits non-null, and `toolkitLockEntry` writes `commit` IFF
       // `status === 'release'` — the anti-churn invariant. An unreleased render lands in `unknown`.
+      //
+      // …and it is only reachable when the sources are KNOWN EQUAL. Otherwise we have not established
+      // that any tag moved at all, and say so (#384 F12).
+      if (!comparableRepos) {
+        return `toolkit ${toVersion} is unchanged by version, but its commit moved ${shortSha(from)} → ${shortSha(to)} — at least one source is unrecorded, so this may be a re-cut or force-pushed tag, or two different repositories`;
+      }
       return `toolkit ${toVersion} is unchanged by version, but its commit moved ${shortSha(from)} → ${shortSha(to)} — the tag was re-cut or force-pushed`;
     }
     const repos = differentRepos ? ` (DIFFERENT REPOSITORIES: ${fromSource} → ${toSource})` : '';

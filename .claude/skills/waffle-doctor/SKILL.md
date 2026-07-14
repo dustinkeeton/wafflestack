@@ -85,6 +85,11 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
     `--verify-render` is green alongside it, the difference changed no file and you can ignore it;
     if it is red, this note is *why*. The fix is to re-render, or to pin CI to the toolkit that
     produced the lock.
+  - **`toolkit provenance mismatch … the two sources cannot be compared (at least one is
+    unrecorded)`** — same version, different commits, but one of the two blocks records no
+    repository, so doctor **cannot** tell a re-cut tag from two different repos and does not guess.
+    You will see this against a lock written before the toolkit recorded provenance, or one rendered
+    by a toolkit with no discoverable repo. Re-render to give the lock a source it can name.
   - **`toolkit provenance mismatch … these are DIFFERENT REPOSITORIES`** — the two blocks name
     different repos, so **no tag need have moved**: a fork's `v0.12.0` and upstream's `v0.12.0` are
     two different releases that share a version number. Doctor says this instead of claiming a
