@@ -394,8 +394,9 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
   project-specific guidance to a toolkit item.
 - `.waffle/waffle.lock.json` (generated, committed) — manifest of every rendered file with
-  its hash. It is **canonical**: hashed from the committed inputs only, with
-  `waffle.local.yaml` excluded, so it is byte-identical on every machine and safe to share.
+  its hash, plus the `toolkit` block recording *which toolkit produced it* (ref + commit SHA —
+  see *Toolkit provenance in the lock*). It is **canonical**: hashed from the committed inputs
+  only, with `waffle.local.yaml` excluded, so it is byte-identical on every machine and safe to share.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
   It is also what tells *your* managed files apart from a hand-written file at the same
@@ -497,6 +498,84 @@ what would render, so no `ref` can reproduce it. Untracked files do not count.
 **The repo slug is read from PROVENANCE, not from the declaration:** npm's `resolved` URL, then the
 git `origin` remote, and only then `package.json` `repository`. A fork inherits the declared field
 verbatim, so trusting it first would ask the wrong remote about a fork's own release.
+
+### Toolkit provenance in the lock
+
+The resolved identity above is **recorded**, in a top-level `toolkit` block keyed exactly like a
+`sources[]` entry (see *External stack sources*) — because a version string does not identify
+content, and the external stacks solved this problem first:
+
+```json
+{
+  "toolkitVersion": "0.12.0",
+  "toolkit": {
+    "source": "github:dustinkeeton/wafflestack",
+    "sourceType": "git",
+    "ref": "v0.12.0",
+    "commit": "e3f1c0d9a2b45f6e8c1d0a9b7e6f5d4c3b2a1908",
+    "status": "release"
+  },
+  "targets": ["claude"],
+  "files": { "…": "…" }
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `source` | the npx spec **base** — `github:<owner>/<repo>`, no `#ref` |
+| `sourceType` | always `"git"` — shape parity, so one reader consumes either block |
+| `ref` | the **pin**, `"v0.12.0"` — *not* the npx spec. `null` unless `status` is `release` |
+| `commit` | the 40-char SHA. `null` unless `status` is `release` |
+| `status` | `release` \| `unreleased` \| `unverified` — why a null block is null |
+
+`toolkitVersion` is **unchanged** and stays where it is: it is `upgrade`'s migration baseline and
+`list`'s skew signal. The block *adds* identity; it replaces nothing.
+
+**`status` is the field `sources` does not need.** An external source's `ref` is *authored* in
+`waffle.yaml` and pinning is mandatory, so a null there can only mean "local path". The built-in
+toolkit's ref is *discovered at runtime*, so a null is ambiguous — `status` is what makes a null
+block **say** something instead of merely **lack** something.
+
+> **`ref: null` means "no provenance was captured" — it NEVER means "this was not a release."** The
+> `--allow-unreleased` hatch short-circuits the release lookup, and a pnpm/yarn `dlx` consumer has no
+> npm hidden lockfile to read a commit from at all: both forfeit a release that genuinely existed.
+> Never infer "unreleased" from a null.
+
+**A checkout render records NO commit, by design.** The rule is: **`commit` is recorded if and only
+if `status` is `release`** — i.e. only when it names an immutable, published, content-identifying
+pointer. No field in this block is a function of a moving `HEAD`, and that is deliberate:
+
+- **A HEAD SHA is self-referential in a repo that commits its own lock** — it would name the commit
+  *before* the one containing it. Never right, and it cannot be made right.
+- **It would be false even when fresh.** A toolkit developer's tree is dirty by definition (rendering
+  uncommitted `stacks/**` edits is the point), so `HEAD` does not identify what rendered.
+- **It would churn the lock on every commit** — a lock diff on every PR, a conflict on every
+  long-lived branch, and a permanent red on the `render` + `git diff --exit-code
+  .waffle/waffle.lock.json` CI recipe, for a change that moved no rendered byte.
+
+So a non-release render writes `{ "ref": null, "commit": null, "status": "unreleased" }` — a block
+that is **byte-stable across every commit**. Null is not a degradation here; it is the correct answer.
+
+**An `unverified` render carries the previous block forward**, but only when doing so asserts nothing
+new: same `toolkitVersion`, and a freshly rendered `files` map *identical* to the one the recorded
+provenance already describes. Under that condition the old block is still exactly true — which is
+what stops a network blip (or the hatch, or `dlx`) from rewriting a good `release` block to nulls and
+reddening a `git diff --exit-code` gate with no content change anywhere. If content *did* move, the
+block is honestly rewritten to nulls.
+
+**What reads it.** `doctor` reports which toolkit produced the render and **warns** on a mismatch —
+including the case the bare version string structurally cannot express: **same version, different
+commit** (a re-cut or force-pushed tag). It is a **note, never an error**: `doctor.toolkitRef` ships
+unpinned by default, so an error would red every consumer's required check the moment anything merges
+to the toolkit's `main` — and `--verify-render` is already the *content* gate, so the only mismatch an
+error could add is one whose rendered bytes are identical, i.e. one that provably did not matter.
+`upgrade` reports the commit move, exactly as it already does for external sources.
+
+**Compatibility: no lock-format version bump, and no migration.** The key is additive and every
+reader is key-by-key, exactly as when the `sources` block was added. A lock predating the block loads
+and doctors clean (one note). An old CLI ignores the block; `eject` round-trips and preserves it; only
+an old `render`/`reinstall` — which rewrites the lock wholesale — drops it. A render that is handed no
+identity at all (a library caller) **omits** the block rather than inventing one.
 
 ## How do I know a file is wafflestack-managed?
 

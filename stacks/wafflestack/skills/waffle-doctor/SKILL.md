@@ -75,6 +75,24 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
 - **version-skew note** — doctor mentions when the lock was written by a different toolkit
   version. That is informational; pin `{{waffle.toolkitRef}}` (and the repo's version) to a
   release tag to silence it, or run **`/waffle-upgrade`** to move forward deliberately.
+- **toolkit provenance note** — doctor names *which toolkit* produced the render, read from the
+  lock's `toolkit` block (its ref and commit SHA, not just a version number). **Every form of this
+  note is a warning: none of them fails the check.** Read it as the explanation for a red
+  elsewhere, never as the red itself.
+  - **`toolkit provenance mismatch … both report version X but resolve to DIFFERENT commits`** —
+    the headline, and the one a version number cannot express: the tag was **re-cut or
+    force-pushed**, or one of the two is not the release it claims to be. If `--verify-render` is
+    green alongside it, the difference changed no file and you can ignore it; if it is red, this
+    note is *why*. The fix is to re-render, or to pin CI to the toolkit that produced the lock.
+  - **`the lock was rendered by an UNRELEASED toolkit`** — its provenance cannot be pinned to a
+    release, so there is nothing to compare against. Expected for a repo that renders from a
+    toolkit checkout (this one does). Not a problem to fix.
+  - **`the lock records no toolkit provenance`** — it was rendered by a toolkit predating the
+    block. The next **`/waffle-render`** records it. Harmless.
+  - A **null `ref`** in the block means *"no provenance was captured"* — it does **not** mean
+    "this was not a release". An `--allow-unreleased` run, or a `pnpm`/`yarn dlx` install, both
+    record nulls for a toolkit that genuinely was one.
 
 Report the exit status plainly: a clean doctor is the green light to commit; drift must be
-resolved (usually by re-rendering) first.
+resolved (usually by re-rendering) first. Provenance notes are never drift — do not report one as
+a failure, and never tell the user to "fix" a mismatch that `--verify-render` says changed nothing.
