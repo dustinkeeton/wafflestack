@@ -13,6 +13,7 @@ import {
   resolveConfigFile,
   loadProjectConfig,
 } from './project.mjs';
+import { describeToolkitProvenance } from './toolkit-ref.mjs';
 import { loadToolkitWithSources } from './toolkit.mjs';
 import { computeSelection } from './refs.mjs';
 import { applicablePrerequisites, evaluatePrerequisites } from './prerequisites.mjs';
@@ -83,11 +84,34 @@ function noVerify() {
  * `toolkitIdentity` (#373, optional) is what the CLI worked out about ITSELF — release / unreleased /
  * unverified, and the ref that reproduces it. Doctor does not gate on it (plain doctor reads no
  * toolkit content, so it is correct from any toolkit, and gating it would red the unpinned-by-default
- * `waffle-doctor.yml` for every consumer). It uses it for one thing: to keep the version-skew remedy
- * pointing at a PINNED command, so the reader is not sent to re-fetch the default branch. Note that
- * the identity plain doctor is handed is the OFFLINE one, which on an npx install cannot reach
- * `release` at all — so the note describes the CLI in hand and never predicts what the gate will do
- * (see the note itself). Absent, the remedy reads exactly as it always did.
+ * `waffle-doctor.yml` for every consumer). It has two uses, both of them notes: keeping the
+ * version-skew remedy pointed at a PINNED command, and — since #374 — comparing the lock's recorded
+ * `toolkit` provenance against the toolkit now in hand. Note that the identity plain doctor is handed
+ * is the OFFLINE one, which on an npx install cannot reach `release` at all — so the notes describe
+ * the CLI in hand and never predict what the gate will do (see the notes themselves). Absent, the
+ * remedy reads exactly as it always did.
+ *
+ * ## The provenance check is a WARNING. `ok` is NOT touched. This is not a style call. (#374)
+ *
+ * `toolkitProvenance` reports which toolkit produced the render and flags a mismatch — including the
+ * one a bare version string structurally cannot express: **same version, different commit** (a re-cut
+ * or force-pushed tag). It never fails the gate, for four reasons, of which the first two are each
+ * independently fatal to the alternative:
+ *
+ *   1. **A hard error would red every consumer's required check the moment we merge anything.**
+ *      `doctor.toolkitRef` ships UNPINNED by default and `waffle-doctor.yml` runs on every consumer
+ *      PR, so that CLI's commit differs from every consumer's lock as soon as `main` moves.
+ *   2. **It adds no coverage.** The gate that SHOULD fail on a bad toolkit already exists and is
+ *      CONTENT-based: `--verify-render` re-renders and compares bytes. If a provenance mismatch
+ *      changed anything that mattered, `--verify-render` already fails on the hash. The only mismatch
+ *      a provenance error could catch beyond it is one where the rendered bytes are IDENTICAL — a
+ *      difference that provably did not matter. Erroring on a no-op is pure false positive.
+ *   3. It would red-gate this repo's own dogfooding: our lock is `unreleased`, our unpinned CI doctor
+ *      is a different unreleased commit. Mismatch by construction, every run.
+ *   4. Precedent: `toolkitVersion` skew is already a note.
+ *
+ * The note's real job is to make `--verify-render`'s red LEGIBLE. A `--strict-provenance` opt-in
+ * error is an explicit non-goal, and must never be the default.
  */
 export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
   const lock = readLock(cwd);
@@ -167,6 +191,22 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
         : 'version skew — run `wafflestack upgrade` to apply migrations and re-render',
     );
   }
+
+  // Toolkit provenance (#374) — WARNING ONLY; see the docblock. `toolkitVersion` says WHICH VERSION
+  // rendered this repo; the lock's `toolkit` block says WHICH TOOLKIT, and those are different
+  // questions the moment a tag is re-cut or a default branch is rendered. Layered ON TOP of the
+  // version-skew note above (which #373 fixed to name a working command) — it does not replace it.
+  //
+  // Read from the CANONICAL lock, not `tree`: provenance is a property of the committed render (a
+  // local overlay changes VALUES, never which toolkit produced them), and the local lock is a
+  // machine-private artifact no teammate can be told about.
+  const toolkitProvenance = describeToolkitProvenance({
+    lockToolkit: lock.toolkit ?? null,
+    lockVersion: lock.toolkitVersion ?? null,
+    identity: toolkitIdentity,
+  });
+  notes.push(...toolkitProvenance.notes);
+
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
   }
@@ -174,7 +214,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   // Render verification (#314). Runs before the notes about absence below, because whether an
   // all-absent tree "verified nothing" depends on whether this reproduced the render instead.
   const render = verifyRender
-    ? verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, sourceCacheDir })
+    ? verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, toolkitIdentity, sourceCacheDir })
     : noVerify();
   // Verification only *replaces* the on-disk comparison when it actually ran to completion.
   const verified = render.evaluated;
@@ -240,8 +280,13 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   // asked a question that could not be answered, which must never read as a pass. And so is a config
   // value the toolkit's own guards reject (#218): it cannot render, and the render on disk that
   // still hash-matches the lock is precisely the stale artifact that hides it.
+  //
+  // `toolkitProvenance` is DELIBERATELY ABSENT from this expression (#374). Adding it here would red
+  // every consumer's required `waffle-doctor` check — which ships unpinned — the moment anything
+  // merges to this repo's `main`, and it would catch only mismatches whose rendered bytes are
+  // identical, i.e. mismatches that provably did not matter. Read the docblock before reconsidering.
   const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0;
-  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems };
+  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, toolkitProvenance };
 }
 
 /**
@@ -284,8 +329,10 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
  *
  * A render that outright fails (bad config, unresolvable source) is a failure of the check, not a
  * clean bill of health: `ok: false` with the render's own errors. Same for a missing toolkit root.
+ *
+ * **THE COMPARISON IS `files`-ONLY, AND MUST STAY THAT WAY (#374).** See the comment at the site.
  */
-export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, sourceCacheDir = defaultSourceCacheDir() }) {
+export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir = defaultSourceCacheDir() }) {
   const result = { evaluated: false, ok: false, checked: 0, stale: [], absent: [], unexpected: [], errors: [] };
   if (!toolkitRoot) {
     result.errors.push('--verify-render needs the toolkit to render from, but no toolkit root was supplied');
@@ -319,11 +366,17 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
 
     // `sourceBaseDir: cwd` keeps a relative local-path external `source:` resolving against the
     // real repo — the one thing in the render that must NOT follow the temp cwd.
+    //
+    // `toolkitIdentity` is threaded so the temp render writes the same `toolkit` block a real render
+    // would (#374). It changes NO verdict here — the comparison below is `files`-only — but a render
+    // that silently differs from the real one in ANY output is a trap for the next reader, and the
+    // block is cheap to get right.
     const rendered = renderProject({
       toolkitRoot,
       cwd: tmp,
       sourceBaseDir: cwd,
       toolkitVersion,
+      toolkitIdentity,
       sourceCacheDir,
       refreshSources: false,
     });
@@ -334,6 +387,18 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
     // Warnings are deliberately dropped: they describe the *temp* dir (no .codex/config.toml, no
     // .gitignore …), so surfacing them would be noise about a directory that is about to vanish.
 
+    // TWO `files` MAPS, AND NOTHING ELSE. This is deliberate and it is load-bearing (#374).
+    //
+    // Both locks now carry a `toolkit` provenance block, and extending this comparison to include it
+    // is the single most natural-looking future "improvement" in this file. DO NOT. It would compare
+    // the toolkit that produced the COMMITTED lock against the toolkit running RIGHT NOW — which
+    // differ, by construction, for every consumer whose `doctor.toolkitRef` is unpinned (the default)
+    // the moment anything merges to the toolkit's `main`. Their required check would go red on a
+    // render that reproduces the lock byte-for-byte.
+    //
+    // The question this check asks is "does the committed config still produce the committed FILES".
+    // Provenance is a different question, and `doctor` answers it separately — as a NOTE (see
+    // `describeToolkitProvenance`). Content is the gate; provenance is the explanation.
     const produced = readLock(tmp)?.files ?? {};
     const tracked = lock.files ?? {};
     for (const [rel, hash] of Object.entries(tracked)) {

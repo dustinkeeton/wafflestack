@@ -12,6 +12,10 @@ import {
   parseLsRemoteTags,
   latestReleaseTag,
   toolkitRef,
+  toolkitSource,
+  toolkitLockEntry,
+  toolkitPinFromLock,
+  describeToolkitProvenance,
   repoSlug,
   parseRepoSlug,
   httpsUrl,
@@ -21,8 +25,10 @@ import {
   formatProvenanceWarning,
 } from '../lib/toolkit-ref.mjs';
 import { renderProject } from '../lib/render.mjs';
-import { upgrade } from '../lib/upgrade.mjs';
+import { upgrade, diffToolkit } from '../lib/upgrade.mjs';
 import { doctor } from '../lib/doctor.mjs';
+import { reinstall } from '../lib/uninstall.mjs';
+import { eject } from '../lib/eject.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #373 — toolkit provenance: what am I, and what ref reproduces me?
@@ -1017,16 +1023,18 @@ describe('the identity is threaded to the render/upgrade write sites (#373 → #
       assert.equal(result.ok, true, JSON.stringify(result.errors));
       assert.equal(result.identity?.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
 
-      // …and the lock is UNCHANGED by it. Writing the field is #374's issue, deliberately not this
-      // one: doing it here would rewrite every consumer's lock bytes in a change about the GATE.
+      // …and #374 lands it in the lock. `toolkitVersion` is untouched — the block ADDS identity, it
+      // replaces nothing (it is still `upgrade`'s migration baseline and `list`'s skew signal).
       const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
       assert.equal(lock.toolkitVersion, '0.0.test');
-      assert.equal('toolkitRef' in lock, false, 'the lock field is #374 — this PR only makes the value reachable');
+      assert.equal(lock.toolkit.ref, 'v0.12.0', 'the PIN, not the npx spec — `sources[].ref` shape');
+      assert.equal(lock.toolkit.commit, SHA_A);
 
       // Absent, everything behaves exactly as it always did (evals.mjs and most tests render this way).
       const bare = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
       assert.equal(bare.ok, true);
       assert.equal(bare.identity, null);
+      assert.equal(bare.toolkit, null);
     } finally {
       for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
     }
@@ -1154,5 +1162,536 @@ describe('the version-skew remedy names a command that WORKS (#373 / #372)', () 
   test('a RELEASE CLI (and an absent identity) keep the remedy exactly as it always read', () => {
     assert.match(notes(identityAt('release')), /version skew — run `wafflestack upgrade`/);
     assert.match(notes(null), /version skew — run `wafflestack upgrade`/);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// #374 — THE LOCK RECORDS WHICH TOOLKIT PRODUCED THE RENDER
+//
+// `toolkitVersion: "0.12.0"` does not identify content: the default branch and the tag 74 commits
+// behind it both carry that string. So the lock gains a top-level `toolkit` block, keyed exactly
+// like a `sources[]` entry (the external-stack prior art, #125) plus a `status` field `sources`
+// cannot need — because an external source's `ref` is AUTHORED and mandatory, while the built-in
+// toolkit's is DISCOVERED at runtime, so a null there is ambiguous without a reason attached.
+//
+// Two invariants carry the whole design, and both are load-bearing enough to be stated here:
+//
+//   1. **NO FIELD IS A FUNCTION OF A MOVING HEAD.** `commit` is recorded IF AND ONLY IF
+//      `status === 'release'`. A HEAD-derived SHA in a self-rendering repo's committed lock is
+//      self-referential (it names the commit BEFORE the one containing it), false whenever the tree
+//      is dirty, and would churn the lock on every single commit — reddening the documented
+//      `render` + `git diff --exit-code` recipe forever, for a change that moved no rendered byte.
+//   2. **DOCTOR'S CHECK IS A WARNING.** `doctor.toolkitRef` ships UNPINNED and `waffle-doctor.yml`
+//      runs on every consumer PR, so an error would red the entire install base the moment anything
+//      merges to this repo's `main` — and it would catch only mismatches whose rendered bytes are
+//      identical, i.e. ones that provably did not matter. `--verify-render` is the content gate.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** A synthetic release identity — the shape `resolveToolkitIdentity` hands back. */
+const releaseIdentity = (over = {}) => /** @type {any} */ ({
+  status: 'release',
+  version: '0.12.0',
+  commit: SHA_A,
+  tag: 'v0.12.0',
+  ref: 'github:dustinkeeton/wafflestack#v0.12.0',
+  origin: 'npm-install',
+  repo: 'dustinkeeton/wafflestack',
+  latestTag: 'v0.12.0',
+  lookupError: null,
+  ...over,
+});
+
+/** The same, for a toolkit that is provably NOT a release — no tag, no ref, but a real commit. */
+const unreleasedIdentity = (over = {}) =>
+  releaseIdentity({ status: 'unreleased', tag: null, ref: null, origin: 'checkout', ...over });
+
+/** …and for one we could not classify (a blip, the hatch, a `dlx` install — #383). */
+const unverifiedIdentity = (over = {}) =>
+  releaseIdentity({ status: 'unverified', tag: null, ref: null, lookupError: 'lookup skipped', ...over });
+
+const RELEASE_BLOCK = {
+  source: 'github:dustinkeeton/wafflestack',
+  sourceType: 'git',
+  ref: 'v0.12.0',
+  commit: SHA_A,
+  status: 'release',
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The shape, unit-tested against synthetic identities — no git, no network, no render.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('toolkitLockEntry — the block\'s shape (#374)', () => {
+  test('a RELEASE identity records the full block: source, pinned ref, and the commit', () => {
+    assert.deepEqual(toolkitLockEntry(releaseIdentity()), RELEASE_BLOCK);
+  });
+
+  test('an UNRELEASED identity records nulls and a status that says WHY — never HEAD\'s sha', () => {
+    // The identity HAS a commit (a checkout always knows its HEAD). The block still records null:
+    // that SHA does not identify what rendered (the tree may be dirty, and in this repo it is dirty
+    // by definition — rendering uncommitted stacks/** edits is the point of a local render).
+    const identity = unreleasedIdentity({ commit: SHA_A });
+    assert.equal(identity.commit, SHA_A, 'the identity knows HEAD…');
+    assert.deepEqual(toolkitLockEntry(identity), {
+      source: 'github:dustinkeeton/wafflestack',
+      sourceType: 'git',
+      ref: null,
+      commit: null, // …and the lock deliberately does not record it
+      status: 'unreleased',
+    });
+  });
+
+  test('an UNVERIFIED identity with no prior lock records nulls and says `unverified`', () => {
+    assert.deepEqual(toolkitLockEntry(unverifiedIdentity()), {
+      source: 'github:dustinkeeton/wafflestack',
+      sourceType: 'git',
+      ref: null,
+      commit: null,
+      status: 'unverified',
+    });
+  });
+
+  test('NO identity → NO block. The library caller\'s lock is byte-identical to the pre-#374 shape', () => {
+    // ~50 existing `renderProject({ toolkitVersion: '0.0.test' })` call sites, plus evals.mjs, pass
+    // no identity. Omitting the block is what keeps every one of them green — and it is honest: a
+    // block asserting provenance nobody supplied would be a lie.
+    assert.equal(toolkitLockEntry(null), null);
+  });
+
+  test('a release whose repo slug is unknowable records source: null — and no pin can be built', () => {
+    // #373's contract, verbatim: `status: 'release'` does NOT imply a non-null ref. A bare clone with
+    // no `origin`, no npm lockfile and no `repository` field is a release nobody can name.
+    const entry = toolkitLockEntry(releaseIdentity({ repo: null, ref: null }));
+    assert.deepEqual(entry, { source: null, sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' });
+    assert.equal(toolkitPinFromLock({ toolkit: entry }), null, 'no slug → no reproducible npx spec');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The `unverified` carry-forward — the fix for the one real compat hazard.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the `unverified` carry-forward (#374)', () => {
+  const FILES = { 'a.md': 'hash-a', 'b.md': 'hash-b' };
+  const prevLock = { toolkitVersion: '0.12.0', toolkit: RELEASE_BLOCK, files: FILES };
+
+  test('a network blip does NOT churn a good release block to nulls', () => {
+    // Without this, an `unverified` render (a GitHub blip, a proxy, the hatch, a `dlx` install)
+    // would rewrite a full release block to nulls — so two teammates on the SAME pinned toolkit
+    // commit two different locks, and the documented `render` + `git diff --exit-code` CI gate goes
+    // red with no content change anywhere.
+    const entry = toolkitLockEntry(unverifiedIdentity(), {
+      prevLock,
+      newFiles: { ...FILES },
+      toolkitVersion: '0.12.0',
+    });
+    assert.deepEqual(entry, RELEASE_BLOCK, 'the recorded provenance is still exactly true — keep it');
+  });
+
+  test('…but only when it asserts NOTHING NEW: different content rewrites the block honestly', () => {
+    // The carry-forward is airtight, not a guess: it fires only when the freshly rendered bytes are
+    // IDENTICAL to the bytes the recorded provenance already describes. Move a byte and the old
+    // block would be a claim about content that no longer exists.
+    const entry = toolkitLockEntry(unverifiedIdentity(), {
+      prevLock,
+      newFiles: { ...FILES, 'b.md': 'hash-b-CHANGED' },
+      toolkitVersion: '0.12.0',
+    });
+    assert.equal(entry.status, 'unverified');
+    assert.equal(entry.commit, null);
+  });
+
+  test('…and only at the SAME version: a version move rewrites the block honestly', () => {
+    const entry = toolkitLockEntry(unverifiedIdentity({ version: '0.13.0' }), {
+      prevLock,
+      newFiles: { ...FILES },
+      toolkitVersion: '0.13.0', // the lock says 0.12.0 — different toolkit, so different provenance
+    });
+    assert.equal(entry.status, 'unverified');
+    assert.equal(entry.commit, null);
+  });
+
+  test('an added or removed file is caught even when every surviving hash matches', () => {
+    // `sameFiles` must compare the key SETS, not just the shared keys — a subset would carry a
+    // release block forward across a render that added or dropped an output.
+    const added = toolkitLockEntry(unverifiedIdentity(), {
+      prevLock,
+      newFiles: { ...FILES, 'c.md': 'hash-c' },
+      toolkitVersion: '0.12.0',
+    });
+    assert.equal(added.commit, null, 'an added file is a content move');
+    const removed = toolkitLockEntry(unverifiedIdentity(), {
+      prevLock,
+      newFiles: { 'a.md': 'hash-a' },
+      toolkitVersion: '0.12.0',
+    });
+    assert.equal(removed.commit, null, 'a removed file is a content move');
+  });
+
+  test('UNRELEASED never carries forward — it is a POSITIVE determination, not an absence', () => {
+    // Two people rendering the same unreleased toolkit compute the same nulls offline, so there is
+    // nothing to protect. Carrying forward here would preserve a release block for a render that
+    // provably was NOT that release.
+    const entry = toolkitLockEntry(unreleasedIdentity(), {
+      prevLock,
+      newFiles: { ...FILES },
+      toolkitVersion: '0.12.0',
+    });
+    assert.equal(entry.status, 'unreleased');
+    assert.equal(entry.commit, null, 'a KNOWN non-release must never inherit a release SHA');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #372's read-back. The triple equality IS the contract, and it stops the lock's pin format and
+// `toolkitRef()`'s from drifting apart.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('toolkitPinFromLock — #372 reads the pin back out (#374)', () => {
+  test('THE TRIPLE EQUALITY: lock pin === toolkitRef(slug, tag) === identity.ref', () => {
+    const slug = { owner: 'dustinkeeton', repo: 'wafflestack' };
+    const identity = releaseIdentity();
+    const lock = { toolkitVersion: '0.12.0', toolkit: toolkitLockEntry(identity) };
+
+    assert.equal(toolkitPinFromLock(lock), 'github:dustinkeeton/wafflestack#v0.12.0');
+    assert.equal(toolkitPinFromLock(lock), toolkitRef(slug, 'v0.12.0'));
+    assert.equal(toolkitPinFromLock(lock), identity.ref);
+    // …and it is a spec `npx` accepts: base + '#' + pin, with the pin held separately in the lock
+    // exactly as `sources[].ref` holds an external stack's.
+    assert.equal(`${toolkitSource(identity.repo)}#${lock.toolkit.ref}`, identity.ref);
+  });
+
+  test('a non-release lock, and a lock predating the block, both yield null — never a guess', () => {
+    assert.equal(toolkitPinFromLock({ toolkit: toolkitLockEntry(unreleasedIdentity()) }), null);
+    assert.equal(toolkitPinFromLock({ toolkit: toolkitLockEntry(unverifiedIdentity()) }), null);
+    assert.equal(toolkitPinFromLock({ toolkitVersion: '0.12.0', files: {} }), null, 'a pre-#374 lock');
+    assert.equal(toolkitPinFromLock(null), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The lock, written for real — including THE ANTI-CHURN TEST, the non-negotiable regression guard.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the lock records the toolkit that produced the render (#374)', () => {
+  let toolkitRoot;
+  let cwd;
+  const lockPath = () => path.join(cwd, '.waffle/waffle.lock.json');
+  const readLockJson = () => JSON.parse(fs.readFileSync(lockPath(), 'utf8'));
+  const lockBytes = () => fs.readFileSync(lockPath(), 'utf8');
+
+  const writeToolkit = (body = 'body') => {
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: fixture\nstacks: [core]\n');
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [alpha]\n');
+    write(toolkitRoot, 'stacks/core/skills/alpha/SKILL.md', `---\nname: alpha\ndescription: Alpha.\n---\n\n${body}\n`);
+  };
+
+  const render = (toolkitIdentity, toolkitVersion = '0.12.0') =>
+    renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity });
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-toolkit-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-project-'));
+    writeToolkit();
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\nconfig: {}\n');
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('a RELEASE render records source + pinned ref + commit, and leaves toolkitVersion alone', () => {
+    const result = render(releaseIdentity());
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    const lock = readLockJson();
+    assert.deepEqual(lock.toolkit, RELEASE_BLOCK);
+    // The block ADDS identity; it replaces nothing. `toolkitVersion` is still `upgrade`'s migration
+    // baseline and `list`'s skew signal, and no existing reader changes behavior.
+    assert.equal(lock.toolkitVersion, '0.12.0');
+    // …and the render surfaces the block it wrote, which is what `upgrade` diffs against.
+    assert.deepEqual(result.toolkit, RELEASE_BLOCK);
+    // Placement: immediately after `toolkitVersion`, before `targets`.
+    assert.deepEqual(Object.keys(lock).slice(0, 3), ['toolkitVersion', 'toolkit', 'targets']);
+  });
+
+  test('an UNRELEASED render records `{ ref: null, commit: null, status: "unreleased" }`', () => {
+    // This is THIS REPO's own lock, on every render, forever: an untagged checkout of the toolkit.
+    assert.equal(render(unreleasedIdentity()).ok, true);
+    assert.deepEqual(readLockJson().toolkit, {
+      source: 'github:dustinkeeton/wafflestack',
+      sourceType: 'git',
+      ref: null,
+      commit: null,
+      status: 'unreleased',
+    });
+  });
+
+  test('NO identity → the lock has NO `toolkit` key at all (the pre-#374 shape, byte for byte)', () => {
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' }).ok, true);
+    assert.equal('toolkit' in readLockJson(), false);
+  });
+
+  test('THE ANTI-CHURN TEST — two unreleased toolkits, different commits, BYTE-IDENTICAL lock', () => {
+    // THE non-negotiable regression guard. If a future change ever records HEAD's sha for a checkout
+    // render, this test fails — and it must, because that lock would churn on every single commit to
+    // `main`, conflict on every long-lived branch, and permanently red the documented
+    // `render` + `git diff --exit-code .waffle/waffle.lock.json` recipe for a no-op change.
+    //
+    // The two identities differ in the ONE field a naive implementation would reach for.
+    assert.equal(render(unreleasedIdentity({ commit: SHA_A })).ok, true);
+    const first = lockBytes();
+    assert.equal(render(unreleasedIdentity({ commit: SHA_B })).ok, true);
+    const second = lockBytes();
+    assert.equal(first, second, 'a moving HEAD must not move a single byte of the lock');
+    assert.equal(JSON.parse(second).toolkit.commit, null);
+  });
+
+  test('carry-forward, end to end: a blip after a release render preserves the release block', () => {
+    assert.equal(render(releaseIdentity()).ok, true);
+    const afterRelease = lockBytes();
+    // Same toolkit, same content — but this run could not reach GitHub.
+    assert.equal(render(unverifiedIdentity()).ok, true);
+    assert.equal(lockBytes(), afterRelease, 'the lock does not move: the old provenance is still true');
+    assert.deepEqual(readLockJson().toolkit, RELEASE_BLOCK);
+  });
+
+  test('…and content that actually moved rewrites the block to honest nulls', () => {
+    assert.equal(render(releaseIdentity()).ok, true);
+    writeToolkit('DIFFERENT BODY'); // the toolkit's content changed under us
+    assert.equal(render(unverifiedIdentity()).ok, true);
+    const lock = readLockJson();
+    assert.equal(lock.toolkit.status, 'unverified');
+    assert.equal(lock.toolkit.commit, null, 'the release block described bytes that no longer exist');
+  });
+
+  test('backward compat: a lock with no `toolkit` block doctors CLEAN, with a note (mirrors #125)', () => {
+    // The prior art, pinned: `installer.test.mjs` — "a lock with no `sources` block doctors clean".
+    // Additive key + tolerant readers, no lock-format version bump, no migration.
+    assert.equal(render(releaseIdentity()).ok, true);
+    const lock = readLockJson();
+    delete lock.toolkit;
+    fs.writeFileSync(lockPath(), `${JSON.stringify(lock, null, 2)}\n`);
+
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
+    assert.equal(dr.ok, true, JSON.stringify(dr.notes));
+    assert.equal(dr.toolkitProvenance.status, 'not-recorded');
+    assert.match(dr.notes.join('\n'), /records no toolkit provenance/);
+  });
+
+  test('eject round-trips the block — it survives an operation that rewrites the lock', () => {
+    assert.equal(render(releaseIdentity()).ok, true);
+    eject({ cwd, item: 'skills/alpha' });
+    assert.deepEqual(readLockJson().toolkit, RELEASE_BLOCK, 'eject rewrites `files`, and preserves the rest');
+  });
+
+  test('reinstall preserves the block — an un-threaded caller would silently strip it', () => {
+    assert.equal(render(releaseIdentity()).ok, true);
+    const result = reinstall({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.deepEqual(readLockJson().toolkit, RELEASE_BLOCK);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// doctor: the headline capability — and the four ways it must NOT go red.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('doctor reports the toolkit that produced the render, and WARNS on a mismatch (#374)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-dr-toolkit-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-dr-project-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: fixture\nstacks: [core]\n');
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [alpha]\n');
+    write(toolkitRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha.\n---\n\nbody\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\nconfig: {}\n');
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('a matching release reads back as a match, naming the pin and the commit', () => {
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity(), toolkitRoot });
+    assert.equal(dr.ok, true);
+    assert.equal(dr.toolkitProvenance.status, 'match');
+    assert.match(dr.notes.join('\n'), /github:dustinkeeton\/wafflestack#v0\.12\.0 @ aaaaaaaaaaaa.*matches this CLI/);
+  });
+
+  test('THE CONSUMER-SAFETY TEST: a provenance mismatch is a WARNING — `ok` stays TRUE', () => {
+    // If this ever flips to false, EVERY consumer's required `waffle-doctor` check goes red the
+    // moment anything merges to this repo's `main`: `doctor.toolkitRef` ships UNPINNED by default
+    // (stacks/github-workflow/stack.yaml) and `waffle-doctor.yml` runs on every consumer PR, so that
+    // CLI's commit differs from every consumer's lock by construction. Fatal. Ends the discussion.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0', toolkitIdentity: releaseIdentity({ version: '0.11.0', tag: 'v0.11.0', commit: SHA_A, ref: 'github:dustinkeeton/wafflestack#v0.11.0' }) });
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_B }), toolkitRoot });
+    assert.equal(dr.ok, true, 'a provenance mismatch MUST NOT fail the gate');
+    assert.equal(dr.toolkitProvenance.status, 'mismatch');
+    const out = dr.notes.join('\n');
+    assert.match(out, /toolkit provenance mismatch/);
+    assert.match(out, /aaaaaaaaaaaa/, 'names the lock\'s commit');
+    assert.match(out, /bbbbbbbbbbbb/, 'names this CLI\'s commit');
+  });
+
+  test('THE HEADLINE: same version, DIFFERENT commit — the case a version string cannot express', () => {
+    // A re-cut or force-pushed tag. `"0.12.0"` on both sides: the version-skew note is SILENT, and
+    // before #374 the lock had nothing else to say. This is the entire point of the issue.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_B }), toolkitRoot });
+    assert.equal(dr.ok, true, 'still a warning');
+    assert.equal(dr.toolkitProvenance.status, 'recut');
+    const out = dr.notes.join('\n');
+    assert.doesNotMatch(out, /version skew/, 'the versions MATCH — only the commits differ');
+    assert.match(out, /both report version 0\.12\.0 but resolve to DIFFERENT commits \(aaaaaaaaaaaa vs bbbbbbbbbbbb\)/);
+    assert.match(out, /re-cut or force-pushed/);
+  });
+
+  test('THE GATE-DOESN\'T-GO-RED TEST: --verify-render with different provenance, identical content', () => {
+    // `--verify-render`'s comparison is `files`-only, deliberately (see the comment at the site).
+    // Extending it to provenance is the single most natural-looking future change that would
+    // red-gate the entire install base — this test is what stops it.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
+    const dr = doctor({
+      cwd,
+      toolkitVersion: '0.12.0',
+      toolkitIdentity: releaseIdentity({ commit: SHA_B }), // a DIFFERENT toolkit commit…
+      toolkitRoot, // …rendering byte-identical content
+      verifyRender: true,
+    });
+    assert.equal(dr.render.evaluated, true);
+    assert.equal(dr.render.ok, true, 'the content reproduces the lock — that is the question asked');
+    assert.deepEqual(dr.render.stale, []);
+    assert.equal(dr.ok, true, 'and the gate stays green');
+    assert.equal(dr.toolkitProvenance.status, 'recut', 'while the NOTE still says the commits differ');
+  });
+
+  test('an UNRELEASED lock + an unidentifiable CLI: informational, no comparison, ok (this repo)', () => {
+    // Exactly `waffle-doctor.yml` running on THIS repo: our lock says `unreleased`/null, and the
+    // unpinned CI doctor is some other unreleased commit. Mismatch by construction, every run.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: unreleasedIdentity() });
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: null, toolkitRoot });
+    assert.equal(dr.ok, true);
+    assert.equal(dr.toolkitProvenance.status, 'unpinnable');
+    const out = dr.notes.join('\n');
+    assert.match(out, /rendered by an UNRELEASED toolkit/);
+    assert.doesNotMatch(out, /provenance mismatch/, 'there is nothing to compare — do not invent a mismatch');
+  });
+
+  test('a release lock + an offline (unverified) CLI is NOT a mismatch — it is an unknown', () => {
+    // The normal state for plain `doctor` on an npx install: it resolves its identity OFFLINE, which
+    // structurally cannot reach `release` (#373). Calling that a mismatch would cry wolf on the most
+    // common consumer path there is.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: unverifiedIdentity(), toolkitRoot });
+    assert.equal(dr.ok, true);
+    assert.equal(dr.toolkitProvenance.status, 'unverifiable');
+    assert.doesNotMatch(dr.notes.join('\n'), /provenance mismatch/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// upgrade: report the actual commit move, as it already does for external sources.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('upgrade reports the toolkit\'s commit move (#374)', () => {
+  let toolkitRoot;
+  let cwd;
+  let logged;
+  const log = (line) => logged.push(String(line));
+
+  beforeEach(() => {
+    logged = [];
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-up-toolkit-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-up-project-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: fixture\nstacks: [core]\n');
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [alpha]\n');
+    write(toolkitRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha.\n---\n\nbody\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\nconfig: {}\n');
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const runUpgrade = (toolkitIdentity, toolkitVersion) =>
+    upgrade({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, changelog: '# Changelog\n', migrations: [], log });
+
+  test('a real version move reports both the version and the commits', () => {
+    const from = releaseIdentity({ version: '0.11.0', tag: 'v0.11.0', commit: SHA_A, ref: 'github:dustinkeeton/wafflestack#v0.11.0' });
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0', toolkitIdentity: from });
+
+    const result = runUpgrade(releaseIdentity({ commit: SHA_B }), '0.12.0');
+    assert.equal(result.toolkitMove.status, 'moved');
+    assert.equal(result.toolkitMove.from, SHA_A);
+    assert.equal(result.toolkitMove.to, SHA_B);
+    assert.equal(result.toolkitMove.fromRef, 'v0.11.0');
+    assert.equal(result.toolkitMove.toRef, 'v0.12.0');
+    assert.match(logged.join('\n'), /toolkit moved 0\.11\.0 \(v0\.11\.0 @ aaaaaaaaaaaa\) → 0\.12\.0 \(v0\.12\.0 @ bbbbbbbbbbbb\)/);
+  });
+
+  test('SAME VERSION, different commit — still reported. This is #372\'s self-upgrade trap', () => {
+    // `toVersion === lock.toolkitVersion` → `status: 'current'` → "already on toolkit X" → upgrade
+    // falls silent on a toolkit that genuinely moved. Now it says so.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
+
+    const result = runUpgrade(releaseIdentity({ commit: SHA_B }), '0.12.0');
+    assert.equal(result.status, 'current', 'upgrade\'s own status enum is UNCHANGED — #372 branches on it');
+    assert.equal(result.toolkitMove.status, 'moved');
+    const out = logged.join('\n');
+    assert.match(out, /already on toolkit 0\.12\.0/, 'the old, blind line still prints…');
+    assert.match(out, /toolkit 0\.12\.0 is unchanged by version, but its commit moved aaaaaaaaaaaa → bbbbbbbbbbbb/);
+    assert.match(out, /the tag was re-cut/);
+  });
+
+  test('a lock with NO `toolkit` block does not crash — the move reads `added`', () => {
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0' }); // pre-#374 lock: no identity, no block
+    assert.equal('toolkit' in JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8')), false);
+
+    const result = runUpgrade(releaseIdentity(), '0.12.0');
+    assert.equal(result.ok, true, JSON.stringify(result.doctor?.notes));
+    assert.equal(result.toolkitMove.status, 'added');
+    assert.equal(result.toolkitMove.to, SHA_A);
+    assert.match(logged.join('\n'), /the previous render recorded no toolkit provenance/);
+  });
+
+  test('an unreleased toolkit reports no move — because it recorded no commit to move', () => {
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
+    const result = runUpgrade(unreleasedIdentity({ version: '0.12.0' }), '0.12.0');
+    assert.equal(result.toolkitMove.status, 'unknown', 'no commit on one side → no move can be asserted');
+    assert.match(logged.join('\n'), /no commit recorded, so no move can be reported/);
+  });
+
+  test('diffToolkit: an unchanged commit says nothing at all', () => {
+    const block = { ...RELEASE_BLOCK };
+    const move = diffToolkit(block, { ...block }, { fromVersion: '0.12.0', toVersion: '0.12.0' });
+    assert.equal(move.status, 'unchanged');
+    // …and `null` when neither side ever recorded provenance: no move, and no absence worth a line.
+    assert.equal(diffToolkit(null, null, {}), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// describeToolkitProvenance, direct — the note wording is a proposal, but the STATUS is a contract.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('describeToolkitProvenance (#374)', () => {
+  test('every state produces exactly one note and never throws on a malformed block', () => {
+    const states = [
+      [{ lockToolkit: null }, 'not-recorded'],
+      [{ lockToolkit: toolkitLockEntry(unreleasedIdentity()) }, 'unpinnable'],
+      [{ lockToolkit: RELEASE_BLOCK, identity: null }, 'unverifiable'],
+      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity() }, 'match'],
+      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity({ commit: SHA_B }) }, 'recut'],
+      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.11.0', identity: releaseIdentity({ commit: SHA_B }) }, 'mismatch'],
+      // A release block with no commit — impossible from `toolkitLockEntry`, but a hand-edited or
+      // future-CLI lock must not crash doctor. Degrades to "cannot pin", never to a false mismatch.
+      [{ lockToolkit: { ...RELEASE_BLOCK, commit: null } }, 'unpinnable'],
+    ];
+    for (const [input, expected] of states) {
+      const result = describeToolkitProvenance(input);
+      assert.equal(result.status, expected, JSON.stringify(input));
+      assert.equal(result.notes.length, 1);
+      assert.ok(result.notes[0].length > 20, 'a note that says nothing is worse than no note');
+    }
   });
 });

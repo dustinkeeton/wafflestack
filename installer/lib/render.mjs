@@ -7,6 +7,7 @@ import {
   stringifyFrontmatter,
 } from './util.mjs';
 import { substitute, placeholderKeys, makeGuard } from './template.mjs';
+import { toolkitLockEntry } from './toolkit-ref.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
@@ -71,12 +72,13 @@ import {
  * `toolkitIdentity` (#373) is what the running CLI worked out about ITSELF — `release` /
  * `unreleased` / `unverified`, plus the `commit`/`tag`/`ref` that reproduce it (see
  * `toolkit-ref.mjs`). The render does not gate on it: the gate lives in `cli.mjs`, and by the time
- * a write reaches here it has already been allowed. It is threaded to the lock write site below,
- * and echoed back on the result, because `toolkitVersion` alone CANNOT identify what produced a
- * render — the default branch and the tag 74 commits behind it both say `0.12.0`. #374 turns that
- * into a lock field; this parameter is what will be sitting there when it does. Optional and
- * inert everywhere: absent (every test that renders directly, `evals.mjs`), the lock is written
- * byte-for-byte as it always was.
+ * a write reaches here it has already been allowed. It is written into the lock's `toolkit` block
+ * (#374) and echoed back on the result, because `toolkitVersion` alone CANNOT identify what produced
+ * a render — the default branch and the tag 74 commits behind it both say `0.12.0`.
+ *
+ * **Absent, the block is OMITTED** and the lock is byte-for-byte the pre-#374 shape. That is the
+ * degradation every library caller relies on (`evals.mjs`, and every test that renders directly),
+ * and it is deliberate: a `toolkit` block asserting provenance nobody supplied would be a lie.
  */
 export function renderProject({
   toolkitRoot,
@@ -304,22 +306,29 @@ export function renderProject({
   // doctors clean, since doctor/upgrade treat a missing `sources` as "all built-in").
   const sources = collectSourceProvenance(canonical.groups, canonical.producedBy, canonicalFiles);
 
+  // Built-in toolkit provenance (#374): the `toolkit` block — `{ source, sourceType, ref, commit,
+  // status }`, keyed like a `sources[]` entry, because `toolkitVersion` alone does NOT identify
+  // content (an unpinned `npx github:…` fetch resolves the default branch, whose package.json still
+  // carries the last released version number, so a render 74 commits past the tag and the tag itself
+  // are indistinguishable in the lock).
+  //
+  // **`commit` is recorded if and only if `status === 'release'`** — no field here may be a function
+  // of a moving HEAD, or the committed lock would churn on every commit and name content it did not
+  // produce. `toolkitLockEntry` owns that rule, and the `unverified` carry-forward that keeps a
+  // network blip from rewriting a good block to nulls; read its docblock before touching this.
+  //
+  // Each lock carries forward from its OWN predecessor (#317): the committed lock from `lock` against
+  // `canonicalFiles`, the local lock from `localLock` against `effectiveFiles`.
+  const toolkitBlock = toolkitLockEntry(toolkitIdentity, { prevLock: lock, newFiles: canonicalFiles, toolkitVersion });
+
   // The committed lock: canonical throughout — its `targets`/`stacks`/`include` come from the
   // committed config, not the merged one, for the same reason its hashes do. `stacks:` records
   // the enabled built-in stack names; `sources` (when present) records each external source's
   // resolved provenance and the files it produced. External files also live in `files` so doctor
   // drift-checks them like any managed file.
-  //
-  // #373/#374 — `toolkitVersion` is the ONE piece of provenance the built-in toolkit gets, and it
-  // does not identify content: an unpinned `npx github:…` fetch resolves the default branch, whose
-  // package.json still carries the last released version number. `toolkitIdentity` (threaded in
-  // above) is the answer — `{ status, commit, tag, ref }` for the toolkit that ran this render, the
-  // same shape external stacks already record in `sources`. It is deliberately NOT written to the
-  // lock here: adding the field is #374, and doing it in this PR would change every consumer's lock
-  // bytes (and this repo's committed one) in a change whose subject is the GATE. The value is
-  // resolved, carried to the write site, and returned — the next issue only has to name it.
   writeLockFile(path.join(cwd, LOCK_FILE), {
     toolkitVersion,
+    ...(toolkitBlock ? { toolkit: toolkitBlock } : {}),
     targets: canonicalProject.targets,
     stacks: canonicalProject.stacks,
     include: canonicalProject.include,
@@ -334,8 +343,14 @@ export function renderProject({
   const localLockFile = localLockPath(cwd);
   const overlayChangedTheRender = JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles);
   if (overlayChangedTheRender) {
+    const localToolkitBlock = toolkitLockEntry(toolkitIdentity, {
+      prevLock: localLock,
+      newFiles: effectiveFiles,
+      toolkitVersion,
+    });
     writeLockFile(localLockFile, {
       toolkitVersion,
+      ...(localToolkitBlock ? { toolkit: localToolkitBlock } : {}),
       targets: project.targets,
       stacks: project.stacks,
       include: project.include,
@@ -361,7 +376,19 @@ export function renderProject({
   log(`rendered ${effective.outputs.size} files${removed.length ? `, removed ${removed.length} stale` : ''}`);
   // `identity` rides back out with the result so a caller that did not resolve it (upgrade, and #372
   // after it) can read the ref that produced this render without asking twice. Null when unthreaded.
-  return { ok: true, errors: [], warnings, written: [...effective.outputs.keys()], removed, sources, identity: toolkitIdentity };
+  // `toolkit` is the block as WRITTEN — which is not always derivable from `identity`, because the
+  // carry-forward may have preserved the previous one. `upgrade` diffs exactly this against the
+  // lock's old block to report a commit move (`diffToolkit`), so it must be the written value.
+  return {
+    ok: true,
+    errors: [],
+    warnings,
+    written: [...effective.outputs.keys()],
+    removed,
+    sources,
+    toolkit: toolkitBlock,
+    identity: toolkitIdentity,
+  };
 }
 
 /**
