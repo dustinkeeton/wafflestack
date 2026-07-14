@@ -51,9 +51,12 @@ was likewise rejected — a pin records what *rendered*, never what was merely h
 
 **Affects**: `installer/lib/upgrade.mjs` (`reconcileToolkitRefPins`, `pinMoves`, `newerRelease`),
 `installer/lib/toolkit-ref.mjs` (`toolkitPinFromIdentity`, `classifyToolkitRefValue`),
-`installer/lib/project.mjs` (`setScalarIn` — in-place `Scalar.value` mutation, because `doc.setIn`
-drops the comments attached to the node it replaces, and `waffle.yaml` is hand-authored). The
-gitignored `waffle.local.yaml` overlay is neither read nor written (#317).
+`installer/lib/project.mjs` (`setScalarIn` — a byte-level splice of the pin scalar's own source bytes,
+because `waffle.yaml` is hand-authored and committed: re-serializing the parsed document would reflow
+the whole file, and `doc.setIn` would CREATE a pin the consumer never chose. Contrary to what this
+entry said before #386, `doc.setIn` does *not* drop comments on a scalar overwrite — creation, not
+comment loss, is the reason the helper exists). The gitignored `waffle.local.yaml` overlay is neither
+read nor written (#317).
 
 ---
 

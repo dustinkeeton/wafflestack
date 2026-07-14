@@ -253,9 +253,12 @@ export function upgrade({
  * private, gitignored overlay (#317), and a pin there (typically a local checkout path) is a
  * deliberate machine-local override. It is neither read nor written here.
  *
- * The edit is an in-place `Scalar.value` mutation (`setScalarIn`), never `doc.setIn`, which builds a
- * fresh node and drops the comments attached to the old one. One dirty-guarded write, the idiom the
- * other two config writers already use (`eject`, `installRefs`).
+ * The edit is a BYTE-LEVEL splice of the pin scalar's own source bytes (`setScalarIn`), never a
+ * re-serialize of the parsed document — `doc.toString()` reflows the WHOLE file (flow collections
+ * re-padded, long lines folded at 80 columns), turning a one-line pin bump into pages of diff in a
+ * consumer's hand-authored config. And never `doc.setIn`, which would CREATE a `toolkitRef` the
+ * consumer never chose. One dirty-guarded write, and the dirty guard is now byte-exact: the file is
+ * written iff its bytes actually differ (#386).
  *
  * @param {object} opts
  * @param {string} opts.cwd the consumer repo
@@ -269,7 +272,8 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
   const { file: configFile } = resolveConfigFile(cwd);
   if (!exists(configFile)) return pinMoves; // `render` will fail on this next, with a better message
 
-  const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
+  const source = fs.readFileSync(configFile, 'utf8');
+  const doc = YAML.parseDocument(source);
   if (doc.errors?.length) {
     // A config that does not parse is one `render` is about to reject anyway. Do not half-write it.
     log(`could not reconcile the pinned toolkitRef keys — ${CONFIG_FILE} did not parse cleanly; leaving it untouched`);
@@ -278,7 +282,11 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
 
   const pin = toolkitPinFromIdentity(identity);
   const pinSlug = parseRepoSlug(pin);
-  let dirty = false;
+  // `doc` is the READ side (classification only, and it is never serialized); `text` is the write side,
+  // carried through the loop so a second bumped key splices onto the first key's result. The two keys
+  // are independent scalars, so `doc`'s offsets stay valid for the reads — `setScalarIn` re-parses the
+  // text it is handed, and takes its ranges from that.
+  let text = source;
 
   for (const keyPath of TOOLKIT_REF_KEYS) {
     const key = keyPath.slice(1).join('.'); // "doctor.toolkitRef" — how a consumer names it
@@ -308,7 +316,14 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
       pinMoves.push({ key, from, to: pin, action: 'unchanged', reason: 'already pins the toolkit that rendered' });
       continue;
     }
-    if (setScalarIn(doc, keyPath, pin)) dirty = true;
+    const next = setScalarIn(text, keyPath, pin);
+    if (next === null) {
+      // Defensive, and unreachable through the branches above: the scalar we just classified is gone,
+      // or already holds the pin. Report what is true — nothing moved — never a bump we did not write.
+      pinMoves.push({ key, from, to: pin, action: 'unchanged', reason: 'already pins the toolkit that rendered' });
+      continue;
+    }
+    text = next;
     pinMoves.push({ key, from, to: pin, action: 'bumped', reason: 'moved to the toolkit that rendered this lock' });
     log(`${key} ${from} → ${pin}`);
     // A rewrite that changes the OWNER/REPO is truthful — the pin must name the toolkit that rendered
@@ -322,7 +337,8 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
     }
   }
 
-  if (dirty) fs.writeFileSync(configFile, doc.toString());
+  // The dirty guard is the bytes themselves: no splice, no write. A no-op run cannot touch the file.
+  if (text !== source) fs.writeFileSync(configFile, text);
   return pinMoves;
 }
 

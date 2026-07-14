@@ -1,6 +1,7 @@
 // @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 
 /** @import { Toolkit, Stack } from './toolkit.mjs' */
@@ -392,34 +393,88 @@ export function renameLegacyStacksKey(doc) {
 }
 
 /**
- * In-place update of an EXISTING scalar at `keyPath` on a parsed YAML Document — the value-side twin
- * of `renameLegacyStacksKey`, and it exists for the same reason: `doc.setIn(path, v)` builds a FRESH
- * node and drops every comment attached to the old one. `.waffle/waffle.yaml` is a hand-authored,
- * committed file — a consumer's `# pinned deliberately, see #322` note is not ours to delete — so the
- * only sanctioned write is fetching the live Scalar (`getIn(path, true)`) and assigning its `.value`.
- * Quoting style survives too: the node keeps its `type`, so a double-quoted pin stays double-quoted.
+ * BYTE-VERBATIM update of an EXISTING scalar at `keyPath` in a YAML file's raw TEXT — the value-side
+ * twin of `renameLegacyStacksKey`, and the only sanctioned write to `.waffle/waffle.yaml`.
  *
- * **It never CREATES anything.** A missing key, a missing parent, or a non-scalar at the path all
- * return false and write nothing. That is the contract #372 needs (never introduce a `toolkitRef` a
- * consumer did not choose) and it is why the caller's dirty flag can trust the return value: false
- * means not one byte of the document changed, including when the scalar already held `value`.
+ * **It takes text and returns text, and that is the whole point.** Re-serializing a parsed Document
+ * (`doc.toString()`) reflows the ENTIRE file, not the line you changed: flow collections get re-padded
+ * (`targets: [claude]` → `[ claude ]` — and the unpadded form is the shape `schema/FORMAT.md:43`
+ * documents), long plain scalars fold at 80 columns, double-spaced inline comments collapse to one
+ * space. So a one-line pin bump lands in a consumer's committed, hand-authored config as pages of
+ * unexplained diff. Here only the scalar's OWN source bytes are spliced (`node.range`), so every other
+ * byte in the file survives literally — which is what #372's "verbatim" claim actually requires, and
+ * what `doc.toString({ lineWidth: 0, flowCollectionPadding: false })` still would NOT deliver.
  *
- * `doc` stays `any` for the same reason its neighbour does — this walks nodes the public `Node` union
- * does not model, and narrowing would buy only casts.
+ * **It never CREATES anything.** A missing key, a missing parent, a non-scalar at the path, or a value
+ * that already equals `value` all return `null` and produce no new text. That is the contract #372
+ * needs (never introduce a `toolkitRef` a consumer did not choose), and it is the REAL reason this
+ * helper exists instead of `doc.setIn`: `setIn` happily creates the whole missing path, and returns
+ * nothing a caller's dirty guard could trust.
  *
- * @param {any} doc a parsed YAML Document (from `YAML.parseDocument`)
+ * It is **not** about comments. `yaml` v2's `YAMLMap.set` keeps the old node — with its comments and
+ * anchors — on a scalar→scalar overwrite (`if (isScalar(prev.value) && isScalarValue(value))
+ * prev.value.value = value`), so `doc.setIn` preserves them exactly as an in-place mutation does.
+ * Comment loss was never the differentiator; creation and whole-document reflow are (#386).
+ *
+ * Quoting style survives: the replacement token is re-emitted in the node's own `type`, so a
+ * double-quoted pin stays double-quoted. A scalar whose source form cannot be spliced safely — a block
+ * scalar, whose bytes carry indentation a token-level emit does not reproduce — falls back to a full
+ * re-serialize: correct value, reflowed file. The splice is *proved* by re-parsing, never assumed.
+ *
+ * @param {string} source the raw text of a YAML file
  * @param {(string|number)[]} keyPath e.g. `['config', 'doctor', 'toolkitRef']`
  * @param {string} value
- * @returns {boolean} true when an existing scalar's value actually changed
+ * @returns {string|null} the rewritten text, or null when not one byte may change
  */
-export function setScalarIn(doc, keyPath, value) {
-  const node = doc?.getIn?.(keyPath, true);
+export function setScalarIn(source, keyPath, value) {
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length) return null; // a config that does not parse is not one we may half-write
+  const node = doc.getIn(keyPath, true);
   // Duck-typed, exactly like `renameLegacyStacksKey`: a Scalar carries `value`; a YAMLMap/YAMLSeq
   // carries `items` (and would be a config shape we must not flatten into a string).
-  if (!node || typeof node !== 'object' || !('value' in node) || 'items' in node) return false;
-  if (node.value === value) return false;
-  node.value = value;
-  return true;
+  if (!node || typeof node !== 'object' || !('value' in node) || 'items' in node) return null;
+  if (node.value === value) return null;
+
+  const spliced = spliceScalar(source, node, keyPath, value);
+  if (spliced !== null) return spliced;
+
+  node.value = value; // the fallback: the right value, in a file the serializer has reflowed
+  return doc.toString();
+}
+
+/**
+ * Replace ONLY `node`'s own source bytes with `value`, re-emitted in the node's existing scalar style,
+ * and prove the result re-parses to exactly that value at that path. Returns null when it cannot prove
+ * it — the caller then re-serializes, which is correct but not verbatim.
+ *
+ * `node.range` is `[start, valueEnd, nodeEnd]`: `valueEnd` ends the scalar's own token, before any
+ * trailing comment or newline. Splicing `[start, valueEnd)` therefore cannot touch a comment, the
+ * indentation, or any neighbouring line.
+ *
+ * @param {string} source
+ * @param {any} node the live Scalar at `keyPath`
+ * @param {(string|number)[]} keyPath
+ * @param {string} value
+ * @returns {string|null}
+ */
+function spliceScalar(source, node, keyPath, value) {
+  const [start, valueEnd] = node.range ?? [];
+  if (typeof start !== 'number' || typeof valueEnd !== 'number') return null;
+  // `yaml` re-quotes when the requested style cannot hold the value (a `PLAIN` `yes`, say) — a quote
+  // we then WANT, and the re-parse below is what confirms we got a token that means what we meant.
+  const token = YAML.stringify(value, { defaultStringType: node.type, lineWidth: 0 }).trimEnd();
+  const next = `${source.slice(0, start)}${token}${source.slice(valueEnd)}`;
+  // RE-PARSING IS THE PROOF, and it is the ONE gate — deliberately, and it is written as a single
+  // expression because its two halves are a single claim: *the spliced text is still this document,
+  // with `value` at `keyPath`.* A block scalar (`|-`, `>-`) emits a multi-line token whose indentation
+  // belongs to the mapping we are splicing into, so it trips this and falls back to a re-serialize.
+  //
+  // There is deliberately NO cheap pre-check (`node.type !== 'PLAIN'`, `token.includes('\n')`) in front
+  // of it. Such a check rejects exactly the inputs this one already rejects, so no test could tell the
+  // two apart and neither could ever fail alone — a branch that cannot fail is the precise defect #386
+  // exists to remove, and adding one here while removing another would be a joke at our own expense.
+  const check = YAML.parseDocument(next);
+  return !check.errors?.length && check.getIn(keyPath) === value ? next : null;
 }
 
 /**

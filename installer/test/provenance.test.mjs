@@ -2377,55 +2377,102 @@ describe('toolkitPinFromIdentity — the pin is DERIVED, never surgically edited
   });
 });
 
-describe('setScalarIn — the comment-preserving write (#372)', () => {
-  const parse = (text) => YAML.parseDocument(text);
+describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
+  const PIN_PATH = ['config', 'doctor', 'toolkitRef'];
+  const OLD = 'github:dustinkeeton/wafflestack#v0.12.0';
+  const NEW = 'github:dustinkeeton/wafflestack#v0.13.0';
 
-  test('an in-place value mutation preserves every comment attached to the pair', () => {
+  // The one assertion worth making about a "verbatim" write, and the one the #372 tests were missing:
+  // the output is the input with the PIN'S BYTES swapped and NOTHING else moved. Substring matches
+  // cannot see a reflow — they pass just as happily on a file the serializer has re-laid-out.
+  const assertOnlyThePinMoved = (src, out) =>
+    assert.equal(out, src.replaceAll(OLD, NEW), 'the pin moved; every other byte must be where it was');
+
+  test('BYTE-VERBATIM: only the pin’s own bytes change — the rest of the file is untouched', () => {
+    // Every element here is one a `doc.toString()` re-serialize DEMONSTRABLY reflows (#386), which is
+    // what makes this test non-vacuous: an unpadded flow collection (the shape `schema/FORMAT.md:43`
+    // documents), a plain scalar past 80 columns, and a double-spaced inline comment.
     const src = [
       '# the pin CI fetches',
+      'targets: [claude]',
+      'stacks:',
+      '  - github-workflow',
       'config:',
+      '  project:',
+      '    description: A description that is deliberately longer than the eighty columns yaml folds a plain scalar at',
       '  # bumped by hand on 2026-07-01, see #322',
       '  doctor:',
-      '    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0 # pinned deliberately',
+      `    toolkitRef: ${OLD}  # pinned deliberately`,
+      '    flags: --verify-render',
       '  # trailing note under the block',
       '',
     ].join('\n');
-    const doc = parse(src);
-    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.13.0'), true);
-    const out = doc.toString();
-    assert.match(out, /toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0 # pinned deliberately/);
-    assert.match(out, /# the pin CI fetches/);
-    assert.match(out, /# bumped by hand on 2026-07-01, see #322/);
-    assert.match(out, /# trailing note under the block/);
+
+    const out = setScalarIn(src, PIN_PATH, NEW);
+    assertOnlyThePinMoved(src, out);
+    // Spelled out, so a failure names the thing that broke rather than dumping two files:
+    assert.match(out, /^targets: \[claude\]$/m, 'the flow collection is not re-padded to `[ claude ]`');
+    assert.match(out, /^ {4}description: A description .{40,}columns yaml folds a plain scalar at$/m, 'not folded at 80');
+    assert.match(out, new RegExp(`toolkitRef: ${NEW.replace(/[.#/]/g, '\\$&')} {2}# pinned deliberately$`, 'm'), 'the comment keeps its own spacing');
     assert.doesNotMatch(out, /v0\.12\.0/);
   });
 
-  test('quoting style survives — the node keeps its type, only its value moves', () => {
-    const doc = parse('config:\n  waffle:\n    toolkitRef: "github:dustinkeeton/wafflestack#v0.12.0"\n');
-    assert.equal(setScalarIn(doc, ['config', 'waffle', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.13.0'), true);
-    assert.match(doc.toString(), /toolkitRef: "github:dustinkeeton\/wafflestack#v0\.13\.0"/);
+  test('quoting style survives — the token is re-emitted in the node’s own type', () => {
+    const src = `config:\n  waffle:\n    toolkitRef: "${OLD}"\n`;
+    const out = setScalarIn(src, ['config', 'waffle', 'toolkitRef'], NEW);
+    assert.equal(out, `config:\n  waffle:\n    toolkitRef: "${NEW}"\n`);
   });
 
-  test('it NEVER creates: a missing key, a missing parent, and a non-scalar all return false', () => {
-    const doc = parse('config:\n  doctor: {}\n');
-    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'x'), false, 'missing key');
-    assert.equal(setScalarIn(doc, ['config', 'waffle', 'toolkitRef'], 'x'), false, 'missing parent');
-    assert.equal(setScalarIn(doc, ['config', 'doctor'], 'x'), false, 'a map is not a scalar');
-    assert.equal(doc.toString(), 'config:\n  doctor: {}\n', 'and not one byte moved');
+  test('a single-quoted pin stays single-quoted', () => {
+    const src = `config:\n  doctor:\n    toolkitRef: '${OLD}'\n`;
+    assert.equal(setScalarIn(src, PIN_PATH, NEW), `config:\n  doctor:\n    toolkitRef: '${NEW}'\n`);
+  });
+
+  test('a BLOCK scalar cannot be spliced, so it falls back to a re-serialize — correct, not verbatim', () => {
+    // The one shape the splice refuses (its bytes carry a block header + indentation). The value must
+    // still land: a pin we decline to move would silently leave CI fetching the old toolkit.
+    const src = `config:\n  doctor:\n    toolkitRef: >-\n      ${OLD}\n`;
+    const out = setScalarIn(src, PIN_PATH, NEW);
+    assert.equal(YAML.parse(out).config.doctor.toolkitRef, NEW, 'the pin still moved');
+  });
+
+  test('it NEVER creates: a missing key, a missing parent, and a non-scalar all return null', () => {
+    const src = 'config:\n  doctor: {}\n';
+    assert.equal(setScalarIn(src, PIN_PATH, 'x'), null, 'missing key');
+    assert.equal(setScalarIn(src, ['config', 'waffle', 'toolkitRef'], 'x'), null, 'missing parent');
+    assert.equal(setScalarIn(src, ['config', 'doctor'], 'x'), null, 'a map is not a scalar');
   });
 
   test('a FLAT literal key is not found — matching `lookupPath`, which never resolves one', () => {
     // `makeResolver` reads config via `lookupPath`, which splits on `.` and walks NESTED objects. A
     // literal `"doctor.toolkitRef":` key in waffle.yaml is therefore INERT — it pins nothing. So the
     // bumper must not touch it either: rewriting a key the renderer ignores would be a lie.
-    const doc = parse('config:\n  doctor.toolkitRef: github:dustinkeeton/wafflestack#v0.12.0\n');
-    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.13.0'), false);
-    assert.match(doc.toString(), /v0\.12\.0/, 'left exactly as authored');
+    assert.equal(setScalarIn(`config:\n  doctor.toolkitRef: ${OLD}\n`, PIN_PATH, NEW), null);
   });
 
-  test('setting the value it already holds is not a change — the dirty guard can trust it', () => {
-    const doc = parse('config:\n  doctor:\n    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0\n');
-    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.12.0'), false);
+  test('setting the value it already holds is not a change — the dirty guard can trust null', () => {
+    assert.equal(setScalarIn(`config:\n  doctor:\n    toolkitRef: ${OLD}\n`, PIN_PATH, OLD), null);
+  });
+
+  test('a config that does not parse is never half-written', () => {
+    assert.equal(setScalarIn('config:\n  doctor:\n   toolkitRef: [unclosed\n', PIN_PATH, NEW), null);
+  });
+
+  // The rationale this helper carried until #386 — "`doc.setIn` drops the comments attached to the old
+  // node" — was FALSE for `yaml` v2, and it was documented as fact in six places. `YAMLMap.set` keeps
+  // the old node on a scalar→scalar overwrite, so `setIn` preserves comments exactly as an in-place
+  // mutation does. Pinning it here means the six corrected sites cannot silently rot back.
+  test('the REAL contract: `doc.setIn` would CREATE the pin — which is what #372 forbids', () => {
+    const doc = YAML.parseDocument('config:\n  doctor: {}\n');
+    doc.setIn(PIN_PATH, NEW);
+    assert.match(doc.toString(), /toolkitRef: github/, 'setIn invents a pin the consumer never chose…');
+    assert.equal(setScalarIn('config:\n  doctor: {}\n', PIN_PATH, NEW), null, '…and setScalarIn refuses to');
+
+    // And the claim that justified the ban is simply not true of this `yaml`, so it must not be
+    // re-asserted in the docs: on an EXISTING scalar, setIn keeps the comments too.
+    const live = YAML.parseDocument(`config:\n  doctor:\n    toolkitRef: ${OLD} # pinned deliberately\n`);
+    live.setIn(PIN_PATH, NEW);
+    assert.match(live.toString(), /# pinned deliberately/, 'setIn does NOT drop comments (yaml v2)');
   });
 });
 
@@ -2583,42 +2630,54 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
     assert.doesNotMatch(configBytes(), /#0\.13\.0\b/, 'style preservation would have written a tag that does not resolve');
   });
 
-  test('comments and formatting survive the rewrite, verbatim', () => {
-    writeConfig(
-      [
-        'config:',
-        '  # CI fetches this exact toolkit — see docs/gitignore.md',
-        '  doctor:',
-        '    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0 # pinned deliberately (#322)',
-        '    flags: --verify-render',
-        '  waffle:',
-        '    toolkitRef: "github:dustinkeeton/wafflestack#v0.12.0"',
-        '  # everything below is ours',
-        '  project:',
-        '    name: Consumer',
-        '',
-      ].join('\n'),
-    );
+  test('comments and formatting survive the rewrite, VERBATIM — byte for byte but the pins (#386)', () => {
+    // The claim #372 makes about this file is `verbatim`, and only ONE assertion tests it: the bytes
+    // after == the bytes before with the pins swapped. Substring matches cannot see a whole-document
+    // reflow — the flow collection, the over-long plain scalar and the double-spaced inline comment
+    // below are each a thing `doc.toString()` demonstrably re-lays-out, and each passed the old test.
+    // Written whole, not through `writeConfig`, so the assertion owns EVERY byte of the file — the
+    // unpadded `targets: [claude]` flow collection included.
+    const before = [
+      '# CI fetches this exact toolkit — see docs/gitignore.md',
+      'targets: [claude]',
+      'stacks: [core]',
+      'config:',
+      '  doctor:',
+      '    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0  # pinned deliberately (#322)',
+      '    flags: --verify-render',
+      '  waffle:',
+      '    toolkitRef: "github:dustinkeeton/wafflestack#v0.12.0"',
+      '  # everything below is ours',
+      '  project:',
+      '    name: Consumer',
+      '    description: A description deliberately longer than the eighty columns at which yaml folds a plain scalar',
+      '',
+    ].join('\n');
+    write(cwd, '.waffle/waffle.yaml', before);
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
 
     runUpgrade(at('0.13.0'), '0.13.0');
-    const text = configBytes();
-    assert.match(text, /# CI fetches this exact toolkit — see docs\/gitignore\.md/);
-    assert.match(text, /toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0 # pinned deliberately \(#322\)/);
-    assert.match(text, /# everything below is ours/);
-    assert.match(text, /flags: --verify-render/);
-    assert.match(text, /toolkitRef: "github:dustinkeeton\/wafflestack#v0\.13\.0"/, 'and the quoting style with them');
+    assert.equal(configBytes(), before.replaceAll('#v0.12.0', '#v0.13.0'), 'only the two pins may move');
   });
 
-  test('NO-OP, BYTE FOR BYTE: an absent key is never given a pin', () => {
+  test('NO-OP, BYTE FOR BYTE: an absent key is never given a pin — and the file is never WRITTEN', () => {
     // This repo's own shape, and most consumers'. Introducing a pin here would silently change what
     // their CI fetches — a decision that is theirs, not ours.
     writeConfig('config: {}\n');
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
     const before = configBytes();
+    // Since #386 the write is byte-verbatim, so "wrote the same bytes back" and "did not write" are
+    // INDISTINGUISHABLE by content — a byte assertion can no longer catch a dropped dirty guard. The
+    // mtime can: age the file, and require that upgrade never touched it. (Before #386 the guard was
+    // caught only because an unguarded write REFLOWED the file, i.e. by the very bug that PR fixed.)
+    const aged = new Date(Date.now() - 60_000);
+    fs.utimesSync(configPath(), aged, aged);
+    const untouched = fs.statSync(configPath()).mtimeMs; // fs-reported, not `aged.getTime()`: APFS keeps
+    // nanoseconds, and reading them back as a float lands a hair off the integer we asked for.
 
     const result = runUpgrade(at('0.13.0'), '0.13.0');
     assert.equal(configBytes(), before, 'not one byte');
+    assert.equal(fs.statSync(configPath()).mtimeMs, untouched, 'and the file was never opened for writing');
     assert.deepEqual(result.pinMoves, []);
     assert.doesNotMatch(logged.join('\n'), /toolkitRef/, 'and not one line of noise about a non-event');
   });

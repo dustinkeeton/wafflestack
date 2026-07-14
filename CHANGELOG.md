@@ -445,10 +445,16 @@ is what you reach for across a breaking one.
   heals without a hand edit. It **only ever moves a pin the consumer already chose**: an absent key is
   never given one, an unpinned `github:owner/repo` keeps floating, a `#main`/`#<sha>` pin is left alone
   and noted, and a run that cannot prove it is a release (`--allow-unreleased`, a `dlx` install, an
-  unanswerable lookup, or a release *checkout*) writes no pin at all and says why. Comments and
-  quoting survive (in-place scalar mutation, never `doc.setIn`); a run that changes nothing rewrites
-  nothing, byte for byte. The gitignored `waffle.local.yaml` overlay is neither read nor written
-  (#317). Bumps are surfaced in the CLI output and in `upgrade()`'s new `pinMoves`, beside `sourceMoves`.
+  unanswerable lookup, or a release *checkout*) writes no pin at all and says why. **The rewrite is
+  byte-verbatim** (#386): `setScalarIn` splices only the pin scalar's own source bytes, so comments,
+  quoting, flow collections and line widths elsewhere in the consumer's hand-authored config are not
+  merely "preserved" but never touched — re-serializing the parsed document (`doc.toString()`) would
+  reflow the whole file, turning a one-line pin bump into pages of diff. It is `doc.setIn` the helper
+  avoids because `setIn` would CREATE an absent key — **not** because `setIn` drops comments, which it
+  does not (`yaml` v2 keeps the old node on a scalar overwrite; the claim was wrong, and the test that
+  pinned it could not fail). A run that changes nothing does not write the file at all. The gitignored
+  `waffle.local.yaml` overlay is neither read nor written (#317). Bumps are surfaced in the CLI output
+  and in `upgrade()`'s new `pinMoves`, beside `sourceMoves`.
 
   **The self-upgrade trap is answered by reporting, not by re-exec.** A `waffle.toolkitRef` pinned to
   an old tag means `/waffle-upgrade` runs the *old* CLI, which structurally cannot contain this fix and
