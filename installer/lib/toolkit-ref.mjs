@@ -50,7 +50,15 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  * @property {string|null} commit       40-char sha, when knowable
  * @property {string|null} tag          "v0.12.0" when the commit IS a release tag
  * @property {string|null} ref          "github:owner/repo#v0.12.0" — the npx spec that reproduces
- *                                      this toolkit. Non-null ONLY when status === 'release'.
+ *                                      this toolkit. Non-null ONLY when status === 'release' — but
+ *                                      NOT non-null WHENEVER it is, and the difference is the
+ *                                      contract #374/#372 must code against. A release whose repo
+ *                                      SLUG is unknowable (a checkout with no `repository` field, no
+ *                                      npm lockfile and no `origin` remote) is `status: 'release'`
+ *                                      with `ref: null` — pinned by a test, so it cannot drift.
+ *                                      **Consumers key on `ref != null`, never on
+ *                                      `status === 'release'`**, or they dereference a null the day
+ *                                      someone renders from a bare clone.
  * @property {'checkout'|'npm-install'|'unknown'} origin
  * @property {string|null} repo         "owner/repo", when knowable
  * @property {string|null} latestTag    the release to pin to, for the remedy message
@@ -138,7 +146,14 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
   } catch (err) {
     return corroborate({ ...found, lookupError: `could not list the toolkit's release tags: ${err instanceof Error ? err.message : String(err)}` }, changelog);
   }
-  const latestTag = tags.latest ?? base.latestTag;
+  // A lookup that SUCCEEDED and returned zero release tags is POSITIVE knowledge — there is nothing
+  // in THIS remote to pin — and it is categorically different from "we could not look". So it must
+  // NOT fall back to `base.latestTag`, which is scraped from the CHANGELOG that SHIPPED with the
+  // toolkit, i.e. inherited from upstream: a fork that has cut no tags of its own (a plain `git
+  // clone` + push carries none) would then be handed `npx …#github:acme/wafflestack#v0.12.0`, a ref
+  // that does not exist in acme's remote. The refusal's whole justification is that it names a
+  // command that WORKS; `latestTag: null` is what makes it say so honestly instead.
+  const latestTag = tags.latest;
   const tag = tags.byCommit.get(commit) ?? null;
   if (tag) return { ...found, status: 'release', tag, ref: toolkitRef(slug, tag), latestTag: latestTag ?? tag };
   return { ...found, status: 'unreleased', latestTag };
@@ -184,6 +199,21 @@ function corroborate(identity, changelog) {
  * @returns {string|null} 40-char commit sha
  */
 export function commitFromNpmLockfile(toolkitRoot, pkgName) {
+  return shaFromResolved(npmResolvedUrl(toolkitRoot, pkgName));
+}
+
+/**
+ * The `resolved` URL npm recorded for THIS toolkit, or null — the single place the hidden lockfile
+ * is located, parsed and keyed. Two callers need it and they need the SAME entry: this function for
+ * the SHA (`commitFromNpmLockfile`) and `repoSlug` for the owner/repo. Keeping one copy of the key
+ * lookup is not tidiness — a second copy is a divergence hazard, since changing the fallback key in
+ * one leaves the other silently answering about a different package.
+ *
+ * @param {string} toolkitRoot
+ * @param {unknown} pkgName
+ * @returns {string|null}
+ */
+function npmResolvedUrl(toolkitRoot, pkgName) {
   const lock = readJson(path.resolve(toolkitRoot, '..', '.package-lock.json'));
   const packages = lock && typeof lock === 'object' ? lock.packages : null;
   if (!packages || typeof packages !== 'object') return null;
@@ -192,7 +222,7 @@ export function commitFromNpmLockfile(toolkitRoot, pkgName) {
   const byName = typeof pkgName === 'string' ? packages[`node_modules/${pkgName}`] : null;
   const entry = byName ?? packages[`node_modules/${path.basename(toolkitRoot)}`];
   const resolved = entry && typeof entry === 'object' ? entry.resolved : null;
-  return shaFromResolved(typeof resolved === 'string' ? resolved : null);
+  return typeof resolved === 'string' ? resolved : null;
 }
 
 /**
@@ -286,9 +316,7 @@ export function toolkitRef(slug, tag) {
 export function repoSlug({ toolkitRoot, pkg, runGit = gitCapture }) {
   const fromPkg = parseRepoSlug(repositoryUrl(pkg));
   if (fromPkg) return fromPkg;
-  const lock = readJson(path.resolve(toolkitRoot, '..', '.package-lock.json'));
-  const entry = lock?.packages?.[`node_modules/${pkg?.name}`] ?? lock?.packages?.[`node_modules/${path.basename(toolkitRoot)}`];
-  const fromLock = parseRepoSlug(typeof entry?.resolved === 'string' ? entry.resolved : null);
+  const fromLock = parseRepoSlug(npmResolvedUrl(toolkitRoot, pkg?.name));
   if (fromLock) return fromLock;
   if (!exists(path.join(toolkitRoot, '.git'))) return null;
   return parseRepoSlug(runGit(toolkitRoot, ['config', '--get', 'remote.origin.url']));
@@ -380,7 +408,8 @@ export function gitCapture(cwd, args) {
 
 /**
  * Does the SHIPPED changelog carry a non-empty `## [Unreleased]` section? See `corroborate`.
- * A heading with nothing under it (what a release leaves behind) is NOT evidence.
+ * A heading with nothing under it (what a release leaves behind) is NOT evidence — and neither is
+ * the empty SCAFFOLD a release leaves behind, which is the same claim and needs saying out loud.
  *
  * @param {string|null} text
  * @returns {boolean}
@@ -390,9 +419,46 @@ export function changelogHasUnreleasedEntries(text) {
   for (const part of String(text).split(/^(?=## )/m)) {
     if (!/^##\s+\[?Unreleased\]?/i.test(part)) continue;
     const body = part.replace(/^##[^\n]*\n/, '');
-    if (/\S/.test(body)) return true;
+    if (hasEntries(body)) return true;
   }
   return false;
+}
+
+/**
+ * Real entries under `## [Unreleased]`, or only the empty Keep-a-Changelog scaffold?
+ *
+ * This is the honesty of the whole corroborator (#373 review). A bare `/\S/` on the section body
+ * reads `### Added`, `<!-- add entries here -->` and `_Nothing yet._` as ENTRIES — and those are the
+ * three idioms a Keep-a-Changelog release process routinely leaves in place. Since `corroborate()`
+ * only ever tightens `unverified` → `unreleased`, and `unreleased` REFUSES, a derivative whose
+ * release process leaves the scaffold would ship a genuinely tagged release whose own CHANGELOG
+ * testifies against it: one lookup failure (a corporate proxy npm honours via `.npmrc` but
+ * `git ls-remote` does not; git egress blocked while the registry is not) and a correctly-pinned
+ * release is hard-refused. That is bricking a legitimate consumer, not being wrong in the safe
+ * direction — the accepted false positive is a DEFAULT BRANCH that matches the tag, which is a far
+ * more benign thing than a release.
+ *
+ * So strip what a release leaves behind — sub-headings, HTML comments, emphasis-only placeholders —
+ * and only then ask whether anything is left. This repo's own `release` skill happens to leave the
+ * section truly empty, which is exactly why the hole was invisible; the guard must not rest on a
+ * convention it never states.
+ *
+ * @param {string} body the `## [Unreleased]` section, heading line already removed
+ * @returns {boolean}
+ */
+function hasEntries(body) {
+  const substance = body
+    // "<!-- add entries here -->" — may span lines, so strip before the line filters.
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .split('\n')
+    // "### Added" / "#### Fixed" — a sub-heading with nothing under it is scaffolding, not an entry.
+    // (`## ` cannot appear here: the caller split the file on it.)
+    .filter((line) => !/^\s*#{3,}\s/.test(line))
+    // "_Nothing yet._", "*None.*", "**No changes.**" — an emphasis-only line is a placeholder. A
+    // real bullet (`- x`, `* x`, even `* a *bold* x`) does not match: the close must end the line.
+    .filter((line) => !/^\s*[_*]{1,2}[^_*\n]*[_*]{1,2}\s*$/.test(line))
+    .join('\n');
+  return /\S/.test(substance);
 }
 
 /**
@@ -426,23 +492,45 @@ export function changelogLatestRelease(text) {
 export function formatUnreleasedRefusal(identity, command) {
   const repo = identity.repo ?? FALLBACK_REPO;
   const tag = identity.latestTag;
-  const pinned = tag ? `github:${repo}#${tag}` : `github:${repo}#<latest release tag>`;
   const at = identity.commit ? identity.commit.slice(0, 7) : 'an unknown commit';
   const how =
     identity.origin === 'checkout'
       ? `a checkout at ${at} (no release tag points here)`
       : `${repo} @ ${at} (not a release)`;
-  return [
+  const why = [
     `refusing to run \`${command}\` from an unreleased toolkit.`,
     '',
     `  running:        wafflestack ${identity.version} — ${how}`,
-    `  latest release: ${tag ?? 'unknown'}`,
+    `  latest release: ${tag ?? `none known for ${repo}`}`,
     '',
     'An unpinned `npx github:` fetch resolves the DEFAULT BRANCH. Rendering from it writes',
     'unreleased content while stamping the last released version number into your lock — which',
     'is what breaks `doctor --verify-render` in CI, and what makes the lock stop identifying',
     'what produced it.',
     '',
+  ];
+  // NO release tag to name. A fork or a vendored copy that has cut none of its own is the ordinary
+  // shape of this — `git clone` + push to a new remote carries no tags — and it is precisely the
+  // population `repoSlug` exists to serve ("a fork therefore names ITSELF in the remedy"). There is
+  // no pinned command that would resolve against that remote, so DO NOT PRINT ONE: a `Run this
+  // instead:` block that errors is worse than the refusal it decorates, and this message's entire
+  // justification is that the command it hands back works. Lead with the hatch, which does. (#373
+  // review: the old code inherited the SHIPPED changelog's tag here and named a ref upstream has and
+  // the fork does not.)
+  if (!tag) {
+    return [
+      ...why,
+      `There is no \`vX.Y.Z\` release of ${repo} to pin to, so no pinned command would resolve.`,
+      'Either cut a release tag there and pin to it, or — if this IS the toolkit you are developing —',
+      'render the working tree anyway:',
+      `  npx --yes github:${repo} ${command} --allow-unreleased    # or WAFFLESTACK_ALLOW_UNRELEASED=1`,
+      '',
+      'The identity stays honest either way: `--allow-unreleased` suppresses the refusal, not the truth.',
+    ].join('\n');
+  }
+  const pinned = `github:${repo}#${tag}`;
+  return [
+    ...why,
     'Run this instead:',
     `  npx --yes ${pinned} ${command}`,
     '',
@@ -468,12 +556,17 @@ export function formatUnreleasedRefusal(identity, command) {
 export function formatProvenanceWarning(identity) {
   if (identity.status === 'release') return null;
   const repo = identity.repo ?? FALLBACK_REPO;
-  const pin = identity.latestTag ? `github:${repo}#${identity.latestTag}` : `github:${repo}#<latest release tag>`;
   const at = identity.commit ? ` (${identity.commit.slice(0, 7)})` : '';
+  // Same rule as the refusal: never advise a pin that cannot exist. With no release tag known for
+  // this repo there is nothing to pin TO, and a `#<latest release tag>` placeholder would send a
+  // fork's users hunting for a tag their remote does not have.
+  const advice = identity.latestTag
+    ? `Pin to \`github:${repo}#${identity.latestTag}\` for a reproducible render.`
+    : `No \`vX.Y.Z\` release of ${repo} is known, so there is nothing to pin to — cut one for a reproducible render.`;
   if (identity.status === 'unverified') {
-    return `could not verify that this toolkit${at} is a release — ${identity.lookupError ?? 'lookup unavailable'}; proceeding. Pin to \`${pin}\` for a reproducible render.`;
+    return `could not verify that this toolkit${at} is a release — ${identity.lookupError ?? 'lookup unavailable'}; proceeding. ${advice}`;
   }
-  return `this toolkit${at} is NOT a release — it is the default branch or a working tree, and \`${identity.version}\` is merely the last released version number. Pin to \`${pin}\` for a reproducible render.`;
+  return `this toolkit${at} is NOT a release — it is the default branch or a working tree, and \`${identity.version}\` is merely the last released version number. ${advice}`;
 }
 
 /** @param {string} file @returns {any} */

@@ -276,6 +276,26 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.ref, null);
     assert.equal(id.commit, head());
   });
+
+  test('THE CONTRACT #374/#372 REST ON: `status: release` does NOT imply a non-null `ref`', () => {
+    // The JSDoc says `ref` is non-null ONLY for a release. True — and one-directional, which is the
+    // trap: it does not say non-null WHENEVER. `status` is fixed at 'release' by `git describe`
+    // BEFORE the repo slug is consulted, so a release whose slug is unknowable — no `repository` in
+    // package.json (this fixture), no npm lockfile, no `origin` remote — is a genuine release with
+    // `ref: null`. A consumer that branches on `status === 'release'` and then dereferences `ref`
+    // (#374 writes it into the lock; #372 into `doctor.toolkitRef` / `waffle.toolkitRef`) writes a
+    // null into a lock the first time someone renders from a bare clone.
+    //
+    // KEY ON `ref != null`, NOT ON `status === 'release'`. This test is what makes that
+    // enforceable rather than merely stated.
+    git('remote', 'remove', 'origin');
+    const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+    assert.equal(id.status, 'release', 'it IS a release — the tag is right there on HEAD');
+    assert.equal(id.tag, 'v0.9.0');
+    assert.equal(id.repo, null, 'but nothing can say WHICH repo');
+    assert.equal(id.ref, null, 'so there is no npx spec that reproduces it — and #374/#372 must handle this');
+    assert.equal(formatProvenanceWarning(id), null, 'still a release: nothing to warn about');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,12 +310,12 @@ describe('identity from an npm-install layout (#373)', () => {
   // The real shape, verified against a live `~/.npm/_npx/<hash>/` cache during planning:
   //   <tmp>/node_modules/wafflestack/          ← the toolkit (no .git)
   //   <tmp>/node_modules/.package-lock.json    ← npm's hidden lockfile, with the resolved SHA
-  const layout = ({ resolved, name = 'wafflestack', lockBody, changelog }) => {
+  const layout = ({ resolved, name = 'wafflestack', lockBody, changelog, repository = { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } }) => {
     toolkitRoot = path.join(tmp, 'node_modules', name);
     write(toolkitRoot, 'package.json', JSON.stringify({
       name,
       version: '0.12.0',
-      repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' },
+      repository,
     }));
     if (changelog !== null) write(toolkitRoot, 'CHANGELOG.md', changelog ?? '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n');
     if (lockBody !== undefined) {
@@ -357,6 +377,38 @@ describe('identity from an npm-install layout (#373)', () => {
     });
     assert.equal(id.status, 'release');
     assert.equal(id.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
+  });
+
+  test('a remote with ZERO release tags names no pinned command — it never inherits UPSTREAM\'s tag', () => {
+    // A fork or a vendored copy that has cut none of its own tags. `git clone` + push to a new remote
+    // carries no tags, so this is the ORDINARY shape of a derivative, not an exotic one — and it is
+    // exactly the population `repoSlug` exists to serve ("a fork names ITSELF in the remedy").
+    //
+    // The lookup SUCCEEDS and returns nothing. That is POSITIVE knowledge that there is nothing to
+    // pin — categorically different from "we could not look" — so `latestTag` must not fall back to
+    // the tag scraped from the SHIPPED changelog, which came from upstream. Doing so printed
+    // `npx …github:acme/wafflestack#v0.12.0`, a ref acme's remote does not have: a refusal whose
+    // `Run this instead:` command errors, which is the one thing this message must never do.
+    const root = layout({
+      resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_B}`,
+      repository: 'github:acme/wafflestack',
+      changelog: '# Changelog\n\n## [Unreleased]\n\n- fork work\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
+    });
+    const lsRemote = fakeLsRemote([]); // ls-remote ran fine; the remote simply has no release tags
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
+
+    assert.deepEqual(lsRemote.calls, ['https://github.com/acme/wafflestack.git'], 'it asked the FORK, not upstream');
+    assert.equal(id.status, 'unreleased');
+    assert.equal(id.repo, 'acme/wafflestack');
+    assert.equal(id.latestTag, null, "the shipped CHANGELOG says v0.12.0 — but that is UPSTREAM's tag, not acme's");
+
+    const msg = formatUnreleasedRefusal(id, 'render');
+    assert.doesNotMatch(msg, /#v0\.12\.0/, 'never name a ref the remote does not have');
+    assert.doesNotMatch(msg, /#<latest release tag>/, 'nor a placeholder command that cannot resolve');
+    assert.match(msg, /no `vX\.Y\.Z` release of acme\/wafflestack to pin to/);
+    assert.match(msg, /--allow-unreleased/, 'lead with the hatch — here it is the only path that works');
+    // The warning printed by the ungated commands must not invent a pin either.
+    assert.match(formatProvenanceWarning(id) ?? '', /nothing to pin to/);
   });
 
   test('no lockfile at all → `unverified`, never a throw (npm internals may change shape)', () => {
@@ -430,6 +482,26 @@ describe('identity from an npm-install layout (#373)', () => {
     assert.equal(shaFromResolved('git+ssh://git@github.com/o/r.git#v0.12.0'), null);
     assert.equal(shaFromResolved(null), null);
   });
+
+  test('the sha and the slug are read from the SAME lockfile entry — one lookup, two callers', () => {
+    // `commitFromNpmLockfile` (the sha) and `repoSlug` (the owner/repo) both need npm's hidden
+    // lockfile, and they must never disagree about WHICH package entry they are reading. Two copies
+    // of the key lookup is a divergence hazard: change the fallback key in one and the other keeps
+    // the old behaviour silently. They now share one resolver, and this pins both ends of it.
+    const root = layout({
+      resolved: `git+ssh://git@github.com/acme/forked.git#${SHA_A}`,
+      repository: null, // no usable `repository` field → the slug MUST come from the lockfile
+    });
+    assert.deepEqual(repoSlug({ toolkitRoot: root, pkg: { name: 'wafflestack' }, runGit: () => null }), { owner: 'acme', repo: 'forked' });
+    assert.equal(commitFromNpmLockfile(root, 'wafflestack'), SHA_A);
+    // …and the identity agrees with both, having asked the fork's own remote.
+    const lsRemote = fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]);
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
+    assert.equal(id.repo, 'acme/forked');
+    assert.equal(id.commit, SHA_A);
+    assert.equal(id.ref, 'github:acme/forked#v1.0.0');
+    assert.deepEqual(lsRemote.calls, ['https://github.com/acme/forked.git']);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -480,6 +552,33 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(id.status, 'unverified', 'ignorance must stay ignorance — this fails OPEN');
   });
 
+  test('an empty Keep-a-Changelog SCAFFOLD is not evidence either — it must not refuse a real release', () => {
+    // The three shapes a release process routinely LEAVES BEHIND under `## [Unreleased]`. Reading
+    // any of them as an entry lets `corroborate()` tighten a GENUINELY TAGGED release to
+    // `unreleased` — and `unreleased` REFUSES. So a derivative whose release process leaves the
+    // scaffold ships a real release whose own CHANGELOG testifies against it, and the first lookup
+    // failure (git egress blocked while the registry is not — a common CI shape) hard-refuses a
+    // correctly-pinned consumer. Bricking a legitimate consumer is NOT "wrong in the safe
+    // direction"; the accepted false positive is a default branch that matches the tag, which is a
+    // much more benign thing than a release.
+    for (const scaffold of [
+      '# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Fixed\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
+      '# Changelog\n\n## [Unreleased]\n\n_Nothing yet._\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
+      '# Changelog\n\n## [Unreleased]\n\n<!-- add entries here -->\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
+    ]) {
+      const id = resolveToolkitIdentity({ toolkitRoot: npmLayout(scaffold), lsRemote: failedLookup });
+      assert.equal(id.status, 'unverified', `a scaffold must fail OPEN, never refuse:\n${scaffold}`);
+    }
+  });
+
+  test('a real entry UNDER a scaffold heading is still an entry — the guard must not go blind', () => {
+    const id = resolveToolkitIdentity({
+      toolkitRoot: npmLayout('# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- something on main\n\n## [0.12.0] - 2026-07-11\n'),
+      lsRemote: failedLookup,
+    });
+    assert.equal(id.status, 'unreleased', 'stripping the scaffold must not strip what is under it');
+  });
+
   test('the corroborator never OVERRIDES a successful lookup that said `release`', () => {
     // main's changelog shape, but the SHA really is the tag: the network wins, every time.
     const id = resolveToolkitIdentity({
@@ -494,6 +593,18 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n## [1.0.0] - 2026\n'), false);
     assert.equal(changelogHasUnreleasedEntries('## Unreleased\n\n- a thing\n'), true, 'the brackets are optional');
     assert.equal(changelogHasUnreleasedEntries(null), false);
+    // The SCAFFOLD — what a release leaves behind. None of these is an entry.
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n### Fixed\n'), false, 'empty sub-headings');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_Nothing yet._\n'), false, 'emphasis-only placeholder');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n**No changes.**\n'), false, 'bold placeholder');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n<!-- add entries\n     here -->\n'), false, 'HTML comment, even across lines');
+    // …and everything that IS an entry still reads as one. A guard that strips too much is worse
+    // than one that strips too little: it fails OPEN on the default branch, which is issue #373.
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n- a real entry\n'), true, 'an entry under a sub-heading');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n* an asterisk bullet\n'), true, 'a bullet is not a placeholder');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n* a *bold* asterisk bullet\n'), true);
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n- **Fixed** a thing (#1)\n'), true);
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\nprose, no bullet\n'), true);
     assert.equal(changelogLatestRelease('## [0.9.0] - x\n## [0.10.0] - y\n'), 'v0.10.0', 'semver order, not file order');
     assert.equal(changelogLatestRelease('## [Unreleased]\n'), null);
     assert.equal(changelogLatestRelease(null), null);
@@ -537,9 +648,17 @@ describe('formatUnreleasedRefusal (#373)', () => {
     assert.match(msg, /fae04ff/, 'name the commit we actually landed on');
   });
 
-  test('with no known tag it still prints a shaped command rather than a dead end', () => {
+  test('with NO release tag known, it says so — it does not print a command that cannot resolve', () => {
+    // This used to print `npx …#<latest release tag> render`, a shaped placeholder, on the theory
+    // that a shape beats a dead end. It does not: a `Run this instead:` block whose command errors
+    // is worse than the refusal it decorates, and the whole justification for failing closed is that
+    // the message hands back something that WORKS. When there is no release to pin to, the only
+    // command that works is the hatch — so lead with it and say plainly why.
     const msg = formatUnreleasedRefusal({ ...unreleased, latestTag: null }, 'render');
-    assert.match(msg, /npx --yes github:dustinkeeton\/wafflestack#<latest release tag> render/);
+    assert.doesNotMatch(msg, /#<latest release tag>/);
+    assert.match(msg, /latest release: none known for dustinkeeton\/wafflestack/);
+    assert.match(msg, /no `vX\.Y\.Z` release of dustinkeeton\/wafflestack to pin to/);
+    assert.match(msg, /npx --yes github:dustinkeeton\/wafflestack render --allow-unreleased/);
   });
 
   test('a fork is told to pin ITSELF', () => {
@@ -799,14 +918,54 @@ describe('the version-skew remedy names a command that WORKS (#373 / #372)', () 
     lookupError: null,
   });
 
-  test('an UNRELEASED CLI prints the pinned command, not the bare `upgrade` that would refuse', () => {
+  test('an UNRELEASED CLI prints the pinned command, not the bare `upgrade` that resolves main', () => {
     // #372's "self-defeating remedy": doctor said "run `wafflestack upgrade`", which for most
-    // people IS the unpinned `npx github:…` — the exact command the gate now refuses. Sending the
-    // reader there would be handing them a loop.
+    // people IS the unpinned `npx github:…` — the command that fetches the default branch, and the
+    // one the gate now refuses. Sending the reader there would be handing them a loop.
     const out = notes(identityAt('unreleased'));
     assert.match(out, /version skew/);
     assert.match(out, /npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0 upgrade/);
-    assert.match(out, /would refuse/);
+    assert.match(out, /a bare `upgrade` re-fetches the default branch/, 'say what is TRUE of a bare upgrade…');
+    assert.doesNotMatch(out, /would refuse/, '…not a prediction about the gate, which this note cannot make');
+  });
+
+  test('THE NOTE MUST NOT PREDICT THE GATE — a release-pinned npx install is told no such thing', () => {
+    // The note reasons from the identity plain `doctor` is handed, which is the OFFLINE one — and
+    // offline, an npx install can NEVER reach `release`: the lookup is short-circuited (`noNetwork`)
+    // and `corroborate()` only ever tightens toward `unreleased`. So this fixture — a consumer
+    // pinned at an exact release tag, the most common shape there is — reports `unverified`.
+    //
+    // Meanwhile `requireRelease()` refuses ONLY on `unreleased`, and it resolves its OWN networked
+    // identity, which classifies this very commit as `release` and proceeds. The old text said
+    // "this CLI is unverified, so a bare `upgrade` would refuse": false in both directions at once.
+    // An offline status is structurally incapable of predicting what the gate will do — so the note
+    // states what the CLI IS, and lets the gate speak for itself.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-skew-npx-'));
+    try {
+      const root = path.join(tmp, 'node_modules', 'wafflestack');
+      write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: 'github:dustinkeeton/wafflestack' }));
+      // A RELEASE's changelog: `## [Unreleased]` stamped down, nothing under it.
+      write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n');
+      write(tmp, 'node_modules/.package-lock.json', JSON.stringify({
+        lockfileVersion: 3,
+        packages: { 'node_modules/wafflestack': { resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${SHA_A}` } },
+      }));
+
+      // Exactly what cli.mjs's `offlineIdentity()` builds for plain `doctor` — the shipped,
+      // unpinned-by-default check every consumer runs on every PR.
+      const offline = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
+      assert.equal(offline.status, 'unverified', 'the offline path cannot see the tag — that IS the design');
+      // …and the same commit, classified WITH the network (what the gate does), is a release:
+      const networked = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
+      assert.equal(networked.status, 'release', 'so `upgrade` would PROCEED, not refuse');
+
+      const out = notes(offline);
+      assert.match(out, /version skew/);
+      assert.doesNotMatch(out, /would refuse/, 'the gate does not refuse an `unverified` CLI — it warns and proceeds');
+      assert.match(out, /npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0 upgrade/, 'the pinned command is still the right advice');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('a RELEASE CLI (and an absent identity) keep the remedy exactly as it always read', () => {
