@@ -1588,6 +1588,37 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
     assert.equal(dr.toolkitProvenance.status, 'unverifiable');
     assert.doesNotMatch(dr.notes.join('\n'), /provenance mismatch/);
   });
+
+  test('THE OVERLAY-MUST-NOT-PROPAGATE TEST: provenance is read from the CANONICAL lock, never the local one', () => {
+    // doctor reads `lock.toolkit`, NOT `tree.toolkit` — a deliberate choice reasoned out at the call
+    // site, and until now pinned by nothing: flipping it to `tree.toolkit ?? lock.toolkit` left the
+    // whole suite green (#384 review, F1). This test is what makes the comment an invariant.
+    //
+    // The two blocks genuinely CAN diverge — canonical carries forward against `canonicalFiles`, the
+    // local one against `effectiveFiles` — so a content-changing overlay can leave canonical holding
+    // a `release` block while local holds `unverified` nulls. Reading `tree` would then report a
+    // MACHINE-PRIVATE provenance no teammate can be told about: the exact "local overlay must not
+    // propagate" class this repo was bitten by in #317. Provenance is a property of the COMMITTED
+    // render — an overlay changes VALUES, never which toolkit produced them.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
+    const canonical = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    assert.deepEqual(canonical.toolkit, RELEASE_BLOCK, 'precondition: the committed block is a release');
+
+    // This machine's private render: same files, but a provenance block that says something else.
+    const local = { ...canonical, toolkit: { ...RELEASE_BLOCK, ref: null, commit: null, status: 'unverified' } };
+    fs.writeFileSync(path.join(cwd, '.waffle/waffle.local.lock.json'), `${JSON.stringify(local, null, 2)}\n`);
+
+    const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity(), toolkitRoot });
+    assert.equal(dr.ok, true);
+    assert.equal(
+      dr.toolkitProvenance.status,
+      'match',
+      'doctor must compare the CLI against the COMMITTED block (`match`); reading the local lock would report `unpinnable`',
+    );
+    const out = dr.notes.join('\n');
+    assert.match(out, /github:dustinkeeton\/wafflestack#v0\.12\.0 @ aaaaaaaaaaaa.*matches this CLI/);
+    assert.doesNotMatch(out, /rendered by an UNVERIFIED toolkit/, 'the local block must not reach the report');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
