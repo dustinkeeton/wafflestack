@@ -522,7 +522,7 @@ content, and the external stacks solved this problem first:
 
 | Key | Meaning |
 |---|---|
-| `source` | the npx spec **base** — `github:<owner>/<repo>`, no `#ref` |
+| `source` | the npx spec **base** — `github:<owner>/<repo>`, no `#ref`. `null` when no repo could be corroborated as holding `ref` (a release rendered from a checkout, or no declared `repository` at all) |
 | `sourceType` | always `"git"` — shape parity, so one reader consumes either block |
 | `ref` | the **pin**, `"v0.12.0"` — *not* the npx spec. `null` unless `status` is `release` |
 | `commit` | the 40-char SHA. `null` unless `status` is `release` |
@@ -556,30 +556,52 @@ pointer. No field in this block is a function of a moving `HEAD`, and that is de
 So a non-release render writes `{ "ref": null, "commit": null, "status": "unreleased" }` — a block
 that is **byte-stable across every commit**. Null is not a degradation here; it is the correct answer.
 
-**And `source` obeys the same rule: no field in this block is a function of the renderer's machine.**
-The determinism above is worth nothing if the *repo slug* varies, so `source` is resolved from the
-**pin**, never from local git config:
+### What each field is a function of — precisely
 
-| The render was… | `source` comes from | Why it is a function of the pin |
+An earlier draft of this section bolded *"no field in this block is a function of the renderer's
+machine."* That is **true of `source`** and **false of `ref` / `commit` / `status`**, and the difference
+is not academic — a reader acts on it. Stated exactly:
+
+| Field | A function of… | Never a function of… |
 |---|---|---|
-| an npm/npx install | npm's `resolved` URL | the spec the operator typed — `npx github:acme/wafflestack#v1.0.0` resolves to `acme` on every machine. This is how a **fork names itself**: `resolved` records the repo npm actually cloned |
-| **any** checkout — release or not | `package.json` `repository` | ships with the toolkit's content, so it is a function of the commit |
+| `source` | the **pin**: npm's `resolved` URL, or the toolkit's own committed `package.json` — or **`null`** when neither can be corroborated | the renderer's machine. **`remote.origin.url` is never recorded, under any status** |
+| `ref`, `commit`, `status` | what **this clone can establish about itself** — on a checkout, `git describe --tags --exact-match` against its **local tag refs** | a moving `HEAD` (see above) |
 
-**There is no exception for a release checkout**, and an earlier draft of this table claimed one — that
-`ls-remote` had "corroborated" the remote, so the clone's `origin` was safe to record. It had not: on a
-checkout, `release` is decided offline by `git describe --exact-match`, and **no remote is ever asked**.
-Neither `origin` nor `repository` is *verified* there; only one of them is a function of the pin.
+**`source` is not a label — it is half of a pin.** The read-back is literally
+`` `${source}#${ref}` ``, so naming a repo **asserts that repo holds that ref at that commit**. Where
+that has been corroborated, it is recorded; where it has not, **nothing** is:
 
-**`remote.origin.url` is never recorded** — *including when it is the only slug on offer*. It is a
-property of the clone the renderer happened to use, not of the toolkit: two contributors on the same
-commit, rendering identical bytes, would otherwise write different `source` values into the committed
-lock — churning it back and forth and redding the `render` + `git diff --exit-code` gate for a change
-that moved no rendered byte. So a checkout whose `package.json` declares no `repository` writes
-`"source": null` — **an unknown repo is recorded as unknown, never as the clone's** — and doctor reads
-that block as "an unknown toolkit" while `toolkitPinFromLock` declines to pin it. Determinism is kept by
-recording nothing, not by recording a guess. A fork that renders from a checkout and wants its lock to
-name itself sets `repository` in `package.json`: a committed edit, and therefore a function of the pin,
-which is exactly the property `origin` lacks.
+| The render was… | `source` | Why |
+|---|---|---|
+| an npm/npx install | npm's `resolved` URL | the spec the operator typed — `npx github:acme/wafflestack#v1.0.0` resolves to `acme` on every machine, and `ls-remote` **found that tag on that commit in that remote**. Corroborated, and it is how a **fork names itself** |
+| a checkout, **not** a release | `package.json` `repository` | ships with the toolkit's content, so it is a function of the commit. `ref`/`commit` are `null`, so it pins nothing and claims nothing |
+| a checkout **on a release tag** | **`null`** | `git describe` read the clone's *local* tag refs and **asked no remote**. `repository` is a field a fork inherits verbatim, so recording it pinned `github:dustinkeeton/wafflestack#v1.0.0` for a tag **upstream never cut**. Zero corroboration buys zero claims |
+
+So `toolkitPinFromLock` returns a pin **only** for an npx-installed release. A checkout render — a
+toolkit developer, who has the toolkit in hand already — records its real, checkable local facts
+(`ref`, `commit`, `status`) and declines to name a repo it never asked. Doctor still compares the
+**commits**, so a re-cut tag is still reported as a re-cut tag. **An unknown repo is recorded as
+unknown, never as the clone's: determinism by recording nothing, not by recording a guess.**
+
+### The honest limit: a clone that cannot see the tag records nulls
+
+`status` is decided by `git describe` against **local tag refs**, so a `git clone --no-tags`, a
+`--depth 1` CI checkout, or a fork clone that never fetched upstream's tags writes
+`{ "ref": null, "commit": null, "status": "unreleased" }` for the **same commit and the same rendered
+bytes** a full clone records a `release` for. The blocks differ; the lock is not byte-identical.
+
+**This is the correct behavior and it will not be changed.** A clone that cannot see the tag genuinely
+cannot establish a release, and failing to honest nulls is the fail-honest rule this format is built on
+(§ `ref: null` above, and #383). Inventing a release it cannot see would be the real defect.
+
+But be clear-eyed about the cost, because the churn hazard cited above is **live through this door**: a
+teammate rendering from a shallow clone rewrites a good `release` block to nulls, and the maintainer's
+next render puts it back. **The `unverified` carry-forward does not save you here** — it covers
+`unverified` only (a blip, `dlx`, the hatch), and a tagless clone is `unreleased`, a *positive*
+determination that deliberately overwrites. What bounds the damage is that it is confined to *this*
+block: `files` is untouched, so `--verify-render` and the content gate are unaffected, and the lock diff
+is visible in review. **Render the toolkit from a clone that has its tags** (a plain `git clone` fetches
+them; `--no-tags` and `--depth 1` do not).
 
 **An `unverified` render carries the previous block forward**, but only when doing so asserts nothing
 new: same `toolkitVersion`, and a freshly rendered `files` map *identical* to the one the recorded

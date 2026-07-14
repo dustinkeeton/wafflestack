@@ -230,6 +230,19 @@ is what you reach for across a breaking one.
   forward** when the version and the whole `files` map are unchanged, so a hiccup cannot rewrite a good
   `release` block to nulls.
 
+  **`source` names a repo only when one was corroborated — otherwise it is `null`.** `source` + `ref`
+  are a **pin** (the read-back is `` `${source}#${ref}` ``), so naming a repo asserts that repo holds
+  that tag at that commit. An `npx` install has that in hand — npm's `resolved` URL is the spec the
+  operator typed, and `ls-remote` found the tag on that commit in that remote — so a **fork pinned to
+  its own release names itself**, on every machine. A **checkout** has not: `git describe` reads the
+  clone's *local* tag refs and asks no remote, and `package.json` `repository` is a field a fork
+  inherits verbatim — so a fork clean on its own `v1.0.0` would have pinned
+  `github:dustinkeeton/wafflestack#v1.0.0`, a tag upstream never cut. A release rendered from a
+  checkout therefore records `"source": null` and pins nothing, keeping its real, checkable local facts
+  (`ref`, `commit`, `status`). Doctor still compares the **commits**, so a re-cut tag is still reported
+  as a re-cut tag. `remote.origin.url` is **never** recorded under any status: it is a property of the
+  clone, not of the toolkit, and two contributors on one commit must not write different locks.
+
   **Consumer impact — none, and deliberately so.** No lock-format version bump and no migration: the
   key is additive and every reader is key-by-key, exactly as when the `sources` block was added. Your
   lock gains the block on its next `render` (a one-time diff, like a `toolkitVersion` bump); a lock

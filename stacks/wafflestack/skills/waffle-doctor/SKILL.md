@@ -88,8 +88,12 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
   - **`toolkit provenance mismatch … the two sources cannot be compared (at least one is
     unrecorded)`** — same version, different commits, but one of the two blocks records no
     repository, so doctor **cannot** tell a re-cut tag from two different repos and does not guess.
-    You will see this against a lock written before the toolkit recorded provenance, or one rendered
-    by a toolkit with no discoverable repo. Re-render to give the lock a source it can name.
+    The commits are still compared, so a genuine **re-cut is still reported here** — only the *cause*
+    is hedged. You will see this against a lock written before the toolkit recorded provenance, one
+    rendered by a toolkit with no discoverable repo, or one rendered from a toolkit **checkout**
+    sitting on a release tag: a checkout reads its *local* tags and asks no remote, so it records no
+    source rather than naming a repo it never checked. Only a lock rendered by an `npx`-installed
+    release names a repo — that one was corroborated — and it gets the stronger note above.
   - **`toolkit provenance mismatch … these are DIFFERENT REPOSITORIES`** — the two blocks name
     different repos, so **no tag need have moved**: a fork's `v0.12.0` and upstream's `v0.12.0` are
     two different releases that share a version number. Doctor says this instead of claiming a

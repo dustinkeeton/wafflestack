@@ -69,11 +69,15 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  *                                      never reads `remote.origin.url`. **Which toolkit is this,
  *                                      given the pin?** A function of the npm `resolved` pin and the
  *                                      toolkit's own committed `package.json`, so two clones of one
- *                                      commit write a byte-identical lock (#384 F2, #317). The lock
- *                                      records THIS, for **every** status — `release` included. It is
+ *                                      commit write a byte-identical lock (#384 F2, #317). It is
  *                                      identical to `repo` on the npx path (no `.git`, so no origin
  *                                      step), and on a checkout no remote is ever asked, so `repo`
  *                                      there is an unverified property of the clone (#384 F11).
+ *                                      **The lock records this for every status EXCEPT a checkout
+ *                                      `release`, which records `source: null`** — there `lockRepo` is
+ *                                      a declared field a fork inherits verbatim, and `source`+`ref`
+ *                                      together are a PIN, i.e. a claim that repo holds that tag. No
+ *                                      remote was asked, so we do not make it (#384 F13, `lockSourceRepo`).
  * @property {string|null} latestTag    the release to pin to, for the remedy message
  * @property {string|null} lookupError  why we could not call this a release: the lookup that failed
  *                                      (status === 'unverified'), or the reason a release verdict was
@@ -88,7 +92,10 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  *                                      (see `formatUnreleasedRefusal`; each is pinned by a test).
  *
  * @typedef {object} ToolkitLockEntry  the lock's top-level `toolkit` block (#374) — see `toolkitLockEntry`
- * @property {string|null} source      "github:<owner>/<repo>" — the npx spec BASE, no `#ref`
+ * @property {string|null} source      "github:<owner>/<repo>" — the npx spec BASE, no `#ref`. Null when
+ *                                     this render could not establish which repo holds `ref` (a checkout
+ *                                     `release`, or no declared repository at all) — `source`+`ref` ARE
+ *                                     the pin, so an unattributable ref pins nothing (#384 F13)
  * @property {'git'} sourceType        always "git"; shape parity with a `sources[]` entry
  * @property {string|null} ref         the PIN — "v0.12.0", not the npx spec. Null unless `release`.
  * @property {string|null} commit      40-char sha. Null unless `release`. **Never a moving HEAD.**
@@ -499,14 +506,39 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
  * keeps. The carve-out therefore changed nothing on npx and was wrong on the checkout: it had no
  * correct case at all.
  *
- * **What a checkout-release's `source` should name, so the triple stays coherent.** On a checkout NO
- * remote is ever asked, so neither `origin` nor `repository` is *verified* — both are guesses, and only
- * one of them is a function of the pin. `origin` is a property of the clone; `repository` ships with the
- * toolkit's own content. The lock is a committed artifact that must be byte-identical across machines
- * (#317) — **determinism wins**, which is the plan's own rule, and it is what makes `source`/`ref`/
- * `commit` reproducible rather than merely plausible. A fork that renders from a checkout and wants its
- * lock (and therefore `toolkitPinFromLock`'s pin) to name itself sets `repository` in `package.json`: a
- * committed, content-bearing edit, and thus a function of the pin — precisely the property `origin` lacks.
+ * **A checkout-release's `source` is NULL, because the triple must name ONE repo (#384 F13).** Recording
+ * `lockRepo` there looked like the determinism-preserving answer, and it was — but determinism is not the
+ * only property the block owes. `source` is not a decoration: `toolkitPinFromLock` is literally
+ * `` `${source}#${ref}` ``, so **`source` is a claim that THAT repo holds THAT ref at THAT commit.** On a
+ * checkout, `ref`/`commit` come from `git describe` against the clone's LOCAL tag refs and NO remote is
+ * asked, while `lockRepo` comes from a `package.json` field a fork inherits verbatim (`repoSlug`'s own
+ * docblock: "nothing prompts anyone to rewrite it"). So a fork clean on ITS OWN `v1.0.0` wrote
+ * `github:dustinkeeton/wafflestack#v1.0.0` — **a pin naming a repo that never cut that tag, at a commit
+ * it does not have.** Both halves were individually defensible and the pair was a lie.
+ *
+ * Neither guess can be promoted, and that is the point:
+ *
+ *   - `origin` is the clone's — **nondeterministic**, and #384 F2/F11 exist to keep it out. (The tempting
+ *     "record null only when `origin` and `repository` DISAGREE" is that same value in a null-shaped
+ *     costume: a contributor's fork clone of upstream and the maintainer's clone of upstream would write
+ *     byte-different locks for one commit. It reds THE DETERMINISM TEST — I tried it.)
+ *   - `repository` is the content's — deterministic, but on a checkout it is **unverified against the tag**,
+ *     and that is precisely the claim `source` makes.
+ *
+ * So we record nothing, which is this module's own rule where it could not know (see the tail below):
+ * **determinism by recording nothing, not by recording a guess.** The block keeps `ref`/`commit`/`status` —
+ * real, local, checkable facts — and `toolkitPinFromLock` honestly declines to pin rather than pinning a
+ * repo it cannot vouch for. `describeToolkitProvenance` still compares the COMMITS, so a re-cut tag on a
+ * fork checkout reads `recut` (hedged cause, #384 F12) instead of the inverted "DIFFERENT REPOSITORIES".
+ *
+ * **`npm-install` keeps its `source`, and it is the only path that earned one.** There `ls-remote` found
+ * the tag ON that commit IN that remote — a corroborated fact, not a guess — and `repo === lockRepo`
+ * (both from npm's `resolved`), so #373 F14's "a fork must name ITSELF" is untouched: `npx
+ * github:acme/wafflestack#v1.0.0` records acme and pins acme, on every machine. That path is the whole
+ * consumer population; the checkout is toolkit developers, who have the toolkit in their hand already.
+ *
+ * A fork that renders from a CHECKOUT and wants a pinnable lock cuts its release and installs it the way
+ * its own consumers do — `npx github:acme/wafflestack#v1.0.0` — which is the path that can prove the pin.
  *
  * **The `repo` tail is gated on the same fact, or it reopens the hole it just closed.** When no
  * pin-derived slug exists at all, falling back to `repo` is safe on every origin EXCEPT a checkout —
@@ -522,6 +554,13 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
  * @returns {string|null}
  */
 function lockSourceRepo(identity) {
+  // THE RELEASE CARVE-OUT, INVERTED (#384 F13). F2 carved `release` out to record the CLONE; F11 killed
+  // that. The carve-out that IS right is the opposite one, and it records NOTHING: a `release` block's
+  // `source` is the repo its PIN names, and it may only name a repo we established actually holds that
+  // `ref` at that `commit`. Exactly one path establishes it — `npm-install`, where `ls-remote` found
+  // the tag on that commit in that remote (and `repo === lockRepo` there, so there is no third answer).
+  // A CHECKOUT establishes nothing: `git describe` reads the clone's LOCAL tag refs, zero remotes asked.
+  if (identity.status === 'release' && identity.origin !== 'npm-install') return null;
   if (identity.lockRepo) return identity.lockRepo;
   if (identity.origin === 'checkout') return null;
   return identity.repo ?? null;

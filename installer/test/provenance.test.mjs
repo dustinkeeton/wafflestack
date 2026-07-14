@@ -283,11 +283,15 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
     }
   });
 
-  test('a checkout on a RELEASE TAG asks NO remote — so its `source` cannot be the clone (#384 F11)', () => {
-    // The counted stub is the whole point. The `release` carve-out was justified by "`ls-remote` asked
-    // THAT remote"; this proves no remote is asked at all on a checkout — `git describe --exact-match`
-    // decides it offline and `resolveToolkitIdentity` returns before the lookup. An unverified value
-    // must not reach a committed artifact, so the lock records the declared repo here as well.
+  test('a checkout on a RELEASE TAG asks NO remote — so it records NO source (#384 F11, F13)', () => {
+    // The counted stub is the whole point, and it now carries TWO findings. The `release` carve-out was
+    // justified by "`ls-remote` asked THAT remote"; this proves no remote is asked at all on a checkout —
+    // `git describe --exact-match` decides it offline and `resolveToolkitIdentity` returns before the
+    // lookup. F11 concluded "so record the DECLARED repo, which at least is deterministic". F13 showed
+    // that conclusion still wrote a lie: `source` + `ref` ARE the pin (`toolkitPinFromLock` is
+    // `` `${source}#${ref}` ``), so naming the declared repo CLAIMS that repo holds this tag — and the
+    // 0 ls-remote calls this test counts are the proof that nobody ever checked. Zero corroboration
+    // must buy zero claims: the block records `source: null` and pins nothing.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-relclone-'));
     try {
       fs.mkdirSync(path.join(root, '.git'), { recursive: true });
@@ -319,9 +323,10 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
 
       assert.equal(lsRemoteCalls, 0, '…decided with ZERO ls-remote calls: nothing was corroborated');
       assert.deepEqual(forked, upstream, 'so two clones of one tagged commit write a byte-identical lock');
-      assert.equal(upstream.source, 'github:dustinkeeton/wafflestack');
+      assert.equal(upstream.source, null, 'and it names NO repo: none was corroborated (#384 F13)');
+      assert.equal(toolkitPinFromLock({ toolkit: upstream }), null, 'so it pins nothing, honestly');
       assert.equal(upstream.commit, SHA_A);
-      assert.equal(upstream.ref, 'v0.12.0', 'the release block is still fully recorded');
+      assert.equal(upstream.ref, 'v0.12.0', 'the LOCAL facts are still fully recorded — they are checkable');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1353,6 +1358,14 @@ const RELEASE_BLOCK = {
   status: 'release',
 };
 
+/**
+ * The same release, rendered from a CHECKOUT — and it names no repo (#384 F13). `git describe` reads
+ * the clone's local tag refs and asks no remote, so nothing corroborates that ANY repo holds this tag;
+ * `source` + `ref` are a pin, and a pin is a claim. The local facts (`ref`, `commit`, `status`) are
+ * recorded because they are real and checkable; the repo is not, because it is not.
+ */
+const CHECKOUT_RELEASE_BLOCK = { ...RELEASE_BLOCK, source: null };
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The shape, unit-tested against synthetic identities — no git, no network, no render.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1620,19 +1633,24 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
     assert.equal(JSON.parse(second).toolkit.source, 'github:dustinkeeton/wafflestack');
   });
 
-  test('a RELEASE is NOT an exception — the checkout path is deterministic too (#384 F11)', () => {
-    // This test previously asserted the OPPOSITE, and it pinned a bug. F2's first fix carved `release`
-    // out of the rule "the lock records the pin, not the clone", on the reasoning that `identity.repo`
-    // had been "corroborated" by `ls-remote`. On a CHECKOUT that is false: `release` is decided offline
-    // by `git describe --exact-match` and the function returns before any lookup — ZERO ls-remote calls
-    // (pinned directly in the `resolveToolkitIdentity` suite). So the carve-out let a clean checkout on
-    // a release tag write the CLONE'S origin into the committed lock: same commit, same tag, same
-    // bytes, byte-DIFFERENT locks.
+  test('a RELEASE is NOT an exception — a checkout records NO source at all (#384 F11, F13)', () => {
+    // This test has now asserted three different things, and the journey IS the finding. F2's first fix
+    // carved `release` out of "the lock records the pin, not the clone", on the reasoning that
+    // `identity.repo` had been "corroborated" by `ls-remote`. F11 showed that is false on a CHECKOUT —
+    // `release` is decided offline by `git describe --exact-match` and the function returns before any
+    // lookup, ZERO ls-remote calls — and concluded: record the DECLARED repo, which is at least
+    // deterministic. F13 showed that STILL wrote a lie, because `source` is not a label, it is half of
+    // a PIN (`toolkitPinFromLock` === `` `${source}#${ref}` ``): naming the declared repo asserts that
+    // repo holds this tag, and on a checkout nobody asked it. A fork clean on its own `v1.0.0`, carrying
+    // upstream's `repository` verbatim, pinned `github:dustinkeeton/wafflestack#v1.0.0` — a repo that
+    // never cut that tag.
     //
-    // `repo` and `lockRepo` can only differ on a checkout (the origin step is gated on `.git`), and
-    // there nothing is verified. So there is no status for which `repo` is the right answer.
-    const fromUpstreamClone = releaseIdentity({ repo: 'dustinkeeton/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
-    const fromForkClone = releaseIdentity({ repo: 'contributor/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
+    // Determinism was never the whole obligation; it was one of two. `null` satisfies BOTH: no clone
+    // leaks in, and no unverified repo is named. NOTE `origin: 'checkout'` — the fixture used to say
+    // `npm-install` while its name said checkout, so it never once exercised the path it was guarding.
+    const checkout = { origin: /** @type {const} */ ('checkout') };
+    const fromUpstreamClone = releaseIdentity({ ...checkout, repo: 'dustinkeeton/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
+    const fromForkClone = releaseIdentity({ ...checkout, repo: 'contributor/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
 
     assert.equal(render(fromUpstreamClone).ok, true);
     const first = lockBytes();
@@ -1640,7 +1658,40 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
     const second = lockBytes();
 
     assert.equal(first, second, 'a release checkout must not record the clone either');
-    assert.deepEqual(JSON.parse(second).toolkit, RELEASE_BLOCK);
+    assert.deepEqual(JSON.parse(second).toolkit, CHECKOUT_RELEASE_BLOCK);
+    assert.equal(toolkitPinFromLock(JSON.parse(second)), null, 'an uncorroborated release pins NOTHING');
+  });
+
+  test('THE PIN NEVER NAMES A REPO THAT DOES NOT HOLD THE REF — the checkout twin (#384 F13)', () => {
+    // The checkout twin of the npx fork test above, which was the ONLY path that pinned this property —
+    // and on the checkout it was false. THE REALISTIC FORK: `gh repo fork`, cut `v1.0.0`, push, change
+    // nothing else. `repository` still says upstream (`repoSlug`'s docblock: "nothing prompts anyone to
+    // rewrite it"), `origin` says acme, and `git describe` reads acme's OWN tag out of the local refs.
+    //
+    // The two candidate sources are BOTH wrong here, which is why the answer is neither:
+    //   - `repo` (acme, from origin)      → correct repo, but it is the CLONE — F2/F11 nondeterminism.
+    //   - `lockRepo` (dustinkeeton)       → deterministic, and a pin for a tag upstream NEVER CUT.
+    const forkCheckout = releaseIdentity({
+      version: '1.0.0',
+      tag: 'v1.0.0',
+      ref: 'github:acme/wafflestack#v1.0.0', // the CLI names itself by where it CAME FROM (#373 F14)
+      origin: 'checkout',
+      repo: 'acme/wafflestack', // origin
+      lockRepo: 'dustinkeeton/wafflestack', // declared — INHERITED, and it never cut v1.0.0
+    });
+    assert.equal(render(forkCheckout).ok, true);
+    const block = readLockJson().toolkit;
+
+    assert.equal(block.source, null, 'no repo was corroborated, so no repo is named');
+    assert.equal(toolkitPinFromLock({ toolkit: block }), null, 'and NO PIN is emitted — not a false one');
+    assert.notEqual(
+      toolkitPinFromLock({ toolkit: block }),
+      'github:dustinkeeton/wafflestack#v1.0.0',
+      'the exact false pin F13 reproduced: upstream never cut v1.0.0',
+    );
+    assert.equal(block.ref, 'v1.0.0', 'the local facts survive — the tag and commit are checkable');
+    assert.equal(block.commit, SHA_A);
+    assert.equal(block.status, 'release', 'and it is still, honestly, a release render');
   });
 
   test('…and #373 F14 still holds where it actually lives: the NPX path names the fork', () => {
@@ -2160,5 +2211,72 @@ describe('describeToolkitProvenance (#374)', () => {
     assert.match(result.notes[0], /from the same repository/);
     assert.match(result.notes[0], /the tag was re-cut or force-pushed/, 'the strong cause, on strong evidence');
     assert.doesNotMatch(result.notes[0], /cannot be compared/);
+  });
+
+  test('a FORK CHECKOUT\'s genuine re-cut reads `recut`, not DIFFERENT REPOSITORIES (#384 F13)', () => {
+    // #374's headline, INVERTED for the fork population this PR exists to serve — and the writer is what
+    // fixed it. The lock was written by the fork's own checkout render, so under F13 its `source` was the
+    // DECLARED repo (upstream, inherited) while the CLI's was `origin` (acme): apples to oranges, and the
+    // comparison then labelled ONE repo with a re-cut tag as TWO repos whose tags "need not have moved",
+    // with a remedy pointing at a toolkit that did not produce the lock.
+    //
+    // Now the checkout records `source: null` — it corroborated no repo, so it names none — and the
+    // comparison falls to F12's hedge: still `recut` (the commits DID move), with the cause honestly
+    // hedged rather than a repo split invented out of a `package.json` field nobody rewrote.
+    const forkCheckoutLock = toolkitLockEntry(
+      releaseIdentity({
+        version: '1.0.0', tag: 'v1.0.0', ref: 'github:acme/wafflestack#v1.0.0',
+        origin: 'checkout', repo: 'acme/wafflestack', lockRepo: 'dustinkeeton/wafflestack',
+      }),
+      { toolkitVersion: '1.0.0' },
+    );
+    assert.equal(forkCheckoutLock.source, null, 'the writer names no repo it did not corroborate…');
+
+    const result = describeToolkitProvenance({
+      lockToolkit: forkCheckoutLock,
+      lockVersion: '1.0.0',
+      identity: releaseIdentity({ // the same fork checkout, tag GENUINELY re-cut aaaa -> bbbb
+        version: '1.0.0', tag: 'v1.0.0', ref: 'github:acme/wafflestack#v1.0.0', commit: SHA_B,
+        origin: 'checkout', repo: 'acme/wafflestack', lockRepo: 'dustinkeeton/wafflestack',
+      }),
+    });
+    assert.equal(result.status, 'recut', 'a re-cut tag is a re-cut tag, on a fork checkout too');
+    assert.doesNotMatch(result.notes[0], /DIFFERENT REPOSITORIES/, 'one repo — never call it two');
+    assert.doesNotMatch(result.notes[0], /neither tag need have moved/, 'a tag DID move; that is the finding');
+  });
+
+  test('the CLI names itself by where it CAME FROM — the reader must not read `lockRepo` (#384 F13)', () => {
+    // The reader-side fix F13's review proposed — compare `lockToolkit.source` against
+    // `toolkitSource(identity.lockRepo ?? identity.repo)` — and the reason it is NOT the fix. It reds
+    // right here, and the note it produces refutes itself in one sentence.
+    //
+    // A lock rendered by the fork VIA NPX carries a CORROBORATED source (`ls-remote` found v0.12.0 on
+    // that commit in acme's remote). The CLI is a CHECKOUT of that same fork: `origin` = acme, declared
+    // `repository` = upstream (inherited). One repository; the tag was re-cut. Reading `lockRepo` for the
+    // CLI's side compares acme against dustinkeeton, returns `mismatch`, and prints:
+    //
+    //   "the lock was rendered by github:acme/wafflestack#v0.12.0 @ aaaa…; this CLI is
+    //    github:acme/wafflestack#v0.12.0 @ bbbb…. These are DIFFERENT REPOSITORIES"
+    //
+    // — two IDENTICAL sources, declared different. `cliWho` is built from `identity.ref`, which is
+    // origin-derived (#373 F14, and it must stay so: the remedy has to name the toolkit in your hand).
+    // So a verdict computed from a DIFFERENT slug than the sentence prints is F12's self-contradiction
+    // class, and it re-inverts the very diagnosis F13 is about. The CLI has ONE self-identification, and
+    // this is it.
+    const result = describeToolkitProvenance({
+      lockToolkit: { source: 'github:acme/wafflestack', sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' },
+      lockVersion: '0.12.0',
+      identity: releaseIdentity({
+        commit: SHA_B,
+        ref: 'github:acme/wafflestack#v0.12.0',
+        origin: 'checkout',
+        repo: 'acme/wafflestack', // where this clone came from — what the note prints
+        lockRepo: 'dustinkeeton/wafflestack', // what its inherited package.json declares
+      }),
+    });
+    assert.equal(result.status, 'recut', 'one repo, one moved tag');
+    assert.match(result.notes[0], /from the same repository/, 'and the sources DO agree — both are acme');
+    assert.doesNotMatch(result.notes[0], /DIFFERENT REPOSITORIES/, 'the note must never contradict what it prints');
+    assert.doesNotMatch(result.notes[0], /github:dustinkeeton/, 'a slug that appears nowhere in the evidence');
   });
 });
