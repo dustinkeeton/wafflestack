@@ -471,13 +471,32 @@ not a release — enough to tighten `unverified` to `unreleased`.
 | `list --interactive`, once a selection is applied | `init`, `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
 
 **Escape hatch:** `--allow-unreleased`, or `WAFFLESTACK_ALLOW_UNRELEASED=1`. It suppresses the
-*refusal*, not the *truth* — identity is still resolved and still reported as `unreleased` — and it
-short-circuits the network lookup, so toolkit development and `npm test` stay offline. Consumers
-should pin the ref instead.
+*refusal*, and it can never **manufacture** a release: identity is still resolved and still reported
+as `unreleased` whenever that can be established offline. It also short-circuits the network lookup,
+so toolkit development and `npm test` stay offline. Consumers should pin the ref instead.
+
+> **What the hatch does cost you.** On an **npx install**, short-circuiting the lookup means a
+> toolkit that genuinely *is* a pinned release resolves as `unverified`, with **`ref: null`** — the
+> hatch cannot invent a release, but it can forfeit one you really had. Same for a **pnpm/yarn
+> `dlx`** consumer, which has no `node_modules/.package-lock.json` for the commit to be read from at
+> all. Since `ref` is the provenance field the lock records, a consumer who sets the hatch to unblock
+> CI and *later* pins properly records **no** `toolkitRef`, silently. Read `ref != null` as *"no
+> provenance was captured"*, never as *"this is not a release."*
 
 The resolved identity is `{ status, version, commit, tag, ref, origin, repo, latestTag,
-lookupError }`, where `ref` is exactly `github:<owner>/<repo>#<tag>` and is non-null only when
-`status` is `release`.
+lookupError }`, where `ref` is exactly `github:<owner>/<repo>#<tag>`.
+
+**`ref` is non-null only when `status` is `release` — but NOT whenever it is.** A release whose repo
+slug is unknowable (no npm `resolved`, no git `origin`, no `repository` field) is `status: 'release'`
+with `ref: null`. **Key on `ref != null`**, never on `status === 'release'`.
+
+**A release is the *commit* AND the *tree*.** A checkout sitting exactly on a release tag with
+uncommitted changes to tracked files is `unreleased`, not `release` — the tag no longer describes
+what would render, so no `ref` can reproduce it. Untracked files do not count.
+
+**The repo slug is read from PROVENANCE, not from the declaration:** npm's `resolved` URL, then the
+git `origin` remote, and only then `package.json` `repository`. A fork inherits the declared field
+verbatim, so trusting it first would ask the wrong remote about a fork's own release.
 
 ## How do I know a file is wafflestack-managed?
 

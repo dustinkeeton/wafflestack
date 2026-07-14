@@ -168,12 +168,29 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
     assert.equal(httpsUrl({ owner: 'o', repo: 'r' }), 'https://github.com/o/r.git');
   });
 
-  test("repoSlug prefers package.json's `repository` — the canonical, offline answer", () => {
+  test('repoSlug reads PROVENANCE before DECLARATION — and the git remote outranks `repository` too', () => {
+    // The declared field says what a toolkit CLAIMS to be; `resolved` and `origin` say where it came
+    // FROM. A fork inherits the claim verbatim, so preferring it asks the wrong remote — see the
+    // fork test in the npm-install suite. Order: npm `resolved` → git `origin` → `repository`.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-slug-'));
     try {
       const pkg = { name: 'wafflestack', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } };
+      // No lockfile, no .git → the declared field is all there is, and it answers. (Last resort, and
+      // a correct one: a vendored copy or a registry tarball has no provenance to read.)
       assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: () => null }), { owner: 'dustinkeeton', repo: 'wafflestack' });
-      // …and this repo really does carry the field (it is what makes the remedy printable offline).
+
+      // A CHECKOUT whose `origin` is a fork, still carrying upstream's declared `repository`: the
+      // remote wins. This is the toolkit developer working in their own fork.
+      fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+      assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: () => 'git@github.com:acme/wafflestack.git' }), {
+        owner: 'acme',
+        repo: 'wafflestack',
+      });
+      // …and with no usable remote, it still falls back to the declaration rather than to nothing.
+      assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: () => null }), { owner: 'dustinkeeton', repo: 'wafflestack' });
+
+      // This repo really does carry the field (it is what keeps the remedy printable for a toolkit
+      // with no provenance to read), and this checkout's own remote agrees with it.
       const real = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
       assert.deepEqual(repoSlug({ toolkitRoot: REPO_ROOT, pkg: real, runGit: () => null }), {
         owner: 'dustinkeeton',
@@ -275,6 +292,43 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.status, 'unreleased');
     assert.equal(id.ref, null);
     assert.equal(id.commit, head());
+  });
+
+  test('A DIRTY TREE ON A RELEASE TAG IS NOT A RELEASE — the tag stops describing what renders', () => {
+    // `git describe --exact-match` answers about the COMMIT and ignores the WORKING TREE. So a
+    // maintainer who checks out `v0.9.0` to reproduce a consumer issue, edits `stacks/**`, and
+    // renders, was classified `release` and handed `ref: github:…#v0.9.0` — a ref that does NOT
+    // reproduce what just rendered. An unreleased toolkit landing in `release`: #373's own disease
+    // through the checkout door, and once #374 writes `ref` into the lock, a provenance marker
+    // naming content it did not produce.
+    write(work, 'stacks/x/stack.yaml', 'name: x\ndescription: X.\n');
+    git('add', '-A');
+    git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'stacks');
+    git('tag', '-f', 'v0.9.0'); // HEAD is exactly the release tag, tree clean
+
+    const clean = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+    assert.equal(clean.status, 'release', 'a CLEAN tree on the tag is still a release — do not over-refuse');
+    assert.equal(clean.ref, 'github:acme/toolkit#v0.9.0');
+
+    // An UNTRACKED scratch file is NOT a dirty toolkit: nothing that renders has changed, and
+    // refusing here would refuse every maintainer with a note in their tree.
+    write(work, 'scratch.txt', 'a note to self');
+    const scratched = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+    assert.equal(scratched.status, 'release', 'untracked files must NOT trip the dirty check');
+
+    // A TRACKED edit to toolkit content IS: this is what actually renders.
+    write(work, 'stacks/x/stack.yaml', 'name: x\ndescription: X, LOCALLY EDITED.\n');
+    const dirty = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+    assert.equal(dirty.status, 'unreleased', 'the tag no longer describes what would render');
+    assert.equal(dirty.ref, null, 'and there is NO ref that reproduces this tree — #374 must not get one');
+    assert.equal(dirty.tag, null);
+    assert.equal(dirty.latestTag, 'v0.9.0', 'the remedy can still name the release to pin');
+
+    // The refusal must say WHY. "No release tag points here" would be a flat lie — one points here.
+    const msg = formatUnreleasedRefusal(dirty, 'render');
+    assert.doesNotMatch(msg, /no release tag points here/);
+    assert.match(msg, /uncommitted changes to tracked files/);
+    assert.match(msg, /HEAD is v0\.9\.0/);
   });
 
   test('A CHECKOUT NEVER QUERIES THE REMOTE — so the refusal must hedge, never assert', () => {
@@ -403,6 +457,48 @@ describe('identity from an npm-install layout (#373)', () => {
     assert.equal(id.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
   });
 
+  test('AN UNEDITED FORK IS ASKED ABOUT ITSELF — provenance beats the declared `repository`', () => {
+    // The realistic fork: `gh repo fork`, cut a tag, push, change NOTHING else. It carries UPSTREAM's
+    // `repository` field verbatim — nothing prompts anyone to rewrite it (the package is
+    // `private: true` and never published; #373 is what introduced the field) — while npm's
+    // `resolved` records where this build actually came from.
+    //
+    // With `repository` consulted first, `ls-remote` went to UPSTREAM, which has never heard of the
+    // fork's commit → `unreleased` → a correctly-pinned fork release HARD-REFUSED (the inverse of
+    // #373), and the remedy told them to `npx github:dustinkeeton/wafflestack#v0.12.0` — installing a
+    // DIFFERENT REPO'S TOOLKIT and rendering upstream content into their repo. #374 would then bake
+    // upstream's slug into the fork's lock as provenance.
+    const root = layout({
+      resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_A}`,
+      // repository: left as the default — UPSTREAM's, inherited. This is the whole point.
+    });
+    /** Answers per-URL, so the test pins WHICH REMOTE WAS ASKED and cannot pass by fixture. */
+    const asked = [];
+    const lsRemote = (url) => {
+      asked.push(url);
+      // acme cut its own v1.0.0 at this exact commit. Upstream has never seen the commit.
+      return url.includes('acme') ? `${SHA_A}\trefs/tags/v1.0.0` : `${SHA_B}\trefs/tags/v0.12.0`;
+    };
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
+
+    assert.deepEqual(asked, ['https://github.com/acme/wafflestack.git'], 'ask where the build CAME FROM, not what it declares');
+    assert.equal(id.status, 'release', 'a correctly-pinned fork release must NOT be refused');
+    assert.equal(id.repo, 'acme/wafflestack');
+    assert.equal(id.tag, 'v1.0.0');
+    assert.equal(id.ref, 'github:acme/wafflestack#v1.0.0', 'the ref #374 writes must name the fork, not upstream');
+  });
+
+  test('the DECLARED `repository` is the last resort — used only when provenance is unknowable', () => {
+    // No lockfile and no `.git`: a vendored copy or a registry tarball. Here the declared field is
+    // all there is, and it is right to use it — it is only wrong to PREFER it.
+    const root = path.join(tmp, 'node_modules', 'wafflestack');
+    write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: 'github:dustinkeeton/wafflestack' }));
+    assert.deepEqual(repoSlug({ toolkitRoot: root, pkg: { name: 'wafflestack', repository: 'github:dustinkeeton/wafflestack' }, runGit: () => null }), {
+      owner: 'dustinkeeton',
+      repo: 'wafflestack',
+    });
+  });
+
   test('a remote with ZERO release tags names no pinned command — it never inherits UPSTREAM\'s tag', () => {
     // A fork or a vendored copy that has cut none of its own tags. `git clone` + push to a new remote
     // carries no tags, so this is the ORDINARY shape of a derivative, not an exotic one — and it is
@@ -413,9 +509,12 @@ describe('identity from an npm-install layout (#373)', () => {
     // the tag scraped from the SHIPPED changelog, which came from upstream. Doing so printed
     // `npx …github:acme/wafflestack#v0.12.0`, a ref acme's remote does not have: a refusal whose
     // `Run this instead:` command errors, which is the one thing this message must never do.
+    // NOTE the fixture leaves `repository` as UPSTREAM's — the realistic fork, which inherited the
+    // field and never rewrote it. Pre-editing it here (as this fixture once did) made the
+    // "it asked the FORK" assertion below pass on the FIXTURE rather than on the code: it answered
+    // the question before `repoSlug` was asked. The slug must come from `resolved`, i.e. provenance.
     const root = layout({
       resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_B}`,
-      repository: 'github:acme/wafflestack',
       changelog: '# Changelog\n\n## [Unreleased]\n\n- fork work\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
     });
     const lsRemote = fakeLsRemote([]); // ls-remote ran fine; the remote simply has no release tags

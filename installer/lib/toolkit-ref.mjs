@@ -62,7 +62,17 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  * @property {'checkout'|'npm-install'|'unknown'} origin
  * @property {string|null} repo         "owner/repo", when knowable
  * @property {string|null} latestTag    the release to pin to, for the remedy message
- * @property {string|null} lookupError  why classification failed (status === 'unverified')
+ * @property {string|null} lookupError  why we could not call this a release: the lookup that failed
+ *                                      (status === 'unverified'), or the reason a release verdict was
+ *                                      WITHHELD from a commit that is on a tag (a dirty checkout).
+ *                                      Diagnostic prose — never branch on its text. Its one
+ *                                      load-bearing use is structural, and it is HALF a
+ *                                      discriminator, never a whole one: it is non-null on every
+ *                                      npm-install path whose lookup could not answer — but it is
+ *                                      also `null` on a clean CHECKOUT, which never looks at all. So
+ *                                      "the lookup ran and succeeded" is `origin === 'npm-install'
+ *                                      && lookupError === null`, and both conjuncts are required
+ *                                      (see `formatUnreleasedRefusal`; each is pinned by a test).
  */
 
 /** A wafflestack release tag. The toolkit tags plain `vX.Y.Z` — see CHANGELOG.md. */
@@ -79,11 +89,17 @@ const FALLBACK_REPO = 'dustinkeeton/wafflestack';
 /**
  * Establish what toolkit is running (see the module docblock).
  *
- * `allowUnreleased` and `offline` both suppress the network lookup, and NEITHER suppresses the
- * truth — the returned `status` still says `unreleased` whenever that can be established offline,
- * so the lock #374 writes stays honest rather than merely permitted. They differ only in intent:
+ * `allowUnreleased` and `offline` both suppress the network lookup. They differ only in intent:
  * `allowUnreleased` is the operator's escape hatch (toolkit development), `offline` is a caller
  * declaring it does not need the answer badly enough to pay for it (plain `doctor`, the banner).
+ *
+ * NEITHER can MANUFACTURE a release verdict — `status` still says `unreleased` whenever that can be
+ * established offline, so the lock #374 writes stays honest rather than merely permitted. But be
+ * precise about the other direction, because the docs used to over-promise here: on an npx install,
+ * skipping the lookup means a genuinely release-pinned toolkit resolves `unverified`, with
+ * `ref: null`. The hatch cannot invent a release — but it CAN cost you one you really had, and that
+ * is the field #374/#372 record. Tracked as a follow-up; do not "fix" it here without reading it,
+ * since only `offline` should arguably skip the lookup and the change stalls air-gapped CI.
  *
  * @param {object} opts
  * @param {string} opts.toolkitRoot
@@ -119,13 +135,43 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
     if (!commit) {
       return { ...base, origin: 'checkout', lookupError: 'the toolkit is a git checkout but `git rev-parse HEAD` did not run — is git installed?' };
     }
-    const exact = runGit(toolkitRoot, ['describe', '--tags', '--exact-match', 'HEAD']); // null when untagged
+    // `--dirty`, and NO `HEAD` argument: git refuses a committish alongside `--dirty`, and HEAD is
+    // the default anyway. Without it, `describe --exact-match` answers about the COMMIT and ignores
+    // the WORKING TREE — so a checkout sitting on a release tag with uncommitted edits to `stacks/**`
+    // classified as `release`, handed out `ref: github:…#v0.9.0`, and rendered content that ref
+    // demonstrably does not reproduce. That is an unreleased toolkit landing in `release`: #373's own
+    // disease, through the checkout door — and once #374 writes `ref` into the lock it becomes a
+    // provenance marker naming content it did not produce.
+    //
+    // `--dirty` has exactly the sensitivity we want: it appends `-dirty` when a TRACKED file differs
+    // from the commit, and ignores untracked files. A maintainer with a scratch note is not rendering
+    // different content and must not be refused; one with an edited `stacks/**` is, and must be.
+    // Reachable whenever someone checks out a tag to reproduce a consumer issue or cut a hotfix and
+    // renders with edits still in the tree — and during a release, since the bump commit IS the
+    // tagged one. Costs nothing: every toolkit-dev path in this repo already passes
+    // `--allow-unreleased`, so nothing that works today starts refusing.
+    const described = runGit(toolkitRoot, ['describe', '--tags', '--exact-match', '--dirty']); // null when untagged
+    const dirty = described !== null && described.endsWith('-dirty');
+    const exact = dirty ? described.slice(0, -'-dirty'.length) : described;
+    const onReleaseTag = exact !== null && RELEASE_TAG.test(exact);
     const localLatest = latestReleaseTag(splitLines(runGit(toolkitRoot, ['tag', '--list', 'v*']) ?? ''));
     const latestTag = localLatest ?? base.latestTag;
-    if (exact && RELEASE_TAG.test(exact)) {
+    if (onReleaseTag && !dirty) {
       return { ...base, status: 'release', origin: 'checkout', commit, tag: exact, ref: toolkitRef(slug, exact), latestTag: latestTag ?? exact };
     }
-    return { ...base, status: 'unreleased', origin: 'checkout', commit, latestTag };
+    return {
+      ...base,
+      status: 'unreleased',
+      origin: 'checkout',
+      commit,
+      latestTag,
+      // Say WHY, when the reason is not the obvious one. "No release tag points here" would be a lie
+      // for a dirty tree sitting exactly on a tag, and this module has been bitten twice by a message
+      // asserting something the code does not do.
+      lookupError: onReleaseTag && dirty
+        ? `HEAD is ${exact}, but the working tree has uncommitted changes to tracked files — the tag no longer describes what would render`
+        : null,
+    };
   }
 
   // ── an `npx github:` install: npm's hidden lockfile knows the commit; ls-remote classifies it. ─
@@ -305,21 +351,43 @@ export function toolkitRef(slug, tag) {
 }
 
 /**
- * Which GitHub repo is this toolkit? In order: `package.json` `repository` (the canonical answer,
- * which is why #373 adds the field), then npm's hidden lockfile (`resolved`), then a checkout's
- * `origin` remote. A fork therefore names ITSELF in the remedy, rather than sending its users to
- * pin upstream.
+ * Which GitHub repo is this toolkit? **PROVENANCE BEFORE DECLARATION** — where this build actually
+ * CAME FROM beats what it SAYS it is. In order:
+ *
+ *   1. npm's hidden lockfile (`resolved`) — the URL npm actually cloned. Offline.
+ *   2. a checkout's `origin` remote — where this working tree actually came from. Offline.
+ *   3. `package.json` `repository` — the DECLARED answer, and only a fallback for a toolkit that
+ *      has neither of the above (a registry tarball, a vendored copy with no git).
+ *
+ * The order was the other way round, and it asked the WRONG REMOTE for the population this function
+ * exists to serve. A fork inherits `repository` verbatim: nothing prompts anyone to rewrite it — the
+ * package is `private: true`, never published, and #373 is what introduced the field. So `npx
+ * github:acme/wafflestack#v1.0.0`, a consumer correctly pinned to a real release OF THE FORK, had
+ * its `ls-remote` pointed at UPSTREAM, which has never heard of that commit → `unreleased` →
+ * **hard-refused**, and then handed `npx --yes github:dustinkeeton/wafflestack#v0.12.0` — a remedy
+ * that installs A DIFFERENT REPO'S TOOLKIT and renders upstream content into their repo. Three
+ * failures at once: a correctly-pinned release refused (the inverse of #373), a remedy that is
+ * actively wrong to follow, and — once #374 lands — upstream's slug baked into the fork's lock as
+ * provenance.
+ *
+ * It also made the zero-release-tag machinery (`provablyNone`) unreachable for exactly the
+ * population it was written for: an unedited fork's lookup landed on upstream, which always HAS
+ * tags, so the honest `latestTag: null` path could never fire.
+ *
+ * Both provenance sources are read offline, so the offline guarantee is untouched — and the fork
+ * comments in this module become true instead of aspirational.
  *
  * @param {{toolkitRoot: string, pkg: any, runGit: (cwd: string, args: string[]) => string | null}} opts
  * @returns {{owner: string, repo: string}|null}
  */
 export function repoSlug({ toolkitRoot, pkg, runGit = gitCapture }) {
-  const fromPkg = parseRepoSlug(repositoryUrl(pkg));
-  if (fromPkg) return fromPkg;
   const fromLock = parseRepoSlug(npmResolvedUrl(toolkitRoot, pkg?.name));
   if (fromLock) return fromLock;
-  if (!exists(path.join(toolkitRoot, '.git'))) return null;
-  return parseRepoSlug(runGit(toolkitRoot, ['config', '--get', 'remote.origin.url']));
+  if (exists(path.join(toolkitRoot, '.git'))) {
+    const fromGit = parseRepoSlug(runGit(toolkitRoot, ['config', '--get', 'remote.origin.url']));
+    if (fromGit) return fromGit;
+  }
+  return parseRepoSlug(repositoryUrl(pkg));
 }
 
 /** @param {any} pkg @returns {string|null} */
@@ -524,7 +592,7 @@ export function formatUnreleasedRefusal(identity, command) {
   const at = identity.commit ? identity.commit.slice(0, 7) : 'an unknown commit';
   const how =
     identity.origin === 'checkout'
-      ? `a checkout at ${at} (no release tag points here)`
+      ? `a checkout at ${at} (${identity.lookupError ?? 'no release tag points here'})`
       : `${repo} @ ${at} (not a release)`;
   const why = [
     `refusing to run \`${command}\` from an unreleased toolkit.`,
