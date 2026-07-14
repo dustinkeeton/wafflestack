@@ -640,6 +640,24 @@ export function toolkitPinFromIdentity(identity) {
 const RELEASE_PIN_FRAGMENT = /^v?\d+\.\d+\.\d+$/;
 
 /**
+ * A `toolkitRef` written as a git URL instead of npm's `github:` shorthand — `https://github.com/o/r`,
+ * `git+https://…`, `git+ssh://git@github.com/o/r.git`, `git@github.com:o/r.git`. npx resolves all of
+ * them, so they are real pins a consumer can be holding, and no `pattern:` in either key's schema
+ * rejects one (#386 F3).
+ *
+ * This test does exactly ONE job — *does the value name github.com at all* — because that is the only
+ * job `parseRepoSlug` cannot do for us: `parseRepoSlug` happily takes a BARE `owner/repo`, and
+ * `vendor/wafflestack` is a relative path as readily as a slug. Everything else is left to it, and that
+ * is deliberate: it already anchors the host (`^…github\.com[:/]`), so a lookalike (`github.com.evil.com`)
+ * and a path segment (`https://evil.com/github.com/x`) are rejected there and yield `not-github`.
+ * Re-anchoring here as well would add a check that rejects exactly what the real gate already rejects —
+ * a branch no test could ever fail alone, which is the precise defect #386 exists to remove (a
+ * mutation proved it: tightening this regex changed no test's outcome). ONE gate, and it is the one
+ * with the tests.
+ */
+const NAMES_GITHUB_HOST = /github\.com/i;
+
+/**
  * Classify the CURRENT value of a `toolkitRef` config key — the read half of #372's decision, kept
  * pure so the rule is testable without a filesystem.
  *
@@ -652,7 +670,21 @@ const RELEASE_PIN_FRAGMENT = /^v?\d+\.\d+\.\d+$/;
  *   | `unpinned`    | `github:owner/repo` (no `#fragment`)      | nothing — deliberately floating     |
  *   | `release-pin` | `github:owner/repo#v0.12.0` / `#0.12.0`   | **rewrite the whole value**         |
  *   | `other-pin`   | `#main`, `#<sha>`, `#nightly`             | nothing — left alone, and NOTED     |
- *   | `not-github`  | a local path, an https URL, a non-string  | nothing                             |
+ *   | `not-github`  | a local path, a non-github URL, a non-string | nothing                          |
+ *
+ * `form` is the SECOND axis, and it is what decides whether a `release-pin` may actually be rewritten
+ * (#386 F3):
+ *
+ *   - `shorthand` — `github:owner/repo#v0.12.0`, the documented form. The only form `upgrade` REWRITES.
+ *   - `url` — the same repo and fragment written as a git URL. Recognised, classified identically, and
+ *     **never rewritten** — but no longer SILENT, which was the bug. Rewriting it would have to either
+ *     normalize the consumer's chosen spec into `github:` shorthand (changing their fetch transport —
+ *     an `ssh` URL on a private fork resolves where the https shorthand 404s) or do fragment surgery on
+ *     the old value (which writes a pin that is NOT `toolkitPinFromIdentity`, breaking the one
+ *     invariant #372 exists to establish, and preserves an authored slug that may name a repo which did
+ *     not render the lock — #384 F13/F14). Both trade a rare, visible skip for a rare, SILENT breakage.
+ *     So the pin is left exactly where it is and `reconcileToolkitRefPins` says so, loudly, with the
+ *     remedy — which is what this module already promises for every pin it will not move.
  *
  * Two deliberate calls, both departures from the issue body's "rewrite the fragment, preserve the
  * style":
@@ -668,29 +700,37 @@ const RELEASE_PIN_FRAGMENT = /^v?\d+\.\d+\.\d+$/;
  *      github:acme/wafflestack#…`, so the identity's own slug IS acme. When the slug does change, the
  *      caller says so loudly (`reconcileToolkitRefPins`).
  *
- * Only an explicit `github:` spec is a candidate. A bare `owner/repo` is NOT accepted even though
- * `parseRepoSlug` would happily take it: `vendor/wafflestack` is a local path as often as it is a
- * slug, and this function's answer decides whether a consumer's committed config gets rewritten.
+ * A bare `owner/repo` is NOT accepted in either form, even though `parseRepoSlug` would happily take
+ * it: `vendor/wafflestack` is a local path as often as it is a slug, and this function's answer decides
+ * whether a consumer's committed config gets rewritten. A URL must name `github.com` explicitly.
  *
  * @param {unknown} value the raw config value (may be undefined, a non-string, anything)
- * @returns {{kind: 'absent'|'unpinned'|'release-pin'|'other-pin'|'not-github', slug?: {owner: string, repo: string}, fragment?: string}}
+ * @returns {{kind: 'absent'|'unpinned'|'release-pin'|'other-pin'|'not-github', slug?: {owner: string, repo: string}, fragment?: string, form?: 'shorthand'|'url'}}
  */
 export function classifyToolkitRefValue(value) {
   if (value === undefined || value === null) return { kind: 'absent' };
   if (typeof value !== 'string') return { kind: 'not-github' };
   const raw = value.trim();
   if (!raw) return { kind: 'absent' };
-  if (!/^github:/.test(raw)) return { kind: 'not-github' };
+  const shorthand = /^github:/.test(raw);
+  // A git URL is a pin we can READ (and must therefore account for) but will not REWRITE. Classifying
+  // it as `not-github` was the #386 F3 bug: it fell in with local paths and was skipped in silence,
+  // so a consumer who pinned in URL form watched the two keys diverge with no output at all.
+  const url = !shorthand && NAMES_GITHUB_HOST.test(raw);
+  if (!shorthand && !url) return { kind: 'not-github' };
   const hash = raw.indexOf('#');
   const base = hash === -1 ? raw : raw.slice(0, hash);
   const fragment = hash === -1 ? '' : raw.slice(hash + 1).trim();
+  // THE gate, for both forms: `github:` with nothing parseable behind it (`github:`, `github:owner`), a
+  // URL whose path is not an `owner/repo`, a lookalike host (`github.com.evil.com`) or a github.com
+  // path segment on another host (`https://evil.com/github.com/x`) all fail it. Unwritable and
+  // uninterpretable — leave them exactly where they are.
   const slug = parseRepoSlug(base);
-  // `github:` with nothing parseable behind it (`github:`, `github:owner`). Unwritable and
-  // uninterpretable — leave it exactly where it is.
   if (!slug) return { kind: 'not-github' };
-  if (!fragment) return { kind: 'unpinned', slug };
-  if (RELEASE_PIN_FRAGMENT.test(fragment)) return { kind: 'release-pin', slug, fragment };
-  return { kind: 'other-pin', slug, fragment };
+  const form = /** @type {'shorthand'|'url'} */ (shorthand ? 'shorthand' : 'url');
+  if (!fragment) return { kind: 'unpinned', slug, form };
+  if (RELEASE_PIN_FRAGMENT.test(fragment)) return { kind: 'release-pin', slug, fragment, form };
+  return { kind: 'other-pin', slug, fragment, form };
 }
 
 /**

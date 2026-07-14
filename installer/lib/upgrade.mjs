@@ -237,6 +237,13 @@ export function upgrade({
  *     leave the file byte-identical, which is a tested property, not an intention.
  *   - **`#main` / `#<sha>` / `#nightly` are left alone and NOTED.** They are pins we did not write and
  *     cannot interpret; saying so beats both silence and a rewrite.
+ *   - **A release pin written as a GIT URL is left alone and NOTED too** (#386 F3).
+ *     `git+https://github.com/o/r#v0.12.0` is a valid npx spec that the rendered `npx --yes <ref> doctor`
+ *     line resolves, and no `pattern:` rejects one — so a consumer really can be holding one. We do not
+ *     rewrite it (normalizing the form would change their fetch transport; splicing the fragment would
+ *     write a pin that is not `toolkitPinFromIdentity`), but we no longer SKIP IT IN SILENCE: silence
+ *     let the other key move while this one kept fetching the old toolkit — the very lock/pin divergence
+ *     this issue exists to kill. It is reported `left`, with the remedy.
  *   - **The value written is `toolkitPinFromIdentity(identity)`** — by construction the same string
  *     `toolkitPinFromLock` will read back out of the lock this render is about to write. Not string
  *     surgery on the old value: see `classifyToolkitRefValue` for why preserving the authored style or
@@ -282,6 +289,10 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
 
   const pin = toolkitPinFromIdentity(identity);
   const pinSlug = parseRepoSlug(pin);
+  // The tag the lock is about to record — `github:owner/repo#v0.13.0` → `v0.13.0`. Used to tell a
+  // git-URL pin that ALREADY names this toolkit (nothing diverges; say nothing) from one that does not
+  // (the two keys are about to disagree; say so). #386 F3.
+  const pinFragment = pin ? pin.slice(pin.indexOf('#') + 1) : null;
   // `doc` is the READ side (classification only, and it is never serialized); `text` is the write side,
   // carried through the loop so a second bumped key splices onto the first key's result. The two keys
   // are independent scalars, so `doc`'s offsets stay valid for the reads — `setScalarIn` re-parses the
@@ -310,6 +321,30 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
       const reason = unpinnableReason(identity);
       pinMoves.push({ key, from, to: null, action: 'skipped', reason });
       log(`${key} still pins ${from} and was NOT reconciled — ${reason}`);
+      continue;
+    }
+    // A release pin written as a git URL (`git+https://github.com/o/r#v0.12.0`). NOT rewritten — see
+    // `classifyToolkitRefValue` for why normalizing the form or splicing the fragment each trade a
+    // rare visible skip for a rare SILENT breakage. But no longer skipped in silence, which was the
+    // real defect (#386 F3): the other key moves, the lock records the new toolkit, and this one goes
+    // on fetching the old one — the exact lock/pin divergence #372 exists to kill, reintroduced through
+    // a pin form the classifier did not recognise. This module already promises to NOTE every pin it
+    // will not move (`#main`, `#<sha>`); a form we can read more easily than those earns the same.
+    if (found.form === 'url') {
+      const sameRepo = found.slug && pinSlug && found.slug.owner === pinSlug.owner && found.slug.repo === pinSlug.repo;
+      if (sameRepo && found.fragment === pinFragment) {
+        // A different NOTATION for the pin we would have written. Nothing diverges, so nothing is said:
+        // warning here would cry wolf on every upgrade at a consumer who is already correct.
+        pinMoves.push({ key, from, to: from, action: 'unchanged', reason: 'already pins the toolkit that rendered, written as a git URL' });
+        continue;
+      }
+      const reason = 'written as a git URL, which `upgrade` does not rewrite — it moves the `github:owner/repo#tag` shorthand only';
+      pinMoves.push({ key, from, to: null, action: 'left', reason });
+      log(`${key} still pins ${from} and was NOT reconciled — ${reason}`);
+      log(
+        `  this lock now records ${pin}, so CI would fetch a DIFFERENT toolkit than the one that rendered it — ` +
+          `edit ${key} by hand, or replace it with: ${pin}`,
+      );
       continue;
     }
     if (from === pin) {

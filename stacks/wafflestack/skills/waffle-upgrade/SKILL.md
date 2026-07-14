@@ -33,8 +33,15 @@ not. So when `{{waffle.toolkitRef}}` is pinned to an old tag, the **old** CLI ru
    ```bash
    npx --yes github:OWNER/REPO upgrade
    ```
-   That either runs at a genuine release, or **refuses and names the exact pinned command** to
+   That normally runs at a genuine release, or **refuses and names the exact pinned command** to
    run instead. The refusal is the answer, not a failure — run the command it prints.
+
+   > **There is a third outcome, and it is the dangerous one.** The gate refuses only what it can
+   > *prove* is unreleased; a probe that cannot establish its own provenance (a network blip, a
+   > `dlx`-shaped layout) resolves to `unverified`, which **fails open** — it warns and renders
+   > anyway, from the default branch. So if the probe neither refuses nor reports a real release,
+   > **stop and report — do not let it render.** Rendering default-branch content into the repo is
+   > the exact failure this pinning exists to prevent.
 3. Only after one of those actually moves the version is "already up to date" a true report.
 
 The pins move themselves from there on: a successful `upgrade` rewrites a release-pinned

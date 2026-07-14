@@ -445,7 +445,15 @@ is what you reach for across a breaking one.
   heals without a hand edit. It **only ever moves a pin the consumer already chose**: an absent key is
   never given one, an unpinned `github:owner/repo` keeps floating, a `#main`/`#<sha>` pin is left alone
   and noted, and a run that cannot prove it is a release (`--allow-unreleased`, a `dlx` install, an
-  unanswerable lookup, or a release *checkout*) writes no pin at all and says why. **The rewrite is
+  unanswerable lookup, or a release *checkout*) writes no pin at all and says why. **A release pin
+  written as a git URL** (`git+https://github.com/o/r#v0.12.0`, `git@github.com:o/r.git#…`) is likewise
+  left alone **and reported, with the remedy** (#386): npx resolves those specs and no `pattern:` rejects
+  one, so a consumer can be holding one — and skipping it *silently*, as a plain "not a github ref",
+  let the other key move while this one went on fetching the old toolkit, reintroducing the very
+  lock/pin divergence this issue exists to kill. It is not rewritten (normalizing the form would change
+  the consumer's fetch transport — an `ssh` URL on a private fork resolves where the https shorthand
+  404s — and splicing its fragment would write a pin that is not `toolkitPinFromIdentity`), but it is
+  never quiet. **The rewrite is
   byte-verbatim** (#386): `setScalarIn` splices only the pin scalar's own source bytes, so comments,
   quoting, flow collections and line widths elsewhere in the consumer's hand-authored config are not
   merely "preserved" but never touched — re-serializing the parsed document (`doc.toString()`) would

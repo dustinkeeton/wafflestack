@@ -2331,17 +2331,65 @@ describe('classifyToolkitRefValue — which values are ours to move (#372)', () 
     assert.equal(classifyToolkitRefValue('github:dustinkeeton/wafflestack#v1.2').kind, 'other-pin', 'not a `vX.Y.Z`');
   });
 
-  test('not-github: a local path, a URL, a bare slug, a non-string — none of them ours', () => {
+  test('not-github: a local path, a non-github URL, a bare slug, a non-string — none of them ours', () => {
     assert.equal(classifyToolkitRefValue('../wafflestack').kind, 'not-github');
     assert.equal(classifyToolkitRefValue('/Users/dev/wafflestack').kind, 'not-github');
-    assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack').kind, 'not-github');
     // A BARE `owner/repo` parses as a slug (`parseRepoSlug` takes it) and is still not a candidate:
     // `vendor/wafflestack` is a relative path as readily as a slug, and this answer decides whether a
-    // consumer's committed config gets rewritten. Only an explicit `github:` spec qualifies.
+    // consumer's committed config gets rewritten. Only an explicit `github:` spec or github.com URL qualifies.
     assert.equal(classifyToolkitRefValue('vendor/wafflestack').kind, 'not-github');
+    assert.equal(classifyToolkitRefValue('vendor/wafflestack#v0.12.0').kind, 'not-github', 'even with a release fragment');
+    assert.equal(classifyToolkitRefValue('https://gitlab.com/dustinkeeton/wafflestack#v0.12.0').kind, 'not-github', 'another host');
     assert.equal(classifyToolkitRefValue(42).kind, 'not-github');
     assert.equal(classifyToolkitRefValue({ toolkitRef: 'x' }).kind, 'not-github');
     assert.equal(classifyToolkitRefValue('github:').kind, 'not-github', 'unparseable behind the scheme');
+  });
+
+  // ── the git-URL form (#386 F3) ────────────────────────────────────────────────────────────────
+  // These used to fall in with local paths as `not-github` and be skipped in SILENCE, so a consumer
+  // who pinned in URL form watched `doctor.toolkitRef` and the lock diverge with no output at all.
+  // They are npx specs the rendered `npx --yes <ref> doctor` line resolves, and no `pattern:` in
+  // either key's schema rejects one. They are now READ (so the divergence can be reported) and still
+  // never REWRITTEN — `form` is the axis that separates those two questions.
+  describe('the git-URL form is recognised, and marked as one we do not rewrite (#386 F3)', () => {
+    const URLS = [
+      'git+https://github.com/dustinkeeton/wafflestack#v0.12.0',
+      'https://github.com/dustinkeeton/wafflestack#v0.12.0',
+      'https://github.com/dustinkeeton/wafflestack.git#v0.12.0',
+      'git@github.com:dustinkeeton/wafflestack.git#v0.12.0',
+      'git+ssh://git@github.com/dustinkeeton/wafflestack.git#v0.12.0',
+    ];
+
+    test('a release-pinned git URL is a `release-pin`, in `url` form', () => {
+      for (const url of URLS) {
+        const c = classifyToolkitRefValue(url);
+        assert.equal(c.kind, 'release-pin', url);
+        assert.equal(c.form, 'url', url);
+        assert.equal(c.fragment, 'v0.12.0', url);
+        assert.deepEqual(c.slug, { owner: 'dustinkeeton', repo: 'wafflestack' }, url);
+      }
+    });
+
+    test('the `github:` shorthand is the only form marked `shorthand` — the only one `upgrade` rewrites', () => {
+      assert.equal(classifyToolkitRefValue('github:dustinkeeton/wafflestack#v0.12.0').form, 'shorthand');
+      assert.equal(classifyToolkitRefValue('github:dustinkeeton/wafflestack').form, 'shorthand');
+    });
+
+    test('a URL carries its fragment kind across, exactly as the shorthand does', () => {
+      // Same value, same kind, different form. The kind says WHAT it is; the form says whether we may
+      // rewrite it. Folding the two together is what produced the silent skip.
+      assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack').kind, 'unpinned', 'floating, and still floating');
+      assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack').form, 'url');
+      assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack#main').kind, 'other-pin');
+      assert.equal(classifyToolkitRefValue(`https://github.com/dustinkeeton/wafflestack#${SHA_A}`).kind, 'other-pin');
+    });
+
+    test('the host is anchored — a lookalike or a path segment is NOT a github URL', () => {
+      // `parseRepoSlug` is the second gate, but the form test must not admit these on its own: this
+      // answer decides whether we report a repo the consumer never named.
+      assert.equal(classifyToolkitRefValue('https://evil.com/github.com/o/r#v0.12.0').kind, 'not-github');
+      assert.equal(classifyToolkitRefValue('https://github.com.evil.com/o/r#v0.12.0').kind, 'not-github');
+    });
   });
 });
 
@@ -2713,6 +2761,91 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
     const out = logged.join('\n');
     assert.match(out, /doctor\.toolkitRef is pinned to `#main`, which is not a release tag/);
     assert.match(out, new RegExp(`waffle\\.toolkitRef is pinned to \`#${SHA_A}\``));
+  });
+
+  // ── the git-URL pin (#386 F3) ─────────────────────────────────────────────────────────────────
+  // The bug this replaces: a release-pinned git URL classified as `not-github`, fell in with local
+  // paths, and was skipped in SILENCE — no pinMove, no log. The other key moved, the lock recorded the
+  // new toolkit, and CI went on fetching the old one. That is the lock/pin divergence #372 exists to
+  // kill, reintroduced through a pin form the classifier did not recognise.
+  test('a release-pinned GIT URL is left alone — and SAID so, with the remedy, while the other key moves', () => {
+    writeConfig(pinnedConfig('git+https://github.com/dustinkeeton/wafflestack#v0.12.0', 'github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+
+    // BYTE IDENTITY: the ONLY bytes that moved are the shorthand pin's. The URL pin is not rewritten
+    // (the conservative call), and nothing else in the file is either. `github:…#v0.12.0` is not a
+    // substring of `git+https://github.com/…#v0.12.0` (`github:` vs `github.com/`), so this one
+    // replacement names exactly the shorthand line.
+    assert.equal(
+      configBytes(),
+      before.replace('github:dustinkeeton/wafflestack#v0.12.0', 'github:dustinkeeton/wafflestack#v0.13.0'),
+      'the shorthand pin moved; the URL pin and every other byte stayed put',
+    );
+    assert.match(configBytes(), /toolkitRef: git\+https:\/\/github\.com\/dustinkeeton\/wafflestack#v0\.12\.0/, 'left exactly as authored');
+
+    assert.deepEqual(
+      result.pinMoves.map((m) => [m.key, m.action, m.to]),
+      [
+        ['doctor.toolkitRef', 'left', null],
+        ['waffle.toolkitRef', 'bumped', 'github:dustinkeeton/wafflestack#v0.13.0'],
+      ],
+      'the skipped key is REPORTED, and reports no `to` — nothing was written',
+    );
+
+    const out = logged.join('\n');
+    assert.match(out, /doctor\.toolkitRef still pins git\+https:\/\/github\.com\/dustinkeeton\/wafflestack#v0\.12\.0 and was NOT reconciled/);
+    assert.match(out, /written as a git URL, which `upgrade` does not rewrite/, 'says WHY');
+    assert.match(out, /CI would fetch a DIFFERENT toolkit than the one that rendered it/, 'names the divergence');
+    assert.match(out, /replace it with: github:dustinkeeton\/wafflestack#v0\.13\.0/, 'names the remedy');
+  });
+
+  test('every git-URL spelling is caught — https, git+https, scp-style ssh, git+ssh', () => {
+    // One test per form would pin the same branch four times; what matters is that no spelling slips
+    // back into the silent `not-github` bucket. Each is a spec `npx --yes` resolves.
+    for (const url of [
+      'https://github.com/dustinkeeton/wafflestack#v0.12.0',
+      'git+https://github.com/dustinkeeton/wafflestack#v0.12.0',
+      'git@github.com:dustinkeeton/wafflestack.git#v0.12.0',
+      'git+ssh://git@github.com/dustinkeeton/wafflestack.git#v0.12.0',
+    ]) {
+      logged = [];
+      writeConfig(pinnedConfig(url, 'github:dustinkeeton/wafflestack#v0.12.0'));
+      const moves = reconcileToolkitRefPins({ cwd, identity: at('0.13.0'), log });
+      assert.deepEqual(moves.map((m) => [m.key, m.action]), [['doctor.toolkitRef', 'left'], ['waffle.toolkitRef', 'bumped']], url);
+      assert.match(logged.join('\n'), /was NOT reconciled/, url);
+    }
+  });
+
+  test('a git URL that ALREADY names the toolkit that rendered says NOTHING — it must not cry wolf', () => {
+    // Same pin, different notation: `git+https://…#v0.13.0` fetches exactly what `github:…#v0.13.0`
+    // does. Nothing diverges, so a warning here would fire on every upgrade at a consumer who is
+    // already correct — and a warning that fires when nothing is wrong is how consumers learn to
+    // ignore warnings.
+    writeConfig(pinnedConfig('git+https://github.com/dustinkeeton/wafflestack#v0.13.0', 'github:dustinkeeton/wafflestack#v0.13.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.13.0', toolkitIdentity: at('0.13.0', { commit: SHA_B }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before, 'still a zero-byte no-op');
+    assert.deepEqual(result.pinMoves.map((m) => m.action), ['unchanged', 'unchanged']);
+    assert.doesNotMatch(logged.join('\n'), /NOT reconciled/, 'nothing diverges, so nothing is said');
+  });
+
+  test('a git URL naming a DIFFERENT repo diverges even at the same tag — and is reported', () => {
+    // The fragment matches, but the repo does not: a pin at `acme/wafflestack#v0.13.0` does not name
+    // the toolkit that rendered this lock, so it is a divergence like any other. Matching the tag is
+    // not enough — the repo has to be the one that rendered (#384 F14, inherited).
+    writeConfig(pinnedConfig('https://github.com/acme/wafflestack#v0.13.0', 'github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before.replace('#v0.12.0', '#v0.13.0'), 'only the shorthand key moved');
+    assert.deepEqual(result.pinMoves.map((m) => [m.key, m.action]), [['doctor.toolkitRef', 'left'], ['waffle.toolkitRef', 'bumped']]);
+    assert.match(logged.join('\n'), /doctor\.toolkitRef still pins https:\/\/github\.com\/acme\/wafflestack#v0\.13\.0 and was NOT reconciled/);
   });
 
   test('an already-correct pin is a zero-byte no-op, reported as `unchanged` — idempotence', () => {
