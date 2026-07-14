@@ -75,6 +75,42 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
 - **version-skew note** — doctor mentions when the lock was written by a different toolkit
   version. That is informational; pin `github:dustinkeeton/wafflestack` (and the repo's version) to a
   release tag to silence it, or run **`/waffle-upgrade`** to move forward deliberately.
+- **toolkit provenance note** — doctor names *which toolkit* produced the render, read from the
+  lock's `toolkit` block (its ref and commit SHA, not just a version number). **Every form of this
+  note is a warning: none of them fails the check.** Read it as the explanation for a red
+  elsewhere, never as the red itself.
+  - **`toolkit provenance mismatch … both report version X from the same repository but resolve to
+    DIFFERENT commits`** — the headline, and the one a version number cannot express: the tag was
+    **re-cut or force-pushed**, or one of the two is not the release it claims to be. If
+    `--verify-render` is green alongside it, the difference changed no file and you can ignore it;
+    if it is red, this note is *why*. The fix is to re-render, or to pin CI to the toolkit that
+    produced the lock.
+  - **`toolkit provenance mismatch … the two sources cannot be compared (at least one is
+    unrecorded)`** — same version, different commits, but one of the two blocks records no
+    repository, so doctor **cannot** tell a re-cut tag from two different repos and does not guess.
+    The commits are still compared, so a genuine **re-cut is still reported here** — only the *cause*
+    is hedged. You will see this against a lock written before the toolkit recorded provenance, one
+    rendered by a toolkit with no discoverable repo, or one rendered from a toolkit **checkout**
+    sitting on a release tag: a checkout reads its *local* tags and asks no remote, so it records no
+    source rather than naming a repo it never checked. Only a lock rendered by an `npx`-installed
+    release names a repo — that one was corroborated — and it gets the stronger note above.
+  - **`toolkit provenance mismatch … these are DIFFERENT REPOSITORIES`** — the two blocks name
+    different repos, so **no tag need have moved**: a fork's `v0.12.0` and upstream's `v0.12.0` are
+    two different releases that share a version number. Doctor says this instead of claiming a
+    re-cut, because it compared the sources rather than guessing from the commits alone. The fix is
+    the same: re-render, or pin CI to the toolkit that produced the lock.
+  - **`the lock was rendered by a toolkit marked UNRELEASED`** — its provenance cannot be pinned to
+    a release, so there is nothing to compare against. Expected for a repo that renders from a
+    toolkit checkout (this one does). Not a problem to fix.
+  - **`the lock names <pin> but recorded no commit`** — the lock *is* pinnable (it names a release
+    ref), it just carries no commit SHA to compare this CLI against. Only a hand-edited or foreign
+    lock produces this; doctor reports it rather than falsely claiming the lock "cannot be pinned".
+  - **`the lock records no toolkit provenance`** — it was rendered by a toolkit predating the
+    block. The next **`/waffle-render`** records it. Harmless.
+  - A **null `ref`** in the block means *"no provenance was captured"* — it does **not** mean
+    "this was not a release". An `--allow-unreleased` run, or a `pnpm`/`yarn dlx` install, both
+    record nulls for a toolkit that genuinely was one.
 
 Report the exit status plainly: a clean doctor is the green light to commit; drift must be
-resolved (usually by re-rendering) first.
+resolved (usually by re-rendering) first. Provenance notes are never drift — do not report one as
+a failure, and never tell the user to "fix" a mismatch that `--verify-render` says changed nothing.

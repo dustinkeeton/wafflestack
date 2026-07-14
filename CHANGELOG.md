@@ -210,6 +210,49 @@ is what you reach for across a breaking one.
     pr-green takes `statuses: write`.
 
 ### Added
+- **The lock records WHICH toolkit produced the render, not just its version number (#374, epic #377).**
+  `.waffle/waffle.lock.json` gains a top-level `toolkit` block — `{ source, sourceType, ref, commit,
+  status }` — keyed exactly like an external stack's `sources[]` entry, because a version string does
+  not identify content: `main` and the tag 74 commits behind it both carry `"version": "0.12.0"`, so
+  two renders six files apart used to produce identical provenance. `doctor` now reports which toolkit
+  produced a render and flags a mismatch — **including the case the bare version string structurally
+  cannot express: same version, different commit** (a re-cut or force-pushed tag). `upgrade` reports
+  the toolkit's actual commit move, exactly as it already does for external sources — which is what
+  finally lets it say something when the version did *not* change but the toolkit did.
+
+  **`commit` is recorded if and only if `status` is `release`.** No field in the block is a function
+  of a moving `HEAD`: recording one in a repo that commits its own lock would be self-referential
+  (naming the commit *before* the one containing it), false whenever the working tree is dirty, and
+  would churn the lock on **every commit** — reddening the documented `render` + `git diff --exit-code
+  .waffle/waffle.lock.json` recipe forever, for a change that moved no rendered byte. A non-release
+  render writes `{ ref: null, commit: null, status }`, and that block is byte-stable. An `unverified`
+  render (a network blip, `--allow-unreleased`, a pnpm/yarn `dlx` install) **carries the previous block
+  forward** when the version and the whole `files` map are unchanged, so a hiccup cannot rewrite a good
+  `release` block to nulls.
+
+  **`source` names a repo only when one was corroborated — otherwise it is `null`.** `source` + `ref`
+  are a **pin** (the read-back is `` `${source}#${ref}` ``), so naming a repo asserts that repo holds
+  that tag at that commit. An `npx` install has that in hand — npm's `resolved` URL is the spec the
+  operator typed, and `ls-remote` found the tag on that commit in that remote — so a **fork pinned to
+  its own release names itself**, on every machine. A **checkout** has not: `git describe` reads the
+  clone's *local* tag refs and asks no remote, and `package.json` `repository` is a field a fork
+  inherits verbatim — so a fork clean on its own `v1.0.0` would have pinned
+  `github:dustinkeeton/wafflestack#v1.0.0`, a tag upstream never cut. A release rendered from a
+  checkout therefore records `"source": null` and pins nothing, keeping its real, checkable local facts
+  (`ref`, `commit`, `status`). Doctor still compares the **commits**, so a re-cut tag is still reported
+  as a re-cut tag. `remote.origin.url` is **never** recorded under any status: it is a property of the
+  clone, not of the toolkit, and two contributors on one commit must not write different locks.
+
+  **Consumer impact — none, and deliberately so.** No lock-format version bump and no migration: the
+  key is additive and every reader is key-by-key, exactly as when the `sources` block was added. Your
+  lock gains the block on its next `render` (a one-time diff, like a `toolkitVersion` bump); a lock
+  without it loads and doctors clean. **`doctor`'s new provenance check is a NOTE, never an error** —
+  `doctor.toolkitRef` ships unpinned by default, so failing the gate on a mismatch would red every
+  consumer's required check the moment anything merges to this repo's `main`; and `--verify-render`
+  already gates on *content*, so an error could only ever fire when the rendered bytes are provably
+  identical. `doctor --verify-render`'s comparison stays `files`-only. Read `ref: null` as *"no
+  provenance was captured"*, never as *"this was not a release"* (see #383).
+
 - **A `files:` entry can scope itself to harness targets (#364).** Syrup used to render **once,
   unconditionally** — right for a `.github/` payload (a GitHub Action has nothing to do with which
   harness you run), wrong for a harness-specific one: a `.claude/workflows/*.js` would land in a

@@ -216,6 +216,14 @@ ordered, idempotent, and keyed to the version that introduced the change, so run
 `upgrade` on an already-current repo is a safe no-op. If the lock is missing or predates
 version stamping, `upgrade` says so and falls back to a plain render + `doctor`.
 
+It also reports the toolkit's **actual commit move**, the way it already does for external
+stack sources — `toolkit moved 0.11.0 (v0.11.0 @ aaaaaaaaaaaa) → 0.12.0 (v0.12.0 @ bbbbbbbbbbbb)`.
+That matters most in the case a version number cannot describe: when the version did **not**
+change but the toolkit did (a re-cut or force-pushed tag), `upgrade` used to report *"already on
+toolkit 0.12.0"* and fall silent. Now it says the commit moved. The lock is what makes this
+possible — it records the ref and commit SHA that produced your render, not just a version
+string (see [Release resolution](#release-resolution-what-toolkit-am-i-running)).
+
 Two such migrations exist so far: **0.6.0** shortened the consumer dotfiles
 (`.wafflestack.yaml` → `.waffle.yaml`, plus the local overlay, lock, and
 `.wafflestack/extensions/` → `.waffle/extensions/`), and **0.8.0** consolidates everything
@@ -258,6 +266,21 @@ write, so they warn and carry on.
 **Developing the toolkit itself?** Rendering from a working tree is the whole point there — pass
 `--allow-unreleased` (or set `WAFFLESTACK_ALLOW_UNRELEASED=1`). It suppresses the *refusal*, not
 the *truth*: the toolkit still reports itself as unreleased.
+
+**And it is recorded.** Your lock carries a `toolkit` block naming the ref and commit SHA that
+produced the render — so `doctor` can tell you *which* toolkit made it, and flag the one thing a
+version string can never express: **same version, different commit**.
+
+```json
+"toolkit": { "source": "github:dustinkeeton/wafflestack", "sourceType": "git",
+             "ref": "v0.12.0", "commit": "e3f1c0d9…", "status": "release" }
+```
+
+A commit SHA is recorded **only when it identifies immutable content** — i.e. a release. A render
+from an untagged checkout writes `{ ref: null, commit: null, status: "unreleased" }`, because a
+`HEAD` SHA would name content that a dirty working tree did not produce, and it would churn your
+lock on every commit. `doctor`'s provenance check is a **note, never a failure**: your required
+`waffle-doctor` check stays green.
 
 Format details: [schema/FORMAT.md](schema/FORMAT.md). Brand assets and guidelines:
 [assets/](assets/).

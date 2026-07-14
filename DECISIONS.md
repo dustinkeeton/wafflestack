@@ -9,6 +9,57 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-13: The lock records a commit SHA only when it identifies immutable content (#374)
+
+**Context**: `.waffle/waffle.lock.json` is documented as *the* authoritative marker of what
+wafflestack produced. For the built-in toolkit it recorded one field — `toolkitVersion: "0.12.0"` —
+and a version string does not identify content: `main` and the `v0.12.0` tag sat 74 commits apart
+while both reporting `"version": "0.12.0"`, so two renders that differed by six files carried
+identical provenance. External stacks had solved this for themselves years earlier, recording
+`{source, ref, commit}` in a `sources` block. The toolkit every consumer depends on got a string.
+
+**Decision**: Record the toolkit's resolved identity in a top-level `toolkit` block, keyed exactly
+like a `sources[]` entry plus a `status` field — and **record the commit SHA if and only if
+`status` is `release`**. Every other case writes `{ ref: null, commit: null, status }`, where the
+status says *why*. No field in the block may be a function of a moving `HEAD`.
+
+The obvious alternative — "record HEAD's SHA, it's better than nothing" — is not merely imperfect,
+it is incoherent, and it is the decision most likely to be re-litigated by someone who has not
+thought it through. Four reasons, of which the first two are each independently fatal:
+
+1. **It is self-referential and has no fixed point.** This repo commits its own lock. A lock
+   recording `HEAD` names the commit *before* the one that contains it. It is never right on the
+   commit that ships it, and it cannot be made right.
+2. **It is a false claim even when fresh.** A toolkit developer's tree is dirty by definition —
+   rendering uncommitted `stacks/**` edits is the *point* of a local render — so `HEAD` does not
+   identify the content that rendered. A provenance field naming content it did not produce, inside
+   the artifact documented as the authoritative provenance marker, is a worse defect than the bare
+   version string this issue exists to fix.
+3. **It would churn the lock on every single commit** — a lock diff on every PR, a conflict on every
+   long-lived branch (this repo already has a documented lock-conflict problem with the hygiene
+   cron), and a permanent red on the shipped `render` + `git diff --exit-code` CI recipe.
+4. **Null is not a degradation — it is the correct answer.** `status` is what makes a null block
+   *say* something instead of merely *lack* something, which is precisely the courtesy the `sources`
+   block already extends to a local-path source.
+
+**Also decided, and for the same family of reasons: `doctor`'s new provenance check is a WARNING.**
+`doctor.toolkitRef` ships **unpinned by default** and `waffle-doctor.yml` runs on every consumer PR,
+so "mismatch is an error" would turn every consumer's required check red the moment we merge anything
+to `main`. It would also add no coverage: `--verify-render` already re-renders and compares *bytes*,
+so the only mismatch a provenance error could catch beyond it is one where the rendered content is
+**identical** — a difference that provably did not matter. Erroring on a no-op is a pure false
+positive. For the same reason `--verify-render`'s comparison stays `files`-only, with a comment at
+the site saying so: extending it to provenance is the most natural-looking future change that would
+red-gate the entire install base.
+
+**Consequences**: This repo's own lock carries `{ ref: null, commit: null, status: "unreleased" }`
+forever, and that block does not move when `main` moves — pinned by a test asserting that two renders
+from unreleased toolkits differing *only* in commit produce a byte-identical lock. `doctor` gains the
+capability the version string could never have: flagging **same version, different commit**, a re-cut
+or force-pushed tag. `upgrade` reports the commit move even when the version did not change. And
+`ref: null` means *"no provenance was captured"* — never *"this was not a release"* (the
+`--allow-unreleased` hatch and pnpm/yarn `dlx` both forfeit a release that genuinely existed; #383).
+
 ## 2026-07-13: "Workflow" means the Claude primitive; our orchestrators are skills (#184, epic #347)
 
 **Context**: The toolkit said **"workflow"** to mean three unrelated things: a **GitHub Actions

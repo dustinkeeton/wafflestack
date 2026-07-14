@@ -50,6 +50,10 @@ export function upgrade({
   const toVersion = toolkitVersion;
   // Snapshot the pre-render per-source provenance so we can diff resolved commits after re-render.
   const oldSources = new Map((lock?.sources ?? []).map((s) => [s.name, s]));
+  // …and the same for the BUILT-IN toolkit (#374). `oldToolkit` is null for a lock written before
+  // the `toolkit` block existed — the exact `?? null` idiom `oldSources` already uses for a pre-#125
+  // lock, and the whole of the backward-compatibility story.
+  const oldToolkit = lock?.toolkit ?? null;
 
   // Decide whether we have a baseline to migrate from, and describe the move.
   let status;
@@ -116,12 +120,20 @@ export function upgrade({
   // sources so a moved ref is observed, not served from the session cache), then doctor.
   const render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, sourceCacheDir, refreshSources: true, log });
   if (!render.ok) {
-    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], notes };
+    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], toolkitMove: null, notes };
   }
 
   // Per-source version moves: diff the freshly-resolved commits against the lock's recorded ones.
   const sourceMoves = diffSources(oldSources, render.sources ?? []);
   for (const move of sourceMoves) log(describeSourceMove(move));
+
+  // The BUILT-IN toolkit's move (#374) — the same report, for the toolkit every consumer depends on.
+  // The case this exists for is the one `status` above cannot see: `toVersion === fromVersion` →
+  // `status: 'current'` → "already on toolkit X" — while the COMMIT moved underneath it (a re-cut
+  // tag, or one of the two renders ran an unreleased toolkit). Upgrade can now say so.
+  const toolkitMove = diffToolkit(oldToolkit, render.toolkit ?? null, { fromVersion, toVersion });
+  const moveNote = toolkitMove ? describeToolkitMove(toolkitMove) : null;
+  if (moveNote) log(moveNote);
 
   const dr = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot });
 
@@ -139,6 +151,9 @@ export function upgrade({
     render,
     doctor: dr,
     sourceMoves,
+    // The built-in toolkit's commit move, or null when neither lock recorded provenance (a pre-#374
+    // lock re-rendered by a library caller that supplied no identity). #372 branches on `status`.
+    toolkitMove,
     notes,
   };
 }
@@ -166,6 +181,116 @@ export function diffSources(oldSources, newSources) {
     }
   }
   return moves.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Diff the built-in toolkit's provenance across an upgrade — the lock's `toolkit` block (#374)
+ * before the re-render, against the block the re-render just wrote. Exported like `diffSources`,
+ * whose shape it deliberately mirrors, because #372 consumes it.
+ *
+ * `status`:
+ *   - `moved`     — both sides recorded a commit, and they differ. THE report. When the two
+ *                   VERSIONS also match, this is a re-cut tag (or an unreleased render), and it is
+ *                   precisely what `toolkitVersion` alone cannot express.
+ *   - `unchanged` — both recorded the same commit. Nothing to say.
+ *   - `added`     — the previous lock recorded no provenance (pre-#374), this render does.
+ *   - `removed`   — the previous lock recorded provenance, this render supplies none (a library
+ *                   caller with no identity; the CLI always has one on a gated write).
+ *   - `unknown`   — both sides have a block, but at least one recorded NO commit (an unreleased or
+ *                   unverified toolkit). No move can be asserted — and asserting one anyway is the
+ *                   exact false claim `toolkitLockEntry` refuses to write.
+ *
+ * Returns `null` when neither side recorded anything: there is no move, and no absence worth a line.
+ *
+ * @param {import('./toolkit-ref.mjs').ToolkitLockEntry|null} prev the lock's block before the render
+ * @param {import('./toolkit-ref.mjs').ToolkitLockEntry|null} next the block the render wrote
+ * @param {{fromVersion?: string|null, toVersion?: string|null}} [versions]
+ */
+export function diffToolkit(prev, next, { fromVersion = null, toVersion = null } = {}) {
+  if (!prev && !next) return null;
+  const move = {
+    from: prev?.commit ?? null,
+    to: next?.commit ?? null,
+    fromRef: prev?.ref ?? null,
+    toRef: next?.ref ?? null,
+    // Which REPOSITORY each side came from (#384 F3). Without these, `describeToolkitMove` compared
+    // commits alone and reported a repo swap as "the tag was re-cut" — the same unasked question
+    // `describeToolkitProvenance` was answering wrong, at the second site.
+    fromSource: prev?.source ?? null,
+    toSource: next?.source ?? null,
+    fromVersion,
+    toVersion,
+    fromStatus: prev?.status ?? null,
+    toStatus: next?.status ?? null,
+    status: 'unknown',
+  };
+  if (!prev) move.status = 'added';
+  else if (!next) move.status = 'removed';
+  else if (!prev.commit || !next.commit) move.status = 'unknown';
+  else move.status = prev.commit === next.commit ? 'unchanged' : 'moved';
+  return move;
+}
+
+/**
+ * The one-line report for a toolkit move, or null when there is nothing to say. Module-private and
+ * tested through the `log` sink, exactly like `describeSourceMove`.
+ */
+function describeToolkitMove(move) {
+  const { status, from, to, fromRef, toRef, fromSource, toSource, fromVersion, toVersion, toStatus } = move;
+  const at = (ref, sha) => [ref, sha ? shortSha(sha) : null].filter(Boolean).join(' @ ') || 'no commit recorded';
+  const v = (x) => x ?? 'unknown';
+  // Same unasked question as `describeToolkitProvenance`'s `recut`, at the second site (#384 F3) —
+  // and the same THREE-STATE rule, because F3's fix collapsed `unknown` into `same` here too (#384
+  // F12). `differentRepos` is false when a source is merely NULL, so a lock whose `source` was never
+  // recorded (a bare clone; a lock written before #374) fell into the `re-cut or force-pushed` arm and
+  // was told a tag had moved — the very assertion-about-an-unqueried-remote F3 exists to stop. Same /
+  // different / unknown: the strong cause needs BOTH sources, and unknown gets the hedge.
+  const comparableRepos = Boolean(fromSource && toSource);
+  const differentRepos = comparableRepos && fromSource !== toSource;
+  if (status === 'unchanged') return null;
+  if (status === 'moved') {
+    // The #372 trap, said out loud: same version, different commit. `upgrade` reports `current`
+    // ("already on toolkit X") and would otherwise fall silent on a toolkit that genuinely moved.
+    if (fromVersion && toVersion && fromVersion === toVersion) {
+      if (differentRepos) {
+        return `toolkit ${toVersion} is unchanged by version, but its provenance moved ${fromSource} @ ${shortSha(from)} → ${toSource} @ ${shortSha(to)} — these are DIFFERENT REPOSITORIES, so neither tag need have been re-cut`;
+      }
+      // The cause named here is now the only one REACHABLE (#384 F4). The old line also offered "or
+      // one of the two renders used an unreleased toolkit", which `moved` structurally cannot be:
+      // `moved` requires both commits non-null, and `toolkitLockEntry` writes `commit` IFF
+      // `status === 'release'` — the anti-churn invariant. An unreleased render lands in `unknown`.
+      //
+      // …and it is only reachable when the sources are KNOWN EQUAL. Otherwise we have not established
+      // that any tag moved at all, and say so (#384 F12).
+      if (!comparableRepos) {
+        return `toolkit ${toVersion} is unchanged by version, but its commit moved ${shortSha(from)} → ${shortSha(to)} — at least one source is unrecorded, so this may be a re-cut or force-pushed tag, or two different repositories`;
+      }
+      return `toolkit ${toVersion} is unchanged by version, but its commit moved ${shortSha(from)} → ${shortSha(to)} — the tag was re-cut or force-pushed`;
+    }
+    const repos = differentRepos ? ` (DIFFERENT REPOSITORIES: ${fromSource} → ${toSource})` : '';
+    return `toolkit moved ${v(fromVersion)} (${at(fromRef, from)}) → ${v(toVersion)} (${at(toRef, to)})${repos}`;
+  }
+  if (status === 'added') {
+    return `toolkit ${v(toVersion)} (${at(toRef, to)}) — the previous render recorded no toolkit provenance`;
+  }
+  if (status === 'removed') {
+    return `toolkit provenance dropped: the lock recorded ${v(fromVersion)} (${at(fromRef, from)}), and this render supplied none`;
+  }
+  // `unknown`: at least one side has no commit, so no move can be honestly claimed — and this branch
+  // used to claim one anyway (#384 F8), printing `toolkit moved 0.12.0 → 0.12.0` one line under a
+  // comment saying it must not. The `moved` branch above already special-cases `fromVersion ===
+  // toVersion` because `X → X` reads as nonsense; this one forgot the same guard.
+  //
+  // Not exotic: a first render lands `unverified` on any network blip, and per #383 a pnpm/yarn `dlx`
+  // consumer is `unverified` ALWAYS. The moment they `upgrade` on a CLI that does resolve a release at
+  // the same version, they were told their toolkit "moved 0.12.0 → 0.12.0". With no version move this
+  // is the previous render's provenance being FILLED IN, not a move — so say that.
+  if (to) {
+    return fromVersion && toVersion && fromVersion === toVersion
+      ? `toolkit ${v(toVersion)} is now pinned to ${at(toRef, to)}; the previous render recorded no commit, so no move can be reported`
+      : `toolkit moved ${v(fromVersion)} → ${v(toVersion)} (${at(toRef, to)}); the previous render recorded no commit`;
+  }
+  return `toolkit ${v(toVersion)} (this toolkit is ${toStatus ?? 'unidentified'} — no commit recorded, so no move can be reported)`;
 }
 
 function shortSha(sha) {

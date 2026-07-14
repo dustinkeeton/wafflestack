@@ -1,5 +1,12 @@
 {
   "toolkitVersion": "0.12.0",
+  "toolkit": {
+    "source": "github:dustinkeeton/wafflestack",
+    "sourceType": "git",
+    "ref": null,
+    "commit": null,
+    "status": "unreleased"
+  },
   "targets": [
     "claude"
   ],
@@ -52,7 +59,7 @@
     ".claude/skills/qa/SKILL.md": "38dc1984567ae2bc32ff1454d1e23492c9c05a1cc69d8ab7ad9255afc40455e4",
     ".claude/skills/release/SKILL.md": "46310ede4c3a50d37d408fec7f57de7981ee4377c1e50c729068a5037ca8af3d",
     ".claude/skills/standup/SKILL.md": "5828d35b100cabc50733094883fc4be63c26d3c9d9c461416e6ac65200b78df6",
-    ".claude/skills/waffle-doctor/SKILL.md": "17693d3a619db6287b8613efbe3189e2dc461eeb2b89e1fad05fd6f86c21a5dd",
+    ".claude/skills/waffle-doctor/SKILL.md": "337c2ad2e1837f6f8ffe4bf18b42ca6a1a328b9de6f4f38dff3e9e9bb84225b4",
     ".claude/skills/waffle-eject/SKILL.md": "7ae14ddadd8e7ea711369869e490f90e862f1ce19e9c457874974a85f58a8605",
     ".claude/skills/waffle-init/SKILL.md": "9e9b9109ee4356bd876908cffec44d8b95373c13b27934669513576d77b822b3",
     ".claude/skills/waffle-install/SKILL.md": "bc12fe21656038b6a058f160bc166a6172c5f9a8a068249829ea04d2722af8b5",

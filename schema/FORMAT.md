@@ -394,8 +394,9 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
   project-specific guidance to a toolkit item.
 - `.waffle/waffle.lock.json` (generated, committed) — manifest of every rendered file with
-  its hash. It is **canonical**: hashed from the committed inputs only, with
-  `waffle.local.yaml` excluded, so it is byte-identical on every machine and safe to share.
+  its hash, plus the `toolkit` block recording *which toolkit produced it* (ref + commit SHA —
+  see *Toolkit provenance in the lock*). It is **canonical**: hashed from the committed inputs
+  only, with `waffle.local.yaml` excluded, so it is byte-identical on every machine and safe to share.
   `wafflestack doctor` diffs reality against it; `wafflestack render` regenerates
   everything verbatim and deletes previously-managed files that are no longer rendered.
   It is also what tells *your* managed files apart from a hand-written file at the same
@@ -497,6 +498,143 @@ what would render, so no `ref` can reproduce it. Untracked files do not count.
 **The repo slug is read from PROVENANCE, not from the declaration:** npm's `resolved` URL, then the
 git `origin` remote, and only then `package.json` `repository`. A fork inherits the declared field
 verbatim, so trusting it first would ask the wrong remote about a fork's own release.
+
+### Toolkit provenance in the lock
+
+The resolved identity above is **recorded**, in a top-level `toolkit` block keyed exactly like a
+`sources[]` entry (see *External stack sources*) — because a version string does not identify
+content, and the external stacks solved this problem first:
+
+```json
+{
+  "toolkitVersion": "0.12.0",
+  "toolkit": {
+    "source": "github:dustinkeeton/wafflestack",
+    "sourceType": "git",
+    "ref": "v0.12.0",
+    "commit": "e3f1c0d9a2b45f6e8c1d0a9b7e6f5d4c3b2a1908",
+    "status": "release"
+  },
+  "targets": ["claude"],
+  "files": { "…": "…" }
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `source` | the npx spec **base** — `github:<owner>/<repo>`, no `#ref`. `null` when no repo could be corroborated as holding `ref` (a release rendered from a checkout, or no declared `repository` at all) |
+| `sourceType` | always `"git"` — shape parity, so one reader consumes either block |
+| `ref` | the **pin**, `"v0.12.0"` — *not* the npx spec. `null` unless `status` is `release` |
+| `commit` | the 40-char SHA. `null` unless `status` is `release` |
+| `status` | `release` \| `unreleased` \| `unverified` — why a null block is null |
+
+`toolkitVersion` is **unchanged** and stays where it is: it is `upgrade`'s migration baseline and
+`list`'s skew signal. The block *adds* identity; it replaces nothing.
+
+**`status` is the field `sources` does not need.** An external source's `ref` is *authored* in
+`waffle.yaml` and pinning is mandatory, so a null there can only mean "local path". The built-in
+toolkit's ref is *discovered at runtime*, so a null is ambiguous — `status` is what makes a null
+block **say** something instead of merely **lack** something.
+
+> **`ref: null` means "no provenance was captured" — it NEVER means "this was not a release."** The
+> `--allow-unreleased` hatch short-circuits the release lookup, and a pnpm/yarn `dlx` consumer has no
+> npm hidden lockfile to read a commit from at all: both forfeit a release that genuinely existed.
+> Never infer "unreleased" from a null.
+
+**A checkout render records NO commit, by design.** The rule is: **`commit` is recorded if and only
+if `status` is `release`** — i.e. only when it names an immutable, published, content-identifying
+pointer. No field in this block is a function of a moving `HEAD`, and that is deliberate:
+
+- **A HEAD SHA is self-referential in a repo that commits its own lock** — it would name the commit
+  *before* the one containing it. Never right, and it cannot be made right.
+- **It would be false even when fresh.** A toolkit developer's tree is dirty by definition (rendering
+  uncommitted `stacks/**` edits is the point), so `HEAD` does not identify what rendered.
+- **It would churn the lock on every commit** — a lock diff on every PR, a conflict on every
+  long-lived branch, and a permanent red on the `render` + `git diff --exit-code
+  .waffle/waffle.lock.json` CI recipe, for a change that moved no rendered byte.
+
+So a non-release render writes `{ "ref": null, "commit": null, "status": "unreleased" }` — a block
+that is **byte-stable across every commit**. Null is not a degradation here; it is the correct answer.
+
+### What each field is a function of — precisely
+
+An earlier draft of this section bolded *"no field in this block is a function of the renderer's
+machine."* That is **true of `source`** and **false of `ref` / `commit` / `status`**, and the difference
+is not academic — a reader acts on it. Stated exactly:
+
+| Field | A function of… | Never a function of… |
+|---|---|---|
+| `source` | the **pin**: npm's `resolved` URL, or the toolkit's own committed `package.json` — or **`null`** when neither can be corroborated | the renderer's machine. **`remote.origin.url` is never recorded, under any status** |
+| `ref`, `commit`, `status` | what **this clone can establish about itself** — on a checkout, `git describe --tags --exact-match` against its **local tag refs** | a moving `HEAD` (see above) |
+
+**`source` is not a label — it is half of a pin.** The read-back is literally
+`` `${source}#${ref}` ``, so naming a repo **asserts that repo holds that ref at that commit**. Where
+that has been corroborated, it is recorded; where it has not, **nothing** is:
+
+| The render was… | `source` | Why |
+|---|---|---|
+| an npm/npx install | npm's `resolved` URL | the spec the operator typed — `npx github:acme/wafflestack#v1.0.0` resolves to `acme` on every machine, and `ls-remote` **found that tag on that commit in that remote**. Corroborated, and it is how a **fork names itself** |
+| a checkout, **not** a release | `package.json` `repository` | ships with the toolkit's content, so it is a function of the commit. `ref`/`commit` are `null`, so it pins nothing and claims nothing |
+| a checkout **on a release tag** | **`null`** | `git describe` read the clone's *local* tag refs and **asked no remote**. `repository` is a field a fork inherits verbatim, so recording it pinned `github:dustinkeeton/wafflestack#v1.0.0` for a tag **upstream never cut**. Zero corroboration buys zero claims |
+
+So `toolkitPinFromLock` returns a pin **only** for an npx-installed release. A checkout render — a
+toolkit developer, who has the toolkit in hand already — records its real, checkable local facts
+(`ref`, `commit`, `status`) and declines to name a repo it never asked. Doctor still compares the
+**commits**, so a re-cut tag is still reported as a re-cut tag. **An unknown repo is recorded as
+unknown, never as the clone's: determinism by recording nothing, not by recording a guess.**
+
+### The honest limit: a clone that cannot see the tag records nulls
+
+`status` is decided by `git describe` against **local tag refs**, so a `git clone --no-tags`, a
+`--depth 1` CI checkout, or a fork clone that never fetched upstream's tags writes
+`{ "ref": null, "commit": null, "status": "unreleased" }` for the **same commit and the same rendered
+bytes** a full clone records a `release` for. The blocks differ; the lock is not byte-identical.
+
+**This is the correct behavior and it will not be changed.** A clone that cannot see the tag genuinely
+cannot establish a release, and failing to honest nulls is the fail-honest rule this format is built on
+(§ `ref: null` above, and #383). Inventing a release it cannot see would be the real defect.
+
+But be clear-eyed about the cost, because the churn hazard cited above is **live through this door**: a
+teammate rendering from a shallow clone rewrites a good `release` block to nulls, and the maintainer's
+next render puts it back. **The `unverified` carry-forward does not save you here** — it covers
+`unverified` only (a blip, `dlx`, the hatch), and a tagless clone is `unreleased`, a *positive*
+determination that deliberately overwrites. What bounds the damage is that it is confined to *this*
+block: `files` is untouched, so `--verify-render` and the content gate are unaffected, and the lock diff
+is visible in review. **Render the toolkit from a clone that has its tags** (a plain `git clone` fetches
+them; `--no-tags` and `--depth 1` do not).
+
+**An `unverified` render carries the previous block forward**, but only when doing so asserts nothing
+new: same `toolkitVersion`, and a freshly rendered `files` map *identical* to the one the recorded
+provenance already describes. This is what stops a network blip (or the hatch, or `dlx`) from
+rewriting a good `release` block to nulls and reddening a `git diff --exit-code` gate with no content
+change anywhere. If content *did* move, the block is honestly rewritten to nulls.
+
+**What the carried-forward block guarantees — and what it does not.** Under that condition the
+recorded toolkit still **reproduces these exact bytes**, so the block remains a correct answer to
+*"what do I run to get this render?"*. It is **not** a claim that the recorded toolkit is the one that
+*performed* the render: an `unverified` CLI knows its own commit (the lookup could not **classify**
+it, not locate it), so a render performed at commit `B` may carry forward a block naming commit `A`.
+
+That distinction is load-bearing precisely here. This block exists because a version string lies by
+collapsing two different toolkits into one — so the carry-forward must not reintroduce the same
+collapse as a *written guarantee*. Read the block as **reproducibility**, never as attribution.
+
+**What reads it.** `doctor` reports which toolkit produced the render and **warns** on a mismatch —
+including the case the bare version string structurally cannot express: **same version, different
+commit**. It names the cause it actually checked: a **re-cut or force-pushed tag** when both blocks
+name the *same* repository, and **different repositories** when they do not (a fork's `v0.12.0` and
+upstream's `v0.12.0` are two releases, and neither tag need have moved). It is a **note, never an
+error**: `doctor.toolkitRef` ships
+unpinned by default, so an error would red every consumer's required check the moment anything merges
+to the toolkit's `main` — and `--verify-render` is already the *content* gate, so the only mismatch an
+error could add is one whose rendered bytes are identical, i.e. one that provably did not matter.
+`upgrade` reports the commit move, exactly as it already does for external sources.
+
+**Compatibility: no lock-format version bump, and no migration.** The key is additive and every
+reader is key-by-key, exactly as when the `sources` block was added. A lock predating the block loads
+and doctors clean (one note). An old CLI ignores the block; `eject` round-trips and preserves it; only
+an old `render`/`reinstall` — which rewrites the lock wholesale — drops it. A render that is handed no
+identity at all (a library caller) **omits** the block rather than inventing one.
 
 ## How do I know a file is wafflestack-managed?
 
