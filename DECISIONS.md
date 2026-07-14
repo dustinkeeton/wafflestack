@@ -9,6 +9,54 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-13: `upgrade` rewrites only the pins a consumer already chose, and never re-execs (#372)
+
+**Context**: The two `toolkitRef` config keys decide which toolkit actually runs — `doctor.toolkitRef`
+is what CI's doctor job fetches, `waffle.toolkitRef` is what every `/waffle-*` skill fetches. They live
+in `.waffle/waffle.yaml`, which `upgrade` never wrote. So a repo that did exactly what the docs
+required — pin, *then* arm `--verify-render` — came out of an upgrade with a lock rendered by the new
+toolkit and a CI job re-rendering with the old one. The next unrelated PR went red, and `doctor`'s
+remedy (``run `wafflestack upgrade` ``) was the very command that could not fix it. This repo pins
+neither key, so the whole defect was invisible to our own dogfooding: it bit only the consumers who
+followed the instructions.
+
+**Decision**: `upgrade` rewrites a `toolkitRef` key **if and only if the consumer already pinned it
+release-shaped**, and writes **the pin the lock is about to record** — nothing else, nowhere else.
+
+Three properties carry it:
+
+- **The value is derived, not edited.** `toolkitPinFromIdentity(identity)` is literally
+  `toolkitPinFromLock({toolkit: toolkitLockEntry(identity)})` — the composition of #374's own
+  machinery, so what lands in `waffle.yaml` is by construction what lands in the lock. It inherits
+  every honesty rule for free: a non-release run, a `dlx`/hatch run (#383) and a release **checkout**
+  (#384 F13) all yield a null pin, and a null pin writes nothing. String surgery on the old value was
+  rejected: a release tag is always `v`-prefixed, so "preserving the authored style" would write
+  `#0.13.0`, a tag that does not exist; and preserving an authored `owner/repo` that differs from the
+  toolkit which rendered would leave CI fetching a repo that did not produce the lock.
+- **A pin is never introduced.** Absent and unpinned are hard, byte-identical no-ops. Unpinned is a
+  *choice* — it floats deliberately — and silently pinning it would change what a consumer's CI
+  fetches without them asking.
+- **The write lands between the migrations and the render.** `renderProject` re-reads `waffle.yaml`
+  from disk, so one `upgrade` moves the config, the rendered output and the lock together. This is why
+  it is not a migration: migrations get only `cwd` (so they cannot know `toVersion`), run only on
+  `status: 'upgrade'`, and are for breaking changes — while the pins also need reconciling on
+  `current`, which is exactly the state the already-broken repo is sitting in.
+
+**Alternatives weighed**: **Re-exec** — have the pinned old CLI fetch and exec the newer one. Rejected,
+re-affirming #373: a toolkit that silently runs a *different* toolkit is the unpinned-render class of
+bug this epic exists to kill. Instead the pinned CLI **reports and names**: it already knows
+`latestTag`, so it prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned command, and
+`/waffle-upgrade` runs it. It cannot run the fix; it can name it. **Bumping the pin to `latestTag`**
+was likewise rejected — a pin records what *rendered*, never what was merely heard about.
+
+**Affects**: `installer/lib/upgrade.mjs` (`reconcileToolkitRefPins`, `pinMoves`, `newerRelease`),
+`installer/lib/toolkit-ref.mjs` (`toolkitPinFromIdentity`, `classifyToolkitRefValue`),
+`installer/lib/project.mjs` (`setScalarIn` — in-place `Scalar.value` mutation, because `doc.setIn`
+drops the comments attached to the node it replaces, and `waffle.yaml` is hand-authored). The
+gitignored `waffle.local.yaml` overlay is neither read nor written (#317).
+
+---
+
 ## 2026-07-13: The lock records a commit SHA only when it identifies immutable content (#374)
 
 **Context**: `.waffle/waffle.lock.json` is documented as *the* authoritative marker of what
