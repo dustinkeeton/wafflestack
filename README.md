@@ -224,6 +224,20 @@ toolkit 0.12.0"* and fall silent. Now it says the commit moved. The lock is what
 possible — it records the ref and commit SHA that produced your render, not just a version
 string (see [Release resolution](#release-resolution-what-toolkit-am-i-running)).
 
+**And it moves your pins.** If you pinned `doctor.toolkitRef` (the toolkit CI's doctor job fetches)
+or `waffle.toolkitRef` (the toolkit every `/waffle-*` skill runs) to a release tag, `upgrade`
+rewrites them to the toolkit that just rendered your lock — *before* the render, so the new ref is
+baked into `.github/workflows/waffle-doctor.yml` and every rendered skill in the same run. The pin
+your CI fetches is by construction the pin your lock records. It only ever moves a pin you already
+chose: an **unpinned** ref keeps floating, an **absent** key is never given one, and a `#main` or
+`#<sha>` pin is left alone and noted. A run that cannot prove it is a release (`--allow-unreleased`,
+a `dlx` install, an unanswerable lookup) writes no pin at all.
+
+Pinned to an old tag and wondering why `upgrade` says *"already on toolkit X"*? That pin means npx
+fetched the **old** CLI, and it can only render itself. It knows the way out, though, and prints it:
+`a newer toolkit release exists: v0.14.0 —` followed by the exact pinned command to run. Run that
+one (or let `/waffle-upgrade` do it), and everything moves together.
+
 Two such migrations exist so far: **0.6.0** shortened the consumer dotfiles
 (`.wafflestack.yaml` → `.waffle.yaml`, plus the local overlay, lock, and
 `.wafflestack/extensions/` → `.waffle/extensions/`), and **0.8.0** consolidates everything

@@ -187,8 +187,9 @@ produce, and compares that against your committed lock:
 
 ```yaml
 # .waffle/waffle.yaml
-doctor:
-  flags: --verify-render
+config:
+  doctor:
+    flags: --verify-render
 ```
 
 ```
@@ -304,11 +305,17 @@ shipped workflow interpolates into its run line. They compose:
 
 ```yaml
 # .waffle/waffle.yaml
-doctor:
-  flags: --allow-missing                    # Posture 2 — some renders gitignored
-  # flags: --verify-render                  # also catch a forgotten re-render
-  # flags: --allow-missing --verify-render  # Posture 2b — the whole render gitignored
+config:
+  doctor:
+    flags: --allow-missing                    # Posture 2 — some renders gitignored
+    # flags: --verify-render                  # also catch a forgotten re-render
+    # flags: --allow-missing --verify-render  # Posture 2b — the whole render gitignored
 ```
+
+> **Every key here lives under `config:`.** That block is the only place the renderer reads
+> project values from (`doctor.flags`, `doctor.toolkitRef`, and every other stack key). A
+> top-level `doctor:` in `.waffle/waffle.yaml` is silently inert — the workflow renders with the
+> stack defaults, so an armed flag never arms and a pin never pins.
 
 ---
 
@@ -388,10 +395,14 @@ needs no editing and no ejecting:
 
 ```yaml
 # .waffle/waffle.yaml
-doctor:
-  toolkitRef: github:dustinkeeton/wafflestack#v0.11.0   # pin FIRST — see below
-  flags: --allow-missing --verify-render
+config:
+  doctor:
+    toolkitRef: github:dustinkeeton/wafflestack#v0.11.0   # pin FIRST — see below
+    flags: --allow-missing --verify-render
 ```
+
+Both keys go under `config:` — that is the only block the renderer reads project values from. A
+top-level `doctor:` parses fine and does nothing at all.
 
 The two flags do exactly opposite halves of the job, which is why the pair is the answer:
 
@@ -429,6 +440,35 @@ Note what this is *not*. It is not a hole in the gate — the check still correc
 own forgotten re-render, which is what it is for. And it is not an argument for floating "so I
 notice upstream changes": you will notice them, at the worst possible moment, in the least
 actionable place. Pin first, arm second.
+
+##### `upgrade` moves the pin for you (#372)
+
+The pin used to be the one thing `upgrade` left behind: it stamped the new version into the lock,
+ran migrations, re-rendered — and never wrote `.waffle/waffle.yaml`. So a repo that did exactly
+what this page says (pin, then arm) came out of an upgrade with a lock rendered by the **new**
+toolkit and a CI job re-rendering with the **old** one. They disagree, and the next unrelated PR
+goes red. Fixed: `upgrade` now rewrites a release-pinned `doctor.toolkitRef` / `waffle.toolkitRef`
+to the toolkit that just rendered your lock — *before* the render, so the new ref lands in
+`waffle-doctor.yml` and every `waffle-*` skill in the same run. The pin CI fetches is, by
+construction, the pin the lock records.
+
+It moves only a pin **you already chose**:
+
+| your value | what `upgrade` does |
+|---|---|
+| `github:owner/repo#v0.11.0` | rewrites it to the toolkit that rendered |
+| `github:owner/repo` (no tag) | nothing — floating is a choice, and pinning you silently would change what CI fetches |
+| key absent | nothing — a pin is never introduced |
+| `#main`, `#<sha>` | nothing — left alone, and noted in the output |
+
+A run that cannot prove it *is* a release (`--allow-unreleased`, a `dlx` install, a lookup that
+could not answer) writes **no pin at all** and says so. A pin is a claim about what a remote
+holds; a claim we cannot back is one we do not make.
+
+**Upgrading past a pinned toolkit.** The pin means `npx --yes <pinned-ref> upgrade` runs the *old*
+CLI, which can only render itself — it reports `already on toolkit X` and moves nothing. It does
+know the answer, though: it prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned
+command to run. Run that, and the pins move from there. (`/waffle-upgrade` does this for you.)
 
 #### The manual recipe (older toolkits, or if you'd rather see the render)
 

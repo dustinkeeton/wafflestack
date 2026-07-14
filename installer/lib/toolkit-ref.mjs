@@ -602,6 +602,138 @@ export function toolkitPinFromLock(lock) {
 }
 
 /**
+ * The pin a RUNNING toolkit would have a consumer write into `doctor.toolkitRef` /
+ * `waffle.toolkitRef` — #372's write-side, and the mirror of `toolkitPinFromLock`'s read-side.
+ *
+ * **It is a composition, not a computation, and that is the whole point.** The value written into
+ * `.waffle/waffle.yaml` must be the value the lock is about to record — otherwise CI fetches one
+ * toolkit and the lock claims another, which is the exact disagreement `--verify-render` reds on.
+ * Deriving it by construction from #374's own machinery makes that an identity rather than a
+ * promise: for any identity, `toolkitPinFromIdentity(identity) === toolkitPinFromLock(lockAfterRender)`,
+ * because the render writes `toolkitLockEntry(identity)` into `lock.toolkit` and this function reads
+ * `toolkitPinFromLock` back off exactly that block. A test pins the equality end to end.
+ *
+ * It therefore inherits every honesty rule the block already enforces, for free — and each one is a
+ * case where #372 MUST NOT WRITE:
+ *
+ *   - `unreleased` / `unverified` → the block records `ref: null` → **null**. The hatch, a `dlx`
+ *     install and a network blip all land here (#383): a run that could not establish a release must
+ *     not stamp a pin naming one.
+ *   - a **checkout** `release` → the block records `source: null` (#384 F13 — `git describe` reads the
+ *     clone's local refs and asks no remote, so nothing corroborates that any repository holds this
+ *     tag) → **null**. A toolkit developer's `upgrade` never writes their clone's origin into a
+ *     consumer's committed config.
+ *   - a release whose repo slug is unknowable → **null**, same reasoning.
+ *
+ * Null means NOTHING IS WRITTEN. Not "write the default", not "write what we guessed" — the pin is a
+ * claim about a remote, and a claim we cannot corroborate is one we do not make.
+ *
+ * @param {ToolkitIdentity|null} identity the toolkit that performed the render
+ * @returns {string|null} `github:<owner>/<repo>#<tag>`, or null when this toolkit is not pinnable
+ */
+export function toolkitPinFromIdentity(identity) {
+  return toolkitPinFromLock({ toolkit: toolkitLockEntry(identity) });
+}
+
+/** A pinnable release fragment. `v`-optional on READ — `#0.12.0` is a mistake we must still recognise
+ * in order to fix it (we always WRITE a `v`-prefixed tag; `RELEASE_TAG` is the shape that exists). */
+const RELEASE_PIN_FRAGMENT = /^v?\d+\.\d+\.\d+$/;
+
+/**
+ * A `toolkitRef` written as a git URL instead of npm's `github:` shorthand — `https://github.com/o/r`,
+ * `git+https://…`, `git+ssh://git@github.com/o/r.git`, `git@github.com:o/r.git`. npx resolves all of
+ * them, so they are real pins a consumer can be holding, and no `pattern:` in either key's schema
+ * rejects one (#386 F3).
+ *
+ * This test does exactly ONE job — *does the value name github.com at all* — because that is the only
+ * job `parseRepoSlug` cannot do for us: `parseRepoSlug` happily takes a BARE `owner/repo`, and
+ * `vendor/wafflestack` is a relative path as readily as a slug. Everything else is left to it, and that
+ * is deliberate: it already anchors the host (`^…github\.com[:/]`), so a lookalike (`github.com.evil.com`)
+ * and a path segment (`https://evil.com/github.com/x`) are rejected there and yield `not-github`.
+ * Re-anchoring here as well would add a check that rejects exactly what the real gate already rejects —
+ * a branch no test could ever fail alone, which is the precise defect #386 exists to remove (a
+ * mutation proved it: tightening this regex changed no test's outcome). ONE gate, and it is the one
+ * with the tests.
+ */
+const NAMES_GITHUB_HOST = /github\.com/i;
+
+/**
+ * Classify the CURRENT value of a `toolkitRef` config key — the read half of #372's decision, kept
+ * pure so the rule is testable without a filesystem.
+ *
+ * The rule the kinds encode: **`upgrade` moves a pin the consumer already chose; it never makes the
+ * choice for them.**
+ *
+ *   | kind          | value                                    | what #372 does                      |
+ *   |---------------|------------------------------------------|-------------------------------------|
+ *   | `absent`      | key unset (this repo; most consumers)     | nothing — a pin is never INTRODUCED |
+ *   | `unpinned`    | `github:owner/repo` (no `#fragment`)      | nothing — deliberately floating     |
+ *   | `release-pin` | `github:owner/repo#v0.12.0` / `#0.12.0`   | **rewrite the whole value**         |
+ *   | `other-pin`   | `#main`, `#<sha>`, `#nightly`             | nothing — left alone, and NOTED     |
+ *   | `not-github`  | a local path, a non-github URL, a non-string | nothing                          |
+ *
+ * `form` is the SECOND axis, and it is what decides whether a `release-pin` may actually be rewritten
+ * (#386 F3):
+ *
+ *   - `shorthand` — `github:owner/repo#v0.12.0`, the documented form. The only form `upgrade` REWRITES.
+ *   - `url` — the same repo and fragment written as a git URL. Recognised, classified identically, and
+ *     **never rewritten** — but no longer SILENT, which was the bug. Rewriting it would have to either
+ *     normalize the consumer's chosen spec into `github:` shorthand (changing their fetch transport —
+ *     an `ssh` URL on a private fork resolves where the https shorthand 404s) or do fragment surgery on
+ *     the old value (which writes a pin that is NOT `toolkitPinFromIdentity`, breaking the one
+ *     invariant #372 exists to establish, and preserves an authored slug that may name a repo which did
+ *     not render the lock — #384 F13/F14). Both trade a rare, visible skip for a rare, SILENT breakage.
+ *     So the pin is left exactly where it is and `reconcileToolkitRefPins` says so, loudly, with the
+ *     remedy — which is what this module already promises for every pin it will not move.
+ *
+ * Two deliberate calls, both departures from the issue body's "rewrite the fragment, preserve the
+ * style":
+ *
+ *   1. **The whole value is replaced, not just the fragment.** A release tag is ALWAYS `v`-prefixed
+ *      (`RELEASE_TAG`), so "preserving" a bare `#0.12.0` style would write `#0.13.0` — a tag that does
+ *      not exist, and an npx spec that cannot resolve. We read the bare form (it is a real mistake, and
+ *      recognising it is how we fix it) and always write the real one.
+ *   2. **`owner/repo` is not preserved either** — the pin comes from the toolkit that actually
+ *      rendered. Keeping an authored slug that differs from the renderer's would leave CI fetching a
+ *      repo that did not produce the lock, which `--verify-render` reds by construction. The fork case
+ *      survives naturally and needs no special code: a fork's consumer installed `npx
+ *      github:acme/wafflestack#…`, so the identity's own slug IS acme. When the slug does change, the
+ *      caller says so loudly (`reconcileToolkitRefPins`).
+ *
+ * A bare `owner/repo` is NOT accepted in either form, even though `parseRepoSlug` would happily take
+ * it: `vendor/wafflestack` is a local path as often as it is a slug, and this function's answer decides
+ * whether a consumer's committed config gets rewritten. A URL must name `github.com` explicitly.
+ *
+ * @param {unknown} value the raw config value (may be undefined, a non-string, anything)
+ * @returns {{kind: 'absent'|'unpinned'|'release-pin'|'other-pin'|'not-github', slug?: {owner: string, repo: string}, fragment?: string, form?: 'shorthand'|'url'}}
+ */
+export function classifyToolkitRefValue(value) {
+  if (value === undefined || value === null) return { kind: 'absent' };
+  if (typeof value !== 'string') return { kind: 'not-github' };
+  const raw = value.trim();
+  if (!raw) return { kind: 'absent' };
+  const shorthand = /^github:/.test(raw);
+  // A git URL is a pin we can READ (and must therefore account for) but will not REWRITE. Classifying
+  // it as `not-github` was the #386 F3 bug: it fell in with local paths and was skipped in silence,
+  // so a consumer who pinned in URL form watched the two keys diverge with no output at all.
+  const url = !shorthand && NAMES_GITHUB_HOST.test(raw);
+  if (!shorthand && !url) return { kind: 'not-github' };
+  const hash = raw.indexOf('#');
+  const base = hash === -1 ? raw : raw.slice(0, hash);
+  const fragment = hash === -1 ? '' : raw.slice(hash + 1).trim();
+  // THE gate, for both forms: `github:` with nothing parseable behind it (`github:`, `github:owner`), a
+  // URL whose path is not an `owner/repo`, a lookalike host (`github.com.evil.com`) or a github.com
+  // path segment on another host (`https://evil.com/github.com/x`) all fail it. Unwritable and
+  // uninterpretable — leave them exactly where they are.
+  const slug = parseRepoSlug(base);
+  if (!slug) return { kind: 'not-github' };
+  const form = /** @type {'shorthand'|'url'} */ (shorthand ? 'shorthand' : 'url');
+  if (!fragment) return { kind: 'unpinned', slug, form };
+  if (RELEASE_PIN_FRAGMENT.test(fragment)) return { kind: 'release-pin', slug, fragment, form };
+  return { kind: 'other-pin', slug, fragment, form };
+}
+
+/**
  * Compare the provenance the LOCK recorded against the toolkit NOW IN HAND, and say what the
  * difference means. `doctor` turns this into notes.
  *

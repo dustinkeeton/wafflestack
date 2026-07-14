@@ -428,6 +428,60 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **`upgrade` now moves the pinned `toolkitRef` config keys — the write-side of the pin (#372).**
+  `upgrade` moved the toolkit forward everywhere except the two places that decide *which toolkit
+  actually runs*: `doctor.toolkitRef` (what CI's doctor job fetches) and `waffle.toolkitRef` (what
+  every `/waffle-*` skill fetches). Both are plain config in `.waffle/waffle.yaml`, and `upgrade`
+  never wrote that file — so a repo that followed the REQUIRED PRACTICE and **pinned** came out of an
+  upgrade with a lock rendered by the *new* toolkit and a CI job re-rendering with the *old* one. The
+  two disagree and the next unrelated PR goes red, whereupon `doctor` prints ``version skew — run
+  `wafflestack upgrade` `` — the exact command that could not fix it.
+
+  `upgrade` now rewrites a **release-pinned** `toolkitRef` to the toolkit that just rendered, between
+  the migrations and the render — so the same run bakes the new ref into `waffle-doctor.yml` and every
+  rendered `waffle-*` skill, and the pin CI fetches is *by construction* the pin the lock records
+  (`toolkitPinFromIdentity(identity) === toolkitPinFromLock(lock)`, pinned by a test). It runs on every
+  status including `current`, which is precisely the state an already-broken repo sits in — so it
+  heals without a hand edit. It **only ever moves a pin the consumer already chose**: an absent key is
+  never given one, an unpinned `github:owner/repo` keeps floating, a `#main`/`#<sha>` pin is left alone
+  and noted, and a run that cannot prove it is a release (`--allow-unreleased`, a `dlx` install, an
+  unanswerable lookup, or a release *checkout*) writes no pin at all and says why. **A release pin
+  written as a git URL** (`git+https://github.com/o/r#v0.12.0`, `git@github.com:o/r.git#…`) is likewise
+  left alone **and reported, with the remedy** (#386): npx resolves those specs and no `pattern:` rejects
+  one, so a consumer can be holding one — and skipping it *silently*, as a plain "not a github ref",
+  let the other key move while this one went on fetching the old toolkit, reintroducing the very
+  lock/pin divergence this issue exists to kill. It is not rewritten (normalizing the form would change
+  the consumer's fetch transport — an `ssh` URL on a private fork resolves where the https shorthand
+  404s — and splicing its fragment would write a pin that is not `toolkitPinFromIdentity`), but it is
+  never quiet. **The rewrite is
+  byte-verbatim** (#386): `setScalarIn` splices only the pin scalar's own source bytes, so comments,
+  quoting, flow collections and line widths elsewhere in the consumer's hand-authored config are not
+  merely "preserved" but never touched — re-serializing the parsed document (`doc.toString()`) would
+  reflow the whole file, turning a one-line pin bump into pages of diff. It is `doc.setIn` the helper
+  avoids because `setIn` would CREATE an absent key — **not** because `setIn` drops comments, which it
+  does not (`yaml` v2 keeps the old node on a scalar overwrite; the claim was wrong, and the test that
+  pinned it could not fail). A run that changes nothing does not write the file at all. The gitignored
+  `waffle.local.yaml` overlay is neither read nor written (#317). Bumps are surfaced in the CLI output
+  and in `upgrade()`'s new `pinMoves`, beside `sourceMoves`.
+
+  **The self-upgrade trap is answered by reporting, not by re-exec.** A `waffle.toolkitRef` pinned to
+  an old tag means `/waffle-upgrade` runs the *old* CLI, which structurally cannot contain this fix and
+  can only render itself — it reports "already on toolkit X" and moves nothing. But a pinned CLI still
+  *learns the latest release* (`latestTag`), so it now names the exact command that escapes:
+  `a newer toolkit release exists: v0.14.0 — … npx --yes github:owner/repo#v0.14.0 upgrade`, returned as
+  `newerRelease: {tag, command}`. `/waffle-upgrade` runs it. Re-exec stays rejected (#373).
+
+  Also fixed a real docs bug found on the way: the `.waffle/waffle.yaml` examples in `docs/gitignore.md`
+  showed `doctor:` at the **top level**, but project values are only read under `config:` — a consumer
+  following the REQUIRED-PRACTICE example verbatim got no pin and no flags at all.
+
+  **Consumer impact — read this if you pinned either `toolkitRef` key.** Your next `upgrade` will
+  rewrite them (to the toolkit that rendered) and re-render the files that carry them: expect
+  `.waffle/waffle.yaml`, `.github/workflows/waffle-doctor.yml` and the `waffle-*` skills in the diff,
+  and commit them together. Nothing changes for an unpinned or absent key. **If your pin predates this
+  release**, the old CLI runs and will not move it — take the newer-release line it prints (or run
+  `/waffle-upgrade`, whose escalation flow does it for you) and run the pinned command it names; that
+  run moves everything. One-time friction, and only once.
 - **An unpinned `npx github:` invocation renders the DEFAULT BRANCH, not the latest release — the
   write path now refuses instead (#373).** `npx github:dustinkeeton/wafflestack <cmd>` with no
   `#ref` fetches whatever is on `main`. `main` and the tag behind it report the same `version` in

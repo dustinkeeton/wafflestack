@@ -1757,6 +1757,12 @@ config:
       the toolkit your lock was built with — turning the next unrelated PR red for a change
       nobody on your side made, with no clue why. Pin first, arm second; bump the pin
       deliberately (`wafflestack upgrade`) and commit the re-render with it.
+      Since #372 `upgrade` DOES the bump for you: a release-pinned value here is rewritten to the
+      toolkit that just rendered your lock — before the render, so the new ref lands in this
+      workflow in the same run — and the pin CI fetches is by construction the pin the lock
+      records. It rewrites only a pin you already chose: an UNPINNED value keeps floating and an
+      absent key is never given one, because that would silently change what your CI fetches. A
+      `#main`/`#<sha>` pin is left alone and noted.
   doctor.flags:
     required: false
     default: ""

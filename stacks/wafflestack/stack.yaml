@@ -34,3 +34,10 @@ config:
       content and keep working either way. Developing the toolkit ITSELF? Point this at a local
       checkout path, or use `node installer/cli.mjs --allow-unreleased` directly — rendering a
       working tree is the one case where unreleased content is the point.
+      ONCE PINNED, `wafflestack upgrade` MOVES THE PIN FOR YOU (#372): a release-pinned value here
+      is rewritten to the toolkit that just rendered — before the render, so every `/waffle-*`
+      skill picks the new ref up in the same run. It never introduces a pin and never touches an
+      unpinned or `#main`-pinned one. The old chicken-and-egg (a pin to an old tag runs the OLD
+      CLI, which reports "already on toolkit X" and moves nothing) is answered by REPORTING, not
+      by re-exec: `upgrade` prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned
+      command to run, and `/waffle-upgrade` runs it.
