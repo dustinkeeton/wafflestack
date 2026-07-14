@@ -1,12 +1,29 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 import { exists, compareVersions, parseVersion } from './util.mjs';
 import { readLock, renderProject } from './render.mjs';
 import { doctor } from './doctor.mjs';
 import { MIGRATIONS, runMigrations } from './migrations.mjs';
-import { LOCK_FILE } from './project.mjs';
+import { CONFIG_FILE, LOCK_FILE, resolveConfigFile, setScalarIn } from './project.mjs';
+import { classifyToolkitRefValue, toolkitPinFromIdentity, parseRepoSlug } from './toolkit-ref.mjs';
 
 const CHANGELOG_FILE = 'CHANGELOG.md';
+
+/**
+ * The two config keys that decide WHICH TOOLKIT ACTUALLY RUNS in a consumer repo (#372), as YAML
+ * paths in `.waffle/waffle.yaml`. Both live under `config:` — that is not a detail, it is the only
+ * place the resolver reads (`loadProjectConfig`: `values: cfg.config ?? {}`; `makeResolver` →
+ * `lookupPath`, which walks NESTED objects and never resolves a flat literal `"doctor.toolkitRef"`
+ * key). A pin written anywhere else is inert, so a pin found anywhere else is not ours to move.
+ *
+ *   - `doctor.toolkitRef` → `.github/workflows/waffle-doctor.yml` — the toolkit CI's doctor job fetches
+ *   - `waffle.toolkitRef` → every rendered `waffle-*` SKILL.md — the toolkit every `/waffle-*` skill runs
+ */
+const TOOLKIT_REF_KEYS = [
+  ['config', 'doctor', 'toolkitRef'],
+  ['config', 'waffle', 'toolkitRef'],
+];
 
 /**
  * Move a consumer repo from the toolkit version its lock records to the toolkit version
@@ -15,13 +32,24 @@ const CHANGELOG_FILE = 'CHANGELOG.md';
  *   2. print what changed between then and now (from CHANGELOG.md, degrading gracefully
  *      when the file is absent);
  *   3. run any registered migrations whose version is in `(from, to]`, in order;
- *   4. re-render every managed file for the current config;
- *   5. run `doctor` and fold its result into the outcome.
+ *   4. **reconcile the pinned `toolkitRef` config keys** to the toolkit that is rendering (#372);
+ *   5. re-render every managed file for the current config;
+ *   6. run `doctor` and fold its result into the outcome.
  *
  * Migrations run BEFORE render so a step that changes file layout (a rename, a moved
  * config key) leaves the tree in the shape render expects. A missing lock or a lock with
  * no `toolkitVersion` is reported clearly and degrades to "render + doctor, no migrations"
  * rather than erroring — there is simply no known baseline to migrate from.
+ *
+ * **Step 4's position is load-bearing, and it is why this is not a migration** (#372). The two
+ * `toolkitRef` keys are template placeholders: `render` bakes them into `waffle-doctor.yml` and every
+ * `waffle-*` skill, and `renderProject` re-reads `.waffle/waffle.yaml` FROM DISK. Writing the pin
+ * between the migrations and the render is therefore what makes ONE `upgrade` move the config, the
+ * rendered output and the lock together — the same run, no second command. A migration could not do
+ * it: migrations receive only `cwd` (so they cannot know `toVersion`), run only on `status:
+ * 'upgrade'`, and exist for breaking changes. The pins need reconciling on `status: 'current'` too —
+ * that is precisely the state the already-broken repo is sitting in (lock at 0.13.0, pin still at
+ * `#v0.12.0`, CI red), and the state it heals from.
  *
  * External sources are re-resolved per pin (`refreshSources`): the re-render re-fetches each git
  * source so a MOVED ref (e.g. a branch that advanced) is observed rather than served stale from
@@ -97,6 +125,22 @@ export function upgrade({
     }
   }
 
+  // THE SELF-UPGRADE TRAP, ANSWERED (#372). A repo whose `waffle.toolkitRef` is pinned to an old tag
+  // runs the OLD CLI when `/waffle-upgrade` fires it: `toVersion` equals the version already in the
+  // lock, `status` is `current`, and the upgrade that was supposed to move the pin reports "already on
+  // toolkit X" and moves nothing. The old CLI structurally cannot contain the fix, and re-exec is off
+  // the table (#373: a toolkit that silently re-executes a DIFFERENT toolkit is exactly the
+  // unpinned-render class of bug this epic exists to kill).
+  //
+  // But a pinned CLI is not ignorant — it is merely stuck. `resolveToolkitIdentity` learns `latestTag`
+  // from `ls-remote` (npx) or the local tag list (checkout) EVEN WHEN its own commit maps to an older
+  // tag. So it can name the exact command that escapes the trap, and hand it to the operator (or to
+  // `/waffle-upgrade`, whose escalation flow runs it). Report and name; never re-exec.
+  //
+  // The pins are NOT bumped to `latestTag`: a pin records what RENDERED, and this CLI is what rendered.
+  const newerRelease = describeNewerRelease(toolkitIdentity, toVersion);
+  if (newerRelease) notes.push(newerRelease.note);
+
   // Emit the narrative up front — what's moving and what changed — before the mechanical
   // migration/render logs, so a consumer reads the changelog before it's applied.
   for (const n of notes) log(n);
@@ -116,11 +160,21 @@ export function upgrade({
     if (!migrationsRun.length) log(`no migrations registered between ${fromVersion} and ${toVersion}`);
   }
 
+  // Move the pins the consumer already chose (#372) — AFTER the migrations (one could move the config
+  // key itself) and BEFORE the render, which re-reads `.waffle/waffle.yaml` from disk and bakes these
+  // two values into `waffle-doctor.yml` and every `waffle-*` skill. Runs on EVERY status, `current`
+  // included; idempotent by the dirty guard, so a repo whose pins are already right is a zero-byte
+  // no-op. A repo that pinned nothing is a zero-byte no-op twice over.
+  const pinMoves = reconcileToolkitRefPins({ cwd, identity: toolkitIdentity, log });
+
   // Re-render (re-resolving each external source at its pin — refreshSources re-fetches git
   // sources so a moved ref is observed, not served from the session cache), then doctor.
   const render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, sourceCacheDir, refreshSources: true, log });
   if (!render.ok) {
-    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], toolkitMove: null, notes };
+    // `pinMoves` rides the failure return too — the config writes ALREADY HAPPENED (migrations set the
+    // same precedent: they mutate `cwd` before the render can fail). A caller that reported only on
+    // success would leave a bumped pin invisible in the one run where knowing about it matters most.
+    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], toolkitMove: null, pinMoves, newerRelease: newerRelease?.result ?? null, notes };
   }
 
   // Per-source version moves: diff the freshly-resolved commits against the lock's recorded ones.
@@ -154,8 +208,167 @@ export function upgrade({
     // The built-in toolkit's commit move, or null when neither lock recorded provenance (a pre-#374
     // lock re-rendered by a library caller that supplied no identity). #372 branches on `status`.
     toolkitMove,
+    // What happened to each `toolkitRef` config key the consumer had pinned (#372) — the mirror of
+    // `sourceMoves`, for the two pins that decide which toolkit their CI and their skills run.
+    // Empty when nothing was pinned, which is most repos, this one included.
+    pinMoves,
+    // `{ tag, command } | null` — a release NEWER than the toolkit that just ran. The pinned-CLI
+    // escape hatch: it names what to run, because it cannot run it.
+    newerRelease: newerRelease?.result ?? null,
     notes,
   };
+}
+
+/**
+ * Reconcile the pinned `toolkitRef` config keys in `.waffle/waffle.yaml` with the toolkit that is
+ * about to render (#372) — the write-side of the pin, and the last link of epic #377's
+ * resolve → record → **move** chain.
+ *
+ * ## The rule, in one sentence
+ *
+ * **Rewrite a `toolkitRef` key if and only if the consumer already pinned it release-shaped, and
+ * write the pin the lock is about to record — nothing else, nowhere else.**
+ *
+ * Everything else follows from that:
+ *
+ *   - **A pin is never INTRODUCED.** An absent key and an unpinned `github:owner/repo` are hard
+ *     no-ops, not oversights: unpinned is a CHOICE (it floats to the default branch, deliberately),
+ *     and silently pinning it would change what a consumer's CI fetches without them asking. Both
+ *     leave the file byte-identical, which is a tested property, not an intention.
+ *   - **`#main` / `#<sha>` / `#nightly` are left alone and NOTED.** They are pins we did not write and
+ *     cannot interpret; saying so beats both silence and a rewrite.
+ *   - **The value written is `toolkitPinFromIdentity(identity)`** — by construction the same string
+ *     `toolkitPinFromLock` will read back out of the lock this render is about to write. Not string
+ *     surgery on the old value: see `classifyToolkitRefValue` for why preserving the authored style or
+ *     slug would write a pin that does not resolve (`#0.13.0`) or one that names a repo which did not
+ *     render the lock.
+ *   - **A non-pinnable toolkit writes NOTHING.** Hatch / `dlx` / a blip (`unverified`, #383), a
+ *     provably unreleased tree, or a release CHECKOUT (#384 F13) all yield a null pin — and a null pin
+ *     means the file is not touched. It is logged, because a repo whose release-shaped pin was left
+ *     unreconciled deserves to hear why rather than assume it moved.
+ *
+ * ## What it writes, and where
+ *
+ * Only the COMMITTED config (`resolveConfigFile`) — `.waffle/waffle.local.yaml` is a developer's
+ * private, gitignored overlay (#317), and a pin there (typically a local checkout path) is a
+ * deliberate machine-local override. It is neither read nor written here.
+ *
+ * The edit is an in-place `Scalar.value` mutation (`setScalarIn`), never `doc.setIn`, which builds a
+ * fresh node and drops the comments attached to the old one. One dirty-guarded write, the idiom the
+ * other two config writers already use (`eject`, `installRefs`).
+ *
+ * @param {object} opts
+ * @param {string} opts.cwd the consumer repo
+ * @param {import('./toolkit-ref.mjs').ToolkitIdentity|null} opts.identity the toolkit performing the render
+ * @param {(msg: string) => void} [opts.log]
+ * @returns {{key: string, from: string, to: string|null, action: 'bumped'|'unchanged'|'left'|'skipped', reason: string}[]}
+ */
+export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }) {
+  /** @type {{key: string, from: string, to: string|null, action: 'bumped'|'unchanged'|'left'|'skipped', reason: string}[]} */
+  const pinMoves = [];
+  const { file: configFile } = resolveConfigFile(cwd);
+  if (!exists(configFile)) return pinMoves; // `render` will fail on this next, with a better message
+
+  const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
+  if (doc.errors?.length) {
+    // A config that does not parse is one `render` is about to reject anyway. Do not half-write it.
+    log(`could not reconcile the pinned toolkitRef keys — ${CONFIG_FILE} did not parse cleanly; leaving it untouched`);
+    return pinMoves;
+  }
+
+  const pin = toolkitPinFromIdentity(identity);
+  const pinSlug = parseRepoSlug(pin);
+  let dirty = false;
+
+  for (const keyPath of TOOLKIT_REF_KEYS) {
+    const key = keyPath.slice(1).join('.'); // "doctor.toolkitRef" — how a consumer names it
+    const current = doc.getIn(keyPath);
+    const found = classifyToolkitRefValue(current);
+    // An absent, floating, or non-github value is not a pin we may move. Say nothing: on the
+    // overwhelming majority of repos (this one included) BOTH keys land here, and a line of output
+    // per non-event on every upgrade is noise, not information.
+    if (found.kind === 'absent' || found.kind === 'unpinned' || found.kind === 'not-github') continue;
+
+    const from = String(current).trim();
+    if (found.kind === 'other-pin') {
+      const reason = `pinned to \`#${found.fragment}\`, which is not a release tag — \`upgrade\` moves release pins only`;
+      pinMoves.push({ key, from, to: null, action: 'left', reason });
+      log(`${key} is ${reason}; left as ${from}`);
+      continue;
+    }
+
+    // A release-shaped pin, and the only kind we rewrite.
+    if (!pin) {
+      const reason = unpinnableReason(identity);
+      pinMoves.push({ key, from, to: null, action: 'skipped', reason });
+      log(`${key} still pins ${from} and was NOT reconciled — ${reason}`);
+      continue;
+    }
+    if (from === pin) {
+      pinMoves.push({ key, from, to: pin, action: 'unchanged', reason: 'already pins the toolkit that rendered' });
+      continue;
+    }
+    if (setScalarIn(doc, keyPath, pin)) dirty = true;
+    pinMoves.push({ key, from, to: pin, action: 'bumped', reason: 'moved to the toolkit that rendered this lock' });
+    log(`${key} ${from} → ${pin}`);
+    // A rewrite that changes the OWNER/REPO is truthful — the pin must name the toolkit that rendered
+    // — but it is never routine, so it is never quiet. It is what a consumer sees when they switch to
+    // (or away from) a fork, and the one case where the new pin points at a repo they did not author.
+    if (found.slug && pinSlug && (found.slug.owner !== pinSlug.owner || found.slug.repo !== pinSlug.repo)) {
+      log(
+        `  note: that is a DIFFERENT REPOSITORY (${found.slug.owner}/${found.slug.repo} → ${pinSlug.owner}/${pinSlug.repo}) — ` +
+          'the pin names the toolkit that rendered this lock, which is the one CI must fetch to reproduce it',
+      );
+    }
+  }
+
+  if (dirty) fs.writeFileSync(configFile, doc.toString());
+  return pinMoves;
+}
+
+/**
+ * Why a release-shaped pin was left unreconciled — i.e. why `toolkitPinFromIdentity` returned null.
+ * Every branch is a case where writing a pin would be a claim we cannot back (see
+ * `toolkitPinFromIdentity`), so the honest report is the whole of the feature here.
+ *
+ * @param {import('./toolkit-ref.mjs').ToolkitIdentity|null} identity
+ * @returns {string}
+ */
+function unpinnableReason(identity) {
+  if (!identity) return 'this run recorded no toolkit identity, so there is no ref to pin to';
+  if (identity.status !== 'release') {
+    return `the toolkit that rendered is ${identity.status}, so it has no release ref to pin to (a \`--allow-unreleased\` run, a \`dlx\` install, or a release lookup that could not answer)`;
+  }
+  // A release with no pin: `toolkitLockEntry` recorded `source: null`. A CHECKOUT release is the
+  // reachable case (#384 F13) — `git describe` reads local refs and corroborates no remote.
+  return identity.origin === 'checkout'
+    ? 'the toolkit that rendered is a release CHECKOUT — no remote was asked whether any repository holds that tag, so there is no pin it can honestly write into your config'
+    : 'the toolkit that rendered is a release, but no repository could be established for it, so there is no pin to write';
+}
+
+/**
+ * A release NEWER than the toolkit that is running — the other half of #372's answer to the
+ * self-upgrade trap (see the call site). Returns the note to print AND the structured `{tag, command}`
+ * the CLI/skill consume, or null when this CLI is the latest thing it knows of.
+ *
+ * `compareVersions` tolerates the `v` prefix (`parseVersion`), so `latestTag` ("v0.14.0") and
+ * `toVersion` ("0.13.0") compare directly.
+ *
+ * @param {import('./toolkit-ref.mjs').ToolkitIdentity|null} identity
+ * @param {string|null|undefined} toVersion the version this CLI is rendering
+ * @returns {{note: string, result: {tag: string, command: string|null}}|null}
+ */
+function describeNewerRelease(identity, toVersion) {
+  const tag = identity?.latestTag ?? null;
+  if (!tag || !toVersion || compareVersions(tag, toVersion) <= 0) return null;
+  // The remedy must name a command that RESOLVES, or it is worse than saying nothing (the rule
+  // `formatUnreleasedRefusal` already lives by). With no repo we can still name the tag.
+  const repo = identity?.repo ?? identity?.lockRepo ?? null;
+  const command = repo ? `npx --yes github:${repo}#${tag} upgrade` : null;
+  const note = command
+    ? `a newer toolkit release exists: ${tag} — this CLI is ${toVersion} and renders only its own content. To move to ${tag}, run:\n  ${command}`
+    : `a newer toolkit release exists: ${tag} — this CLI is ${toVersion} and renders only its own content. Re-run \`upgrade\` from a toolkit pinned to ${tag} to move to it.`;
+  return { note, result: { tag, command } };
 }
 
 /**

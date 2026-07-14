@@ -15,6 +15,8 @@ import {
   toolkitSource,
   toolkitLockEntry,
   toolkitPinFromLock,
+  toolkitPinFromIdentity,
+  classifyToolkitRefValue,
   describeToolkitProvenance,
   repoSlug,
   lockRepoSlug,
@@ -25,8 +27,10 @@ import {
   formatUnreleasedRefusal,
   formatProvenanceWarning,
 } from '../lib/toolkit-ref.mjs';
-import { renderProject } from '../lib/render.mjs';
-import { upgrade, diffToolkit } from '../lib/upgrade.mjs';
+import YAML from 'yaml';
+import { setScalarIn } from '../lib/project.mjs';
+import { renderProject, readLock } from '../lib/render.mjs';
+import { upgrade, diffToolkit, reconcileToolkitRefPins } from '../lib/upgrade.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { reinstall } from '../lib/uninstall.mjs';
 import { eject } from '../lib/eject.mjs';
@@ -2278,5 +2282,530 @@ describe('describeToolkitProvenance (#374)', () => {
     assert.match(result.notes[0], /from the same repository/, 'and the sources DO agree — both are acme');
     assert.doesNotMatch(result.notes[0], /DIFFERENT REPOSITORIES/, 'the note must never contradict what it prints');
     assert.doesNotMatch(result.notes[0], /github:dustinkeeton/, 'a slug that appears nowhere in the evidence');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// #372 — MOVE. The last link of epic #377: resolve (#373) → record (#374) → move.
+//
+// `upgrade` moved the toolkit forward everywhere except the two places that decide WHICH TOOLKIT
+// ACTUALLY RUNS: `doctor.toolkitRef` (CI's doctor job) and `waffle.toolkitRef` (every `/waffle-*`
+// skill). They are plain config in `.waffle/waffle.yaml`, and `upgrade` never wrote that file — so a
+// consumer who followed the REQUIRED PRACTICE and pinned ended up with a lock rendered by the NEW
+// toolkit and a CI job re-rendering with the OLD one. The two disagree, and the next unrelated PR
+// goes red for a change nobody made.
+//
+// The rule under test, in one sentence: **rewrite a pin the consumer already chose, to the pin the
+// lock is about to record — never introduce one, never write a pin we cannot back.**
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('classifyToolkitRefValue — which values are ours to move (#372)', () => {
+  test('absent: an unset key is never given a pin', () => {
+    assert.deepEqual(classifyToolkitRefValue(undefined), { kind: 'absent' });
+    assert.deepEqual(classifyToolkitRefValue(null), { kind: 'absent' });
+    assert.deepEqual(classifyToolkitRefValue('   '), { kind: 'absent' }, 'an empty value is not a pin');
+  });
+
+  test('unpinned: `github:owner/repo` floats deliberately — leave it floating', () => {
+    const c = classifyToolkitRefValue('github:dustinkeeton/wafflestack');
+    assert.equal(c.kind, 'unpinned');
+    assert.deepEqual(c.slug, { owner: 'dustinkeeton', repo: 'wafflestack' });
+  });
+
+  test('release-pin: a `vX.Y.Z` fragment — AND the bare `X.Y.Z` mistake, which is why we read it', () => {
+    const v = classifyToolkitRefValue('github:dustinkeeton/wafflestack#v0.12.0');
+    assert.equal(v.kind, 'release-pin');
+    assert.equal(v.fragment, 'v0.12.0');
+    // A release tag is ALWAYS `v`-prefixed (RELEASE_TAG), so `#0.12.0` names a tag that does not
+    // exist. Recognising it is precisely how `upgrade` fixes it: we read the bare form and write the
+    // real one. "Preserving the authored style" would write another tag that does not resolve.
+    const bare = classifyToolkitRefValue('github:dustinkeeton/wafflestack#0.12.0');
+    assert.equal(bare.kind, 'release-pin');
+    assert.equal(bare.fragment, '0.12.0');
+  });
+
+  test('other-pin: `#main`, a sha, a non-release tag — a pin we did not write and cannot interpret', () => {
+    assert.equal(classifyToolkitRefValue('github:dustinkeeton/wafflestack#main').kind, 'other-pin');
+    assert.equal(classifyToolkitRefValue(`github:dustinkeeton/wafflestack#${SHA_A}`).kind, 'other-pin');
+    assert.equal(classifyToolkitRefValue('github:dustinkeeton/wafflestack#nightly').kind, 'other-pin');
+    assert.equal(classifyToolkitRefValue('github:dustinkeeton/wafflestack#v1.2').kind, 'other-pin', 'not a `vX.Y.Z`');
+  });
+
+  test('not-github: a local path, a URL, a bare slug, a non-string — none of them ours', () => {
+    assert.equal(classifyToolkitRefValue('../wafflestack').kind, 'not-github');
+    assert.equal(classifyToolkitRefValue('/Users/dev/wafflestack').kind, 'not-github');
+    assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack').kind, 'not-github');
+    // A BARE `owner/repo` parses as a slug (`parseRepoSlug` takes it) and is still not a candidate:
+    // `vendor/wafflestack` is a relative path as readily as a slug, and this answer decides whether a
+    // consumer's committed config gets rewritten. Only an explicit `github:` spec qualifies.
+    assert.equal(classifyToolkitRefValue('vendor/wafflestack').kind, 'not-github');
+    assert.equal(classifyToolkitRefValue(42).kind, 'not-github');
+    assert.equal(classifyToolkitRefValue({ toolkitRef: 'x' }).kind, 'not-github');
+    assert.equal(classifyToolkitRefValue('github:').kind, 'not-github', 'unparseable behind the scheme');
+  });
+});
+
+describe('toolkitPinFromIdentity — the pin is DERIVED, never surgically edited (#372)', () => {
+  test('a release npx toolkit yields the pin the lock is about to record — by construction', () => {
+    const identity = releaseIdentity();
+    assert.equal(toolkitPinFromIdentity(identity), 'github:dustinkeeton/wafflestack#v0.12.0');
+    // THE COMPOSITION, stated as an assertion: what #372 writes into waffle.yaml is literally what
+    // #374 writes into the lock, read back by #372's own read-back function. They cannot drift.
+    assert.equal(toolkitPinFromIdentity(identity), toolkitPinFromLock({ toolkit: toolkitLockEntry(identity) }));
+    assert.equal(toolkitPinFromIdentity(identity), identity.ref);
+  });
+
+  test('a CHECKOUT release yields NULL — #384 F13, inherited for free', () => {
+    // `git describe` reads the clone's LOCAL tag refs and asks no remote, so nothing corroborates
+    // that any repository holds this tag. `toolkitLockEntry` records `source: null`; the pin is a
+    // claim about a repo, so there is no pin. A toolkit developer's `upgrade` therefore never writes
+    // their clone's origin into a consumer's committed config.
+    const identity = releaseIdentity({ origin: 'checkout', lockRepo: 'dustinkeeton/wafflestack' });
+    assert.equal(toolkitLockEntry(identity).source, null, 'the F13 shape, on merged main');
+    assert.equal(toolkitPinFromIdentity(identity), null);
+  });
+
+  test('unreleased / unverified / no identity at all yield NULL — nothing gets written', () => {
+    assert.equal(toolkitPinFromIdentity(unreleasedIdentity()), null);
+    assert.equal(toolkitPinFromIdentity(unverifiedIdentity()), null, 'the hatch, dlx, a blip — #383');
+    assert.equal(toolkitPinFromIdentity(null), null, 'a library caller with no identity');
+  });
+
+  test('a fork pins ITSELF (#373 F14) — the fork case needs no special code', () => {
+    const acme = releaseIdentity({ repo: 'acme/wafflestack', ref: 'github:acme/wafflestack#v0.12.0' });
+    assert.equal(toolkitPinFromIdentity(acme), 'github:acme/wafflestack#v0.12.0');
+  });
+});
+
+describe('setScalarIn — the comment-preserving write (#372)', () => {
+  const parse = (text) => YAML.parseDocument(text);
+
+  test('an in-place value mutation preserves every comment attached to the pair', () => {
+    const src = [
+      '# the pin CI fetches',
+      'config:',
+      '  # bumped by hand on 2026-07-01, see #322',
+      '  doctor:',
+      '    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0 # pinned deliberately',
+      '  # trailing note under the block',
+      '',
+    ].join('\n');
+    const doc = parse(src);
+    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.13.0'), true);
+    const out = doc.toString();
+    assert.match(out, /toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0 # pinned deliberately/);
+    assert.match(out, /# the pin CI fetches/);
+    assert.match(out, /# bumped by hand on 2026-07-01, see #322/);
+    assert.match(out, /# trailing note under the block/);
+    assert.doesNotMatch(out, /v0\.12\.0/);
+  });
+
+  test('quoting style survives — the node keeps its type, only its value moves', () => {
+    const doc = parse('config:\n  waffle:\n    toolkitRef: "github:dustinkeeton/wafflestack#v0.12.0"\n');
+    assert.equal(setScalarIn(doc, ['config', 'waffle', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.13.0'), true);
+    assert.match(doc.toString(), /toolkitRef: "github:dustinkeeton\/wafflestack#v0\.13\.0"/);
+  });
+
+  test('it NEVER creates: a missing key, a missing parent, and a non-scalar all return false', () => {
+    const doc = parse('config:\n  doctor: {}\n');
+    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'x'), false, 'missing key');
+    assert.equal(setScalarIn(doc, ['config', 'waffle', 'toolkitRef'], 'x'), false, 'missing parent');
+    assert.equal(setScalarIn(doc, ['config', 'doctor'], 'x'), false, 'a map is not a scalar');
+    assert.equal(doc.toString(), 'config:\n  doctor: {}\n', 'and not one byte moved');
+  });
+
+  test('a FLAT literal key is not found — matching `lookupPath`, which never resolves one', () => {
+    // `makeResolver` reads config via `lookupPath`, which splits on `.` and walks NESTED objects. A
+    // literal `"doctor.toolkitRef":` key in waffle.yaml is therefore INERT — it pins nothing. So the
+    // bumper must not touch it either: rewriting a key the renderer ignores would be a lie.
+    const doc = parse('config:\n  doctor.toolkitRef: github:dustinkeeton/wafflestack#v0.12.0\n');
+    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.13.0'), false);
+    assert.match(doc.toString(), /v0\.12\.0/, 'left exactly as authored');
+  });
+
+  test('setting the value it already holds is not a change — the dirty guard can trust it', () => {
+    const doc = parse('config:\n  doctor:\n    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0\n');
+    assert.equal(setScalarIn(doc, ['config', 'doctor', 'toolkitRef'], 'github:dustinkeeton/wafflestack#v0.12.0'), false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The write, end to end, through a real `upgrade` over a fixture toolkit that declares BOTH keys and
+// renders BOTH placeholders — so the sequencing claim (config → render → lock, one run) is provable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
+  let toolkitRoot;
+  let cwd;
+  let logged;
+  const log = (line) => logged.push(String(line));
+
+  const configPath = () => path.join(cwd, '.waffle/waffle.yaml');
+  const configBytes = () => fs.readFileSync(configPath(), 'utf8');
+  const skillPath = () => path.join(cwd, '.claude/skills/alpha/SKILL.md');
+  const ciPath = () => path.join(cwd, '.claude/skills/ci/SKILL.md');
+
+  /** The consumer's committed config, with whatever the test wants under `config:`. */
+  const writeConfig = (body) => write(cwd, '.waffle/waffle.yaml', `targets: [claude]\nstacks: [core]\n${body}`);
+
+  /** Both keys pinned to the same release-shaped value. The shape the docs told consumers to write. */
+  const pinnedConfig = (doctorRef, waffleRef = doctorRef) =>
+    `config:\n  doctor:\n    toolkitRef: ${doctorRef}\n  waffle:\n    toolkitRef: ${waffleRef}\n`;
+
+  /** A toolkit at `version`, installed the way every consumer installs one (npx → npm-install). */
+  const at = (version, over = {}) =>
+    releaseIdentity({
+      version,
+      tag: `v${version}`,
+      ref: `github:dustinkeeton/wafflestack#v${version}`,
+      latestTag: `v${version}`,
+      commit: SHA_B,
+      ...over,
+    });
+
+  const runUpgrade = (toolkitIdentity, toolkitVersion) =>
+    upgrade({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, changelog: '# Changelog\n', migrations: [], log });
+
+  beforeEach(() => {
+    logged = [];
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-toolkit-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-project-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: fixture\nstacks: [core]\n');
+    // The fixture stack DECLARES both keys and RENDERS both placeholders — `alpha` stands in for the
+    // nine `waffle-*` skills, `ci` for `.github/workflows/waffle-doctor.yml`. Same substitution
+    // machinery, same lock hashing; the point is that one `upgrade` moves config, render and lock.
+    write(
+      toolkitRoot,
+      'stacks/core/stack.yaml',
+      [
+        'name: core',
+        'description: Core.',
+        'skills: [alpha, ci]',
+        'config:',
+        '  waffle.toolkitRef:',
+        '    required: false',
+        '    default: github:dustinkeeton/wafflestack',
+        '    description: npx spec the waffle-* skills invoke.',
+        '  doctor.toolkitRef:',
+        '    required: false',
+        '    default: github:dustinkeeton/wafflestack',
+        '    description: npx spec the doctor CI workflow invokes.',
+        '',
+      ].join('\n'),
+    );
+    write(toolkitRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha.\n---\n\nnpx --yes {{waffle.toolkitRef}} doctor\n');
+    write(toolkitRoot, 'stacks/core/skills/ci/SKILL.md', '---\nname: ci\ndescription: Ci.\n---\n\nnpx --yes {{doctor.toolkitRef}} doctor\n');
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('BOTH pinned keys move to the pin the lock records, and both are reported', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(result.ok, true);
+    const text = configBytes();
+    assert.match(text, /doctor:\n {4}toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0/);
+    assert.match(text, /waffle:\n {4}toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0/);
+    assert.doesNotMatch(text, /v0\.12\.0/);
+
+    assert.deepEqual(
+      result.pinMoves.map((m) => [m.key, m.from, m.to, m.action]),
+      [
+        ['doctor.toolkitRef', 'github:dustinkeeton/wafflestack#v0.12.0', 'github:dustinkeeton/wafflestack#v0.13.0', 'bumped'],
+        ['waffle.toolkitRef', 'github:dustinkeeton/wafflestack#v0.12.0', 'github:dustinkeeton/wafflestack#v0.13.0', 'bumped'],
+      ],
+    );
+    const out = logged.join('\n');
+    assert.match(out, /doctor\.toolkitRef github:dustinkeeton\/wafflestack#v0\.12\.0 → github:dustinkeeton\/wafflestack#v0\.13\.0/);
+    assert.match(out, /waffle\.toolkitRef github:dustinkeeton\/wafflestack#v0\.12\.0 → github:dustinkeeton\/wafflestack#v0\.13\.0/);
+  });
+
+  test('THE SEQUENCING PROOF: one run bakes the NEW pin into the rendered files and the lock', () => {
+    // The write lands AFTER migrations and BEFORE render — and `renderProject` re-reads waffle.yaml
+    // from disk. So the same `upgrade` that moves the config also renders the moved value into every
+    // consumer of the placeholder, and hashes THAT into the lock. A bump applied after the render
+    // would leave the stale ref in the rendered output until someone ran `render` again.
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    assert.match(fs.readFileSync(skillPath(), 'utf8'), /v0\.12\.0/, 'the OLD pin is what rendered before');
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(result.ok, true, JSON.stringify(result.render?.errors));
+    assert.match(fs.readFileSync(skillPath(), 'utf8'), /npx --yes github:dustinkeeton\/wafflestack#v0\.13\.0 doctor/, 'the waffle-* skills');
+    assert.match(fs.readFileSync(ciPath(), 'utf8'), /npx --yes github:dustinkeeton\/wafflestack#v0\.13\.0 doctor/, 'the doctor workflow');
+
+    // …and the lock's hashes describe the bytes actually on disk. `doctor` folds that into `ok`, so
+    // this is the assertion that the whole thing is coherent rather than merely written.
+    assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor?.modified));
+    assert.equal(result.doctor.modified.length, 0);
+  });
+
+  test('THE CONTRACT: what waffle.yaml now says === what the lock says === identity.ref', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+
+    const identity = at('0.13.0');
+    runUpgrade(identity, '0.13.0');
+
+    const written = YAML.parse(configBytes()).config.doctor.toolkitRef;
+    const fromLock = toolkitPinFromLock(readLock(cwd));
+    assert.equal(written, fromLock, 'the pin CI fetches IS the pin the lock records — the whole issue');
+    assert.equal(written, identity.ref);
+    assert.equal(written, toolkitRef({ owner: 'dustinkeeton', repo: 'wafflestack' }, 'v0.13.0'));
+    assert.equal(YAML.parse(configBytes()).config.waffle.toolkitRef, written);
+  });
+
+  test('`status: current` STILL reconciles — the already-red-CI repo heals itself', () => {
+    // The epic's third *Done when*, and the state the bug actually leaves people in: they upgraded,
+    // the lock moved to 0.13.0, the pin stayed at v0.12.0, CI went red. Running `upgrade` again is a
+    // no-op by version (`current`) — and it must STILL move the pin, or the remedy doctor prints
+    // ("run `wafflestack upgrade`") remains the command that cannot fix it.
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.13.0', toolkitIdentity: at('0.13.0', { commit: SHA_A }) });
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(result.status, 'current', 'no version move at all…');
+    assert.match(logged.join('\n'), /already on toolkit 0\.13\.0/);
+    assert.equal(result.pinMoves.filter((m) => m.action === 'bumped').length, 2, '…and both pins moved anyway');
+    assert.match(configBytes(), /#v0\.13\.0/);
+    assert.doesNotMatch(configBytes(), /#v0\.12\.0/);
+  });
+
+  test('a bare `#0.12.0` — a tag that never existed — is rewritten to the real `v`-prefixed one', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+
+    runUpgrade(at('0.13.0'), '0.13.0');
+    assert.match(configBytes(), /toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0/);
+    assert.doesNotMatch(configBytes(), /#0\.13\.0\b/, 'style preservation would have written a tag that does not resolve');
+  });
+
+  test('comments and formatting survive the rewrite, verbatim', () => {
+    writeConfig(
+      [
+        'config:',
+        '  # CI fetches this exact toolkit — see docs/gitignore.md',
+        '  doctor:',
+        '    toolkitRef: github:dustinkeeton/wafflestack#v0.12.0 # pinned deliberately (#322)',
+        '    flags: --verify-render',
+        '  waffle:',
+        '    toolkitRef: "github:dustinkeeton/wafflestack#v0.12.0"',
+        '  # everything below is ours',
+        '  project:',
+        '    name: Consumer',
+        '',
+      ].join('\n'),
+    );
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+
+    runUpgrade(at('0.13.0'), '0.13.0');
+    const text = configBytes();
+    assert.match(text, /# CI fetches this exact toolkit — see docs\/gitignore\.md/);
+    assert.match(text, /toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0 # pinned deliberately \(#322\)/);
+    assert.match(text, /# everything below is ours/);
+    assert.match(text, /flags: --verify-render/);
+    assert.match(text, /toolkitRef: "github:dustinkeeton\/wafflestack#v0\.13\.0"/, 'and the quoting style with them');
+  });
+
+  test('NO-OP, BYTE FOR BYTE: an absent key is never given a pin', () => {
+    // This repo's own shape, and most consumers'. Introducing a pin here would silently change what
+    // their CI fetches — a decision that is theirs, not ours.
+    writeConfig('config: {}\n');
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before, 'not one byte');
+    assert.deepEqual(result.pinMoves, []);
+    assert.doesNotMatch(logged.join('\n'), /toolkitRef/, 'and not one line of noise about a non-event');
+  });
+
+  test('NO-OP, BYTE FOR BYTE: an unpinned `github:owner/repo` is deliberately floating', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before);
+    assert.deepEqual(result.pinMoves, []);
+  });
+
+  test('NO-OP, BYTE FOR BYTE: a local-path ref (toolkit development) is left alone', () => {
+    writeConfig(pinnedConfig('../wafflestack', '/Users/dev/wafflestack'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before);
+    assert.deepEqual(result.pinMoves, []);
+  });
+
+  test('`#main` and a raw sha are left alone — and SAID so, not silently skipped', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#main', `github:dustinkeeton/wafflestack#${SHA_A}`));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before, 'left exactly as authored');
+    assert.deepEqual(result.pinMoves.map((m) => [m.key, m.action]), [['doctor.toolkitRef', 'left'], ['waffle.toolkitRef', 'left']]);
+    const out = logged.join('\n');
+    assert.match(out, /doctor\.toolkitRef is pinned to `#main`, which is not a release tag/);
+    assert.match(out, new RegExp(`waffle\\.toolkitRef is pinned to \`#${SHA_A}\``));
+  });
+
+  test('an already-correct pin is a zero-byte no-op, reported as `unchanged` — idempotence', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.13.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.13.0', toolkitIdentity: at('0.13.0', { commit: SHA_B }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), before);
+    assert.deepEqual(result.pinMoves.map((m) => m.action), ['unchanged', 'unchanged']);
+  });
+
+  test('a NON-RELEASE toolkit never writes a pin — and says why it did not', () => {
+    // The hatch, a `dlx` install, a network blip (#383): `ref` is null, so there is no pin. Writing
+    // one anyway would stamp a claim this run could not establish. Read `ref == null` as "no
+    // provenance captured", NEVER as "not a release".
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(unverifiedIdentity({ version: '0.13.0', latestTag: 'v0.13.0' }), '0.13.0');
+    assert.equal(configBytes(), before, 'not one byte, on an unverified run');
+    assert.deepEqual(result.pinMoves.map((m) => m.action), ['skipped', 'skipped']);
+    const out = logged.join('\n');
+    assert.match(out, /doctor\.toolkitRef still pins github:dustinkeeton\/wafflestack#v0\.12\.0 and was NOT reconciled/);
+    assert.match(out, /is unverified, so it has no release ref to pin to/);
+  });
+
+  test('a release CHECKOUT never writes a pin either (#384 F13) — no remote corroborated the tag', () => {
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const before = configBytes();
+
+    const result = runUpgrade(at('0.13.0', { origin: 'checkout', lockRepo: 'dustinkeeton/wafflestack' }), '0.13.0');
+    assert.equal(configBytes(), before, 'a toolkit dev\'s clone never rewrites a consumer\'s committed pin');
+    assert.deepEqual(result.pinMoves.map((m) => m.action), ['skipped', 'skipped']);
+    assert.match(logged.join('\n'), /release CHECKOUT — no remote was asked/);
+  });
+
+  test('a FORK keeps its own owner/repo, because the pin names the toolkit that rendered', () => {
+    writeConfig(pinnedConfig('github:acme/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A, repo: 'acme/wafflestack', ref: 'github:acme/wafflestack#v0.12.0' }) });
+
+    const result = runUpgrade(at('0.13.0', { repo: 'acme/wafflestack', ref: 'github:acme/wafflestack#v0.13.0' }), '0.13.0');
+    assert.match(configBytes(), /toolkitRef: github:acme\/wafflestack#v0\.13\.0/);
+    assert.equal(result.pinMoves[0].to, 'github:acme/wafflestack#v0.13.0');
+    assert.doesNotMatch(logged.join('\n'), /DIFFERENT REPOSITORY/, 'acme → acme is not a repo swap');
+  });
+
+  test('a CROSS-REPO rewrite is truthful — and loud', () => {
+    // An acme pin, upgraded by an UPSTREAM toolkit. The rewrite is correct (the pin must name the
+    // toolkit that produced the lock, or `--verify-render` reds by construction) and it is exactly
+    // the case a consumer must see, so it never happens quietly.
+    writeConfig(pinnedConfig('github:acme/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A, repo: 'acme/wafflestack', ref: 'github:acme/wafflestack#v0.12.0' }) });
+
+    runUpgrade(at('0.13.0'), '0.13.0'); // upstream
+    assert.match(configBytes(), /toolkitRef: github:dustinkeeton\/wafflestack#v0\.13\.0/);
+    assert.match(logged.join('\n'), /DIFFERENT REPOSITORY \(acme\/wafflestack → dustinkeeton\/wafflestack\)/);
+  });
+
+  test('the gitignored overlay is neither read nor written (#317)', () => {
+    // `waffle.local.yaml` is a developer's private tooling — a pin there (typically a local checkout)
+    // is a deliberate machine-local override, and it must not trigger a write to the committed file
+    // OR receive one itself.
+    writeConfig('config: {}\n'); // the COMMITTED file pins nothing
+    write(cwd, '.waffle/waffle.local.yaml', pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
+    const committed = configBytes();
+    const overlay = fs.readFileSync(path.join(cwd, '.waffle/waffle.local.yaml'), 'utf8');
+
+    const result = runUpgrade(at('0.13.0'), '0.13.0');
+    assert.equal(configBytes(), committed, 'the committed file has no pin, and gains none');
+    assert.equal(fs.readFileSync(path.join(cwd, '.waffle/waffle.local.yaml'), 'utf8'), overlay, 'and the overlay is never touched');
+    assert.deepEqual(result.pinMoves, []);
+  });
+
+  test('reconcileToolkitRefPins is callable on its own, and a missing config is a clean no-op', () => {
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-empty-'));
+    try {
+      assert.deepEqual(reconcileToolkitRefPins({ cwd: empty, identity: at('0.13.0') }), []);
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test('a config that does not parse is left untouched, with a note — never half-written', () => {
+    write(cwd, '.waffle/waffle.yaml', 'config:\n  doctor:\n    toolkitRef: "unterminated\n');
+    const before = configBytes();
+    const moves = reconcileToolkitRefPins({ cwd, identity: at('0.13.0'), log });
+    assert.deepEqual(moves, []);
+    assert.equal(configBytes(), before);
+    assert.match(logged.join('\n'), /did not parse cleanly; leaving it untouched/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The self-upgrade trap: a pinned CLI cannot run the toolkit that would fix it — but it KNOWS it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('upgrade reports a newer release, and names the exact command (#372)', () => {
+  let toolkitRoot;
+  let cwd;
+  let logged;
+  const log = (line) => logged.push(String(line));
+
+  beforeEach(() => {
+    logged = [];
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-newer-toolkit-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-newer-project-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: fixture\nstacks: [core]\n');
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [alpha]\n');
+    write(toolkitRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha.\n---\n\nbody\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\nconfig: {}\n');
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const runUpgrade = (toolkitIdentity, toolkitVersion) =>
+    upgrade({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, changelog: '# Changelog\n', migrations: [], log });
+
+  test('a pinned CLI one release behind names the command that escapes the trap — and does NOT re-exec', () => {
+    // The whole trap: `waffle.toolkitRef` pinned to v0.13.0 runs the v0.13.0 CLI, which reports
+    // `current` and would otherwise fall silent. It cannot BE v0.14.0 — but `latestTag` told it that
+    // v0.14.0 exists, so it can say exactly what to run. Report and name; never re-exec (#373).
+    const identity = releaseIdentity({ version: '0.13.0', tag: 'v0.13.0', ref: 'github:dustinkeeton/wafflestack#v0.13.0', latestTag: 'v0.14.0' });
+    const result = runUpgrade(identity, '0.13.0');
+    assert.deepEqual(result.newerRelease, { tag: 'v0.14.0', command: 'npx --yes github:dustinkeeton/wafflestack#v0.14.0 upgrade' });
+    const out = logged.join('\n');
+    assert.match(out, /a newer toolkit release exists: v0\.14\.0/);
+    assert.match(out, /npx --yes github:dustinkeeton\/wafflestack#v0\.14\.0 upgrade/);
+    // …and the pins/lock still record what ACTUALLY rendered, which is 0.13.0. A pin names the
+    // toolkit that produced the render, never one it merely heard about.
+    assert.equal(readLock(cwd).toolkitVersion, '0.13.0');
+  });
+
+  test('a fork\'s newer release names the FORK\'S command, not upstream\'s', () => {
+    const identity = releaseIdentity({ version: '0.13.0', tag: 'v0.13.0', ref: 'github:acme/wafflestack#v0.13.0', repo: 'acme/wafflestack', latestTag: 'v0.14.0' });
+    const result = runUpgrade(identity, '0.13.0');
+    assert.equal(result.newerRelease.command, 'npx --yes github:acme/wafflestack#v0.14.0 upgrade');
+  });
+
+  test('the latest release IS this CLI → nothing to say, and no note', () => {
+    const result = runUpgrade(releaseIdentity({ version: '0.13.0', tag: 'v0.13.0', latestTag: 'v0.13.0' }), '0.13.0');
+    assert.equal(result.newerRelease, null);
+    assert.doesNotMatch(logged.join('\n'), /newer toolkit release/);
+  });
+
+  test('no identity at all (a library caller) → no note, no crash', () => {
+    const result = runUpgrade(null, '0.13.0');
+    assert.equal(result.newerRelease, null);
+    assert.deepEqual(result.pinMoves, []);
   });
 });

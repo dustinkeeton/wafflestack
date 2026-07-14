@@ -392,6 +392,37 @@ export function renameLegacyStacksKey(doc) {
 }
 
 /**
+ * In-place update of an EXISTING scalar at `keyPath` on a parsed YAML Document — the value-side twin
+ * of `renameLegacyStacksKey`, and it exists for the same reason: `doc.setIn(path, v)` builds a FRESH
+ * node and drops every comment attached to the old one. `.waffle/waffle.yaml` is a hand-authored,
+ * committed file — a consumer's `# pinned deliberately, see #322` note is not ours to delete — so the
+ * only sanctioned write is fetching the live Scalar (`getIn(path, true)`) and assigning its `.value`.
+ * Quoting style survives too: the node keeps its `type`, so a double-quoted pin stays double-quoted.
+ *
+ * **It never CREATES anything.** A missing key, a missing parent, or a non-scalar at the path all
+ * return false and write nothing. That is the contract #372 needs (never introduce a `toolkitRef` a
+ * consumer did not choose) and it is why the caller's dirty flag can trust the return value: false
+ * means not one byte of the document changed, including when the scalar already held `value`.
+ *
+ * `doc` stays `any` for the same reason its neighbour does — this walks nodes the public `Node` union
+ * does not model, and narrowing would buy only casts.
+ *
+ * @param {any} doc a parsed YAML Document (from `YAML.parseDocument`)
+ * @param {(string|number)[]} keyPath e.g. `['config', 'doctor', 'toolkitRef']`
+ * @param {string} value
+ * @returns {boolean} true when an existing scalar's value actually changed
+ */
+export function setScalarIn(doc, keyPath, value) {
+  const node = doc?.getIn?.(keyPath, true);
+  // Duck-typed, exactly like `renameLegacyStacksKey`: a Scalar carries `value`; a YAMLMap/YAMLSeq
+  // carries `items` (and would be a config shape we must not flatten into a string).
+  if (!node || typeof node !== 'object' || !('value' in node) || 'items' in node) return false;
+  if (node.value === value) return false;
+  node.value = value;
+  return true;
+}
+
+/**
  * Load `.waffle/waffle.yaml` with the gitignored local overlay merged over it, falling back
  * to the legacy root `.waffle.*` — and then pre-0.6.0 `.wafflestack.*` — names when the
  * current ones are absent. Deprecation notes for any legacy read are pushed onto `notes`
