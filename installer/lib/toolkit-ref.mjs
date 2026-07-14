@@ -443,6 +443,20 @@ export function changelogHasUnreleasedEntries(text) {
  * section truly empty, which is exactly why the hole was invisible; the guard must not rest on a
  * convention it never states.
  *
+ * WHICH DIRECTION TO ERR, when a shape is ambiguous — the ordering is not symmetric, and the first
+ * cut of this function got it backwards:
+ *
+ *   - Strip too LITTLE → the corroborator over-fires → `unreleased` → a REFUSAL. Recoverable: the
+ *     message names the pin, and `--allow-unreleased` is one flag away. (This was F8's bug.)
+ *   - Strip too MUCH  → the corroborator goes blind → `unverified` → PROCEED → a default branch
+ *     renders into a consumer's lock. That is issue #373 itself, unrecoverable and silent.
+ *
+ * So every filter here must key on what a placeholder SAYS, never on what an entry LOOKS LIKE. The
+ * emphasis rule below keyed on shape and swallowed `**Breaking: render now refuses.**` — a real
+ * entry, emphasized. Shape is the vocabulary of entries; only the WORDS are the vocabulary of
+ * placeholders. When in doubt, keep the line: a false refusal is the direction this module is
+ * allowed to be wrong in.
+ *
  * @param {string} body the `## [Unreleased]` section, heading line already removed
  * @returns {boolean}
  */
@@ -452,14 +466,29 @@ function hasEntries(body) {
     .replace(/<!--[\s\S]*?-->/g, '')
     .split('\n')
     // "### Added" / "#### Fixed" — a sub-heading with nothing under it is scaffolding, not an entry.
-    // (`## ` cannot appear here: the caller split the file on it.)
+    // (`## ` cannot appear here: the caller split the file on it.) Unambiguous: a heading is never
+    // itself an entry, and anything written UNDER it survives this filter untouched.
     .filter((line) => !/^\s*#{3,}\s/.test(line))
-    // "_Nothing yet._", "*None.*", "**No changes.**" — an emphasis-only line is a placeholder. A
-    // real bullet (`- x`, `* x`, even `* a *bold* x`) does not match: the close must end the line.
-    .filter((line) => !/^\s*[_*]{1,2}[^_*\n]*[_*]{1,2}\s*$/.test(line))
+    // "_Nothing yet._", "*None.*", "**No changes.**", "_TBD_" — a placeholder, recognised by its
+    // VOCABULARY and not by its emphasis. An emphasized line that says anything else is an ENTRY:
+    // `**Breaking: render now refuses.**` stands, and so does `_Support for pnpm added._`. Bullets
+    // (`- x`, `* x`, `* **x**`) never matched this and still do not.
+    .filter((line) => !PLACEHOLDER_LINE.test(line))
     .join('\n');
   return /\S/.test(substance);
 }
+
+/**
+ * An emphasis-wrapped line whose WORDS say "there is nothing here". Deliberately a closed vocabulary
+ * rather than a shape: see the safety ordering in `hasEntries`. A placeholder this misses costs a
+ * refusal (recoverable); an entry this eats costs a silent unreleased render (#373).
+ *
+ * The phrase must be the WHOLE line — vocabulary, optional trailing punctuation, close. Matching it
+ * as a mere PREFIX would eat `**Nothing is broken by this release.**`, a real entry that happens to
+ * open with a placeholder word; the tail is where the meaning lives. Erring toward keeping the line
+ * is the safe direction by construction.
+ */
+const PLACEHOLDER_LINE = /^\s*[_*]{1,2}\s*(nothing(\s+yet)?|none|no\s+(changes?|entries)|n\/a|tbd|empty)\s*[.!]?\s*[_*]{1,2}\s*$/i;
 
 /**
  * The newest released version heading in a Keep-a-Changelog file, as a `vX.Y.Z` tag. The remedy
@@ -509,20 +538,40 @@ export function formatUnreleasedRefusal(identity, command) {
     'what produced it.',
     '',
   ];
-  // NO release tag to name. A fork or a vendored copy that has cut none of its own is the ordinary
-  // shape of this — `git clone` + push to a new remote carries no tags — and it is precisely the
-  // population `repoSlug` exists to serve ("a fork therefore names ITSELF in the remedy"). There is
-  // no pinned command that would resolve against that remote, so DO NOT PRINT ONE: a `Run this
-  // instead:` block that errors is worse than the refusal it decorates, and this message's entire
-  // justification is that the command it hands back works. Lead with the hatch, which does. (#373
-  // review: the old code inherited the SHIPPED changelog's tag here and named a ref upstream has and
-  // the fork does not.)
+  // NO release tag to name — and the message must not claim more than it knows about WHY. Three
+  // epistemic states reach `latestTag === null`, and only ONE licenses the strong sentence:
+  //
+  //   1. npm-install, `ls-remote` RAN AND SUCCEEDED, zero release tags → we looked; there are none.
+  //      A fork or vendored copy that has cut no tags of its own is the ordinary shape of this
+  //      (`git clone` + push carries none), and it is the population `repoSlug` exists to serve.
+  //   2. npm-install, the lookup THREW or was skipped → `corroborate()` can still reach `unreleased`
+  //      off the shipped changelog, with no tag to name. WE NEVER QUERIED THE REMOTE.
+  //   3. checkout with no local `v*` tags (a `--depth 1` / `--no-tags` clone) → the checkout path
+  //      queries the remote BY DESIGN NEVER.
+  //
+  // `lookupError` is the discriminator, and it is already on the contract: it is null on exactly the
+  // paths where a lookup ran and succeeded, and set on every path that could not look. So state 1
+  // gets the assertion, and 2 and 3 get a hedge — because telling a fork's user that
+  // `--allow-unreleased` is their only path, when a perfectly good release tag exists and we merely
+  // failed to see it, sends them to render unreleased content for no reason. Either way we print no
+  // pinned command: a `Run this instead:` block that cannot resolve is worse than the refusal it
+  // decorates, and this message's whole justification is that what it hands back WORKS.
+  const provablyNone = identity.origin === 'npm-install' && identity.lookupError === null;
   if (!tag) {
+    const noTag = provablyNone
+      ? [
+          `${repo} has no \`vX.Y.Z\` release tags, so no pinned command would resolve.`,
+          'Cut a release there and pin to it — or, if this IS the toolkit you are developing, render',
+          'the working tree anyway:',
+        ]
+      : [
+          `No \`vX.Y.Z\` release of ${repo} is known to this CLI: the release lookup did not answer, so`,
+          'there may well be one to pin to that this run cannot see. Check, and pin it if there is —',
+          'or, if this IS the toolkit you are developing, render the working tree anyway:',
+        ];
     return [
       ...why,
-      `There is no \`vX.Y.Z\` release of ${repo} to pin to, so no pinned command would resolve.`,
-      'Either cut a release tag there and pin to it, or — if this IS the toolkit you are developing —',
-      'render the working tree anyway:',
+      ...noTag,
       `  npx --yes github:${repo} ${command} --allow-unreleased    # or WAFFLESTACK_ALLOW_UNRELEASED=1`,
       '',
       'The identity stays honest either way: `--allow-unreleased` suppresses the refusal, not the truth.',
@@ -562,7 +611,7 @@ export function formatProvenanceWarning(identity) {
   // fork's users hunting for a tag their remote does not have.
   const advice = identity.latestTag
     ? `Pin to \`github:${repo}#${identity.latestTag}\` for a reproducible render.`
-    : `No \`vX.Y.Z\` release of ${repo} is known, so there is nothing to pin to — cut one for a reproducible render.`;
+    : `No \`vX.Y.Z\` release of ${repo} is known to this CLI, so it cannot name a pin — pin one (or cut one) for a reproducible render.`;
   if (identity.status === 'unverified') {
     return `could not verify that this toolkit${at} is a release — ${identity.lookupError ?? 'lookup unavailable'}; proceeding. ${advice}`;
   }

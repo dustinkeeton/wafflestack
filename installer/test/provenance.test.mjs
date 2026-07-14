@@ -405,10 +405,40 @@ describe('identity from an npm-install layout (#373)', () => {
     const msg = formatUnreleasedRefusal(id, 'render');
     assert.doesNotMatch(msg, /#v0\.12\.0/, 'never name a ref the remote does not have');
     assert.doesNotMatch(msg, /#<latest release tag>/, 'nor a placeholder command that cannot resolve');
-    assert.match(msg, /no `vX\.Y\.Z` release of acme\/wafflestack to pin to/);
+    // We LOOKED and there is nothing there, so the strong claim is licensed here — and only here.
+    assert.match(msg, /acme\/wafflestack has no `vX\.Y\.Z` release tags/);
     assert.match(msg, /--allow-unreleased/, 'lead with the hatch — here it is the only path that works');
     // The warning printed by the ungated commands must not invent a pin either.
-    assert.match(formatProvenanceWarning(id) ?? '', /nothing to pin to/);
+    assert.match(formatProvenanceWarning(id) ?? '', /cannot name a pin/);
+  });
+
+  test('a lookup that NEVER RAN must not claim the remote has no tags — hedge, do not assert', () => {
+    // The same `latestTag: null` state, reached from ignorance instead of knowledge (#373 review).
+    // `corroborate()` tightens to `unreleased` off the shipped changelog after `ls-remote` THREW, and
+    // with no `## [X.Y.Z]` headings in that changelog there is no tag to name — but WE NEVER ASKED
+    // THE REMOTE. Asserting "acme has no release tags" here is exactly the over-claim that was
+    // rejected in round 1, and it is not harmless: it tells a fork's user that `--allow-unreleased`
+    // is their only path, when a perfectly good release tag may exist that this run merely could not
+    // see. `lookupError` is the discriminator, and it is already on the contract: null on exactly the
+    // paths where a lookup ran and SUCCEEDED.
+    const root = layout({
+      resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_B}`,
+      repository: 'github:acme/wafflestack',
+      changelog: '# Changelog\n\n## [Unreleased]\n\n- fork work\n', // entries, but no release headings
+    });
+    const id = resolveToolkitIdentity({
+      toolkitRoot: root,
+      lsRemote: () => { throw new Error('Could not resolve host: github.com'); },
+    });
+    assert.equal(id.status, 'unreleased', 'the changelog corroborates it…');
+    assert.equal(id.latestTag, null, '…but nothing can name a tag');
+    assert.notEqual(id.lookupError, null, 'and THIS is what says we never looked');
+
+    const msg = formatUnreleasedRefusal(id, 'render');
+    assert.doesNotMatch(msg, /has no `vX\.Y\.Z` release tags/, 'we did not look — we cannot say that');
+    assert.match(msg, /No `vX\.Y\.Z` release of acme\/wafflestack is known to this CLI/);
+    assert.match(msg, /there may well be one to pin to that this run cannot see/);
+    assert.match(msg, /--allow-unreleased/, 'the hatch is still offered — just not as the ONLY path');
   });
 
   test('no lockfile at all → `unverified`, never a throw (npm internals may change shape)', () => {
@@ -579,6 +609,22 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(id.status, 'unreleased', 'stripping the scaffold must not strip what is under it');
   });
 
+  test('an EMPHASIZED entry is an entry — stripping it would fail OPEN, which is #373 itself', () => {
+    // The scaffold-stripper's dangerous edge. `**Breaking: …**` and `_Support for pnpm added._` are
+    // real, substantive entries that happen to be emphasized. Eating them leaves `unverified`, and
+    // `unverified` PROCEEDS — so an unpinned default-branch fetch would render straight into the
+    // consumer's lock, which is the exact bug this whole PR exists to prevent. F8's defect was
+    // fail-CLOSED (a recoverable refusal); its first fix traded it for fail-OPEN, which by this
+    // module's own stated ordering is the strictly worse direction. Both edges are now pinned.
+    for (const entry of ['**Breaking: render now refuses.**', '_Support for pnpm added._']) {
+      const id = resolveToolkitIdentity({
+        toolkitRoot: npmLayout(`# Changelog\n\n## [Unreleased]\n\n${entry}\n\n## [0.12.0] - 2026-07-11\n`),
+        lsRemote: failedLookup,
+      });
+      assert.equal(id.status, 'unreleased', `an emphasized entry must still corroborate: ${entry}`);
+    }
+  });
+
   test('the corroborator never OVERRIDES a successful lookup that said `release`', () => {
     // main's changelog shape, but the SHA really is the tag: the network wins, every time.
     const id = resolveToolkitIdentity({
@@ -593,13 +639,25 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n## [1.0.0] - 2026\n'), false);
     assert.equal(changelogHasUnreleasedEntries('## Unreleased\n\n- a thing\n'), true, 'the brackets are optional');
     assert.equal(changelogHasUnreleasedEntries(null), false);
-    // The SCAFFOLD — what a release leaves behind. None of these is an entry.
+    // ── EDGE 1, fail-CLOSED: the SCAFFOLD a release leaves behind. None of these is an entry.
+    // Reading one AS an entry refuses a genuine release (F8). Recoverable — the refusal names the
+    // pin — but wrong.
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n### Fixed\n'), false, 'empty sub-headings');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_Nothing yet._\n'), false, 'emphasis-only placeholder');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n**No changes.**\n'), false, 'bold placeholder');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n*None.*\n'), false);
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_TBD_\n'), false);
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n<!-- add entries\n     here -->\n'), false, 'HTML comment, even across lines');
-    // …and everything that IS an entry still reads as one. A guard that strips too much is worse
-    // than one that strips too little: it fails OPEN on the default branch, which is issue #373.
+
+    // ── EDGE 2, fail-OPEN: THE DANGEROUS DIRECTION — and the one the F8 fix itself got wrong (F11).
+    // Missing a real entry leaves `unverified`, which PROCEEDS: a default branch renders into a
+    // consumer's lock, silently. That is issue #373, reintroduced through the back door. An
+    // emphasized line is an ENTRY unless its WORDS say otherwise — the filter keys on placeholder
+    // vocabulary, never on emphasis, because shape is the vocabulary of entries.
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n**Breaking: render now refuses.**\n'), true, 'a BOLD entry is still an entry');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_Support for pnpm added._\n'), true, 'an ITALIC entry is still an entry');
+    assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n**Nothing is broken by this release.**\n'), true, 'opens with "Nothing" — but it is prose, not a placeholder');
+    // …and everything that always was an entry still reads as one.
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n- a real entry\n'), true, 'an entry under a sub-heading');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n* an asterisk bullet\n'), true, 'a bullet is not a placeholder');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n* a *bold* asterisk bullet\n'), true);
@@ -654,10 +712,12 @@ describe('formatUnreleasedRefusal (#373)', () => {
     // is worse than the refusal it decorates, and the whole justification for failing closed is that
     // the message hands back something that WORKS. When there is no release to pin to, the only
     // command that works is the hatch — so lead with it and say plainly why.
+    // `lookupError: null` + `origin: 'npm-install'` on this fixture ⇒ the lookup RAN and succeeded,
+    // so the strong claim is licensed. (The hedged twin is pinned in the npm-install suite above.)
     const msg = formatUnreleasedRefusal({ ...unreleased, latestTag: null }, 'render');
     assert.doesNotMatch(msg, /#<latest release tag>/);
     assert.match(msg, /latest release: none known for dustinkeeton\/wafflestack/);
-    assert.match(msg, /no `vX\.Y\.Z` release of dustinkeeton\/wafflestack to pin to/);
+    assert.match(msg, /dustinkeeton\/wafflestack has no `vX\.Y\.Z` release tags/);
     assert.match(msg, /npx --yes github:dustinkeeton\/wafflestack render --allow-unreleased/);
   });
 
