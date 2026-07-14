@@ -575,10 +575,19 @@ edit, and therefore a function of the pin, which is exactly the property `origin
 
 **An `unverified` render carries the previous block forward**, but only when doing so asserts nothing
 new: same `toolkitVersion`, and a freshly rendered `files` map *identical* to the one the recorded
-provenance already describes. Under that condition the old block is still exactly true — which is
-what stops a network blip (or the hatch, or `dlx`) from rewriting a good `release` block to nulls and
-reddening a `git diff --exit-code` gate with no content change anywhere. If content *did* move, the
-block is honestly rewritten to nulls.
+provenance already describes. This is what stops a network blip (or the hatch, or `dlx`) from
+rewriting a good `release` block to nulls and reddening a `git diff --exit-code` gate with no content
+change anywhere. If content *did* move, the block is honestly rewritten to nulls.
+
+**What the carried-forward block guarantees — and what it does not.** Under that condition the
+recorded toolkit still **reproduces these exact bytes**, so the block remains a correct answer to
+*"what do I run to get this render?"*. It is **not** a claim that the recorded toolkit is the one that
+*performed* the render: an `unverified` CLI knows its own commit (the lookup could not **classify**
+it, not locate it), so a render performed at commit `B` may carry forward a block naming commit `A`.
+
+That distinction is load-bearing precisely here. This block exists because a version string lies by
+collapsing two different toolkits into one — so the carry-forward must not reintroduce the same
+collapse as a *written guarantee*. Read the block as **reproducibility**, never as attribution.
 
 **What reads it.** `doctor` reports which toolkit produced the render and **warns** on a mismatch —
 including the case the bare version string structurally cannot express: **same version, different

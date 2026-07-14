@@ -264,10 +264,21 @@ function describeToolkitMove(move) {
   if (status === 'removed') {
     return `toolkit provenance dropped: the lock recorded ${v(fromVersion)} (${at(fromRef, from)}), and this render supplied none`;
   }
-  // `unknown`: at least one side has no commit, so no move can be honestly claimed.
-  return to
-    ? `toolkit moved ${v(fromVersion)} → ${v(toVersion)} (${at(toRef, to)}); the previous render recorded no commit`
-    : `toolkit ${v(toVersion)} (this toolkit is ${toStatus ?? 'unidentified'} — no commit recorded, so no move can be reported)`;
+  // `unknown`: at least one side has no commit, so no move can be honestly claimed — and this branch
+  // used to claim one anyway (#384 F8), printing `toolkit moved 0.12.0 → 0.12.0` one line under a
+  // comment saying it must not. The `moved` branch above already special-cases `fromVersion ===
+  // toVersion` because `X → X` reads as nonsense; this one forgot the same guard.
+  //
+  // Not exotic: a first render lands `unverified` on any network blip, and per #383 a pnpm/yarn `dlx`
+  // consumer is `unverified` ALWAYS. The moment they `upgrade` on a CLI that does resolve a release at
+  // the same version, they were told their toolkit "moved 0.12.0 → 0.12.0". With no version move this
+  // is the previous render's provenance being FILLED IN, not a move — so say that.
+  if (to) {
+    return fromVersion && toVersion && fromVersion === toVersion
+      ? `toolkit ${v(toVersion)} is now pinned to ${at(toRef, to)}; the previous render recorded no commit, so no move can be reported`
+      : `toolkit moved ${v(fromVersion)} → ${v(toVersion)} (${at(toRef, to)}); the previous render recorded no commit`;
+  }
+  return `toolkit ${v(toVersion)} (this toolkit is ${toStatus ?? 'unidentified'} — no commit recorded, so no move can be reported)`;
 }
 
 function shortSha(sha) {
