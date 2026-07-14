@@ -116,7 +116,13 @@ function noVerify() {
 export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
   const lock = readLock(cwd);
   if (!lock) {
-    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, prerequisites: noPrereqs(), render: noVerify() };
+    // `toolkitProvenance` is part of the RETURN SHAPE, not a field that appears once a lock does
+    // (#384 F5). #372 is specced to read `doctor(…).toolkitProvenance.status`, and on a repo with no
+    // lock that dereferenced `undefined` and threw a TypeError. `not-recorded` is the honest status —
+    // no lock records no provenance — and the note is deliberately dropped: `notes` already says the
+    // lock is missing, and "the next `render` records it" would be a second, weaker way of saying so.
+    const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
+    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify() };
   }
   // The manifest of what is actually on disk (see the docblock). Identical to `lock` unless a local
   // overlay shaped this machine's render.

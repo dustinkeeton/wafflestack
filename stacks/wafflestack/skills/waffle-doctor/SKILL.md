@@ -79,11 +79,17 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
   lock's `toolkit` block (its ref and commit SHA, not just a version number). **Every form of this
   note is a warning: none of them fails the check.** Read it as the explanation for a red
   elsewhere, never as the red itself.
-  - **`toolkit provenance mismatch … both report version X but resolve to DIFFERENT commits`** —
-    the headline, and the one a version number cannot express: the tag was **re-cut or
-    force-pushed**, or one of the two is not the release it claims to be. If `--verify-render` is
-    green alongside it, the difference changed no file and you can ignore it; if it is red, this
-    note is *why*. The fix is to re-render, or to pin CI to the toolkit that produced the lock.
+  - **`toolkit provenance mismatch … both report version X from the same repository but resolve to
+    DIFFERENT commits`** — the headline, and the one a version number cannot express: the tag was
+    **re-cut or force-pushed**, or one of the two is not the release it claims to be. If
+    `--verify-render` is green alongside it, the difference changed no file and you can ignore it;
+    if it is red, this note is *why*. The fix is to re-render, or to pin CI to the toolkit that
+    produced the lock.
+  - **`toolkit provenance mismatch … these are DIFFERENT REPOSITORIES`** — the two blocks name
+    different repos, so **no tag need have moved**: a fork's `v0.12.0` and upstream's `v0.12.0` are
+    two different releases that share a version number. Doctor says this instead of claiming a
+    re-cut, because it compared the sources rather than guessing from the commits alone. The fix is
+    the same: re-render, or pin CI to the toolkit that produced the lock.
   - **`the lock was rendered by an UNRELEASED toolkit`** — its provenance cannot be pinned to a
     release, so there is nothing to compare against. Expected for a repo that renders from a
     toolkit checkout (this one does). Not a problem to fix.

@@ -213,6 +213,11 @@ export function diffToolkit(prev, next, { fromVersion = null, toVersion = null }
     to: next?.commit ?? null,
     fromRef: prev?.ref ?? null,
     toRef: next?.ref ?? null,
+    // Which REPOSITORY each side came from (#384 F3). Without these, `describeToolkitMove` compared
+    // commits alone and reported a repo swap as "the tag was re-cut" — the same unasked question
+    // `describeToolkitProvenance` was answering wrong, at the second site.
+    fromSource: prev?.source ?? null,
+    toSource: next?.source ?? null,
     fromVersion,
     toVersion,
     fromStatus: prev?.status ?? null,
@@ -231,17 +236,27 @@ export function diffToolkit(prev, next, { fromVersion = null, toVersion = null }
  * tested through the `log` sink, exactly like `describeSourceMove`.
  */
 function describeToolkitMove(move) {
-  const { status, from, to, fromRef, toRef, fromVersion, toVersion, toStatus } = move;
+  const { status, from, to, fromRef, toRef, fromSource, toSource, fromVersion, toVersion, toStatus } = move;
   const at = (ref, sha) => [ref, sha ? shortSha(sha) : null].filter(Boolean).join(' @ ') || 'no commit recorded';
   const v = (x) => x ?? 'unknown';
+  // Same unasked question as `describeToolkitProvenance`'s `recut`, at the second site (#384 F3).
+  const differentRepos = Boolean(fromSource && toSource && fromSource !== toSource);
   if (status === 'unchanged') return null;
   if (status === 'moved') {
     // The #372 trap, said out loud: same version, different commit. `upgrade` reports `current`
     // ("already on toolkit X") and would otherwise fall silent on a toolkit that genuinely moved.
     if (fromVersion && toVersion && fromVersion === toVersion) {
-      return `toolkit ${toVersion} is unchanged by version, but its commit moved ${shortSha(from)} → ${shortSha(to)} — the tag was re-cut, or one of the two renders used an unreleased toolkit`;
+      if (differentRepos) {
+        return `toolkit ${toVersion} is unchanged by version, but its provenance moved ${fromSource} @ ${shortSha(from)} → ${toSource} @ ${shortSha(to)} — these are DIFFERENT REPOSITORIES, so neither tag need have been re-cut`;
+      }
+      // The cause named here is now the only one REACHABLE (#384 F4). The old line also offered "or
+      // one of the two renders used an unreleased toolkit", which `moved` structurally cannot be:
+      // `moved` requires both commits non-null, and `toolkitLockEntry` writes `commit` IFF
+      // `status === 'release'` — the anti-churn invariant. An unreleased render lands in `unknown`.
+      return `toolkit ${toVersion} is unchanged by version, but its commit moved ${shortSha(from)} → ${shortSha(to)} — the tag was re-cut or force-pushed`;
     }
-    return `toolkit moved ${v(fromVersion)} (${at(fromRef, from)}) → ${v(toVersion)} (${at(toRef, to)})`;
+    const repos = differentRepos ? ` (DIFFERENT REPOSITORIES: ${fromSource} → ${toSource})` : '';
+    return `toolkit moved ${v(fromVersion)} (${at(fromRef, from)}) → ${v(toVersion)} (${at(toRef, to)})${repos}`;
   }
   if (status === 'added') {
     return `toolkit ${v(toVersion)} (${at(toRef, to)}) — the previous render recorded no toolkit provenance`;
