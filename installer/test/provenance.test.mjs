@@ -1361,7 +1361,24 @@ describe('the `unverified` carry-forward (#374)', () => {
       newFiles: { ...FILES },
       toolkitVersion: '0.12.0',
     });
-    assert.deepEqual(entry, RELEASE_BLOCK, 'the recorded provenance is still exactly true — keep it');
+    // #384 F9: the guarantee is REPRODUCIBILITY, not attribution. The recorded toolkit still produces
+    // these exact bytes — it is not a claim that it is the toolkit that PERFORMED this render (an
+    // unverified CLI knows its own commit; it just could not classify it). Keep the block for the
+    // former, and do not let the assertion message promise the latter.
+    assert.deepEqual(entry, RELEASE_BLOCK, 'the recorded toolkit still reproduces these exact bytes — keep it');
+  });
+
+  test('the carry-forward\'s guarantee is REPRODUCIBILITY, not attribution (#384 F9)', () => {
+    // The doc used to promise the carried-forward block is "still exactly true". It is not: this
+    // render was performed at commit B, and the block it writes names commit A. That is CORRECT
+    // behavior — A still reproduces these bytes, and churning to nulls on a blip is the bug this
+    // guards — but the claim had to be narrowed to what actually holds. This test pins the gap the
+    // doc now describes, so nobody "fixes" the behavior to match the old, wrong sentence.
+    const ranAtB = unverifiedIdentity({ commit: SHA_B }); // an unverified CLI KNOWS its own commit
+    const entry = toolkitLockEntry(ranAtB, { prevLock, newFiles: { ...FILES }, toolkitVersion: '0.12.0' });
+    assert.equal(entry.commit, SHA_A, 'the block names A…');
+    assert.equal(ranAtB.commit, SHA_B, '…while B is what actually rendered');
+    assert.equal(entry.status, 'release', 'and the good block is preserved, which is the point');
   });
 
   test('…but only when it asserts NOTHING NEW: different content rewrites the block honestly', () => {
@@ -1712,7 +1729,9 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
     assert.equal(dr.ok, true);
     assert.equal(dr.toolkitProvenance.status, 'unpinnable');
     const out = dr.notes.join('\n');
-    assert.match(out, /rendered by an UNRELEASED toolkit/);
+    // "marked UNRELEASED", not "an UNRELEASED toolkit" — the article could not be right for every
+    // status, and the same line printed `an RELEASE` / `an UNDEFINED` (#384 F7).
+    assert.match(out, /rendered by a toolkit marked UNRELEASED/);
     assert.doesNotMatch(out, /provenance mismatch/, 'there is nothing to compare — do not invent a mismatch');
   });
 
@@ -1841,6 +1860,35 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
     assert.doesNotMatch(out, /the tag was re-cut/, 'a cause it never checked');
   });
 
+  test('NO commit on the previous side: provenance is FILLED IN, never "moved 0.12.0 → 0.12.0" (#384 F8)', () => {
+    // The `unknown` branch's `to`-truthy arm — which had NO test at all: gutting the line left the
+    // whole suite green. Its own comment says "no move can be honestly claimed", and the next line
+    // claimed one: `toolkit moved 0.12.0 → 0.12.0`.
+    //
+    // Not exotic. A first render lands `unverified` on any network blip — and per #383 a pnpm/yarn
+    // `dlx` consumer has no npm lockfile, so it is `unverified` ALWAYS. The moment they upgrade on a
+    // CLI that does resolve a release at the same version, they hit exactly this.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: unverifiedIdentity() });
+    const written = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8')).toolkit;
+    assert.equal(written.commit, null, 'the previous render recorded no commit');
+
+    const result = runUpgrade(releaseIdentity({ commit: SHA_A }), '0.12.0'); // same version, now a release
+    assert.equal(result.toolkitMove.status, 'unknown', 'no move can be honestly claimed…');
+    const out = logged.join('\n');
+    assert.doesNotMatch(out, /moved 0\.12\.0 → 0\.12\.0/, '…so it must not claim one');
+    assert.match(out, /toolkit 0\.12\.0 is now pinned to v0\.12\.0 @ aaaaaaaaaaaa/, 'it was FILLED IN');
+    assert.match(out, /no move can be reported/);
+  });
+
+  test('…while a genuine CROSS-VERSION fill-in still reads as a move', () => {
+    // The other arm of the same ternary must keep its wording: the versions really did move, even
+    // though the previous side recorded no commit to move FROM.
+    renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0', toolkitIdentity: unverifiedIdentity({ version: '0.11.0' }) });
+    const result = runUpgrade(releaseIdentity({ commit: SHA_A }), '0.12.0');
+    assert.equal(result.toolkitMove.status, 'unknown');
+    assert.match(logged.join('\n'), /toolkit moved 0\.11\.0 → 0\.12\.0 \(v0\.12\.0 @ aaaaaaaaaaaa\); the previous render recorded no commit/);
+  });
+
   test('a lock with NO `toolkit` block does not crash — the move reads `added`', () => {
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0' }); // pre-#374 lock: no identity, no block
     assert.equal('toolkit' in JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8')), false);
@@ -1873,24 +1921,48 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('describeToolkitProvenance (#374)', () => {
-  test('every state produces exactly one note and never throws on a malformed block', () => {
+  test('every state produces exactly one note, and the note SAYS THE RIGHT THING (#384 F10)', () => {
+    // This table used to assert only `notes[0].length > 20` — and that is precisely how a note reading
+    // "rendered by an RELEASE toolkit … cannot be pinned to a release" (for a block
+    // `toolkitPinFromLock` pins fine) shipped past a green suite: 100+ characters of wrong is still
+    // > 20. A row now carries the substring its note must contain, so a state and its message cannot
+    // drift apart. The length check stays as a backstop, but it is no longer the only guard.
     const states = [
-      [{ lockToolkit: null }, 'not-recorded'],
-      [{ lockToolkit: toolkitLockEntry(unreleasedIdentity()) }, 'unpinnable'],
-      [{ lockToolkit: RELEASE_BLOCK, identity: null }, 'unverifiable'],
-      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity() }, 'match'],
-      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity({ commit: SHA_B }) }, 'recut'],
-      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.11.0', identity: releaseIdentity({ commit: SHA_B }) }, 'mismatch'],
-      // A release block with no commit — impossible from `toolkitLockEntry`, but a hand-edited or
-      // future-CLI lock must not crash doctor. Degrades to "cannot pin", never to a false mismatch.
-      [{ lockToolkit: { ...RELEASE_BLOCK, commit: null } }, 'unpinnable'],
+      [{ lockToolkit: null }, 'not-recorded', /records no toolkit provenance/],
+      [{ lockToolkit: toolkitLockEntry(unreleasedIdentity()) }, 'unpinnable', /marked UNRELEASED .* cannot be pinned to a release/],
+      [{ lockToolkit: RELEASE_BLOCK, identity: null }, 'unverifiable', /reported no identity, so the two cannot be compared/],
+      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity() }, 'match', /matches this CLI/],
+      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity({ commit: SHA_B }) }, 'recut', /re-cut or force-pushed/],
+      [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.11.0', identity: releaseIdentity({ commit: SHA_B }) }, 'mismatch', /the lock was rendered by/],
+      // A release block with no commit — impossible from `toolkitLockEntry`, but a hand-edited,
+      // foreign, or future-CLI lock can carry one, and doctor must not crash OR LIE about it. It is
+      // PINNABLE (see the pin below) and merely not comparable, so the note must not say otherwise.
+      [{ lockToolkit: { ...RELEASE_BLOCK, commit: null } }, 'unverifiable', /names github:dustinkeeton\/wafflestack#v0\.12\.0 but recorded no commit/],
+      // A malformed block with no `status` at all: it printed `an UNDEFINED toolkit`.
+      [{ lockToolkit: { ...RELEASE_BLOCK, status: undefined } }, 'unpinnable', /marked UNIDENTIFIED/],
     ];
-    for (const [input, expected] of states) {
+    for (const [input, expected, noteMatches] of states) {
       const result = describeToolkitProvenance(input);
       assert.equal(result.status, expected, JSON.stringify(input));
       assert.equal(result.notes.length, 1);
+      assert.match(result.notes[0], noteMatches, `the note for '${expected}' must say what is true`);
+      assert.doesNotMatch(result.notes[0], /\ban (RELEASE|UNDEFINED|UNRELEASED|UNVERIFIED)\b/, 'no ungrammatical article, no UNDEFINED');
       assert.ok(result.notes[0].length > 20, 'a note that says nothing is worse than no note');
     }
+  });
+
+  test('the two exported halves of the contract AGREE about a pinnable block (#384 F7)', () => {
+    // `describeToolkitProvenance` said the lock "cannot be pinned to a release" while
+    // `toolkitPinFromLock` — the other half of the contract #372 consumes — pinned that exact block.
+    // Shipping them contradictory hands the ambiguity to the next PR. They must agree.
+    const block = { ...RELEASE_BLOCK, commit: null };
+    const pin = toolkitPinFromLock({ toolkit: block });
+    assert.equal(pin, 'github:dustinkeeton/wafflestack#v0.12.0', 'it IS pinnable…');
+
+    const note = describeToolkitProvenance({ lockToolkit: block, lockVersion: '0.12.0' }).notes[0];
+    assert.doesNotMatch(note, /cannot be pinned/, '…so the note must not claim it cannot be');
+    assert.match(note, /but recorded no commit/, 'what is missing is a commit to COMPARE against');
+    assert.ok(note.includes(pin), 'and the note names the very pin the other half returns');
   });
 
   test('a FORK\'s v0.12.0 vs UPSTREAM\'s v0.12.0 is not a re-cut tag — it is two repos (#384 F3)', () => {

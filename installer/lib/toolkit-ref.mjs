@@ -420,9 +420,23 @@ export function toolkitSource(repo) {
  *
  * So an `unverified` render carries the previous block forward — but ONLY when doing so asserts
  * nothing new: same `toolkitVersion`, and the freshly rendered `files` map is IDENTICAL to the one
- * the recorded provenance already describes. Under that condition the old block is still exactly
- * true. If content moved, the block is honestly rewritten to nulls — and the `files` diff is the
- * real signal anyway.
+ * the recorded provenance already describes. If content moved, the block is honestly rewritten to
+ * nulls — and the `files` diff is the real signal anyway.
+ *
+ * **BE PRECISE ABOUT WHAT SURVIVES (#384 F9).** This used to say the carried-forward block is "still
+ * exactly true", and it is not: an `unverified` CLI KNOWS its own commit (the lookup could not
+ * CLASSIFY it, not locate it), so a render performed at commit B can carry forward a block naming
+ * commit A. B produced that render; the lock says A did. What actually holds is narrower, and it is
+ * still the guarantee worth having:
+ *
+ *   the recorded toolkit still **reproduces these exact bytes**, so the block remains a correct answer
+ *   to *"what do I run to get this render?"* — even though a different, unclassifiable toolkit may
+ *   have performed it.
+ *
+ * The distinction is not pedantry HERE of all places: this issue's whole thesis is that a version
+ * string lies by collapsing two different toolkits into one. A carry-forward doc promising the block
+ * is "exactly true" about WHICH TOOLKIT RAN reintroduces that same collapse as a written guarantee —
+ * in the contract #372 reads as spec. The behavior is right and must not change; the claim was wrong.
  *
  * `unreleased` needs no carry-forward: it is a POSITIVE determination, reached offline, and two
  * people rendering the same unreleased toolkit compute the same nulls.
@@ -551,13 +565,33 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
   }
   const pin = toolkitPinFromLock({ toolkit: lockToolkit });
   const lockWho = `${pin ?? lockToolkit.source ?? 'an unknown toolkit'}${lockToolkit.commit ? ` @ ${at(lockToolkit.commit)}` : ''}`;
-  if (lockToolkit.status !== 'release' || !lockToolkit.commit) {
+  // "marked X", not "an X toolkit": the article cannot be right for every status (`an RELEASE`), and a
+  // malformed block printed `an UNDEFINED toolkit`. Sidestep the article and give `status` a fallback,
+  // so no lock — however hand-edited — can make this sentence ungrammatical or say `UNDEFINED` (#384 F7).
+  const lockStatus = String(lockToolkit.status ?? 'unidentified').toUpperCase();
+  if (lockToolkit.status !== 'release') {
     // Informational, and the shape this repo's OWN lock is in — plus every consumer who rendered
     // through the hatch, or through pnpm/yarn `dlx` (#383). There is nothing to compare against.
     return {
       status: 'unpinnable',
       notes: [
-        `the lock was rendered by an ${String(lockToolkit.status).toUpperCase()} toolkit (${lockToolkit.source ?? 'source unknown'}) — its provenance cannot be pinned to a release, so there is nothing to compare this CLI against`,
+        `the lock was rendered by a toolkit marked ${lockStatus} (${lockToolkit.source ?? 'source unknown'}) — its provenance cannot be pinned to a release, so there is nothing to compare this CLI against`,
+      ],
+    };
+  }
+  if (!lockToolkit.commit) {
+    // A RELEASE block with no commit. THE TWO HALVES MUST AGREE (#384 F7): this branch used to be
+    // folded into `unpinnable` above and told the reader the provenance "cannot be pinned to a
+    // release" — while `toolkitPinFromLock`, which #372 consumes for the pin, pins this exact block
+    // and returns `github:owner/repo#v0.12.0`. The lock IS pinnable; what it lacks is a commit to
+    // compare AGAINST, which is a different sentence. Say that one instead.
+    //
+    // `toolkitLockEntry` cannot emit this block — but a hand-edited, foreign, or future-CLI lock can,
+    // and that is the stated reason `toolkitPinFromLock` keeps its "redundant" status guard.
+    return {
+      status: 'unverifiable',
+      notes: [
+        `the lock names ${pin ?? lockToolkit.source ?? 'an unknown toolkit'} but recorded no commit, so this CLI cannot be compared against it`,
       ],
     };
   }

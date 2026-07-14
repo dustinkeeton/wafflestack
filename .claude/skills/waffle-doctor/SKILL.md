@@ -90,9 +90,12 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
     two different releases that share a version number. Doctor says this instead of claiming a
     re-cut, because it compared the sources rather than guessing from the commits alone. The fix is
     the same: re-render, or pin CI to the toolkit that produced the lock.
-  - **`the lock was rendered by an UNRELEASED toolkit`** — its provenance cannot be pinned to a
-    release, so there is nothing to compare against. Expected for a repo that renders from a
+  - **`the lock was rendered by a toolkit marked UNRELEASED`** — its provenance cannot be pinned to
+    a release, so there is nothing to compare against. Expected for a repo that renders from a
     toolkit checkout (this one does). Not a problem to fix.
+  - **`the lock names <pin> but recorded no commit`** — the lock *is* pinnable (it names a release
+    ref), it just carries no commit SHA to compare this CLI against. Only a hand-edited or foreign
+    lock produces this; doctor reports it rather than falsely claiming the lock "cannot be pinned".
   - **`the lock records no toolkit provenance`** — it was rendered by a toolkit predating the
     block. The next **`/waffle-render`** records it. Harmless.
   - A **null `ref`** in the block means *"no provenance was captured"* — it does **not** mean
