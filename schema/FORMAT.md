@@ -556,6 +556,23 @@ pointer. No field in this block is a function of a moving `HEAD`, and that is de
 So a non-release render writes `{ "ref": null, "commit": null, "status": "unreleased" }` — a block
 that is **byte-stable across every commit**. Null is not a degradation here; it is the correct answer.
 
+**And `source` obeys the same rule: no field in this block is a function of the renderer's machine.**
+The determinism above is worth nothing if the *repo slug* varies, so `source` is resolved from the
+**pin**, never from local git config:
+
+| The render was… | `source` comes from | Why it is a function of the pin |
+|---|---|---|
+| an npm/npx install | npm's `resolved` URL | the spec the operator typed — `npx github:acme/wafflestack#v1.0.0` resolves to `acme` on every machine |
+| a **release** checkout | the corroborated remote | `ls-remote` found *that* tag at *that* commit on *that* remote, so `source`/`ref`/`commit` name one repo together — a fork that cuts its own release names **itself** |
+| any **non-release** checkout | `package.json` `repository` | ships with the toolkit's content, so it is a function of the commit |
+
+**`remote.origin.url` is never recorded.** It is a property of the clone the renderer happened to use,
+not of the toolkit: two contributors on the same commit, rendering identical bytes, would otherwise
+write different `source` values into the committed lock — churning it back and forth and redding the
+`render` + `git diff --exit-code` gate for a change that moved no rendered byte. A fork that renders
+from a checkout and wants its lock to name itself sets `repository` in `package.json`: a committed
+edit, and therefore a function of the pin, which is exactly the property `origin` lacks.
+
 **An `unverified` render carries the previous block forward**, but only when doing so asserts nothing
 new: same `toolkitVersion`, and a freshly rendered `files` map *identical* to the one the recorded
 provenance already describes. Under that condition the old block is still exactly true — which is
@@ -565,7 +582,10 @@ block is honestly rewritten to nulls.
 
 **What reads it.** `doctor` reports which toolkit produced the render and **warns** on a mismatch —
 including the case the bare version string structurally cannot express: **same version, different
-commit** (a re-cut or force-pushed tag). It is a **note, never an error**: `doctor.toolkitRef` ships
+commit**. It names the cause it actually checked: a **re-cut or force-pushed tag** when both blocks
+name the *same* repository, and **different repositories** when they do not (a fork's `v0.12.0` and
+upstream's `v0.12.0` are two releases, and neither tag need have moved). It is a **note, never an
+error**: `doctor.toolkitRef` ships
 unpinned by default, so an error would red every consumer's required check the moment anything merges
 to the toolkit's `main` — and `--verify-render` is already the *content* gate, so the only mismatch an
 error could add is one whose rendered bytes are identical, i.e. one that provably did not matter.

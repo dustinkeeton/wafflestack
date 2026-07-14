@@ -60,7 +60,16 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  *                                      `status === 'release'`**, or they dereference a null the day
  *                                      someone renders from a bare clone.
  * @property {'checkout'|'npm-install'|'unknown'} origin
- * @property {string|null} repo         "owner/repo", when knowable
+ * @property {string|null} repo         "owner/repo", when knowable. **Which remote do I ASK?** —
+ *                                      origin-first (`repoSlug`), so the `ls-remote` lookup and the
+ *                                      remedy message address the clone actually in hand (#373 F14).
+ *                                      Correct for the network; NOT a value the committed lock may
+ *                                      record on a checkout — see `lockRepo`.
+ * @property {string|null} lockRepo     "owner/repo" for the **committed lock** — `lockRepoSlug`, which
+ *                                      never reads `remote.origin.url`. **Which toolkit is this,
+ *                                      given the pin?** A function of the npm `resolved` pin and the
+ *                                      toolkit's own committed `package.json`, so two clones of one
+ *                                      commit write a byte-identical lock (#384 F2, #317).
  * @property {string|null} latestTag    the release to pin to, for the remedy message
  * @property {string|null} lookupError  why we could not call this a release: the lookup that failed
  *                                      (status === 'unverified'), or the reason a release verdict was
@@ -120,6 +129,9 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
   const pkg = readJson(path.join(toolkitRoot, 'package.json')) ?? {};
   const changelog = readTextOrNull(path.join(toolkitRoot, 'CHANGELOG.md'));
   const slug = repoSlug({ toolkitRoot, pkg, runGit });
+  // The SAME question asked for the lock, which must not depend on the renderer's clone (#384 F2).
+  // Differs from `slug` on exactly one path — an unreleased checkout — and see `lockRepoSlug`.
+  const lockSlug = lockRepoSlug({ toolkitRoot, pkg });
   /** @type {ToolkitIdentity} */
   const base = {
     status: 'unverified',
@@ -129,6 +141,7 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
     ref: null,
     origin: 'unknown',
     repo: slug ? `${slug.owner}/${slug.repo}` : null,
+    lockRepo: lockSlug ? `${lockSlug.owner}/${lockSlug.repo}` : null,
     // Best-effort fallback for the remedy message: the newest released heading in the CHANGELOG
     // that SHIPPED with this toolkit. Overwritten below by a real tag list whenever we get one.
     latestTag: changelogLatestRelease(changelog),
@@ -426,7 +439,7 @@ export function toolkitSource(repo) {
  */
 export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, toolkitVersion = undefined } = {}) {
   if (!identity) return null;
-  const source = toolkitSource(identity.repo);
+  const source = toolkitSource(lockSourceRepo(identity));
   if (identity.status === 'release') {
     return {
       source,
@@ -445,6 +458,34 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
     return prevLock.toolkit;
   }
   return { source, sourceType: 'git', ref: null, commit: null, status: identity.status };
+}
+
+/**
+ * Which repo does the **committed lock** name as the source of this render (#384 F2)? The two states
+ * answer it from different evidence, and collapsing them is what let a machine-local value reach a
+ * committed artifact.
+ *
+ * - **`release`** → `identity.repo`, the slug the identity was **corroborated against**. `ls-remote`
+ *   asked THAT remote and found THAT tag at THAT commit, so it is verified provenance rather than
+ *   machine state — and `source`/`ref`/`commit` MUST name one repo together, or `toolkitPinFromLock`
+ *   emits `github:<repo>#<tag>` for a repo that does not hold the tag. A fork that cuts its own
+ *   release therefore still names ITSELF (#373 F14), on the checkout path as well as the npx one.
+ *
+ * - **`unreleased` / `unverified`** → `identity.lockRepo`, which never consults `remote.origin.url`.
+ *   Nothing was verified here: `ref` and `commit` are already null, so `source` asserts no pin and is
+ *   the ONLY field left that could vary — and on a checkout, `repo` varies with the renderer's clone.
+ *   This is the churn the reviewer demonstrated, and it is the everyday path: every contributor's dev
+ *   checkout of this very repo.
+ *
+ * The `?? identity.repo` tail keeps a synthetic identity (a library caller, a test fixture) that
+ * carries no `lockRepo` behaving exactly as before.
+ *
+ * @param {ToolkitIdentity} identity
+ * @returns {string|null}
+ */
+function lockSourceRepo(identity) {
+  if (identity.status === 'release') return identity.repo ?? null;
+  return identity.lockRepo ?? identity.repo ?? null;
 }
 
 /**
@@ -538,13 +579,32 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
     };
   }
   const cliWho = `${identity.ref ?? toolkitSource(identity.repo) ?? 'an unknown toolkit'} @ ${at(identity.commit)}`;
-  if (lockVersion && identity.version && lockVersion === identity.version) {
-    // THE HEADLINE (#374). A re-cut or force-pushed tag, or one of the two is not the release it
-    // claims to be. The bare version string collapses this case into "no skew" and says nothing.
+  // Do the two blocks even name the same REPOSITORY? `recut` used to assert "the tag was re-cut or
+  // force-pushed" without ever asking (#384 F3) — so a fork's genuine `v0.12.0` doctored against
+  // upstream's genuine `v0.12.0` (two repos, neither tag touched) was told its tag had been
+  // force-pushed. That is an assertion about a remote this code never queried, and the correct
+  // diagnosis was sitting unread in `lockToolkit.source` and `identity.repo`.
+  const lockSource = lockToolkit.source ?? null;
+  const cliSource = toolkitSource(identity.repo);
+  const differentRepos = Boolean(lockSource && cliSource && lockSource !== cliSource);
+  if (lockVersion && identity.version && lockVersion === identity.version && !differentRepos) {
+    // THE HEADLINE (#374), and now only for the case it actually describes: ONE repository, one
+    // version, two commits. The bare version string collapses this into "no skew" and says nothing.
+    // Both provenances are named, so a reader can see the evidence rather than trust the verdict.
     return {
       status: 'recut',
       notes: [
-        `toolkit provenance mismatch — the lock and this CLI both report version ${lockVersion} but resolve to DIFFERENT commits (${at(lockToolkit.commit)} vs ${at(identity.commit)}): the tag was re-cut or force-pushed, or one of them is not the release it claims to be. \`--verify-render\` says whether the difference changes any file.`,
+        `toolkit provenance mismatch — the lock (${lockWho}) and this CLI (${cliWho}) both report version ${lockVersion} from the same repository but resolve to DIFFERENT commits: the tag was re-cut or force-pushed, or one of them is not the release it claims to be. \`--verify-render\` says whether the difference changes any file.`,
+      ],
+    };
+  }
+  if (differentRepos) {
+    // Same version, DIFFERENT repositories — the ordinary shape for the fork population #373 F14
+    // exists to serve, and the one state that must never be called a re-cut tag.
+    return {
+      status: 'mismatch',
+      notes: [
+        `toolkit provenance mismatch — the lock was rendered by ${lockWho}; this CLI is ${cliWho}. These are DIFFERENT REPOSITORIES${lockVersion && identity.version && lockVersion === identity.version ? ` that each report version ${lockVersion}` : ''}, so neither tag need have moved. Re-render, or pin CI to the toolkit that produced the lock; \`--verify-render\` says whether the difference changes any file.`,
       ],
     };
   }
@@ -593,6 +653,47 @@ export function repoSlug({ toolkitRoot, pkg, runGit = gitCapture }) {
     const fromGit = parseRepoSlug(runGit(toolkitRoot, ['config', '--get', 'remote.origin.url']));
     if (fromGit) return fromGit;
   }
+  return parseRepoSlug(repositoryUrl(pkg));
+}
+
+/**
+ * The same question, asked **for the committed lock** — and the answer differs on exactly one step.
+ *
+ *   1. npm's hidden lockfile (`resolved`) — **kept, and it is the whole of #373 F14.** This is not
+ *      machine state: it is *the pin the operator typed*, recorded by npm. `npx
+ *      github:acme/wafflestack#v1.0.0` resolves to acme on every machine that runs it, so a fork
+ *      still names ITSELF in its own lock. Read offline, from the lockfile, never the network.
+ *   2. `package.json` `repository` — the DECLARED answer, which SHIPS WITH THE CONTENT and is
+ *      therefore a function of the pinned commit.
+ *
+ * **`remote.origin.url` is deliberately absent, and that is the fix for #384 F2.** The origin step in
+ * `repoSlug` is gated on `.git`, so it fires on ONE path — a checkout — and there it reads a value
+ * that is not a function of the pin, the commit, or the rendered bytes. It is a property of the CLONE
+ * the renderer happened to use. Two contributors on the same commit, rendering identical bytes, wrote
+ * `source: github:<their-own-fork>/wafflestack` and `source: github:dustinkeeton/wafflestack` into the
+ * COMMITTED lock — churning it back and forth and redding the documented `render` + `git diff
+ * --exit-code` gate for a change that moved no rendered byte. That is precisely the nondeterminism the
+ * plan cited to reject recording `origin` at all ("two consumers on the same pinned release write
+ * different locks… determinism wins", #317), re-admitted through a different door.
+ *
+ * **Why this does not regress #373 F14**, which exists to stop upstream's slug being baked into a
+ * fork's lock: F14's failing population is the **npm/npx** path, and an npm-installed toolkit HAS NO
+ * `.git` — so `repoSlug`'s origin step never ran for it in the first place. F14 is carried entirely by
+ * step 1, which is preserved verbatim. The origin step only ever served the **checkout**, and for the
+ * checkout it is `resolveToolkitIdentity`'s NETWORK lookup and remedy message that need it
+ * ("which remote do I ask about tags?") — questions this function does not answer. Those still call
+ * `repoSlug`, unchanged.
+ *
+ * A fork that renders from a CHECKOUT and wants its lock to name itself has a deterministic way to
+ * say so: set `repository` in `package.json` — a committed, content-bearing edit, and therefore a
+ * function of the pin, which is exactly the property `origin` lacks.
+ *
+ * @param {{toolkitRoot: string, pkg: any}} opts
+ * @returns {{owner: string, repo: string}|null}
+ */
+export function lockRepoSlug({ toolkitRoot, pkg }) {
+  const fromLock = parseRepoSlug(npmResolvedUrl(toolkitRoot, pkg?.name));
+  if (fromLock) return fromLock;
   return parseRepoSlug(repositoryUrl(pkg));
 }
 

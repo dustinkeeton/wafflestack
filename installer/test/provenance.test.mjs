@@ -17,6 +17,7 @@ import {
   toolkitPinFromLock,
   describeToolkitProvenance,
   repoSlug,
+  lockRepoSlug,
   parseRepoSlug,
   httpsUrl,
   changelogHasUnreleasedEntries,
@@ -202,6 +203,81 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
         owner: 'dustinkeeton',
         repo: 'wafflestack',
       });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('lockRepoSlug asks the LOCK\'s question — the pin, never `remote.origin.url` (#384 F2)', () => {
+    // `repoSlug` answers "which remote do I ASK about tags?" — origin-first, and right (#373 F14).
+    // The LOCK asks a different question: "which toolkit is this, GIVEN THE PIN?" On a checkout,
+    // `origin` is a property of the clone the renderer happened to use — not of the pin, the commit,
+    // or the rendered bytes — and it must never reach a committed artifact (#317).
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-lockslug-'));
+    try {
+      const pkg = { name: 'wafflestack', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } };
+      const fork = () => 'git@github.com:contributor/wafflestack.git';
+      fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+
+      // THE DIVERGENCE, on one line: same checkout, same bytes, two different questions.
+      assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: fork }), { owner: 'contributor', repo: 'wafflestack' });
+      assert.deepEqual(lockRepoSlug({ toolkitRoot: root, pkg }), { owner: 'dustinkeeton', repo: 'wafflestack' });
+
+      // It takes no `runGit` AT ALL — the origin step cannot be reached even by accident.
+      assert.equal(lockRepoSlug.length, 1, 'one arg: there is no git seam to consult');
+
+      // #373 F14 is carried entirely by step 1, which `lockRepoSlug` KEEPS: npm's `resolved` is not
+      // machine state, it is the pin the operator typed. `npx github:acme/wafflestack#v1.0.0`
+      // resolves to acme on every machine — so a fork still names ITSELF in its own lock. (And an
+      // npm-installed toolkit has no `.git`, which is why removing the origin step cannot regress
+      // the npx path: it never ran there.)
+      const npm = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-lockslug-npm-'));
+      try {
+        // The real npx layout: the toolkit lives INSIDE node_modules, beside the hidden lockfile.
+        const installed = path.join(npm, 'node_modules/wafflestack');
+        fs.mkdirSync(installed, { recursive: true });
+        fs.writeFileSync(
+          path.join(npm, 'node_modules/.package-lock.json'),
+          JSON.stringify({ packages: { 'node_modules/wafflestack': { resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_A}` } } }),
+        );
+        assert.deepEqual(lockRepoSlug({ toolkitRoot: installed, pkg }), { owner: 'acme', repo: 'wafflestack' }, 'the fork names itself');
+      } finally {
+        fs.rmSync(npm, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('resolveToolkitIdentity: the reviewer\'s repro — two clones, one commit, one lock block (#384 F2)', () => {
+    // The live path, end to end, stubbing ONLY `runGit` (the module's own injection seam) exactly as
+    // the review did. Everything else is real: a checkout, an untagged HEAD, a declared `repository`.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-clone-'));
+    try {
+      fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } }),
+      );
+      const clone = (originUrl) => (_cwd, args) => {
+        if (args[0] === 'config') return originUrl;
+        if (args[0] === 'rev-parse') return SHA_A; // the SAME commit in both clones
+        if (args[0] === 'describe') return null; // untagged → unreleased
+        return null;
+      };
+      const blockFor = (originUrl) =>
+        toolkitLockEntry(
+          resolveToolkitIdentity({ toolkitRoot: root, runGit: clone(originUrl), allowUnreleased: true }),
+          { toolkitVersion: '0.12.0' },
+        );
+
+      const upstream = blockFor('https://github.com/dustinkeeton/wafflestack.git');
+      const forked = blockFor('git@github.com:contributor/wafflestack.git');
+
+      assert.deepEqual(forked, upstream, 'the committed lock cannot depend on which clone rendered it');
+      assert.equal(upstream.source, 'github:dustinkeeton/wafflestack');
+      // …while the value the NETWORK path needs still tracks the clone in hand (#373 F14 intact).
+      assert.equal(resolveToolkitIdentity({ toolkitRoot: root, runGit: clone('git@github.com:contributor/wafflestack.git'), allowUnreleased: true }).repo, 'contributor/wafflestack');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1445,6 +1521,46 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
     assert.equal(JSON.parse(second).toolkit.commit, null);
   });
 
+  test('THE DETERMINISM TEST — two clones, different `origin`, BYTE-IDENTICAL lock (#384 F2)', () => {
+    // THE ANTI-CHURN TEST's sibling, and the gap it structurally could not see: it varies `commit`,
+    // so a moving value that arrives through `repo` sails straight past it.
+    //
+    // `identity.repo` is origin-first (#373 F14) — correct for "which remote do I ASK about tags",
+    // and machine state on a checkout. Two contributors on the SAME commit rendering the SAME bytes
+    // (one cloned upstream, one cloned their fork) wrote different `source` values into the COMMITTED
+    // lock, churning it back and forth and redding `render` + `git diff --exit-code` for a change
+    // that moved no rendered byte. `lockRepo` is the pin-derived answer, and it is what the lock
+    // records.
+    const upstreamClone = unreleasedIdentity({ repo: 'dustinkeeton/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
+    const forkClone = unreleasedIdentity({ repo: 'contributor/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
+
+    assert.equal(render(upstreamClone).ok, true);
+    const first = lockBytes();
+    assert.equal(render(forkClone).ok, true);
+    const second = lockBytes();
+
+    assert.equal(first, second, 'the renderer\'s clone must not move a single byte of the lock');
+    assert.equal(JSON.parse(second).toolkit.source, 'github:dustinkeeton/wafflestack');
+  });
+
+  test('…but a RELEASE still names the repo it was CORROBORATED against — #373 F14 is not regressed', () => {
+    // The other direction, and the one a naive "always use the declared repository" fix breaks: a
+    // fork that cuts its OWN release must name ITSELF. Here `repo` was verified — `ls-remote` found
+    // that tag at that commit on that remote — so it is provenance, not machine state, and
+    // `source`/`ref`/`commit` must name ONE repo together or `toolkitPinFromLock` emits a pin for a
+    // repo that does not hold the ref.
+    //
+    // `lockRepo` is upstream (the fork inherited `package.json` `repository` verbatim — #373's own
+    // observation). If the lock read it here, upstream's slug would be baked into the fork's lock as
+    // provenance: exactly the third failure #382 F14 was filed to stop.
+    const forkRelease = releaseIdentity({ repo: 'acme/wafflestack', lockRepo: 'dustinkeeton/wafflestack', ref: 'github:acme/wafflestack#v0.12.0' });
+    assert.equal(render(forkRelease).ok, true);
+    const block = readLockJson().toolkit;
+    assert.equal(block.source, 'github:acme/wafflestack', 'the fork names ITSELF, not upstream');
+    assert.equal(block.commit, SHA_A);
+    assert.equal(toolkitPinFromLock({ toolkit: block }), 'github:acme/wafflestack#v0.12.0', 'and the pin reproduces the fork');
+  });
+
   test('carry-forward, end to end: a blip after a release render preserves the release block', () => {
     assert.equal(render(releaseIdentity()).ok, true);
     const afterRelease = lockBytes();
@@ -1511,6 +1627,23 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
     for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
   });
 
+  test('NO LOCK: `toolkitProvenance` is part of the RETURN SHAPE — reading it must not throw (#384 F5)', () => {
+    // The no-lock early return omitted the key entirely, so `doctor(…).toolkitProvenance.status` —
+    // which #372 is specced to read — threw a TypeError on a repo that has never rendered. A field
+    // that exists only on the happy path is not a contract; every consumer would need a guard the
+    // docs never mention. `not-recorded` is the honest status: no lock records no provenance.
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-nolock-'));
+    try {
+      const dr = doctor({ cwd: fresh, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
+      assert.equal(dr.ok, false);
+      assert.equal(dr.toolkitProvenance.status, 'not-recorded', 'the field is THERE, and it is honest');
+      assert.deepEqual(dr.toolkitProvenance.notes, [], 'and it adds no note — `notes` already says the lock is missing');
+      assert.match(dr.notes.join('\n'), /not found/);
+    } finally {
+      fs.rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+
   test('a matching release reads back as a match, naming the pin and the commit', () => {
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
     const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity(), toolkitRoot });
@@ -1543,8 +1676,13 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
     assert.equal(dr.toolkitProvenance.status, 'recut');
     const out = dr.notes.join('\n');
     assert.doesNotMatch(out, /version skew/, 'the versions MATCH — only the commits differ');
-    assert.match(out, /both report version 0\.12\.0 but resolve to DIFFERENT commits \(aaaaaaaaaaaa vs bbbbbbbbbbbb\)/);
+    assert.match(out, /both report version 0\.12\.0 from the same repository but resolve to DIFFERENT commits/);
     assert.match(out, /re-cut or force-pushed/);
+    // #384 F3: the note now shows its WORK. `recut` asserts a cause — a moved tag — and the reader
+    // must be able to see the evidence it rests on: the same repo on both sides, and the two commits.
+    assert.match(out, /aaaaaaaaaaaa/, 'names the lock\'s commit');
+    assert.match(out, /bbbbbbbbbbbb/, 'names this CLI\'s commit');
+    assert.match(out, /github:dustinkeeton\/wafflestack/, 'and names the repository it checked');
   });
 
   test('THE GATE-DOESN\'T-GO-RED TEST: --verify-render with different provenance, identical content', () => {
@@ -1672,6 +1810,35 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
     assert.match(out, /already on toolkit 0\.12\.0/, 'the old, blind line still prints…');
     assert.match(out, /toolkit 0\.12\.0 is unchanged by version, but its commit moved aaaaaaaaaaaa → bbbbbbbbbbbb/);
     assert.match(out, /the tag was re-cut/);
+    // #384 F4: the line used to also offer "…or one of the two renders used an unreleased toolkit".
+    // That cause is STRUCTURALLY IMPOSSIBLE on this branch — `moved` requires both commits non-null,
+    // and `toolkitLockEntry` writes `commit` IFF `status === 'release'` (the anti-churn invariant),
+    // so an unreleased render lands in `unknown`, never `moved`. A test pinned the false clause;
+    // this one pins its absence.
+    assert.doesNotMatch(out, /unreleased toolkit/, 'a cause this branch cannot have');
+  });
+
+  test('a REPO SWAP is not a re-cut tag at the second site either (#384 F3)', () => {
+    // `describeToolkitMove` compared commits alone — the same unasked question, in `upgrade`. A lock
+    // rendered by a fork's v0.12.0, upgraded with an upstream CLI reporting v0.12.0, was told its tag
+    // had been re-cut. `diffToolkit` now carries the two sources so the line can tell them apart.
+    renderProject({
+      toolkitRoot,
+      cwd,
+      toolkitVersion: '0.12.0',
+      toolkitIdentity: releaseIdentity({ commit: SHA_A, repo: 'acme/wafflestack', ref: 'github:acme/wafflestack#v0.12.0' }),
+    });
+
+    const result = runUpgrade(releaseIdentity({ commit: SHA_B }), '0.12.0'); // upstream CLI
+    assert.equal(result.toolkitMove.status, 'moved');
+    assert.equal(result.toolkitMove.fromSource, 'github:acme/wafflestack');
+    assert.equal(result.toolkitMove.toSource, 'github:dustinkeeton/wafflestack');
+    const out = logged.join('\n');
+    assert.match(out, /DIFFERENT REPOSITORIES/);
+    assert.match(out, /github:acme\/wafflestack @ aaaaaaaaaaaa → github:dustinkeeton\/wafflestack @ bbbbbbbbbbbb/);
+    // The line may *deny* a re-cut ("neither tag need have been re-cut"); what it must never do is
+    // ASSERT one. Pin the assertion, not the word.
+    assert.doesNotMatch(out, /the tag was re-cut/, 'a cause it never checked');
   });
 
   test('a lock with NO `toolkit` block does not crash — the move reads `added`', () => {
@@ -1724,5 +1891,50 @@ describe('describeToolkitProvenance (#374)', () => {
       assert.equal(result.notes.length, 1);
       assert.ok(result.notes[0].length > 20, 'a note that says nothing is worse than no note');
     }
+  });
+
+  test('a FORK\'s v0.12.0 vs UPSTREAM\'s v0.12.0 is not a re-cut tag — it is two repos (#384 F3)', () => {
+    // `recut` used to fire on `sameVersion && differentCommit` and assert "the tag was re-cut or
+    // force-pushed" — an assertion about a remote it never queried. Two repositories that each cut a
+    // genuine v0.12.0 land here, neither tag touched. This is the ORDINARY shape for the fork
+    // population #373 F14 exists to serve, and the correct diagnosis was sitting unread in
+    // `lockToolkit.source` and `identity.repo`.
+    const result = describeToolkitProvenance({
+      lockToolkit: { source: 'github:acme/wafflestack', sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' },
+      lockVersion: '0.12.0',
+      identity: releaseIdentity({ commit: SHA_B }), // repo: dustinkeeton/wafflestack
+    });
+    assert.equal(result.status, 'mismatch', 'NOT recut');
+    const note = result.notes[0];
+    assert.doesNotMatch(note, /re-cut|force-pushed/, 'it must not assert a cause it never checked');
+    assert.match(note, /DIFFERENT REPOSITORIES/);
+    assert.match(note, /github:acme\/wafflestack/, 'names the lock\'s repo…');
+    assert.match(note, /github:dustinkeeton\/wafflestack/, '…and this CLI\'s');
+    assert.match(note, /version 0\.12\.0/, 'and says they agree on the version, which is why it looked like a re-cut');
+  });
+
+  test('…while a genuine re-cut — SAME repo, same version, different commit — still reports `recut`', () => {
+    // The headline capability must survive the fix: gating on the sources agreeing must not gut it.
+    const result = describeToolkitProvenance({
+      lockToolkit: RELEASE_BLOCK, // github:dustinkeeton/wafflestack
+      lockVersion: '0.12.0',
+      identity: releaseIdentity({ commit: SHA_B }), // same repo, different commit
+    });
+    assert.equal(result.status, 'recut');
+    assert.match(result.notes[0], /re-cut or force-pushed/);
+    assert.match(result.notes[0], /from the same repository/, 'and it now shows the evidence for that claim');
+  });
+
+  test('an UNKNOWABLE source cannot be called a different repo — it degrades to `recut`, not a false claim', () => {
+    // A release block whose slug was unknowable (a bare clone: no origin, no `repository`). We cannot
+    // prove the repos differ, so we must not say so — and `recut`'s hedge ("or one of them is not the
+    // release it claims to be") is the honest remainder.
+    const result = describeToolkitProvenance({
+      lockToolkit: { ...RELEASE_BLOCK, source: null },
+      lockVersion: '0.12.0',
+      identity: releaseIdentity({ commit: SHA_B }),
+    });
+    assert.equal(result.status, 'recut');
+    assert.doesNotMatch(result.notes[0], /DIFFERENT REPOSITORIES/);
   });
 });
