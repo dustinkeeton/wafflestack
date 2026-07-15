@@ -272,8 +272,8 @@ Two steps, in this order, and **neither substitutes for the other**:
 REVIEW_ID=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-qa-review-$N-$HEAD_SHA.json" --jq '.id')
 gh api "repos/$OWNER/$REPO/pulls/$N/reviews/$REVIEW_ID" --jq '.id, .commit_id, .state'
 
-# 2. ONLY THEN, signal it — a waffle/qa commit status on the head you reviewed.
-HEAD_SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
+# 2. ONLY THEN, signal it — a waffle/qa commit status on the head you reviewed
+#    (step 1's headRefOid — do not re-resolve it here).
 gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/qa -f description="QA review posted"
 ```
 

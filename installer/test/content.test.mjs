@@ -1771,8 +1771,10 @@ describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
     assert.match(md, /Fail closed/i);
     // #232 review, preserved through both mechanism changes: the check stays HEAD-scoped, so an
     // earlier round's review can never satisfy a later round's check in autopilot's multi-round
-    // loop. The review's own commit_id and the status are both keyed to the SHA.
-    assert.match(md, /HEAD_SHA=\$\(gh pr view "\$N" --json headRefOid/);
+    // loop. The review's own commit_id and the status are both keyed to the SHA — step 1's
+    // read-time headRefOid, never re-resolved at post time (#412).
+    assert.match(md, /statuses\/\$HEAD_SHA/, 'the status is keyed to the reviewed head SHA');
+    assert.doesNotMatch(md, /HEAD_SHA=\$\(gh pr view/, 'step 7 must not re-resolve HEAD_SHA — a late re-derivation reads after the first use and stamps a post-time head (#412)');
     assert.match(md, /commit_id/, 'the read-back must surface commit_id — head-scoping is load-bearing');
   });
 
@@ -3190,7 +3192,8 @@ describe('issue / PR / review templates (#337)', () => {
     // Write/Read pair is what crosses the Bash-call boundary that killed $CUTOFF (F10), and it is
     // the ONLY recovery that cannot over-claim.
     const pr = readSkill('pr-response');
-    assert.match(pr, /waffle-cutoff-<N>-<head-sha>\.txt|waffle-cutoff-354-/, 'pr-response must persist the cutoff to a per-PR, per-head scratch file');
+    assert.match(pr, /waffle-cutoff-<N>-<head-sha>\.txt/, 'pr-response must persist the cutoff to a per-PR, per-head scratch file');
+    assert.match(pr, /waffle-cutoff-354-[0-9a-f]{40}\.txt/, 'pr-response’s concrete cutoff example must carry a full 40-char SHA — a truncated SHA breaks the step-6 recovery path');
     assert.match(pr, /`Write` tool/, 'pr-response must persist the cutoff with the Write tool');
     assert.match(pr, /Recover the cutoff with the `Read` tool/, 'pr-response must recover the cutoff with the Read tool — it crosses the shell-call boundary');
     // The round-4 recovery instruction, which silently restored F9. It must be gone from both sites.
