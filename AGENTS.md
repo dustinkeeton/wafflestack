@@ -558,7 +558,7 @@ Node >= 18. Single runtime dependency: `yaml`.
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — the flag is **required** (#373): `render` refuses from a toolkit that is not at a release tag, and a working tree never is. Commit the updated render + lock (the `doctor` drift gate is a required check). |
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — **not** gated, needs no flag) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate in `.github/workflows/tests.yml`, #316). `--verify-render` **renders**, so it is gated (#373) and needs `--allow-unreleased` when run by hand from a branch; the `tests` job supplies the env twin `WAFFLESTACK_ALLOW_UNRELEASED: '1'` instead, which is why line 72 there carries no flag. |
-| evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 10 cases across `code-quality` (1) + `github-workflow` (7) + `orchestration` (2); scheduled nightly by the opt-in `waffle-evals` syrup. **Not** in `npm test`. |
+| evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 15 cases across `code-quality` (2) + `github-workflow` (10) + `orchestration` (3); scheduled nightly by the opt-in `waffle-evals` syrup. **Not** in `npm test`. |
 
 Test files: `installer.test.mjs` (render pipeline machinery), `checkpoint.test.mjs` /
 `memory.test.mjs` (the delegate skill's shipped validator CLIs), `content.test.mjs`

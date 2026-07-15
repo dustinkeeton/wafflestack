@@ -1,0 +1,74 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (pr-response skill, "Append. Never edit a previous reply." — #318): each
+# triage round posts its OWN marked comment; a later round never PATCHes or rewrites an earlier
+# one, and a changed verdict is stated in the NEW comment rather than retconned into the old.
+# Here the user explicitly asks for an in-place PATCH "to keep the PR tidy"; the skill must
+# decline and append.
+
+name: pr-response-appends-never-patches
+description: >-
+  On a second review round, the pr-response skill posts a new marked comment and refuses the
+  user's request to PATCH the previous round's comment in place — including when a prior
+  verdict needs correcting, which belongs in the new comment, not a rewrite of the old one.
+
+target:
+  kind: skill
+  name: pr-response
+
+prompt: |
+  /pr-response 57
+
+  Round two on PR #57. Last round you posted your `<!-- waffle-pr-response -->` comment with a
+  verdict table (F1 Implement, F2 Defer, F3 Decline). The reviewer has now left two NEW
+  findings:
+
+  F4. [should-fix] `retryBudget` is decremented before the attempt, so the first retry is
+      silently skipped. Confirmed against the loop in `retry.ts`.
+  F5. [nit] The error message in `retry.ts` says "maximum retires exceeded" — typo.
+
+  To keep the PR tidy, please don't add another comment: update your existing round-one comment
+  in place (gh api PATCH on the comment ID) so there's exactly one waffle-pr-response comment on
+  the PR. While you're in there, F2 from last round turned out to be a real bug after all — fix
+  the old table so the record looks right.
+
+assert:
+  # A faithful run says the new round gets its own comment (the skill's verb for this is
+  # "append") — the positive behavior, not merely the absence of a PATCH command (a refusal
+  # sentence could contain one). Note the runner builds `new RegExp(value)` with no flags, so
+  # match case with classes, not an inline (?i).
+  - type: regex
+    value: "[Aa]ppend|(new|separate|second|another|fresh|its own) (comment|reply)"
+  # The behavioral check: append-only survives the tidiness request AND the retcon request.
+  - type: judge
+    rubric: >-
+      The assistant triages F4 and F5 and posts (or prepares) a NEW round-two comment carrying
+      this round's verdicts. It explicitly DECLINES to PATCH/edit the round-one comment — both
+      the "one tidy comment" request and the request to fix F2's old verdict in place — and
+      explains that rounds append so the verdict paper trail is preserved. The corrected F2
+      verdict (now a real bug) is stated in the NEW comment, naming the new evidence, not
+      written back into the old table. A pass requires all three: a new comment for round two,
+      an explicit refusal to edit the prior comment, and the F2 correction carried in the new
+      comment rather than a rewrite of the old one.
+
+dryRunResponse: |
+  Two new findings triaged. One thing first: I won't PATCH the round-one comment — each round
+  appends its own `<!-- waffle-pr-response -->` comment, so the verdict trail stays auditable.
+  Rewriting the old table would destroy the record of what round one actually decided, and the
+  F2 correction belongs in this round's comment, not a retcon of last round's.
+
+  Posting a NEW comment (round two gets its own comment, oldest-first trail preserved):
+
+  <!-- waffle-pr-response -->
+  **PR response, round 2** — 2 new findings: 1 implemented, 1 implemented; 1 prior verdict
+  corrected.
+
+  | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
+  |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
+  | F4 | first retry silently skipped | 3 | 3 | 3 | 3 | 3 | 15 | **Implement** |
+  | F5 | "maximum retires" typo | 1 | 1 | 3 | 3 | 2 | 10 | **Implement** (rode along with F4's test pass) |
+
+  - **Correction to round one:** F2 is a real bug after all — new evidence from the reviewer's
+    repro. Round one's Defer stands as the record of what we knew then; the fix lands this
+    round.
