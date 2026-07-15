@@ -454,6 +454,18 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **Pre-flight commands now mirror CI's required `test` job (#375).** `typecheckCmd` was
+  `npm run validate` (the manifest validator, not tsc), `lintCmd` fell back to a
+  `npm run lint --if-present` no-op (no `lint` script exists), and no pre-flight ran the
+  `doctor --verify-render` step — so an agent could follow the rendered pre-flight exactly and
+  still red a required check, which is precisely what happened on PR #370 (commit `46293cc`)
+  during autopilot. Now `typecheckCmd: npm run typecheck`, `lintCmd: npm run validate` (this
+  repo's lint-shaped static conformance check), and `buildCmd: npm run build` — a new
+  `package.json` script wrapping `npm pack --dry-run` plus the doctor verify step. A new guard
+  test (`installer/test/preflight-ci-parity.test.mjs`) fails whenever a command in tests.yml's
+  required `test` job is missing from the rendered pre-flight, so the drift can't recur
+  silently. **Consumer impact:** none — repo config (`.waffle/waffle.yaml`) and repo-local
+  test only; no stack content changed.
 - **`upgrade` now moves the pinned `toolkitRef` config keys — the write-side of the pin (#372).**
   `upgrade` moved the toolkit forward everywhere except the two places that decide *which toolkit
   actually runs*: `doctor.toolkitRef` (what CI's doctor job fetches) and `waffle.toolkitRef` (what

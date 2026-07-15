@@ -136,7 +136,7 @@ Each agent should:
 - Read its corresponding skill in `.claude/skills/` for standards and checklists
 - Read the full project source and root
 - Implement fixes directly if its role grants edit tools; report-only agents deliver a severity-ranked findings report instead
-- Verify the build passes after changes (`npm run validate`)
+- Verify the build passes after changes (`npm run typecheck`)
 - Send a findings summary to the team lead: `SendMessage(to: "team-lead", message: <summary>, summary: "<5–10 word preview>")`
 - Mark its task as completed: `TaskUpdate(taskId: <task_id>, status: "completed")`
 

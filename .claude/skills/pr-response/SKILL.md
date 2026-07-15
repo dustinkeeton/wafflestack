@@ -219,8 +219,8 @@ For each **Implement** finding, in order, following the `git-workflow` skill:
    Use the commit format and attribution trailer from `git-workflow` — pass the message with
    `git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -F <message-file>` when it needs a body.
 
-5. Run the pre-flight before pushing: `npm run lint --if-present`, `npm run validate`,
-   `npm test`, `npm pack --dry-run`.
+5. Run the pre-flight before pushing: `npm run validate`, `npm run typecheck`,
+   `npm test`, `npm run build`.
 6. Push to the PR's branch. The PR updates in place — do not open a second PR.
 
 For each **Defer** finding, file a follow-up issue (the `issue` skill does this well) and put the

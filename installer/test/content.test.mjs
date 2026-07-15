@@ -200,9 +200,12 @@ describe('delegate skill: gates, checklist, checkpoint + approval invariants', (
   });
 
   test('pre-flight checklist items are present in the agent prompt', () => {
+    // Command values are this repo's project.*Cmd config (#375); CI parity is
+    // guarded by preflight-ci-parity.test.mjs — this only pins their presence.
     assert.match(md, /npm run validate/);
+    assert.match(md, /npm run typecheck/);
     assert.match(md, /npm test/);
-    assert.match(md, /npm pack --dry-run/);
+    assert.match(md, /npm run build/);
   });
 
   test('checkpoint validation is a hard deterministic gate at every phase boundary', () => {
@@ -2084,10 +2087,13 @@ describe('release skill: required sections and tag-safety guardrails', () => {
     assert.match(md, /Rename the `## \[Unreleased\]` heading to\s*\n?\s*`## \[X\.Y\.Z\] - YYYY-MM-DD`/);
   });
 
-  test('pre-flight checklist runs validate / test / pack before the PR opens', () => {
+  test('pre-flight checklist runs validate / typecheck / test / build before the PR opens', () => {
+    // Command values are this repo's project.*Cmd config (#375); CI parity is
+    // guarded by preflight-ci-parity.test.mjs — this only pins their presence.
     assert.match(md, /npm run validate/);
+    assert.match(md, /npm run typecheck/);
     assert.match(md, /npm test/);
-    assert.match(md, /npm pack --dry-run/);
+    assert.match(md, /npm run build/);
   });
 
   test('the skill never pushes to main and never tags — the on-merge hook does', () => {

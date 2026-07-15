@@ -80,9 +80,12 @@ config:
   project:
     name: wafflestack
     longName: the wafflestack agent/skill toolkit
+    # These four slots mirror tests.yml's required `test` job; guarded by
+    # installer/test/preflight-ci-parity.test.mjs (#375).
+    lintCmd: npm run validate
     testCmd: npm test
-    typecheckCmd: npm run validate
-    buildCmd: npm pack --dry-run
+    typecheckCmd: npm run typecheck
+    buildCmd: npm run build
   release:
     # The `release` skill syncs the version line in these files (beyond package.json +
     # lockfile) on a bump. STATUS.md carries a "**Version**: vX.Y.Z" header.

@@ -187,10 +187,10 @@ gh pr create --title "feat: short title" --body "$(cat <<'EOF'
 - Bullet points describing changes
 
 ## Test plan
-- [ ] Lint passes (`npm run lint --if-present`)
-- [ ] Types pass (`npm run validate`)
+- [ ] Lint passes (`npm run validate`)
+- [ ] Types pass (`npm run typecheck`)
 - [ ] Tests pass (`npm test`)
-- [ ] Build passes (`npm pack --dry-run`)
+- [ ] Build passes (`npm run build`)
 
 Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
 EOF
@@ -293,8 +293,8 @@ Coordination and isolation are orthogonal — **named agents** provide coordinat
 
 Before pushing any branch, run all of these in order. Do not push if any fail:
 
-1. `npm run lint --if-present` — lint/format checks pass
-2. `npm run validate` — types pass
+1. `npm run validate` — lint/format checks pass
+2. `npm run typecheck` — types pass
 3. `npm test` — all tests pass
-4. `npm pack --dry-run` — build succeeds
+4. `npm run build` — build succeeds
 5. `git diff main...HEAD` — review all changes since branching

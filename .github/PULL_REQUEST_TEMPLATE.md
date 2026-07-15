@@ -25,10 +25,10 @@ Closes #
 
 <!-- The git-workflow pre-flight. Check what you ran; note anything you could not run, and why. -->
 
-- [ ] Lint passes (`npm run lint --if-present`)
-- [ ] Types pass (`npm run validate`)
+- [ ] Lint passes (`npm run validate`)
+- [ ] Types pass (`npm run typecheck`)
 - [ ] Tests pass (`npm test`)
-- [ ] Build passes (`npm pack --dry-run`)
+- [ ] Build passes (`npm run build`)
 - [ ] Reviewed the full diff against the base branch (`git diff main...HEAD`)
 
 ## Review notes
