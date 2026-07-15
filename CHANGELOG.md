@@ -454,6 +454,15 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **Back-port the exfil/destructive DANGER tier to the sibling guards (#331).** `waffle-label-hook`
+  (both jobs), `waffle-pr-response-hook`, and `waffle-hygiene` now red a denied non-git/gh
+  exfil/destructive call (`curl`/`wget`/`nc`/`ssh`/`rm`/`sudo`/…) even when the run produced
+  delivery evidence — mirroring pr-green's #208 fix. The delivery downgrade still covers each
+  job's real delivery path (git/gh, Edit/Write); sandbox escapes still outrank everything; the
+  program list is one shared declaration per guard, derived, never re-typed, and the classifiers
+  now fail closed (a jq error or an unclassifiable denial reds the run instead of silently
+  zeroing every tier). **Consumer impact:** re-render; runs that previously went
+  green-with-warning after a blocked exfil attempt now fail.
 - **Pre-flight commands now mirror CI's required `test` job (#375).** `typecheckCmd` was
   `npm run validate` (the manifest validator, not tsc), `lintCmd` fell back to a
   `npm run lint --if-present` no-op (no `lint` script exists), and no pre-flight ran the

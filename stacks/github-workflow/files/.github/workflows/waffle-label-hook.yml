@@ -108,29 +108,49 @@ jobs:
             delivered=1
           fi
           if [ "$denials" -gt 0 ]; then
-            # Fail ONLY on denials that blocked delivery or tried to escape the sandbox; warn on
-            # ad-hoc read-only shell that never blocks delivery (#82). HARD (fails the job): a
-            # sandbox-escape attempt (dangerouslyDisableSandbox:true — ALWAYS hard, NEVER downgraded),
-            # a blocked file edit (Edit/Write/MultiEdit/NotebookEdit), or a blocked delivery/destructive
-            # shell command — git/gh (the issue/board mutations enrich delivers) or a mutating/exfil
-            # program (rm/mv/cp/curl/…), matched ONLY at a command boundary so a program name inside a
-            # path or an echo string is never a false hit. SOFT (warn, does NOT fail): everything else —
-            # ad-hoc READ-ONLY shell (ls/cat/grep/find/sed/sort/loops/pipelines). A denied call never
-            # ran, so this changes only the red-vs-yellow signal, never what the harness could execute;
-            # the allowlist stays the real control. Only a bare count (no array) ⇒ every denial HARD.
-            hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(git|gh|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
-            case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
-            # Sandbox escapes among the hard denials — NEVER downgraded, even by delivery evidence.
-            escapes="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end' 2>/dev/null || echo 0)"
-            case "$escapes" in ''|*[!0-9]*) escapes=0 ;; esac
+            # Four tiers (#82/#208/#331) — pr-green's guard carries the full rationale:
+            #   ESCAPE — dangerouslyDisableSandbox:true. Red, always.
+            #   DANGER — the shared non-git/gh exfil/destructive list, never downgraded (#331;
+            #            mirrors pr-green's rung 2). Derived from $destructive, never re-typed.
+            #   DELIV  — hard minus the two above. git/gh and Edit/Write stay HERE, downgradeable —
+            #            they ARE this job's delivery path; verb tiering deliberately not ported.
+            #   SOFT   — everything else: ad-hoc read-only shell. Warn only.
+            destructive='rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|nc|netcat|socat|telnet|openssl|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs'
+            # FAIL-CLOSED: a jq error or a non-numeric count reds the run — an unclassifiable denial
+            # is never proof of safety. (`classify` runs in the CURRENT shell, so `exit 1` exits the job.)
+            classify_err="${RUNNER_TEMP:-/tmp}/waffle-classify-err.txt"
+            classify() {
+              if ! classify_out="$(printf '%s' "$result" | jq -r --arg progs "$2" "$3" 2>"$classify_err")"; then
+                echo "::error title=waffle-label-hook (enrich)::The denial classifier (${1}) FAILED TO RUN, so it cannot prove these ${denials} denied tool call(s) were harmless — FAILING CLOSED (an error is never proof of safety). jq said: $(tr '\n' ' ' <"$classify_err")Inspect the claude-execution-log-enrich artifact."
+                exit 1
+              fi
+              case "$classify_out" in
+                ''|*[!0-9]*)
+                  echo "::error title=waffle-label-hook (enrich)::The denial classifier (${1}) returned a NON-NUMERIC result ('${classify_out}'), so it cannot prove these ${denials} denied tool call(s) were harmless — FAILING CLOSED (an unreadable answer is never proof of safety). jq stderr: $(tr '\n' ' ' <"$classify_err")Inspect the claude-execution-log-enrich artifact."
+                  exit 1
+                  ;;
+              esac
+            }
+            classify hard "gh|git|${destructive}" 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (((.tool_name // "") | test("^(Edit|Write|MultiEdit|NotebookEdit)$"))) or (((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(" + $progs + ")\\b")))) ] | length else (.permission_denials_count // 0) end'
+            hard="$classify_out"
+            classify escapes '' 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end'
+            escapes="$classify_out"
+            classify danger "$destructive" 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox != true) and (((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(" + $progs + ")\\b")))) ] | length else 0 end'
+            danger="$classify_out"
             soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
-            deliv=$(( hard - escapes )); if [ "$deliv" -lt 0 ]; then deliv=0; fi
+            # DANGER ⊆ HARD \ ESCAPES by construction, clamped anyway.
+            deliv=$(( hard - escapes - danger )); if [ "$deliv" -lt 0 ]; then deliv=0; fi
             # (1) A sandbox escape is UNCONDITIONALLY red — never authorized, never downgraded.
             if [ "$escapes" -gt 0 ]; then
               echo "::error title=waffle-label-hook (enrich)::Harness attempted ${escapes} sandbox escape(s) (dangerouslyDisableSandbox) of ${denials} denied tool call(s) — a sandbox escape is NEVER authorized and ALWAYS fails the run, regardless of what else it delivered. Detail: the claude-execution-log-enrich artifact."
               exit 1
             fi
-            # (2) A hard DELIVERY denial reds the run UNLESS it still reported a PR URL (proof it landed).
+            # (2) An exfil/destructive denial is NEVER downgraded — deliberately ignores delivery evidence.
+            if [ "$danger" -gt 0 ]; then
+              echo "::error title=waffle-label-hook (enrich)::Harness was denied ${danger} exfil/destructive tool call(s) of ${denials} total — a blocked curl/wget/nc/ssh/rm/sudo/… . The call WAS blocked, so nothing escaped — but this hook chews on untrusted issue/review/PR content, and such an attempt is NEVER downgraded, not even on a run that delivered (#331). Inspect the claude-execution-log-enrich artifact; do NOT widen claude_args --allowedTools to make this green."
+              exit 1
+            fi
+            # (3) A hard DELIVERY denial reds the run UNLESS it still reported a PR URL (proof it landed).
             if [ "$deliv" -gt 0 ] && [ "$delivered" -ne 1 ]; then
               echo "::error title=waffle-label-hook (enrich)::Harness was denied ${deliv} delivery tool call(s) of ${denials} total — a blocked gh issue/board mutation, and the run reported no PR URL, so it may not have landed its work. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-enrich artifact."
               exit 1
@@ -345,31 +365,49 @@ jobs:
             delivered=1
           fi
           if [ "$denials" -gt 0 ]; then
-            # Fail ONLY on denials that blocked delivery or tried to escape the sandbox; warn on
-            # ad-hoc read-only shell that never blocks delivery (#82). HARD (fails the job): a
-            # sandbox-escape attempt (dangerouslyDisableSandbox:true — ALWAYS hard, NEVER downgraded),
-            # a blocked file edit (Edit/Write/MultiEdit/NotebookEdit — implement's code changes), or a
-            # blocked delivery/destructive shell command — git/gh (branch·commit·push·PR·issue) or a
-            # mutating/exfil program (rm/mv/cp/curl/…), matched ONLY at a command boundary so a program
-            # name inside a path or an echo string is never a false hit. SOFT (warn, does NOT fail):
-            # everything else — ad-hoc READ-ONLY shell (ls/cat/grep/find/sed/sort/loops/pipelines) and
-            # redundant setup (a stray install or toolkit-CLI call already covered by the install step
-            # above and claude_args). A denied call never ran, so this changes only the red-vs-yellow
-            # signal, never what the harness could execute; the allowlist stays the real control and
-            # sandbox escapes stay a hard failure. Only a bare count (no array) ⇒ every denial HARD.
-            hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(git|gh|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
-            case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
-            # Sandbox escapes among the hard denials — NEVER downgraded, even by delivery evidence.
-            escapes="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end' 2>/dev/null || echo 0)"
-            case "$escapes" in ''|*[!0-9]*) escapes=0 ;; esac
+            # Four tiers (#82/#208/#331) — pr-green's guard carries the full rationale:
+            #   ESCAPE — dangerouslyDisableSandbox:true. Red, always.
+            #   DANGER — the shared non-git/gh exfil/destructive list, never downgraded (#331;
+            #            mirrors pr-green's rung 2). Derived from $destructive, never re-typed.
+            #   DELIV  — hard minus the two above. git/gh and Edit/Write stay HERE, downgradeable —
+            #            they ARE this job's delivery path; verb tiering deliberately not ported.
+            #   SOFT   — everything else: ad-hoc read-only shell and redundant setup. Warn only.
+            destructive='rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|nc|netcat|socat|telnet|openssl|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs'
+            # FAIL-CLOSED: a jq error or a non-numeric count reds the run — an unclassifiable denial
+            # is never proof of safety. (`classify` runs in the CURRENT shell, so `exit 1` exits the job.)
+            classify_err="${RUNNER_TEMP:-/tmp}/waffle-classify-err.txt"
+            classify() {
+              if ! classify_out="$(printf '%s' "$result" | jq -r --arg progs "$2" "$3" 2>"$classify_err")"; then
+                echo "::error title=waffle-label-hook (implement)::The denial classifier (${1}) FAILED TO RUN, so it cannot prove these ${denials} denied tool call(s) were harmless — FAILING CLOSED (an error is never proof of safety). jq said: $(tr '\n' ' ' <"$classify_err")Inspect the claude-execution-log-implement artifact."
+                exit 1
+              fi
+              case "$classify_out" in
+                ''|*[!0-9]*)
+                  echo "::error title=waffle-label-hook (implement)::The denial classifier (${1}) returned a NON-NUMERIC result ('${classify_out}'), so it cannot prove these ${denials} denied tool call(s) were harmless — FAILING CLOSED (an unreadable answer is never proof of safety). jq stderr: $(tr '\n' ' ' <"$classify_err")Inspect the claude-execution-log-implement artifact."
+                  exit 1
+                  ;;
+              esac
+            }
+            classify hard "gh|git|${destructive}" 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (((.tool_name // "") | test("^(Edit|Write|MultiEdit|NotebookEdit)$"))) or (((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(" + $progs + ")\\b")))) ] | length else (.permission_denials_count // 0) end'
+            hard="$classify_out"
+            classify escapes '' 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end'
+            escapes="$classify_out"
+            classify danger "$destructive" 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox != true) and (((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(" + $progs + ")\\b")))) ] | length else 0 end'
+            danger="$classify_out"
             soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
-            deliv=$(( hard - escapes )); if [ "$deliv" -lt 0 ]; then deliv=0; fi
+            # DANGER ⊆ HARD \ ESCAPES by construction, clamped anyway.
+            deliv=$(( hard - escapes - danger )); if [ "$deliv" -lt 0 ]; then deliv=0; fi
             # (1) A sandbox escape is UNCONDITIONALLY red — never authorized, never downgraded.
             if [ "$escapes" -gt 0 ]; then
               echo "::error title=waffle-label-hook (implement)::Harness attempted ${escapes} sandbox escape(s) (dangerouslyDisableSandbox) of ${denials} denied tool call(s) — a sandbox escape is NEVER authorized and ALWAYS fails the run, regardless of what else it delivered. Detail: the claude-execution-log-implement artifact."
               exit 1
             fi
-            # (2) A hard DELIVERY denial reds the run UNLESS it still reported a PR URL (proof it landed).
+            # (2) An exfil/destructive denial is NEVER downgraded — deliberately ignores delivery evidence.
+            if [ "$danger" -gt 0 ]; then
+              echo "::error title=waffle-label-hook (implement)::Harness was denied ${danger} exfil/destructive tool call(s) of ${denials} total — a blocked curl/wget/nc/ssh/rm/sudo/… . The call WAS blocked, so nothing escaped — but this hook chews on untrusted issue/review/PR content, and such an attempt is NEVER downgraded, not even on a run that delivered (#331). Inspect the claude-execution-log-implement artifact; do NOT widen claude_args --allowedTools to make this green."
+              exit 1
+            fi
+            # (3) A hard DELIVERY denial reds the run UNLESS it still reported a PR URL (proof it landed).
             if [ "$deliv" -gt 0 ] && [ "$delivered" -ne 1 ]; then
               echo "::error title=waffle-label-hook (implement)::Harness was denied ${deliv} delivery tool call(s) of ${denials} total — a blocked file edit or git/gh commit·push·PR, and the run reported no PR URL, so it may not have landed its work. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-implement artifact."
               exit 1

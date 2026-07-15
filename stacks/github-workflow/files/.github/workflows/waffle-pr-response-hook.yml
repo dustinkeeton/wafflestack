@@ -263,43 +263,65 @@ jobs:
             if [ "$n" -gt 0 ]; then delivered=1; fi
           }
           if [ "$denials" -gt 0 ]; then
-            # Classify denials. HARD: a sandbox-escape attempt (dangerouslyDisableSandbox:true —
-            # ALWAYS hard, NEVER downgraded), a blocked file edit (Edit/Write/MultiEdit/NotebookEdit
-            # — the run could not apply a fix or assemble its reply body), or a blocked delivery shell
-            # command — git/gh (commit·push·reply) or a mutating/exfil program (rm/curl/…), matched
-            # ONLY at a command boundary so a program name inside a path or an echo string is never a
-            # false hit. SOFT (warn, does NOT fail): everything else — ad-hoc READ-ONLY shell
-            # (ls/cat/grep/find/sed/…). Only a bare count (no array) ⇒ every denial HARD (fail-closed).
-            #
-            # The program-name heuristic cannot read intent: a read-only `git log`/`git status` or a
-            # `gh api` GET is indistinguishable from a mutating one. Rather than chase regex precision,
-            # a hard denial is checked against the API: if the marked reply IS on the PR, the denial
-            # provably blocked nothing and is downgraded to a warning.
-            hard="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (.tool_name | test("^(Edit|Write|MultiEdit|NotebookEdit)$")) or ((.tool_name == "Bash") and ((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(git|gh|rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs)\\b")))) ] | length else (.permission_denials_count // 0) end' 2>/dev/null || echo 0)"
-            case "$hard" in ''|*[!0-9]*) hard=0 ;; esac
-            escapes="$(printf '%s' "$result" | jq -r 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end' 2>/dev/null || echo 0)"
-            case "$escapes" in ''|*[!0-9]*) escapes=0 ;; esac
+            # Four tiers (#82/#208/#331) — pr-green's guard carries the full rationale:
+            #   ESCAPE — dangerouslyDisableSandbox:true. Red, always.
+            #   DANGER — the shared non-git/gh exfil/destructive list, never downgraded (#331;
+            #            mirrors pr-green's rung 2) and never queries the API.
+            #   DELIV  — hard minus the two above. git/gh and Edit/Write stay HERE, downgradeable —
+            #            they ARE this job's delivery path; verb tiering deliberately not ported.
+            #   SOFT   — everything else: ad-hoc read-only shell. Warn only.
+            # The program list is derived from $destructive, never re-typed.
+            destructive='rm|rmdir|mv|cp|dd|tee|truncate|shred|chmod|chown|chgrp|ln|mkdir|touch|curl|wget|nc|netcat|socat|telnet|openssl|ssh|scp|rsync|sudo|kill|pkill|make|cargo|docker|apt|brew|xargs|eval|mount|mkfs'
+            # FAIL-CLOSED: a jq error or a non-numeric count reds the run — an unclassifiable denial
+            # is never proof of safety. (`classify` runs in the CURRENT shell, so `exit 1` exits the job.)
+            classify_err="${RUNNER_TEMP:-/tmp}/waffle-classify-err.txt"
+            classify() {
+              if ! classify_out="$(printf '%s' "$result" | jq -r --arg progs "$2" "$3" 2>"$classify_err")"; then
+                echo "::error title=waffle-pr-response-hook::The denial classifier (${1}) FAILED TO RUN, so it cannot prove these ${denials} denied tool call(s) were harmless — FAILING CLOSED (an error is never proof of safety). jq said: $(tr '\n' ' ' <"$classify_err")Inspect the claude-execution-log-pr-response artifact."
+                exit 1
+              fi
+              case "$classify_out" in
+                ''|*[!0-9]*)
+                  echo "::error title=waffle-pr-response-hook::The denial classifier (${1}) returned a NON-NUMERIC result ('${classify_out}'), so it cannot prove these ${denials} denied tool call(s) were harmless — FAILING CLOSED (an unreadable answer is never proof of safety). jq stderr: $(tr '\n' ' ' <"$classify_err")Inspect the claude-execution-log-pr-response artifact."
+                  exit 1
+                  ;;
+              esac
+            }
+            classify hard "gh|git|${destructive}" 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox == true) or (((.tool_name // "") | test("^(Edit|Write|MultiEdit|NotebookEdit)$"))) or (((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(" + $progs + ")\\b")))) ] | length else (.permission_denials_count // 0) end'
+            hard="$classify_out"
+            classify escapes '' 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select(.tool_input.dangerouslyDisableSandbox == true) ] | length else 0 end'
+            escapes="$classify_out"
+            classify danger "$destructive" 'if (.permission_denials | type) == "array" then [ .permission_denials[] | select((.tool_input.dangerouslyDisableSandbox != true) and (((.tool_input.command // "") | test("(^|[;&|(\\n]|&&|\\|\\|)\\s*(" + $progs + ")\\b")))) ] | length else 0 end'
+            danger="$classify_out"
             soft=$(( denials - hard )); if [ "$soft" -lt 0 ]; then soft=0; fi
+            # DANGER ⊆ HARD \ ESCAPES by construction, clamped anyway.
+            deliv=$(( hard - escapes - danger )); if [ "$deliv" -lt 0 ]; then deliv=0; fi
             # (1) A sandbox escape is UNCONDITIONALLY red — never authorized, never downgraded, not
             #     even by a delivered reply. This must stay AHEAD of the delivery-aware downgrade.
             if [ "$escapes" -gt 0 ]; then
               echo "::error title=waffle-pr-response-hook::Harness attempted ${escapes} sandbox escape(s) (dangerouslyDisableSandbox) of ${denials} denied tool call(s) — a sandbox escape is NEVER authorized and ALWAYS fails the run, regardless of whether the reply posted. Detail: the claude-execution-log-pr-response artifact."
               exit 1
             fi
-            # (2) A hard denial with NO marked reply on the PR reds the run — the response really did
-            #     not land. Widen claude_args --allowedTools (see the stack setup note) and rerun.
+            # (2) An exfil/destructive denial is NEVER downgraded — deliberately ignores delivery
+            #     evidence, so it sits BEFORE check_delivered and never queries the API.
+            if [ "$danger" -gt 0 ]; then
+              echo "::error title=waffle-pr-response-hook::Harness was denied ${danger} exfil/destructive tool call(s) of ${denials} total — a blocked curl/wget/nc/ssh/rm/sudo/… . The call WAS blocked, so nothing escaped — but this hook chews on untrusted issue/review/PR content, and such an attempt is NEVER downgraded, not even on a run that delivered (#331). Inspect the claude-execution-log-pr-response artifact; do NOT widen claude_args --allowedTools to make this green."
+              exit 1
+            fi
+            # (3) A delivery denial with NO marked reply on the PR reds the run — the response really
+            #     did not land. Widen claude_args --allowedTools (see the stack setup note) and rerun.
             #     NOTE a rerun requires REMOVING THE LOOP-BOUND LABEL first: the gate skips a PR that
             #     already carries it. That is deliberate friction — re-arming a paid, committing run is
             #     a human decision, taken with the evidence of why the first one failed in hand.
-            if [ "$hard" -gt 0 ]; then check_delivered; fi
-            if [ "$hard" -gt 0 ] && [ "$delivered" -ne 1 ]; then
-              echo "::error title=waffle-pr-response-hook::Harness was denied ${hard} delivery tool call(s) of ${denials} total — a blocked file edit, git commit·push, or gh reply — and no waffle/pr-response commit status is on ${HEAD_SHA}, so the response did NOT post. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-pr-response artifact."
+            if [ "$deliv" -gt 0 ]; then check_delivered; fi
+            if [ "$deliv" -gt 0 ] && [ "$delivered" -ne 1 ]; then
+              echo "::error title=waffle-pr-response-hook::Harness was denied ${deliv} delivery tool call(s) of ${denials} total — a blocked file edit, git commit·push, or gh reply — and no waffle/pr-response commit status is on ${HEAD_SHA}, so the response did NOT post. Widen claude_args --allowedTools (see the stack setup note) — but NEVER authorize a sandbox escape — and rerun. Detail: the claude-execution-log-pr-response artifact."
               exit 1
             fi
-            # (3) A hard denial on a run whose reply DID post blocked nothing — warn, don't red.
+            # (4) A delivery denial on a run whose reply DID post blocked nothing — warn, don't red.
             #     This is what stops a denied read-only `git log`/`gh api` GET from failing the job.
-            if [ "$hard" -gt 0 ]; then
-              echo "::warning title=waffle-pr-response-hook::Harness was denied ${hard} delivery-classified tool call(s), but the waffle/pr-response commit status IS on ${HEAD_SHA}, so the response posted — treating them as non-blocking (likely a read-only git/gh call the program-name classifier could not distinguish from a mutating one). Review the claude-execution-log-pr-response artifact if the reply looks incomplete."
+            if [ "$deliv" -gt 0 ]; then
+              echo "::warning title=waffle-pr-response-hook::Harness was denied ${deliv} delivery-classified tool call(s), but the waffle/pr-response commit status IS on ${HEAD_SHA}, so the response posted — treating them as non-blocking (likely a read-only git/gh call the program-name classifier could not distinguish from a mutating one). Review the claude-execution-log-pr-response artifact if the reply looks incomplete."
             fi
             if [ "$soft" -gt 0 ]; then
               echo "::warning title=waffle-pr-response-hook::Harness was denied ${soft} read-only tool call(s) (ad-hoc shell exploration); none blocked the response, so this does not fail the job. Review the claude-execution-log-pr-response artifact if the result looks incomplete."
