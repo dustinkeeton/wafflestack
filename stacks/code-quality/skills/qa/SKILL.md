@@ -130,6 +130,10 @@ Assign each finding a severity and let that drive whether it blocks:
 Do **not** pad the list. If the only honest finding is one nit, post one nit. If there are
 none, say so (step 6).
 
+Comment text in deterministic files (JS, YAML, shell) is outside QA's scope: QA verifies
+acceptance criteria and behavior — including user-visible output — not prose that no runtime
+reads.
+
 ## 5. Post findings as one PR review
 
 Frame each finding as an **actionable demand to the author**: name the acceptance criterion

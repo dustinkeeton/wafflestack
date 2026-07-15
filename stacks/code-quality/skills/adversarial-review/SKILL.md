@@ -82,6 +82,13 @@ would I break it?" Be specific: name the input, the line, the call path.
   standard library call replaces, a special case the general case already covers, an existing
   helper in this repo that was re-implemented, and needless indirection. What could be deleted
   with no loss?
+- **Comment-vs-code disagreements** — comments in deterministic files (JS, YAML, shell) are
+  human orientation, not spec: when one contradicts the code, the finding is "shrink or delete
+  the comment", never "make the code match the comment". Raise a comment finding only when the
+  comment misleads about live behavior — and the demand is a deletion or a one-line correction,
+  not an expansion. Skill and agent markdown is different: there the prose is the program a
+  model executes, and precision findings stay fully in scope, as do findings about
+  **user-visible output strings** that lie.
 
 Keep it proportional. A three-line typo fix does not need a five-category audit; a new module
 does. Match the depth of the review to the surface area of the change.
@@ -95,7 +102,8 @@ Assign each finding a severity and let that drive whether it blocks:
   demonstrate; if you are not sure it's real, it is not a blocker.
 - **should-fix** — a real weakness (thin test, awkward API, unhandled-but-unlikely failure)
   that is worth addressing but wouldn't by itself stop a merge.
-- **nit** — style, naming, or a minor simplification. Label it as optional.
+- **nit** — style, naming, or a minor simplification. Label it as optional. Comment wording in
+  a deterministic file is at most a nit, and usually not a finding at all.
 
 Do **not** pad the list. If the only honest finding is one nit, post one nit. If there are
 none, say so (step 6).

@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-07-13
+last-updated: 2026-07-15
 ---
 
 # AGENTS.md — wafflestack
@@ -8,6 +8,9 @@ Canonical, harness-neutral agent/skill definitions grouped into stacks; the `waf
 CLI renders them into harness-native files (`.claude/`, `.codex/`, `.agents/`) inside a
 consuming project. Rendered files are generated output — edit source (`stacks/**`,
 `schema/**`, `installer/**`), project config, or a project extension, never the rendered files.
+Comments in deterministic files (JS/YAML/shell) are orientation, not spec — rules live in code
+and behavior tests; agent-behavior rules live in skill/agent markdown, which is the program
+(DECISIONS.md 2026-07-15, #388).
 
 Entry points: `installer/cli.mjs` (bin `wafflestack`) · `toolkit.yaml` (stack registry) ·
 `schema/FORMAT.md` (format reference).

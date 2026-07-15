@@ -305,7 +305,9 @@ A **stack's content is a set of prompts**, and a prompt is only correct if it ma
 
 - **Layer 1** (`installer/test/content.test.mjs`) is the cheap per-PR gate: deterministic
   key-phrase assertions on the *rendered* prompt text, no model call. It proves a guardrail's
-  wording survived an edit, but it can't prove what the prompt makes a model *do*.
+  wording survived an edit, but it can't prove what the prompt makes a model *do*. Layer 1
+  pins prompt text and rendered output only — never comment prose in deterministic files
+  (comments there are orientation, not spec).
 - **Layer 2** is this: a metered, LLM-driven tier that renders a target prompt, drives a real
   model against a scenario, and checks a transcript-level assertion. Because it costs real API
   money it lives behind its **own entry point** (`npm run evals` → `installer/evals.mjs`) and is

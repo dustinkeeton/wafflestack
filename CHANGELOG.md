@@ -32,6 +32,13 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **Comments are not spec (#388).** Deterministic files (JS, YAML, shell) carry rules in code and
+  behavior tests; comments there are short, rare, human orientation, and a comment-vs-code
+  disagreement is resolved by shrinking the comment — never by making the code match the comment.
+  `adversarial-review` and `qa` now scope comment findings accordingly, and `git-workflow` carries
+  the standing touch-it-shrink-it commit rule. Two deliberate exceptions stay fully reviewable:
+  skill/agent markdown (the program agents execute) and user-visible output strings / generated
+  docs (behavior). **Consumer impact:** re-render picks up the skill changes; no migration.
 - **The orchestration skills call the tools the harness actually has (#360).** `audit`, `delegate`,
   `autopilot`, `clean-up`, `git-workflow` and the `project-manager` agent had drifted onto primitives
   that no longer exist, so an agent following them literally called a tool that was not in its tool
