@@ -353,7 +353,13 @@ gh api --method POST "repos/$OWNER/$REPO/statuses/<head-sha>" -f state=success -
 ```
 
 **Recover the cutoff with the `Read` tool** — `/tmp/waffle-cutoff-<N>-<head-sha>.txt`, the file
-step 2 wrote — and **substitute both literals**: the head SHA, and that timestamp.
+step 2 wrote — and **substitute both literals**: the head SHA, and that timestamp. Here `<head-sha>`
+is the **read-time** head — the same `$HEAD_SHA` that named the staging path (step 5), the head you
+**read** the findings on in step 1. **Do not re-resolve it after the push:** the fixes you applied
+moved the head, so `gh pr view … headRefOid` now returns the *post-push* head Y. Recover the cutoff
+file under the read-time head X (step 2 wrote `-X`, so `-Y` misses and forces the fallback), and
+target the delivery status on X (a consumer keyed on the read-time head finds no status on Y). Both
+failures are fail-safe but defeat the fix.
 
 **Never write `$CUTOFF` here**: that variable belonged to a shell that exited many tool calls ago, it
 expands to empty, and an empty cutoff makes the gate read *every* review on this head as untriaged —
@@ -426,7 +432,10 @@ Five rules, each load-bearing:
   errors, say so and do **not** report success — an untriaged PR that *looks* triaged is the one
   failure this skill must never produce.
 
-`$HEAD_SHA` is the head at the time you read the findings: `gh pr view "$N" --json headRefOid -q .headRefOid`.
+`$HEAD_SHA` is the head at the time you read the findings — captured **once** in step 1 with
+`gh pr view "$N" --json headRefOid -q .headRefOid`, then reused verbatim through the staging path and
+this delivery status. **Do not re-derive it here:** after your push the branch points at a new head,
+and re-running that command returns the post-push head, not the one you triaged.
 
 ### Label each round
 
