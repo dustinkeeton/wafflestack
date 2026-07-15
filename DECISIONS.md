@@ -9,6 +9,47 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-15: Comments are not spec — rules live in code and tests; skill markdown is the program (#388)
+
+**Context**: Review loops were litigating prose. Across the last 10 substantive PRs (~100 findings),
+~29% were prose/comment/consistency findings, and the most-churned PRs (#370, #382, #384) spent their
+late rounds on wording rather than behavior. The cause was structural, not a review-skill defect
+(~54% of the findings were real functional bugs — the loop earns its keep): `installer/lib/toolkit-ref.mjs`
+was 62% comment lines (a ~200-line normative JSDoc essay among them), the pr-green/pr-response hook
+workflows 62–63%, and `content.test.mjs` pinned comment sentences verbatim. Every rule existed in
+three drifting copies — comment, code, test pin — so a competent reviewer had no choice but to treat
+the comment as spec and back-check the code against it. The runtime never reads a comment; the review
+loop did.
+
+**Decision**: Deterministic files (JS, YAML, shell) carry rules in **code + behavior tests**.
+Comments there are short, rare, human orientation — a pointer to a DECISIONS entry or a setup note,
+never the spec. A comment-vs-code disagreement is resolved by shrinking the comment, never by
+litigating which side is right, and a review finding is never answered by growing a comment. Two
+deliberate exceptions:
+
+- **Skill/agent markdown is the program.** An agent executes that prose, so precision there is a
+  feature; it stays test-pinned (Layer 1) and eval-checked (Layer 2). When a Layer-1 phrase pin
+  churns in review, prefer substantive-token pins over exact sentences, and migrate guardrails whose
+  value is *what a model does* to Layer-2 evals case by case.
+- **User-visible output is behavior.** CLI messages, refusal text, and generated docs are read and
+  acted on by consumers; findings about output that lies stay fully in scope.
+
+Layer 1 (`content.test.mjs`) pins prompt text and rendered output; it never pins comment prose in
+deterministic files.
+
+**Alternatives weighed**: Softening the review skills to ignore prose entirely — rejected: lying
+user-facing output is a defect, and the loop's lens was never the problem. Recording the boundary
+without touching the scoring — rejected: pr-response's rubric is where a comment-wording finding
+either clears the Implement bar or does not, so the doctrine gets a scoring anchor there (rubric v3,
+#385).
+
+**Affects**: `adversarial-review` and `qa` (comment-vs-code findings demand comment shrinkage),
+`git-workflow` (the touch-it-shrink-it commit rule), `pr-response` (v3 scoring anchor, #385),
+`content.test.mjs` (comment-prose pins removed in a follow-up), and the `installer/lib` comment
+burn-down epic.
+
+---
+
 ## 2026-07-13: `upgrade` rewrites only the pins a consumer already chose, and never re-execs (#372)
 
 **Context**: The two `toolkitRef` config keys decide which toolkit actually runs — `doctor.toolkitRef`

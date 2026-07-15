@@ -137,6 +137,11 @@ git checkout -b feat/my-feature
   `git.cmd` **is** the project's explicit signing posture — never deviate from it per-invocation,
   in either direction, without the human's per-run say-so.
 - Prefer new commits over amending — amending overwrites history.
+- **Comments are not spec.** In deterministic files (JS, YAML, shell), keep comments short,
+  rare, and non-normative — the rule lives in the code and its tests; the why lives in
+  `DECISIONS.md`. When you touch a file, shrink its comment mass rather than growing it, and
+  never grow a comment to answer a review finding. Skill and agent markdown is the exception:
+  that prose is the program.
 
 ### Example
 
