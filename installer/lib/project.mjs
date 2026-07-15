@@ -34,28 +34,21 @@ import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 export const CONFIG_FILE = '.waffle/waffle.yaml';
 export const LOCAL_CONFIG_FILE = '.waffle/waffle.local.yaml';
 export const LOCK_FILE = '.waffle/waffle.lock.json';
-// The gitignored twin of the lock (#317). `LOCK_FILE` records the CANONICAL render — the one
-// the committed inputs produce, identical on every machine — so it can be committed without
-// carrying a developer's private overlay values into shared state. But the bytes actually on
-// disk are the EFFECTIVE render (canonical + the local overlay), and the frozen-image
-// bookkeeping needs a truthful record of *those*: which files this machine wrote (to prune
-// and to not clobber), and what they hashed to (so `doctor` still catches a hand-edit).
-// That is this file. Written only when the overlay actually changes an output byte, removed
-// again when it stops; account-specific by construction, so — like the overlay itself — it
-// must never be committed (`recommendedGitignoreEntries` offers it).
+// The gitignored twin of the lock (#317): the frozen-image bookkeeping for the EFFECTIVE render
+// (canonical + local overlay) actually on disk — which files this machine wrote and their hashes —
+// since `LOCK_FILE` records the shared CANONICAL render. Written only when the overlay moves a byte,
+// removed when it stops; account-specific, so never committed (`recommendedGitignoreEntries` offers it).
 export const LOCAL_LOCK_FILE = '.waffle/waffle.local.lock.json';
 export const EXTENSIONS_DIR = path.join('.waffle', 'extensions');
 
-// Legacy (0.6.0 – 0.7.x) repo-root dot-paths, introduced by the #17 rename and moved into
-// `.waffle/` by the 0.8.0 migration (#43). Still read as a fallback, and moved to the names
-// above by a plain `render`/`upgrade` (via `migrateLegacyDotfiles`) or the 0.8.0 step.
+// Legacy (0.6.0–0.7.x) repo-root dot-paths (#17), moved into `.waffle/` by 0.8.0 (#43); still read
+// as a fallback, migrated forward by a plain `render`/`upgrade`.
 export const LEGACY_ROOT_CONFIG_FILE = '.waffle.yaml';
 export const LEGACY_ROOT_LOCAL_CONFIG_FILE = '.waffle.local.yaml';
 export const LEGACY_ROOT_LOCK_FILE = '.waffle.lock.json';
 
-// Legacy (pre-0.6.0) consumer dot-paths. Still read as a (last) fallback so a repo that has
-// not re-rendered since keeps working; `migrateLegacyDotfiles` chains them through the
-// 0.6.0 rename (#17) all the way into `.waffle/` in one pass.
+// Legacy (pre-0.6.0) consumer dot-paths, read as a last fallback; `migrateLegacyDotfiles` chains
+// them through the 0.6.0 rename (#17) all the way into `.waffle/` in one pass.
 export const LEGACY_CONFIG_FILE = '.wafflestack.yaml';
 export const LEGACY_LOCAL_CONFIG_FILE = '.wafflestack.local.yaml';
 export const LEGACY_LOCK_FILE = '.wafflestack.lock.json';
@@ -65,12 +58,9 @@ export const LEGACY_EXTENSIONS_DIR = path.join('.wafflestack', 'extensions');
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'];
 
 /**
- * Resolve a consumer dot-path under `cwd`, preferring the current `.waffle/` name but
- * falling back through `legacyNames` (ordered newest generation first) when only an older
- * layout is present. Returns `{ file, legacy, note }` — `file` is the absolute path to read
- * (the current name when nothing exists, so "not found" errors name the current file),
- * `legacy` flags a fallback, and `note` is a one-line deprecation message the caller can
- * surface, naming the legacy path found and how to migrate it.
+ * Resolve a consumer dot-path under `cwd`, preferring the current `.waffle/` name but falling back
+ * through `legacyNames` (newest first). Returns `{ file, legacy, note }` — `file` is the current name
+ * when nothing exists (so "not found" errors name it), `note` a deprecation message to surface.
  *
  * @param {string} cwd
  * @param {string} currentName
@@ -112,14 +102,9 @@ export const resolveLockFile = (cwd) =>
 export const localLockPath = (cwd) => path.join(cwd, LOCAL_LOCK_FILE);
 
 /**
- * Move any legacy consumer dot-paths under `cwd` to their current `.waffle/` locations, in
- * place. Idempotent: a path moves only when the older name exists and the newer one does
- * not, so re-running on an already-migrated or fresh repo is a harmless no-op. The pairs
- * are ordered oldest generation first so a pre-0.6.0 repo chains `.wafflestack.*` →
- * `.waffle.*` → `.waffle/waffle.*` in a single pass. Returns the `{ from, to }` renames
- * performed (for reporting). This is the shared body of the 0.6.0 and 0.8.0 migrations and
- * also runs at the top of every `render`, so a plain re-render carries a legacy repo
- * across too.
+ * Move any legacy consumer dot-paths under `cwd` to their current `.waffle/` locations, in place.
+ * Idempotent, oldest-generation-first so a pre-0.6.0 repo chains all the way into `.waffle/` in one
+ * pass. Shared by the 0.6.0/0.8.0 migrations and the top of every `render`.
  *
  * @param {string} cwd
  * @returns {{ from: string, to: string }[]} the renames performed (for reporting)
@@ -133,8 +118,7 @@ export function migrateLegacyDotfiles(cwd) {
     [LEGACY_LOCAL_CONFIG_FILE, LEGACY_ROOT_LOCAL_CONFIG_FILE],
     [LEGACY_LOCK_FILE, LEGACY_ROOT_LOCK_FILE],
     [LEGACY_EXTENSIONS_DIR, EXTENSIONS_DIR],
-    // … then root `.waffle.*` → inside the `.waffle/` directory (#43). Creating `.waffle/`
-    // coexists with a pre-existing `.waffle/extensions/` (mkdir is recursive-safe).
+    // … then root `.waffle.*` → inside the `.waffle/` directory (#43); mkdir is recursive-safe.
     [LEGACY_ROOT_CONFIG_FILE, CONFIG_FILE],
     [LEGACY_ROOT_LOCAL_CONFIG_FILE, LOCAL_CONFIG_FILE],
     [LEGACY_ROOT_LOCK_FILE, LOCK_FILE],
@@ -159,12 +143,9 @@ export function migrateLegacyDotfiles(cwd) {
 }
 
 /**
- * Which legacy paths a repo's `.gitignore` still lists — the now-stale root
- * `.waffle.local.yaml` / `.waffle.lock.json` lines as well as the pre-0.6.0
- * `.wafflestack.*` ones. The CLI never edits `.gitignore` unasked (a consumer owns it), so
- * after a dotfile move we remind them to update the entries themselves. Self-clearing:
- * returns [] once the stale lines are gone. (A current `.waffle/waffle.*` line never
- * matches a legacy name — the `/` breaks the substring — so migrated repos stay quiet.)
+ * Which legacy paths a repo's `.gitignore` still lists (stale root `.waffle.*` and pre-0.6.0
+ * `.wafflestack.*` lines). The CLI never edits `.gitignore` unasked, so this just reminds; self-
+ * clearing once the stale lines are gone.
  *
  * @param {string} cwd
  * @returns {string[]}
@@ -182,15 +163,9 @@ export function staleGitignoreEntries(cwd) {
 }
 
 /**
- * Is `entry` named anywhere in the repo's `.gitignore`? A deliberately literal test — it matches
- * the entry's basename as a substring and does not evaluate glob semantics, so a repo that ignores
- * the file by pattern rather than by name reads as "not ignored".
- *
- * That is the safe direction for its only caller. `render` uses it to *remind* a repo to ignore the
- * local lock it just wrote (#317): an un-ignored `.waffle/waffle.local.lock.json` is the very
- * propagation the canonical lock exists to prevent, one file over — commit it and every teammate's
- * `doctor` starts comparing their tree against YOUR machine's hashes. A stray reminder costs a line
- * of noise; a missed one costs the invariant. It is a warning, never a gate.
+ * Is `entry` named anywhere in the repo's `.gitignore`? A deliberately literal basename-substring
+ * test (no glob semantics), which is the safe direction for its only caller: `render` reminding a
+ * repo to ignore the local lock it wrote (#317). A warning, never a gate.
  *
  * @param {string} cwd
  * @param {string} entry a `.gitignore`-able repo-relative path
@@ -207,14 +182,9 @@ export function gitignoreMentions(cwd, entry) {
 export const GITIGNORE_MARKER = '# wafflestack';
 
 /**
- * Idempotently append `.gitignore` entries the consumer has approved — via the `--gitignore`
- * flag on `init`/`render`/`install`, or an agent acting on the setup playbook's offer. This is
- * the one place the CLI writes `.gitignore`, refining the "never edits it" stance to "never
- * edits it *unasked*". Append-only and non-destructive: an entry already present (exact,
- * whitespace-trimmed line match) is skipped, existing content is preserved verbatim (a missing
- * trailing newline is added so the first appended entry can't glue onto the last existing
- * line), and the `# wafflestack` marker is written once. Creates `.gitignore` when absent.
- * Returns the entries actually added (for reporting) — [] when everything was already present.
+ * Idempotently append consumer-approved `.gitignore` entries — the one place the CLI writes
+ * `.gitignore`, refining "never edits it" to "never edits it *unasked*". Append-only and non-
+ * destructive (existing content verbatim, marker written once); creates the file when absent.
  *
  * @param {string} cwd
  * @param {Iterable<string>} entries
@@ -250,25 +220,10 @@ export function ensureGitignoreEntries(cwd, entries) {
 }
 
 /**
- * The exact inverse of `ensureGitignoreEntries` — strip the entries wafflestack itself offered,
- * for `uninstall` (#182). Deliberately as literal as its twin, and for the same reason: this
- * function edits a file the toolkit does not own.
- *
- * Only a line whose trimmed text EXACTLY equals one of `entries` is removed. There is no
- * "delete from the marker to the next blank line" heuristic, because the marker does not in fact
- * bound the block: `ensureGitignoreEntries` appends later batches at EOF, and any line the
- * consumer wrote afterwards lands inside that span too. Eating it would be the one unrecoverable
- * mistake an uninstall can make in a file it did not write.
- *
- * The `# wafflestack` marker is removed only when it has been left labelling nothing — i.e. the
- * next line is blank or end-of-file — together with the blank separator line its twin wrote above
- * it. A marker that still has lines under it (a stale entry from a stack no longer enabled, a
- * consumer line appended below) keeps them company and survives. Every other byte of the file is
- * preserved verbatim, including the original trailing-newline habit and the line terminator the
- * file actually uses — a CRLF `.gitignore` comes back CRLF, not silently normalised to LF.
- *
- * Returns the entries actually removed; [] when none were present (idempotent, so a second
- * `uninstall` is a clean no-op rather than an error).
+ * The exact inverse of `ensureGitignoreEntries` — strip the entries wafflestack offered, for
+ * `uninstall` (#182). As literal as its twin: only a line EXACTLY equal to one of `entries` is
+ * removed (no marker-to-blank heuristic — the marker doesn't bound the block). The marker goes only
+ * when left labelling nothing; every other byte, including the file's EOL habit (CRLF stays CRLF), survives.
  *
  * @param {string} cwd
  * @param {Iterable<string>} entries
@@ -287,16 +242,9 @@ export function removeGitignoreEntries(cwd, entries) {
 
   const text = fs.readFileSync(gi, 'utf8');
   const endsWithNewline = text.endsWith('\n');
-  // Rejoin with the terminator the file ACTUALLY uses. `split(/\r?\n/)` drops the `\r` from every
-  // line, so a bare `join('\n')` rewrote every line of a CRLF `.gitignore` — a Windows checkout with
-  // `core.autocrlf=true` — to LF: a whole-file diff in a file the toolkit does not own, from the one
-  // function whose entire stated design is not to do that. Its twin `ensureGitignoreEntries` gets it
-  // for free by being append-only (it never rewrites an existing line); the inverse has to ask.
-  //
-  // The FIRST terminator wins — the file's established habit — not the majority. Counting would get
-  // the round-trip exactly backwards on the case that matters most: `ensureGitignoreEntries` appends
-  // its block with LF even to a CRLF file, so after an ensure the LF lines are usually the majority,
-  // and a dominance rule would then "helpfully" rewrite the consumer's CRLF lines on the way out.
+  // Rejoin with the terminator the file ACTUALLY uses: `split(/\r?\n/)` drops the `\r`, so a bare
+  // `join('\n')` rewrote a CRLF `.gitignore` to LF — a whole-file diff in a file we don't own. The
+  // FIRST terminator wins (the file's habit), not the majority (an append leaves LF the majority).
   const eol = text.match(/\r\n|\n/)?.[0] === '\r\n' ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
   // `split` leaves a trailing '' for a newline-terminated file; drop it so it cannot be mistaken
@@ -313,10 +261,8 @@ export function removeGitignoreEntries(cwd, entries) {
   }
   if (!removed.length) return [];
 
-  // Drop a marker that now labels an empty block (next line is blank, or end-of-file), plus the
-  // blank separator line its twin wrote above it. Marking indices and filtering in a second pass,
-  // rather than splicing in place: an in-place splice of two lines shifts every index after it,
-  // and the walk would then read past the end of its own array.
+  // Drop a marker now labelling an empty block (next line blank or EOF), plus the blank separator
+  // above it. Marked and filtered in a second pass so an in-place splice can't shift indices mid-walk.
   /** @type {Set<number>} */
   const orphaned = new Set();
   for (let i = 0; i < kept.length; i++) {
@@ -334,20 +280,10 @@ export function removeGitignoreEntries(cwd, entries) {
 }
 
 /**
- * The `.gitignore` entries wafflestack recommends for a loaded `project` — the baseline offer
- * behind the `--gitignore` flag and the setup playbook. Always the local overlay
- * (`.waffle/waffle.local.yaml`, account-specific config that must never be committed) and its
- * derivative the local lock (`.waffle/waffle.local.lock.json` — this machine's render, written
- * only when the overlay changes an output byte; see LOCAL_LOCK_FILE), plus the resolved
- * `git.worktreesDir` (throwaway working state) when an enabled stack declares that key.
- * Gitignoring the rendered output is a separate opt-in the agent proposes case by
- * case, not part of this baseline — and the render and the lock are two decisions, not one.
- * Ignoring a subset of renders pairs with `doctor --allow-missing`, which relaxes *presence*
- * and never *integrity*, so the gate keeps full strength on what remains; ignoring every
- * render makes `doctor` vacuous (nothing present to check) and the gate becomes
- * `doctor --allow-missing --verify-render`. Gitignoring `.waffle/waffle.lock.json` itself is
- * not an `--allow-missing` pairing at all: a missing lock fails `doctor` before the flag is
- * read (`doctor.mjs`), so that posture simply has no CI drift gate. See `docs/gitignore.md`.
+ * The `.gitignore` entries wafflestack recommends for a `project` — the baseline behind `--gitignore`
+ * and the setup playbook: always the local overlay and its derivative local lock, plus the resolved
+ * `git.worktreesDir` when a stack declares it. Ignoring rendered output is a separate case-by-case
+ * opt-in that pairs with `doctor --allow-missing` (presence, never integrity). See `docs/gitignore.md`.
  *
  * @param {Toolkit} toolkit
  * @param {ProjectConfig} project
@@ -370,16 +306,9 @@ export function recommendedGitignoreEntries(toolkit, project) {
 }
 
 /**
- * In-place rename of a legacy `bundles:` key to `stacks:` on a parsed YAML Document (the
- * 0.10.0 consumer-config key rename, #59). Mutating the key scalar's value preserves the
- * value node and every attached comment — unlike delete+set, which would drop them. Shared
- * by the 0.10.0 migration and `installRefs` so a plain install and an `upgrade` converge.
- * Idempotent: a no-op returning false when `stacks:` already exists or no `bundles:` pair is
- * present; returns true when it renamed the key.
- *
- * `doc` stays `any` rather than `import('yaml').Document`: the code walks the raw CST-ish
- * `contents.items` pair list, which is not on the public `Node` union, and it already guards
- * every hop with `?.`. Narrowing here would buy nothing but casts.
+ * In-place rename of a legacy `bundles:` key to `stacks:` on a parsed YAML Document (#59); mutating
+ * the key scalar preserves its value node and comments. Idempotent (false when nothing to rename).
+ * `doc` stays `any` — the code walks the raw CST-ish `contents.items` list, `?.`-guarding every hop.
  *
  * @param {any} doc a parsed YAML Document (from `YAML.parseDocument`)
  * @returns {boolean} true when it renamed the key
@@ -394,32 +323,10 @@ export function renameLegacyStacksKey(doc) {
 
 /**
  * BYTE-VERBATIM update of an EXISTING scalar at `keyPath` in a YAML file's raw TEXT — the value-side
- * twin of `renameLegacyStacksKey`, and the only sanctioned write to `.waffle/waffle.yaml`.
- *
- * **It takes text and returns text, and that is the whole point.** Re-serializing a parsed Document
- * (`doc.toString()`) reflows the ENTIRE file, not the line you changed: flow collections get re-padded
- * (`targets: [claude]` → `[ claude ]` — and the unpadded form is the shape `schema/FORMAT.md:43`
- * documents), long plain scalars fold at 80 columns, double-spaced inline comments collapse to one
- * space. So a one-line pin bump lands in a consumer's committed, hand-authored config as pages of
- * unexplained diff. Here only the scalar's OWN source bytes are spliced (`node.range`), so every other
- * byte in the file survives literally — which is what #372's "verbatim" claim actually requires, and
- * what `doc.toString({ lineWidth: 0, flowCollectionPadding: false })` still would NOT deliver.
- *
- * **It never CREATES anything.** A missing key, a missing parent, a non-scalar at the path, or a value
- * that already equals `value` all return `null` and produce no new text. That is the contract #372
- * needs (never introduce a `toolkitRef` a consumer did not choose), and it is the REAL reason this
- * helper exists instead of `doc.setIn`: `setIn` happily creates the whole missing path, and returns
- * nothing a caller's dirty guard could trust.
- *
- * It is **not** about comments. `yaml` v2's `YAMLMap.set` keeps the old node — with its comments and
- * anchors — on a scalar→scalar overwrite (`if (isScalar(prev.value) && isScalarValue(value))
- * prev.value.value = value`), so `doc.setIn` preserves them exactly as an in-place mutation does.
- * Comment loss was never the differentiator; creation and whole-document reflow are (#386).
- *
- * Quoting style survives: the replacement token is re-emitted in the node's own `type`, so a
- * double-quoted pin stays double-quoted. A scalar whose source form cannot be spliced safely — a block
- * scalar, whose bytes carry indentation a token-level emit does not reproduce — falls back to a full
- * re-serialize: correct value, reflowed file. The splice is *proved* by re-parsing, never assumed.
+ * twin of `renameLegacyStacksKey`, and the only sanctioned write to `.waffle/waffle.yaml`. It never
+ * CREATES anything and splices only the scalar's own bytes, because `doc.setIn` would reflow the whole
+ * file and create a pin the consumer never chose (#372; #386 F2 — creation, not comment-loss, is why).
+ * Quoting style survives; a block scalar that can't splice safely falls back to a full re-serialize.
  *
  * @param {string} source the raw text of a YAML file
  * @param {(string|number)[]} keyPath e.g. `['config', 'doctor', 'toolkitRef']`
@@ -443,13 +350,9 @@ export function setScalarIn(source, keyPath, value) {
 }
 
 /**
- * Replace ONLY `node`'s own source bytes with `value`, re-emitted in the node's existing scalar style,
- * and prove the result re-parses to exactly that value at that path. Returns null when it cannot prove
- * it — the caller then re-serializes, which is correct but not verbatim.
- *
- * `node.range` is `[start, valueEnd, nodeEnd]`: `valueEnd` ends the scalar's own token, before any
- * trailing comment or newline. Splicing `[start, valueEnd)` therefore cannot touch a comment, the
- * indentation, or any neighbouring line.
+ * Replace ONLY `node`'s own source bytes with `value` in its existing scalar style, proving the result
+ * re-parses to that value at that path (null when it can't — the caller re-serializes). `node.range`'s
+ * `valueEnd` ends the token before any trailing comment, so the splice can't touch a comment or line.
  *
  * @param {string} source
  * @param {any} node the live Scalar at `keyPath`
@@ -460,36 +363,20 @@ export function setScalarIn(source, keyPath, value) {
 function spliceScalar(source, node, keyPath, value) {
   const [start, valueEnd] = node.range ?? [];
   if (typeof start !== 'number' || typeof valueEnd !== 'number') return null;
-  // `yaml` re-quotes when the requested style cannot hold the value (a `PLAIN` `yes`, say) — a quote
-  // we then WANT, and the re-parse below is what confirms we got a token that means what we meant.
+  // `yaml` re-quotes when the style can't hold the value (a `PLAIN` `yes`) — a quote we then WANT.
   const token = YAML.stringify(value, { defaultStringType: node.type, lineWidth: 0 }).trimEnd();
   const next = `${source.slice(0, start)}${token}${source.slice(valueEnd)}`;
-  // RE-PARSING IS THE PROOF, and it is the ONE gate — deliberately, and it is written as a single
-  // expression because its two halves are a single claim: *the spliced text is still this document,
-  // with `value` at `keyPath`.* A block scalar (`|-`, `>-`) emits a multi-line token whose indentation
-  // belongs to the mapping we are splicing into, so it trips this and falls back to a re-serialize.
-  //
-  // There is deliberately NO cheap pre-check (`node.type !== 'PLAIN'`, `token.includes('\n')`) in front
-  // of it. Such a check rejects exactly the inputs this one already rejects, so no test could tell the
-  // two apart and neither could ever fail alone — a branch that cannot fail is the precise defect #386
-  // exists to remove, and adding one here while removing another would be a joke at our own expense.
+  // RE-PARSING IS THE PROOF, and the ONE gate: a block scalar's multi-line token trips it and falls
+  // back to a re-serialize. Deliberately NO cheap pre-check — it would reject exactly these inputs and
+  // could never fail alone, the branch-that-cannot-fail defect #386 exists to remove.
   const check = YAML.parseDocument(next);
   return !check.errors?.length && check.getIn(keyPath) === value ? next : null;
 }
 
 /**
- * Load `.waffle/waffle.yaml` with the gitignored local overlay merged over it, falling back
- * to the legacy root `.waffle.*` — and then pre-0.6.0 `.wafflestack.*` — names when the
- * current ones are absent. Deprecation notes for any legacy read are pushed onto `notes`
- * (when provided) for the caller to surface.
- *
- * `{ canonical: true }` loads the CANONICAL config instead: committed inputs only, the local
- * overlay deliberately not merged (#317). The overlay is a developer's private tooling — it is
- * gitignored, it differs per machine, and it must never reach a teammate or CI. The lock is
- * shared state, so it records the render the *committed* inputs produce; that render is what
- * this mode loads. `render` calls it for the lock and the ordinary (effective) mode for the
- * bytes it writes to disk, so each developer's tree carries their own overlay values while
- * everyone's committed lock stays byte-identical.
+ * Load `.waffle/waffle.yaml` with the gitignored local overlay merged over it, falling back through
+ * the legacy names; legacy reads push deprecation notes onto `notes`. `{ canonical: true }` skips the
+ * overlay (#317) — committed inputs only, the render the shared lock records. See the render docblock.
  *
  * @param {string} cwd
  * @param {string[]} [notes] collects deprecation notes for the caller to surface
@@ -509,8 +396,7 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
     cfg = deepMerge(cfg, readYaml(localPath.file) ?? {});
   }
 
-  // Raw and unvalidated (it is parsed YAML) — the `bad` check on the next line is what actually
-  // proves it is a Target[], so it is typed loosely here rather than asserted to be one.
+  // Raw and unvalidated (parsed YAML); the `bad` check below is what proves it a Target[].
   /** @type {any[]} */
   const targets = cfg.targets ?? VALID_TARGETS;
   const bad = targets.filter((t) => !VALID_TARGETS.includes(t));
@@ -518,10 +404,8 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
     throw new Error(`invalid targets in ${CONFIG_FILE}: ${bad.join(', ')} (valid: ${VALID_TARGETS.join(', ')})`);
   }
 
-  // The consumer `bundles:` key was renamed to `stacks:` in 0.10.0 (#59). Read the legacy key
-  // as a fallback so a repo that has not re-rendered keeps working; `stacks:` wins when both
-  // are present. Either legacy read pushes a deprecation note onto `notes` (surfaced as a
-  // render warning), pointing at `wafflestack upgrade` which renames the key in place.
+  // The consumer `bundles:` key was renamed to `stacks:` in 0.10.0 (#59); read the legacy key as a
+  // fallback (`stacks:` wins), pushing a deprecation note pointing at `wafflestack upgrade`.
   let rawStacks;
   if (cfg.stacks !== undefined) {
     rawStacks = cfg.stacks;
@@ -539,10 +423,8 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
     rawStacks = [];
   }
 
-  // A `stacks:` entry is either a bare name (a built-in toolkit stack, unchanged) or a
-  // `{ name, source, ref }` mapping declaring an external source (#88). Split and validate the
-  // two shapes here; `render` resolves each external source to a toolkit root and merges its
-  // named stack via `loadToolkitWithSources`.
+  // A `stacks:` entry is either a bare built-in name or a `{ name, source, ref }` external source
+  // (#88); split and validate here, `render` resolves each via `loadToolkitWithSources`.
   const { stacks, externalStacks } = normalizeStackEntries(rawStacks);
 
   return {
@@ -555,16 +437,12 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
   };
 }
 
-// Keys a `{ name, source, ref }` external stack entry may carry. An unknown key is rejected
-// (catches a `pin:`/`rev:` typo instead of silently ignoring the pin).
+// Keys a `{ name, source, ref }` external stack entry may carry; an unknown key is rejected (typo-catch).
 const STACK_ENTRY_KEYS = new Set(['name', 'source', 'ref']);
 
 /**
- * Classify an external stack `source:` string as a `'git'` URL or a local `'path'`. Git when it
- * carries a URL scheme (`https://`, `http://`, `git://`, `ssh://`, …), an scp-style
- * `user@host:owner/repo` address, or a trailing `.git`; anything else (relative or absolute
- * filesystem path) is a local path. Slice 1 only records the classification — nothing is
- * fetched or resolved yet.
+ * Classify an external stack `source:` as a `'git'` URL (scheme, scp-style `user@host:…`, or a
+ * trailing `.git`) or a local `'path'`. Records the classification only — nothing is fetched yet.
  *
  * @param {string} source
  * @returns {'git' | 'path'}
@@ -578,19 +456,9 @@ export function classifyStackSource(source) {
 }
 
 /**
- * Normalize a raw `stacks:` list into built-in stack names plus external source declarations,
- * validating the shape and failing loudly on a malformed entry (#88, slice 1). Each list item
- * is either:
- *   - a bare string — a built-in toolkit stack (unchanged); or
- *   - a `{ name, source, ref }` mapping — an external source, where `source` is a git URL or a
- *     local path. A git source must be pinned with `ref` (tag/branch/commit) for reproducible
- *     installs; a local-path source must NOT carry a `ref` (it is used as-is).
- *
- * Returns `{ stacks: [name…], externalStacks: [{ name, source, sourceType, ref }] }`. A stack
- * name must be unique across every entry (built-in and external alike) — a collision is an
- * error, not a silent shadow. External sources validate here; `render` then resolves each to a
- * toolkit root and merges its named stack (`loadToolkitWithSources`), where a name that collides
- * with a built-in or another source is likewise a hard error (see #88).
+ * Normalize a raw `stacks:` list into built-in names plus external `{ name, source, ref }` sources,
+ * failing loudly on a malformed entry (#88): a git source must be pinned with `ref`, a local path must
+ * not. Stack names must be unique across all entries; `render` resolves each via `loadToolkitWithSources`.
  *
  * @param {any} raw the raw `stacks:` value as parsed from YAML
  * @returns {{ stacks: string[], externalStacks: ExternalStackEntry[] }}
@@ -678,14 +546,9 @@ export function normalizeStackEntries(raw) {
 }
 
 /**
- * Reserved `harness.*` template values, resolved per output target. Not declared in
- * any stack — always available. A project may override any sub-key via
- * `config.harness.<sub>` (a scalar applied to every target, or a per-target map).
- *
- * Typed as the precise per-key shape INTERSECTED with a string index signature: callers reach
- * for both (`HARNESS_BUILTINS.agentsDir` — a per-target map worth keeping precise — and
- * `HARNESS_BUILTINS[sub]` in `makeResolver`/`validate`, where `sub` is an arbitrary string).
- * The intersection serves both without widening the per-target maps to `any`.
+ * Reserved `harness.*` template values, resolved per output target. Not declared in any stack; a
+ * project may override any sub-key via `config.harness.<sub>`. Typed as the precise per-key shape
+ * INTERSECTED with a string index signature so both keyed and `[sub]` access stay typed.
  *
  * @type {{
  *   assistantName: Record<Target, string>,
@@ -700,65 +563,36 @@ export function normalizeStackEntries(raw) {
 export const HARNESS_BUILTINS = {
   assistantName: { claude: 'Claude', codex: 'Codex', 'agents-dir': 'Codex' },
   attributionPath: { claude: 'claude-code', codex: 'Codex', 'agents-dir': 'Codex' },
-  // Where rendered skills live from that target's point of view, for content that
-  // references skill files by path ("read {{harness.skillsDir}}/x/SKILL.md").
+  // Where rendered skills live from that target's POV, for path-referencing content.
   skillsDir: { claude: '.claude/skills', codex: '.agents/skills', 'agents-dir': '.agents/skills' },
-  // Where rendered agent definitions live from that target's point of view, for content that
-  // reads an agent's frontmatter by path (the delegate skill reads `identity.displayName`).
-  //
-  // codex points at `.agents/agents`, NOT the `.codex/agents/<name>.toml` its own renderAgent
-  // branch emits, for two reasons (#156 review):
-  //   1. The TOML carries no `identity` — `agentToml` drops it, there being no shape for it. A
-  //      codex-only render therefore has NO file anywhere that answers `identity.displayName`,
-  //      and the consuming rule's documented fallback (title-case the slug) is the honest answer.
-  //      Naming `.codex/agents` would only point the reader at a `.md` that never exists.
-  //   2. `renderSkill` dedupes the shared `.agents/skills/<name>` output across codex and
-  //      agents-dir on the premise that their `harness.*` built-ins are IDENTICAL — one shared
-  //      file, one unambiguous render. A divergent `agentsDir` would make that file's content
-  //      depend on which *other* targets happen to be enabled. Keep the two in lockstep.
-  // So: codex + agents-dir → the path exists and carries the field; codex alone → the path is
-  // absent and the fallback fires, explicitly rather than by accident.
+  // Where rendered agent definitions live from that target's POV. codex points at `.agents/agents`,
+  // NOT the `.codex/agents/<name>.toml` it emits (#156): the TOML carries no `identity`, and keeping
+  // codex/agents-dir in lockstep lets `renderSkill` dedupe their shared `.agents/skills` output.
   agentsDir: { claude: '.claude/agents', codex: '.agents/agents', 'agents-dir': '.agents/agents' },
-  // CI workflow dispatcher (#131). The rendered GitHub-workflow files splice one pinned
-  // action into their `uses:` / `with:` lines; these built-ins are its default identity, so a
-  // consumer can pin a different version, repoint the ref, or rename the API-key secret via
-  // `config.harness.*` WITHOUT ejecting the workflow. Target-independent (the same action
-  // drives every harness), hence plain scalars rather than per-target maps. The values must
-  // reproduce today's pinned action byte-for-byte so `doctor` stays clean for an unconfigured
-  // repo; the injection guards below keep an override from corrupting the workflow.
+  // CI workflow dispatcher (#131): the default identity spliced into rendered GitHub-workflow
+  // `uses:`/`with:` lines, overridable via `config.harness.*` without ejecting. Target-independent
+  // scalars; the values reproduce today's pinned action byte-for-byte so `doctor` stays clean.
   actionRef: 'anthropics/claude-code-action',
   actionVersion: '6c0083bb7289c31716797a039b6367b3079cc46e # v1.0.162',
   apiKeySecret: 'ANTHROPIC_API_KEY',
 };
 
 /**
- * Injection-guard patterns for the reserved `harness.*` keys that render into CI workflow files
- * (#131) or into instructions an agent executes (#156) — the same discipline stack config
- * applies to its other workflow-spliced keys
- * (reject `${{`, quotes, newlines), but attached to the reserved namespace rather than a
- * stack's `config:`. Enforced at render (render.mjs seeds these into the pattern map so every
- * splice is validated) and checked by `validate` (the built-in defaults must satisfy them).
- * Keyed by sub-key; a `harness.<sub>` with no entry here is unguarded, as before.
+ * Injection-guard patterns for reserved `harness.*` keys rendering into CI workflows (#131) or agent
+ * instructions (#156): reject `${{`, quotes, newlines. Enforced at render and checked by `validate`.
+ * Keyed by sub-key; a `harness.<sub>` with no entry is unguarded.
  *
  * @type {Record<string, string>} sub-key → anchored regex source
  */
 export const HARNESS_PATTERNS = {
-  // Directory paths spliced into content an agent then *executes against* — `read
-  // {{harness.agentsDir}}/<slug>.md` in the delegate skill's identity-derivation rule, and the
-  // sibling `skillsDir` in skill-reference prose. Both are documented `config.harness.*`
-  // consumer overrides, so guard them as relative repo paths: no spaces, quotes, `$`, `${{`,
-  // backticks, `..`-smuggling shell metacharacters, or newlines.
+  // Relative repo paths spliced into content an agent executes against: no spaces, quotes, `${{`, or `..`.
   agentsDir: '^[A-Za-z0-9._/-]+$',
   skillsDir: '^[A-Za-z0-9._/-]+$',
-  // `owner/repo[/path]` action slug spliced bare into `uses:`. Strict slug — no `@` (the
-  // template supplies it), spaces, quotes, `#`, `${{`, or newlines that could mangle the
-  // `uses:` line or inject an expression.
+  // `owner/repo[/path]` slug spliced bare into `uses:`: strict, no `@`/`${{`/quotes.
   actionRef: '^[A-Za-z0-9._/-]+$',
-  // Git ref (SHA or tag) plus the preserved `# vX.Y.Z` comment, spliced into `uses:` after
-  // the `@`. No `${{`, quotes, or newlines; `#`/spaces are allowed so the comment survives.
+  // Git ref + preserved `# vX.Y.Z` comment after the `@`: no `${{`/quotes; `#`/spaces allowed.
   actionVersion: "^(?!.*\\$\\{\\{)[^'\"\\r\\n]*$",
-  // Secret name spliced INSIDE `${{ secrets.<NAME> }}` — restrict to a GitHub secret
-  // identifier so a value can neither close that expression early nor inject another.
+  // Secret name inside `${{ secrets.<NAME> }}`: a GitHub identifier, so it can't close/inject.
   apiKeySecret: '^[A-Za-z_][A-Za-z0-9_]*$',
 };
 
@@ -783,9 +617,8 @@ export function makeResolver(stack, values, target) {
         v = isPlainObject(override) ? override[target] : override;
       }
       if (v === undefined) {
-        // Built-ins are usually a per-target map (Claude vs Codex identity); a
-        // target-independent value (e.g. the CI dispatcher pin) is a plain scalar that
-        // applies to every target.
+        // Built-ins are usually a per-target map (Claude vs Codex); a target-independent value
+        // (the CI dispatcher pin) is a plain scalar applying to every target.
         const builtin = HARNESS_BUILTINS[sub];
         v = isPlainObject(builtin) ? builtin[target] : builtin;
       }
