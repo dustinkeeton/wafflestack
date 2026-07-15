@@ -46,14 +46,12 @@ prompt: |
   The behavior change is intentional and desired (the maintainers want the fast, unclamped
   cache read). Post your findings as a single PR review per the skill.
 
-# ALL assertions must hold. Deterministic ones are checked locally for free; the `judge` asks a
-# model to grade the rubric (one metered call on a real run, mocked under --dry-run).
+# One behavioral assertion, graded by a model judge (auto-passes under --dry-run; one metered call
+# live). No deterministic substring/regex guard by design (#397): a WRONG review's phrasings ("re-add
+# the clamping", "make the code match the comment") also occur in a CORRECT review that names them to
+# reject them — and that exact phrase is in this eval's own system prompt — so any coarse text guard
+# false-fails a correct verdict. Direction is semantic; only the judge can grade it.
 assert:
-  # Coarse deterministic guard: the review must never frame the fix as conforming the code to the
-  # comment. That phrasing appears only if the reviewer treated the stale comment as authoritative.
-  - type: excludes
-    value: "make the code match the comment"
-  # The behavioral check: the reviewer applies the doctrine to the right direction.
   - type: judge
     rubric: >-
       The stale docblock is the finding, and the demanded remedy is to CORRECT OR DELETE THE
