@@ -32,6 +32,15 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **pr-response rubric v3: valid + cheap alone no longer clears the Implement bar (#385).**
+  Implement moves ≥10 → **≥11** (Defer becomes 5–10; Decline ≤4, dimensions, and anchors are
+  untouched). Evidence: `Validity 3 · Effort/Risk 3 · Alignment 3` composes to 9 on its own, so
+  almost any valid, cheap nit auto-implemented — PR #382 implemented 15 of 16 findings across six
+  rounds, #384 13 of 14 across five. v3 also lands #388's scoring rule where it bites: comment
+  text in a deterministic file is Reach ≤ 1 and Severity ≤ 1, and the Implement-worthy fix for a
+  wrong comment is a deletion or a one-line correction, never an expansion. **Consumer impact:**
+  re-render picks it up; expect marginal findings to Defer with a filed follow-up instead of
+  auto-implementing. Old replies stay scored against the rubric version named in their footer.
 - **Comments are not spec (#388).** Deterministic files (JS, YAML, shell) carry rules in code and
   behavior tests; comments there are short, rare, human orientation, and a comment-vs-code
   disagreement is resolved by shrinking the comment — never by making the code match the comment.

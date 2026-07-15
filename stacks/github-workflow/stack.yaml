@@ -278,7 +278,7 @@ setup: |-
   of truth.** GitHub has no native review template, so a file in `.github/` can only ever be a
   reference doc — nothing reads it and nothing enforces it. The canonical finding shape (severity
   ladder) already lives in the `adversarial-review` skill and the canonical verdict shape (the
-  four-dimension rubric, the composite thresholds, the override rules) in `pr-response`, and those
+  five-dimension rubric, the composite thresholds, the override rules) in `pr-response`, and those
   ARE load-bearing: the pr-green / pr-response hooks key their dedup and delivery guards on the
   markers those skills emit. Duplicating the rubric into `.github/` would create a copy that drifts
   out from under the guards. So the skills stay the enforcement point, and `REVIEW_TEMPLATE.md` is a

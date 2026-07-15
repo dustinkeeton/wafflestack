@@ -1,7 +1,7 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
 # PR-response hook: when waffle-pr-green-hook delivers an adversarial review on a pull request,
 # dispatch the Claude harness to run the pr-response skill (.claude/skills/pr-response/SKILL.md) against that PR — read
-# every finding, score it on the skill's four-dimension rubric, apply the fixes it accepts, and post
+# every finding, score it on the skill's rubric, apply the fixes it accepts, and post
 # ONE reply carrying the verdict table. This is the consuming half of waffle-pr-green-hook: that
 # hook PRODUCES findings on a green PR, this one DISPOSES of them.
 #
