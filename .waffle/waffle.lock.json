@@ -18,13 +18,10 @@
     "wafflestack"
   ],
   "include": [
-    "files/.github/workflows/waffle-hygiene.yml",
     "files/.github/workflows/waffle-release-hook.yml",
-    "files/.github/workflows/waffle-pr-green-hook.yml",
     "code-quality/skills/adversarial-review",
     "code-quality/skills/qa",
-    "files/.github/workflows/waffle-post-merge-hook.yml",
-    "files/.github/workflows/waffle-pr-response-hook.yml"
+    "files/.github/workflows/waffle-post-merge-hook.yml"
   ],
   "files": {
     ".claude/agents/docs-agent.md": "2906db901f756096c6d40ab61bafc340f31d9a9664d508796789ee4c2933ac56",

@@ -3,7 +3,7 @@
 # /docs and the docs/PM/planner agents are available when developing the toolkit.
 #
 # The rendered .claude/ output, the lock, and the doctor CI workflow are COMMITTED
-# (like a consuming project) — the CI-dispatched hygiene harness reads the committed
+# (like a consuming project) — agents in fresh worktrees and CI read the committed
 # skills, and the doctor drift gate (required check on main) is what protects the
 # generated files from hand-edits. Deliberately still gitignored: the label-hook
 # workflow (committing it would arm a live label→harness dispatch) and the generated
@@ -20,23 +20,15 @@ stacks:
   - harness-architect
   - wafflestack
 include:
-  - files/.github/workflows/waffle-hygiene.yml
+  # Paid Claude-dispatch hooks (hygiene, pr-green, pr-response) removed 2026-07-15 while the
+  # API key is deliberately unfunded — re-add the include lines to re-arm (#343 is the path back).
   - files/.github/workflows/waffle-release-hook.yml
-  - files/.github/workflows/waffle-pr-green-hook.yml
   - code-quality/skills/adversarial-review
   # The qa skill (#228) — adversarial-review's functional sibling: post-green QA of a PR against
   # its linked issue's intent + test coverage. Autopilot's opt-in QA gate (autopilot.qaLoop)
   # composes it, so render it here (whole-stack installs don't pull requires closures).
   - code-quality/skills/qa
   - files/.github/workflows/waffle-post-merge-hook.yml
-  # The PR-response hook (#195) — the consuming half of pr-green, opt-in syrup, ARMED here: when an
-  # adversarial review lands on a PR, it dispatches the harness to run the pr-response skill, apply
-  # the fixes it accepts, and post one rubric-scored reply. It holds contents: write (it commits), so
-  # it is the heaviest waffle in the stack. Its rendered workflow is committed (like hygiene/pr-green
-  # — a pull_request_review hook only ever fires the default-branch copy). Bounded to ONE automated
-  # response per PR, regardless of head SHA: pr-green re-reviews every new SHA, so a per-SHA bound
-  # would loop. Runtime still needs ANTHROPIC_API_KEY + WAFFLE_HYGIENE_TOKEN (both already set here).
-  - files/.github/workflows/waffle-pr-response-hook.yml
 config:
   git:
     # #155: the managed Wafflebot identity, injected into the rendered `commit` examples via
