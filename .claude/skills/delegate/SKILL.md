@@ -610,10 +610,10 @@ The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT
 1. Read the relevant source files identified in the issue.
 2. Implement the fix/feature following the project's conventions.
 3. Run the pre-flight checklist:
-   - npm run lint --if-present
    - npm run validate
+   - npm run typecheck
    - npm test
-   - npm pack --dry-run
+   - npm run build
    - `npm run validate` passes after any stack/manifest edit
 - If `stacks/**` changed: re-run `node installer/cli.mjs render --allow-unreleased` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output. The flag is required (#373): `render` refuses from a toolkit that is not at a release tag, and a feature branch never is. It suppresses the refusal, not the truth.
 4. Commit your work following the git-workflow skill — commit with `{agent-git-cmd} commit` (that is where your own agent identity, if this project configures one, is applied) and end every commit message with `Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>`. Commit everything **locally**; do not push yet.
@@ -662,7 +662,7 @@ When the gate is on, each agent commits locally and STOPS before `git push` (see
 After each agent completes, verify the build still passes in the main working directory:
 
 ```bash
-npm run validate
+npm run typecheck
 ```
 
 ```bash

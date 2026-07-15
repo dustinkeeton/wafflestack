@@ -82,10 +82,10 @@ git checkout -b chore/bump-X.Y.Z
 
 Run the full checklist from `git-workflow`; do not open the PR if any fail:
 
-1. `npm run lint --if-present`
-2. `npm run validate`
+1. `npm run validate`
+2. `npm run typecheck`
 3. `npm test`
-4. `npm pack --dry-run`
+4. `npm run build`
 
 ## 5. Commit, push, open the labeled PR
 
