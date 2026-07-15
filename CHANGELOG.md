@@ -454,6 +454,16 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **qa step 7 no longer re-resolves `HEAD_SHA` after its first use (#412).** PR #410 added
+  `$HEAD_SHA` to qa's staging path and status POST but left the block's late
+  `HEAD_SHA=$(gh pr view …)` re-derivation *after* the first use — a fresh single-call
+  execution expanded the staging filename empty, and the retained re-derivation stamped the
+  `waffle/qa` status on the post-time head instead of the read-time head. The block now
+  relies on step 1's `headRefOid`, mirroring adversarial-review. Also softens pr-response's
+  "the head SHA makes each round's staging file its own" overclaim (two rounds on one
+  unmoved head can still share a file; the read-back guard is the boundary) and re-anchors
+  the `waffle-cutoff-354-` test-regex arm with `[0-9a-f]{40}\.txt` so a truncated SHA fails.
+  **Consumer impact:** patch — plain re-render; no config change.
 - **Review-payload staging paths are namespaced by head SHA as well as PR number (#376).**
   Successive rounds on one PR no longer reuse a staging file, so autopilot's cold evidence pass
   (adversarial-review and qa cap hatches) never has to read a prior round's payload to overwrite

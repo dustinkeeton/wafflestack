@@ -326,7 +326,9 @@ verdict table onto PR B**, and the loser never knows; a stale body left by an ea
 posted as if it were this round's. The PR number in the path is what keeps two concurrent runs from
 ever touching the same file. And `$N` alone is not enough (#376): this skill reuses its staging
 path every round by design — each round appends a new comment — so a per-PR-only path guarantees a
-later round stages over a stale body. The head SHA makes each round's staging file its own.
+later round stages over a stale body. The head SHA separates rounds that land on different heads;
+two rounds on one unmoved head (a 0-implemented round, say) can still share a file — the read-back
+below is the boundary there.
 
 > **The `Write` tool does not expand shell syntax.** `$N`, `$HEAD_SHA` and `${TMPDIR:-/tmp}` are for
 > the `bash` command line only. When you call `Write`, pass a **literal, already-substituted** path —
