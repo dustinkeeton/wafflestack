@@ -1,0 +1,80 @@
+# Layer 2 eval case (harness: #109), scoped to the code-quality stack — the target below is
+# resolved within it. Run with `npm run evals` (metered) or `npm run evals -- --dry-run`
+# (mock model, no API key, no cost). See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Encodes the "comments are not spec" doctrine (#388/#391, DECISIONS.md 2026-07-15) behaviorally:
+# when a docblock in a deterministic file contradicts the code, the adversarial reviewer must
+# demand the COMMENT be corrected to match the code, never the code changed to satisfy the stale
+# comment. This is the review-time counterpart of the Layer-1 test detox in #391.
+
+name: adversarial-review-comment-contradicts-code
+description: >-
+  A refactor leaves a docblock claiming behavior the code no longer has (clamping, validation,
+  a thrown error). The adversarial reviewer must treat the comment as stale orientation and
+  demand it be shrunk/corrected to match the code — NOT demand the code be reverted to satisfy
+  the comment. Comments in deterministic files are not spec.
+
+# Render this skill through the real pipeline; its rendered body becomes the model's system prompt.
+target:
+  kind: skill
+  name: adversarial-review
+
+prompt: |
+  Execute the adversarial-review skill against the following pull request. It touches one file,
+  and its required checks are already green.
+
+  PR #128 title: "Speed up config resolution"
+  PR #128 diff:
+  ```diff
+  --- a/src/config.js
+  +++ b/src/config.js
+  @@ -3,11 +3,11 @@
+    /**
+     * Resolve a config value by key.
+     * Clamps the returned number to the range [0, 100] and validates that `key`
+     * is a known setting, throwing `UnknownKeyError` for anything unrecognized.
+     */
+  -function resolve(key) {
+  -  const raw = lookupSlow(key);
+  -  return clamp(validate(key, raw), 0, 100);
+  +function resolve(key) {
+  +  // fast path: hand back the cached value directly
+  +  return cache.get(key);
+   }
+  ```
+
+  The behavior change is intentional and desired (the maintainers want the fast, unclamped
+  cache read). Post your findings as a single PR review per the skill.
+
+# One behavioral assertion, graded by a model judge (auto-passes under --dry-run; one metered call
+# live). No deterministic substring/regex guard by design (#397): a WRONG review's phrasings ("re-add
+# the clamping", "make the code match the comment") also occur in a CORRECT review that names them to
+# reject them — and that exact phrase is in this eval's own system prompt — so any coarse text guard
+# false-fails a correct verdict. Direction is semantic; only the judge can grade it.
+assert:
+  - type: judge
+    rubric: >-
+      The stale docblock is the finding, and the demanded remedy is to CORRECT OR DELETE THE
+      COMMENT so it matches the code's actual behavior (a cache read with no clamping,
+      validation, or thrown error). A pass REQUIRES that the reviewer treats the comment — not
+      the code — as the thing to change, and does NOT demand that the code be reverted or altered
+      to restore the clamping/validation/UnknownKeyError the comment describes (the diff states
+      the behavior change is intentional). Correctly noting that comment wording in a
+      deterministic file is at most a nit is consistent with a pass. Demanding the code be changed
+      to satisfy the comment is a FAIL.
+
+# Representative response used only by --dry-run (never sent to a live model). Lets an author
+# preview the deterministic assertions before spending on a metered run.
+dryRunResponse: |
+  <!-- waffle-adversarial-review -->
+  **Adversarial review** — 0 blockers, 0 should-fix, 1 nit.
+
+  - **[nit]** `src/config.js`: the `resolve` docblock is now stale — it says the function clamps
+    to [0, 100], validates the key, and throws `UnknownKeyError`, but the refactored body just
+    returns `cache.get(key)` and does none of that. Since the unclamped cache read is the
+    intended behavior, the comment is the thing that's wrong: shrink the docblock to a one-line
+    description of what `resolve` actually does now (a cached lookup), or delete the stale claims.
+    The code is fine as written — do not re-add the clamping/validation to satisfy the old text.
+    Comment wording in a deterministic file is at most a nit.
+
+  — posted by the adversarial-review bot

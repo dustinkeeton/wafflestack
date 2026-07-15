@@ -621,21 +621,11 @@ describe('CI workflow identity (#160)', () => {
     });
   }
 
-  for (const name of COMMITTING) {
-    test(`${name} states the identity-neutrality design`, () => {
-      const wf = wfSource(name);
-      assert.match(wf, /Identity-neutral by design/);
-      assert.match(wf, /CI identity — token vs\. git config/);
-      // The comment must name the dispatcher's default identity and the precedence that
-      // makes `git.cmd` load-bearing — not claim the runner's ambient identity survives.
-      assert.match(wf, /claude\[bot\]/);
-      // The comment must not claim the bare default is the RUNNER's identity, in any
-      // phrasing — "the runner's ambient identity", "ambient git identity", reflowed or
-      // not. Pin the substantive token inside the identity sentence, not a brittle
-      // word-for-word string.
-      assert.doesNotMatch(wf, /ambient/i);
-    });
-  }
+  // NOTE: the identity-neutrality DESIGN is no longer pinned as comment prose in the workflow
+  // YAML (#391 — comments are orientation, not spec; DECISIONS.md 2026-07-15). The behavioral
+  // half survives above (`adds no git identity of its own`, over comment-stripped YAML) and the
+  // false-"ambient"-claim guard survives on the stack.yaml setup-note pins below — the setup note
+  // is a doc users and agents act on, so it stays pinned.
 
   // The token fallback is this PR's ONLY behavioral change, and its whole point is WHICH
   // job holds the PAT. Slice the file at the job boundaries so the pin can tell implement

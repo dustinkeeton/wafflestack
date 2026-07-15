@@ -2512,15 +2512,8 @@ describe('github-workflow: identity config schema (#154)', () => {
     });
   });
 
-  // #246 (deferred from #245's review, F5): entryPatternProblems walks the WHOLE map instead of
-  // short-circuiting on the first bad entry — a config with three independent mistakes surfaces
-  // all three in one render, not one per fix-and-retry cycle. The three entries hit three
-  // distinct branches (failing guard / unknown leaf / non-map entry), and rogue1 carries TWO bad
-  // leaves (adversarial review on #258): the contract is per-LEAF, so multiplicity must hold
-  // within one entry, not only across entries — cap the leaf loop at one problem per entry
-  // (each `continue` → `break`) and the botName assertion goes red. `botName: 42` is also the
-  // suite's only end-to-end hit on the non-string-leaf branch. Restore the early return and
-  // this drops to one error.
+  // #246/#258: entryPatternProblems surfaces EVERY malformed entry AND leaf in one render pass —
+  // multiplicity holds WITHIN an entry (rogue1 has two bad leaves), not only across entries.
   test('I7e a map with several malformed entries reports EVERY problem in one pass', () => {
     write(
       cwd,

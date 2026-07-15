@@ -1,71 +1,15 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
-# PR-green hook: when a pull request's required checks go GREEN, dispatch the Claude harness to
-# run the adversarial-review skill (.claude/skills/adversarial-review/SKILL.md) against that PR —
-# a hostile post-green review that pokes holes before merge and posts its findings back as a PR
-# review. Fires ONCE per green transition (per head commit), NOT on every check re-run.
-#
-# Trigger choice — workflow_run, NOT check_suite/status. GitHub deliberately does NOT emit
-# check_suite / check_run workflow events for check suites it creates itself (an anti-recursion
-# rule), and the `status` event only fires for the legacy Commit-Statuses API — not the Checks API
-# that GitHub Actions uses. So for any repo whose required checks ARE GitHub Actions (the common
-# case, this repo included: the waffle-doctor drift gate), neither would ever fire. workflow_run
-# DOES fire when a watched Actions workflow completes, so it is the only reliable "CI finished"
-# signal. Because it fires per-workflow (not for the PR's aggregate state), the job below
-# re-confirms the FULL check rollup is green before any paid dispatch. prGreen.watchWorkflows lists
-# which workflows to watch (default: the always-rendered waffle-doctor gate); a repo with extra
-# required-check workflows should add their names so a slower check finishing last still triggers a
-# re-evaluation. Like every `on:` here, this only fires for the copy of the workflow on the
-# default branch (a GitHub rule for workflow_run/schedule) — which is why its render is committed.
-#
-# Opt-in syrup: this spends real Anthropic API money on every green PR, so enabling the stack does
-# NOT render it — install it explicitly (see optIn in stack.yaml) and complete the opt-ins in the
-# stack setup note: the ANTHROPIC_API_KEY secret, the adversarial-review skill rendered and
-# committed under .claude/skills/ (it lives in the code-quality stack — install
-# `code-quality/skills/adversarial-review` alongside this workflow), and a token with pull-request
-# review-write scope (the default GITHUB_TOKEN already carries it here; WAFFLE_HYGIENE_TOKEN is an
-# optional override for review attribution). Until those are set the workflow is inert.
-#
-# Idempotency + anti-loop: before dispatching, the job (1) resolves the OPEN PR whose head is the
-# completed run's commit and which targets the default branch; (2) skips drafts, bot-authored PRs
-# (a bot's own PRs are not adversarially reviewed), and fork-head PRs (a fork's green checks must
-# not spend this repo's API budget — the workflow_run token is read/write even for forks, so this
-# gate is the guard); (3) re-confirms EVERY check on the head is green; and (4) skips if the
-# `waffle/adversarial-review` COMMIT STATUS is already on THIS head commit — so a re-run of checks
-# on an already-reviewed head never posts a duplicate. A new commit is a new head SHA with no
-# status, so it is reviewed afresh. The review posts findings only (no commits, no tracked-file
-# edits — the harness writes its review payload to a scratch file under /tmp), so it cannot itself
-# retrigger CI.
-#
-# ─── THE DELIVERY SIGNAL: a commit status, NOT a marker in prose (#338). ────────────────────────
-# Both this hook and its sibling used to decide "the bot did a thing" by string-matching a marker
-# literal inside a FREE-TEXT BODY that anyone can write — a review, a PR comment. That mechanism is
-# the common root of #211, #332 and #333, which are three faces of one defect:
-#
-#     PR #207 — a human comment quoting the literal  ⇒ read as "the bot already replied"
-#     PR #296 — a QA review quoting the literal      ⇒ read as "this head is already reviewed",
-#                                                       so the real security review never ran
-#
-# Narrowing the match (bare word → full literal → marker-LED) only ever shrank the target: a
-# marker-led body is still prose, and it left a prose-to-prose coupling no test could pin — a
-# workflow's `jq startswith()` depending on a SKILL.md sentence to a model. So the mechanism is
-# gone, not narrowed. The harness now emits an OUT-OF-BAND signal keyed to the commit: a
-# `waffle/adversarial-review` commit status on the head SHA (see the dispatch prompt). Writing one
-# takes PUSH ACCESS to the repo, so no comment, review, or issue body — however it quotes any
-# marker, at any offset — can forge it. The whole quote/mention class is dissolved at every site at
-# once, rather than narrowed at each.
-#
-# WHY A COMMIT STATUS AND NOT A CHECK RUN (#338 proposed a check run). Creating a check run is
-# GitHub-App-only — "OAuth apps and authenticated users are not able to create a check suite". The
-# harness authenticates with WAFFLE_HYGIENE_TOKEN when it is set, which the setup note documents as
-# a PAT *or* an App token, so a harness-emitted check run would be uncreatable in the recommended
-# configuration. A commit status needs only push access, works with every token this stack supports,
-# and is identical in every property that matters: keyed to the head SHA, structured, visible in the
-# PR's checks list, and unforgeable without repo write. It is always written state=success, so it
-# never reddens the check rollup this job itself re-confirms.
-#
-# The marker literal STAYS in the review body — it is how a human recognizes a bot review in the UI
-# and how the skill dedups its own posts. It is simply no longer a workflow predicate, so quoting it
-# is now harmless everywhere.
+# PR-green hook: when a PR's required checks go GREEN, dispatch the Claude harness to run the
+# adversarial-review skill against that PR and post its findings as one PR review — once per green
+# transition (per head commit), not per check re-run.
+# Delivery + dedup key on an OUT-OF-BAND `waffle/adversarial-review` commit status (push access
+# only), never on a marker in a review body — DECISIONS #338. Identity-neutral by design (#160): no
+# workflow sets a committer identity; the committed git.cmd recipe is the single opt-in.
+# Trigger (workflow_run, not check_suite/status), the fork-head guard, the full-rollup re-confirm,
+# idempotency, why a commit status over a check run, and the baked-in allowlist all live in the
+# github-workflow stack.yaml setup note, "PR-green hook (opt-in syrup)".
+# Opt-in syrup: real Anthropic API spend on every green PR, so the stack does NOT render it — install
+# it and complete the setup-note opt-ins (key, adversarial-review skill, pull-requests: write token).
 name: waffle-pr-green-hook
 
 on:
@@ -163,11 +107,8 @@ jobs:
           echo "should_review=true" >> "$GITHUB_OUTPUT"
           echo "pr_number=${N}" >> "$GITHUB_OUTPUT"
           echo "🧇 waffle-pr-green-hook: PR #${N} is green and unreviewed at ${HEAD_SHA} — dispatching adversarial review." | tee -a "$GITHUB_STEP_SUMMARY"
-      # Check out the PR head so the review can read the surrounding source — the skill traces
-      # callers/callees across files, not just the diff hunks. Same-repo head only (gated above), so
-      # this is trusted code; the harness reads it with its built-in (ungated) Read/Grep tools, and
-      # the unified diff itself still comes from `gh pr diff`. persist-credentials: false — the
-      # harness authenticates gh through its own github_token input, not the checkout's git credential.
+      # Check out the PR head (same-repo, gated above) so the review can read surrounding source, not
+      # just diff hunks; persist-credentials: false — the harness authenticates gh via its own token.
       - name: Check out the PR head
         if: steps.gate.outputs.should_review == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -212,11 +153,8 @@ jobs:
           claude_args: >-
             --allowedTools 'Write,Bash(gh pr:*),Bash(gh api:*),Bash(gh repo:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git status:*)'
             {{prGreen.claudeArgs}}
-      # Preserve the harness's execution log as an artifact (to debug a silent run) and fail the job
-      # when the paid harness was denied the tools it needed — a dispatch blocked from posting the
-      # review otherwise reports success with nothing done. Same rationale and mechanics as the
-      # sibling hooks (artifact vs. show_full_output; the log is read as DATA via jq, never eval'd).
-      # Gated on should_review so a skipped (no-dispatch) run neither uploads nor checks a log.
+      # Upload the harness execution log as an artifact (to debug a silent run); the next step reads
+      # it as DATA (jq) to fail the job on a blocked delivery. Gated on should_review. See setup note.
       - name: Upload harness execution log
         if: always() && steps.gate.outputs.should_review == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -471,29 +409,10 @@ jobs:
           else
             echo "::warning title=waffle-pr-green-hook::No waffle/adversarial-review commit status is on ${HEAD_SHA} — the run may have silently no-op'd (it was dispatched because none existed). Review the claude-execution-log-pr-green artifact or rerun in debug mode."
           fi
-      # Per-run token accounting (#227). Extract usage/cost from the same execution log the
-      # check step reads and fold it into ONE marker-keyed comment on the reviewed PR (the
-      # gate already resolved its number) — created on the first recorded run, updated in
-      # place after that. One row per run (keyed run_id.run_attempt in the machine-readable
-      # waffle-token-data line) and the totals are always recomputed from the full runs map —
-      # never incremented in place — so a step retry replaces its own row and a later hook's
-      # run on the same PR adds one; a double count is structurally impossible. The table is
-      # a pure render of the data line; downstream (the post-merge counter) reads ONLY the
-      # data line. HOOK is deliberately a short label: sibling hooks match their own markers
-      # as substrings over ALL comments on a thread, so this comment must never contain
-      # another hook's marker text. Telemetry must never red the job: continue-on-error is
-      # the hard backstop, the script only ever exits 0, and always() (still gated on
-      # should_review — a skipped dispatch spent nothing) keeps recording the spend of a run
-      # whose harness or checks failed (it still billed). A missing log, a result-less log
-      # (the invalid-API-key shape), zero usage, or a failed API call all skip with a note
-      # instead of failing.
-      # Known race windows (one undercount class — never a double count): (1) CREATE — two
-      # hooks' token steps finishing at once on the same thread can each see "no existing
-      # comment" and POST their own (GitHub has no conditional create); every later reader
-      # takes the OLDEST marked comment, so the loser's rows are orphaned. (2) UPDATE — two
-      # steps PATCHing the same comment at once each read the same base run map, and the
-      # loser's row is silently dropped (that run never re-records). Accepted: best-effort
-      # telemetry, not billing.
+      # Per-run token accounting (#227): jq the usage/cost out of the same execution log and
+      # create-or-update ONE marker-keyed comment on the reviewed PR, totals recomputed from the full
+      # runs map (never double-counted). Never reds the job (continue-on-error + exit-0-only). See the
+      # setup note's "Token spend accounting (#227)" for the label rationale and the race windows.
       - name: Record token spend
         if: always() && steps.gate.outputs.should_review == 'true'
         continue-on-error: true
