@@ -311,80 +311,19 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
 }
 
 /**
- * Which repo does the **committed lock** name as the source of this render (#384 F2, F11)? **Always
- * `lockRepo` — the pin-derived slug — whatever the status.** There is no exception, and the exception
- * this function used to make was the bug.
- *
- * F2's first fix carved out `release`, on the reasoning that `identity.repo` was "the slug the
- * identity was **corroborated against** — `ls-remote` asked THAT remote". **That is false on a
- * checkout**, and a checkout is exactly where `repo` and `lockRepo` can differ: `resolveToolkitIdentity`
- * reaches `release` there via `git describe --exact-match` and returns BEFORE any lookup — **zero
- * `ls-remote` calls**. So the carve-out re-admitted the very thing F2 removed: a clean checkout sitting
- * on a release tag wrote the CLONE'S origin into the committed lock, and two clones of one commit, on
- * one tag, rendering identical bytes, produced byte-different locks. The justification named evidence
- * that was never gathered — the same over-claim class this epic keeps shipping, this time in a comment.
- *
- * The carve-out was also **pointless where it was supposed to help**. `repoSlug`'s `origin` step is
- * gated on `.git`, which an npm-installed toolkit does not have — so on the npx path `repo` and
- * `lockRepo` are computed from the SAME npm `resolved` URL and are always **identical**. #373 F14 (a
- * fork must name ITSELF) lives on that path and is carried entirely by `resolved`, which `lockRepoSlug`
- * keeps. The carve-out therefore changed nothing on npx and was wrong on the checkout: it had no
- * correct case at all.
- *
- * **A checkout-release's `source` is NULL, because the triple must name ONE repo (#384 F13).** Recording
- * `lockRepo` there looked like the determinism-preserving answer, and it was — but determinism is not the
- * only property the block owes. `source` is not a decoration: `toolkitPinFromLock` is literally
- * `` `${source}#${ref}` ``, so **`source` is a claim that THAT repo holds THAT ref at THAT commit.** On a
- * checkout, `ref`/`commit` come from `git describe` against the clone's LOCAL tag refs and NO remote is
- * asked, while `lockRepo` comes from a `package.json` field a fork inherits verbatim (`repoSlug`'s own
- * docblock: "nothing prompts anyone to rewrite it"). So a fork clean on ITS OWN `v1.0.0` wrote
- * `github:dustinkeeton/wafflestack#v1.0.0` — **a pin naming a repo that never cut that tag, at a commit
- * it does not have.** Both halves were individually defensible and the pair was a lie.
- *
- * Neither guess can be promoted, and that is the point:
- *
- *   - `origin` is the clone's — **nondeterministic**, and #384 F2/F11 exist to keep it out. (The tempting
- *     "record null only when `origin` and `repository` DISAGREE" is that same value in a null-shaped
- *     costume: a contributor's fork clone of upstream and the maintainer's clone of upstream would write
- *     byte-different locks for one commit. It reds THE DETERMINISM TEST — I tried it.)
- *   - `repository` is the content's — deterministic, but on a checkout it is **unverified against the tag**,
- *     and that is precisely the claim `source` makes.
- *
- * So we record nothing, which is this module's own rule where it could not know (see the tail below):
- * **determinism by recording nothing, not by recording a guess.** The block keeps `ref`/`commit`/`status` —
- * real, local, checkable facts — and `toolkitPinFromLock` honestly declines to pin rather than pinning a
- * repo it cannot vouch for. `describeToolkitProvenance` still compares the COMMITS, so a re-cut tag on a
- * fork checkout reads `recut` (hedged cause, #384 F12) instead of the inverted "DIFFERENT REPOSITORIES".
- *
- * **`npm-install` keeps its `source`, and it is the only path that earned one.** There `ls-remote` found
- * the tag ON that commit IN that remote — a corroborated fact, not a guess — and `repo === lockRepo`
- * (both from npm's `resolved`), so #373 F14's "a fork must name ITSELF" is untouched: `npx
- * github:acme/wafflestack#v1.0.0` records acme and pins acme, on every machine. That path is the whole
- * consumer population; the checkout is toolkit developers, who have the toolkit in their hand already.
- *
- * A fork that renders from a CHECKOUT and wants a pinnable lock cuts its release and installs it the way
- * its own consumers do — `npx github:acme/wafflestack#v1.0.0` — which is the path that can prove the pin.
- *
- * **The `repo` tail is gated on the same fact, or it reopens the hole it just closed.** When no
- * pin-derived slug exists at all, falling back to `repo` is safe on every origin EXCEPT a checkout —
- * because `repoSlug`'s origin step is `.git`-gated, so "not a checkout" is *exactly* the condition
- * under which `repo` cannot be `remote.origin.url`. On a checkout it can be, and a toolkit whose
- * `package.json` declares no `repository` (`lockRepo: null`, `repo:` the clone's origin) would walk
- * straight back into F11 through the fallback. There, the honest answer is that we do not know which
- * repo this came from: `source: null`, which `describeToolkitProvenance` already renders as "an
- * unknown toolkit" and `toolkitPinFromLock` already declines to pin. **An unknown repo is recorded as
- * unknown — never as the clone's.**
+ * Which repo does the committed lock name as the source of this render? `source` + `ref` are a PIN —
+ * a claim that THAT repo holds THAT ref at THAT commit — so only a path that corroborated it may set
+ * it. Exactly one does: `npm-install`, where `ls-remote` found the tag on that commit in that remote
+ * and `repo === lockRepo`. A checkout-`release` records `source: null` (`git describe` asks no remote),
+ * and `origin`-derived slugs are nondeterministic and stay out (two clones of one commit must match).
+ * The `repo` fallback is `.git`-gated for the same reason. DECISIONS #372/#317; F2/F11/F13 in provenance.test.mjs.
  *
  * @param {ToolkitIdentity} identity
  * @returns {string|null}
  */
 function lockSourceRepo(identity) {
-  // THE RELEASE CARVE-OUT, INVERTED (#384 F13). F2 carved `release` out to record the CLONE; F11 killed
-  // that. The carve-out that IS right is the opposite one, and it records NOTHING: a `release` block's
-  // `source` is the repo its PIN names, and it may only name a repo we established actually holds that
-  // `ref` at that `commit`. Exactly one path establishes it — `npm-install`, where `ls-remote` found
-  // the tag on that commit in that remote (and `repo === lockRepo` there, so there is no third answer).
-  // A CHECKOUT establishes nothing: `git describe` reads the clone's LOCAL tag refs, zero remotes asked.
+  // A `release` block's `source` may name only a corroborated repo — `npm-install` alone establishes
+  // one (`ls-remote` found the tag on that commit); a checkout asks no remote (#384 F13).
   if (identity.status === 'release' && identity.origin !== 'npm-install') return null;
   if (identity.lockRepo) return identity.lockRepo;
   if (identity.origin === 'checkout') return null;
@@ -392,9 +331,7 @@ function lockSourceRepo(identity) {
 }
 
 /**
- * Do two `files` maps record exactly the same paths at exactly the same hashes? The carry-forward's
- * precondition, and the reason it is airtight rather than a guess: the old provenance is preserved
- * only when the bytes it describes are the bytes we just rendered.
+ * Do two `files` maps record exactly the same paths at the same hashes? The carry-forward precondition.
  *
  * @param {Record<string,string>|null|undefined} a
  * @param {Record<string,string>|null|undefined} b
@@ -408,14 +345,9 @@ function sameFiles(a, b) {
 }
 
 /**
- * The npx spec that reproduces the toolkit a lock was rendered by — `github:<owner>/<repo>#<tag>`,
- * or **null** when the lock cannot name one (no `toolkit` block, a non-release render, or a release
- * whose repo slug was unknowable).
- *
- * THIS IS #372's READ-BACK, and the reason it lives here rather than in the consumer: #372 must not
- * do string surgery on the lock. A test pins the triple equality
- * `toolkitPinFromLock(releaseLock) === toolkitRef(slug, tag) === identity.ref`, so the lock's pin
- * format and the CLI's cannot drift apart.
+ * The npx spec that reproduces the toolkit a lock was rendered by — `github:<owner>/<repo>#<tag>`, or
+ * null when the lock cannot name one. #372's read-back, kept here so the consumer never does string
+ * surgery on the lock; a test pins the triple equality with `toolkitRef` and `identity.ref`.
  *
  * @param {any} lock a parsed lock (or anything with a `.toolkit`)
  * @returns {string|null}
@@ -427,31 +359,10 @@ export function toolkitPinFromLock(lock) {
 }
 
 /**
- * The pin a RUNNING toolkit would have a consumer write into `doctor.toolkitRef` /
- * `waffle.toolkitRef` — #372's write-side, and the mirror of `toolkitPinFromLock`'s read-side.
- *
- * **It is a composition, not a computation, and that is the whole point.** The value written into
- * `.waffle/waffle.yaml` must be the value the lock is about to record — otherwise CI fetches one
- * toolkit and the lock claims another, which is the exact disagreement `--verify-render` reds on.
- * Deriving it by construction from #374's own machinery makes that an identity rather than a
- * promise: for any identity, `toolkitPinFromIdentity(identity) === toolkitPinFromLock(lockAfterRender)`,
- * because the render writes `toolkitLockEntry(identity)` into `lock.toolkit` and this function reads
- * `toolkitPinFromLock` back off exactly that block. A test pins the equality end to end.
- *
- * It therefore inherits every honesty rule the block already enforces, for free — and each one is a
- * case where #372 MUST NOT WRITE:
- *
- *   - `unreleased` / `unverified` → the block records `ref: null` → **null**. The hatch, a `dlx`
- *     install and a network blip all land here (#383): a run that could not establish a release must
- *     not stamp a pin naming one.
- *   - a **checkout** `release` → the block records `source: null` (#384 F13 — `git describe` reads the
- *     clone's local refs and asks no remote, so nothing corroborates that any repository holds this
- *     tag) → **null**. A toolkit developer's `upgrade` never writes their clone's origin into a
- *     consumer's committed config.
- *   - a release whose repo slug is unknowable → **null**, same reasoning.
- *
- * Null means NOTHING IS WRITTEN. Not "write the default", not "write what we guessed" — the pin is a
- * claim about a remote, and a claim we cannot corroborate is one we do not make.
+ * The pin a running toolkit would have a consumer write into `doctor.toolkitRef` / `waffle.toolkitRef`
+ * — #372's write-side. A composition of `toolkitLockEntry` + `toolkitPinFromLock`, so it IS the value
+ * the lock is about to record (a test pins the identity) and inherits every null rule → null writes
+ * nothing (a run that could not corroborate a pin makes no claim). DECISIONS #372; #383, #384 F13.
  *
  * @param {ToolkitIdentity|null} identity the toolkit that performed the render
  * @returns {string|null} `github:<owner>/<repo>#<tag>`, or null when this toolkit is not pinnable
@@ -460,34 +371,18 @@ export function toolkitPinFromIdentity(identity) {
   return toolkitPinFromLock({ toolkit: toolkitLockEntry(identity) });
 }
 
-/** A pinnable release fragment. `v`-optional on READ — `#0.12.0` is a mistake we must still recognise
- * in order to fix it (we always WRITE a `v`-prefixed tag; `RELEASE_TAG` is the shape that exists). */
+/** A pinnable release fragment. `v`-optional on READ (`#0.12.0` is a mistake to recognise; we WRITE `v`). */
 const RELEASE_PIN_FRAGMENT = /^v?\d+\.\d+\.\d+$/;
 
 /**
- * A `toolkitRef` written as a git URL instead of npm's `github:` shorthand — `https://github.com/o/r`,
- * `git+https://…`, `git+ssh://git@github.com/o/r.git`, `git@github.com:o/r.git`. npx resolves all of
- * them, so they are real pins a consumer can be holding, and no `pattern:` in either key's schema
- * rejects one (#386 F3).
- *
- * This test does exactly ONE job — *does the value name github.com at all* — because that is the only
- * job `parseRepoSlug` cannot do for us: `parseRepoSlug` happily takes a BARE `owner/repo`, and
- * `vendor/wafflestack` is a relative path as readily as a slug. Everything else is left to it, and that
- * is deliberate: it already anchors the host (`^…github\.com[:/]`), so a lookalike (`github.com.evil.com`)
- * and a path segment (`https://evil.com/github.com/x`) are rejected there and yield `not-github`.
- * Re-anchoring here as well would add a check that rejects exactly what the real gate already rejects —
- * a branch no test could ever fail alone, which is the precise defect #386 exists to remove (a
- * mutation proved it: tightening this regex changed no test's outcome). ONE gate, and it is the one
- * with the tests.
+ * Does a `toolkitRef` value name github.com at all? A coarse gate only — `parseRepoSlug` does the real
+ * host-anchoring, so re-anchoring here would be the redundant check #386 F3 removed (#386 F3).
  */
 const NAMES_GITHUB_HOST = /github\.com/i;
 
 /**
- * Classify the CURRENT value of a `toolkitRef` config key — the read half of #372's decision, kept
- * pure so the rule is testable without a filesystem.
- *
- * The rule the kinds encode: **`upgrade` moves a pin the consumer already chose; it never makes the
- * choice for them.**
+ * Classify the CURRENT value of a `toolkitRef` config key — #372's read half, kept pure. The rule:
+ * `upgrade` moves a pin the consumer already chose; it never makes the choice for them.
  *
  *   | kind          | value                                    | what #372 does                      |
  *   |---------------|------------------------------------------|-------------------------------------|
@@ -497,37 +392,8 @@ const NAMES_GITHUB_HOST = /github\.com/i;
  *   | `other-pin`   | `#main`, `#<sha>`, `#nightly`             | nothing — left alone, and NOTED     |
  *   | `not-github`  | a local path, a non-github URL, a non-string | nothing                          |
  *
- * `form` is the SECOND axis, and it is what decides whether a `release-pin` may actually be rewritten
- * (#386 F3):
- *
- *   - `shorthand` — `github:owner/repo#v0.12.0`, the documented form. The only form `upgrade` REWRITES.
- *   - `url` — the same repo and fragment written as a git URL. Recognised, classified identically, and
- *     **never rewritten** — but no longer SILENT, which was the bug. Rewriting it would have to either
- *     normalize the consumer's chosen spec into `github:` shorthand (changing their fetch transport —
- *     an `ssh` URL on a private fork resolves where the https shorthand 404s) or do fragment surgery on
- *     the old value (which writes a pin that is NOT `toolkitPinFromIdentity`, breaking the one
- *     invariant #372 exists to establish, and preserves an authored slug that may name a repo which did
- *     not render the lock — #384 F13/F14). Both trade a rare, visible skip for a rare, SILENT breakage.
- *     So the pin is left exactly where it is and `reconcileToolkitRefPins` says so, loudly, with the
- *     remedy — which is what this module already promises for every pin it will not move.
- *
- * Two deliberate calls, both departures from the issue body's "rewrite the fragment, preserve the
- * style":
- *
- *   1. **The whole value is replaced, not just the fragment.** A release tag is ALWAYS `v`-prefixed
- *      (`RELEASE_TAG`), so "preserving" a bare `#0.12.0` style would write `#0.13.0` — a tag that does
- *      not exist, and an npx spec that cannot resolve. We read the bare form (it is a real mistake, and
- *      recognising it is how we fix it) and always write the real one.
- *   2. **`owner/repo` is not preserved either** — the pin comes from the toolkit that actually
- *      rendered. Keeping an authored slug that differs from the renderer's would leave CI fetching a
- *      repo that did not produce the lock, which `--verify-render` reds by construction. The fork case
- *      survives naturally and needs no special code: a fork's consumer installed `npx
- *      github:acme/wafflestack#…`, so the identity's own slug IS acme. When the slug does change, the
- *      caller says so loudly (`reconcileToolkitRefPins`).
- *
- * A bare `owner/repo` is NOT accepted in either form, even though `parseRepoSlug` would happily take
- * it: `vendor/wafflestack` is a local path as often as it is a slug, and this function's answer decides
- * whether a consumer's committed config gets rewritten. A URL must name `github.com` explicitly.
+ * `form` is the second axis: `shorthand` (`github:…`) is the only form `upgrade` rewrites; a `url` form
+ * is READ but never rewritten (#386 F3). A bare `owner/repo` is not accepted — it reads as a local path.
  *
  * @param {unknown} value the raw config value (may be undefined, a non-string, anything)
  * @returns {{kind: 'absent'|'unpinned'|'release-pin'|'other-pin'|'not-github', slug?: {owner: string, repo: string}, fragment?: string, form?: 'shorthand'|'url'}}
@@ -538,18 +404,14 @@ export function classifyToolkitRefValue(value) {
   const raw = value.trim();
   if (!raw) return { kind: 'absent' };
   const shorthand = /^github:/.test(raw);
-  // A git URL is a pin we can READ (and must therefore account for) but will not REWRITE. Classifying
-  // it as `not-github` was the #386 F3 bug: it fell in with local paths and was skipped in silence,
-  // so a consumer who pinned in URL form watched the two keys diverge with no output at all.
+  // A git URL is a pin we READ but never rewrite; classifying it `not-github` was the #386 F3 bug.
   const url = !shorthand && NAMES_GITHUB_HOST.test(raw);
   if (!shorthand && !url) return { kind: 'not-github' };
   const hash = raw.indexOf('#');
   const base = hash === -1 ? raw : raw.slice(0, hash);
   const fragment = hash === -1 ? '' : raw.slice(hash + 1).trim();
-  // THE gate, for both forms: `github:` with nothing parseable behind it (`github:`, `github:owner`), a
-  // URL whose path is not an `owner/repo`, a lookalike host (`github.com.evil.com`) or a github.com
-  // path segment on another host (`https://evil.com/github.com/x`) all fail it. Unwritable and
-  // uninterpretable — leave them exactly where they are.
+  // THE gate, for both forms: no parseable `owner/repo`, a lookalike host, or a github.com path
+  // segment on another host all fail here (see `parseRepoSlug`) — leave them where they are.
   const slug = parseRepoSlug(base);
   if (!slug) return { kind: 'not-github' };
   const form = /** @type {'shorthand'|'url'} */ (shorthand ? 'shorthand' : 'url');
@@ -559,13 +421,8 @@ export function classifyToolkitRefValue(value) {
 }
 
 /**
- * Compare the provenance the LOCK recorded against the toolkit NOW IN HAND, and say what the
- * difference means. `doctor` turns this into notes.
- *
- * **This is a WARNING, never an error** — see `doctor`, which must not fold the verdict into `ok`.
- * The headline capability is `recut`: the lock and the CLI agree on the version and disagree on the
- * commit. `"0.12.0"` alone structurally cannot express that, and expressing it is this issue's whole
- * point.
+ * Compare the provenance the lock recorded against the toolkit now in hand. A WARNING, never an error
+ * (`doctor` must not fold it into `ok`). The headline is `recut` — same version, different commit.
  *
  * @param {object} opts
  * @param {ToolkitLockEntry|null} [opts.lockToolkit] the lock's `toolkit` block
@@ -586,13 +443,10 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
   }
   const pin = toolkitPinFromLock({ toolkit: lockToolkit });
   const lockWho = `${pin ?? lockToolkit.source ?? 'an unknown toolkit'}${lockToolkit.commit ? ` @ ${at(lockToolkit.commit)}` : ''}`;
-  // "marked X", not "an X toolkit": the article cannot be right for every status (`an RELEASE`), and a
-  // malformed block printed `an UNDEFINED toolkit`. Sidestep the article and give `status` a fallback,
-  // so no lock — however hand-edited — can make this sentence ungrammatical or say `UNDEFINED` (#384 F7).
+  // "marked X" with a fallback, so no hand-edited status makes the sentence ungrammatical (#384 F7).
   const lockStatus = String(lockToolkit.status ?? 'unidentified').toUpperCase();
   if (lockToolkit.status !== 'release') {
-    // Informational, and the shape this repo's OWN lock is in — plus every consumer who rendered
-    // through the hatch, or through pnpm/yarn `dlx` (#383). There is nothing to compare against.
+    // Informational — this repo's own lock shape, plus hatch/`dlx` renders (#383). Nothing to compare.
     return {
       status: 'unpinnable',
       notes: [
@@ -601,14 +455,8 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
     };
   }
   if (!lockToolkit.commit) {
-    // A RELEASE block with no commit. THE TWO HALVES MUST AGREE (#384 F7): this branch used to be
-    // folded into `unpinnable` above and told the reader the provenance "cannot be pinned to a
-    // release" — while `toolkitPinFromLock`, which #372 consumes for the pin, pins this exact block
-    // and returns `github:owner/repo#v0.12.0`. The lock IS pinnable; what it lacks is a commit to
-    // compare AGAINST, which is a different sentence. Say that one instead.
-    //
-    // `toolkitLockEntry` cannot emit this block — but a hand-edited, foreign, or future-CLI lock can,
-    // and that is the stated reason `toolkitPinFromLock` keeps its "redundant" status guard.
+    // A RELEASE block with no commit: pinnable, but nothing to compare against — a different sentence
+    // than `unpinnable` (#384 F7). Only a hand-edited/foreign/future-CLI lock can emit it.
     return {
       status: 'unverifiable',
       notes: [
@@ -617,9 +465,8 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
     };
   }
   if (!identity || identity.status !== 'release' || !identity.commit) {
-    // Cannot compare — and, on an npx install, this is the NORMAL state for plain `doctor`, which
-    // resolves its identity OFFLINE and therefore cannot reach `release` at all. Say what the lock
-    // holds and stop; a comparison against an unknown is not a mismatch.
+    // Cannot compare — the normal state for plain `doctor`, which resolves offline and cannot reach
+    // `release`. Say what the lock holds and stop; a comparison against an unknown is not a mismatch.
     return {
       status: 'unverifiable',
       notes: [
@@ -634,28 +481,16 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
     };
   }
   const cliWho = `${identity.ref ?? toolkitSource(identity.repo) ?? 'an unknown toolkit'} @ ${at(identity.commit)}`;
-  // Do the two blocks even name the same REPOSITORY? `recut` used to assert "the tag was re-cut or
-  // force-pushed" without ever asking (#384 F3) — so a fork's genuine `v0.12.0` doctored against
-  // upstream's genuine `v0.12.0` (two repos, neither tag touched) was told its tag had been
-  // force-pushed. That is an assertion about a remote this code never queried, and the correct
-  // diagnosis was sitting unread in `lockToolkit.source` and `identity.repo`.
-  //
-  // THE COMPARISON IS THREE-STATE, NOT TWO (#384 F12). `same` / `different` / **`unknown`** — and
-  // collapsing `unknown` into `same` is how F3's own fix reintroduced the over-claim it was fixing.
-  // `differentRepos` is false when a source is merely NULL, so a bare clone's release block
-  // (`source: null` — `toolkitLockEntry` emits these, and a test pins one) took the `recut` branch and
-  // was told the two "both report version 0.12.0 **from the same repository**" — in a sentence that had
-  // just named the lock "an unknown toolkit". Self-contradicting, and an assertion of a fact never
-  // established. Assert only what was checked: unknown gets a hedge, never membership in "same".
+  // Do the two blocks name the same REPOSITORY? Three-state, not two: same / different / unknown — a
+  // null source is `unknown` and gets a hedge, never membership in "same" (#384 F3/F12).
   const lockSource = lockToolkit.source ?? null;
   const cliSource = toolkitSource(identity.repo);
   const comparable = Boolean(lockSource && cliSource);
   const differentRepos = comparable && lockSource !== cliSource;
   const sameRepo = comparable && lockSource === cliSource;
   if (lockVersion && identity.version && lockVersion === identity.version && !differentRepos) {
-    // THE HEADLINE (#374) — one version, two commits. The bare version string collapses this into "no
-    // skew" and says nothing. Both provenances are named, so a reader can see the evidence rather than
-    // trust the verdict; and the CAUSE is stated only as strongly as the evidence supports it.
+    // THE HEADLINE (#374) — one version, two commits; both provenances named, cause stated only as
+    // strongly as the evidence supports.
     const sameRepoClause = sameRepo ? ' from the same repository' : '';
     const cause = sameRepo
       ? 'the tag was re-cut or force-pushed, or one of them is not the release it claims to be'
@@ -668,8 +503,7 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
     };
   }
   if (differentRepos) {
-    // Same version, DIFFERENT repositories — the ordinary shape for the fork population #373 F14
-    // exists to serve, and the one state that must never be called a re-cut tag.
+    // Same version, DIFFERENT repositories — the fork shape (#373 F14); never a re-cut tag.
     return {
       status: 'mismatch',
       notes: [
@@ -686,31 +520,10 @@ export function describeToolkitProvenance({ lockToolkit = null, lockVersion = nu
 }
 
 /**
- * Which GitHub repo is this toolkit? **PROVENANCE BEFORE DECLARATION** — where this build actually
- * CAME FROM beats what it SAYS it is. In order:
- *
- *   1. npm's hidden lockfile (`resolved`) — the URL npm actually cloned. Offline.
- *   2. a checkout's `origin` remote — where this working tree actually came from. Offline.
- *   3. `package.json` `repository` — the DECLARED answer, and only a fallback for a toolkit that
- *      has neither of the above (a registry tarball, a vendored copy with no git).
- *
- * The order was the other way round, and it asked the WRONG REMOTE for the population this function
- * exists to serve. A fork inherits `repository` verbatim: nothing prompts anyone to rewrite it — the
- * package is `private: true`, never published, and #373 is what introduced the field. So `npx
- * github:acme/wafflestack#v1.0.0`, a consumer correctly pinned to a real release OF THE FORK, had
- * its `ls-remote` pointed at UPSTREAM, which has never heard of that commit → `unreleased` →
- * **hard-refused**, and then handed `npx --yes github:dustinkeeton/wafflestack#v0.12.0` — a remedy
- * that installs A DIFFERENT REPO'S TOOLKIT and renders upstream content into their repo. Three
- * failures at once: a correctly-pinned release refused (the inverse of #373), a remedy that is
- * actively wrong to follow, and — once #374 lands — upstream's slug baked into the fork's lock as
- * provenance.
- *
- * It also made the zero-release-tag machinery (`provablyNone`) unreachable for exactly the
- * population it was written for: an unedited fork's lookup landed on upstream, which always HAS
- * tags, so the honest `latestTag: null` path could never fire.
- *
- * Both provenance sources are read offline, so the offline guarantee is untouched — and the fork
- * comments in this module become true instead of aspirational.
+ * Which GitHub repo is this toolkit? PROVENANCE BEFORE DECLARATION — where this build came FROM beats
+ * what it SAYS: (1) npm's hidden lockfile `resolved`, (2) a checkout's `origin`, (3) `package.json`
+ * `repository`. A fork inherits `repository` verbatim, so a declared-first order would ask upstream's
+ * remote and refuse a correctly-pinned fork release (#373 F14). All three sources are read offline.
  *
  * @param {{toolkitRoot: string, pkg: any, runGit: (cwd: string, args: string[]) => string | null}} opts
  * @returns {{owner: string, repo: string}|null}
@@ -726,36 +539,10 @@ export function repoSlug({ toolkitRoot, pkg, runGit = gitCapture }) {
 }
 
 /**
- * The same question, asked **for the committed lock** — and the answer differs on exactly one step.
- *
- *   1. npm's hidden lockfile (`resolved`) — **kept, and it is the whole of #373 F14.** This is not
- *      machine state: it is *the pin the operator typed*, recorded by npm. `npx
- *      github:acme/wafflestack#v1.0.0` resolves to acme on every machine that runs it, so a fork
- *      still names ITSELF in its own lock. Read offline, from the lockfile, never the network.
- *   2. `package.json` `repository` — the DECLARED answer, which SHIPS WITH THE CONTENT and is
- *      therefore a function of the pinned commit.
- *
- * **`remote.origin.url` is deliberately absent, and that is the fix for #384 F2.** The origin step in
- * `repoSlug` is gated on `.git`, so it fires on ONE path — a checkout — and there it reads a value
- * that is not a function of the pin, the commit, or the rendered bytes. It is a property of the CLONE
- * the renderer happened to use. Two contributors on the same commit, rendering identical bytes, wrote
- * `source: github:<their-own-fork>/wafflestack` and `source: github:dustinkeeton/wafflestack` into the
- * COMMITTED lock — churning it back and forth and redding the documented `render` + `git diff
- * --exit-code` gate for a change that moved no rendered byte. That is precisely the nondeterminism the
- * plan cited to reject recording `origin` at all ("two consumers on the same pinned release write
- * different locks… determinism wins", #317), re-admitted through a different door.
- *
- * **Why this does not regress #373 F14**, which exists to stop upstream's slug being baked into a
- * fork's lock: F14's failing population is the **npm/npx** path, and an npm-installed toolkit HAS NO
- * `.git` — so `repoSlug`'s origin step never ran for it in the first place. F14 is carried entirely by
- * step 1, which is preserved verbatim. The origin step only ever served the **checkout**, and for the
- * checkout it is `resolveToolkitIdentity`'s NETWORK lookup and remedy message that need it
- * ("which remote do I ask about tags?") — questions this function does not answer. Those still call
- * `repoSlug`, unchanged.
- *
- * A fork that renders from a CHECKOUT and wants its lock to name itself has a deterministic way to
- * say so: set `repository` in `package.json` — a committed, content-bearing edit, and therefore a
- * function of the pin, which is exactly the property `origin` lacks.
+ * The same question for the committed lock, minus the `origin` step: (1) npm's hidden lockfile
+ * `resolved` (carries #373 F14 — the pin the operator typed), (2) `package.json` `repository`. Omitting
+ * `remote.origin.url` is the #384 F2 fix: it is a property of the renderer's clone, so two clones of one
+ * commit would write byte-different locks. Determinism by a content-bearing source only. DECISIONS #317.
  *
  * @param {{toolkitRoot: string, pkg: any}} opts
  * @returns {{owner: string, repo: string}|null}
@@ -775,8 +562,7 @@ function repositoryUrl(pkg) {
 }
 
 /**
- * Parse any of the forms a GitHub repo is written in — `git+https://…`, `git+ssh://git@…`, the scp
- * form `git@github.com:o/r.git`, `github:o/r`, or a bare `o/r` — into `{owner, repo}`.
+ * Parse any GitHub repo form — `git+https`, `git+ssh`, scp `git@…:o/r.git`, `github:o/r`, bare `o/r`.
  *
  * @param {string|null|undefined} url
  * @returns {{owner: string, repo: string}|null}
@@ -787,17 +573,14 @@ export function parseRepoSlug(url) {
   const m =
     /^(?:https?:\/\/|ssh:\/\/)?(?:[^@/]+@)?github\.com[:/]+([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(s) ??
     /^github:([^/#]+)\/([^/#]+?)(?:\.git)?$/.exec(s) ??
-    // A bare `owner/repo`. Anchored on a leading word character so a relative path (`../elsewhere`)
-    // can never be mistaken for one — that would send `ls-remote` at a nonsense URL.
+    // A bare `owner/repo`, anchored on a leading word char so a relative path is never mistaken for one.
     /^(\w[\w.-]*)\/(\w[\w.-]*?)(?:\.git)?$/.exec(s);
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
 /**
- * The URL to hand `git ls-remote`. Normalizing to https is not cosmetic: npm records the resolved
- * URL as `git+ssh://git@github.com/…`, and an unauthenticated `ls-remote` against THAT demands an
- * ssh key — so on a CI runner with no key the lookup would fail, degrade to `unverified`, and
- * silently defeat the whole gate.
+ * The URL to hand `git ls-remote`. Normalize to https: npm's `git+ssh://` demands an ssh key an
+ * unauthenticated CI runner lacks, which would degrade the lookup to `unverified` and defeat the gate.
  *
  * @param {{owner: string, repo: string}} slug
  * @returns {string}
@@ -807,10 +590,8 @@ export function httpsUrl(slug) {
 }
 
 /**
- * Default `lsRemote`: shell out to git. Deliberately NOT `--refs` — that flag drops the peeled
- * `refs/tags/vX^{}` lines, which are the only way to learn the COMMIT an annotated tag points at
- * (see `parseLsRemoteTags`). A non-zero exit throws with git's stderr attached, and the caller
- * turns that into `unverified` rather than into an outage.
+ * Default `lsRemote`: shell out to git. NOT `--refs` — that drops the peeled `^{}` lines an annotated
+ * tag's commit needs (see `parseLsRemoteTags`). A non-zero exit throws, becoming `unverified`, not an outage.
  *
  * @param {string} url
  * @returns {string} raw stdout
@@ -821,8 +602,7 @@ export function gitLsRemoteTags(url) {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
       timeout: 15_000,
-      // No credential prompt may EVER block a render. An unauthenticated public fetch is all this
-      // needs, and a repo that answers with a prompt is a repo we simply cannot classify.
+      // No credential prompt may block a render; a repo that prompts is one we cannot classify.
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo', GCM_INTERACTIVE: 'never' },
     });
   } catch (err) {
@@ -833,10 +613,8 @@ export function gitLsRemoteTags(url) {
 }
 
 /**
- * Default `runGit`: capture a git command's stdout, or null. Null is not an error here — `git
- * describe --tags --exact-match HEAD` exits non-zero precisely when HEAD is UNTAGGED, which is the
- * single most important answer this module gets, so a non-zero exit must read as data, not as a
- * crash.
+ * Default `runGit`: capture a git command's stdout, or null. Null is data, not an error — `git describe
+ * --exact-match` exits non-zero precisely when HEAD is UNTAGGED, this module's key answer.
  *
  * @param {string} cwd
  * @param {string[]} args
@@ -851,9 +629,8 @@ export function gitCapture(cwd, args) {
 }
 
 /**
- * Does the SHIPPED changelog carry a non-empty `## [Unreleased]` section? See `corroborate`.
- * A heading with nothing under it (what a release leaves behind) is NOT evidence — and neither is
- * the empty SCAFFOLD a release leaves behind, which is the same claim and needs saying out loud.
+ * Does the shipped changelog carry a non-empty `## [Unreleased]` section? See `corroborate`. An empty
+ * heading or the scaffold a release leaves behind is not evidence.
  *
  * @param {string|null} text
  * @returns {boolean}
@@ -869,37 +646,10 @@ export function changelogHasUnreleasedEntries(text) {
 }
 
 /**
- * Real entries under `## [Unreleased]`, or only the empty Keep-a-Changelog scaffold?
- *
- * This is the honesty of the whole corroborator (#373 review). A bare `/\S/` on the section body
- * reads `### Added`, `<!-- add entries here -->` and `_Nothing yet._` as ENTRIES — and those are the
- * three idioms a Keep-a-Changelog release process routinely leaves in place. Since `corroborate()`
- * only ever tightens `unverified` → `unreleased`, and `unreleased` REFUSES, a derivative whose
- * release process leaves the scaffold would ship a genuinely tagged release whose own CHANGELOG
- * testifies against it: one lookup failure (a corporate proxy npm honours via `.npmrc` but
- * `git ls-remote` does not; git egress blocked while the registry is not) and a correctly-pinned
- * release is hard-refused. That is bricking a legitimate consumer, not being wrong in the safe
- * direction — the accepted false positive is a DEFAULT BRANCH that matches the tag, which is a far
- * more benign thing than a release.
- *
- * So strip what a release leaves behind — sub-headings, HTML comments, emphasis-only placeholders —
- * and only then ask whether anything is left. This repo's own `release` skill happens to leave the
- * section truly empty, which is exactly why the hole was invisible; the guard must not rest on a
- * convention it never states.
- *
- * WHICH DIRECTION TO ERR, when a shape is ambiguous — the ordering is not symmetric, and the first
- * cut of this function got it backwards:
- *
- *   - Strip too LITTLE → the corroborator over-fires → `unreleased` → a REFUSAL. Recoverable: the
- *     message names the pin, and `--allow-unreleased` is one flag away. (This was F8's bug.)
- *   - Strip too MUCH  → the corroborator goes blind → `unverified` → PROCEED → a default branch
- *     renders into a consumer's lock. That is issue #373 itself, unrecoverable and silent.
- *
- * So every filter here must key on what a placeholder SAYS, never on what an entry LOOKS LIKE. The
- * emphasis rule below keyed on shape and swallowed `**Breaking: render now refuses.**` — a real
- * entry, emphasized. Shape is the vocabulary of entries; only the WORDS are the vocabulary of
- * placeholders. When in doubt, keep the line: a false refusal is the direction this module is
- * allowed to be wrong in.
+ * Real entries under `## [Unreleased]`, or only the empty Keep-a-Changelog scaffold? Strip the scaffold
+ * — sub-headings, HTML comments, vocabulary-only placeholders — then ask whether anything remains. Err
+ * toward keeping a line: a false refusal is recoverable (`--allow-unreleased`), a false "released" is
+ * the silent #373 render. So filters key on what a placeholder SAYS, never on what an entry LOOKS like.
  *
  * @param {string} body the `## [Unreleased]` section, heading line already removed
  * @returns {boolean}
@@ -909,34 +659,24 @@ function hasEntries(body) {
     // "<!-- add entries here -->" — may span lines, so strip before the line filters.
     .replace(/<!--[\s\S]*?-->/g, '')
     .split('\n')
-    // "### Added" / "#### Fixed" — a sub-heading with nothing under it is scaffolding, not an entry.
-    // (`## ` cannot appear here: the caller split the file on it.) Unambiguous: a heading is never
-    // itself an entry, and anything written UNDER it survives this filter untouched.
+    // "### Added" — a sub-heading is scaffolding, not an entry (`## ` cannot appear; caller split on it).
     .filter((line) => !/^\s*#{3,}\s/.test(line))
-    // "_Nothing yet._", "*None.*", "**No changes.**", "_TBD_" — a placeholder, recognised by its
-    // VOCABULARY and not by its emphasis. An emphasized line that says anything else is an ENTRY:
-    // `**Breaking: render now refuses.**` stands, and so does `_Support for pnpm added._`. Bullets
-    // (`- x`, `* x`, `* **x**`) never matched this and still do not.
+    // "_Nothing yet._", "**No changes.**" — a placeholder by VOCABULARY, not emphasis; an emphasized
+    // line that says anything else is a real ENTRY and survives.
     .filter((line) => !PLACEHOLDER_LINE.test(line))
     .join('\n');
   return /\S/.test(substance);
 }
 
 /**
- * An emphasis-wrapped line whose WORDS say "there is nothing here". Deliberately a closed vocabulary
- * rather than a shape: see the safety ordering in `hasEntries`. A placeholder this misses costs a
- * refusal (recoverable); an entry this eats costs a silent unreleased render (#373).
- *
- * The phrase must be the WHOLE line — vocabulary, optional trailing punctuation, close. Matching it
- * as a mere PREFIX would eat `**Nothing is broken by this release.**`, a real entry that happens to
- * open with a placeholder word; the tail is where the meaning lives. Erring toward keeping the line
- * is the safe direction by construction.
+ * An emphasis-wrapped line whose WORDS say "there is nothing here" — a closed vocabulary, and the phrase
+ * must be the WHOLE line (a prefix match would eat `**Nothing is broken by this release.**`). See `hasEntries`.
  */
 const PLACEHOLDER_LINE = /^\s*[_*]{1,2}\s*(nothing(\s+yet)?|none|no\s+(changes?|entries)|n\/a|tbd|empty)\s*[.!]?\s*[_*]{1,2}\s*$/i;
 
 /**
- * The newest released version heading in a Keep-a-Changelog file, as a `vX.Y.Z` tag. The remedy
- * message's last line of defence when there is no tag list to read (offline, on an npx install).
+ * The newest released version heading in a Keep-a-Changelog file, as a `vX.Y.Z` tag — the remedy
+ * message's fallback when there is no tag list to read (offline).
  *
  * @param {string|null} text
  * @returns {string|null}
@@ -954,9 +694,8 @@ export function changelogLatestRelease(text) {
 }
 
 /**
- * The refusal. This message IS the feature — the whole value of failing closed over silently
- * rendering the default branch is that the consumer is handed the exact command to run instead, so
- * make it copy-pasteable and say why.
+ * The refusal message — the feature itself: failing closed hands the consumer a copy-pasteable command
+ * to run instead, and says why.
  *
  * @param {ToolkitIdentity} identity
  * @param {string} command the gated command that was refused, e.g. "render"
@@ -982,24 +721,9 @@ export function formatUnreleasedRefusal(identity, command) {
     'what produced it.',
     '',
   ];
-  // NO release tag to name — and the message must not claim more than it knows about WHY. Three
-  // epistemic states reach `latestTag === null`, and only ONE licenses the strong sentence:
-  //
-  //   1. npm-install, `ls-remote` RAN AND SUCCEEDED, zero release tags → we looked; there are none.
-  //      A fork or vendored copy that has cut no tags of its own is the ordinary shape of this
-  //      (`git clone` + push carries none), and it is the population `repoSlug` exists to serve.
-  //   2. npm-install, the lookup THREW or was skipped → `corroborate()` can still reach `unreleased`
-  //      off the shipped changelog, with no tag to name. WE NEVER QUERIED THE REMOTE.
-  //   3. checkout with no local `v*` tags (a `--depth 1` / `--no-tags` clone) → the checkout path
-  //      queries the remote BY DESIGN NEVER.
-  //
-  // `lookupError` is the discriminator, and it is already on the contract: it is null on exactly the
-  // paths where a lookup ran and succeeded, and set on every path that could not look. So state 1
-  // gets the assertion, and 2 and 3 get a hedge — because telling a fork's user that
-  // `--allow-unreleased` is their only path, when a perfectly good release tag exists and we merely
-  // failed to see it, sends them to render unreleased content for no reason. Either way we print no
-  // pinned command: a `Run this instead:` block that cannot resolve is worse than the refusal it
-  // decorates, and this message's whole justification is that what it hands back WORKS.
+  // No tag to name: only a lookup that ran and succeeded (npm-install + lookupError null) proves "no
+  // tags exist" → strong sentence; a skipped/failed lookup or a checkout gets a hedge. Either way print
+  // no pinned command that cannot resolve.
   const provablyNone = identity.origin === 'npm-install' && identity.lookupError === null;
   if (!tag) {
     const noTag = provablyNone
@@ -1038,10 +762,8 @@ export function formatUnreleasedRefusal(identity, command) {
 }
 
 /**
- * The warning for the commands that are NOT gated but still read the toolkit (`list`, `setup`), and
- * for a proceed-anyway (`--allow-unreleased`) or an unanswerable lookup. Reporting-only commands
- * are never refused — `setup` is the documented onboarding entry point, and breaking it would be
- * gratuitous — but they must still say what they are.
+ * The warning for ungated commands that still read the toolkit (`list`, `setup`), and for a
+ * proceed-anyway or unanswerable lookup. These are never refused, but must say what they are.
  *
  * @param {ToolkitIdentity} identity
  * @returns {string|null} null when the toolkit IS a release (nothing to say)
@@ -1050,9 +772,7 @@ export function formatProvenanceWarning(identity) {
   if (identity.status === 'release') return null;
   const repo = identity.repo ?? FALLBACK_REPO;
   const at = identity.commit ? ` (${identity.commit.slice(0, 7)})` : '';
-  // Same rule as the refusal: never advise a pin that cannot exist. With no release tag known for
-  // this repo there is nothing to pin TO, and a `#<latest release tag>` placeholder would send a
-  // fork's users hunting for a tag their remote does not have.
+  // Same rule as the refusal: never advise a pin that cannot exist (no known tag → no pin to name).
   const advice = identity.latestTag
     ? `Pin to \`github:${repo}#${identity.latestTag}\` for a reproducible render.`
     : `No \`vX.Y.Z\` release of ${repo} is known to this CLI, so it cannot name a pin — pin one (or cut one) for a reproducible render.`;
