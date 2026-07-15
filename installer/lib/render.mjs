@@ -32,53 +32,13 @@ import {
 } from './project.mjs';
 
 /**
- * Render every enabled stack into the project at `cwd`.
- * Frozen-image contract: outputs are regenerated verbatim; managed files from the
- * previous lock that are no longer rendered get deleted; a fresh lock is written.
+ * Render every enabled stack into the project at `cwd`. Frozen-image contract: outputs regenerated
+ * verbatim, managed files no longer rendered are pruned, a fresh lock is written.
  *
- * ## Two renders, because the lock is shared and the overlay is not (#317)
- *
- * `.waffle/waffle.local.yaml` is a developer's private tooling: gitignored, different on every
- * machine, and absent in CI. It must never reach a teammate's workspace — and the lock is a
- * *committed* file, so a lock built from the overlay's values is exactly that leak. (It was one:
- * two developers with different `git.botEmail` overlays produced different committed lock hashes,
- * and each one's commit reverted the other's.) So this function computes the render twice:
- *
- *   - the **effective** render — committed config *plus* the overlay — is what gets **written to
- *     disk**, so your working copy carries YOUR values, exactly as before;
- *   - the **canonical** render — committed inputs alone (`.waffle/waffle.yaml` +
- *     `.waffle/extensions/`) — is what gets **hashed into `.waffle/waffle.lock.json`**.
- *
- * Canonical means *everything committed*. Extensions are committed, so they are canonical and they
- * still propagate — that contrast with the overlay is the whole design. The consequences all fall
- * out: every developer's committed lock is byte-identical, nobody is ever red-gated into committing
- * a personal value, and `doctor --verify-render` (which renders the committed config in a temp dir)
- * reproduces the canonical lock exactly, so it goes green in CI instead of refusing to answer.
- *
- * With no overlay present the two configs are the same object and the second render is skipped
- * entirely — the overwhelmingly common case pays nothing and behaves byte-for-byte as before.
- *
- * When they diverge, the bytes on disk are no longer the bytes the lock records, so the frozen-image
- * bookkeeping needs its own truthful record of the tree: `.waffle/waffle.local.lock.json`, gitignored,
- * written only on divergence and removed when it ends. See `readTreeLock`.
- *
- * `sourceBaseDir` is the base a *relative local-path* external `source:` resolves against; it
- * defaults to `cwd` (the project being rendered), which is what every ordinary render wants. It is
- * separable only for `doctor --verify-render` (#314), which renders the committed inputs into a
- * temp dir to check them against the lock: there `cwd` is the scratch dir, but a `source: ../foo`
- * in the config still names a path relative to the REAL repo. Nothing else in the render follows
- * it — outputs, extensions, and the lock all stay bound to `cwd`.
- *
- * `toolkitIdentity` (#373) is what the running CLI worked out about ITSELF — `release` /
- * `unreleased` / `unverified`, plus the `commit`/`tag`/`ref` that reproduce it (see
- * `toolkit-ref.mjs`). The render does not gate on it: the gate lives in `cli.mjs`, and by the time
- * a write reaches here it has already been allowed. It is written into the lock's `toolkit` block
- * (#374) and echoed back on the result, because `toolkitVersion` alone CANNOT identify what produced
- * a render — the default branch and the tag 74 commits behind it both say `0.12.0`.
- *
- * **Absent, the block is OMITTED** and the lock is byte-for-byte the pre-#374 shape. That is the
- * degradation every library caller relies on (`evals.mjs`, and every test that renders directly),
- * and it is deliberate: a `toolkit` block asserting provenance nobody supplied would be a lie.
+ * Renders TWICE — effective (committed config + local overlay) to disk, canonical (committed inputs
+ * alone) into the committed lock — so the private overlay never leaks into shared state (#317).
+ * `sourceBaseDir` exists only for `doctor --verify-render` (#314). `toolkitIdentity` (#373/#374) is
+ * echoed into the lock's `toolkit` block; null ⇒ block omitted, pre-#374 lock shape.
  */
 export function renderProject({
   toolkitRoot,
@@ -92,10 +52,8 @@ export function renderProject({
   refreshSources = false,
 }) {
   const warnings = [];
-  // Carry a legacy repo forward before reading anything: move the consumer dot-paths
-  // (root `.waffle.*`, or pre-0.6.0 `.wafflestack.*`) into `.waffle/` so config load and
-  // the frozen-image lock below see the current layout. A no-op on an already-migrated or
-  // fresh repo.
+  // Carry a legacy repo forward before reading: migrate consumer dot-paths into `.waffle/` (#43);
+  // a no-op on an already-migrated or fresh repo.
   for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
   const stale = staleGitignoreEntries(cwd);
   if (stale.length) {
@@ -111,12 +69,8 @@ export function renderProject({
     ? loadProjectConfig(cwd, [], { canonical: true })
     : project;
 
-  // External stack sources (#88): resolve each declared `{ name, source, ref }` entry to a
-  // toolkit root — a git URL fetched at the pinned `ref`, or a local path read in place — and
-  // merge its named stack into the registry, so one render/lock/doctor pipeline handles built-in
-  // and external stacks alike. Cross-source name collisions are a hard error naming both sources
-  // (see loadToolkitWithSources). A resolution/collision failure is surfaced as a render error
-  // (same fail-loud, tree-untouched contract as the guards below), not thrown.
+  // External stack sources (#88): resolve each `{ name, source, ref }` entry to a toolkit root and
+  // merge its named stack; failures surface as render errors, not throws. See loadToolkitWithSources.
   const loadToolkitFor = (proj) =>
     loadToolkitWithSources({
       builtinRoot: toolkitRoot,
@@ -138,14 +92,8 @@ export function renderProject({
     return { ok: false, warnings, errors: [err.message] };
   }
 
-  // Install-time trust boundary (#126): before rendering anything, lint the definitions of every
-  // EXTERNAL stack (a stack pulled from a `source:` — it carries `provenance`). A malformed
-  // third-party stack (missing frontmatter, undeclared placeholder, dangling `requires:`) must
-  // fail loudly HERE, before a single file is written, with a message naming the source — the
-  // consumer can't fix it and shouldn't ship a broken render. Load-time already rejects the
-  // coarser breakage (unparseable manifest, missing SKILL.md); this adds the finer lint the
-  // toolkit's own `validate` runs, scoped to external stacks so built-in ones aren't re-linted on
-  // every consumer render. Returning here leaves the tree untouched (nothing is written yet).
+  // Install-time trust boundary (#126): lint every EXTERNAL stack's definitions before any write,
+  // failing loudly with the source named. Scoped to external stacks; a return leaves the tree untouched.
   const externalProblems = new Set([
     ...(project.externalStacks?.length ? validateExternalStacks(toolkit) : []),
     ...(canonicalToolkit !== toolkit && canonicalProject.externalStacks?.length
@@ -160,15 +108,9 @@ export function renderProject({
     };
   }
 
-  // Read both locks up front, before anything is written.
-  //   `lock`      — the committed, CANONICAL lock: what the project renders.
-  //   `localLock` — the gitignored, EFFECTIVE lock: what THIS machine last rendered. Absent
-  //                 unless the overlay moved a byte.
-  // Every question about the tree on disk (which files are mine to prune, which pre-existing file
-  // would I clobber, which opt-in syrup is already poured here) must be answered by the lock that
-  // actually describes that tree — so the frozen-image bookkeeping below reads `treeLock`, never
-  // `lock`. Answering from the canonical lock on an overlay machine would prune files it never
-  // wrote and refuse to overwrite files it did.
+  // Read both locks up front (#317): `lock` is the committed canonical lock, `localLock` the
+  // gitignored effective one (absent unless the overlay moved a byte). Every question about the
+  // tree on disk uses `treeLock`, never `lock` — see `readTreeLock`.
   const lock = readLock(cwd);
   const localLock = readLocalLock(cwd);
   const treeLock = localLock ?? lock;
@@ -183,15 +125,9 @@ export function renderProject({
     trackedFiles: new Set(Object.keys(treeLock?.files ?? {})),
   });
 
-  // Generalized prerequisite warnings (#129): beyond the legacy `env:` map, every declared
-  // `prerequisites:` entry cheap to probe locally (a `tool`/`env` kind — a `command -v` binary
-  // check or an env-var read) that is currently unmet emits a non-blocking `warning:`. This is
-  // advisory only — it never fails the render (that is `doctor`'s job), and it deliberately does
-  // NOT shell out for the network/auth kinds (secret, scope, label, setting, service), which the
-  // deliberate `doctor` gate verifies instead. Scoped to the selected items, like `requires:`.
-  //
-  // Deliberately OUTSIDE `computeOutputs`: it shells out, and it describes the machine you are
-  // rendering on — so it runs once, against the effective selection, never twice.
+  // Generalized prerequisite warnings (#129): unmet locally-probeable (`tool`/`env`) prerequisites
+  // warn but never fail the render (that is `doctor`'s job); network/auth kinds are left to doctor.
+  // Deliberately OUTSIDE `computeOutputs` — it shells out, so it runs once against the effective selection.
   {
     const prereqs = applicablePrerequisites(toolkit, { items: effective.selection.items });
     const { unmetRequired, unmetRecommended } = evaluatePrerequisites(prereqs, cwd, {
@@ -201,12 +137,8 @@ export function renderProject({
     for (const p of [...unmetRequired, ...unmetRecommended]) warnings.push(formatPrereq(p));
   }
 
-  // The same placeholder is substituted once per target, so a missing value yields
-  // one error per target — collapse to a distinct set.
-  //
-  // The developer's OWN render is checked first, and a failure returns here — which is also what
-  // keeps the canonical failure below unambiguous. If the effective render is broken, that is the
-  // problem to report; only once it is clean can a *canonical* error mean anything else.
+  // A missing value yields one error per target — collapse to a distinct set. The effective render
+  // is checked first so a failure returns here, keeping the canonical failure below unambiguous.
   if (errors.length) return { ok: false, errors: [...new Set(errors)], warnings };
 
   // The canonical render — the bytes the lock will record. Nothing here is written to disk.
@@ -226,16 +158,9 @@ export function renderProject({
           trackedFiles: new Set(Object.keys(lock?.files ?? {})),
         });
 
-  // A canonical error that survives a clean effective render can have exactly one cause: the
-  // overlay supplied something the committed config cannot. The headline case is a `required:` key
-  // with no `default:` held ONLY in the overlay — the render works for you and for nobody else,
-  // and the lock could not be built from committed inputs at all.
-  //
-  // That must be LOUD, never a silent fallback to a default nobody asked for, and never a silent
-  // half-lock (#317, constraint 2). It is not a red-gate on a *personal* value either: the fix is
-  // to commit SOME value — a team address, the stack's own default, a placeholder — while your
-  // private one keeps overriding it locally. A defaultless required key is by definition one the
-  // stack cannot render without, so the canonical render must be given something.
+  // A canonical error surviving a clean effective render has one cause: the overlay supplied
+  // something the committed config cannot (a defaultless `required:` key). Must be LOUD, not a silent
+  // half-lock (#317, constraint 2); the fix is to commit SOME value while the overlay overrides locally.
   if (canonicalErrors.length) {
     return {
       ok: false,
@@ -254,13 +179,9 @@ export function renderProject({
   // Frozen image: reconcile against the lock that describes the TREE (read up front).
   const managed = treeLock?.files ?? {};
 
-  // Refuse to clobber a pre-existing UNMANAGED file: a path this render would produce that
-  // already exists on disk but was not tracked by the previous lock — i.e. the consumer's
-  // own hand-written file, not a prior render of ours. A byte-identical file is adopted
-  // silently (the write is a no-op and the new lock records it either way); only a genuine
-  // content difference is a collision. `--force` overwrites. Checked before any write or
-  // prune, so a refusal leaves the whole tree untouched — same fail-loud spirit as the
-  // cross-stack `emit()` conflict above.
+  // Refuse to clobber a pre-existing UNMANAGED file — a produced path that exists on disk but was
+  // untracked by the previous lock (#25). Byte-identical is adopted silently; `--force` overwrites.
+  // Checked before any write or prune, so a refusal leaves the tree untouched.
   if (!force) {
     const collisions = [];
     for (const [rel, content] of effective.outputs) {
@@ -298,27 +219,14 @@ export function renderProject({
   const canonicalFiles = hashOutputs(canonical.outputs);
   const effectiveFiles = canonical === effective ? canonicalFiles : hashOutputs(effective.outputs);
 
-  // Per-source provenance (#125): attribute every rendered *external* file to the source it came
-  // from. `producedBy` records "<stackName>/<kind>/…" per output, and only external stacks carry
-  // `provenance` — so built-in and waffledocs outputs have no source entry and stay attributable
-  // to the toolkit as before. The `sources` block is omitted when empty, so a built-in-only lock
-  // is byte-identical to the pre-#125 shape (backward compatible: an old lock still validates and
-  // doctors clean, since doctor/upgrade treat a missing `sources` as "all built-in").
+  // Per-source provenance (#125): attribute every rendered EXTERNAL file to its source. Only
+  // external stacks carry `provenance`; the `sources` block is omitted when empty, so a
+  // built-in-only lock is byte-identical to the pre-#125 shape. See collectSourceProvenance.
   const sources = collectSourceProvenance(canonical.groups, canonical.producedBy, canonicalFiles);
 
-  // Built-in toolkit provenance (#374): the `toolkit` block — `{ source, sourceType, ref, commit,
-  // status }`, keyed like a `sources[]` entry, because `toolkitVersion` alone does NOT identify
-  // content (an unpinned `npx github:…` fetch resolves the default branch, whose package.json still
-  // carries the last released version number, so a render 74 commits past the tag and the tag itself
-  // are indistinguishable in the lock).
-  //
-  // **`commit` is recorded if and only if `status === 'release'`** — no field here may be a function
-  // of a moving HEAD, or the committed lock would churn on every commit and name content it did not
-  // produce. `toolkitLockEntry` owns that rule, and the `unverified` carry-forward that keeps a
-  // network blip from rewriting a good block to nulls; read its docblock before touching this.
-  //
-  // Each lock carries forward from its OWN predecessor (#317): the committed lock from `lock` against
-  // `canonicalFiles`, the local lock from `localLock` against `effectiveFiles`.
+  // Built-in toolkit provenance (#374): `toolkitVersion` alone does NOT identify content, so the
+  // `toolkit` block records it. `toolkitLockEntry` owns the "`commit` iff release" rule and the
+  // `unverified` carry-forward; each lock carries forward from its OWN predecessor (#317).
   const toolkitBlock = toolkitLockEntry(toolkitIdentity, { prevLock: lock, newFiles: canonicalFiles, toolkitVersion });
 
   // The committed lock: canonical throughout — its `targets`/`stacks`/`include` come from the
@@ -374,11 +282,8 @@ export function renderProject({
   }
 
   log(`rendered ${effective.outputs.size} files${removed.length ? `, removed ${removed.length} stale` : ''}`);
-  // `identity` rides back out with the result so a caller that did not resolve it (upgrade, and #372
-  // after it) can read the ref that produced this render without asking twice. Null when unthreaded.
-  // `toolkit` is the block as WRITTEN — which is not always derivable from `identity`, because the
-  // carry-forward may have preserved the previous one. `upgrade` diffs exactly this against the
-  // lock's old block to report a commit move (`diffToolkit`), so it must be the written value.
+  // `identity` rides back on the result so a caller that didn't resolve it can read the ref (null
+  // when unthreaded). `toolkit` is the block as WRITTEN, which `upgrade` diffs against the old block.
   return {
     ok: true,
     errors: [],
@@ -393,22 +298,13 @@ export function renderProject({
 
 /**
  * Compute every file a `project` config would render — the pure core of `renderProject`, run once
- * per config (effective and canonical; see that docblock). It reads the toolkit and the committed
- * `.waffle/extensions/`, and writes nothing: the caller decides which result lands on disk and
- * which one is merely hashed.
- *
- * `errors` and `warnings` are push-style sinks the caller owns — the canonical pass hands in a
- * throwaway `warnings` array precisely because its advisories describe a render that exists
- * nowhere. Returns the pieces the caller still needs: `outputs` (path → content), `producedBy`
- * (path → the "stack/kind/name" that emitted it) and `groups`, which together build the lock's
- * per-source provenance, and `selection`, which the prerequisite probe runs against.
+ * per config (effective and canonical). Writes nothing; `errors`/`warnings` are caller-owned sinks.
+ * Returns `outputs` (path → content), `producedBy`, `groups`, and `selection`.
  */
 function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings }) {
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "stack/kind/name" that emitted it
-  // Two enabled stacks may define same-named items (alternative implementations of
-  // the same skill, say) — fine in the toolkit, but rendering both would silently
-  // last-write-wins. Fail loudly instead.
+  // Two enabled stacks defining a same-named item would silently last-write-wins; fail loudly instead.
   const emit = (rel, content, context) => {
     if (producedBy.has(rel) && producedBy.get(rel) !== context) {
       errors.push(
@@ -420,22 +316,14 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     outputs.set(rel, content);
   };
 
-  // Selection = union(items of enabled stacks) ∪ closure(include items) − eject. An external
-  // `{ name, source, ref }` entry enables its stack exactly like a bare built-in name — both are
-  // registered in `toolkit.stacks` — so fold the external names into the enabled set here.
-  // `trackedFiles` (the caller's lock paths) lets the selection keep rendering an opt-in syrup item
-  // the repo already has, so existing installs keep getting updates while opt-in syrup stays gated
-  // out of a fresh stack expansion.
+  // Selection = union(items of enabled stacks) ∪ closure(include items) − eject; external entries
+  // fold into the enabled set here. `trackedFiles` keeps updating opt-in syrup the repo already has.
   const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
   errors.push(...selection.errors);
 
-  // Reverse the syrup companion edge (#74): an opt-in syrup file pairs with a companion waffle
-  // via `requires:` (installing the syrup pulls the companion), but the render only walks that
-  // forward — so selecting the companion, or enabling its whole stack, leaves the paired syrup
-  // gated out and silent. Surface each skipped pairing with the exact pour command. This is the
-  // deliberately non-interactive CLI's stand-in for the both/one/neither question the setup
-  // playbook (schema/SETUP.md step 2) now requires an agent to ask.
+  // Reverse the syrup companion edge (#74): the render walks `requires:` forward only, so selecting a
+  // companion leaves its paired opt-in syrup gated out and silent — surface each skipped pairing.
   for (const { fileRef, stackName, companions, scopedTo } of skippedSyrupCompanions(toolkit, selection)) {
     // External opt-in syrup is doubly gated (#126): a paired external syrup file was authored
     // outside this repo, so its extra trust-boundary acknowledgement rides along with the
@@ -477,23 +365,11 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     );
   }
 
-  // #364: a SELECTED waffle whose `requires:` edge lands on a scoped-out file renders WITHOUT the
-  // dependency it declares. Before #364 that was impossible — a `files/` item always rendered, so a
-  // strict edge was always satisfied at render time — and the renderer walks the edge forward only,
-  // so nothing else can notice. Left silent, the consumer gets an agent declaring a dependency on a
-  // payload that will never exist in their repo: the "half-installed and silent" failure #74 exists
-  // to prevent, reached by the one entry path that had neither a warning nor a lint.
-  //
-  // The REMEDY has to be true, not just the diagnosis. When the dependency is opt-in syrup, the
-  // scope is only HALF of what gates it: `addStack` skips an opt-in file until it is explicitly
-  // installed, so "enable one of its targets" alone renders nothing. Worse, enabling the target
-  // clears the scope-broken condition — this warning would disappear while the dependency still
-  // does not exist, and a warning that vanishes reads as RESOLVED. Unlike the pairing warning
-  // above, nothing else picks the flow up: `skippedSyrupCompanions` walks the requires: edge from
-  // the FILE to its companions, so an agent→file edge is invisible to it. State both steps.
-  // `computeSelection` ALWAYS sets both `targetSkipped` and `targetBrokenRequires` (they are plain
-  // accumulators on its return), so neither needs a `?? []` guard — and iterating one bare while
-  // guarding the other implied, falsely, that they differ. Both read bare.
+  // #364: a SELECTED waffle whose `requires:` edge lands on a scoped-out file renders WITHOUT that
+  // dependency — the "half-installed and silent" failure #74 prevents, via the one entry path with
+  // neither warning nor lint. For opt-in syrup, enabling a target clears the scope-broken condition
+  // while the dependency still doesn't exist, so the remedy states both steps (enable AND install).
+  // `targetSkipped`/`targetBrokenRequires` are always set, so both read bare (no `?? []`).
   for (const { ref, requiredBy, targets, optIn } of selection.targetBrokenRequires) {
     const remedy = optIn
       ? `${ref} is also OPT-IN syrup, so enabling a target is necessary but NOT sufficient: enable one of ` +
@@ -507,12 +383,8 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     );
   }
 
-  // Trust-boundary acknowledgement for EXTERNAL opt-in syrup being poured (#126). Opt-in syrup is
-  // already gated behind explicit opt-in; when it comes from an external source, the content was
-  // authored OUTSIDE this repo (and may demand elevated permissions — a workflow with repo write),
-  // so pouring it deserves one more, clearly-worded acknowledgement, distinct from built-in opt-in
-  // syrup. The CLI never prompts, so — like the pairing warning above — this is surfaced as a
-  // required acknowledgement the setup/install flow must put to the user.
+  // Trust-boundary acknowledgement for EXTERNAL opt-in syrup being poured (#126): authored outside this
+  // repo, so surface a required acknowledgement the flow must put to the user, distinct from built-in opt-in.
   for (const { stackName, stack, kind, item } of selection.items) {
     if (kind !== 'files' || !stack.provenance) continue;
     if (!stack.optIn.has(`files/${item.name}`)) continue;
@@ -544,18 +416,12 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     const primaryTarget = project.targets[0] ?? 'claude';
     const resolvers = {};
     for (const target of project.targets) resolvers[target] = makeResolver(stack, project.values, target);
-    // A file renders ONCE, with ONE identity (it has no per-harness variant), and the
-    // missing-required-key probe needs a single resolver — both use the primary target's identity
-    // for any `harness.*` refs. A `targets:`-scoped file (#364) is the one exception, and only on
-    // WHICH identity: see `resolverFor` below. `targets:` decides whether a file renders, never how
-    // many times.
+    // A file renders ONCE with the primary target's identity; a `targets:`-scoped file (#364) is the
+    // one exception on WHICH identity — see `resolverFor`. `targets:` decides whether, not how many.
     const primaryResolver = resolvers[primaryTarget] ?? makeResolver(stack, project.values, primaryTarget);
-    // #364: a scoped file substitutes with the identity of the primary-most target it DECLARES —
-    // not the project's primary target, which may be a harness the file is not even for. Rendering
-    // a `[claude]`-scoped payload in a `[codex, claude]` repo with the Codex identity would put the
-    // wrong `{{harness.*}}` values in a Claude-only file. An unscoped file keeps using
-    // primaryResolver, unchanged. A selected scoped file is guaranteed at least one enabled declared
-    // target by computeSelection's filter, so the `find` always hits; the fallback is belt-and-braces.
+    // #364: a scoped file substitutes with the primary-most target it DECLARES, not the project's
+    // primary target (which may be a harness it isn't for); an unscoped file keeps primaryResolver.
+    // computeSelection guarantees a selected scoped file at least one declared target, so `find` hits.
     const resolverFor = (f) =>
       (f.targets ? resolvers[project.targets.find((t) => f.targets.includes(t))] : primaryResolver) ?? primaryResolver;
     // Scope required-config to keys the *selected* items actually reference — installing
@@ -563,11 +429,8 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     const usedKeys = collectUsedKeys(items);
     const missing = missingRequiredKeys(stack, project.values, (values, key) => primaryResolver(key), usedKeys);
     if (missing.length) {
-      // Names the committed config, and ONLY it. This fires exclusively for a `required:` key with
-      // no resolvable value — by construction the one class that may not live only in the overlay
-      // (#317: the canonical render must be buildable from committed inputs). Advising the overlay
-      // here would route the consumer straight into the canonical-render guard above, which prints
-      // in the same output and says the opposite.
+      // Names the committed config, and ONLY it: a `required:` key with no resolvable value is the one
+      // class that may not live only in the overlay (#317); advising it would contradict the guard above.
       errors.push(
         `stack "${stackName}" needs config values: ${missing.map((k) => `config.${k}`).join(', ')} — add them to ${CONFIG_FILE}`,
       );
@@ -583,11 +446,8 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     checkEnvPrerequisites({ stack, project, cwd, warnings });
   }
 
-  // Generate the `.waffle/` overview docs (cheat sheet + team intro, Markdown + branded HTML)
-  // from the same computed selection, through the same `emit()` choke point — so they are
-  // lock-tracked, doctor-drift-checked, pruned when stale, and refreshed on every render.
-  // Only when the item loop was clean: a missing required key already failed the render, and
-  // re-substituting descriptions here would just repeat those errors.
+  // Generate the `.waffle/` overview docs through the same `emit()` choke point, so they are
+  // lock-tracked, drift-checked, and pruned like any output. Only when the item loop was clean.
   if (!errors.length) {
     for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors })) {
       emit(rel, content, 'waffledocs');
@@ -626,8 +486,7 @@ function sameExternalStacks(a, b) {
 function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, guards }) {
   const context = `${stack.name}/agents/${agent.name}`;
   const extPath = path.join(EXTENSIONS_DIR, 'agents', `${agent.name}.md`);
-  // Body and description are substituted per target so `harness.*` resolves to that
-  // target's identity (description is the one frontmatter field carrying prose).
+  // Body and description substituted per target so `harness.*` resolves to that target's identity.
   const bodyFor = (target) =>
     appendExtension(substitute(agent.body, resolvers[target], stack.declared, errors, context, guards), cwd, extPath);
   const descriptionFor = (target) =>
@@ -636,15 +495,11 @@ function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, guar
   if (project.targets.includes('claude')) {
     const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('claude') };
     if (agent.data.skills) fm.skills = agent.data.skills;
-    // `identity:` (#156) — the agent's virtualized git author, read at spawn time by the
-    // delegate orchestrator off the rendered agent file. Harnesses that don't know the field
-    // ignore it (Claude Code identifies an agent by name/description), so passing it through
-    // is safe; codex's TOML has no shape for it and drops it.
+    // `identity:` (#156) — the agent's virtualized git author, read at spawn time off the rendered
+    // file. Harnesses that don't know it ignore it; codex's TOML has no shape for it and drops it.
     if (agent.data.identity) fm.identity = agent.data.identity;
-    // The `claude:` passthrough may not shadow a reserved key. `validateStack` rejects that for
-    // toolkit and (via `validateExternalStacks`, above) external stacks alike; stripping here is
-    // defense in depth, so a validated `identity` can never be overwritten by an unvalidated one
-    // hoisted out of `claude:` — that pathway would bypass DISPLAY_NAME_RE entirely.
+    // The `claude:` passthrough may not shadow a reserved key (#156); `validateStack` rejects it,
+    // and stripping here is defense in depth so a validated `identity` can't be overwritten.
     for (const [k, v] of Object.entries(agent.data.claude ?? {})) {
       if (!RESERVED_AGENT_KEYS.includes(k)) fm[k] = v;
     }
@@ -662,10 +517,8 @@ function renderAgent({ agent, stack, resolvers, project, cwd, emit, errors, guar
     );
   }
   if (project.targets.includes('agents-dir')) {
-    // Cross-tool `.agents/` convention: harness-neutral Markdown that mirrors the Claude
-    // agent shape (frontmatter name/description + the neutral `skills:` grant-pointer, body)
-    // but drops the Claude-only `claude:` passthrough block — so it renders correctly for any
-    // AGENTS.md-ecosystem tool. Skills already land in the sibling `.agents/skills/`.
+    // Cross-tool `.agents/` convention: harness-neutral Markdown mirroring the Claude agent shape
+    // but dropping the Claude-only `claude:` passthrough. Skills land in the sibling `.agents/skills/`.
     const fm = { name: agent.data.name ?? agent.name, description: descriptionFor('agents-dir') };
     if (agent.data.skills) fm.skills = agent.data.skills;
     if (agent.data.identity) fm.identity = agent.data.identity;
@@ -698,13 +551,9 @@ function tomlMultilineString(s) {
 }
 
 function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guards }) {
-  // Map each output dir → the target identity to substitute it with. Codex and agents-dir
-  // both consume skills from the cross-tool `.agents/skills` convention (per OpenAI's docs,
-  // Codex scans `.agents/skills` from the cwd up to the repo root), so they share one output
-  // dir — deduped here (first target wins) to avoid emitting the same path twice. Their
-  // `harness.*` built-ins are identical, so the shared render is unambiguous. That premise is
-  // load-bearing (a divergent built-in would make this file's content depend on which *other*
-  // targets are enabled) and pinned by a test — see HARNESS_BUILTINS' `agentsDir` note.
+  // Map each output dir → the target identity to substitute it with. Codex and agents-dir share the
+  // cross-tool `.agents/skills` dir, deduped here (first target wins); their `harness.*` built-ins
+  // are identical so the shared render is unambiguous (#156 — see HARNESS_BUILTINS' `agentsDir` note).
   const skillDirs = new Map(); // dir -> target identity
   const addDir = (dir, target) => { if (!skillDirs.has(dir)) skillDirs.set(dir, target); };
   if (project.targets.includes('claude')) addDir(path.join('.claude', 'skills', skill.name), 'claude');
@@ -720,8 +569,7 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guar
     if (rel.endsWith('.md')) {
       const context = `${itemContext}/${rel}`;
       const raw = fs.readFileSync(abs, 'utf8');
-      // Substitute per target: `.claude/skills` uses the claude identity, `.agents/skills`
-      // the agents-dir/codex (Codex) identity — they diverge only where `harness.*` is used.
+      // Substitute per target — they diverge only where `harness.*` is used.
       for (const [dir, target] of skillDirs) {
         let content = substitute(raw, resolvers[target], stack.declared, errors, context, guards);
         if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
@@ -735,14 +583,10 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guar
 }
 
 /**
- * Emit a generic `files/` payload to its repo-relative path. A file has no per-harness variant, so
- * it renders ONCE, never per-target — but an optional `targets:` on its manifest entry may decide
- * WHETHER it renders at all (#364), which `computeSelection` settles before this is ever called: an
- * out-of-scope file is not in the selection, so its path is not among the render's outputs and the
- * stale-prune removes any copy an earlier config left behind. Text is template-substituted (declared
- * keys + `harness.*` resolved against a single target's identity — the caller's `resolve`); binaries
- * are copied byte-for-byte. The rel path doubles as the cross-stack conflict key, so two enabled
- * stacks emitting the same path fail loudly, exactly like same-named skills.
+ * Emit a generic `files/` payload to its repo-relative path. Renders ONCE, never per-target; an
+ * optional `targets:` decides WHETHER it renders (#364), settled by `computeSelection` beforehand.
+ * Text is template-substituted (caller's `resolve`); binaries are copied byte-for-byte. The rel path
+ * doubles as the cross-stack conflict key.
  */
 function renderFiles({ file, stack, resolve, emit, errors, guards }) {
   const context = `${stack.name}/files/${file.name}`;
@@ -813,16 +657,10 @@ export function readLocalLock(cwd) {
 }
 
 /**
- * The lock that describes the files ON DISK — the local lock when the overlay shaped this tree,
- * else the committed one. Every check that hashes the working tree must read through here
- * (`doctor`'s drift check, `list`'s per-item status, `render`'s prune and clobber guards):
- * comparing a tree the overlay shaped against the *canonical* hashes would report every file the
- * overlay touched as hand-edited, which is a permanently red `doctor` for the one developer whose
- * private tooling the canonical lock exists to protect.
- *
- * Note what does NOT read through here: `--verify-render`, which asks the orthogonal question —
- * does the COMMITTED config still reproduce the COMMITTED lock — and must therefore stay on the
- * canonical pair, on every machine.
+ * The lock that describes the files ON DISK (#317) — the local lock when the overlay shaped this
+ * tree, else the committed one. Every check that hashes the working tree reads through here
+ * (`doctor` drift, `list` status, `render`'s prune/clobber guards). NOT `--verify-render`, which
+ * asks whether the COMMITTED config reproduces the COMMITTED lock and stays on the canonical pair.
  */
 export function readTreeLock(cwd) {
   return readLocalLock(cwd) ?? readLock(cwd);
@@ -835,13 +673,9 @@ function describeProvenance(prov) {
 }
 
 /**
- * Build the lock's per-source provenance: one `{ name, source, sourceType, ref, commit, files }`
- * entry per external source that rendered at least one file, `files` being the source's rendered
- * paths. `groups` is the per-stack render grouping (only external stacks carry `provenance`);
- * `producedBy` maps each output path to its "<stackName>/…" context, whose leading segment names
- * the owning stack (stack names are unique across all sources, so the segment identifies it
- * unambiguously). Built-in and waffledocs outputs have no external source and are simply absent.
- * Sources and their file lists are sorted for a deterministic lock.
+ * Build the lock's per-source provenance: one entry per external source that rendered ≥1 file.
+ * Only external stacks carry `provenance`; built-in and waffledocs outputs are absent. Sorted for
+ * a deterministic lock.
  */
 function collectSourceProvenance(groups, producedBy, lockFiles) {
   const provenanceByStack = new Map();
@@ -866,36 +700,13 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
 }
 
 /**
- * Compile every `pattern:` declared anywhere in the toolkit into a Map<key, guard[]> for
- * render-time value validation — each guard a makeGuard record carrying the RegExp, the raw
- * authored pattern, and its declaring source, so a rejection can name the guard that fired
- * (#244 F1). A pattern that fails to compile is a toolkit-authoring bug (validate reports it
- * precisely) — here we fail the render loudly rather than silently skip the check, so a
- * broken guard can never ship unenforced.
- *
- * The map spans **every** stack, not just the selected ones (#155 review). A guard is a
- * property of the config KEY, not of which stack happens to be installed. `git.cmd` is
- * declared by both `github-workflow` and `orchestration`, but only the former declares the
- * `git.botName` / `git.botEmail` it composes — so a per-stack map left an orchestration-only
- * install splicing an unvalidated `botEmail: "$(id)@x.com"` straight into an agent-executed
- * shell command, while the identical value was rejected once `github-workflow` was co-installed.
- * That is the same "accident of what else happens to be present" failure mode `expandNested`'s
- * doc comment (template.mjs) says the nested-enforcement path exists to prevent. W5b/W5c pin
- * that independence. The flip side — a stack the project never installs can veto its value —
- * is why the guard records carry provenance: the error names the failing pattern and its
- * declaring stack, so the veto is legible even when the declarer is outside the selection.
- *
- * A key declared with a pattern in more than one stack must satisfy ALL of them — the strictest
- * reading, and the only one that cannot be weakened by installing another stack. No shipped
- * scalar key is dual-declared today, so the AND is pinned by a two-stack fixture test
- * ("pattern guards from two stacks AND together", #244 F2) rather than by shipped data; its
- * `entryPatterns` twin IS live on shipped data (`git.agentIdentities` declares byte-identical
- * entryPatterns in both `github-workflow` and `orchestration`), and #254 adds a dual-declared
- * `git.cmd` pattern relying on exactly this union.
- *
- * The same collection runs for `entryPatterns:` (#156), the map-valued sibling of `pattern:`:
- * `Map<key, Map<leaf, guard[]>>`, unioned toolkit-wide on the same reasoning. Returns the pair
- * as a `guards` object, which is what `substitute()` takes.
+ * Compile every `pattern:` declared anywhere in the toolkit into a Map<key, guard[]> for render-time
+ * value validation, each guard carrying its RegExp/source so a rejection names it (#244 F1). A guard
+ * that won't compile fails the render loudly. The map spans EVERY stack, not just selected ones (#155):
+ * a guard is a property of the config KEY, so a per-stack map let an unvalidated value through when its
+ * declaring stack was absent — the "accident of what else is present" failure `expandNested` prevents.
+ * A key guarded in multiple stacks must satisfy ALL (#244 F2). `entryPatterns:` (#156) collects the same
+ * way; returns the pair as a `guards` object for `substitute()`.
  */
 function compileGuards(toolkit, errors) {
   const patterns = new Map();
@@ -951,35 +762,15 @@ function compileGuards(toolkit, errors) {
 }
 
 /**
- * The config-value guard failures a render WOULD produce — evaluated WITHOUT rendering anything
- * (#218). This is what lets `doctor` enforce a `pattern:` guard in the form the toolkit actually
- * ships.
- *
- * A guard is a property of the config VALUE, not of the render: `render` only *notices* it because
- * substitution is where a value is read. But `doctor` (bare — the shipped `waffle-doctor.yml`
- * invocation, since `doctor.flags` defaults to `""`) only hashes the tree against the lock, so it
- * structurally could not see one — and `--verify-render` is opt-in by design (#314), so it is not
- * the gate a consumer actually runs. That left the population this class of guard exists for
- * silently unprotected: a repo whose config ALREADY carries a compound has a lock and renders,
- * produced by the OLD toolkit, that match each other. Hash-comparison doctor is green; the dead
- * `Bash(cmd1 && cmd2:*)` grant stays live in their rendered workflow; their CI keeps silently
- * denying the check. The guard closed the door on new dead grants and left the existing ones behind
- * a passing check — which is the original bug's own failure shape.
- *
- * FAITHFULNESS IS THE WHOLE POINT, so this does not re-implement the check: it runs the real
- * `substitute()` — the same resolver, the same `declared` set, the same compiled guards — against a
- * text that is exactly `{{key}}`. A doctor that rejected what render accepts (or vice versa) would
- * be worse than no doctor check at all, and the only way to guarantee they agree is to run the same
- * code. It reports one problem per KEY, not one per substitution site.
- *
- * Deliberately NOT the missing-value gate: an unresolved key is `missingRequiredKeys`' business
- * (and render's), and a key whose value lives only in the gitignored local overlay must not read as
- * missing here. So an undefined value is skipped, and only a RESOLVED value is guarded.
+ * The config-value guard failures a render WOULD produce, evaluated WITHOUT rendering (#218) — so
+ * bare `doctor` (which only hashes the tree, and whose `--verify-render` is opt-in, #314) can enforce
+ * a `pattern:` guard in the shipped form. FAITHFULNESS IS THE POINT: it runs the real `substitute()`
+ * against `{{key}}` rather than re-implementing the check, reporting one problem per KEY. An undefined
+ * value is skipped (that's `missingRequiredKeys`' business); only a RESOLVED value is guarded.
  */
 export function configGuardProblems({ toolkit, project, selection }) {
   const problems = [];
-  // A guard that fails to compile is a toolkit-authoring bug; surfacing it here matches render,
-  // which fails loudly rather than silently skipping the check.
+  // A guard that fails to compile is a toolkit-authoring bug; surface it here, matching render.
   const guards = compileGuards(toolkit, problems);
 
   const groups = new Map();
@@ -990,8 +781,7 @@ export function configGuardProblems({ toolkit, project, selection }) {
 
   const reported = new Set();
   for (const [stackName, { stack, items }] of groups) {
-    // The primary target, exactly as render's `primaryResolver` does — only the reserved `harness.*`
-    // keys resolve per-target, and none of those is a stack-declared, pattern-guarded config key.
+    // The primary target, exactly as render's `primaryResolver` does (no guarded key resolves per-target).
     const target = project.targets?.[0] ?? 'claude';
     const resolve = makeResolver(stack, project.values, target);
     for (const key of collectUsedKeys(items)) {
