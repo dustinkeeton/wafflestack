@@ -3013,7 +3013,7 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(pr, /never (an )?improvised? (a )?(token|value)/i, 'pr-response must forbid improvising a cutoff — a plausible token fails OPEN');
     // The CI dispatch prompt writes the same status, so it must carry the same format and the same
     // literal-not-variable rule — the CI harness crosses the same Bash-call boundary.
-    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
+    const wf = fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, 'waffle-pr-response-hook.yml'), 'utf8');
     assert.match(wf, /description=triaged-through=/, 'the CI dispatch prompt must stamp the cutoff too, or CI-written statuses never parse');
     assert.doesNotMatch(wf, /description=triaged-through=\$CUTOFF"/, 'the CI dispatch prompt writes $CUTOFF — it expands to empty in the harness too');
     assert.match(wf, /PASTE, AS A LITERAL/i, 'the CI dispatch prompt must tell the harness to paste the literal cutoff');
@@ -3202,7 +3202,7 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(pr, /among the reviews in your (own )?verdict table/i, 'pr-response must name the safe fallback: the newest submitted_at among the reviews actually triaged');
     assert.match(pr, /cannot be recovered by reading again/i, 'pr-response must say WHY a re-query is wrong, or the next editor restores it as a convenience');
     // The CI dispatch prompt crosses the same boundary and carried the same bad recovery.
-    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/waffle-pr-response-hook.yml'), 'utf8');
+    const wf = fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, 'waffle-pr-response-hook.yml'), 'utf8');
     assert.doesNotMatch(wf, /If you have lost the value, re-run the command that printed it/i, 'the CI dispatch prompt still prescribes re-running the query (F12)');
     assert.match(wf, /do NOT re-run the query/i, 'the CI dispatch prompt must forbid recomputing the cutoff');
     assert.match(wf, /verdict table/i, 'the CI dispatch prompt must name the safe fallback');
