@@ -56,7 +56,7 @@ env, prerequisites, and setup notes live in each `stack.yaml` (authoritative —
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The former `security-audit` name
 collision is resolved by the `electron-`/`webapp-` renames; the output-conflict guard
-(`render.mjs:100`) still errors if two enabled stacks ever emit the same path.
+(`render.mjs:308`) still errors if two enabled stacks ever emit the same path.
 
 ## Installer module registry
 
@@ -264,19 +264,19 @@ util.mjs     → (none)
 
 Bin `wafflestack` → `installer/cli.mjs`. Usage:
 `wafflestack <init|setup|list|install|render|bake|upgrade|doctor|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
-(`USAGE`, `cli.mjs:35`).
+(`USAGE`, `cli.mjs:53`).
 
 Dispatch and exit contract:
 
 - `help` / `--help` / `-h` print the banner, usage and a one-line description per command and per
-  listed flag to stdout, exit 0 (#187, `helpText` `cli.mjs:271`).
+  listed flag to stdout, exit 0 (#187, `helpText` `cli.mjs:375`).
 - `--help`/`-h` anywhere after a command prints that same full help instead of running the command
-  — intercepted before the switch (`cli.mjs:43`), so `uninstall --help` explains rather than
+  — intercepted before the switch (`cli.mjs:61`), so `uninstall --help` explains rather than
   deletes. It is the whole help text, not a per-command page.
 - An unknown command, and bare `wafflestack` with no command, print the banner + usage to stderr
   and exit 1. Bare invocation is deliberately on the error path so a script passing an empty
   argument sees a failure.
-- Flags are spliced out of `args` by name (`extractFlag` `cli.mjs:347`, `extractCwd` `cli.mjs:338`),
+- Flags are spliced out of `args` by name (`extractFlag` `cli.mjs:459`, `extractCwd` `cli.mjs:450`),
   so an unrecognized flag is never consumed and survives as a positional. What happens to it is
   per-command, not uniform: `render`/`bake`/`upgrade`/`list`/`uninstall`/`reinstall` reject any
   leftover arg via their takes-no-refs guard (exit 1); `install`/`eject` treat it as a ref, so
@@ -285,7 +285,7 @@ Dispatch and exit contract:
 
 | Flag | Commands | Effect |
 |------|----------|--------|
-| `--cwd DIR` | every command | run against DIR instead of process cwd; spliced out before ref parsing (`cli.mjs:29`) |
+| `--cwd DIR` | every command | run against DIR instead of process cwd; spliced out before ref parsing (`cli.mjs:30`) |
 | `--help`, `-h` | every command | print help to stdout, exit 0; intercepted before dispatch |
 | `--force` | `render`, `bake`, `install`, `reinstall` | override render's unmanaged-file overwrite guard |
 | `--force` | `uninstall`, `reinstall --clean` | also delete drifted (hand-edited) managed files |
@@ -318,25 +318,25 @@ does **not** yet carry it (that is #374).
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.waffle/waffle.yaml` (targets / stacks / include / config / eject scaffold, creating `.waffle/`); errors if one exists at any generation. `--gitignore` appends the two entries knowable before any stack is chosen — `.waffle/waffle.local.yaml` and `.waffle/waffle.local.lock.json` (`cli.mjs:189`); the worktrees dir is added later by `install --gitignore` once a stack declaring it is enabled. `eject.mjs:200` |
+| `init` | Write starter `.waffle/waffle.yaml` (targets / stacks / include / config / eject scaffold, creating `.waffle/`); errors if one exists at any generation. `--gitignore` appends the two entries knowable before any stack is chosen — `.waffle/waffle.local.yaml` and `.waffle/waffle.local.lock.json` (`cli.mjs:227`); the worktrees dir is added later by `install --gitignore` once a stack declaring it is enabled. `eject.mjs:200` |
 | `setup` | Print `schema/SETUP.md` playbook + inventory generated from the installed toolkit; when `--cwd` (or the invoked repo) is already configured, also prints a live "Current configuration — update mode" section. `setup.mjs:25` |
-| `list` | Report the whole toolkit surface per stack/item vs. what this repo has installed (`installed & current` / `out of date` / `not installed` / `not installable` / `PENDING REMOVAL` — the last two name a target-scoped syrup file this project cannot render, and both are excluded from the `--interactive` picker's choices; `PENDING REMOVAL` is the case where the file was already poured under an older `targets:` and is still on disk + in the lock, so the next `render` DELETES it — `list` runs before a re-render, so it must not report an installed file as merely "not installable", #364) as an aligned plain table (default — agent/CI-safe; ANSI only on a TTY, `--no-color` opts out). `--interactive` (real TTY both ends) drives a keypress multi-select that installs/updates the chosen refs then renders; degrades to the table without a TTY. Takes no refs. `list.mjs`, `cli.mjs:196` |
+| `list` | Report the whole toolkit surface per stack/item vs. what this repo has installed (`installed & current` / `out of date` / `not installed` / `not installable` / `PENDING REMOVAL` — the last two name a target-scoped syrup file this project cannot render, and both are excluded from the `--interactive` picker's choices; `PENDING REMOVAL` is the case where the file was already poured under an older `targets:` and is still on disk + in the lock, so the next `render` DELETES it — `list` runs before a re-render, so it must not report an installed file as merely "not installable", #364) as an aligned plain table (default — agent/CI-safe; ANSI only on a TTY, `--no-color` opts out). `--interactive` (real TTY both ends) drives a keypress multi-select that installs/updates the chosen refs then renders; degrades to the table without a TTY. Takes no refs. `list.mjs`, `cli.mjs:238` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`; resolves up front, reports pulled-in deps), then render. Bare `install` = `render`. `--force` overrides the overwrite guard; `--gitignore` appends recommended entries after a clean render. `eject.mjs:98` |
-| `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Refuses to overwrite a pre-existing file not tracked by the lock unless `--force` (guard `render.mjs:245`). Exit 1 on error. `--gitignore` appends recommended entries after a clean render (`ensureGitignoreEntries` + `recommendedGitignoreEntries`, `offerGitignore` in `cli.mjs`). `render.mjs:71` |
+| `render` | Regenerate all managed files verbatim for the current selection; delete now-unrendered managed files; write lock. Rejects positional refs. Refuses to overwrite a pre-existing file not tracked by the lock unless `--force` (guard `render.mjs:185`). Exit 1 on error. `--gitignore` appends recommended entries after a clean render (`ensureGitignoreEntries` + `recommendedGitignoreEntries`, `offerGitignore` in `cli.mjs`). `render.mjs:43` |
 | `bake` | Pure alias for `render` — a fall-through case sharing its body, flags and no-refs guard (the guard names whichever word was typed). `cli.mjs` (#176) |
-| `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render (re-fetching external source pins, reporting per-source commit moves **and the built-in toolkit's own commit move, #374 — including at an unchanged version, which is #372's self-upgrade trap**) + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:33` |
-| `doctor` | Diff managed files vs lock; always report the rendered `toolkitVersion` + a skew note + the `toolkit` provenance note (#374, **warning only — never fails the gate**); run the selected stacks' typed `prerequisites:` checks. Exit 1 on drift OR an unmet `require`-level prerequisite (`recommend` only reports; `--allow-missing`: only modified files count as drift). `doctor.mjs:83` |
+| `upgrade` | Read lock `toolkitVersion`, print `CHANGELOG.md` delta to the invoked version, run migrations in `(from, to]`, then render (re-fetching external source pins, reporting per-source commit moves **and the built-in toolkit's own commit move, #374 — including at an unchanged version, which is #372's self-upgrade trap**) + doctor. Missing lock/version degrades to render + doctor with a note. Rejects positional refs. Exit follows doctor. `upgrade.mjs:61` |
+| `doctor` | Diff managed files vs lock; always report the rendered `toolkitVersion` + a skew note + the `toolkit` provenance note (#374, **warning only — never fails the gate**); run the selected stacks' typed `prerequisites:` checks. Exit 1 on drift OR an unmet `require`-level prerequisite (`recommend` only reports; `--allow-missing`: only modified files count as drift). `doctor.mjs:184` |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Add to `eject:`, strip any matching `include:` entry, drop the item's files from the lock; files stay in place, now project-owned. `eject.mjs:25` |
 | `uninstall` | The toolkit's only destructive command. Removes the whole install, driven entirely off the lock (`readTreeLock` — the local lock when an overlay shaped this tree, else the canonical one). Per tracked path: deleted only if the lock tracks it AND its sha256 still equals what was rendered (the same compare `doctor` makes); `drifted` (hand-edited) is skipped and reported unless `--force`; an unreadable file classifies as drifted too (an unverifiable hash cannot prove the file is ours, so the read-only preview classifies it instead of throwing `EACCES`); `absent` is a no-op (`--allow-missing` only silences the per-file line). Then: remove the `.waffle/` meta (config, overlay, both locks, `extensions/`) — the one exception to the lock invariant, since `extensions/` holds consumer-authored render *inputs* the lock cannot track, so `--keep-config` spares them and keeps both locks with them (`computeSelection` keeps a poured opt-in syrup selected *because its path is in the lock*, so a config without its lock is half a selection and the next `render` silently un-pours) — prune directories the removals left empty (bounded to `cwd`, only when genuinely empty: a `.claude/` still holding consumer files survives), strip wafflestack's own `.gitignore` lines + an orphaned `# wafflestack` marker (exact-line match, `removeGitignoreEntries`), and announce ejected items as project-owned and left in place. REFUSES the whole run, deleting nothing: an absent lock, or a lock key that resolves outside `cwd` — both a lexical `../…` escape and a key whose parent directory is an in-tree SYMLINK pointing out of the tree (`resolveInside` realpaths the deepest existing ancestor, since `path.resolve` collapses `..` textually but does not follow links; re-checked in the delete loop, narrowing the TOCTOU window). PARTIAL RUNS are not symmetric: a failed removal keeps the whole `.waffle/` meta and leaves `.gitignore` untouched, while a skip keeps only the locks — the config, overlay and `extensions/` are still deleted and the `.gitignore` lines still stripped (#359). Lock retention is one decision, reconciled after the removals run: `uninstall` returns the plan with `lockRetained` set to what execution actually did (plan-time it is only a prediction — a skip, or an explicit `keepLock`), and the skip messages read that one answer, so the report can never say "now project-owned" about a file the surviving lock still tracks. Read `lockRetained` off the result, not off a bare plan. The post-run report names what was actually removed/pruned, not what the plan predicted. Dry run until `--yes` (the CLI is non-interactive by design — the flag is the consent). Exit 1 only on an error (absent lock, refused key, a removal or prune that failed); a run that merely skipped drifted files exits 0 although the uninstall is incomplete (#359). Rejects positional refs (points at `eject`). `uninstall.mjs` (#182) |
 | `reinstall` | Default = refresh in place: snapshot the bytes of every file the uninstall leg will delete, uninstall with `keepConfig`/`keepLock` and `force: true`, then re-render the same selection. Keeping the lock is load-bearing, not tidy — `computeSelection` keeps an already-poured opt-in (syrup) `files/` item selected *because its path is in the lock*, so dropping it would silently un-pour any syrup not also named in `include:`. Drifted files are deleted rather than skipped (any plain `render` rewrites a managed path regardless of hash, so a skip would preserve nothing), which is exactly why they are snapshotted with the rest. Needs no `--yes`: every file it removes, the render writes straight back — and if either leg fails (the uninstall leg reporting a failed removal, or the render leg returning `ok: false` or throwing) the snapshot is restored and the run says so; a file the snapshot could not READ is named as gone rather than certified restored. `--clean` = wipe to empty: uninstall everything incl. the config (with `keepLockOnSkip: false`, so a skipped hand-edited file is announced project-owned instead of being promised a `--force` re-run the missing lock could not honour), then `init` a starter scaffold; no render (nothing is selected), and it requires `--yes`. `--force` overrides whichever safety refusal is live on the path taken (render's unmanaged-clobber guard on a refresh; uninstall's drift skip on `--clean`). Both shapes run the uninstall leg, so both need a lock: a configured-but-never-rendered repo (config, no lock) fails there, exit 1 (#359). `uninstall.mjs` (#182) |
-| `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285). Enumerate the installed agent roster with its derived commit emails (same derivation as `AVATARS.md`), and for each email **already verified** on the Gravatar account: `sync` rasters the avatar SVG→512px PNG and uploads/assigns it (rating G); `status` only probes and reports drift (an installed agent whose address is unregistered). Reads an owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`; Gravatar has no add/verify-email API, so an unverified address is reported as a manual "verify then re-run" remainder. HTTP + rasterizer are injected (unit-tested with mocks). `status` exits 1 on drift; a per-agent `failed` remainder (transient API errors, isolated so one failure never aborts the roster) exits 1 in either mode (`avatarsExitCode`). `avatars-sync.mjs`, `cli.mjs:222` |
+| `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285). Enumerate the installed agent roster with its derived commit emails (same derivation as `AVATARS.md`), and for each email **already verified** on the Gravatar account: `sync` rasters the avatar SVG→512px PNG and uploads/assigns it (rating G); `status` only probes and reports drift (an installed agent whose address is unregistered). Reads an owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`; Gravatar has no add/verify-email API, so an unverified address is reported as a manual "verify then re-run" remainder. HTTP + rasterizer are injected (unit-tested with mocks). `status` exits 1 on drift; a per-agent `failed` remainder (transient API errors, isolated so one failure never aborts the roster) exits 1 in either mode (`avatarsExitCode`). `avatars-sync.mjs`, `cli.mjs:268` |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter complete, placeholder↔declaration sync, agent-skill/`requires:` refs resolve, `prerequisites:` fields + `items:` refs, harness.* defaults match their guards. Exit 1 on problems. `validate.mjs:77` |
-| `help` | Print the banner, usage, one line per command and one line per listed flag to stdout; exit 0. Also reachable as `--help` / `-h`, before or after a command (intercepted before dispatch, `cli.mjs:43`). The rendered flag block lists every flag except `--no-color` (#359). `helpText` `cli.mjs:271` (#187) |
+| `help` | Print the banner, usage, one line per command and one line per listed flag to stdout; exit 0. Also reachable as `--help` / `-h`, before or after a command (intercepted before dispatch, `cli.mjs:61`). The rendered flag block lists every flag except `--no-color` (#359). `helpText` `cli.mjs:375` (#187) |
 
 ## Item refs and render selection
 
 A ref (used by `install`, `include:`, `eject`, and `requires:`) names something installable.
-Grammar + resolution live in `refs.mjs` (`parseRef` `refs.mjs:64`, `resolveRef` `refs.mjs:91`).
+Grammar + resolution live in `refs.mjs` (`parseRef` `refs.mjs:148`, `resolveRef` `refs.mjs:184`).
 The item kind is one of `agents`, `skills`, `files` (a `files/` payload — a workflow or script
 byte/text-copied to that repo-relative path).
 
@@ -350,7 +350,7 @@ A bare item name resolves only when unique across the toolkit; otherwise it must
 stack-qualified. `canonicalRef` is the minimal re-resolvable form (qualified only when
 ambiguous) — that is what `install` writes to `include:`.
 
-Render selection (`computeSelection`, `refs.mjs:252`):
+Render selection (`computeSelection`, `refs.mjs:407`):
 
 ```
 rendered = union(items of enabled stacks:) ∪ closure(each include: item) − eject:
@@ -358,7 +358,7 @@ rendered = union(items of enabled stacks:) ∪ closure(each include: item) − e
 
 - Opt-in syrup gate — a stack's `optIn:` `files/` items are excluded from default expansion
   unless the path is already lock-tracked (`trackedFiles`, from the prior lock via
-  `renderProject`) or explicitly `include:`-ed (`refs.mjs:268`) — an existing install keeps
+  `renderProject`) or explicitly `include:`-ed (`refs.mjs:443`) — an existing install keeps
   updating, a fresh enable never silently arms a sensitive workflow. When a gated opt-in syrup
   file's `requires:` companion IS in the selection (its skill is rendering), `render`/`install`
   emits a warning naming the file + the exact `wafflestack install files/<path>` pour command
@@ -477,16 +477,16 @@ prerequisites:
   `harness.*` (`template.mjs:38`). Any other braces (bash `${...}`, mustache) pass through
   verbatim; a `$`-prefixed `${{ }}` (GitHub Actions) is hard-excluded by the negative
   lookbehind, so `files/` workflow payloads carry those expressions untouched and unpoliced.
-- Value formatting (`formatValue`, `template.mjs:67`): strings verbatim; string arrays join
+- Value formatting (`formatValue`, `template.mjs:245`): strings verbatim; string arrays join
   `, `; other structures render as a YAML block.
 - `harness.*` — reserved, always-available namespace (never declared), resolved per output
-  target (`HARNESS_BUILTINS`, `project.mjs:386`). Override via `config.harness.<sub>` (scalar →
+  target (`HARNESS_BUILTINS`, `project.mjs:563`). Override via `config.harness.<sub>` (scalar →
   all targets, or a per-target map). Also carries three target-independent CI-dispatcher scalars
   (`actionRef`/`actionVersion`/`apiKeySecret`, #131) spliced into the rendered workflow `uses:` /
   `with:` lines; each is injection-guarded at render by `HARNESS_PATTERNS` (rejects `${{`, quotes,
   newlines), so an override can repin/repoint the action without ejecting the workflow.
 - Nested substitution — substituted values are re-expanded up to depth 4
-  (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:15`; `expandNested`, `template.mjs:59`): a committed
+  (`MAX_SUBSTITUTION_DEPTH`, `template.mjs:15`; `expandNested`, `template.mjs:220`): a committed
   value can reference a key kept in the gitignored local overlay. Canonical text surviving the
   first pass is never re-scanned; unresolvable nested placeholders pass through.
 - Value patterns — a config key may declare `pattern:` (a regex); the fully-resolved value must
@@ -495,13 +495,13 @@ prerequisites:
   structured contexts (a workflow `if:`, a YAML scalar) where escaping is impossible.
 - Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered
   item inside `<!-- BEGIN project extension: … -->` / `<!-- END project extension -->` markers
-  (`appendExtension`, `render.mjs:419`). Agents: appended to body; skills: appended to
+  (`appendExtension`, `render.mjs:601`). Agents: appended to body; skills: appended to
   `SKILL.md` only.
 - Output conflict — two enabled sources emitting the same output path is a hard render error
-  (`emit`, `render.mjs:100`), not last-write-wins.
+  (`emit`, `render.mjs:308`), not last-write-wins.
 - Unmanaged-file overwrite guard — a render that would produce a path already on disk but not
   tracked by the previous lock (a consumer's hand-written file) is refused before any write or
-  prune, leaving the tree untouched (`render.mjs:245`); a byte-identical file is adopted
+  prune, leaving the tree untouched (`render.mjs:185`); a byte-identical file is adopted
   silently. `--force` overwrites.
 
 | `harness.*` key | claude | codex | agents-dir |
@@ -518,7 +518,7 @@ Target-independent CI-dispatcher scalars (#131; same value on every target):
 | `harness.actionVersion` | current pinned SHA + preserved `# vX.Y.Z` comment |
 | `harness.apiKeySecret` | `ANTHROPIC_API_KEY` |
 
-Render targets (`VALID_TARGETS`, `project.mjs:27`):
+Render targets (`VALID_TARGETS`, `project.mjs:58`):
 
 | Source | claude | codex | agents-dir |
 |--------|--------|-------|------------|
@@ -539,7 +539,7 @@ place by `render`/`upgrade`):
 
 | File | Tracked | Role |
 |------|---------|------|
-| `.waffle/waffle.yaml` | committed | version, `targets`, `stacks` (bare built-in names or `{name,source,ref}` external mappings), `include`, `config`, `eject` (`loadProjectConfig`, `project.mjs:212`). `install`/`eject` edit it comment-preservingly. |
+| `.waffle/waffle.yaml` | committed | version, `targets`, `stacks` (bare built-in names or `{name,source,ref}` external mappings), `include`, `config`, `eject` (`loadProjectConfig`, `project.mjs:386`). `install`/`eject` edit it comment-preservingly. |
 | `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict — account-specific values. **Private, and never canonical (#317)**: it shapes the bytes on *your* disk and is excluded from the lock, so it cannot reach a teammate or CI. Extensions are the deliberate contrast — committed, therefore canonical, therefore they DO propagate. |
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated (committed) | manifest of rendered file → sha256 (+ toolkitVersion, an optional `toolkit` provenance block for the BUILT-IN toolkit (#374: `{source, sourceType, ref, commit, status}` — `ref`/`commit` non-null only when `status === 'release'`, so it is BYTE-STABLE across commits and this repo's own lock reads `{ref: null, commit: null, status: 'unreleased'}` forever), targets, stacks, include, and an optional `sources` provenance block for external stacks, #125). Hashes the **canonical** render — committed inputs only (#317) — so it is byte-identical on every machine. `doctor --verify-render` reproduces it; `render` rewrites it |
@@ -553,12 +553,12 @@ Node >= 18. Single runtime dependency: `yaml`.
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 966 tests, 128 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1194 tests, 155 suites) |
 | validate / typecheck | `npm run validate` = `node installer/cli.mjs validate` |
 | build | `npm pack --dry-run` |
 | render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — the flag is **required** (#373): `render` refuses from a toolkit that is not at a release tag, and a working tree never is. Commit the updated render + lock (the `doctor` drift gate is a required check). |
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — **not** gated, needs no flag) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate in `.github/workflows/tests.yml`, #316). `--verify-render` **renders**, so it is gated (#373) and needs `--allow-unreleased` when run by hand from a branch; the `tests` job supplies the env twin `WAFFLESTACK_ALLOW_UNRELEASED: '1'` instead, which is why line 72 there carries no flag. |
-| evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 9 cases across `github-workflow` (7) + `orchestration` (2); scheduled nightly by the opt-in `waffle-evals` syrup. **Not** in `npm test`. |
+| evals (metered, LLM tier — #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 10 cases across `code-quality` (1) + `github-workflow` (7) + `orchestration` (2); scheduled nightly by the opt-in `waffle-evals` syrup. **Not** in `npm test`. |
 
 Test files: `installer.test.mjs` (render pipeline machinery), `checkpoint.test.mjs` /
 `memory.test.mjs` (the delegate skill's shipped validator CLIs), `content.test.mjs`
@@ -610,7 +610,7 @@ step **by hand** from a branch needs `--allow-unreleased`, since `--verify-rende
 gated (#373). This gate cannot live in
 `doctor.flags`: the shipped waffle-doctor workflow renders via
 `npx github:dustinkeeton/wafflestack` (main's toolkit), which is the wrong toolkit for the
-toolkit's own PRs in both directions (`tests.yml:37`).
+toolkit's own PRs in both directions (`tests.yml:58`).
 
 The `test` job sets `WAFFLESTACK_ALLOW_UNRELEASED: '1'` at the job `env:` (#373). Both the CLI
 spawns in `npm test` and the `--verify-render` step above are **gated commands run from an
