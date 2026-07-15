@@ -124,10 +124,11 @@ multi-line `--body "…"`: a heredoc is a *multi-line command*, and an automated
 allowlist matches on the command's leading program (`Bash(gh api:*)`), which a multi-line
 compound never matches — the call is denied and the review silently never posts.
 
-**The staging path MUST be namespaced by PR number** (`$N`, in scope since step 1):
+**The staging path MUST be namespaced by PR number AND head SHA** (`$N` and `$HEAD_SHA` — the
+`headRefOid` you resolved in step 1 — both in scope since step 1):
 
 ```
-${TMPDIR:-/tmp}/waffle-adversarial-review-$N.json
+${TMPDIR:-/tmp}/waffle-adversarial-review-$N-$HEAD_SHA.json
 ```
 
 A fixed, un-namespaced path (`/tmp/adversarial-review.json`) is a **correctness bug, not a
@@ -135,12 +136,21 @@ style nit**. These gates run *per PR, concurrently* — an autopilot parallel gr
 review on several PRs at once. On one shared path, two runs interleaving a write and a
 `gh --input` post **PR A's review onto PR B**, and the loser never knows; a stale payload
 left by an earlier run gets posted as if it were this PR's. Both have happened. The PR number
-in the path is what keeps two concurrent gates from ever touching the same file.
+in the path is what keeps two concurrent gates from ever touching the same file. And `$N`
+alone is not enough (#376): every round of a multi-round loop on the same PR reuses a
+per-PR-only path, so a later round — including autopilot's deliberately cold evidence pass —
+finds the previous round's payload and is forced to read prior-round content just to
+overwrite it, breaking the cold-pass isolation the loop depends on. The head SHA closes that:
+each round reviews a different head by construction (the loop re-waits for green after every
+fix push), so cross-round collisions are structurally impossible.
 
-> **The `Write` tool does not expand shell syntax.** `$N` and `${TMPDIR:-/tmp}` are for the
-> `bash` command line only. When you call `Write`, pass a **literal, already-substituted**
-> path — `/tmp/waffle-adversarial-review-321.json` for PR 321 — or you will create a file
-> named literally `${TMPDIR:-/tmp}` and post nothing. Use the same resolved path in both steps.
+> **The `Write` tool does not expand shell syntax.** `$N`, `$HEAD_SHA` and `${TMPDIR:-/tmp}`
+> are for the `bash` command line only. When you call `Write`, pass a **literal,
+> already-substituted** path —
+> `/tmp/waffle-adversarial-review-321-8f2d3f1e6a9c4b7d0e5f2a8b1c6d3e9f4a7b0c5d.json` for
+> PR 321 at head `8f2d3f1e…` — or you will create a file named literally `${TMPDIR:-/tmp}`
+> and post nothing. Use the **full** 40-character `headRefOid` verbatim — never truncate it.
+> Use the same resolved path in both steps.
 
 Write this JSON to that path — `line` must be a line that appears in the
 PR's diff, `side: RIGHT` for added/context lines and `LEFT` for removed lines. The `body` MUST
@@ -162,7 +172,7 @@ below):
 
 **Read back the file before you post it.** Immediately before handing the path to `gh`, use
 the `Read` tool on the *exact* file you are about to post and confirm it is the payload you
-just wrote **for this PR**: `<!-- waffle-adversarial-review -->` in the summary body, and
+just wrote **for this PR at this head**: `<!-- waffle-adversarial-review -->` in the summary body, and
 findings that match this PR's diff. If it holds anything else — another PR's findings, an
 older run's payload, an empty or truncated file — **stop and do not post**: rewrite it,
 re-read, then post. This check is cheap and it is the last thing standing between a stale
@@ -172,7 +182,7 @@ from a real one.
 Then post it — one program, one line, no compounds:
 
 ```bash
-gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-adversarial-review-$N.json"
+gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-adversarial-review-$N-$HEAD_SHA.json"
 ```
 
 Notes on mechanics:
@@ -185,7 +195,7 @@ Notes on mechanics:
   `waffle/adversarial-review` **commit status** on the reviewed head SHA:
 
   ```bash
-  REVIEW_ID=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-adversarial-review-$N.json" --jq '.id')
+  REVIEW_ID=$(gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --method POST --input "${TMPDIR:-/tmp}/waffle-adversarial-review-$N-$HEAD_SHA.json" --jq '.id')
   gh api "repos/$OWNER/$REPO/pulls/$N/reviews/$REVIEW_ID" --jq '.id, .commit_id, .state'
   gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA" -f state=success -f context=waffle/adversarial-review -f description="Adversarial review posted"
   ```
@@ -238,7 +248,7 @@ obvious simplification — **say so plainly** and do not invent findings to just
 Post a short approving-in-spirit summary (still `event: "COMMENT"` unless you're authorized to
 approve and aren't the author). Same rule as step 5: the body goes in a **file**, never inline
 after `--body` — a multi-line body inside the command is the same allowlist trap. `Write` the
-summary to the **per-PR** path `${TMPDIR:-/tmp}/waffle-adversarial-review-summary-$N.md` (same
+summary to the **per-PR, per-head** path `${TMPDIR:-/tmp}/waffle-adversarial-review-summary-$N-$HEAD_SHA.md` (same
 namespacing rule and same literal-path caveat as step 5), marker as the first line:
 
 ```markdown
@@ -252,7 +262,7 @@ API/naming, and simplification against the full diff — nothing blocks or shoul
 `Read` it back to confirm it is this PR's summary, then post it with a single-line command:
 
 ```bash
-gh pr review "$N" --comment --body-file "${TMPDIR:-/tmp}/waffle-adversarial-review-summary-$N.md"
+gh pr review "$N" --comment --body-file "${TMPDIR:-/tmp}/waffle-adversarial-review-summary-$N-$HEAD_SHA.md"
 ```
 
 ## 7. Report back

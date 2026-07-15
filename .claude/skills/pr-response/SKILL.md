@@ -77,10 +77,12 @@ gh api "repos/$OWNER/$REPO/pulls/$N/reviews" --paginate --jq '.[].submitted_at' 
 ```
 
 It prints one timestamp, e.g. `2026-07-12T23:03:42Z`. **Persist it now, with the `Write` tool**, to a
-per-PR scratch file — for PR 354, the literal path `/tmp/waffle-cutoff-354.txt`:
+per-PR, per-head scratch file — for PR 354 at head `8f2d3f1e…` (the `headRefOid` step 1 printed —
+use the full 40-character SHA verbatim, never truncated), the literal path
+`/tmp/waffle-cutoff-354-8f2d3f1e6a9c4b7d0e5f2a8b1c6d3e9f4a7b0c5d.txt`:
 
 ```
-/tmp/waffle-cutoff-<N>.txt      ← one line: 2026-07-12T23:03:42Z
+/tmp/waffle-cutoff-<N>-<head-sha>.txt      ← one line: 2026-07-12T23:03:42Z
 ```
 
 Step 6 recovers it from that file with the **`Read` tool** and pastes it as a literal. That is the
@@ -280,7 +282,7 @@ rounds](#when-called-by-agents)).
 rewrite the last one:
 
 ```bash
-gh pr comment "$N" --body-file "${TMPDIR:-/tmp}/waffle-pr-response-body-$N.md"
+gh pr comment "$N" --body-file "${TMPDIR:-/tmp}/waffle-pr-response-body-$N-$HEAD_SHA.md"
 ```
 
 That holds even when the new round revisits an earlier finding. The rounds are a **paper trail**,
@@ -309,10 +311,12 @@ Read them as history; write only new ones.
 That is the whole post path: one `Write`, one line of shell (the `gh pr comment` above). Keep the
 body file out of the commit — write it to a temp path, not into the repo.
 
-**The staging path MUST be namespaced by PR number** (`$N`, in scope since step 1):
+**The staging path MUST be namespaced by PR number AND head SHA** (`$N` and `$HEAD_SHA`, both in
+scope since step 1 — `$HEAD_SHA` is the head you **read** the findings on, the same SHA the
+delivery status targets; fixes you push move the head, so never re-resolve it for this path):
 
 ```
-${TMPDIR:-/tmp}/waffle-pr-response-body-$N.md
+${TMPDIR:-/tmp}/waffle-pr-response-body-$N-$HEAD_SHA.md
 ```
 
 A fixed, un-namespaced path (`/tmp/pr-response-body.md`) is a **correctness bug, not a style nit**.
@@ -320,12 +324,16 @@ This skill runs *per PR, concurrently* — an autopilot parallel group responds 
 once. On one shared path, two runs interleaving a `Write` and a `gh --body-file` post **PR A's
 verdict table onto PR B**, and the loser never knows; a stale body left by an earlier run gets
 posted as if it were this round's. The PR number in the path is what keeps two concurrent runs from
-ever touching the same file.
+ever touching the same file. And `$N` alone is not enough (#376): this skill reuses its staging
+path every round by design — each round appends a new comment — so a per-PR-only path guarantees a
+later round stages over a stale body. The head SHA makes each round's staging file its own.
 
-> **The `Write` tool does not expand shell syntax.** `$N` and `${TMPDIR:-/tmp}` are for the `bash`
-> command line only. When you call `Write`, pass a **literal, already-substituted** path —
-> `/tmp/waffle-pr-response-body-321.md` for PR 321 — or you will create a file named literally
-> `${TMPDIR:-/tmp}` and post nothing. Use the same resolved path in both steps.
+> **The `Write` tool does not expand shell syntax.** `$N`, `$HEAD_SHA` and `${TMPDIR:-/tmp}` are for
+> the `bash` command line only. When you call `Write`, pass a **literal, already-substituted** path —
+> `/tmp/waffle-pr-response-body-321-8f2d3f1e6a9c4b7d0e5f2a8b1c6d3e9f4a7b0c5d.md` for PR 321 at head
+> `8f2d3f1e…` — or you will create a file named literally `${TMPDIR:-/tmp}` and post nothing. Use
+> the **full** 40-character `headRefOid` verbatim — never truncate it. Use the same resolved path
+> in both steps.
 
 **Read back the body before you post it.** Immediately before handing the path to `gh`, use the
 `Read` tool on the *exact* file you are about to post and confirm it is the reply you just wrote
@@ -344,8 +352,14 @@ head SHA you responded to — carrying **the cutoff you read in step 2, pasted a
 gh api --method POST "repos/$OWNER/$REPO/statuses/<head-sha>" -f state=success -f context=waffle/pr-response -f "description=triaged-through=2026-07-12T23:03:42Z"
 ```
 
-**Recover the cutoff with the `Read` tool** — `/tmp/waffle-cutoff-<N>.txt`, the file step 2 wrote —
-and **substitute both literals**: the head SHA, and that timestamp.
+**Recover the cutoff with the `Read` tool** — `/tmp/waffle-cutoff-<N>-<head-sha>.txt`, the file
+step 2 wrote — and **substitute both literals**: the head SHA, and that timestamp. Here `<head-sha>`
+is the **read-time** head — the same `$HEAD_SHA` that named the staging path (step 5), the head you
+**read** the findings on in step 1. **Do not re-resolve it after the push:** the fixes you applied
+moved the head, so `gh pr view … headRefOid` now returns the *post-push* head Y. Recover the cutoff
+file under the read-time head X (step 2 wrote `-X`, so `-Y` misses and forces the fallback), and
+target the delivery status on X (a consumer keyed on the read-time head finds no status on Y). Both
+failures are fail-safe but defeat the fix.
 
 **Never write `$CUTOFF` here**: that variable belonged to a shell that exited many tool calls ago, it
 expands to empty, and an empty cutoff makes the gate read *every* review on this head as untriaged —
@@ -418,7 +432,10 @@ Five rules, each load-bearing:
   errors, say so and do **not** report success — an untriaged PR that *looks* triaged is the one
   failure this skill must never produce.
 
-`$HEAD_SHA` is the head at the time you read the findings: `gh pr view "$N" --json headRefOid -q .headRefOid`.
+`$HEAD_SHA` is the head at the time you read the findings — captured **once** in step 1 with
+`gh pr view "$N" --json headRefOid -q .headRefOid`, then reused verbatim through the staging path and
+this delivery status. **Do not re-derive it here:** after your push the branch points at a new head,
+and re-running that command returns the post-push head, not the one you triaged.
 
 ### Label each round
 

@@ -454,6 +454,12 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **Review-payload staging paths are namespaced by head SHA as well as PR number (#376).**
+  Successive rounds on one PR no longer reuse a staging file, so autopilot's cold evidence pass
+  (adversarial-review and qa cap hatches) never has to read a prior round's payload to overwrite
+  it; the per-PR `$N` component and the read-back guards stay. pr-response's reply body and
+  cutoff scratch file get the same shape. **Consumer impact:** re-render picks it up; no config
+  change.
 - **Split the git-family `&&` compounds into single allowlist-matchable commands (#340).** A
   `Bash(<prefix>:*)` entry matches by leading program, so `git checkout main && git pull`
   (git-workflow, release) and the tag/push compound matched no single-program grant the moment a
