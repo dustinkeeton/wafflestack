@@ -51,7 +51,8 @@ resulting `X.Y.Z` before proceeding.
 Never work on `main`. Create the bump branch (per `git-workflow`):
 
 ```bash
-git checkout main && git pull
+git checkout main
+git pull
 git checkout -b chore/bump-X.Y.Z
 ```
 
@@ -138,7 +139,8 @@ gh label create "waffle:release" --color 0E8A16 --description "Merging pushes th
 
 If the repo has **not** installed `waffle-release-hook.yml` (it is opt-in syrup), applying
 the label does nothing on merge — say so, and the maintainer must push the tag manually:
-`git tag vX.Y.Z <merge-commit-sha> && git push origin vX.Y.Z` (lightweight).
+`git tag vX.Y.Z <merge-commit-sha>` (lightweight), then `git push origin vX.Y.Z` — two
+separate commands.
 
 **Caveat — tag-triggered downstream pipelines.** If the repo has `on: push: tags` workflows
 (a build, provenance, or GitHub-Release-asset pipeline the tag is meant to start), the identity

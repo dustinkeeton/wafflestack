@@ -454,6 +454,14 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **Split the git-family `&&` compounds into single allowlist-matchable commands (#340).** A
+  `Bash(<prefix>:*)` entry matches by leading program, so `git checkout main && git pull`
+  (git-workflow, release) and the tag/push compound matched no single-program grant the moment a
+  repo tightens from blanket `Bash(git:*)` to per-subcommand entries; delegate's agent prompt
+  chained `cd <worktree> && git status`. Pure compounds are now one command per line, the delegate
+  first-command is `git -C {worktree_path} status` plus a standalone `cd`, W2b pins the split, and
+  the #218 A4 source backstop grows a git-family arm (md runnable units, git/cd-leading only) so
+  the class stays dead. **Consumer impact:** patch — plain re-render; no config change.
 - **Back-port the exfil/destructive DANGER tier to the sibling guards (#331).** `waffle-label-hook`
   (both jobs), `waffle-pr-response-hook`, and `waffle-hygiene` now red a denied non-git/gh
   exfil/destructive call (`curl`/`wget`/`nc`/`ssh`/`rm`/`sudo`/…) even when the run produced
