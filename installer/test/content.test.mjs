@@ -3192,7 +3192,8 @@ describe('issue / PR / review templates (#337)', () => {
     // Write/Read pair is what crosses the Bash-call boundary that killed $CUTOFF (F10), and it is
     // the ONLY recovery that cannot over-claim.
     const pr = readSkill('pr-response');
-    assert.match(pr, /waffle-cutoff-<N>-<head-sha>\.txt|waffle-cutoff-354-[0-9a-f]{40}\.txt/, 'pr-response must persist the cutoff to a per-PR, per-head scratch file');
+    assert.match(pr, /waffle-cutoff-<N>-<head-sha>\.txt/, 'pr-response must persist the cutoff to a per-PR, per-head scratch file');
+    assert.match(pr, /waffle-cutoff-354-[0-9a-f]{40}\.txt/, 'pr-response’s concrete cutoff example must carry a full 40-char SHA — a truncated SHA breaks the step-6 recovery path');
     assert.match(pr, /`Write` tool/, 'pr-response must persist the cutoff with the Write tool');
     assert.match(pr, /Recover the cutoff with the `Read` tool/, 'pr-response must recover the cutoff with the Read tool — it crosses the shell-call boundary');
     // The round-4 recovery instruction, which silently restored F9. It must be gone from both sites.

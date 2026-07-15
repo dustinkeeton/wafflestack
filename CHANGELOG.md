@@ -461,8 +461,9 @@ is what you reach for across a breaking one.
   `waffle/qa` status on the post-time head instead of the read-time head. The block now
   relies on step 1's `headRefOid`, mirroring adversarial-review. Also softens pr-response's
   "the head SHA makes each round's staging file its own" overclaim (two rounds on one
-  unmoved head can still share a file; the read-back guard is the boundary) and re-anchors
-  the `waffle-cutoff-354-` test-regex arm with `[0-9a-f]{40}\.txt` so a truncated SHA fails.
+  unmoved head can still share a file; the read-back guard is the boundary) and splits the
+  `waffle-cutoff` test alternation into two assertions — placeholder form and a standalone
+  `waffle-cutoff-354-[0-9a-f]{40}\.txt` match — so a truncated concrete-example SHA fails.
   **Consumer impact:** patch — plain re-render; no config change.
 - **Review-payload staging paths are namespaced by head SHA as well as PR number (#376).**
   Successive rounds on one PR no longer reuse a staging file, so autopilot's cold evidence pass
