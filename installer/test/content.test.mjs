@@ -3056,27 +3056,30 @@ describe('issue / PR / review templates (#337)', () => {
     }
   });
 
-  test('rubric v2: Severity and Reach are separate dimensions, and the version is stated everywhere', () => {
+  test('rubric v3: Severity and Reach are separate dimensions, and the version is stated everywhere', () => {
     // v2's reason for existing: v1's Severity anchor mixed "how bad IF hit" with "can it be hit at
     // all", so the only way to express "real blocker, dead code" was to score Severity DOWN — i.e.
     // to launder the judgment into a false number. Reach carries dormancy now; Severity stays honest.
     const md = readSkill('pr-response');
-    assert.match(md, /## 3\. Score each finding — rubric v2/, 'the rubric heading must name v2');
+    assert.match(md, /## 3\. Score each finding — rubric v3/, 'the rubric heading must name v3');
     assert.match(md, /\*\*Reach\*\*/, 'v2 adds the Reach dimension');
     assert.match(md, /0–3 on five dimensions/, 'v2 scores five dimensions');
     assert.match(md, /the five scores summed, 0–15/, 'v2 composite is 0–15');
-    // Thresholds rescaled proportionally from v1 (≥8/12 → ≥10/15; ≤3/12 → ≤4/15).
-    assert.match(md, /\*\*≥ 10\*\* \| \*\*Implement\*\*/);
-    assert.match(md, /\*\*5–9\*\* \| \*\*Defer\*\*/);
+    // v3 (#385): Implement requires Severity or Reach to contribute — Val+E/R+Align alone is 9.
+    assert.match(md, /\*\*≥ 11\*\* \| \*\*Implement\*\*/);
+    assert.match(md, /\*\*5–10\*\* \| \*\*Defer\*\*/);
     assert.match(md, /\*\*≤ 4\*\* \| \*\*Decline\*\*/);
+    // v3 also carries the comment-finding scoring rule (#388).
+    assert.match(md, /Reach ≤ 1 and Severity ≤ 1/, 'v3 must scope comment findings in deterministic files');
     // The reply footer names the version, so a v1 reply stays interpretable against v1.
-    assert.match(md, /rubric \*\*v2\*\* \(Severity · Reach · Validity · Effort\/Risk · Alignment/);
+    assert.match(md, /rubric \*\*v3\*\* \(Severity · Reach · Validity · Effort\/Risk · Alignment/);
+    assert.match(md, /≥11 Implement · 5–10 Defer · ≤4 Decline/, 'the reply footer must carry the v3 thresholds');
     // …and every version reference moved together — a half-bumped rubric is worse than none.
-    assert.doesNotMatch(md, /## Recalibrating the rubric \(v1\)/, 'the recalibration section still says v1');
-    assert.doesNotMatch(md, /recalibrating-the-rubric-v1/, 'the in-page anchor still points at the v1 heading — a dead link');
+    assert.doesNotMatch(md, /## Recalibrating the rubric \(v[12]\)/, 'the recalibration section still names a stale version');
+    assert.doesNotMatch(md, /recalibrating-the-rubric-v[12]/, 'the in-page anchor still points at a stale heading — a dead link');
   });
 
-  test('rubric v2: the overrides encode WHY Reach exists — a dormant blocker must not auto-implement', () => {
+  test('rubric v3: the overrides encode WHY Reach exists — a dormant blocker must not auto-implement', () => {
     const md = readSkill('pr-response');
     // v1's blocker-override was `Severity 3 + Validity 3 ⇒ always Implement`. Under v2 that would
     // force an unreachable, confirmed bug to be fixed on the spot — exactly the call PR #354 got
@@ -3090,10 +3093,11 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(md, /A false positive is always Decline/);
   });
 
-  test('rubric v2: the REVIEW_TEMPLATE tracks the skill — five columns and the v2 pointer', () => {
+  test('rubric v3: the REVIEW_TEMPLATE tracks the skill — five columns and the v3 pointer', () => {
     // The template is the human-facing companion; if it keeps teaching four dimensions, a human
     // reviewer and the bot are scoring different rubrics and the composites are incomparable.
-    assert.match(templates.review, /rubric v2/, 'the template still points at the v1 section');
+    assert.match(templates.review, /rubric v3/, 'the template must point at the v3 section');
+    assert.doesNotMatch(templates.review, /rubric v[12]\b/, 'the template still points at a stale rubric version');
     assert.match(templates.review, /\| # \| Finding \| Severity \| Reach \| Validity \| Effort\/Risk \| Alignment \| Composite \| Verdict \| Reason \|/, 'the template verdict table must carry the Reach column');
     assert.match(templates.review, /Score the five dimensions/, 'the template must teach five dimensions');
     assert.doesNotMatch(templates.review, /Score the four dimensions/, 'the template still teaches the v1 four');

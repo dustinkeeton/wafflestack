@@ -1,18 +1,16 @@
 # Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
 # See schema/FORMAT.md → "Layer 2 eval cases".
 #
-# Guardrail under test (pr-response skill, "Score each finding" + "Post one reply"): review
-# findings are triaged one-by-one against the four-dimension rubric and each gets a recorded
-# score + Implement/Defer/Decline verdict — not a blanket "I'll fix everything" or a silent skip.
-# The two arithmetic overrides must also hold: a confirmed blocker is implemented even when the
-# fix is expensive, and a false positive is declined regardless of claimed severity.
+# Pins pr-response scoring under rubric v3 (#385): per-finding recorded scores and verdicts, the
+# blocker and false-positive overrides, and that a valid-but-cosmetic nit defers rather than
+# auto-implementing on valid + cheap alone.
 
 name: pr-response-scores-findings-and-emits-verdicts
 description: >-
   Given a mix of review findings (a confirmed blocker with a costly fix, a cheap valid nit, and a
-  false positive), the pr-response skill scores each on the rubric and returns per-finding
-  Implement / Defer / Decline verdicts with reasons — including the blocker and false-positive
-  overrides.
+  false positive), the pr-response skill scores each on the v3 rubric and returns per-finding
+  Implement / Defer / Decline verdicts with reasons — the blocker and false-positive overrides
+  fire, and the cosmetic nit defers instead of auto-implementing.
 
 target:
   kind: skill
@@ -36,9 +34,11 @@ prompt: |
   anything yet.
 
 assert:
-  # The four rubric dimensions must be named — this is the tunable surface under test.
+  # The rubric dimensions must be named — this is the tunable surface under test.
   - type: includes
     value: "Severity"
+  - type: includes
+    value: "Reach"
   - type: includes
     value: "Validity"
   - type: includes
@@ -51,34 +51,41 @@ assert:
   # The behavioral check: per-finding scores, correct verdicts, and both overrides applied.
   - type: judge
     rubric: >-
-      The response scores EACH of the three findings separately on the rubric's four dimensions
-      (Severity, Validity, Effort/Risk, Alignment) with a numeric composite, and assigns each a
-      verdict from {Implement, Defer, Decline} with a one-line reason. It must apply both
-      override rules: F1 is a CONFIRMED blocker so it is Implement even though Effort/Risk is
-      high and the raw composite may fall below the threshold (the override should be named);
-      F3 is a FALSE POSITIVE (Validity 0) so it is Decline despite being labeled a blocker, and
-      the reason must state the finding is wrong (the `with` block already closes the handle),
-      not merely that the fix is costly. F2 (a cheap, valid nit) may be Implement or Defer.
-      A pass requires per-finding scores AND correct verdicts on F1 and F3 with reasons.
+      The response scores EACH of the three findings separately on the rubric's five dimensions
+      (Severity, Reach, Validity, Effort/Risk, Alignment) with a numeric composite, and assigns
+      each a verdict from {Implement, Defer, Decline} with a one-line reason. It must apply both
+      override rules: F1 is a CONFIRMED blocker on a live path so it is Implement even though
+      Effort/Risk scores low and the raw composite may fall below the ≥11 threshold (the override
+      should be named); F3 is a FALSE POSITIVE (Validity 0) so it is Decline despite being labeled
+      a blocker, and the reason must state the finding is wrong (the `with` block already closes
+      the handle), not merely that the fix is costly. F2 (a cheap, valid, cosmetic nit) must NOT
+      be Implement: its honest anchors are Severity 1 (cosmetic, no behavior change) and Reach 1
+      (a bad name is hit by maintainers reading the code, not by runs), and nothing documents a
+      naming convention here, so Alignment tops out at 2 — the composite lands at or below 10,
+      which is a Defer under v3's ≥11 bar. An Implement verdict on F2 means the anchors were
+      inflated to reach it, and fails. A pass requires per-finding scores AND correct verdicts on
+      F1 (Implement), F2 (Defer, with a follow-up), and F3 (Decline) with reasons.
 
 dryRunResponse: |
   <!-- waffle-pr-response -->
-  **PR response** — 3 findings: 2 implemented, 0 deferred, 1 declined.
+  **PR response** — 3 findings: 1 implemented, 1 deferred, 1 declined.
 
-  | # | Finding | Sev | Val | E/R | Align | Score | Verdict |
-  |---|---|:---:|:---:|:---:|:---:|:---:|---|
-  | F1 | `parseRange("")` returns `[0, -1]` | 3 | 3 | 1 | 3 | 10 | **Implement** |
-  | F2 | `tmp2` is a meaningless name in `load.ts` | 1 | 3 | 3 | 2 | 9 | **Implement** |
-  | F3 | `flush()` leaks the file handle | 3 | 0 | 3 | 1 | 7 | **Decline** |
+  | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
+  |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
+  | F1 | `parseRange("")` returns `[0, -1]` | 3 | 3 | 3 | 1 | 3 | 13 | **Implement** |
+  | F2 | `tmp2` is a meaningless name in `load.ts` | 1 | 1 | 3 | 3 | 2 | 10 | **Defer** |
+  | F3 | `flush()` leaks the file handle | 3 | 2 | 0 | 3 | 1 | 9 | **Decline** |
 
-  - **F1 — Implement (10).** Confirmed: empty input yields `[0, -1]` and every downstream slice is
-    empty. Effort/Risk scores 1 (three callers with thin tests), but the confirmed-blocker override
-    applies — Severity 3 + Validity 3 is always Implement. Landing the bounds fix with a regression
-    test on the empty-input case, plus tests pinning the three callers before the rework.
-  - **F2 — Implement (9).** Valid, trivial, covered by existing tests. Renamed to `stagingDir`.
-  - **F3 — Decline (7).** False positive (Validity 0 → auto-decline, overriding the composite):
+  - **F1 — Implement (13).** Confirmed: empty input yields `[0, -1]` and every downstream slice is
+    empty, on a live parse path. Effort/Risk scores 1 (three callers with thin tests) — and the
+    confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2) applies regardless. Landing
+    the bounds fix with a regression test on the empty-input case, plus tests pinning the three
+    callers before the rework.
+  - **F2 — Defer (10).** Valid and trivial, but cosmetic: no run behaves differently, so Severity 1
+    and Reach 1 keep it under the ≥11 bar. Filed into the naming-pass follow-up issue.
+  - **F3 — Decline (9).** False positive (Validity 0 → auto-decline, overriding the composite):
     `flush()` wraps the handle in a `with` block, which closes it on every path including
     exceptions. There is no leak. Declining on correctness, not on cost.
 
-  Scored with pr-response rubric **v1** (Severity · Validity · Effort/Risk · Alignment, 0–3 each;
-  ≥8 Implement · 4–7 Defer · ≤3 Decline).
+  Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+  each; ≥11 Implement · 5–10 Defer · ≤4 Decline).

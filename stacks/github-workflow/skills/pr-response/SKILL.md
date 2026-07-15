@@ -1,6 +1,6 @@
 ---
 name: pr-response
-description: Triage the review findings on a pull request — read every review and review comment (from the adversarial-review bot or a human), score each finding on a four-dimension rubric (severity, validity, effort/risk, alignment), decide Implement / Defer / Decline with a recorded score and one-line reason, apply the accepted fixes, and post one reply per round summarizing the verdicts. Use when a PR has review feedback to answer, when the user says "respond to the review", "address the findings", or "triage the PR comments". Invokable by users and agents.
+description: Triage the review findings on a pull request — read every review and review comment (from the adversarial-review bot or a human), score each finding on a five-dimension rubric (severity, reach, validity, effort/risk, alignment), decide Implement / Defer / Decline with a recorded score and one-line reason, apply the accepted fixes, and post one reply per round summarizing the verdicts. Use when a PR has review feedback to answer, when the user says "respond to the review", "address the findings", or "triage the PR comments". Invokable by users and agents.
 user-invocable: true
 argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [--yes]"
 ---
@@ -21,7 +21,7 @@ rather than guessing whether it was even read.
 
 Score honestly. The rubric exists to make your judgment legible and **recalibratable** — not to
 launder a decision you already made. If a finding is a true blocker, a low score means the rubric
-is wrong, not the finding; say so (see [Recalibrating the rubric](#recalibrating-the-rubric-v2)).
+is wrong, not the finding; say so (see [Recalibrating the rubric](#recalibrating-the-rubric-v3)).
 If you catch yourself shading one dimension down to move a verdict you have already decided, **stop
 and name the dimension you are actually missing** — that is the bug, and v2 exists because it went
 unnamed once.
@@ -133,7 +133,7 @@ Before you score, **read the code each finding names**. A finding is a claim abo
 cannot judge its Validity from the comment text alone. Open the file, trace the call path, and
 check whether the claimed failure is real.
 
-## 3. Score each finding — rubric v2
+## 3. Score each finding — rubric v3
 
 Score every finding **0–3 on five dimensions**. The anchors are the contract; use them literally.
 
@@ -151,18 +151,26 @@ gates every merge scored identically — and the only way to record "real bug, d
 talk Severity down, which is laundering a judgment, not making one. Score the bug honestly on
 Severity, and let Reach carry the dormancy.
 
+**Scoring comment and prose findings (#388).** Comment text in a deterministic file (JS, YAML,
+shell) is **Reach ≤ 1 and Severity ≤ 1**: no runtime reads it, so its exposure is a maintainer who
+may act on it later and its worst case is cosmetic — unless the comment is test-pinned or misleads
+about live behavior, which is exactly when it stops being "just a comment". The Implement-worthy
+fix for a wrong comment is a deletion or a one-line correction, never an expansion. Skill/agent
+markdown and user-visible output (CLI messages, generated docs) are behavior; score them normally.
+
 **Composite** = the five scores summed, 0–15:
 
 | Composite | Verdict | Meaning |
 |---|---|---|
-| **≥ 10** | **Implement** | Fix it in this PR, now. |
-| **5–9** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
+| **≥ 11** | **Implement** | Fix it in this PR, now. |
+| **5–10** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
 | **≤ 4** | **Decline** | Do not do it. Say why, once, and move on. |
 
 Three rules that override the arithmetic — apply them **explicitly**, never silently:
 
 - **A confirmed blocker on live code is always Implement.** If `Severity = 3`, `Validity = 3` **and
-  `Reach ≥ 2`**, implement it even when Effort/Risk drags the composite under 10. Note the override
+  `Reach ≥ 2`**, implement it even when Effort/Risk drags the composite below the Implement
+  threshold. Note the override
   in the reason. (v1 omitted the Reach clause, which would have forced a dormant, unreachable bug
   to be fixed on the spot — see the CHANGELOG note for v2.)
 - **A false positive is always Decline.** If `Validity = 0`, decline regardless of Severity — the
@@ -447,8 +455,8 @@ what stitches them together (see step 3 and the resumption rules).
 - **F6 — Decline (5).** False positive (Validity 0 → auto-decline): this is a different helper
   with a different cleanup contract; `withTempDir` does not unlink on error.
 
-Scored with pr-response rubric **v2** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
-each; ≥10 Implement · 5–9 Defer · ≤4 Decline).
+Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+each; ≥11 Implement · 5–10 Defer · ≤4 Decline).
 
 — posted by the pr-response bot
 ```
@@ -463,7 +471,7 @@ Return a concise summary to the caller: the PR URL, the finding count by verdict
 of the posted reply. Call out any rule-override you applied (blocker-implement, false-positive
 decline) and any finding you could not score confidently.
 
-## Recalibrating the rubric (v2)
+## Recalibrating the rubric (v3)
 
 **This section is the point of the skill.** The rubric is a guess: five dimensions, equal weight,
 two thresholds. Review quality drifts (a bot gets better or noisier) and the repo's own bar drifts
@@ -508,8 +516,22 @@ blocker-override gained its `Reach ≥ 2` clause for the same reason, and the ne
 code is a Defer, never a Decline"* floor exists so that dormancy schedules the fix instead of
 forgetting the bug.
 
+### What changed in v3 (#385, #388)
+
+Threshold-layer only — the five dimensions and their anchors are untouched:
+
+- **Implement moved to ≥ 11 (Defer 5–10).** The drift symptom was the table's second row:
+  implemented findings were churn. `Validity 3 · Effort/Risk 3 · Alignment 3` composes to 9 on its
+  own, so any valid, cheap, on-convention finding sat one Severity point from auto-implementing —
+  PR #382 implemented 15 of 16 findings across six rounds, #384 13 of 14 across five, and the
+  owner ruled (2026-07-13) that valid + cheap alone must not clear the bar. Under v3 a finding
+  implements in-PR only by bringing real Severity or Reach; the marginal ones defer with an issue.
+- **Comment findings score what comments are.** The Reach ≤ 1 / Severity ≤ 1 rule for comment text
+  in deterministic files (see the scoring rule above) is #388's doctrine landing where it bites:
+  a wording nit on prose no runtime reads cannot compose to an in-PR fix.
+
 **How to change it:** edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
-truth; the rendered copies are generated output. Bump the version (`v2` → `v3`) in the rubric
+truth; the rendered copies are generated output. Bump the version (`v3` → `v4`) in the rubric
 heading, the reply footer, and here. Note the change and its motivating evidence in the repo's
 `CHANGELOG.md`, because a rubric change silently reinterprets every future verdict — and **old
 replies stay scored against the rubric that produced them**, which is why every reply names its
