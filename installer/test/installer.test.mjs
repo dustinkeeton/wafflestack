@@ -1393,11 +1393,11 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
 // must therefore stand alone: in the allowlist, in the PR-body checklist, and in delegate's
 // post-agent verification.
 //
-// SCOPE, deliberately: these guard `{{project.*Cmd}}` commands ONLY. `&&` is load-bearing
-// elsewhere in the same files — the prose that warns AGAINST compounds, the jq denial classifier
-// that DETECTS them, GHA `if:` expressions, and git-family compounds (`git checkout main &&
-// git pull`, pinned by W2b/#155 and granted wholesale by a single `Bash(git:*)`). A blanket
-// "no && anywhere" assertion would fail the existing suite and gut those guards.
+// SCOPE, deliberately: these guard `{{project.*Cmd}}` commands ONLY, plus A4's #340 git-family
+// arm (the git compounds were split by #340; md runnable units leading with git/cd keep the
+// class dead). `&&` stays load-bearing elsewhere in the same files — the prose that warns
+// AGAINST compounds, the jq denial classifier that DETECTS them, and GHA `if:` expressions. A
+// blanket "no && anywhere" assertion would fail the existing suite and gut those guards.
 describe('project commands never join with && (#218)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
   const REL = '.github/workflows/waffle-label-hook.yml';
@@ -1947,9 +1947,9 @@ describe('project commands never join with && (#218)', () => {
   // SCOPING is what keeps this honest. It fires only on text carrying a {{project.*Cmd}}
   // placeholder, so every INTENTIONAL compound in this repo is out of reach by construction:
   // the dispatch prompts that warn against `cmd1 && cmd2` (they name it literally — no
-  // placeholder), the jq denial classifier that DETECTS compounds (#330/#332), the GHA `if:`
-  // expressions, and `git checkout main && git pull` (pinned by W2b/#155). A blanket `&&` ban
-  // would fail all four.
+  // placeholder), the jq denial classifier that DETECTS compounds (#330/#332), and the GHA
+  // `if:` expressions. The #340 git-family arm below carries its own scoping — md-only
+  // runnable units that LEAD with git/cd.
   //
   // The unit of analysis is the RUNNABLE unit — a bash-fence line, or an inline `code span` —
   // never the raw line, because markdown DECORATES commands with the same characters a shell
@@ -2007,9 +2007,28 @@ describe('project commands never join with && (#218)', () => {
     const SUBST = /\$\([^)]*\{\{project\.\w*Cmd\}\}/;
     const GRANT = /Bash\([^)]*\)/g;                                      // the ONE legit parenthesised use
 
+    // #340 git-family arm. Same class, different population: `git checkout main && git pull`
+    // rides a blanket `Bash(git:*)` today but matches nothing once grants tighten to
+    // per-subcommand. Markdown runnable units ONLY (yml/yaml is real shell, `if:` expressions,
+    // and jq detector strings), and only units that LEAD with git/cd — prose counter-examples
+    // use the neutral `cmd1 && cmd2` shape, which this arm cannot see. No bare `|` in GIT_OP:
+    // a pipeline still carries its leading program, so it matches its grant.
+    const GIT_LEAD = /^(git|cd)\s/;                                      // nothing else is inspected
+    const GIT_OP = /(&&|\|\||;)/;
+    const CD_GIT = /^cd\s+\S+\s*(&&|\|\||;)\s*git\b/;                    // delegate's old first-command shape
+
     const offenders = [];
     const flag = (file, i, why, text) =>
       offenders.push(`${path.relative(repoRoot, file)}:${i + 1}: [${why}] ${text.trim()}`);
+
+    let gitSeen = 0;                                                     // positive control, git arm
+    const gitCheck = (file, i, unit) => {
+      const u = unit.trim();
+      if (!GIT_LEAD.test(u)) return;
+      gitSeen++;
+      if (/^git\s/.test(u) && GIT_OP.test(u)) flag(file, i, 'git-family compound', u);
+      else if (CD_GIT.test(u)) flag(file, i, 'cd-into-git compound', u);
+    };
 
     // POSITIVE CONTROL. Without it this test is green whether it inspected every project-command
     // unit in stacks/ or ZERO of them — so a moved `stacks/`, a broken `repoRoot`/`walk`, or a
@@ -2020,6 +2039,7 @@ describe('project commands never join with && (#218)', () => {
     let seen = 0;
 
     for (const file of walk(path.join(repoRoot, 'stacks'))) {
+      const isMd = file.endsWith('.md');
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       let lang = null;
       let fenceAt = 0;
@@ -2075,6 +2095,7 @@ describe('project commands never join with && (#218)', () => {
             if (line.trim() === heredoc) { heredoc = null; return; }
             for (const m of line.matchAll(/`([^`]+)`/g)) {
               const span = m[1];
+              if (isMd) gitCheck(file, i, span);
               if (!PH.test(span)) continue;
               seen++;
               if (OP.test(span.replace(PH_G, ''))) flag(file, i, 'compound span (heredoc)', span);
@@ -2088,6 +2109,7 @@ describe('project commands never join with && (#218)', () => {
           const cmd = line.split('#')[0].trim();                        // drop any trailing comment
           if (!cmd) return;                                             // blank / comment-only
           fenceCmds.push(cmd);                                          // EVERY runnable line — see the fence close
+          if (isMd) gitCheck(file, i, cmd);
           if (!PH.test(cmd)) return;
           fencePH = true;
           seen++;
@@ -2100,6 +2122,13 @@ describe('project commands never join with && (#218)', () => {
         // command legitimately sits inside parens, and it must never read as a compound.
         if (!line.trim()) inTable = false;
         else if (TABLE_SEP.test(line)) inTable = true;
+
+        // #340 git arm: inside ANY remaining fence (lang-less/text included — delegate's agent
+        // prompt template is one) each trimmed line is a runnable unit; in prose, each span is.
+        if (isMd) {
+          if (lang !== null) { if (line.trim()) gitCheck(file, i, line); }
+          else for (const m of line.matchAll(/`([^`]+)`/g)) gitCheck(file, i, m[1]);
+        }
 
         const l = line.replace(GRANT, '');
         if (!PH.test(l)) return;
@@ -2143,6 +2172,9 @@ describe('project commands never join with && (#218)', () => {
     // purpose — what this must catch is not a drift of a few units, it is the scan silently
     // stopping altogether.
     assert.ok(seen >= 40, `A4 must actually INSPECT project-command units, but saw only ${seen}`);
+    // Same shape for the git arm — roughly a third of today's count, so docs churn stays green
+    // but a silently dead scan does not.
+    assert.ok(gitSeen >= 25, `the #340 git arm must actually INSPECT git/cd-leading units, but saw only ${gitSeen}`);
   });
 });
 
@@ -2634,10 +2666,14 @@ describe('github-workflow: main-agent identity wiring (#155)', () => {
   test('W2b the maintainer-run and identity-free commands stay bare git', () => {
     write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    botName: Wafflebot\n    botEmail: bot@example.com\n    cmd: ${RECIPE}\n`);
     assert.equal(render().ok, true);
-    // `git checkout main && git pull` moves no identity; the tag push explicitly runs under the
-    // maintainer's own credentials (and a lightweight tag carries no identity at all).
-    assert.match(read(cwd, GIT_SKILL), /^git checkout main && git pull$/m);
+    // `git checkout main` / `git pull` move no identity; the tag push explicitly runs under the
+    // maintainer's own credentials (and a lightweight tag carries no identity at all). #340 split
+    // the former `&&` compounds — each command stands alone so a per-subcommand allowlist matches.
+    assert.match(read(cwd, GIT_SKILL), /^git checkout main$/m);
+    assert.match(read(cwd, GIT_SKILL), /^git pull$/m);
+    assert.doesNotMatch(read(cwd, GIT_SKILL), /&& git (pull|push)/);
     assert.match(read(cwd, RELEASE_SKILL), /`git tag vX\.Y\.Z /);
+    assert.doesNotMatch(read(cwd, RELEASE_SKILL), /&& git (pull|push)/);
     // Branch creation and push record no committer — bare git, in both skills.
     assert.match(read(cwd, GIT_SKILL), /^git checkout -b feat\/my-feature$/m);
     assert.match(read(cwd, GIT_SKILL), /^git push -u origin feat\/my-feature$/m);

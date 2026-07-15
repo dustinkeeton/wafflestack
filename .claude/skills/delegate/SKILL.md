@@ -589,11 +589,13 @@ You are assigned to GitHub issue #{number}: {title}
 
 YOUR WORKTREE: {worktree_path}
 
-FIRST COMMAND — run before anything else:
+FIRST COMMANDS — run before anything else, each as its OWN Bash call (a chained `cd … && git status` matches no single-program allowlist entry):
 
-    cd {worktree_path} && git status
+    git -C {worktree_path} status
 
-Every subsequent shell command in your session MUST run from this directory. Bash sessions persist `cwd`, so a single `cd` at the start is enough — but never run `cd` to a different directory afterward, and never operate on the parent checkout.
+    cd {worktree_path}
+
+Every subsequent shell command in your session MUST run from this directory. Bash sessions persist `cwd`, so the single standalone `cd` above is enough — but never run `cd` to a different directory afterward, and never operate on the parent checkout. If your harness resets `cwd` between calls, address the worktree explicitly instead of re-chaining: `git -C {worktree_path}` for git commands, absolute paths under {worktree_path} for everything else.
 
 The worktree is already on branch `{branch-name}` based on `origin/main`. Do NOT run `git checkout main` or `git pull` — that would corrupt sibling agents' worktrees. Just start committing.
 

@@ -110,7 +110,8 @@ ambient signing is the bug this model exists to eliminate.
 ### Creating a branch
 
 ```bash
-git checkout main && git pull
+git checkout main
+git pull
 git checkout -b feat/my-feature
 ```
 
@@ -248,8 +249,8 @@ Two ways the tag gets pushed:
   workflow pushes `vX.Y.Z` on merge. The `release` skill does the whole bump-PR half (level
   selection, bump, CHANGELOG stamp, pre-flight, PR, label) — use it rather than doing these
   steps by hand.
-- **Manual fallback** (hook not installed): after the merge,
-  `git tag vX.Y.Z <merge-commit-sha> && git push origin vX.Y.Z`.
+- **Manual fallback** (hook not installed): after the merge, run
+  `git tag vX.Y.Z <merge-commit-sha>`, then `git push origin vX.Y.Z` — two separate commands.
 
 Do **not** push a tag before the PR merges, and never as a substitute for the PR.
 
