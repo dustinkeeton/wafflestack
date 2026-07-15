@@ -4239,10 +4239,10 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     // it is handed straight to `gh --input` — so whatever sits there at that instant is what gets
     // POSTed. autopilot runs these gates per-PR CONCURRENTLY across a parallel group, so two gates
     // interleaving a write and a post on one path can put PR A's review onto PR B.
-    assert.match(bash, /--input "\$\{TMPDIR:-\/tmp\}\/waffle-adversarial-review-\$N\.json"/,
-      'step 5 posts a per-PR file payload (#324)');
-    assert.match(bash, /--body-file "\$\{TMPDIR:-\/tmp\}\/waffle-adversarial-review-summary-\$N\.md"/,
-      'step 6 posts a per-PR file body (#324)');
+    assert.match(bash, /--input "\$\{TMPDIR:-\/tmp\}\/waffle-adversarial-review-\$N-\$HEAD_SHA\.json"/,
+      'step 5 posts a per-PR, per-head file payload (#324, #376)');
+    assert.match(bash, /--body-file "\$\{TMPDIR:-\/tmp\}\/waffle-adversarial-review-summary-\$N-\$HEAD_SHA\.md"/,
+      'step 6 posts a per-PR, per-head file body (#324, #376)');
     assert.doesNotMatch(bash, /--(?:input|body-file)\s+\/tmp\//,
       'no command posts from a shared, un-namespaced /tmp path — that cross-posts reviews (#324)');
 
