@@ -1,123 +1,15 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
-# PR-response hook: when waffle-pr-green-hook delivers an adversarial review on a pull request,
-# dispatch the Claude harness to run the pr-response skill (.claude/skills/pr-response/SKILL.md) against that PR — read
-# every finding, score it on the skill's rubric, apply the fixes it accepts, and post
-# ONE reply carrying the verdict table. This is the consuming half of waffle-pr-green-hook: that
-# hook PRODUCES findings on a green PR, this one DISPOSES of them.
-#
-# Trigger — workflow_run on waffle-pr-green-hook, NOT pull_request_review (#338). This hook consumes
-# exactly one producer: the adversarial review waffle-pr-green-hook delivers. So it now waits for
-# THAT WORKFLOW to finish and asks GitHub what it produced, rather than watching every submitted
-# review and trying to tell the bot's apart by reading its body.
-#
-# That change is the whole point of #338, and it is structural, not a tightened predicate. The old
-# trigger fired on `pull_request_review: [submitted]` and decided "is this the bot's review?" by
-# string-matching a marker literal at the head of a FREE-TEXT BODY that anyone can write. Every
-# failure in #211, #332 and #333 is a variant of that one mechanism:
-#
-#     PR #207 — a human comment quoting the literal  ⇒ "the bot already replied" (fail-open)
-#     PR #296 — a QA review quoting the literal      ⇒ dispatched this paid, COMMITTING job on a QA
-#                                                      review, spending the PR's one automated reply
-#
-# Narrowing the match (bare word → full literal → marker-LED) only ever shrank the target — a
-# marker-led body is still prose, and a human can type a marker on line 1 as easily as at offset
-# 1103. Under `workflow_run` a review body cannot raise this event AT ALL: the entire quote/mention
-# class is dissolved at the event layer, and no predicate in this file reads a body any more.
-#
-# Chain depth: GitHub refuses to chain more than three levels of `workflow_run`. This repo's chain is
-# waffle-doctor (root, a `pull_request` event) → waffle-pr-green-hook (1) → this hook (2), so it is
-# within the limit with a level to spare. A consumer who points prGreen.watchWorkflows at a workflow
-# that is ITSELF workflow_run-triggered spends that slack and this hook will silently stop firing.
-#
-# Scope is unchanged: v1 answers the review BOT only. A human review is answered by running
-# /pr-response by hand — a deliberate limit, not an oversight: auto-dispatching a paid, committing
-# harness at every human "looks good, one nit" is a cost and trust surface nobody asked for. What
-# changed is that the scope is now enforced by the EVENT rather than by parsing prose.
-#
-# ─── GUARD 1: fork-head. Non-negotiable — but READ WHERE IT ACTUALLY LIVES. ─────────────────────
-# Checking out a fork's head and handing it to an agent that holds `contents: write` is arbitrary
-# code execution (the fork controls every file the harness reads, every test the pre-flight runs)
-# plus secret exfiltration (ANTHROPIC_API_KEY and the job token are in the environment). Anyone can
-# open a fork PR, so nothing upstream authenticates the code this job would run. The fork boundary
-# is therefore absolute: the checkout must never happen for a fork head.
-#
-# WHERE IT IS ENFORCED, precisely — because the obvious answer is WRONG:
-#   * waffle-pr-green-hook's OWN fork guard. THIS is the real boundary. Its trigger is waffle-doctor,
-#     a `pull_request` run, so ITS `workflow_run.head_repository` genuinely IS the fork — its guard
-#     evaluates false, its job skips, and the run concludes `skipped`.
-#   * This job's `conclusion == 'success'` check, which then refuses that skipped run.
-#   * The gate step, which resolves the PR out-of-band and finds no `waffle/adversarial-review`
-#     status (pr-green never ran, so it never wrote one) ⇒ skip.
-#
-# The `head_repository.full_name == github.repository` clause in this job's `if:` is NOT the guard,
-# despite reading like one. On a `workflow_run` event the triggering run is a pr-green run, which
-# executes on the DEFAULT BRANCH — so its `head_repository` is ALWAYS this repo and the clause can
-# never evaluate false. It is currently dead code, kept only as defense in depth for the day the
-# head is threaded through properly (see the KNOWN DEFECT note below). Do NOT relax pr-green's guard
-# on the belief that this job guards itself: it does not. That belief is the hazard this comment
-# exists to prevent.
-#
-# ─── KNOWN DEFECT (#338 follow-up): this hook does not currently dispatch, on any PR. ────────────
-# `github.event.workflow_run.head_sha` is the DEFAULT BRANCH's tip, not the PR head: GitHub does not
-# carry a head across a `workflow_run` hop, and this hook sits at the SECOND hop (doctor → pr-green →
-# here), so it receives pr-green's own run object, whose head is `main`. The gate below asks
-# `commits/{HEAD_SHA}/pulls` and filters for an OPEN PR whose head IS that SHA — main's tip never is
-# — so every run skips at step (1) and the paid harness is never reached. Measured live: all recent
-# pr-green runs report `head_branch: main` and `pull_requests: []`.
-#
-# The fix is to carry the PR number + reviewed head SHA from pr-green out-of-band (an artifact read
-# back via `github.event.workflow_run.id`; job outputs are not exposed to a `workflow_run` consumer
-# and `pull_requests` is empty). That ALSO re-arms the fork clause above and makes the concurrency
-# group per-PR rather than the repo-wide constant it currently is (`head_branch` is always `main`).
-# Until then this hook is INERT — it is not a live loop, and the signal design below is unexercised.
-#
-# ─── GUARD 2: loop bound. Per PR, NOT per head commit. ──────────────────────────────────────────
-# This hook is armed on wafflestack itself, so the cycle below is real, not theoretical:
-#
-#     pr-green delivers a review → workflow_run fires → pr-response commits a fix → new head SHA
-#       → CI green → pr-green reviews the NEW SHA (no status for that SHA ⇒ not deduped)
-#         → workflow_run fires → pr-response again → …
-#
-# pr-green's dedup is keyed PER HEAD SHA (its commit status hangs on the reviewed commit), so it
-# structurally CANNOT bound this cycle — every fix this hook pushes mints a fresh SHA that pr-green
-# is obliged to review. The bound must therefore live here, and it must be PER PR.
-#
-# THE BOUND IS A LABEL, AND THE WORKFLOW WRITES IT — NOT THE HARNESS, AND NOT IN PROSE. Before a
-# single paid token is spent, the `Claim the PR's one automated response` step applies
-# prResponse.responseLabel to the PR; the gate skips any PR that already carries it. One automated
-# response per pull request, ever; a second round of findings is a human's call to answer (run
-# /pr-response by hand).
-#
-# Three properties, each load-bearing, and together STRICTLY TIGHTER than the marked-comment bound
-# they replace (#333's non-negotiable):
-#   * OUT-OF-BAND — applying a label takes repo write access. A comment that quotes any marker, at
-#     any offset, cannot forge it. The old bound counted marker substrings over every comment on the
-#     PR, so a human quoting the literal cost that PR its one automated reply (#333, now moot).
-#   * PER PR, not per SHA — it survives the new head SHA each fix mints, and it survives a rebase or
-#     force-push (a commit status could not: rewriting history would orphan it and RE-ARM the loop,
-#     which is why the bound is NOT the commit status this hook's delivery check uses).
-#   * WRITTEN BEFORE THE MONEY, by the workflow — so a harness that dies mid-run, or is denied its
-#     tools, or never posts a reply, is still bounded. The old bound depended on the harness actually
-#     posting its marked comment; a crashed run left no comment and the next review re-dispatched.
-#
-#   *** Do NOT "optimize" this guard back to per-SHA, and do NOT move it into the harness. ***
-#
-# Either change reintroduces an unbounded paid loop, and it will not look like a bug — each
-# individual fire is locally correct. Note the loop's liveness depends on the push token: a push made
-# with the default GITHUB_TOKEN does not trigger new workflow runs (a GitHub anti-recursion rule), so
-# CI never re-runs and pr-green never re-fires; but a PAT/App token in WAFFLE_HYGIENE_TOKEN (the
-# recommended setting, so the PR's required checks actually run) restores the cycle in full. The
-# per-PR guard is what holds in BOTH configurations. Further skips harden it — as pr-green does,
-# draft PRs and bot-authored PRs are skipped — and a self-trigger is impossible on the event alone:
-# this hook fires only when waffle-pr-green-hook completes, and nothing it does can complete that.
-#
-# Opt-in syrup: this spends real Anthropic API money on every reviewed PR AND holds `contents: write`
-# to commit the fixes it accepts, so enabling the stack does NOT render it — install it explicitly
-# (see optIn in stack.yaml) and complete the opt-ins in the stack setup note: the ANTHROPIC_API_KEY
-# secret, the pr-response skill rendered and committed under .claude/skills/ (its requires: edge
-# pulls it), a token carrying contents + pull-requests write, and the prResponse.responseLabel label
-# (it must pre-exist — the bound is fail-closed, so a missing label reds the job rather than
-# dispatching an unbounded run). Until those are set it is inert.
+# PR-response hook: the consuming half of waffle-pr-green-hook. When pr-green delivers an
+# adversarial review, dispatch the Claude harness to run the pr-response skill against that PR —
+# score each finding, apply the fixes it accepts, and post one reply with the verdict table. It
+# COMMITS (contents: write).
+# Trigger is workflow_run on waffle-pr-green-hook (not pull_request_review): a body cannot raise the
+# event, so the marker-in-prose class is gone — DECISIONS #338. Identity-neutral by design (#160).
+# The fork-head guard, the per-PR loop bound (a label the workflow writes before the paid dispatch),
+# the workflow_run chain-depth limit, and the current KNOWN DEFECT that leaves this hook inert all
+# live in the github-workflow stack.yaml setup note, "PR-response hook (opt-in syrup)".
+# Opt-in syrup: per-review API spend + write scope, so the stack does NOT render it — install it and
+# complete the setup-note opt-ins (key, pr-response skill, write token, response label).
 name: waffle-pr-response-hook
 
 on:
@@ -125,34 +17,17 @@ on:
     workflows: [waffle-pr-green-hook]
     types: [completed]
 
-# One run at a time per PR head branch: a second pr-green delivery landing while a (paid, committing)
-# response is in flight queues behind it rather than cancelling mid-run and leaving a half-applied
-# fix. Keyed on the head repo + branch, both available straight from the event without resolving the
-# PR number (one open PR per head branch, so this is per-PR in practice — the same key pr-green uses).
+# One run at a time per PR head branch: a second delivery mid-run queues rather than cancelling and
+# leaving a half-applied fix. Keyed on the head repo + branch, the same key pr-green uses.
 concurrency:
   group: waffle-pr-response-hook-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   pr-response:
-    # Fast-path gate on the event itself, evaluated before a runner is claimed:
-    #   (1) FORK-HEAD GUARD (see the header) — the head must live in this repo. This is the security
-    #       boundary of the whole workflow; it stays first and stays at job level.
-    #   (2) The producing run SUCCEEDED. A pr-green run that redded did something this hook should
-    #       not build on — its denial ladder reds on a blocked exfil/destructive call, and answering
-    #       a review produced by such a run with a paid, COMMITTING harness is exactly the escalation
-    #       not to automate. (A pr-green run that merely SKIPPED also concludes success; it leaves no
-    #       commit status, and the gate below skips on that.)
-    #
-    # There is NO body predicate here, and there is none anywhere else in this file — that is the
-    # point of #338. The old `if:` carried `startsWith(github.event.review.body, '<!-- … -->')` as
-    # its trigger, which is how PR #296's QA review dispatched this paid, `contents: write` job by
-    # quoting a marker. A body cannot raise a `workflow_run` event, so the class is gone rather than
-    # narrowed. Whether pr-green actually PRODUCED a review is answered out-of-band in the gate step,
-    # by asking for the commit status pr-green's harness writes — never by reading a review.
-    #
-    # These are Actions expressions over event metadata, not a shell splice, so no event content ever
-    # reaches a command line. The in-job gate resolves the PR and adds the per-PR loop bound.
+    # Fast-path gate (before a runner is claimed): the fork-head guard (head must live in this repo)
+    # and the producing pr-green run must have SUCCEEDED. No body predicate anywhere in this file
+    # (#338); the in-job gate resolves the PR out-of-band and adds the per-PR loop bound. See setup note.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository
@@ -235,19 +110,9 @@ jobs:
           echo "pr_number=${N}" >> "$GITHUB_OUTPUT"
           echo "head_ref=$(printf '%s' "$pr" | jq -r '.head.ref')" >> "$GITHUB_OUTPUT"
           echo "🧇 waffle-pr-response-hook: PR #${N} has a new adversarial review on ${HEAD_SHA} and no prior response — dispatching pr-response." | tee -a "$GITHUB_STEP_SUMMARY"
-      # ─── THE LOOP BOUND IS WRITTEN HERE, BEFORE A SINGLE PAID TOKEN IS SPENT. ──────────────────
-      # The bound is only as good as the moment it is claimed. Written AFTER the harness (or BY the
-      # harness) it would be lost by any run that crashes, times out, is cancelled, or is denied its
-      # tools — and the next adversarial review would re-dispatch a paid, committing harness. So the
-      # workflow claims the PR's one automated response up front, and it does so with a LABEL: an
-      # out-of-band artifact that takes repo write access to apply, and which survives the fresh head
-      # SHA every fix mints (a commit status would not survive a rebase — see the header).
-      #
-      # FAIL-CLOSED AND LOUD: if the label cannot be applied, the bound does not exist, so the job
-      # REDS rather than dispatching. It does not "skip quietly" — a repo that has not created the
-      # label (it must pre-exist; the GitHub API will not mint one here) would otherwise look like a
-      # working install while every delivery silently did nothing. Every later step keys on this
-      # step's outcome, so nothing downstream runs and no money is spent.
+      # THE LOOP BOUND IS WRITTEN HERE, BEFORE A SINGLE PAID TOKEN IS SPENT — the workflow applies the
+      # response label (never the harness), so a crashed/denied run is still bounded. FAIL-CLOSED AND
+      # LOUD: a label that cannot be applied REDS the job rather than dispatching. See setup note.
       - name: Claim the PR's one automated response (the loop bound)
         id: bound
         if: steps.gate.outputs.should_respond == 'true'
@@ -262,48 +127,26 @@ jobs:
             exit 1
           fi
           echo "🧇 waffle-pr-response-hook: claimed PR #${PR_NUMBER}'s one automated response (${RESPONSE_LABEL}) — the loop is bounded before any paid dispatch." | tee -a "$GITHUB_STEP_SUMMARY"
-      # Check out the PR head BRANCH (not the detached SHA): the harness commits accepted fixes and
-      # pushes them, so it needs a branch with an upstream. Same-repo head only (the fork-head guard
-      # in the job `if:` above), so this is trusted code. persist-credentials stays at its default
-      # (true) — unlike the read-only pr-green hook, this job's git push needs the checkout's stored
-      # credential. The token is the same one handed to the harness, so the push is attributed to
-      # (and carries the CI-retrigger behavior of) that identity rather than a second one.
-      #
-      # On `ref:` and ref-injection — head.ref is normally an untrusted value, but here it is triply
-      # safe: the fork-head guard means the branch exists in THIS repo (so someone with push access
-      # created it, and git already forbids the leading `-` that makes a ref argument dangerous), it
-      # is read from the PR the gate resolved by HEAD SHA (not from the event payload), and
-      # actions/checkout passes it to git as an argument rather than splicing it into a shell.
+      # Check out the PR head BRANCH (not the detached SHA): the harness commits and pushes fixes, so
+      # it needs a branch with an upstream (persist-credentials default true, unlike read-only
+      # pr-green). Same-repo head only (fork-head guard); head_ref is resolved by the gate, not spliced.
       - name: Check out the PR head branch
         if: steps.gate.outputs.should_respond == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.gate.outputs.head_ref }}
           token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}
-      # Deterministic dependency bootstrap BEFORE the paid harness runs, exactly as waffle-hygiene
-      # does: a fresh checkout has no node_modules, so the skill's pre-flight (project.lintCmd /
-      # typecheckCmd / testCmd / buildCmd — all in the allowlist below) would fail, and the harness
-      # would burn turns trying to install them itself, which CI denies. Doing it as a plain workflow
-      # step keeps the harness allowlist free of any install/network permission. Override via
+      # Deterministic dependency bootstrap BEFORE the paid harness runs, so the skill's pre-flight has
+      # its deps and the harness allowlist needs no install/network permission. Override via
       # project.installCmd (default `npm install`; `true` to skip). See the setup note.
       - name: Install project dependencies
         if: steps.gate.outputs.should_respond == 'true'
         run: |
           {{project.installCmd}}
-      # Identity-neutral by design: no step here sets `git config user.*`, a GIT_AUTHOR_* /
-      # GIT_COMMITTER_* env var, or the dispatcher's bot_name / bot_id / use_commit_signing
-      # inputs. Committer identity on the fix commits this harness pushes comes from the resolved
-      # `git.cmd` recipe carried by the repo's committed, rendered git-workflow skill — the
-      # single opt-in. It sticks because `git -c user.name=…` outranks the REPO-LOCAL config the
-      # pinned dispatcher writes on every run (`git config user.name "claude[bot]"`, from its
-      # bot_name/bot_id defaults). So: opted-in repo commits as its bot; bare-`git.cmd` repo
-      # commits as claude[bot]. The toolkit adds no identity of its own, exactly as it never
-      # clobbers a human's local one. (A `git config user.*` step here would LOSE to an opted-in
-      # `git.cmd` yet clobber a bare one; a GIT_COMMITTER_* env var BEATS `git -c` and would
-      # silently override the recipe. Opposite precedence, both wrong.) The two identities are
-      # separate: the token below decides the EVENT identity (who authors the push and the reply
-      # comment), `git.cmd` decides the COMMIT identity. See "CI identity — token vs. git config"
-      # in the setup note.
+      # Identity-neutral by design (#160): no step sets git config user.*, a GIT_COMMITTER_* env var,
+      # or the dispatcher's bot_name/bot_id/use_commit_signing inputs. Commit identity comes from the
+      # repo's committed git.cmd recipe (the single opt-in); the token below sets the EVENT identity.
+      # See "CI identity — token vs. git config" in the setup note.
       - name: Dispatch harness (pr-response)
         id: harness
         if: steps.gate.outputs.should_respond == 'true'
@@ -335,11 +178,8 @@ jobs:
           claude_args: >-
             --allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh repo view:*),Bash({{project.lintCmd}}:*),Bash({{project.typecheckCmd}}:*),Bash({{project.testCmd}}:*),Bash({{project.buildCmd}}:*)'
             {{prResponse.claudeArgs}}
-      # Preserve the harness's execution log as an artifact (to debug a silent run) and fail the job
-      # when the paid harness was denied the tools it needed — a dispatch blocked from committing or
-      # replying otherwise reports success with nothing done. Same rationale and mechanics as the
-      # sibling hooks (artifact vs. show_full_output; the log is read as DATA via jq, never eval'd).
-      # Gated on should_respond so a skipped (no-dispatch) run neither uploads nor checks a log.
+      # Upload the harness execution log as an artifact (to debug a silent run); the next step reads
+      # it as DATA (jq) to fail the job on a blocked commit/reply. Gated on the bound. See setup note.
       - name: Upload harness execution log
         if: always() && steps.bound.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -476,31 +316,10 @@ jobs:
           else
             echo "::warning title=waffle-pr-response-hook::No waffle/pr-response commit status is on ${HEAD_SHA} — the run may have silently no-op'd (it was dispatched because the PR was unclaimed). Review the claude-execution-log-pr-response artifact or rerun in debug mode."
           fi
-      # Per-run token accounting (#227). Extract usage/cost from the same execution log the
-      # check step reads and fold it into ONE marker-keyed comment on the responded-to PR
-      # (the gate already resolved its number) — created on the first recorded run, updated
-      # in place after that. One row per run (keyed run_id.run_attempt in the machine-
-      # readable waffle-token-data line) and the totals are always recomputed from the full
-      # runs map — never incremented in place — so a step retry replaces its own row and a
-      # later hook's run on the same PR adds one; a double count is structurally impossible.
-      # The table is a pure render of the data line; downstream (the post-merge counter)
-      # reads ONLY the data line. HOOK is deliberately a short label: no hook keys a
-      # predicate on a comment body any more (#338 — the loop bound is a label, delivery is a
-      # commit status), but the markers still mean "a bot wrote this" to a human and to the
-      # skills' own dedup, so this comment must never contain another marker's text.
-      # Telemetry must never red the job:
-      # continue-on-error is the hard backstop, the script only ever exits 0, and always()
-      # (still gated on should_respond — a skipped dispatch spent nothing) keeps recording
-      # the spend of a run whose harness or checks failed (it still billed). A missing log,
-      # a result-less log (the invalid-API-key shape), zero usage, or a failed API call all
-      # skip with a note instead of failing.
-      # Known race windows (one undercount class — never a double count): (1) CREATE — two
-      # hooks' token steps finishing at once on the same thread can each see "no existing
-      # comment" and POST their own (GitHub has no conditional create); every later reader
-      # takes the OLDEST marked comment, so the loser's rows are orphaned. (2) UPDATE — two
-      # steps PATCHing the same comment at once each read the same base run map, and the
-      # loser's row is silently dropped (that run never re-records). Accepted: best-effort
-      # telemetry, not billing.
+      # Per-run token accounting (#227): jq the usage/cost out of the same execution log and
+      # create-or-update ONE marker-keyed comment on the responded-to PR, totals recomputed from the
+      # full runs map (never double-counted). Never reds the job (continue-on-error + exit-0-only). See
+      # the setup note's "Token spend accounting (#227)" for the label rationale and the race windows.
       - name: Record token spend
         if: always() && steps.bound.outcome == 'success'
         continue-on-error: true

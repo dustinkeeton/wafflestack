@@ -787,11 +787,10 @@ setup: |-
   `wafflestack install files/.github/workflows/waffle-pr-response-hook.yml` — or keep an existing
   install via its lock entry. Its `requires:` edge pulls the `pr-response` skill (and, through it,
   `git-workflow`), so no separate skill install is needed.
-  **Trigger and scope.** It keys on `pull_request_review: [submitted]`, narrowed to reviews whose
-  body carries the `<!-- waffle-adversarial-review -->` marker that pr-green's dispatch embeds. v1
-  answers the review **bot** only — a human review is answered by running `/pr-response` by hand.
-  That is a deliberate scope limit: auto-dispatching a paid, committing harness at every human
-  comment is a cost and trust surface nobody asked for.
+  **Scope.** v1 answers the review **bot** only — this hook consumes pr-green's output (see the
+  trigger below), so a human review is answered by running `/pr-response` by hand. That is a
+  deliberate scope limit: auto-dispatching a paid, committing harness at every human comment is a
+  cost and trust surface nobody asked for.
   **Trigger — `workflow_run` on waffle-pr-green-hook (#338).** This hook consumes exactly one
   producer, so it waits for that workflow to finish and asks GitHub what it produced (the
   `waffle/adversarial-review` commit status on the head), rather than watching every submitted review
@@ -829,6 +828,17 @@ setup: |-
   label by hand first: deliberate friction, since re-arming a paid committing run is a human
   decision. Do not "optimize" the guard back to per-SHA and do not move it into the harness — either
   reintroduces an unbounded paid loop in which every individual fire looks locally correct.
+  **Known defect (#338 follow-up): this hook is currently inert.** `github.event.workflow_run.head_sha`
+  is the **default branch's tip**, not the reviewed PR head — GitHub does not carry a head across a
+  `workflow_run` hop, and this hook sits at the SECOND hop (doctor → pr-green → here), so it receives
+  pr-green's own run object, whose head is `main`. The gate asks `commits/{head_sha}/pulls` for an open
+  PR whose head IS that SHA (main's tip never is), so every run skips at step (1) and the paid harness
+  is never reached (measured live: recent pr-green runs report `head_branch: main`, `pull_requests:
+  []`). The fix is to thread the PR number + reviewed head SHA out-of-band from pr-green (an artifact
+  read back via `workflow_run.id` — job outputs are not exposed to a `workflow_run` consumer and
+  `pull_requests` is empty), which also re-arms the fork clause and makes the concurrency group per-PR
+  rather than the repo-wide constant it is now. Until then the hook is inert: not a live loop, and the
+  loop-bound + delivery-signal design above is unexercised.
   **What the harness may do (baked-in allowlist).** `claude_args` ships a default
   `--allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh repo view:*)'` plus
   the four `project.*` pre-flight commands the skill runs before pushing. `Write` is load-bearing

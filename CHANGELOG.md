@@ -32,6 +32,16 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **Detox comment-prose test pins; shrink the pr-green / pr-response hook headers (#391).** Removes
+  the Layer-1 tests that pinned comment sentences inside deterministic workflow YAML (the
+  `states the identity-neutrality design` loop in `content.test.mjs`) and collapses the two
+  ~62–63%-comment hook headers to ≤12 orientation lines that point at DECISIONS #338/#160 + the
+  github-workflow setup note. The one genuinely-unrecorded fact (the pr-response hook is currently
+  inert because `workflow_run` doesn't carry the PR head across the second hop) moves into the setup
+  note; the behavior pins (comment-stripped identity, `{{git.*}}` leak, token-spend telemetry) are
+  untouched. Adds a Layer-2 eval asserting the adversarial reviewer demands a comment shrink, not
+  code conformance, when a docblock contradicts the code. Phase 3 of the #388 "comments are not
+  spec" remediation. **Consumer impact:** none — no rendered output changes.
 - **pr-response rubric v3: valid + cheap alone no longer clears the Implement bar (#385).**
   Implement moves ≥10 → **≥11** (Defer becomes 5–10; Decline ≤4, dimensions, and anchors are
   untouched). Evidence: `Validity 3 · Effort/Risk 3 · Alignment 3` composes to 9 on its own, so
