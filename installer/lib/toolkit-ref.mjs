@@ -47,19 +47,19 @@ const FALLBACK_REPO = 'dustinkeeton/wafflestack';
 /**
  * Establish what toolkit is running (see the module docblock).
  *
- * `allowUnreleased` and `offline` both suppress the network lookup; neither manufactures a release
- * verdict. On an npx install the skip can forfeit a release you genuinely had (`unverified`, ref
- * null) — see issue #383 and DECISIONS #374.
+ * Only `offline` suppresses the network lookup — the caller has chosen not to pay for the answer.
+ * `--allow-unreleased` is NOT an argument here: it suppresses the REFUSAL in cli.mjs, never the
+ * lookup, so a genuinely release-pinned npx install still resolves `release` with a non-null `ref`
+ * even under the hatch (#383). The lookup never manufactures a release verdict either way.
  *
  * @param {object} opts
  * @param {string} opts.toolkitRoot
  * @param {(url: string) => string} [opts.lsRemote] injectable; returns raw `git ls-remote` stdout
  * @param {(cwd: string, args: string[]) => string | null} [opts.runGit] injectable; null on failure
- * @param {boolean} [opts.allowUnreleased] escape hatch: skip the lookup, keep the verdict honest
- * @param {boolean} [opts.offline] never touch the network (plain `doctor`, banner)
+ * @param {boolean} [opts.offline] never touch the network (plain `doctor`, banner, `--offline`)
  * @returns {ToolkitIdentity}
  */
-export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags, runGit = gitCapture, allowUnreleased = false, offline = false }) {
+export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags, runGit = gitCapture, offline = false }) {
   const pkg = readJson(path.join(toolkitRoot, 'package.json')) ?? {};
   const changelog = readTextOrNull(path.join(toolkitRoot, 'CHANGELOG.md'));
   const slug = repoSlug({ toolkitRoot, pkg, runGit });
@@ -79,7 +79,6 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
     latestTag: changelogLatestRelease(changelog),
     lookupError: null,
   };
-  const noNetwork = allowUnreleased || offline;
 
   // ── a checkout of the toolkit: git answers it, offline, always. ────────────────────────────────
   if (exists(path.join(toolkitRoot, '.git'))) {
@@ -118,8 +117,8 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
     return corroborate({ ...base, lookupError: 'no .git and no resolvable commit in npm\'s hidden lockfile — cannot tell whether this toolkit is a release' }, changelog);
   }
   const found = { ...base, origin: /** @type {const} */ ('npm-install'), commit };
-  if (noNetwork) {
-    return corroborate({ ...found, lookupError: allowUnreleased ? 'release lookup skipped (--allow-unreleased)' : 'release lookup skipped (offline)' }, changelog);
+  if (offline) {
+    return corroborate({ ...found, lookupError: 'release lookup skipped (offline)' }, changelog);
   }
   if (!slug) {
     return corroborate({ ...found, lookupError: 'could not work out which repository this toolkit came from' }, changelog);

@@ -34,10 +34,13 @@ const cwd = extractCwd(args) ?? process.cwd();
 // gated cases, but the FLAG has to be gone from `args` before any "takes no refs" check runs, or it
 // would be rejected as a stray ref), and toolkit development needs one switch, not eleven.
 //
-// It suppresses the REFUSAL, not the TRUTH: identity is still computed and still reported, so the
-// lock stays honest about what rendered it. It also short-circuits the release lookup, which is what
-// keeps `npm test` and every local `render` offline and fast.
+// It suppresses the REFUSAL, not the TRUTH: identity is still resolved (network lookup included) and
+// still reported, so a genuine release under the hatch keeps its `ref` (#383). This is why the two
+// flags are separate: `--allow-unreleased` answers "don't refuse me"; `--offline` answers "don't pay
+// for the answer" and is the only one that skips the lookup — for an air-gapped run that must not
+// stall on a doomed `ls-remote`.
 const allowUnreleased = extractFlag(args, '--allow-unreleased') || envAllowUnreleased();
+const offline = extractFlag(args, '--offline') || envOffline();
 
 // Resolved at most once, and only when a command actually needs it — `validate`, `help`, `init` and
 // `eject` must never so much as look at the network.
@@ -313,9 +316,9 @@ try {
 // a fix. `list`/`setup` report, so they warn. `init`/`eject`/`uninstall`/`validate`/`help` never
 // touch toolkit content at all.
 
-/** The full identity, network lookup included (suppressed by --allow-unreleased). Cached. */
+/** The full identity, network lookup included unless `--offline`. Cached. */
 function identity() {
-  if (!identityCache) identityCache = resolveToolkitIdentity({ toolkitRoot, allowUnreleased });
+  if (!identityCache) identityCache = resolveToolkitIdentity({ toolkitRoot, offline });
   return identityCache;
 }
 
@@ -326,7 +329,7 @@ function identity() {
  * exactly; an npx install degrades to `unverified` unless its shipped CHANGELOG gives it away.
  */
 function offlineIdentity() {
-  if (!offlineIdentityCache) offlineIdentityCache = resolveToolkitIdentity({ toolkitRoot, allowUnreleased, offline: true });
+  if (!offlineIdentityCache) offlineIdentityCache = resolveToolkitIdentity({ toolkitRoot, offline: true });
   return offlineIdentityCache;
 }
 
@@ -353,7 +356,17 @@ function warnProvenance(id) {
 
 /** `WAFFLESTACK_ALLOW_UNRELEASED=1` — the env twin of `--allow-unreleased`, for CI and containers. */
 function envAllowUnreleased() {
-  const v = String(process.env.WAFFLESTACK_ALLOW_UNRELEASED ?? '').trim().toLowerCase();
+  return envTruthy('WAFFLESTACK_ALLOW_UNRELEASED');
+}
+
+/** `WAFFLESTACK_OFFLINE=1` — the env twin of `--offline`, for air-gapped CI. */
+function envOffline() {
+  return envTruthy('WAFFLESTACK_OFFLINE');
+}
+
+/** @param {string} name */
+function envTruthy(name) {
+  const v = String(process.env[name] ?? '').trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes';
 }
 
@@ -411,6 +424,9 @@ function helpText() {
     '                    a toolkit that is not a release (a working tree, or an unpinned `npx',
     '                    github:…` fetch of the default branch). Toolkit development only — a',
     '                    consumer should pin the ref instead. Env: WAFFLESTACK_ALLOW_UNRELEASED=1',
+    '  --offline         skip the network release lookup (git ls-remote). For an air-gapped run that',
+    '                    would otherwise stall on a doomed lookup; identity degrades to unverified.',
+    '                    Env: WAFFLESTACK_OFFLINE=1',
     '',
   ].join('\n');
 }

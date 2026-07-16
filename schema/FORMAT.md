@@ -474,17 +474,24 @@ not a release — enough to tighten `unverified` to `unreleased`.
 | `list --interactive`, once a selection is applied | `init`, `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
 
 **Escape hatch:** `--allow-unreleased`, or `WAFFLESTACK_ALLOW_UNRELEASED=1`. It suppresses the
-*refusal*, and it can never **manufacture** a release: identity is still resolved and still reported
-as `unreleased` whenever that can be established offline. It also short-circuits the network lookup,
-so toolkit development and `npm test` stay offline. Consumers should pin the ref instead.
+*refusal*, and it can never **manufacture** a release: identity is still resolved — network lookup
+included — and still reported as `unreleased` whenever that is what it is. Crucially it does **not**
+short-circuit the lookup, so a toolkit that genuinely *is* a pinned release keeps its `ref` even
+under the hatch (#383): the hatch suppresses the refusal, not the provenance. Consumers should pin
+the ref instead.
 
-> **What the hatch does cost you.** On an **npx install**, short-circuiting the lookup means a
-> toolkit that genuinely *is* a pinned release resolves as `unverified`, with **`ref: null`** — the
-> hatch cannot invent a release, but it can forfeit one you really had. Same for a **pnpm/yarn
-> `dlx`** consumer, which has no `node_modules/.package-lock.json` for the commit to be read from at
-> all. Since `ref` is the provenance field the lock records, a consumer who sets the hatch to unblock
-> CI and *later* pins properly records **no** `toolkitRef`, silently. Read `ref != null` as *"no
-> provenance was captured"*, never as *"this is not a release."*
+> **`--offline` is the separate switch (`WAFFLESTACK_OFFLINE=1`).** The two flags answer different
+> questions — `--allow-unreleased` means *"don't refuse me"*, `--offline` means *"don't pay for the
+> answer"* — and only the latter skips the `git ls-remote`. Use `--offline` for an **air-gapped** run
+> that would otherwise stall on a doomed lookup (it fails open — identity degrades to `unverified`,
+> `ref: null`, and the command proceeds). A checkout never needs it: `git describe` answers offline,
+> so it makes no network call regardless.
+
+> **What still costs you a `ref`.** A **pnpm/yarn `dlx`** consumer has no
+> `node_modules/.package-lock.json` for the commit to be read from at all, so it resolves
+> `unverified` with **`ref: null`** even online — the toolkit cannot see which commit it is running.
+> `--offline` forfeits a `ref` the same way, by choice. Since `ref` is the provenance field the lock
+> records, read `ref != null` as *"no provenance was captured"*, never as *"this is not a release."*
 
 The resolved identity is `{ status, version, commit, tag, ref, origin, repo, latestTag,
 lookupError }`, where `ref` is exactly `github:<owner>/<repo>#<tag>`.
@@ -538,10 +545,11 @@ content, and the external stacks solved this problem first:
 toolkit's ref is *discovered at runtime*, so a null is ambiguous — `status` is what makes a null
 block **say** something instead of merely **lack** something.
 
-> **`ref: null` means "no provenance was captured" — it NEVER means "this was not a release."** The
-> `--allow-unreleased` hatch short-circuits the release lookup, and a pnpm/yarn `dlx` consumer has no
-> npm hidden lockfile to read a commit from at all: both forfeit a release that genuinely existed.
-> Never infer "unreleased" from a null.
+> **`ref: null` means "no provenance was captured" — it NEVER means "this was not a release."** A
+> pnpm/yarn `dlx` consumer has no npm hidden lockfile to read a commit from at all, and an `--offline`
+> run skips the lookup by choice: both forfeit a release that genuinely existed. (The
+> `--allow-unreleased` hatch does **not** — it keeps the lookup, so a genuine release keeps its `ref`;
+> see #383.) Never infer "unreleased" from a null.
 
 **A checkout render records NO commit, by design.** The rule is: **`commit` is recorded if and only
 if `status` is `release`** — i.e. only when it names an immutable, published, content-identifying
@@ -599,7 +607,7 @@ cannot establish a release, and failing to honest nulls is the fail-honest rule 
 But be clear-eyed about the cost, because the churn hazard cited above is **live through this door**: a
 teammate rendering from a shallow clone rewrites a good `release` block to nulls, and the maintainer's
 next render puts it back. **The `unverified` carry-forward does not save you here** — it covers
-`unverified` only (a blip, `dlx`, the hatch), and a tagless clone is `unreleased`, a *positive*
+`unverified` only (a blip, `dlx`, `--offline`), and a tagless clone is `unreleased`, a *positive*
 determination that deliberately overwrites. What bounds the damage is that it is confined to *this*
 block: `files` is untouched, so `--verify-render` and the content gate are unaffected, and the lock diff
 is visible in review. **Render the toolkit from a clone that has its tags** (a plain `git clone` fetches

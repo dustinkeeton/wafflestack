@@ -1,4 +1,4 @@
-import { test, describe, beforeEach, afterEach } from 'node:test';
+import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -271,7 +271,7 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
       };
       const blockFor = (originUrl) =>
         toolkitLockEntry(
-          resolveToolkitIdentity({ toolkitRoot: root, runGit: clone(originUrl), allowUnreleased: true }),
+          resolveToolkitIdentity({ toolkitRoot: root, runGit: clone(originUrl) }),
           { toolkitVersion: '0.12.0' },
         );
 
@@ -281,7 +281,7 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
       assert.deepEqual(forked, upstream, 'the committed lock cannot depend on which clone rendered it');
       assert.equal(upstream.source, 'github:dustinkeeton/wafflestack');
       // …while the value the NETWORK path needs still tracks the clone in hand (#373 F14 intact).
-      assert.equal(resolveToolkitIdentity({ toolkitRoot: root, runGit: clone('git@github.com:contributor/wafflestack.git'), allowUnreleased: true }).repo, 'contributor/wafflestack');
+      assert.equal(resolveToolkitIdentity({ toolkitRoot: root, runGit: clone('git@github.com:contributor/wafflestack.git') }).repo, 'contributor/wafflestack');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -420,10 +420,12 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.ref, null);
   });
 
-  test('`--allow-unreleased` suppresses the REFUSAL, never the TRUTH', () => {
+  test('identity is hatch-independent — an unreleased checkout is `unreleased`, ref null (#383)', () => {
+    // `--allow-unreleased` is a cli.mjs refusal-suppressor, not an argument to `resolveToolkitIdentity`
+    // (the gate matrix drives that end). Identity itself only ever tells the truth: this keeps the lock
+    // #374 writes honest rather than merely permitted.
     advance('unreleased work');
-    const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork, allowUnreleased: true });
-    // Still `unreleased` — this is what keeps the lock #374 writes honest rather than merely permitted.
+    const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
     assert.equal(id.status, 'unreleased');
     assert.equal(id.ref, null);
     assert.equal(id.commit, head());
@@ -748,18 +750,25 @@ describe('identity from an npm-install layout (#373)', () => {
     assert.equal(id.latestTag, 'v0.12.0');
   });
 
-  test('`--allow-unreleased` short-circuits the network — this is what keeps `npm test` offline', () => {
+  test('the lookup is skippable ONLY by `offline` — a genuine release pin keeps its `ref` (#383)', () => {
     const root = layout({ resolved: `git+https://github.com/dustinkeeton/wafflestack.git#${SHA_A}` });
-    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, allowUnreleased: true });
-    assert.equal(id.commit, SHA_A);
-    assert.notEqual(id.status, 'release', 'the escape hatch must never MANUFACTURE a release verdict');
+    // Online (the default). There is no `allowUnreleased` argument that could short-circuit the
+    // lookup — that WAS the #383 bug: the hatch forfeited a release you genuinely had. Now a
+    // release-pinned npx install resolves `release`, ref intact, and the hatch (cli.mjs) only
+    // suppresses the refusal it would never have raised for a release anyway.
+    const online = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
+    assert.equal(online.status, 'release');
+    assert.equal(online.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
   });
 
-  test('`offline: true` (plain doctor, the banner) also skips the lookup', () => {
+  test('`offline: true` (plain doctor, the banner, `--offline`) skips the lookup — never a release', () => {
+    // The air-gapped escape: fail OPEN (no stall on a doomed `ls-remote`), and never MANUFACTURE a
+    // release. `forbidNetwork` fails the test if the lookup is attempted at all.
     const root = layout({ resolved: `git+https://github.com/dustinkeeton/wafflestack.git#${SHA_A}` });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
     assert.equal(id.commit, SHA_A);
-    assert.match(id.lookupError ?? '', /skipped/);
+    assert.notEqual(id.status, 'release', 'the skip must never manufacture a release verdict');
+    assert.match(id.lookupError ?? '', /skipped \(offline\)/);
   });
 
   test('commitFromNpmLockfile / shaFromResolved read only a full 40-char sha', () => {
@@ -1105,20 +1114,110 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
     assert.match(r.stderr, /NOT a release/, 'a permitted unreleased render must still announce itself');
   });
 
-  test('`--allow-unreleased` is accepted by every command, not just the gated ones', () => {
-    // The flag is stripped globally, before any "takes no refs" guard runs — otherwise it would be
-    // rejected as a stray ref by exactly the commands that need it least.
-    for (const cmd of ['render', 'upgrade', 'reinstall', 'list', 'doctor']) {
-      const r = allowed([cmd, '--allow-unreleased']);
-      assert.doesNotMatch(r.stderr, /takes no refs/, `${cmd} must not treat --allow-unreleased as a ref`);
+  test('`--allow-unreleased` and `--offline` are accepted by every command, not just the gated ones', () => {
+    // Both flags are stripped globally, before any "takes no refs" guard runs — otherwise they would
+    // be rejected as stray refs by exactly the commands that need them least.
+    for (const flag of ['--allow-unreleased', '--offline']) {
+      for (const cmd of ['render', 'upgrade', 'reinstall', 'list', 'doctor']) {
+        const r = allowed([cmd, flag]);
+        assert.doesNotMatch(r.stderr, /takes no refs/, `${cmd} must not treat ${flag} as a ref`);
+      }
     }
   });
 
-  test('the help text documents the flag and its env twin', () => {
+  test('`--offline` renders under the hatch without stalling — the air-gapped shape (#383)', () => {
+    // An air-gapped CI: `--allow-unreleased` (don't refuse me) + `--offline` (don't pay for the
+    // answer). The lookup is skipped, so nothing waits on a doomed `ls-remote`; the render proceeds.
+    const r = gated(['render', '--allow-unreleased', '--offline']);
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.doesNotMatch(r.stderr, REFUSAL);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), true);
+  });
+
+  test('the help text documents both flags and their env twins', () => {
     const r = gated(['help']);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /--allow-unreleased/);
     assert.match(r.stdout, /WAFFLESTACK_ALLOW_UNRELEASED=1/);
+    assert.match(r.stdout, /--offline/);
+    assert.match(r.stdout, /WAFFLESTACK_OFFLINE=1/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The CLI's own flag wiring, driven end-to-end (#383 / PR #419 QA). Every other spawned-CLI test
+// resolves THIS checkout — origin `checkout`, answered by `git describe`, never `ls-remote` — so
+// reverting cli.mjs's identity() to `offline: offline || allowUnreleased` (the exact #383
+// conflation) left the whole suite green. These spawns run a COPY of the toolkit from a fabricated
+// release-pinned npx-install layout, with a stub `git` on PATH recording its invocations, so the
+// CLI's flag plumbing is the only thing deciding whether the lookup runs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the CLI wires `--offline` — not the hatch — to the lookup (#383)', { skip: process.platform === 'win32' ? 'POSIX git stub' : false }, () => {
+  let tmp;
+  let fabCli;
+  let stubLog;
+  let spawnPath;
+
+  before(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-cli-wire-'));
+    const layoutRoot = path.join(tmp, 'node_modules', 'wafflestack');
+    for (const entry of ['installer', 'stacks', 'schema', 'toolkit.yaml', 'package.json', 'CHANGELOG.md']) {
+      fs.cpSync(path.join(REPO_ROOT, entry), path.join(layoutRoot, entry), { recursive: true });
+    }
+    // A real npx install ships its prod deps; the toolkit's one is `yaml`.
+    fs.cpSync(path.join(REPO_ROOT, 'node_modules', 'yaml'), path.join(layoutRoot, 'node_modules', 'yaml'), { recursive: true });
+    write(tmp, 'node_modules/.package-lock.json', JSON.stringify({
+      name: 'consumer',
+      lockfileVersion: 3,
+      packages: { 'node_modules/wafflestack': { version: '0.12.0', resolved: `git+https://github.com/dustinkeeton/wafflestack.git#${SHA_A}` } },
+    }));
+    fabCli = path.join(layoutRoot, 'installer', 'cli.mjs');
+    stubLog = path.join(tmp, 'git-stub.log');
+    const stubBin = path.join(tmp, 'bin');
+    write(tmp, 'bin/git', [
+      '#!/bin/sh',
+      'echo "$@" >> "$GIT_STUB_LOG"',
+      'case "$1" in',
+      `  ls-remote) printf '%s\\trefs/tags/v0.12.0\\n' '${SHA_A}' ;;`,
+      '  *) exit 1 ;;',
+      'esac',
+    ].join('\n'));
+    fs.chmodSync(path.join(stubBin, 'git'), 0o755);
+    spawnPath = `${stubBin}${path.delimiter}${process.env.PATH}`;
+  });
+  after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const run = (args) => {
+    const cwd = fs.mkdtempSync(path.join(tmp, 'consumer-'));
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    fs.writeFileSync(stubLog, '');
+    const env = { ...process.env, PATH: spawnPath, GIT_STUB_LOG: stubLog };
+    delete env.WAFFLESTACK_ALLOW_UNRELEASED;
+    delete env.WAFFLESTACK_OFFLINE;
+    const r = spawnSync(process.execPath, [fabCli, ...args, '--cwd', cwd], { encoding: 'utf8', env, timeout: 30000 });
+    return { r, cwd, gitCalls: fs.readFileSync(stubLog, 'utf8') };
+  };
+
+  test('`--allow-unreleased` alone still performs the lookup — a genuine release keeps its provenance', () => {
+    const { r, cwd, gitCalls } = run(['render', '--allow-unreleased']);
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(gitCalls, /ls-remote --tags -- https:\/\/github\.com\/dustinkeeton\/wafflestack\.git/,
+      'the hatch must not suppress the lookup — that is the #383 conflation');
+    const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    assert.equal(lock.toolkit.status, 'release', 'a release-pinned npx install resolves as one under the hatch');
+    assert.equal(lock.toolkit.source, 'github:dustinkeeton/wafflestack');
+    assert.equal(lock.toolkit.ref, 'v0.12.0');
+    assert.equal(lock.toolkit.commit, SHA_A);
+  });
+
+  test('`--offline` is the switch that skips it — and provenance degrades honestly, never to a fake release', () => {
+    const { r, cwd, gitCalls } = run(['render', '--allow-unreleased', '--offline']);
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.doesNotMatch(gitCalls, /ls-remote/, '`--offline` must never pay for the lookup');
+    const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    assert.notEqual(lock.toolkit.status, 'release', 'skipping the lookup cannot manufacture a release');
+    assert.equal(lock.toolkit.ref, null);
   });
 });
 
