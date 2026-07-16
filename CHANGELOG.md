@@ -454,6 +454,16 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **Finish the #396 paid-hook disarm — eject the three workflows so the lock forgets them (#414).**
+  PR #396 dropped `waffle-hygiene.yml`, `waffle-pr-green-hook.yml`, and `waffle-pr-response-hook.yml`
+  from `include:` and from git tracking, but the committed `.waffle/waffle.lock.json` still tracked
+  their rendered paths, so `trackedFiles` re-admission (`refs.mjs`) re-poured all three on every
+  `render` — leaving them `??`-untracked and one `git add -A` away from re-arming pr-green's paid
+  dispatch. They are now `eject:`-ed via the CLI (`node installer/cli.mjs eject files/.github/…`),
+  which drops their lock entries so `render` no longer produces them, and the stale `.gitignore` /
+  `waffle.yaml` comments now describe the real (eject-based) re-arm mechanism. This repo's own
+  disarm only; the toolkit sources under `stacks/github-workflow/files/` are untouched.
+  **Consumer impact:** none — a `.waffle/`-config-only change to the wafflestack repo itself.
 - **qa step 7 no longer re-resolves `HEAD_SHA` after its first use (#412).** PR #410 added
   `$HEAD_SHA` to qa's staging path and status POST but left the block's late
   `HEAD_SHA=$(gh pr view …)` re-derivation *after* the first use — a fresh single-call
