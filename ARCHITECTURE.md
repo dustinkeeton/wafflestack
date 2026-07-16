@@ -365,12 +365,13 @@ PR gates run: `adversarial-review` and `qa`. (While developing the toolkit you s
 drive it with `node installer/cli.mjs` directly rather than the rendered `/waffle-*`
 wrappers.)
 
-The three **paid** Claude-dispatch hooks — hygiene, pr-green, and pr-response — were
-**disarmed on 2026-07-15** while the repo deliberately carries no `ANTHROPIC_API_KEY`
-secret: removed from `include:` and from git tracking. The disarm is half-landed — the
-committed lock still tracks the three files, so every `render` re-pours them onto disk
-*untracked and not gitignored*. Leave them be, and never `git add -A` here (it would
-re-commit and re-arm pr-green); finishing the disarm is an owner decision. See
+The three **paid** Claude-dispatch hooks — hygiene, pr-green, and pr-response — are
+**disarmed** while the repo deliberately carries no `ANTHROPIC_API_KEY` secret: removed
+from `include:` and from git tracking (#396, 2026-07-15), then **ejected** so the lock
+forgets their rendered paths (#414, PR #417, 2026-07-16) — `render` no longer produces
+them, so nothing sits untracked and `git add -A` cannot re-arm anything. Re-arming means
+removing the three `eject:` entries in `waffle.yaml`, re-installing the refs and
+`include:` lines, and re-rendering — with a funded key in place first. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)

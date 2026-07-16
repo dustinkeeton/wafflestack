@@ -5,8 +5,8 @@
 
 - **Version**: v0.12.0 (tagged 2026-07-11; pre-1.0 — the file contract can still change
   between minor releases). A large unreleased batch sits on `main` — see Current focus.
-- **Last updated**: 2026-07-15
-- **Health**: 🟢 tests 1203/1203 (156 suites) · `validate` clean · CI green on `main`
+- **Last updated**: 2026-07-16
+- **Health**: 🟢 tests 1204/1204 (156 suites) · `validate` clean · CI green on `main`
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -59,11 +59,6 @@ Everything below is merged but not yet tagged (CHANGELOG `[Unreleased]`; latest 
 
 ## Known issues & things to watch
 
-- **The paid-hook disarm is half-landed (#396).** hygiene / pr-green / pr-response left
-  `include:` and git tracking, but the committed lock still tracks them — every `render` re-pours
-  them onto disk **untracked and not gitignored**. A `git add -A` would re-arm pr-green. Finishing
-  it is an owner call; don't "fix" the lock/yaml/gitignore in passing.
-  [Details](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396)
 - **`uninstall`/`reinstall` rough edges (#359):** a skipped hand-edit still loses config +
   `.gitignore` block; an incomplete `--yes` exits 0; `reinstall` hard-fails on config-but-no-lock;
   `--no-color` missing from `help`.
@@ -91,7 +86,7 @@ Everything below is merged but not yet tagged (CHANGELOG `[Unreleased]`; latest 
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1203 tests, 156 suites)
+npm test                          # installer test suite (1204 tests, 156 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate

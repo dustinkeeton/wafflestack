@@ -527,7 +527,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:30`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1203 tests, 156 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1204 tests, 156 suites) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
@@ -553,19 +553,14 @@ This repo renders 5 stacks into itself — `github-workflow`, `docs-system`, `or
 `harness-architect`, `wafflestack` (`targets: [claude]`; `.waffle/waffle.yaml`). `include:` arms
 `files/.github/workflows/waffle-release-hook.yml`, `files/.github/workflows/waffle-post-merge-hook.yml`,
 `code-quality/skills/adversarial-review` (run by pr-green when armed), and `code-quality/skills/qa`
-(autopilot's opt-in QA gate). The paid Claude-dispatch hooks (hygiene, pr-green, pr-response) were
-removed from `include:` and from git tracking by #396 (2026-07-15) while the repo deliberately
-carries no `ANTHROPIC_API_KEY` secret; the `waffle.yaml` comment names re-adding the include lines
-as the path back (#343).
-
-Known inconsistency — #396 is half-landed: the committed `.waffle/waffle.lock.json` still tracks
-all three paid-hook paths, so the opt-in `trackedFiles` re-admission (`refs.mjs:443`) keeps them
-selected and every `render` re-pours them. They sit on disk untracked and NOT gitignored (`??` in
-`git status`; a `git add -A` would re-commit and re-arm pr-green). The `.gitignore` comment
-("hygiene (#46) and release-hook (#39) workflows ARE committed", `.gitignore:14`) is stale for
-hygiene. The disarm is operationally effective (GitHub runs only committed workflows, and no API
-key exists), but finishing it — eject, lock edit, or gitignore — is an owner decision; do not
-"fix" the lock, the yaml, or the gitignore in a docs pass.
+(autopilot's opt-in QA gate). The paid Claude-dispatch hooks (hygiene, pr-green, pr-response) are
+DISARMED while the repo deliberately carries no `ANTHROPIC_API_KEY` secret: #396 (2026-07-15)
+removed them from `include:` and from git tracking, and #414 (PR #417, 2026-07-16) finished the
+disarm by `eject:`-ing the three `files/` refs via the CLI — the lock no longer tracks their
+rendered paths, so `render` produces nothing under `.github/workflows/waffle-{hygiene,pr-green-hook,pr-response-hook}.yml`.
+Re-arm (#343): remove the three `eject:` entries, re-install the refs + `include:` lines, re-render
+and commit — a funded key must exist first. (Their SOURCES under `stacks/github-workflow/files/`
+stay toolkit content, tracked by the lock as sources.)
 
 The render (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`) and the lock are
 COMMITTED, like a consuming project — the doctor drift gate (required check on main) needs render

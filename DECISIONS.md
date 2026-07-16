@@ -50,16 +50,15 @@ stay armed: doctor (the required drift gate), release-hook (tag on merge), and p
 (remote branch delete). Re-arming is re-adding the include lines; the `waffle.yaml` comment names
 #343 as the path back.
 
-**Known inconsistency — the disarm is half-landed.** The committed lock still tracks all three
-paid-hook paths, so the opt-in `trackedFiles` re-admission keeps them selected and every `render`
-re-pours them. They sit on disk **untracked and not gitignored** (`??` in `git status`) — a
-`git add -A` would re-commit them and re-arm pr-green. The `.gitignore` comment saying the hygiene
-workflow "IS committed" is now stale. Finishing the disarm — eject, a lock edit, or a gitignore
-entry — is an owner decision; do not "fix" the lock, the yaml, or the gitignore in passing.
-
-**Alternatives considered**: Ejecting the three `files/` refs (which would stop the re-pours, but
-release the files as project-owned) and gitignoring them are the candidate ways to *finish* the
-disarm, not rejected alternatives — the choice is deliberately left open.
+**Resolved 2026-07-16 — the disarm is finished (#414, PR #417).** The original landing was
+half-done: the committed lock still tracked all three paid-hook paths, so the opt-in
+`trackedFiles` re-admission kept them selected and every `render` re-poured them onto disk
+untracked and not gitignored — one `git add -A` from re-arming pr-green. The owner chose **eject**
+(over a hand lock edit or a gitignore entry): `node installer/cli.mjs eject files/.github/workflows/waffle-*.yml`
+added an `eject:` block to `waffle.yaml` and dropped exactly the three rendered-path lock entries,
+so `render` forgets them for good. The stale `.gitignore` / `waffle.yaml` comments now describe
+the eject-based re-arm mechanism: remove the `eject:` entries, re-install the refs + `include:`
+lines, re-render and commit — a funded key first (#343).
 
 **Impact**: `.waffle/waffle.yaml` and this repo's git tracking only — no `stacks/**` change, so
 consumers are unaffected; the hooks remain shipped opt-in syrup.
