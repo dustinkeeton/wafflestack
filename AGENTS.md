@@ -264,7 +264,7 @@ export function defaultSourceCacheDir()        // → os.tmpdir()/wafflestack-so
 // toolkit-ref.mjs — toolkit self-identification (#373) + the lock's toolkit block (#374) + the write-side pin (#372).
 // INVARIANT: ref/commit are recorded IFF status === 'release'; identity failure fails OPEN (unverified → warn + proceed);
 // an unverified render carries the previous toolkit block forward when version + files map are unchanged.
-export function resolveToolkitIdentity({ toolkitRoot, lsRemote, runGit, allowUnreleased, offline }) // → { status: 'release'|'unreleased'|'unverified', version, commit, tag, ref, origin: 'checkout'|'npm-install'|'unknown', repo, latestTag, lookupError } — checkout resolves via `git describe --tags --exact-match` (offline); npm-install reads the SHA from npm's hidden lockfile then classifies via ONE `git ls-remote --tags` (never the REST API); lsRemote/runGit injectable
+export function resolveToolkitIdentity({ toolkitRoot, lsRemote, runGit, offline }) // → { status: 'release'|'unreleased'|'unverified', version, commit, tag, ref, origin: 'checkout'|'npm-install'|'unknown', repo, latestTag, lookupError } — checkout resolves via `git describe --tags --exact-match` (offline); npm-install reads the SHA from npm's hidden lockfile then classifies via ONE `git ls-remote --tags` (never the REST API); lookup skipped ONLY by `offline`, never by the hatch (#383); lsRemote/runGit injectable
 export function commitFromNpmLockfile(toolkitRoot, pkgName) // → sha40 | null (from ../.package-lock.json `resolved`)
 export function shaFromResolved(resolved)      // → sha40 | null
 export function parseLsRemoteTags(stdout)      // → tag→SHA map (peeled ^{} wins; non-vX.Y.Z filtered)
@@ -343,7 +343,8 @@ first arg, `init`/`setup`/`doctor`/`validate` silently ignore it.
 | `--verify-render` | `doctor` | re-render committed inputs in a temp dir vs the committed lock |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
 | `--no-color` | `list` | suppress ANSI; the `NO_COLOR` env var does the same (`cli.mjs:264`); neither is listed in `help`'s flag block (#359) |
-| `--allow-unreleased` | every command (spliced globally) | #373: suppress the release gate's refusal (toolkit development only); env twin `WAFFLESTACK_ALLOW_UNRELEASED=1`; suppresses the refusal, not the truth — identity still resolves `unreleased` — and short-circuits the network lookup |
+| `--allow-unreleased` | every command (spliced globally) | #373: suppress the release gate's refusal (toolkit development only); env twin `WAFFLESTACK_ALLOW_UNRELEASED=1`. Suppresses the refusal, not the truth — identity still resolves, network lookup included, so a genuine release keeps its `ref` under the hatch (#383) |
+| `--offline` | every command (spliced globally) | #383: skip the network release lookup (`git ls-remote`); env twin `WAFFLESTACK_OFFLINE=1`. Fails open (identity degrades to `unverified`, `ref: null`); the ONLY switch that skips the lookup — orthogonal to `--allow-unreleased` ("don't refuse me" vs. "don't pay for the answer") |
 
 Release gate (#373; truth in `toolkit-ref.mjs`, gate in `cli.mjs`). Before writing files from
 toolkit content, the CLI resolves its own identity and refuses (exit 1, naming the exact pinned
@@ -527,7 +528,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:30`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1204 tests, 156 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1207 tests, 156 suites) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |

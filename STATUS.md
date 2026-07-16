@@ -6,7 +6,7 @@
 - **Version**: v0.12.0 (tagged 2026-07-11; pre-1.0 — the file contract can still change
   between minor releases). A large unreleased batch sits on `main` — see Current focus.
 - **Last updated**: 2026-07-16
-- **Health**: 🟢 tests 1204/1204 (156 suites) · `validate` clean · CI green on `main`
+- **Health**: 🟢 tests 1207/1207 (156 suites) · `validate` clean · CI green on `main`
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -86,7 +86,7 @@ Everything below is merged but not yet tagged (CHANGELOG `[Unreleased]`; latest 
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1204 tests, 156 suites)
+npm test                          # installer test suite (1207 tests, 156 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate

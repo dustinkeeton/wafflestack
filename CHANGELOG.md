@@ -454,6 +454,16 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **`--allow-unreleased` no longer forfeits a genuine release's provenance (#383).** The hatch used to
+  short-circuit the release lookup, so a toolkit that really *was* a pinned `npx github:…#vX.Y.Z`
+  install resolved as `unverified` with `ref: null` — the field #374 records into the lock and #372
+  writes into `toolkitRef`. The two flags are now orthogonal: `--allow-unreleased` suppresses the
+  *refusal* only (the lookup still runs, so a real release keeps its `ref`), and a new `--offline`
+  (env `WAFFLESTACK_OFFLINE=1`) is the sole switch that skips the network — for an air-gapped run that
+  would otherwise stall on a doomed `git ls-remote`. `resolveToolkitIdentity` drops its
+  `allowUnreleased` parameter accordingly. `schema/FORMAT.md`, `AGENTS.md`, and the `toolkit-ref.mjs`
+  docblock now describe the shipped behavior. **Consumer impact:** none — no rendered output changes; a
+  consumer who set the hatch to unblock CI now records honest release provenance instead of a silent null.
 - **Finish the #396 paid-hook disarm — eject the three workflows so the lock forgets them (#414).**
   PR #396 dropped `waffle-hygiene.yml`, `waffle-pr-green-hook.yml`, and `waffle-pr-response-hook.yml`
   from `include:` and from git tracking, but the committed `.waffle/waffle.lock.json` still tracked
