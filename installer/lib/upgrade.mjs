@@ -271,10 +271,12 @@ export function upgrade({
  * @param {string} opts.cwd the consumer repo
  * @param {import('./toolkit-ref.mjs').ToolkitIdentity|null} opts.identity the toolkit performing the render
  * @param {(msg: string) => void} [opts.log]
- * @returns {{key: string, from: string, to: string|null, action: 'bumped'|'unchanged'|'left'|'skipped', reason: string}[]}
+ * @param {typeof setScalarIn} [opts.writeScalar] the byte-level pin writer; a seam so a test can drive the
+ *   defensive `unwritable` branch, which no config input can reach on its own (#387)
+ * @returns {{key: string, from: string, to: string|null, action: 'bumped'|'unchanged'|'left'|'skipped'|'unwritable', reason: string}[]}
  */
-export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }) {
-  /** @type {{key: string, from: string, to: string|null, action: 'bumped'|'unchanged'|'left'|'skipped', reason: string}[]} */
+export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {}, writeScalar = setScalarIn }) {
+  /** @type {{key: string, from: string, to: string|null, action: 'bumped'|'unchanged'|'left'|'skipped'|'unwritable', reason: string}[]} */
   const pinMoves = [];
   const { file: configFile } = resolveConfigFile(cwd);
   if (!exists(configFile)) return pinMoves; // `render` will fail on this next, with a better message
@@ -351,11 +353,13 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {} }
       pinMoves.push({ key, from, to: pin, action: 'unchanged', reason: 'already pins the toolkit that rendered' });
       continue;
     }
-    const next = setScalarIn(text, keyPath, pin);
+    const next = writeScalar(text, keyPath, pin);
     if (next === null) {
-      // Defensive, and unreachable through the branches above: the scalar we just classified is gone,
-      // or already holds the pin. Report what is true — nothing moved — never a bump we did not write.
-      pinMoves.push({ key, from, to: pin, action: 'unchanged', reason: 'already pins the toolkit that rendered' });
+      // Defensive, and unreachable through the branches above: `from !== pin`, yet the write did not
+      // land. Report the truth — nothing was written — never a bump we did not make (#387).
+      const reason = 'the pin could not be rewritten in place — left as authored';
+      pinMoves.push({ key, from, to: null, action: 'unwritable', reason });
+      log(`${key} still pins ${from} and was NOT reconciled — ${reason}`);
       continue;
     }
     text = next;
