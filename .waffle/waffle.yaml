@@ -20,8 +20,14 @@ stacks:
   - harness-architect
   - wafflestack
 include:
-  # Paid Claude-dispatch hooks (hygiene, pr-green, pr-response) removed 2026-07-15 while the
-  # API key is deliberately unfunded — re-add the include lines to re-arm (#343 is the path back).
+  # Paid Claude-dispatch hooks (hygiene, pr-green, pr-response) disarmed 2026-07-15 while the
+  # API key is deliberately unfunded — they are EJECTED (see the `eject:` block below), not just
+  # dropped from `include:`. #396 removed only the include lines, but the lock still tracked the
+  # rendered paths, so `trackedFiles` re-admission (refs.mjs) re-poured them on every render (#414).
+  # Ejecting drops the lock entries too, so `render` forgets the paths for good. Re-arm path (#343):
+  # remove the three `eject:` entries AND re-install/re-add the includes
+  # (`wafflestack install files/.github/workflows/waffle-pr-green-hook.yml`, etc.), then re-render
+  # and commit — a funded key must exist first.
   - files/.github/workflows/waffle-release-hook.yml
   - code-quality/skills/adversarial-review
   # The qa skill (#228) — adversarial-review's functional sibling: post-green QA of a PR against
@@ -259,3 +265,11 @@ config:
       4. Spot-check changed stacks: every placeholder used in content is declared in that `stack.yaml`; `setup:` notes contain no placeholders
 
       Fix what your role permits (source side only, then re-render); otherwise report each failure with the command output quoted.
+# The three paid Claude-dispatch hooks, released to project ownership so `render` no longer pours
+# them (#414 finishes the #396 disarm — de-selecting alone left them lock-tracked and re-poured).
+# Project-owned now means: nothing re-creates these files, and a `git add -A` cannot silently
+# re-arm pr-green's paid dispatch. See the `include:` re-arm note above.
+eject:
+  - files/.github/workflows/waffle-hygiene.yml
+  - files/.github/workflows/waffle-pr-green-hook.yml
+  - files/.github/workflows/waffle-pr-response-hook.yml
