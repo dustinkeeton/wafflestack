@@ -45,7 +45,7 @@ follow the playbook it prints. Ask me which stacks to enable before you render.
 in-session and feeds its output back to the model; `--yes` keeps `npx` non-interactive):
 
 ```text
-! npx --yes github:dustinkeeton/wafflestack setup
+! npx --yes github:dustinkeeton/wafflestack#v0.13.0 setup
 ```
 
 `setup` prints an agent playbook plus a generated inventory of every stack, config key, and
@@ -58,7 +58,7 @@ prerequisite. The agent then detects targets, asks which stacks to enable, fills
 cd your-project
 npx github:dustinkeeton/wafflestack init              # writes a starter .waffle/waffle.yaml
 # edit .waffle/waffle.yaml: pick stacks, fill in config values
-npx github:dustinkeeton/wafflestack#v0.12.0 render    # renders all harness files + lock manifest
+npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness files + lock manifest
 ```
 
 > **Pin the tag on anything that writes files.** An unpinned `npx github:` spec resolves the
