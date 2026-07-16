@@ -2962,6 +2962,27 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
     assert.equal(configBytes(), before);
     assert.match(logged.join('\n'), /did not parse cleanly; leaving it untouched/);
   });
+
+  test('a write that does not land is reported `unwritable`, to: null — never a bump we did not make (#387)', () => {
+    // A release pin that WOULD move (`from !== pin`), but the byte-level writer returns null — a path no
+    // config input can reach on its own, so it is driven through the `writeScalar` seam. The branch used
+    // to assert `unchanged, to: <pin>` — a bump on the one path where nothing was written. It must now
+    // say what is true: nothing landed.
+    writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
+    const before = configBytes();
+    const moves = reconcileToolkitRefPins({ cwd, identity: at('0.13.0'), log, writeScalar: () => null });
+    assert.deepEqual(
+      moves.map((m) => [m.key, m.from, m.to, m.action]),
+      [
+        ['doctor.toolkitRef', 'github:dustinkeeton/wafflestack#v0.12.0', null, 'unwritable'],
+        ['waffle.toolkitRef', 'github:dustinkeeton/wafflestack#v0.12.0', null, 'unwritable'],
+      ],
+      'to is null and the action is unwritable — no pin was written, so none is claimed',
+    );
+    assert.equal(configBytes(), before, 'and nothing was written to disk');
+    assert.match(logged.join('\n'), /doctor\.toolkitRef still pins github:dustinkeeton\/wafflestack#v0\.12\.0 and was NOT reconciled/);
+    assert.match(logged.join('\n'), /could not be rewritten in place/, 'says WHY');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
