@@ -117,12 +117,20 @@ placeholders your selected items actually use — so a one-item install doesn't
 demand config that its unselected siblings need.
 
 **Opt-in syrup — a gate for sensitive syrup.** The generic `files/` payload is called
-**syrup**; a stack can mark certain payloads (the label-hook, hygiene, and release
-workflows — the ones that hold repo write permissions or spend API budget) as **opt-in
-syrup** via the `optIn:` manifest key. Enabling the stack does *not* render them. They
-render only when you install the ref explicitly or when your repo already tracks the file
-in its lock. That way an existing install keeps getting updates, but a fresh enable never
-silently arms a workflow you didn't ask for.
+**syrup**; a stack can mark certain payloads (seven of the github-workflow stack's CI
+workflows — label-hook, hygiene, release, post-merge, evals, pr-green, pr-response — the
+ones that hold repo write permissions or spend API budget) as **opt-in syrup** via the
+`optIn:` manifest key. Enabling the stack does *not* render them. They render only when
+you install the ref explicitly or when your repo already tracks the file in its lock. That
+way an existing install keeps getting updates, but a fresh enable never silently arms a
+workflow you didn't ask for.
+
+**Target scoping (unreleased, next tag).** A `files/` payload can also declare `targets:` —
+it then renders only when your project enables at least one of the listed harnesses, and
+disabling the last one means the next `render` **prunes** the poured copy (the same
+contract as dropping a stack). Because that prune deletes files, every malformed `targets:`
+(a typo'd name, an empty list) is a hard load error, and `list` reports a poured,
+scoped-out file as `PENDING REMOVAL` rather than pretending it isn't installed.
 
 ### Agents and skills
 
@@ -230,10 +238,10 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 |---------|--------------|
 | `init` | Write a starter `.waffle/waffle.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
-| `list` | Show every stack/item as installed & current / out of date / not installed; `--interactive` multi-selects the ones to add/update and applies them. |
+| `list` | Show every stack/item as installed & current / out of date / not installed — plus, with the unreleased target scoping, `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
-| `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, then re-render + `doctor`. |
+| `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
 | `uninstall` | Remove the whole install — the only destructive command. Deletes only what the lock tracks *and* whose content still matches; **a dry run until `--yes`**. See [Taking it back out](#taking-it-back-out-uninstall--reinstall). |
@@ -242,10 +250,29 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 19 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 20 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
-the lock, check prerequisites, uninstall, sync agent avatars, etc.). The full
-function-level registry is in the root `AGENTS.md`.
+the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
+own identity, etc.). The full function-level registry is in the root `AGENTS.md`.
+
+### Which toolkit am I running? (the release gate — unreleased, next tag)
+
+An `npx github:…` spec with no `#tag` fetches the repo's **default branch**, not the
+latest release, while reporting the released version number. On `main` (unreleased as of
+v0.12.0) the CLI resolves its own identity before writing anything:
+
+- **Write commands refuse when provably unreleased.** `render`, `install`, `upgrade`,
+  `reinstall`, and `doctor --verify-render` stop with an error naming the exact pinned
+  command to run. An *unanswerable* lookup (offline, GitHub unreachable) warns and
+  proceeds — fail open on ignorance, closed only on a confirmed "not a release".
+- **The lock records the answer.** A `toolkit` block names the ref and commit SHA that
+  produced the render — recorded only for a real release, because only a release names
+  immutable content; an untagged checkout records explicit nulls with a `status` saying why.
+- **`upgrade` moves your pins.** A `doctor.toolkitRef` / `waffle.toolkitRef` you already
+  pinned to a release tag is rewritten to the release that just rendered your lock — it
+  never *introduces* a pin, and a run that cannot prove it is a release writes none.
+- **Toolkit developers pass `--allow-unreleased`** (or `WAFFLESTACK_ALLOW_UNRELEASED=1`).
+  It suppresses the refusal, not the truth — the toolkit still reports itself unreleased.
 
 ### Taking it back out (`uninstall` / `reinstall`)
 
@@ -332,18 +359,26 @@ overwrite them. Change source, config, or an extension instead.
 wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders **five**
 stacks — `github-workflow`, `docs-system`, `orchestration`, `harness-architect`, and
 the self-referential `wafflestack` — into this repo, so the toolkit's own agents and
-skills are available while developing it. It also arms three opt-in syrup workflows via
-`include:` — the hygiene, release, and PR-green hooks — plus the single
-`code-quality/skills/adversarial-review` skill the PR-green hook dispatches. (While
-developing the toolkit you still drive it with `node installer/cli.mjs` directly rather
-than the rendered `/waffle-*` wrappers.)
+skills are available while developing it. `include:` arms the two deterministic opt-in
+syrup workflows — the release and post-merge hooks — plus two code-quality skills the
+PR gates run: `adversarial-review` and `qa`. (While developing the toolkit you still
+drive it with `node installer/cli.mjs` directly rather than the rendered `/waffle-*`
+wrappers.)
+
+The three **paid** Claude-dispatch hooks — hygiene, pr-green, and pr-response — were
+**disarmed on 2026-07-15** while the repo deliberately carries no `ANTHROPIC_API_KEY`
+secret: removed from `include:` and from git tracking. The disarm is half-landed — the
+committed lock still tracks the three files, so every `render` re-pours them onto disk
+*untracked and not gitignored*. Leave them be, and never `git add -A` here (it would
+re-commit and re-arm pr-green); finishing the disarm is an owner decision. See
+[DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)
 and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
-consuming project. Two reasons: the CI hygiene harness reads the committed skills,
-and the `waffle-doctor` drift gate (a required check on `main`) can only compare
-against a render + lock that live in git. So after any `stacks/**` change you must
-**re-render and commit** the updated files:
+consuming project — the `waffle-doctor` drift gate (a required check on `main`) can
+only compare against a render + lock that live in git, and CI-dispatched harness runs
+read the committed skills when a hook is armed. So after any `stacks/**` change you
+must **re-render and commit** the updated files:
 
 ```bash
 node installer/cli.mjs render --allow-unreleased
@@ -373,7 +408,7 @@ to tolerate them): `.claude/worktrees/` (throwaway working state), `.codex/` and
 `.agents/` (non-targets — this repo only renders `claude`), the
 `waffle-label-hook.yml` workflow (committing it would arm a live label→harness
 dispatch), and the generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`,
-`cheatsheet.html`, `team.html`).
+both `.html` pages, `AVATARS.md`, and `avatars/`).
 
 ## Getting started (new contributors)
 
@@ -389,6 +424,7 @@ dispatch), and the generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md
    ```bash
    npm run validate      # manifests + placeholder checks
    npm test              # installer test suite
+   npm run typecheck     # tsc over the installer
    node installer/cli.mjs doctor   # rendered output matches the lock (not gated)
    node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # committed inputs reproduce the lock (the CI render gate)
    ```

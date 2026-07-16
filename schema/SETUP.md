@@ -80,7 +80,9 @@ dropped.
 **Required — the both/one/neither question.** Some opt-in syrup *pairs with* a companion waffle
 through a `requires:` edge, so selecting the companion leaves half a flow gated out and silent:
 the github-workflow stack's `release` skill pairs with `waffle-release-hook.yml` (the tag-on-merge
-half), `hygiene` with `waffle-hygiene.yml`, and `label-hook` with `waffle-label-hook.yml`. When
+half), `hygiene` with `waffle-hygiene.yml`, `label-hook` with `waffle-label-hook.yml`, `clean-up`
+with `waffle-post-merge-hook.yml` (the remote half of post-merge hygiene), and `pr-response` with
+`waffle-pr-response-hook.yml` (the hook that dispatches it). When
 your selection pulls in the companion waffle (you enabled the stack, or included the skill) but
 its opt-in syrup stays gated out, `render` prints a `warning:` naming the skipped syrup and the
 exact `wafflestack install files/<path>` command — and the update-mode section above flags the

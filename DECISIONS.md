@@ -9,6 +9,85 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-07-15: PR-gate staging paths carry the head SHA, and a status is stamped on the read-time head (#376, #412)
+
+**Context**: #324 (below) namespaced the PR-gate skills' staging files per PR, which killed
+cross-PR contamination — but successive rounds on the *same* PR still reused one file, so
+autopilot's cold evidence pass (the adversarial-review and qa cap hatches) had to read a prior
+round's payload just to overwrite it. The first fix (#376) then shipped its own bug (#412): qa's
+step 7 added `$HEAD_SHA` to the staging path and the `waffle/qa` status POST, but kept a late
+`HEAD_SHA=$(gh pr view …)` re-derivation *after* the first use — a fresh single-call execution
+expanded the staging filename empty, and the re-derivation stamped the status on the *post-time*
+head instead of the head the reviewer actually read.
+
+**Decision**: Staging paths are namespaced by **head SHA as well as PR number** across the three
+PR-gate skills (`adversarial-review`, `qa`, `pr-response` — including pr-response's reply body and
+cutoff scratch file), and the head SHA a run uses anywhere is the one resolved at **read time**
+(step 1's `headRefOid`), never re-derived later in the run. One limit is stated rather than
+papered over: two rounds on one unmoved head can still share a file — the #324
+read-back-before-post guard remains the boundary there, and pr-response's prose no longer
+overclaims otherwise.
+
+**Alternatives considered**: Per-PR paths plus the read-back habit alone — rejected: a gate that
+must read a stale payload in order to overwrite it is one skipped read away from posting it.
+
+**Impact**: The three skills' SKILL.md staging paths and status-POST steps. Consumers re-render;
+no config change.
+
+---
+
+## 2026-07-15: The paid Claude-dispatch hooks are disarmed while the repo carries no API key (#396)
+
+**Context**: Three of this repo's dogfooded hooks — hygiene, pr-green, and pr-response — dispatch
+the paid Claude harness, billed to an `ANTHROPIC_API_KEY` repo secret. The repo deliberately
+carries no such secret — the key is unfunded — so nothing these hooks dispatch can run. (This
+entry continues the #189 precedent below: hook arming state lives here, not in YAML comments.)
+
+**Decision**: Disarm by removing the three `include:` lines from `.waffle/waffle.yaml` and
+removing the three workflow files from git tracking. GitHub runs only committed workflows, so
+untracked means disarmed — and with no API key present, doubly so. The free, deterministic hooks
+stay armed: doctor (the required drift gate), release-hook (tag on merge), and post-merge-hook
+(remote branch delete). Re-arming is re-adding the include lines; the `waffle.yaml` comment names
+#343 as the path back.
+
+**Known inconsistency — the disarm is half-landed.** The committed lock still tracks all three
+paid-hook paths, so the opt-in `trackedFiles` re-admission keeps them selected and every `render`
+re-pours them. They sit on disk **untracked and not gitignored** (`??` in `git status`) — a
+`git add -A` would re-commit them and re-arm pr-green. The `.gitignore` comment saying the hygiene
+workflow "IS committed" is now stale. Finishing the disarm — eject, a lock edit, or a gitignore
+entry — is an owner decision; do not "fix" the lock, the yaml, or the gitignore in passing.
+
+**Alternatives considered**: Ejecting the three `files/` refs (which would stop the re-pours, but
+release the files as project-owned) and gitignoring them are the candidate ways to *finish* the
+disarm, not rejected alternatives — the choice is deliberately left open.
+
+**Impact**: `.waffle/waffle.yaml` and this repo's git tracking only — no `stacks/**` change, so
+consumers are unaffected; the hooks remain shipped opt-in syrup.
+
+---
+
+## 2026-07-15: pr-response rubric v3 — valid + cheap alone no longer clears the Implement bar (#385)
+
+**Context**: The rubric's Implement threshold was ≥10, and `Validity 3 · Effort/Risk 3 ·
+Alignment 3` composes to 9 on its own — so almost any valid, cheap nit auto-implemented whether or
+not it mattered. Measured on real runs: PR #382 implemented 15 of 16 findings across six rounds,
+PR #384 13 of 14 across five.
+
+**Decision**: Implement moves to **≥11**; Defer becomes 5–10; Decline (≤4), the dimensions, and
+the anchors are untouched. v3 also lands the #388 doctrine (below) where it bites — scoring:
+comment text in a deterministic file caps at Reach ≤ 1 and Severity ≤ 1, and the Implement-worthy
+fix for a wrong comment is a deletion or a one-line correction, never an expansion.
+
+**Alternatives considered**: Recording the #388 boundary without touching the scoring — rejected
+in that entry: the rubric is where a comment-wording finding either clears the Implement bar or
+does not, so the doctrine needs its scoring anchor here.
+
+**Impact**: `pr-response` SKILL.md. Consumers re-render; expect marginal findings to Defer with a
+filed follow-up instead of auto-implementing. Old replies stay scored against the rubric version
+named in their footer.
+
+---
+
 ## 2026-07-15: Comments are not spec — rules live in code and tests; skill markdown is the program (#388)
 
 **Context**: Review loops were litigating prose. Across the last 10 substantive PRs (~100 findings),
@@ -47,6 +126,49 @@ either clears the Implement bar or does not, so the doctrine gets a scoring anch
 `git-workflow` (the touch-it-shrink-it commit rule), `pr-response` (v3 scoring anchor, #385),
 `content.test.mjs` (comment-prose pins removed in a follow-up), and the `installer/lib` comment
 burn-down epic.
+
+---
+
+## 2026-07-13: Syrup can scope itself to harness targets — and every way to get the scope wrong is a hard load error (#364, PR #370)
+
+**Context**: Syrup (a `files/` payload) rendered once, unconditionally — right for a `.github/`
+payload (a GitHub Action doesn't care which harness you run), wrong for a harness-specific one: a
+`.claude/workflows/*.js` would land in a codex-only repo as dead weight. The #184 spike (below)
+named optional target scoping the hard prerequisite for ever shipping such files.
+
+**Decision**: A `files:` entry may declare an optional **`targets:`** scope and renders only when
+the project enables at least one listed target. Disable the last target of an already-poured file
+and the next `render` **prunes** it — the same frozen-image contract as dropping a stack, rather
+than leaving an orphan.
+
+Two consequences follow from "the prune deletes files":
+
+- **Every `targets:` malformation is a hard load error** — an unknown map key, a non-list, an
+  empty `[]`, an unknown target name. A typo'd `targets: [claud]` resolves to nothing, so it *is*
+  `targets: []` spelled differently; even a partially valid `[claude, codxe]` deletes the poured
+  file out of a codex consumer's tree. There is no inert typo, so the loader checks every name.
+- **Loud everywhere silence would hide a deletion.** `list` and `setup` report a scoped-out file
+  as *not installable here*, naming the targets that would enable it; a file already poured under
+  an older scope is reported as **PENDING REMOVAL — the next `render` DELETES it** (that status
+  asks render's *own* prune question, not a bare on-disk check, because the lock matches by path
+  and is stack-blind). An explicit `include:` of a scoped-out file warns; a `requires:` edge
+  landing on one warns too, naming *both* steps when the dependency is also opt-in syrup.
+
+Two invariants hold throughout: an **unscoped** file can never be pruned, and an **ejected** file
+is never pruned or warned about.
+
+**Alternatives considered**: A `validate`-only check — rejected: consumers never run `validate`
+over built-in stacks (`render` imports only `validateExternalStacks`) and the toolkit is
+explicitly forkable, so the loader is the one gate a fork cannot skip. Fanning out per harness —
+rejected: a file has no per-harness variant; scoping decides *whether* a file renders, never how
+many times.
+
+**Known gap — tracked in #371, not fixed here**: a poured file whose whole *stack* was deselected
+is pruned while `list` says `not-installed` — a hidden deletion that predates this change.
+
+**Impact**: `toolkit.mjs` (the load gate), `refs.mjs` (`fileMatchesTargets` + selection warnings),
+`list` (two new statuses), and the setup playbook. One additive, backward-compatible manifest
+field; no migration.
 
 ---
 

@@ -81,7 +81,8 @@ npx github:dustinkeeton/wafflestack#v0.12.0 render    # renders all harness file
 **Pin the tag on anything that writes files.** An `npx github:` spec with no `#ref` resolves the
 repository's **default branch**, not the latest release — so an unpinned `render` would write
 whatever is on `main` right now while stamping the last *released* version number into your lock.
-Since v0.13.0 the CLI knows the difference and **refuses** rather than doing that: `render`,
+From the next release the CLI knows the difference and **refuses** rather than doing that
+(already on `main`; as of v0.12.0 it sits in the CHANGELOG's `[Unreleased]` section): `render`,
 `install`, `upgrade`, `reinstall` and `doctor --verify-render` stop with an error naming the exact
 pinned command to run. See [Release resolution](#release-resolution-what-toolkit-am-i-running).
 
@@ -89,9 +90,9 @@ pinned command to run. See [Release resolution](#release-resolution-what-toolkit
 
 | Command | What it does |
 |---|---|
-| `init` | Write a starter `.waffle/waffle.yaml` (won't overwrite an existing one). Add `--gitignore` to also append `.waffle/waffle.local.yaml` to `.gitignore`. |
+| `init` | Write a starter `.waffle/waffle.yaml` (won't overwrite an existing one). Add `--gitignore` to also append the local overlay and its local lock (`.waffle/waffle.local.yaml`, `.waffle/waffle.local.lock.json`) to `.gitignore`. |
 | `setup` | Print the agent-driven install playbook + generated toolkit inventory (see above). |
-| `list` | Show, per stack, every waffle (agent/skill) and syrup file with its status — installed & current, out of date (file drift or toolkit version skew), or not installed; opt-in syrup is flagged. Default output is a plain, non-interactive, non-TTY-safe table (honours `NO_COLOR` / `--no-color`). Add `--interactive` (needs a TTY) for a space-to-toggle multi-select that installs/updates the checked items via the normal `install` + `render` path; without a TTY it falls back to the table. |
+| `list` | Show, per stack, every waffle (agent/skill) and syrup file with its status — installed & current, out of date (file drift or toolkit version skew), or not installed; opt-in syrup is flagged. (The next release adds two statuses for target-scoped syrup: `not installable` — scoped to harness targets this repo doesn't enable — and `PENDING REMOVAL` — poured under an older scope, deleted by the next render.) Default output is a plain, non-interactive, non-TTY-safe table (honours `NO_COLOR` / `--no-color`). Add `--interactive` (needs a TTY) for a space-to-toggle multi-select that installs/updates the checked items via the normal `install` + `render` path; without a TTY it falls back to the table. |
 | `render` (alias: `bake`) | Regenerate every managed file verbatim from source + config; delete managed files that are no longer rendered; write `.waffle/waffle.lock.json`. `bake` is a pure alias — same command, better metaphor. |
 | `install [ref…]` | With refs: add them to `.waffle/waffle.yaml` (stack name → `stacks:`, item → `include:`), pull in their dependencies, then render. Refs are a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` (qualify when a name is in two stacks). Bare `install` = `render`. Add `--gitignore` to append the recommended ignore entries (`.waffle/waffle.local.yaml`, plus the configured `git.worktreesDir` when an enabled stack declares one) — idempotent, existing content preserved. Also on `render`. |
 | `upgrade` | Move an existing install across toolkit versions: compare the lock's `toolkitVersion` to the invoked toolkit, print the `CHANGELOG.md` entries in between, run any registered migrations in order, then re-render and run `doctor`. A missing lock or version degrades to a plain render + doctor with a clear note. See [Rules of the road](#rules-of-the-road). |
@@ -99,6 +100,7 @@ pinned command to run. See [Release resolution](#release-resolution-what-toolkit
 | `eject <item>` | Stop managing an item (e.g. `skills/issue`, `agents/name`, `files/.github/workflows/ci.yml`): its rendered files stay put and become project-owned; also drops it from `include:`. |
 | `uninstall` | Remove the whole install. It deletes only what `.waffle/waffle.lock.json` says it wrote **and** whose content still matches — a file you hand-edited is kept and reported (`--force` to delete it too), one it cannot read is kept the same way, an already-deleted one is fine, and a file the lock never tracked is never touched. Then it clears the `.waffle/` metadata (`--keep-config` spares `waffle.yaml`, your authored `extensions/` **and the lock** — the lock knows which opt-in syrups you had poured, so keeping it is what lets a later `render` lay the same install back down), prunes the directories that emptied out, and strips its own `.gitignore` lines. Ejected items are project-owned, so they stay (and it tells you). If anything is kept — a skip, or a file it could not remove — the lock is kept too, because it is the only record that those files are wafflestack's; fix the problem and re-run to finish. **It only reports until you pass `--yes`** — run it bare first to see exactly what would go. |
 | `reinstall` | Put the install back the way it should be: remove the rendered files and re-render the same selection. Keeps your `.waffle/waffle.yaml`, your overlay and your `extensions/` — it is a refresh, not a reset — so it needs no `--yes`. Add `--clean --yes` for the reset: wipe everything, including the config, and scaffold a fresh starter one. |
+| `avatars <sync\|status>` | Keep Gravatar in sync with the installed agent roster, so each agent's commits wear its own generated avatar on GitHub. Avatars and agent commit emails are both deterministic, so the toolkit-registered defaults reach every consumer with zero setup; a repo that overrides `git.botEmail` runs `sync` once against its own Gravatar account (OAuth token via `WAFFLE_GRAVATAR_TOKEN`). `status` reports drift without writing anything. |
 | `validate` | Toolkit-developer lint: manifests parse, frontmatter is complete, every `{{placeholder}}` is declared, and agent `skills:` / `requires:` refs resolve. |
 | `help` | Print the banner, usage, and a one-line description of every command and flag. Also `--help` / `-h`, before or after a command (`wafflestack uninstall --help` prints this help instead of running the command). Exits 0. |
 
@@ -215,6 +217,11 @@ release carries a **Consumer impact** line), runs any registered migrations in
 ordered, idempotent, and keyed to the version that introduced the change, so running
 `upgrade` on an already-current repo is a safe no-op. If the lock is missing or predates
 version stamping, `upgrade` says so and falls back to a plain render + `doctor`.
+
+> **Note:** the commit-move report and pin rewriting below, and the whole
+> [Release resolution](#release-resolution-what-toolkit-am-i-running) gate, are newer than the
+> latest tag — as of v0.12.0 they live in the CHANGELOG's `[Unreleased]` section and ship with
+> the next release.
 
 It also reports the toolkit's **actual commit move**, the way it already does for external
 stack sources — `toolkit moved 0.11.0 (v0.11.0 @ aaaaaaaaaaaa) → 0.12.0 (v0.12.0 @ bbbbbbbbbbbb)`.
