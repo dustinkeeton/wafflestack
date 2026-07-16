@@ -10,9 +10,12 @@ node_modules/
 .codex/
 .agents/
 # waffle-label-hook.yml stays untracked — committing it would arm a live label→harness
-# dispatch on this repo, which is not wanted here. The doctor (drift gate, required
-# check on main), hygiene (#46), and release-hook (#39) workflows ARE committed; doctor
-# runs with --allow-missing so this deliberately-absent render doesn't fail CI.
+# dispatch on this repo, which is not wanted here. Committed workflows: doctor (drift gate,
+# required check on main), release-hook (#39), and post-merge-hook. The three paid
+# Claude-dispatch hooks (hygiene, pr-green, pr-response) are EJECTED, not gitignored —
+# `render` no longer pours them (see .waffle/waffle.yaml `eject:`), so there is nothing to
+# ignore. doctor runs with --allow-missing so this deliberately-absent label render doesn't
+# fail CI.
 .github/workflows/waffle-label-hook.yml
 .waffle/waffle.local.yaml
 # …and the local lock it implies (#317): when a contributor's overlay actually feeds their render,
