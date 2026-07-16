@@ -86,8 +86,7 @@ npx github:dustinkeeton/wafflestack#v0.12.0 render    # renders all harness file
 
 Run `npx github:dustinkeeton/wafflestack help` for the full flag detail on any command.
 
-## Rules of the road
-
+## Perchance
 1. **Never edit rendered files** — `render` overwrites them. Put additions in
    `.waffle/extensions/{agents,skills}/<name>.md` and parameters in `.waffle/waffle.yaml`.
 2. **Account-specific values** (bot identities, board IDs) go in `.waffle/waffle.local.yaml` —
