@@ -454,6 +454,16 @@ is what you reach for across a breaking one.
     GitHub silently drops a label that does not exist, so a mismatch fails quietly.
 
 ### Fixed
+- **`--allow-unreleased` no longer forfeits a genuine release's provenance (#383).** The hatch used to
+  short-circuit the release lookup, so a toolkit that really *was* a pinned `npx github:…#vX.Y.Z`
+  install resolved as `unverified` with `ref: null` — the field #374 records into the lock and #372
+  writes into `toolkitRef`. The two flags are now orthogonal: `--allow-unreleased` suppresses the
+  *refusal* only (the lookup still runs, so a real release keeps its `ref`), and a new `--offline`
+  (env `WAFFLESTACK_OFFLINE=1`) is the sole switch that skips the network — for an air-gapped run that
+  would otherwise stall on a doomed `git ls-remote`. `resolveToolkitIdentity` drops its
+  `allowUnreleased` parameter accordingly. `schema/FORMAT.md`, `AGENTS.md`, and the `toolkit-ref.mjs`
+  docblock now describe the shipped behavior. **Consumer impact:** none — no rendered output changes; a
+  consumer who set the hatch to unblock CI now records honest release provenance instead of a silent null.
 - **qa step 7 no longer re-resolves `HEAD_SHA` after its first use (#412).** PR #410 added
   `$HEAD_SHA` to qa's staging path and status POST but left the block's late
   `HEAD_SHA=$(gh pr view …)` re-derivation *after* the first use — a fresh single-call
