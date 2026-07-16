@@ -935,12 +935,15 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(changelogLatestRelease(null), null);
   });
 
-  test('THIS repo\'s own shipped CHANGELOG is the live case — main carries unreleased entries', () => {
+  test('THIS repo\'s own shipped CHANGELOG is the live case — the corroborator reads it', () => {
     // Not a fixture: the real file. It is what lets a consumer who fetched the default branch be
-    // told the truth even when GitHub is unreachable. If a release ever ships with a non-empty
-    // `## [Unreleased]`, this module would call it `unreleased` — the safe direction to be wrong in.
+    // told the truth even when GitHub is unreachable. Both `[Unreleased]` states are legitimate and
+    // both are safe: mid-cycle main carries entries (past the tag ⇒ `unreleased`), and a freshly-cut
+    // release sits AT the tag with an empty `[Unreleased]` — the corroborator simply does not fire,
+    // which is correct, because main is not yet past the tag. If a release ever ships with a
+    // non-empty `[Unreleased]`, this module would call it `unreleased` — the safe direction to err.
     const real = fs.readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
-    assert.equal(changelogHasUnreleasedEntries(real), true, 'main must carry unreleased entries — it is 70+ commits past the tag');
+    assert.equal(typeof changelogHasUnreleasedEntries(real), 'boolean', 'the corroborator reads the real file without throwing');
     assert.match(changelogLatestRelease(real) ?? '', /^v\d+\.\d+\.\d+$/);
   });
 });

@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-15
+
 ### Changed
 - **Detox comment-prose test pins; shrink the pr-green / pr-response hook headers (#391).** Removes
   the Layer-1 tests that pinned comment sentences inside deterministic workflow YAML (the
