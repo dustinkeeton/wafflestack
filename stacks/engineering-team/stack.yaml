@@ -7,6 +7,8 @@ description: >-
   structure, pyramid, and briefs are project config. Pairs with the
   github-workflow stack (git-workflow/issue/github-project-management skills
   are referenced throughout) and slots into the orchestration stack's roster.
+# Pre-selected by the setup wizard unless the user opts out (#202).
+recommended: true
 agents:
   [
     lead-engineer,

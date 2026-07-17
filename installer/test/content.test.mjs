@@ -2347,6 +2347,8 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
 
   test('the flag loads from the manifest and orchestration is flagged', () => {
     assert.equal(toolkit.stacks.get('orchestration').recommended, true);
+    // #202 flagged engineering-team via the same mechanism (a one-line manifest edit).
+    assert.equal(toolkit.stacks.get('engineering-team').recommended, true);
   });
 
   test('an un-flagged stack defaults to recommended === false (generic, not name-keyed)', () => {
@@ -2354,14 +2356,18 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
     // proving the field is read generically and defaults off. This is the guard #202 relies on:
     // flagging engineering-team is a one-line manifest edit, nothing else.
     assert.equal(toolkit.stacks.get('docs-system').recommended, false);
+    // The recommended set is intentionally two: orchestration (#201) and engineering-team (#202),
+    // in toolkit.yaml declaration (Map) order. Add a stack here only when it declares the flag.
     const flagged = [...toolkit.stacks.values()].filter((s) => s.recommended).map((s) => s.name);
-    assert.deepEqual(flagged, ['orchestration']);
+    assert.deepEqual(flagged, ['orchestration', 'engineering-team']);
   });
 
   test('the generated inventory marks the recommended stack and explains the behavior', () => {
     const inventory = toolkitInventory(toolkit);
     // Per-stack marker on the orchestration section header.
     assert.match(inventory, /## stack: orchestration — \*\*recommended \(default-selected\)\*\*/);
+    // #202: engineering-team is surfaced with the same marker.
+    assert.match(inventory, /## stack: engineering-team — \*\*recommended \(default-selected\)\*\*/);
     // Gated intro paragraph teaching the setup agent to pre-select recommended stacks.
     assert.match(inventory, /A \*\*recommended\*\* stack \(marked below\) is one the toolkit suggests/);
     assert.match(inventory, /include it unless the user opts out/);

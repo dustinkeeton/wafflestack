@@ -41,6 +41,10 @@ is what you reach for across a breaking one.
   future stack flags itself with a one-line manifest edit and no schema/code change (shared with
   #202). Documented in `schema/FORMAT.md`, `schema/SETUP.md`, and `AGENTS.md`. **Consumer impact:**
   none — no rendered output changes; the flag only affects what the setup wizard pre-selects.
+- **Mark `engineering-team` recommended (#202).** `engineering-team` now declares
+  `recommended: true`, so `wafflestack setup` pre-selects it by default (still user-overridable).
+  Uses the #201 mechanism — a one-line manifest edit, no schema or code change. **Consumer impact:**
+  none — no rendered output changes.
 
 ## [0.13.0] - 2026-07-15
 
