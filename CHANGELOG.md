@@ -31,6 +31,17 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **Recommended-stacks flag; mark `orchestration` recommended (#201).** A stack's `stack.yaml` may
+  now declare `recommended: true`, read by `loadStack` and exposed as `Stack.recommended`. The
+  generated setup inventory marks such stacks **recommended (default-selected)** and the
+  `wafflestack setup` playbook pre-selects them by default (still user-overridable — advisory
+  pre-selection only, never a force-install and never a change to the render set). `orchestration`
+  is flagged. The mechanism is generic (keyed on `stack.recommended`, never a stack name), so a
+  future stack flags itself with a one-line manifest edit and no schema/code change (shared with
+  #202). Documented in `schema/FORMAT.md`, `schema/SETUP.md`, and `AGENTS.md`. **Consumer impact:**
+  none — no rendered output changes; the flag only affects what the setup wizard pre-selects.
+
 ## [0.13.0] - 2026-07-15
 
 ### Changed

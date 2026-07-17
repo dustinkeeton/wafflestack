@@ -307,6 +307,7 @@ function formatConfigValue(key, spec, set, current) {
 
 export function toolkitInventory(toolkit, version) {
   const hasOptIn = [...toolkit.stacks.values()].some((s) => s.optIn.size);
+  const hasRecommended = [...toolkit.stacks.values()].some((s) => s.recommended);
   const lines = [
     `# Toolkit inventory — ${toolkit.name}${version ? ` v${version}` : ''}`,
     '',
@@ -321,6 +322,15 @@ export function toolkitInventory(toolkit, version) {
     '`requires:`), so required config is scoped to what the selected items actually reference.',
     '',
   ];
+  if (hasRecommended) {
+    lines.push(
+      'A **recommended** stack (marked below) is one the toolkit suggests for most setups.',
+      'Pre-select it by default and include it unless the user opts out — this is in addition to,',
+      'and independent of, any repository-signal recommendation. The user can always remove a',
+      'recommended stack; it is advisory pre-selection only and never force-installed.',
+      '',
+    );
+  }
   if (hasOptIn) {
     lines.push(
       'An **opt-in syrup** item (marked below) is a sensitive `files/` payload — e.g. a workflow',
@@ -333,7 +343,8 @@ export function toolkitInventory(toolkit, version) {
     );
   }
   for (const stack of toolkit.stacks.values()) {
-    lines.push(`## stack: ${stack.name}`, '');
+    const marker = stack.recommended ? ' — **recommended (default-selected)**' : '';
+    lines.push(`## stack: ${stack.name}${marker}`, '');
     if (stack.description) lines.push(stack.description, '');
     lines.push(`- skills: ${stack.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
     lines.push(`- agents: ${stack.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);

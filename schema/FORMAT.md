@@ -34,6 +34,7 @@ detection, and `eject`.
 ```yaml
 name: github-workflow
 description: One-line description of the stack.
+recommended: true                    # optional: setup wizard pre-selects it unless the user opts out
 agents: [architect, security]        # files under agents/, without .md
 skills: [git-workflow, issue]        # directories under skills/
 files:                               # generic files under files/, by repo-relative path
@@ -118,6 +119,12 @@ is unchanged: it is lock-tracked, drift-checked, and `eject`-able like any other
 installed. `validate` checks every `optIn:` entry resolves to a real item in the stack, and
 `wafflestack setup` lists opt-in syrup items under a separate, default-do-not-install
 acknowledgement.
+
+`recommended:` is an optional boolean (default `false`) marking the stack as one the setup
+wizard **pre-selects by default** — a stack that belongs in most setups. The generated inventory
+flags it, and `wafflestack setup` includes it unless the user opts out. It is **purely advisory**:
+it is user-overridable and never forces a render or changes a stack's render set — it only changes
+which stacks the wizard defaults ON. A missing or non-`true` value is `false`.
 
 `setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
 playbook, `schema/SETUP.md`, followed by a generated inventory of every stack's items,
