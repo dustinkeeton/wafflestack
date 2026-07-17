@@ -9,6 +9,7 @@ import { parse as parseYaml } from 'yaml';
 import { parseFrontmatter } from '../lib/util.mjs';
 import { placeholderKeys } from '../lib/template.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
+import { toolkitInventory } from '../lib/setup.mjs';
 import { renderProject } from '../lib/render.mjs';
 
 // -----------------------------------------------------------------------------
@@ -2335,6 +2336,49 @@ describe('SETUP.md playbook: prerequisites walk is required and go-ahead-gated (
   test('opt-in syrup prerequisites are walked only once that file is installed', () => {
     assert.match(setupMd, /only once the user has asked to install\s+that file/);
     assert.match(setupMd, /waffle-label-hook\.yml/);
+  });
+});
+
+// #201: a declarative "recommended" flag the setup wizard pre-selects by default. The mechanism
+// must be generic (keyed on stack.recommended, never the literal name "orchestration") so #202
+// flags engineering-team with a one-line manifest edit and zero schema/code work.
+describe('recommended-stacks flag: default-selected in setup (#201)', () => {
+  const toolkit = loadToolkit(REPO_ROOT);
+
+  test('the flag loads from the manifest and orchestration is flagged', () => {
+    assert.equal(toolkit.stacks.get('orchestration').recommended, true);
+  });
+
+  test('an un-flagged stack defaults to recommended === false (generic, not name-keyed)', () => {
+    // docs-system carries no `recommended:` key, so it must coerce to a plain boolean false —
+    // proving the field is read generically and defaults off. This is the guard #202 relies on:
+    // flagging engineering-team is a one-line manifest edit, nothing else.
+    assert.equal(toolkit.stacks.get('docs-system').recommended, false);
+    const flagged = [...toolkit.stacks.values()].filter((s) => s.recommended).map((s) => s.name);
+    assert.deepEqual(flagged, ['orchestration']);
+  });
+
+  test('the generated inventory marks the recommended stack and explains the behavior', () => {
+    const inventory = toolkitInventory(toolkit);
+    // Per-stack marker on the orchestration section header.
+    assert.match(inventory, /## stack: orchestration — \*\*recommended \(default-selected\)\*\*/);
+    // Gated intro paragraph teaching the setup agent to pre-select recommended stacks.
+    assert.match(inventory, /A \*\*recommended\*\* stack \(marked below\) is one the toolkit suggests/);
+    assert.match(inventory, /include it unless the user opts out/);
+  });
+
+  test('the SETUP.md playbook instructs default-selection of recommended stacks, user-overridable', () => {
+    const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+    assert.match(setupMd, /marks \*\*recommended \(default-selected\)\*\*/);
+    assert.match(setupMd, /pre-selected\s+by\s+default and should be included unless the user opts out/);
+    assert.match(setupMd, /can always remove a recommended stack/);
+  });
+
+  test('the flag is documented in FORMAT.md and AGENTS.md', () => {
+    const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
+    assert.match(formatMd, /`recommended:` is an optional boolean/);
+    const agentsMd = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf8');
+    assert.match(agentsMd, /\.recommended/);
   });
 });
 

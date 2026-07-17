@@ -1,5 +1,7 @@
 name: orchestration
 description: Multi-agent orchestration — a project-manager coordinator (delivery ceremonies, issue routing), a product-manager (product evolution — user stories, acceptance criteria, backlog priority), and a task-planner tracker plus delegate, autopilot, audit, and docs skills that fan issues and pipelines out to specialist agents. Autopilot is the unattended backlog runner that composes delegate (batch mode + auto-merge), clean-up, and git-workflow into a plan→implement→PR loop. The agent roster and module map are project config. Pairs with the github-workflow stack (git-workflow, issue, and github-project-management skills are referenced throughout).
+# Pre-selected by the setup wizard unless the user opts out (#201).
+recommended: true
 agents: [project-manager, product-manager, task-planner]
 skills: [delegate, autopilot, audit, docs, standup]
 # Cross-stack skill dependencies pulled in when an item is installed on its own.

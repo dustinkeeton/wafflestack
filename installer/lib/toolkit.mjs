@@ -60,6 +60,9 @@ import { normalizePrerequisites } from './prerequisites.mjs';
  * @property {string} name
  * @property {string} dir
  * @property {string} description
+ * @property {boolean} recommended true when the manifest sets `recommended: true`; the setup
+ *   wizard pre-selects it by default (still user-overridable). Advisory only — it never forces a
+ *   render or changes the render set.
  * @property {AgentItem[]} agents
  * @property {SkillItem[]} skills
  * @property {FileItem[]} files
@@ -87,6 +90,7 @@ import { normalizePrerequisites } from './prerequisites.mjs';
  *
  * @typedef {object} StackManifest
  * @property {string} [description]
+ * @property {boolean} [recommended] pre-selected by the setup wizard unless the user opts out
  * @property {string[]} [agents] bare agent names
  * @property {string[]} [skills] bare skill names
  * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths —
@@ -375,6 +379,11 @@ function loadStack(name, dir) {
     name,
     dir,
     description: manifest.description ?? '',
+    // Advisory pre-selection flag (#201): the setup wizard defaults recommended stacks ON, still
+    // user-overridable. `=== true` so a missing/malformed value is a plain `false`, mirroring the
+    // defensive coercions used throughout this loader. Read generically from the manifest so #202
+    // needs only a one-line `recommended: true` in its stack.yaml — never keyed on a stack name.
+    recommended: manifest.recommended === true,
     agents,
     skills,
     files,

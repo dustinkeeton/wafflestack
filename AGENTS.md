@@ -20,7 +20,7 @@ Entry points: `installer/cli.mjs` (bin `wafflestack`) · `toolkit.yaml` (stack r
 ```
 toolkit.yaml               registry: name + ordered stack list
 stacks/<name>/
-  stack.yaml               manifest: agents, skills, files, optIn, requires, prerequisites, config, env, setup
+  stack.yaml               manifest: recommended, agents, skills, files, optIn, requires, prerequisites, config, env, setup
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
   files/<repo-rel-path>    neutral syrup payload (CI workflow/script/config), rendered verbatim to that path
@@ -124,7 +124,7 @@ export function placeholderKeys(text)          // → Set<string>
 export function compilePattern(pattern)        // → RegExp (full-match ^(?:…)$)
 
 // toolkit.mjs — load toolkit.yaml + stack manifests
-export function loadToolkit(rootDir)           // → { name, description, stacks: Map } — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites; stale manifest `syrup:` key throws (0.10.0, #59)
+export function loadToolkit(rootDir)           // → { name, description, stacks: Map } — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201); stale manifest `syrup:` key throws (0.10.0, #59)
 export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125)
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) // → string[] (usedKeys Set scopes to referenced keys)
 

@@ -53,6 +53,12 @@ the recommendation with one line per stack on what it adds, and let the user pic
 Two stacks that define a same-named item cannot both be enabled (the renderer refuses);
 the inventory shows each stack's item names.
 
+Stacks the inventory marks **recommended (default-selected)** are pre-selected by
+default and should be included unless the user opts out — this is independent of, and in
+addition to, the repository-signal heuristic above. Still present them and make clear the
+user can always remove a recommended stack; it is advisory pre-selection, never a
+force-install.
+
 You do not have to adopt a whole stack. When a project wants just one skill or agent,
 select it individually — the inventory lists items in installable ref form
 (`skills/<name>`, `agents/<name>`). Two ways to record the choice:
