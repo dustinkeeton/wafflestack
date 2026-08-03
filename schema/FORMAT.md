@@ -14,6 +14,7 @@ opt-in (the `optIn:` manifest key) is **opt-in syrup**.
 
 ```
 toolkit.yaml                 registry: name + list of stacks
+stacks/registry.yaml         waffle registry: every waffle's identity, location, and availability
 stacks/<stack>/
   stack.yaml                stack manifest (see below)
   agents/<name>.md           neutral agent definitions
@@ -154,6 +155,66 @@ selected entry's `check` and gates on unmet `require`s; `render` additionally em
 network/auth kinds to the deliberate `doctor` gate. The legacy `env:` map is **subsumed as the
 `env` kind, read-compatibly** — an existing `env:` map keeps working and is still warned at render,
 so no stack must migrate at once.
+
+## Waffle registry (`stacks/registry.yaml`)
+
+`toolkit.yaml` lists the **stacks**. `stacks/registry.yaml` lists the **waffles** — and it is the
+single source of truth for each one's identity, location, and availability. Every agent and skill
+in every built-in stack has exactly one entry:
+
+```yaml
+waffles:
+  - name: issue
+    kind: skill                    # agent | skill
+    stack: github-workflow         # the owning stack, as listed in toolkit.yaml
+    path: stacks/github-workflow/skills/issue
+    status: stable                 # stable | wip | deprecated | replaced
+
+  - name: old-name                 # a tombstone: the name is gone
+    kind: skill
+    status: replaced
+    replacedBy: new-name           # the forward-fix for a consumer who pinned the old ref
+```
+
+**`status:` is the waffle lifecycle**, and it is the whole of it:
+
+- **`stable`** — offered, installable, supported. The state of a shipped waffle.
+- **`wip`** — present in the repo, offered to nobody. It is skipped by stack expansion, refused by
+  an explicit `install`, dropped from an agent's `skills:` closure, and absent from the `setup`
+  inventory. This is the cheap way to develop a waffle in the open without shipping it. **Never
+  mark an already-shipped waffle `wip`** — the render prunes what it no longer produces, so it
+  would be deleted from every consumer that has it. Use `deprecated`.
+- **`deprecated`** — still offered and still installable, but on the way out. May name a successor
+  in `replacedBy`, which the inventory and `upgrade` surface as advice.
+- **`replaced`** — a **tombstone**: the name no longer exists on disk, and the entry survives so
+  its `replacedBy` can carry a pinned consumer forward. A tombstone declares no `stack:` or
+  `path:` — it names no location, because there is none.
+
+**`replacedBy:` is what makes a rename safe for consumers.** An `include:` ref naming a replaced
+waffle is **forwarded** to its successor at render time, so a toolkit-side rename never breaks a
+downstream repo; the render says the pin is stale, and `wafflestack upgrade` rewrites it in
+`.waffle/waffle.yaml` for good. Chains are followed transitively, so a config two renames behind
+lands on the current name in one upgrade.
+
+**The registry is enforced, not advisory.** `wafflestack validate` reconciles it three ways — against
+the filesystem, against every `stack.yaml`, and against itself — and reds on any divergence: a
+waffle on disk that nobody registered, a `stack.yaml` naming an unregistered waffle, a registered
+waffle whose path doesn't exist or isn't the path the loader would use, a duplicate entry, a
+tombstone whose name still resolves or whose successor doesn't, and an offered waffle whose
+`requires:` edge lands on a `wip` one. **Renaming a waffle is therefore a three-part edit** — move
+the files, update the owning `stack.yaml`, and replace the registry entry with a tombstone plus a
+live entry under the new name — and CI stays red until all three land.
+
+Two things are deliberately **out of registry scope**. **Syrup** (`files/` payloads) is not
+registered: it is addressed by its repo-relative output path rather than by a name, so its identity
+is already pinned by what it renders to, and `optIn:` is already its availability gate. And
+**external stacks** pulled in via `source:` are governed by their own toolkit's registry, not this
+one — their waffles are simply unregistered here, which every gate reads as "available".
+
+A toolkit that ships **no** `stacks/registry.yaml` is ungated and unenforced: everything on disk is
+installable, exactly as before the registry existed. That is the graceful-degradation path for a
+fork, not a supported state for this toolkit — a registry file that exists but cannot be read is a
+hard error, because quietly degrading *that* to an ungated render is how a `wip` waffle ships.
 
 ## Agent definition (`agents/<name>.md`)
 
@@ -753,6 +814,10 @@ The rendered set is `union(items of stacks:) ∪ include: − eject:`.
   config that only unselected siblings need. Stack `env:` prerequisites still warn when
   any item from that stack renders.
 - `eject:` — items to stop managing; wins over both `stacks:` and `include:`.
+
+Every one of those resolutions is gated on the **waffle registry** (see above): a `wip` waffle is
+never expanded from its stack and is refused as an explicit ref, and a ref naming a `replaced`
+waffle is forwarded to its successor with a warning naming the stale pin.
 
 `wafflestack install <ref…>` performs this edit for you: it resolves each ref (failing on
 unknown or ambiguous names, listing the qualified candidates), appends stack refs to

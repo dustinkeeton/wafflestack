@@ -7,6 +7,8 @@ import { doctor } from './doctor.mjs';
 import { MIGRATIONS, runMigrations } from './migrations.mjs';
 import { CONFIG_FILE, LOCK_FILE, resolveConfigFile, setScalarIn } from './project.mjs';
 import { classifyToolkitRefValue, toolkitPinFromIdentity, parseRepoSlug } from './toolkit-ref.mjs';
+import { loadRegistry, replacementFor } from './registry.mjs';
+import { parseRef } from './refs.mjs';
 
 const CHANGELOG_FILE = 'CHANGELOG.md';
 
@@ -167,6 +169,14 @@ export function upgrade({
   // no-op. A repo that pinned nothing is a zero-byte no-op twice over.
   const pinMoves = reconcileToolkitRefPins({ cwd, identity: toolkitIdentity, log });
 
+  // Forward `include:` refs across waffle RENAMES (#335) — the same "move the consumer's config to
+  // match the toolkit that is about to render" step as the pins above, for the other kind of pin a
+  // consumer holds. It sits here for the same reason: `renderProject` re-reads `.waffle/waffle.yaml`
+  // from disk, so writing before it is what makes ONE `upgrade` move the config, the render, and the
+  // lock together. Renders forward a stale ref anyway (and warn), so this is not what makes the
+  // rename WORK — it is what stops the warning recurring forever.
+  const waffleMoves = forwardRenamedWaffleRefs({ toolkitRoot, cwd, log });
+
   // Re-render (re-resolving each external source at its pin — refreshSources re-fetches git
   // sources so a moved ref is observed, not served from the session cache), then doctor.
   const render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, sourceCacheDir, refreshSources: true, log });
@@ -174,7 +184,7 @@ export function upgrade({
     // `pinMoves` rides the failure return too — the config writes ALREADY HAPPENED (migrations set the
     // same precedent: they mutate `cwd` before the render can fail). A caller that reported only on
     // success would leave a bumped pin invisible in the one run where knowing about it matters most.
-    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], toolkitMove: null, pinMoves, newerRelease: newerRelease?.result ?? null, notes };
+    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], toolkitMove: null, pinMoves, waffleMoves, newerRelease: newerRelease?.result ?? null, notes };
   }
 
   // Per-source version moves: diff the freshly-resolved commits against the lock's recorded ones.
@@ -212,6 +222,9 @@ export function upgrade({
     // `sourceMoves`, for the two pins that decide which toolkit their CI and their skills run.
     // Empty when nothing was pinned, which is most repos, this one included.
     pinMoves,
+    // What happened to each `include:` ref naming a RENAMED waffle (#335) — `[{ from, to, action }]`.
+    // Empty whenever no `include:` ref names a tombstone, which is every repo whose pins are current.
+    waffleMoves,
     // `{ tag, command } | null` — a release NEWER than the toolkit that just ran. The pinned-CLI
     // escape hatch: it names what to run, because it cannot run it.
     newerRelease: newerRelease?.result ?? null,
@@ -379,6 +392,93 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {}, 
   // The dirty guard is the bytes themselves: no splice, no write. A no-op run cannot touch the file.
   if (text !== source) fs.writeFileSync(configFile, text);
   return pinMoves;
+}
+
+/**
+ * Rewrite every `include:` entry that names a **renamed waffle** to the ref that supersedes it
+ * (#335) — the migration control the waffle registry exists to make possible.
+ *
+ * The registry's `replaced` entries carry the forward-fix, so this is a lookup, not a heuristic: a
+ * `replaced` entry says "this name is gone, here is what took its place", and the chain is walked
+ * transitively (`replacementFor`), so a config two renames stale lands on the current name in one
+ * upgrade rather than needing one upgrade per rename.
+ *
+ * Deliberately narrow, in the same spirit as `reconcileToolkitRefPins`:
+ *   - **Only `include:`.** `stacks:` names stacks (the registry does not govern those) and `eject:`
+ *     names things the project has taken OWNERSHIP of — rewriting an eject to a name the consumer
+ *     never ejected would silently re-adopt a file they chose to keep.
+ *   - **Only the COMMITTED config.** `.waffle/waffle.local.yaml` is a developer's private overlay
+ *     (#317); it is neither read nor written here.
+ *   - **Only a ref that resolves to a tombstone.** Anything else — a live ref, a stack name, a ref
+ *     for a waffle this toolkit never had — is left exactly as authored.
+ *   - **A byte-level scalar splice** (`setScalarIn`), never `doc.toString()`, so a one-ref rewrite
+ *     is a one-line diff in a hand-authored config rather than a whole-file reflow.
+ *
+ * A qualified old ref (`old-stack/skills/old-name`) is rewritten UNQUALIFIED: the successor may
+ * well live in a different stack, so carrying the old qualifier forward would write a ref that
+ * cannot resolve. `resolveRef` re-qualifies at read time whenever the new name is ambiguous.
+ *
+ * @param {object} opts
+ * @param {string} opts.toolkitRoot the toolkit whose registry supplies the forward-fixes
+ * @param {string} opts.cwd the consumer repo
+ * @param {(msg: string) => void} [opts.log]
+ * @param {typeof setScalarIn} [opts.writeScalar] seam for tests, mirroring `reconcileToolkitRefPins`
+ * @returns {{ from: string, to: string, action: 'forwarded'|'unwritable' }[]}
+ */
+export function forwardRenamedWaffleRefs({ toolkitRoot, cwd, log = () => {}, writeScalar = setScalarIn }) {
+  /** @type {{ from: string, to: string, action: 'forwarded'|'unwritable' }[]} */
+  const moves = [];
+  if (!toolkitRoot) return moves;
+  let registry;
+  try {
+    registry = loadRegistry(toolkitRoot);
+  } catch (err) {
+    // A corrupt registry is `validate`'s red and `render`'s hard error a few lines from now. Do not
+    // half-rewrite a consumer's config on the strength of a file we could not read.
+    log(`could not forward renamed waffle refs — the toolkit's waffle registry did not load: ${err.message}`);
+    return moves;
+  }
+  if (!registry.present || !registry.replaced.size) return moves; // nothing has ever been renamed
+
+  const { file: configFile } = resolveConfigFile(cwd);
+  if (!exists(configFile)) return moves; // `render` will fail on this next, with a better message
+  const source = fs.readFileSync(configFile, 'utf8');
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length) {
+    log(`could not forward renamed waffle refs — ${CONFIG_FILE} did not parse cleanly; leaving it untouched`);
+    return moves;
+  }
+  const include = doc.getIn(['include']);
+  if (!include || typeof include !== 'object' || !('items' in include)) return moves;
+
+  let text = source;
+  const entries = /** @type {any} */ (include).items ?? [];
+  for (let i = 0; i < entries.length; i += 1) {
+    const current = doc.getIn(['include', i]);
+    if (typeof current !== 'string') continue;
+    const from = current.trim();
+    const parsed = parseRef(from);
+    if (parsed.form === 'stack') continue; // a stack name; the registry governs waffles only
+    const forward = replacementFor(registry, parsed.kind, parsed.name);
+    if (!forward) continue;
+    const next = writeScalar(text, ['include', i], forward.ref);
+    if (next === null) {
+      // Defensive, and unreachable through the branches above: the ref differs from its replacement
+      // (a tombstone cannot name itself — `replacementFor` rejects that as a cycle), yet the write
+      // did not land. Report the truth: nothing was written.
+      moves.push({ from, to: forward.ref, action: 'unwritable' });
+      log(`\`include:\` still names ${from}, renamed to ${forward.ref}, and could not be rewritten in place — edit ${CONFIG_FILE} by hand`);
+      continue;
+    }
+    text = next;
+    const chain = forward.via.length > 1 ? ` (via ${forward.via.slice(1).join(' → ')})` : '';
+    moves.push({ from, to: forward.ref, action: 'forwarded' });
+    log(`include: ${from} → ${forward.ref}${chain} (renamed in the toolkit)`);
+  }
+
+  // The dirty guard is the bytes themselves, exactly as in `reconcileToolkitRefPins`.
+  if (text !== source) fs.writeFileSync(configFile, text);
+  return moves;
 }
 
 /**

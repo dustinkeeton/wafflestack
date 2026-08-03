@@ -75,6 +75,15 @@ candidates listed). Installing an item automatically pulls its dependency closur
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across
 stacks, and required config is scoped to what the selected items actually use.
 
+**Install only what the inventory lists.** The inventory is generated from the toolkit's
+**waffle registry**, which decides what is on offer: a waffle marked **work-in-progress**
+exists in the toolkit source but is deliberately absent from the inventory, and installing
+its ref fails. Do not go looking for item names in the toolkit source — if it is not in the
+inventory, it is not installable. An item shown as **(deprecated)** still installs; prefer
+its successor when one is named. A ref for a waffle that has been **renamed** keeps working:
+it is forwarded to the new name, and `wafflestack upgrade` rewrites the stale ref in
+`.waffle/waffle.yaml`.
+
 **Opt-in syrup items are opt-in — never pour them silently.** A stack's generic `files/`
 payloads are called **syrup**; the inventory flags some as **opt-in syrup**: sensitive files
 (e.g. a workflow that needs write permissions on the repo) that enabling their stack does

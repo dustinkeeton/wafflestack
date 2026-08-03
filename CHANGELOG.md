@@ -32,6 +32,23 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Waffle registry: gate availability and control renames (#335).** New `stacks/registry.yaml` — the
+  single source of truth for waffle identity, location, and availability. One entry per agent/skill
+  (`{ name, kind, stack, path, status, replacedBy?, note? }`), populated from the current tree (14
+  agents + 37 skills across 9 stacks, all `stable`). Four statuses: **`stable`** (offered),
+  **`wip`** (in the repo, offered to nobody — develop a waffle in the open without shipping it),
+  **`deprecated`** (still offered, may name a successor), and **`replaced`** (a tombstone carrying
+  the forward-fix for a consumer who pinned the old name). It is *enforced*: the new
+  `validateRegistry` reconciles the registry against the filesystem **and** every `stack.yaml`, so a
+  rename, a move, or an unregistered waffle turns `validate` red — a rename is now a three-part edit
+  (files, `stack.yaml`, tombstone + new entry). Consumer-facing resolution is gated on it
+  (`resolveRef` refuses a `wip` ref, stack expansion skips it, an agent's `skills:` closure drops it,
+  the setup inventory omits it), and a stale `include:` ref naming a renamed waffle is **forwarded**
+  to its successor at render (with a warning) and rewritten in `.waffle/waffle.yaml` by `upgrade`.
+  Syrup (`files/` payloads) and external `source:` stacks are deliberately out of registry scope; a
+  toolkit shipping no registry file is ungated and unenforced, exactly as before. Documented in
+  `schema/FORMAT.md`, `schema/SETUP.md`, and `AGENTS.md`. **Consumer impact:** none — no rendered
+  output changes and no config change is required; every waffle on offer today stays on offer.
 - **Recommended-stacks flag; mark `orchestration` recommended (#201).** A stack's `stack.yaml` may
   now declare `recommended: true`, read by `loadStack` and exposed as `Stack.recommended`. The
   generated setup inventory marks such stacks **recommended (default-selected)** and the

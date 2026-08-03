@@ -6,6 +6,16 @@ import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
 import { HARNESS_BUILTINS, HARNESS_PATTERNS } from './project.mjs';
+import {
+  REGISTRY_FILE,
+  WAFFLE_KINDS,
+  WAFFLE_STATUSES,
+  LIVE_STATUSES,
+  REGISTRY_ENTRY_KEYS,
+  canonicalWafflePath,
+  refKindOf,
+  waffleStatus,
+} from './registry.mjs';
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -84,8 +94,273 @@ export function validateToolkit(rootDir) {
   const problems = [];
   problems.push(...validateHarnessBuiltins());
   problems.push(...validateSourceBytes(rootDir));
+  problems.push(...validateRegistry(rootDir, toolkit));
   for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
   return problems;
+}
+
+/**
+ * Reconcile the waffle registry against the filesystem AND against every `stack.yaml` (#335).
+ *
+ * **This is what makes a rename or a move impossible to land quietly.** Before the registry, a
+ * waffle's existence was whatever happened to be on disk, so moving `stacks/a/skills/x` to
+ * `stacks/b/skills/x` broke nothing here and everything at the next consumer render. Now the
+ * registry states where each waffle lives and whether it is offered, and three-way divergence is a
+ * red: a waffle on disk that nobody registered, a registered waffle whose path does not exist or is
+ * not the one the loader would use, or a `stack.yaml` naming a waffle the registry does not carry.
+ *
+ * Scope, and the two deliberate exclusions:
+ *   - **Absent registry ⇒ no problems at all.** A toolkit is allowed not to have one (a fork, a
+ *     fixture); what it forfeits is this enforcement, not the ability to render. `validateToolkit`
+ *     is toolkit-DEVELOPER lint, so the toolkit that ships a registry is the one that must keep it
+ *     honest — and that this repo ships one is pinned by its own content test, not inferred here.
+ *   - **Built-in stacks only.** `validateToolkit` loads `rootDir` alone, so an external `source:`
+ *     stack never reaches this function; and `validateExternalStacks` deliberately does not call
+ *     it. A third-party stack is governed by ITS toolkit's registry, and reddening a consumer's
+ *     render because someone else's waffle is missing from OUR file would be nonsense.
+ *   - **Syrup is out of scope.** `files/` payloads are addressed by output path and gated by
+ *     `optIn:`; see the registry.mjs docblock.
+ *
+ * @param {string} rootDir toolkit root
+ * @param {import('./toolkit.mjs').Toolkit} toolkit the loaded toolkit (its `registry` is read)
+ * @returns {string[]} problems (empty = clean, or no registry to reconcile)
+ */
+export function validateRegistry(rootDir, toolkit) {
+  const registry = toolkit.registry;
+  if (!registry?.present) return [];
+  const problems = [];
+  const where = REGISTRY_FILE;
+
+  // ── 1. Per-entry shape ────────────────────────────────────────────────────────────────────
+  // Every check below reports against `<name> (kind)` where those are usable and the raw index
+  // otherwise, so a nameless entry is still locatable in the file.
+  const seen = new Map();
+  for (const e of registry.entries) {
+    const at = e.name && e.kind ? `${e.kind} "${e.name}"` : `entry #${e.index + 1}`;
+    if (!e.raw || typeof e.raw !== 'object' || Array.isArray(e.raw)) {
+      problems.push(`${where}: ${at} must be a mapping (name, kind, stack, path, status)`);
+      continue;
+    }
+    if (e.unknownKeys.length) {
+      problems.push(
+        `${where}: ${at} has unknown key${e.unknownKeys.length > 1 ? 's' : ''} ` +
+          `${e.unknownKeys.map((k) => `"${k}"`).join(', ')} (allowed: ${REGISTRY_ENTRY_KEYS.join(', ')})`,
+      );
+    }
+    if (!e.name) problems.push(`${where}: ${at} is missing a \`name\``);
+    if (!e.kind) {
+      problems.push(`${where}: ${at} needs a \`kind\` of ${WAFFLE_KINDS.join(' or ')} (syrup files are not registered)`);
+    }
+    if (!e.status) {
+      problems.push(`${where}: ${at} needs a \`status\` of ${WAFFLE_STATUSES.join(' | ')}`);
+    }
+    if (!e.name || !e.kind || !e.status) continue;
+
+    const key = `${e.kind}/${e.name}`;
+    if (seen.has(key)) {
+      problems.push(`${where}: ${at} is registered twice (entries #${seen.get(key) + 1} and #${e.index + 1}) — a waffle has ONE entry`);
+      continue;
+    }
+    seen.set(key, e.index);
+
+    if (e.status === 'replaced') {
+      // A tombstone names no live location — it exists precisely because there is none. A `stack:`
+      // or `path:` on one would be a claim that outlives the thing it describes.
+      for (const field of ['stack', 'path']) {
+        if (e[field]) problems.push(`${where}: ${at} is \`replaced\`, so it must not declare a \`${field}\` — a tombstone names no location`);
+      }
+      if (!e.replacedBy) {
+        problems.push(
+          `${where}: ${at} is \`replaced\` but declares no \`replacedBy\` — that is the forward-fix a pinned ` +
+            `consumer is carried across; a waffle removed outright should be deleted from the registry instead`,
+        );
+      }
+      continue;
+    }
+
+    if (!LIVE_STATUSES.includes(e.status)) continue; // unreachable; keeps the narrowing honest
+    if (e.replacedBy && e.status !== 'deprecated') {
+      problems.push(`${where}: ${at} declares \`replacedBy\` but is \`${e.status}\` — only \`deprecated\` and \`replaced\` name a successor`);
+    }
+    if (!e.stack) problems.push(`${where}: ${at} is \`${e.status}\`, so it must declare the \`stack\` that owns it`);
+    if (!e.path) problems.push(`${where}: ${at} is \`${e.status}\`, so it must declare its \`path\``);
+    if (!e.stack) continue;
+
+    // ── 2. Registry → stack.yaml → filesystem ───────────────────────────────────────────────
+    const stack = toolkit.stacks.get(e.stack);
+    if (!stack) {
+      problems.push(`${where}: ${at} names stack "${e.stack}", which is not a stack in toolkit.yaml`);
+      continue;
+    }
+    const expected = canonicalWafflePath(e.stack, e.kind, e.name);
+    if (e.path && e.path !== expected) {
+      problems.push(
+        `${where}: ${at} records path "${e.path}" but a ${e.kind} of that name in stack "${e.stack}" ` +
+          `is loaded from "${expected}" — the loader joins the bare manifest name under the stack dir, so no other path can be real`,
+      );
+    }
+    if (!fs.existsSync(path.join(rootDir, expected))) {
+      problems.push(`${where}: ${at} is registered at "${expected}", which does not exist — the waffle was moved or deleted without updating the registry`);
+    }
+    const refKind = refKindOf(e.kind);
+    if (refKind && !itemsOfKind(stack, refKind).some((i) => i.name === e.name)) {
+      problems.push(
+        `${where}: ${at} is registered under stack "${e.stack}", but that stack's stack.yaml does not list it ` +
+          `under \`${refKind}:\` — the registry and the manifest must agree on what the stack contains`,
+      );
+    }
+  }
+
+  // ── 3. Tombstone integrity ────────────────────────────────────────────────────────────────
+  // A `replaced` entry claims the old name is GONE and names its successor. Both halves are
+  // checked: a name that still resolves is not replaced (it is a duplicate that would shadow the
+  // live waffle at the forwarding gate), and a `replacedBy` that resolves to nothing forwards a
+  // pinned consumer into a second error.
+  for (const e of registry.entries) {
+    if (e.status !== 'replaced' || !e.name || !e.kind) continue;
+    const at = `${e.kind} "${e.name}"`;
+    const refKind = refKindOf(e.kind);
+    const stillLive = refKind ? findItems(toolkit, refKind, e.name) : [];
+    if (stillLive.length) {
+      problems.push(
+        `${where}: ${at} is \`replaced\`, but a ${e.kind} of that name still exists in stack ` +
+          `"${stillLive[0].stackName}" — a tombstone is for a name that is gone`,
+      );
+    }
+    if (!e.replacedBy) continue;
+    const target = seen.has(`${e.kind}/${e.replacedBy}`)
+      ? registry.entries.find((c) => c.kind === e.kind && c.name === e.replacedBy)
+      : null;
+    if (!target) {
+      problems.push(`${where}: ${at} is replaced by "${e.replacedBy}", which is not a registered ${e.kind}`);
+    } else if (target.status === 'wip') {
+      problems.push(
+        `${where}: ${at} is replaced by "${e.replacedBy}", which is \`wip\` — a consumer forwarded there ` +
+          `would land on a waffle that is not offered`,
+      );
+    } else if (target.status === 'replaced' && !followsToLive(registry, e)) {
+      problems.push(
+        `${where}: ${at} is replaced by "${e.replacedBy}", whose own \`replacedBy\` chain does not end at a ` +
+          `live waffle (a cycle, or a chain that is too long) — a pinned consumer would never be forwarded`,
+      );
+    }
+  }
+
+  // ── 4. Deprecation advice must resolve ────────────────────────────────────────────────────
+  for (const e of registry.entries) {
+    if (e.status !== 'deprecated' || !e.replacedBy || !e.name || !e.kind) continue;
+    if (!seen.has(`${e.kind}/${e.replacedBy}`)) {
+      problems.push(`${where}: ${e.kind} "${e.name}" is deprecated in favour of "${e.replacedBy}", which is not a registered ${e.kind}`);
+    }
+  }
+
+  // ── 5. Filesystem/manifest → registry (the un-registered side) ────────────────────────────
+  // Walked over both the MANIFEST and the DISK, because they catch different escapes: a waffle
+  // listed in `stack.yaml` but absent from the registry, and a waffle sitting in a stack's
+  // `agents/`/`skills/` directory that no manifest lists AND no registry entry covers — the exact
+  // residue a half-finished move leaves behind.
+  for (const [stackName, stack] of toolkit.stacks) {
+    for (const [refKind, items] of [['agents', stack.agents], ['skills', stack.skills]]) {
+      for (const item of /** @type {any[]} */ (items)) {
+        if (!registry.live.has(`${stackName}::${refKind}/${item.name}`)) {
+          problems.push(
+            `${where}: stack "${stackName}" lists ${refKind}/${item.name} in stack.yaml, but it is not in the waffle ` +
+              `registry — add an entry (status: stable, or wip while it is being written)`,
+          );
+        }
+      }
+    }
+    for (const { kind, name } of wafflesOnDisk(stack.dir)) {
+      const refKind = refKindOf(kind);
+      if (refKind && !registry.live.has(`${stackName}::${refKind}/${name}`)) {
+        problems.push(
+          `${where}: ${canonicalWafflePath(stackName, kind, name)} exists on disk but is not in the waffle registry ` +
+            `— register it, or delete it if it is the residue of a move`,
+        );
+      }
+    }
+  }
+
+  // ── 6. A strict dependency on something that is never offered ─────────────────────────────
+  // `requires:` is an authored PROMISE, resolved strictly — so an offered waffle promising a `wip`
+  // one is a promise the render cannot keep: the dependent installs, its declared dependency is
+  // gated out of every entry path, and nothing downstream notices. (The lenient agent-frontmatter
+  // `skills:` list is deliberately NOT checked here — a grant-pointer at an absent skill is its
+  // normal case, which is what lets an agent ship while its skill is still being written.)
+  for (const [stackName, stack] of toolkit.stacks) {
+    for (const [itemRef, deps] of Object.entries(stack.requires ?? {})) {
+      const parsed = parseRef(itemRef);
+      if (parsed.form === 'stack') continue; // `validateStack` already reports this
+      if (waffleStatus(registry, stackName, parsed.kind, parsed.name) === 'wip') continue; // wip may need wip
+      for (const dep of deps ?? []) {
+        /** @type {import('./refs.mjs').DepNode} */
+        let node;
+        try {
+          node = resolveDepStrict(toolkit, dep, stackName);
+        } catch {
+          continue; // a dangling requires: is `validateStack`'s report, not this one's
+        }
+        if (waffleStatus(registry, node.stack, node.kind, node.name) !== 'wip') continue;
+        problems.push(
+          `${where}: stack "${stackName}" declares requires[${itemRef}] → ${node.kind}/${node.name}, which is \`wip\` ` +
+            `— an offered waffle cannot depend on one that is never installed; mark the dependent \`wip\` too, or ship the dependency`,
+        );
+      }
+    }
+  }
+
+  return problems;
+}
+
+/**
+ * Does this tombstone's `replacedBy` chain terminate at a registered, non-`replaced` waffle?
+ * Mirrors `replacementFor`'s walk (same hop budget) but answers the question `validate` asks —
+ * whether a forward is POSSIBLE — rather than producing the target.
+ *
+ * @param {import('./registry.mjs').Registry} registry
+ * @param {import('./registry.mjs').RegistryEntry} start
+ * @returns {boolean}
+ */
+function followsToLive(registry, start) {
+  const kind = start.kind;
+  const seen = new Set([start.name]);
+  let next = start.replacedBy;
+  for (let hop = 0; hop < 8; hop += 1) {
+    if (!next || seen.has(next)) return false;
+    seen.add(next);
+    const entry = registry.entries.find((c) => c.kind === kind && c.name === next);
+    if (!entry) return false;
+    if (entry.status !== 'replaced') return true;
+    next = entry.replacedBy;
+  }
+  return false;
+}
+
+/**
+ * Every agent/skill directory entry physically present under a stack dir — `agents/<name>.md` and
+ * `skills/<name>/`, one level deep, no recursion. Deliberately independent of `stack.yaml`: this
+ * is the "what is actually on disk" half of the three-way reconcile, and reading the manifest to
+ * find it would defeat the point. A stack with no `agents/` or no `skills/` dir yields nothing.
+ *
+ * @param {string} stackDir
+ * @returns {{ kind: string, name: string }[]}
+ */
+function wafflesOnDisk(stackDir) {
+  /** @type {{ kind: string, name: string }[]} */
+  const found = [];
+  const agentsDir = path.join(stackDir, 'agents');
+  if (fs.existsSync(agentsDir)) {
+    for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.md')) found.push({ kind: 'agent', name: entry.name.slice(0, -3) });
+    }
+  }
+  const skillsDir = path.join(stackDir, 'skills');
+  if (fs.existsSync(skillsDir)) {
+    for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) found.push({ kind: 'skill', name: entry.name });
+    }
+  }
+  return found;
 }
 
 /** Text extensions the control-byte lint scans; everything else under the roots is skipped. */

@@ -365,6 +365,18 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     );
   }
 
+  // #335: an `include:` ref naming a waffle that has since been RENAMED. The registry's tombstone
+  // forwarded it, so the render is complete and correct — a toolkit-side rename must not break a
+  // downstream repo. But the consumer's config is now stale, and a silent forward would keep it that
+  // way forever, so name the move and the one command that makes it permanent.
+  for (const { from, to, via } of selection.forwarded ?? []) {
+    const chain = via.length > 1 ? ` (via ${via.slice(1).join(' → ')})` : '';
+    warnings.push(
+      `\`include:\` still names ${from}, which was renamed to ${to}${chain} — it was forwarded, so this render ` +
+        `is complete, but the pin is stale. Run \`wafflestack upgrade\` to rewrite it, or edit ${CONFIG_FILE} by hand.`,
+    );
+  }
+
   // #364: a SELECTED waffle whose `requires:` edge lands on a scoped-out file renders WITHOUT that
   // dependency — the "half-installed and silent" failure #74 prevents, via the one entry path with
   // neither warning nor lint. For opt-in syrup, enabling a target clears the scope-broken condition
