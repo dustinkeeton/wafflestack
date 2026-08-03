@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-07-15
+last-updated: 2026-08-02
 ---
 
 # AGENTS.md — wafflestack
@@ -13,12 +13,13 @@ and behavior tests; agent-behavior rules live in skill/agent markdown, which is 
 (DECISIONS.md 2026-07-15, #388).
 
 Entry points: `installer/cli.mjs` (bin `wafflestack`) · `toolkit.yaml` (stack registry) ·
-`schema/FORMAT.md` (format reference).
+`stacks/registry.yaml` (waffle registry) · `schema/FORMAT.md` (format reference).
 
 ## Repository layout
 
 ```
 toolkit.yaml               registry: name + ordered stack list
+stacks/registry.yaml       WAFFLE registry (#335): one entry per agent/skill — name, kind, stack, path, status (stable|wip|deprecated|replaced), replacedBy
 stacks/<name>/
   stack.yaml               manifest: recommended, agents, skills, files, optIn, requires, prerequisites, config, env, setup
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
@@ -41,6 +42,17 @@ assets/                    brand assets + brand guide (assets/README.md)
 `toolkit.yaml` lists 9 stacks (14 agents + 37 skills). Per-stack config schema, env,
 prerequisites, requires edges, and setup notes live in each `stack.yaml` (authoritative —
 this table summarizes).
+
+`stacks/registry.yaml` is the WAFFLE registry (#335): one entry per agent/skill —
+`{ name, kind: agent|skill, stack, path, status: stable|wip|deprecated|replaced, replacedBy?, note? }`.
+All 51 are currently `stable`. It is ENFORCED, not advisory: `validateRegistry` reconciles it
+against the filesystem AND every `stack.yaml`, so a rename/move/add cannot land without it (a
+rename is a three-part edit: files, `stack.yaml`, tombstone + new entry). `wip` waffles are gated
+out of every consumer-facing surface (`resolveRef` refuses, stack expansion skips,
+`resolveAgentSkill` drops, the setup inventory omits); a `replaced` tombstone FORWARDS a stale
+`include:` ref at render (warned) and `upgrade` rewrites it. Syrup (`files/`) and external
+(`provenance`-bearing) stacks are out of registry scope; an absent registry file = ungated,
+unenforced (a fork), a corrupt one = hard error.
 
 | Stack | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
@@ -99,20 +111,21 @@ export function readTreeLock(cwd)              // → readLocalLock(cwd) ?? read
 export function configGuardProblems({ toolkit, project, selection }) // → string[] — the guard failures a render WOULD produce, without rendering (#218; runs the real substitute() per used guarded key, so bare doctor enforces pattern:/entryPatterns:)
 export function collectUsedKeys(items)         // → Set<string> placeholder keys referenced by a selection's source content
 
-// refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs)
+// refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs + the registry gate from registry.mjs)
 export function itemOutputMatcher(kind, name)  // → (rel) => boolean — item → lock-path predicate (eject + list; stack-BLIND, matches by path)
 export function normalizeItemRef(ref)          // → "agents/NAME" | "skills/NAME"
 export function itemsOfKind(stack, kind)       // → stack.agents | stack.skills
 export function findItems(toolkit, kind, name) // → [{ stackName, item }] across the toolkit
 export function parseRef(raw)                  // → { form: 'qualified'|'item'|'stack', … }
-export function resolveRef(toolkit, raw)       // → { type:'stack',name } | { type:'item',kind,name,stack,item,canonicalRef }; throws
+export function resolveRef(toolkit, raw)       // → { type:'stack',name } | { type:'item',kind,name,stack,item,canonicalRef,forwardedFrom? }; throws — registry-gated (#335): a `wip` ref is REFUSED (its own message, not "unknown"; wip matches are filtered before the unknown/ambiguous count decides), a `replaced` ref is FORWARDED to its successor with forwardedFrom set
 export function resolveDepStrict(toolkit, refString, preferStack) // → { kind,name,stack,item }; throws (authored requires: dep)
-export function resolveAgentSkill(toolkit, name, preferStack)     // → { kind:'skills',name,stack,item } | null (lenient grant-pointer)
+export function resolveAgentSkill(toolkit, name, preferStack)     // → { kind:'skills',name,stack,item } | null (lenient grant-pointer; null also for a `wip` skill, #335)
+export function isWipWaffle(toolkit, stackName, kind, name) // → boolean — the registry gate, toolkit-shaped (#335); false for an unregistered waffle or a registry-less toolkit
 export function closureFor(toolkit, root)      // → [{ kind,name,stack,item }] BFS closure, root first, deduped
 export function closureDeps(toolkit, root)     // → ["kind/name"…] non-root deps
 export function includeRefMatches(includeRef, kind, name) // → boolean
 export function fileMatchesTargets(item, targets) // → boolean (#364: no targets: ⇒ renders unconditionally; scoped ⇒ ≥1 declared target enabled; non-files items always match)
-export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set, both eject-filtered
+export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set, both eject-filtered; forwarded = include: refs the registry carried across a rename (#335), warned by render, rewritten by upgrade; stack expansion skips `wip` waffles
 export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, stackName, companions, scopedTo }] (#74: opt-in syrup gated out while its companion skill IS selected; scopedTo non-null ⇒ target scope excludes this project, warning withholds the pour command but is still issued, #364)
 
 // template.mjs — {{placeholder}} substitution (PLACEHOLDER regex template.mjs:7; MAX_SUBSTITUTION_DEPTH = 4, template.mjs:15)
@@ -123,9 +136,23 @@ export function formatValue(v)                 // → string (string[] joins ", 
 export function placeholderKeys(text)          // → Set<string>
 export function compilePattern(pattern)        // → RegExp (full-match ^(?:…)$)
 
+// registry.mjs — the WAFFLE registry (#335): stacks/registry.yaml → identity, location, availability
+export const REGISTRY_FILE = 'stacks/registry.yaml'
+export const WAFFLE_KINDS = ['agent', 'skill']        // SINGULAR item vocabulary; syrup is out of scope
+export const WAFFLE_STATUSES = ['stable', 'wip', 'deprecated', 'replaced']
+export const LIVE_STATUSES = ['stable', 'wip', 'deprecated']   // statuses that still exist on disk
+export const REGISTRY_ENTRY_KEYS = ['name','kind','stack','path','status','replacedBy','note']
+export function refKindOf(kind)                // 'agent'|'skill' → 'agents'|'skills' | null
+export function waffleKindOf(kind)             // 'agents'|'skills' → 'agent'|'skill' | null ('files' ⇒ null, out of scope)
+export function canonicalWafflePath(stack, kind, name) // → the ONLY path loadStack could load it from | null
+export function loadRegistry(rootDir)          // → { present, file, entries, live: Map<"stack::kind/name">, replaced: Map<"kind/name"> } — absent file ⇒ { present:false } (silent no-op); present-but-unreadable ⇒ THROWS; per-entry shape defers to validate
+export function waffleStatus(registry, stackName, refKind, name) // → status | null (null = unregistered = available; keyed on the OWNING stack, since a name is not toolkit-unique)
+export function isWaffleWip(registry, stackName, refKind, name) // → boolean — fail-open: ONLY the exact string 'wip' gates, because gating DELETES a poured waffle
+export function replacementFor(registry, refKind, name) // → { ref, name, via } | null — walks the replacedBy chain transitively; null on a cycle or >8 hops
+
 // toolkit.mjs — load toolkit.yaml + stack manifests
-export function loadToolkit(rootDir)           // → { name, description, stacks: Map } — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201); stale manifest `syrup:` key throws (0.10.0, #59)
-export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125)
+export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201); stale manifest `syrup:` key throws (0.10.0, #59)
+export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125); carries the BUILT-IN registry unchanged — external waffles are unregistered here, hence never gated (#335)
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) // → string[] (usedKeys Set scopes to referenced keys)
 
 // project.mjs — consuming-project config, targets, harness built-ins, .gitignore + YAML write helpers
@@ -174,7 +201,8 @@ export function applicableMigrations(fromVersion, toVersion, migrations = MIGRAT
 export function runMigrations({ cwd, fromVersion, toVersion, migrations, log }) // → steps that ran
 
 // upgrade.mjs — version diff, changelog delta, migrations, pin reconcile (#372), re-render + doctor
-export function upgrade({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = null, migrations, changelog, sourceCacheDir, log }) // → { ok, status, fromVersion, toVersion, identity, changelogDelta, migrationsRun, render, doctor, sourceMoves, toolkitMove, pinMoves, newerRelease, notes } — renders with refreshSources: true; call order: runMigrations → reconcileToolkitRefPins → renderProject (render re-reads waffle.yaml, so one run bakes the new pin into the render); runs on EVERY status incl. current; newerRelease = { tag, command } | null names the pinned command a stale pinned CLI cannot itself run (no re-exec, #373); pinMoves/newerRelease ride the render-failed early return too
+export function upgrade({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = null, migrations, changelog, sourceCacheDir, log }) // → { ok, status, fromVersion, toVersion, identity, changelogDelta, migrationsRun, render, doctor, sourceMoves, toolkitMove, pinMoves, waffleMoves, newerRelease, notes } — renders with refreshSources: true; call order: runMigrations → reconcileToolkitRefPins → forwardRenamedWaffleRefs (#335) → renderProject (render re-reads waffle.yaml, so one run bakes the new pin into the render); runs on EVERY status incl. current; newerRelease = { tag, command } | null names the pinned command a stale pinned CLI cannot itself run (no re-exec, #373); pinMoves/newerRelease ride the render-failed early return too
+export function forwardRenamedWaffleRefs({ toolkitRoot, cwd, log, writeScalar = setScalarIn }) // → [{ from, to, action: 'forwarded'|'unwritable' }] (#335) — rewrites `include:` refs naming a `replaced` waffle to its successor in the COMMITTED waffle.yaml only; unqualified target (the successor may live in another stack); byte-verbatim via setScalarIn, dirty-guarded; never touches stacks:/eject:; a corrupt/absent registry writes nothing
 export function reconcileToolkitRefPins({ cwd, identity = null, log }) // → pinMoves [{ key, from, to, action: 'bumped'|'unchanged'|'left'|'skipped', reason }] (#372) — rewrites config.doctor.toolkitRef / config.waffle.toolkitRef in the COMMITTED waffle.yaml (never the .local overlay) to toolkitPinFromIdentity(identity), iff the value is already a shorthand release pin; byte-verbatim via setScalarIn, dirty-guarded; null pin (unreleased/unverified/checkout-release) ⇒ nothing written, reason logged; a URL-form pin (#386 F3) is read but never rewritten — reported `left` with the remedy
 export function diffSources(oldSources, newSources) // → [{ name, ref, sourceType, from, to, status: 'moved'|'added'|'removed' }] (#125)
 export function diffToolkit(prev, next, { fromVersion, toVersion }) // → { from, to, fromRef, toRef, fromVersion, toVersion, fromStatus, toStatus, status: 'moved'|'unchanged'|'added'|'removed'|'unknown' } | null (#374; 'moved' at the SAME version = a re-cut tag; 'unknown' = one side recorded no commit)
@@ -193,7 +221,8 @@ export function init({ cwd })                  // → configFile path (starter .
 // validate.mjs — toolkit-developer lint (render imports only validateExternalStacks; targets: is NOT
 // linted here — all four malformations are hard LOAD errors in toolkit.mjs, a gate a fork cannot skip)
 export const RESERVED_AGENT_KEYS = ['name', 'description', 'skills', 'identity'] // validate.mjs:74
-export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, prerequisites fields, harness built-ins
+export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, prerequisites fields, harness built-ins, waffle-registry reconcile
+export function validateRegistry(rootDir, toolkit) // → string[] — the registry ↔ filesystem ↔ stack.yaml three-way reconcile (#335): entry shape/unknown keys, duplicates, stack+path must be the loader's path and exist, stack.yaml must list it, tombstone must NOT still resolve and its replacedBy chain must end live, un-registered waffles on disk OR in a manifest, and an offered waffle requiring a `wip` one. [] when the toolkit ships no registry (fork/fixture) or the stack is external
 export function validateSourceBytes(rootDir)   // → string[] — raw control bytes in installer/ + stacks/ text sources
 export function validateHarnessBuiltins()      // → string[] — every HARNESS_PATTERNS guard compiles and its built-in default satisfies it
 export function validateExternalStacks(toolkit) // → string[] — lint only source-bearing stacks (render calls pre-write, #126)
@@ -295,19 +324,20 @@ cli.mjs      → render, doctor, eject, validate, setup, upgrade, uninstall, too
                prerequisites, list, toolkit-ref, project, avatars-sync (dynamic)
 render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, project, util
 doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, util
-upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, util
+upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
 eject.mjs    → render, toolkit, refs, project, util
-validate.mjs → toolkit, template, refs, prerequisites, project, util
-setup.mjs    → toolkit, render, project, refs, prerequisites, util
+validate.mjs → toolkit, template, refs, prerequisites, project, registry, util
+setup.mjs    → toolkit, render, project, refs, prerequisites, registry, util
 list.mjs     → toolkit, render, refs, project, util
 waffledocs.mjs → template, project, refs, util
 avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
 migrations.mjs → project, util
-toolkit.mjs  → refs, sources, prerequisites, project (VALID_TARGETS only), util
+toolkit.mjs  → refs, sources, prerequisites, registry, project (VALID_TARGETS only), util
 prerequisites.mjs → refs
-refs.mjs     → project (VALID_TARGETS only; project.mjs imports no sibling but util.mjs — no cycle)
+refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle)
+registry.mjs → util
 sources.mjs  → util
 toolkit-ref.mjs → util
 project.mjs  → util

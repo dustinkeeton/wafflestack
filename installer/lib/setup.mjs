@@ -3,7 +3,8 @@ import path from 'node:path';
 import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
 import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
-import { computeSelection, skippedSyrupCompanions, fileMatchesTargets } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle } from './refs.mjs';
+import { waffleStatus } from './registry.mjs';
 import { readTreeLock, collectUsedKeys } from './render.mjs';
 import {
   applicablePrerequisites,
@@ -346,8 +347,17 @@ export function toolkitInventory(toolkit, version) {
     const marker = stack.recommended ? ' — **recommended (default-selected)**' : '';
     lines.push(`## stack: ${stack.name}${marker}`, '');
     if (stack.description) lines.push(stack.description, '');
-    lines.push(`- skills: ${stack.skills.map((s) => `skills/${s.name}`).join(', ') || '(none)'}`);
-    lines.push(`- agents: ${stack.agents.map((a) => `agents/${a.name}`).join(', ') || '(none)'}`);
+    // #335: the inventory is the OFFERING surface — the list a setup agent picks from — so a `wip`
+    // waffle must not appear on it. Offering one would be worse than a missing line: `resolveRef`
+    // refuses the ref, so the wizard would confidently install something that hard-errors. A
+    // `deprecated` waffle IS still installable, so it stays listed, marked, so the agent can prefer
+    // its successor without the entry silently vanishing from under an existing install.
+    const offered = (items, kind) =>
+      items
+        .filter((i) => !isWipWaffle(toolkit, stack.name, kind, i.name))
+        .map((i) => `${kind}/${i.name}${waffleStatus(toolkit.registry, stack.name, kind, i.name) === 'deprecated' ? ' (deprecated)' : ''}`);
+    lines.push(`- skills: ${offered(stack.skills, 'skills').join(', ') || '(none)'}`);
+    lines.push(`- agents: ${offered(stack.agents, 'agents').join(', ') || '(none)'}`);
     const isOptIn = (f) => stack.optIn.has(`files/${f.name}`);
     const plainFiles = stack.files.filter((f) => !isOptIn(f));
     const optInFiles = stack.files.filter(isOptIn);

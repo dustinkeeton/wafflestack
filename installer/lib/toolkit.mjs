@@ -6,8 +6,10 @@ import { normalizeItemRef } from './refs.mjs';
 import { VALID_TARGETS } from './project.mjs';
 import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
+import { loadRegistry } from './registry.mjs';
 
 /** @import { ExternalStackEntry } from './project.mjs' */
+/** @import { Registry } from './registry.mjs' */
 
 /**
  * The core toolkit types. This module owns them; every other module imports them from here.
@@ -79,6 +81,10 @@ import { normalizePrerequisites } from './prerequisites.mjs';
  * @property {string} name
  * @property {string} description
  * @property {Map<string, Stack>} stacks
+ * @property {Registry} registry the waffle registry (#335) — identity, location, and availability
+ *   for every agent and skill in the BUILT-IN stacks. A toolkit shipping no `stacks/registry.yaml`
+ *   carries `{ present: false }` and every gate keyed on it no-ops. External (provenance-bearing)
+ *   stacks are never registered here; see registry.mjs.
  */
 
 /**
@@ -114,14 +120,19 @@ const FILE_ENTRY_KEYS = new Set(['path', 'targets']);
  * @returns {Toolkit}
  */
 export function loadToolkit(rootDir) {
-  const registry = readYaml(path.join(rootDir, 'toolkit.yaml'));
+  // `toolkit.yaml` — the STACK list. Named `manifest` here to keep it distinct from the WAFFLE
+  // registry loaded below (#335); the two answer different questions and neither subsumes the other.
+  const manifest = readYaml(path.join(rootDir, 'toolkit.yaml'));
   const stacks = new Map();
-  for (const name of registry.stacks ?? []) {
+  for (const name of manifest.stacks ?? []) {
     const dir = path.join(rootDir, 'stacks', name);
     if (!exists(path.join(dir, 'stack.yaml'))) continue; // not yet authored
     stacks.set(name, loadStack(name, dir));
   }
-  return { name: registry.name, description: registry.description, stacks };
+  // The waffle registry (#335) rides on the loaded toolkit so every gate — ref resolution, stack
+  // expansion, the setup inventory — reads the same indexed copy the validator reconciled, rather
+  // than each re-reading the file. Absent file ⇒ `{ present: false }` ⇒ an ungated toolkit.
+  return { name: manifest.name, description: manifest.description, stacks, registry: loadRegistry(rootDir) };
 }
 
 /**
@@ -192,7 +203,10 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
     origin.set(ext.name, `external source ${describeSource(ext)}`);
   }
 
-  return { name: builtin.name, description: builtin.description, stacks };
+  // The BUILT-IN registry rides through unchanged (#335). An external stack is governed by its own
+  // toolkit's registry, not ours: its waffles are simply unregistered here, which every gate reads
+  // as "available" — so merging a source can never be gated, reddened, or forwarded by our file.
+  return { name: builtin.name, description: builtin.description, stacks, registry: builtin.registry };
 }
 
 /**

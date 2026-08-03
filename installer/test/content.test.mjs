@@ -2388,6 +2388,54 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
   });
 });
 
+// #335: the waffle registry adds schema vocabulary — a new file, four status values, and a
+// `replacedBy` forward-fix. Vocabulary that only the code knows is vocabulary an author cannot use,
+// so the docs move in lockstep with it, exactly as the `recommended:` flag's block above pins its
+// own. The MECHANICS are tested in registry.test.mjs; this pins that they are documented, and that
+// the two hazards a reader must not learn the hard way are stated where they will be read.
+describe('waffle registry: documented in lockstep with the schema (#335)', () => {
+  const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
+  const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+  const agentsMd = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf8');
+
+  test('FORMAT.md documents the file, every status value, and replacedBy', () => {
+    assert.match(formatMd, /## Waffle registry \(`stacks\/registry\.yaml`\)/);
+    assert.match(formatMd, /stacks\/registry\.yaml\s+waffle registry/); // the layout block
+    for (const status of ['stable', 'wip', 'deprecated', 'replaced']) {
+      assert.match(formatMd, new RegExp(`\\*\\*\`${status}\`\\*\\*`), `FORMAT.md must define the \`${status}\` status`);
+    }
+    assert.match(formatMd, /`replacedBy:` is what makes a rename safe for consumers/);
+  });
+
+  test('FORMAT.md states the two hazards: never wip a shipped waffle, and a rename is a 3-part edit', () => {
+    // Marking a SHIPPED waffle wip deletes it from every consumer (the render prunes what it no
+    // longer produces). A reader who learns this from a consumer's bug report learned it too late.
+    assert.match(formatMd, /Never\s+mark an already-shipped waffle `wip`\*\* — the render prunes/);
+    assert.match(formatMd, /Renaming a waffle is therefore a three-part edit/);
+  });
+
+  test('FORMAT.md states what is deliberately OUT of registry scope', () => {
+    // Both exclusions are decisions, not omissions — an author who cannot find syrup in the
+    // registry must find out WHY, not conclude the registry is incomplete.
+    assert.match(formatMd, /Syrup\*\* \(`files\/` payloads\) is not\s+registered/);
+    assert.match(formatMd, /\*\*external stacks\*\* pulled in via `source:` are governed by their own toolkit's registry/);
+  });
+
+  test('SETUP.md tells the install agent to offer only what the inventory lists', () => {
+    assert.match(setupMd, /Install only what the inventory lists/);
+    assert.match(setupMd, /work-in-progress/);
+    assert.match(setupMd, /if it is not in the\s+inventory, it is not installable/);
+    assert.match(setupMd, /it is forwarded to the new name/);
+  });
+
+  test('AGENTS.md registers the file, the module, and the enforcement entry point', () => {
+    assert.match(agentsMd, /stacks\/registry\.yaml/);
+    assert.match(agentsMd, /\/\/ registry\.mjs — the WAFFLE registry/);
+    assert.match(agentsMd, /export function validateRegistry\(rootDir, toolkit\)/);
+    assert.match(agentsMd, /export function forwardRenamedWaffleRefs/);
+  });
+});
+
 // #224: the docs agents' writing-craft skills. Each carries ONE load-bearing thesis that the
 // skill is worthless without — prose's reader-first ordering, md-maximalist's "richness must earn
 // its keep", accurate's "omission over invention". Pin the thesis, not the phrasing around it.

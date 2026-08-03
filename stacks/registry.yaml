@@ -1,0 +1,299 @@
+# The waffle registry — the single source of truth for waffle identity, location, and availability.
+#
+# A waffle is one installable item: an agent or a skill. Every waffle in every built-in stack has
+# exactly one entry here, and `wafflestack validate` reconciles this file against the filesystem
+# AND against every stack.yaml — so a waffle cannot be added, renamed, moved, or removed without
+# this file moving with it. See schema/FORMAT.md, "Waffle registry", for the authoring contract.
+#
+# Fields
+#   name        the canonical waffle name (its ref is `<kind>s/<name>`)
+#   kind        agent | skill  (syrup — `files/` payloads — is NOT registered; it is addressed by
+#               output path and gated by `optIn:`)
+#   stack       the owning stack, as listed in toolkit.yaml   (live statuses only)
+#   path        toolkit-root-relative location                (live statuses only)
+#   status      stable     offered, installable, supported
+#               wip        in the repo, offered to nobody — never installed, never rendered
+#               deprecated still offered; may name a successor in `replacedBy`
+#               replaced   a tombstone: the name is gone, and `replacedBy` forwards a pinned
+#                          consumer to its successor
+#   replacedBy  successor waffle NAME (required by `replaced`, optional on `deprecated`)
+#   note        optional free text
+#
+# Renaming a waffle is a THREE-part edit, and validate reds until all three land: move the files,
+# update the owning stack.yaml, and here replace the old entry with a `replaced` tombstone plus a
+# live entry under the new name.
+
+waffles:
+
+  # ── docs-system ─────────────────────────────────────────────────────────────
+  - name: docs-agent
+    kind: agent
+    stack: docs-system
+    path: stacks/docs-system/agents/docs-agent.md
+    status: stable
+  - name: docs-human
+    kind: agent
+    stack: docs-system
+    path: stacks/docs-system/agents/docs-human.md
+    status: stable
+  - name: docs-agent
+    kind: skill
+    stack: docs-system
+    path: stacks/docs-system/skills/docs-agent
+    status: stable
+  - name: docs-human
+    kind: skill
+    stack: docs-system
+    path: stacks/docs-system/skills/docs-human
+    status: stable
+  - name: prose
+    kind: skill
+    stack: docs-system
+    path: stacks/docs-system/skills/prose
+    status: stable
+  - name: md-maximalist
+    kind: skill
+    stack: docs-system
+    path: stacks/docs-system/skills/md-maximalist
+    status: stable
+  - name: accurate
+    kind: skill
+    stack: docs-system
+    path: stacks/docs-system/skills/accurate
+    status: stable
+
+  # ── github-workflow ─────────────────────────────────────────────────────────
+  - name: git-workflow
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/git-workflow
+    status: stable
+  - name: issue
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/issue
+    status: stable
+  - name: github-project-management
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/github-project-management
+    status: stable
+  - name: github-project-board
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/github-project-board
+    status: stable
+  - name: clean-up
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/clean-up
+    status: stable
+  - name: label-hook
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/label-hook
+    status: stable
+  - name: hygiene
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/hygiene
+    status: stable
+  - name: release
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/release
+    status: stable
+  - name: pr-response
+    kind: skill
+    stack: github-workflow
+    path: stacks/github-workflow/skills/pr-response
+    status: stable
+
+  # ── code-quality ────────────────────────────────────────────────────────────
+  - name: tdd
+    kind: skill
+    stack: code-quality
+    path: stacks/code-quality/skills/tdd
+    status: stable
+  - name: codebase-architecture
+    kind: skill
+    stack: code-quality
+    path: stacks/code-quality/skills/codebase-architecture
+    status: stable
+  - name: adversarial-review
+    kind: skill
+    stack: code-quality
+    path: stacks/code-quality/skills/adversarial-review
+    status: stable
+  - name: qa
+    kind: skill
+    stack: code-quality
+    path: stacks/code-quality/skills/qa
+    status: stable
+  - name: dry
+    kind: skill
+    stack: code-quality
+    path: stacks/code-quality/skills/dry
+    status: stable
+
+  # ── obsidian-dev ────────────────────────────────────────────────────────────
+  - name: plugin-architect
+    kind: agent
+    stack: obsidian-dev
+    path: stacks/obsidian-dev/agents/plugin-architect.md
+    status: stable
+  - name: obsidian-plugin-dev
+    kind: skill
+    stack: obsidian-dev
+    path: stacks/obsidian-dev/skills/obsidian-plugin-dev
+    status: stable
+  - name: electron-security-audit
+    kind: skill
+    stack: obsidian-dev
+    path: stacks/obsidian-dev/skills/electron-security-audit
+    status: stable
+
+  # ── orchestration ───────────────────────────────────────────────────────────
+  - name: project-manager
+    kind: agent
+    stack: orchestration
+    path: stacks/orchestration/agents/project-manager.md
+    status: stable
+  - name: product-manager
+    kind: agent
+    stack: orchestration
+    path: stacks/orchestration/agents/product-manager.md
+    status: stable
+  - name: task-planner
+    kind: agent
+    stack: orchestration
+    path: stacks/orchestration/agents/task-planner.md
+    status: stable
+  - name: delegate
+    kind: skill
+    stack: orchestration
+    path: stacks/orchestration/skills/delegate
+    status: stable
+  - name: autopilot
+    kind: skill
+    stack: orchestration
+    path: stacks/orchestration/skills/autopilot
+    status: stable
+  - name: audit
+    kind: skill
+    stack: orchestration
+    path: stacks/orchestration/skills/audit
+    status: stable
+  - name: docs
+    kind: skill
+    stack: orchestration
+    path: stacks/orchestration/skills/docs
+    status: stable
+  - name: standup
+    kind: skill
+    stack: orchestration
+    path: stacks/orchestration/skills/standup
+    status: stable
+
+  # ── engineering-team ────────────────────────────────────────────────────────
+  - name: lead-engineer
+    kind: agent
+    stack: engineering-team
+    path: stacks/engineering-team/agents/lead-engineer.md
+    status: stable
+  - name: data-engineer
+    kind: agent
+    stack: engineering-team
+    path: stacks/engineering-team/agents/data-engineer.md
+    status: stable
+  - name: qa-engineer
+    kind: agent
+    stack: engineering-team
+    path: stacks/engineering-team/agents/qa-engineer.md
+    status: stable
+  - name: devops-engineer
+    kind: agent
+    stack: engineering-team
+    path: stacks/engineering-team/agents/devops-engineer.md
+    status: stable
+  - name: ux-designer
+    kind: agent
+    stack: engineering-team
+    path: stacks/engineering-team/agents/ux-designer.md
+    status: stable
+  - name: security-engineer
+    kind: agent
+    stack: engineering-team
+    path: stacks/engineering-team/agents/security-engineer.md
+    status: stable
+  - name: webapp-security-audit
+    kind: skill
+    stack: engineering-team
+    path: stacks/engineering-team/skills/webapp-security-audit
+    status: stable
+
+  # ── expo-dev ────────────────────────────────────────────────────────────────
+  - name: mobile-architect
+    kind: agent
+    stack: expo-dev
+    path: stacks/expo-dev/agents/mobile-architect.md
+    status: stable
+  - name: expo-ui
+    kind: skill
+    stack: expo-dev
+    path: stacks/expo-dev/skills/expo-ui
+    status: stable
+  - name: expo-app-dev
+    kind: skill
+    stack: expo-dev
+    path: stacks/expo-dev/skills/expo-app-dev
+    status: stable
+
+  # ── harness-architect ───────────────────────────────────────────────────────
+  - name: harness-architect
+    kind: agent
+    stack: harness-architect
+    path: stacks/harness-architect/agents/harness-architect.md
+    status: stable
+
+  # ── wafflestack ─────────────────────────────────────────────────────────────
+  - name: waffle-init
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-init
+    status: stable
+  - name: waffle-setup
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-setup
+    status: stable
+  - name: waffle-install
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-install
+    status: stable
+  - name: waffle-render
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-render
+    status: stable
+  - name: waffle-upgrade
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-upgrade
+    status: stable
+  - name: waffle-doctor
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-doctor
+    status: stable
+  - name: waffle-eject
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-eject
+    status: stable
+  - name: waffle-validate
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-validate
+    status: stable

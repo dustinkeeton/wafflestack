@@ -12,6 +12,7 @@
 
 import path from 'node:path';
 import { VALID_TARGETS } from './project.mjs';
+import { isWaffleWip, replacementFor } from './registry.mjs';
 
 /** @import { Toolkit, Stack, Item } from './toolkit.mjs' */
 
@@ -25,10 +26,12 @@ import { VALID_TARGETS } from './project.mjs';
  *         | { form: 'item', kind: ItemKind, name: string }
  *         | { form: 'stack', name: string }} ParsedRef
  *
- * A ref resolved against the toolkit — discriminated on `type`.
+ * A ref resolved against the toolkit — discriminated on `type`. `forwardedFrom` is present only
+ * when the raw ref named a `replaced` waffle and the registry forwarded it (#335): it is the ref
+ * the caller ASKED for, so the caller can say which pin moved and to what.
  * @typedef {{ type: 'stack', name: string }
  *         | { type: 'item', kind: ItemKind, name: string, stack: string, item: Item,
- *             canonicalRef: string }} ResolvedRef
+ *             canonicalRef: string, forwardedFrom?: string }} ResolvedRef
  *
  * A node in a dependency closure: an item, plus the stack it was resolved from.
  * @typedef {object} DepNode
@@ -57,6 +60,11 @@ import { VALID_TARGETS } from './project.mjs';
  * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
  *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
  *   silent (#364)
+ * @property {{ from: string, to: string, via: string[] }[]} forwarded `include:` refs that named a
+ *   `replaced` waffle and were forwarded to its successor by the registry (#335). The render
+ *   proceeds — a toolkit-side rename must not break a downstream repo — but it must not proceed in
+ *   SILENCE either: the caller prints these so the consumer learns their pin is stale, and
+ *   `upgrade` rewrites it. Empty on every repo whose pins are current, which is nearly all of them
  * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
  *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
  *   filtered out: the dependent renders, its declared dependency never does. Eject-filtered on both
@@ -155,17 +163,55 @@ export function parseRef(raw) {
 }
 
 /**
+ * Is this waffle gated out of every consumer-facing surface by the registry (#335)? A thin,
+ * toolkit-shaped wrapper over `isWaffleWip` so the gate reads the same at each of the four sites
+ * below, and so a toolkit with no registry (or a hand-built test one carrying no `registry` key at
+ * all) is uniformly ungated rather than each call site remembering to check.
+ *
  * @param {Toolkit} toolkit
- * @returns {string[]} every `kind/name` item ref in the toolkit, sorted
+ * @param {string} stackName the stack the item was resolved FROM — a name is not toolkit-unique,
+ *   and one stack's `wip` waffle must not gate another stack's waffle of the same name
+ * @param {ItemKind} kind
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isWipWaffle(toolkit, stackName, kind, name) {
+  return isWaffleWip(toolkit?.registry, stackName, kind, name);
+}
+
+/**
+ * @param {Toolkit} toolkit
+ * @returns {string[]} every INSTALLABLE `kind/name` item ref in the toolkit, sorted. `wip` waffles
+ *   are omitted (#335): this list is the "Available items:" remedy printed on an unknown ref, and
+ *   naming a waffle there that `resolveRef` would then refuse is worse than saying nothing.
  */
 function availableItemRefs(toolkit) {
   const refs = new Set();
-  for (const stack of toolkit.stacks.values()) {
-    for (const a of stack.agents) refs.add(`agents/${a.name}`);
-    for (const s of stack.skills) refs.add(`skills/${s.name}`);
+  for (const [stackName, stack] of toolkit.stacks) {
+    for (const a of stack.agents) if (!isWipWaffle(toolkit, stackName, 'agents', a.name)) refs.add(`agents/${a.name}`);
+    for (const s of stack.skills) if (!isWipWaffle(toolkit, stackName, 'skills', s.name)) refs.add(`skills/${s.name}`);
     for (const f of stack.files) refs.add(`files/${f.name}`);
   }
   return [...refs].sort();
+}
+
+/**
+ * The error a consumer-facing resolution raises when a ref names a `wip` waffle (#335). A `wip`
+ * waffle is present in the repo and absent from every offering, so "unknown ref" would be a lie
+ * that sends the reader looking for a typo — say what it actually is, and that it is not yet
+ * offered.
+ *
+ * @param {string} raw the ref as the consumer wrote it
+ * @param {ItemKind} kind
+ * @param {string} name
+ * @returns {Error}
+ */
+function wipRefError(raw, kind, name) {
+  return new Error(
+    `waffle "${kind}/${name}" is marked work-in-progress in the toolkit's waffle registry and is not ` +
+      `available to install (ref "${raw}"). It exists in the toolkit source but is not offered yet; ` +
+      `it becomes installable when its registry status moves to \`stable\`.`,
+  );
 }
 
 /**
@@ -176,10 +222,18 @@ function availableItemRefs(toolkit) {
  * name is unique toolkit-wide, stack-qualified when it is not.
  * Throws with an actionable message on unknown or ambiguous refs.
  *
+ * This is the CONSUMER-FACING resolver (`install`, `include:`, `eject`), so it is where the waffle
+ * registry's two consumer-facing rules apply (#335):
+ *   - a ref naming a `replaced` waffle is **forwarded** to its successor rather than refused. A
+ *     consumer who pinned the old name keeps rendering — the alternative, erroring until they hand-
+ *     edit their config, makes a toolkit-side rename break every downstream repo. The result
+ *     carries `forwardedFrom` so the caller can SAY the pin moved, and `upgrade` rewrites it.
+ *   - a ref naming a `wip` waffle is **refused**, with a message that says so rather than "unknown".
+ *
  * @param {Toolkit} toolkit
  * @param {string} raw
  * @returns {ResolvedRef}
- * @throws on an unknown or ambiguous ref
+ * @throws on an unknown, ambiguous, or work-in-progress ref
  */
 export function resolveRef(toolkit, raw) {
   const parsed = parseRef(raw);
@@ -193,17 +247,33 @@ export function resolveRef(toolkit, raw) {
     );
   }
 
+  // Forward a renamed waffle before anything else looks on disk (#335). A tombstone exists exactly
+  // BECAUSE the old name is gone, so every lookup below would fail; and the stack qualifier of a
+  // qualified ref is equally stale (the successor may well live in a different stack), which is why
+  // the forward target is resolved unqualified. `replacementFor` walks the chain, so a pin two
+  // renames old still lands in one hop; it answers null on a cycle, and the ref then reports as
+  // unknown rather than looping.
+  const forward = replacementFor(toolkit?.registry, parsed.kind, parsed.name);
+  if (forward) {
+    const resolved = resolveRef(toolkit, forward.ref);
+    if (resolved.type !== 'item') return resolved; // unreachable: a forward target is always an item ref
+    return { ...resolved, forwardedFrom: `${parsed.kind}/${parsed.name}` };
+  }
+
   if (parsed.form === 'qualified') {
     const stack = toolkit.stacks.get(parsed.stack);
     if (!stack) throw new Error(`unknown stack "${parsed.stack}" in ref "${raw}" (have: ${stackNames})`);
     const item = itemsOfKind(stack, parsed.kind).find((i) => i.name === parsed.name);
     if (!item) {
-      const have = itemsOfKind(stack, parsed.kind).map((i) => `${parsed.stack}/${parsed.kind}/${i.name}`);
+      const have = itemsOfKind(stack, parsed.kind)
+        .filter((i) => !isWipWaffle(toolkit, parsed.stack, parsed.kind, i.name))
+        .map((i) => `${parsed.stack}/${parsed.kind}/${i.name}`);
       throw new Error(
         `unknown ref "${raw}": stack "${parsed.stack}" has no ${singular(parsed.kind)} "${parsed.name}" ` +
         `(has: ${have.join(', ') || '(none)'})`,
       );
     }
+    if (isWipWaffle(toolkit, parsed.stack, parsed.kind, parsed.name)) throw wipRefError(raw, parsed.kind, parsed.name);
     const ambiguous = findItems(toolkit, parsed.kind, parsed.name).length > 1;
     return {
       type: 'item',
@@ -215,8 +285,16 @@ export function resolveRef(toolkit, raw) {
     };
   }
 
-  const matches = findItems(toolkit, parsed.kind, parsed.name);
+  const allMatches = findItems(toolkit, parsed.kind, parsed.name);
+  // A `wip` waffle is not a CANDIDATE, so it is filtered before the count decides between
+  // unknown / ambiguous / unique. That ordering is what makes the ambiguity rule keep working
+  // across the gate: with one `wip` and one `stable` waffle of the same name, the ref is not
+  // ambiguous — there is exactly one thing it can mean, and demanding a qualifier for a choice
+  // the consumer cannot make would be nonsense.
+  const matches = allMatches.filter((m) => !isWipWaffle(toolkit, m.stackName, parsed.kind, parsed.name));
   if (matches.length === 0) {
+    // Everything that matched was gated: say WHY, rather than sending the reader after a typo.
+    if (allMatches.length) throw wipRefError(raw, parsed.kind, parsed.name);
     throw new Error(
       `unknown ref "${raw}": no ${singular(parsed.kind)} "${parsed.name}" in the toolkit. ` +
       `Available items: ${availableItemRefs(toolkit).join(', ')}`,
@@ -278,16 +356,25 @@ export function resolveDepStrict(toolkit, refString, preferStack) {
  * error — it is simply skipped. Prefers the agent's own stack, then a unique
  * toolkit-wide match. Returns the resolved item or null (unknown or ambiguous).
  *
+ * A `wip` skill is skipped too (#335), and the lenient doctrine is exactly why: a grant-pointer at
+ * a skill that does not render here is already the NORMAL case this function is built for (a
+ * project-local skill, one not yet authored), so a not-yet-offered skill needs no new behavior —
+ * it is the same absence. That is what lets an agent ship while a skill it will eventually point
+ * at is still being written. The strict counterpart, `requires:`, gets the opposite treatment:
+ * `validate` reds when an offered waffle declares a hard dependency on a `wip` one.
+ *
  * @param {Toolkit} toolkit
  * @param {string} name a bare skill name
  * @param {string} preferStack the agent's own stack
- * @returns {DepNode | null} null when unknown OR ambiguous — deliberately lenient
+ * @returns {DepNode | null} null when unknown, ambiguous, OR work-in-progress — deliberately lenient
  */
 export function resolveAgentSkill(toolkit, name, preferStack) {
   const own = toolkit.stacks.get(preferStack);
   const ownItem = own && own.skills.find((s) => s.name === name);
-  if (ownItem) return { kind: 'skills', name, stack: preferStack, item: ownItem };
-  const matches = findItems(toolkit, 'skills', name);
+  if (ownItem) {
+    return isWipWaffle(toolkit, preferStack, 'skills', name) ? null : { kind: 'skills', name, stack: preferStack, item: ownItem };
+  }
+  const matches = findItems(toolkit, 'skills', name).filter((m) => !isWipWaffle(toolkit, m.stackName, 'skills', name));
   if (matches.length === 1) return { kind: 'skills', name, stack: matches[0].stackName, item: matches[0].item };
   return null;
 }
@@ -433,8 +520,15 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   /** @type {(stackName: string) => void} */
   const addStack = (stackName) => {
     const stack = toolkit.stacks.get(stackName);
-    for (const a of stack.agents) addItem(stackName, 'agents', a);
-    for (const s of stack.skills) addItem(stackName, 'skills', s);
+    // #335: a `wip` waffle is present in the repo and offered to nobody, so adopting its whole
+    // stack must not pull it in. Gated here in the STACK EXPANSION rather than in `addItem`,
+    // because the two other entry paths into `addItem` are already gated by the resolvers that
+    // feed them: an explicit `include:` goes through `resolveRef` (which refuses a `wip` ref), and
+    // an agent's `skills:` closure through `resolveAgentSkill` (which drops one). Gating `addItem`
+    // as well would put the check where it cannot distinguish those cases — and where a `requires:`
+    // edge, whose `wip` target `validate` already reds on, would be silently half-honoured.
+    for (const a of stack.agents) if (!isWipWaffle(toolkit, stackName, 'agents', a.name)) addItem(stackName, 'agents', a);
+    for (const s of stack.skills) if (!isWipWaffle(toolkit, stackName, 'skills', s.name)) addItem(stackName, 'skills', s);
     for (const f of stack.files) {
       // Opt-in syrup is poured on request only: a stack's default expansion skips an opt-in
       // file unless the repo already tracks its path in the lock (an existing install keeps
@@ -455,6 +549,8 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
 
   /** @type {{ rootRef: string, deps: string[] }[]} */
   const closures = [];
+  /** @type {{ from: string, to: string, via: string[] }[]} */
+  const forwarded = [];
   for (const ref of project.include ?? []) {
     /** @type {ResolvedRef} */
     let resolved;
@@ -467,6 +563,14 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
     if (resolved.type === 'stack') {
       addStack(resolved.name);
       continue;
+    }
+    // #335: the ref named a waffle that has since been renamed. It rendered — `resolveRef` walked
+    // the tombstone to its successor — but a silent forward would leave the consumer's config
+    // permanently stale and them none the wiser, so record it for the caller to report.
+    if (resolved.forwardedFrom) {
+      const old = parseRef(resolved.forwardedFrom);
+      const chain = old.form === 'stack' ? null : replacementFor(toolkit?.registry, old.kind, old.name);
+      forwarded.push({ from: resolved.forwardedFrom, to: resolved.canonicalRef, via: chain?.via ?? [] });
     }
     // #364: an explicitly-included file scoped to targets this project has not enabled renders
     // nothing. Record it so the caller can SAY so — a silent no-op on an explicit `include:` is
@@ -547,7 +651,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   // `targets` rides along on the result (see the Selection typedef): every downstream scope judgment
   // must be made against the SAME set this selection was filtered by, and the only way to guarantee
   // that is to stop asking the caller to pass it again.
-  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires };
+  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded };
 }
 
 /**
