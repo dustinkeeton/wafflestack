@@ -21,7 +21,7 @@ Entry points: `installer/cli.mjs` (bin `wafflestack`) · `toolkit.yaml` (stack r
 toolkit.yaml               registry: name + ordered stack list
 stacks/registry.yaml       WAFFLE registry (#335): one entry per agent/skill — name, kind, stack, path, status (stable|wip|deprecated|replaced), replacedBy
 stacks/<name>/
-  stack.yaml               manifest: recommended, agents, skills, files, optIn, requires, prerequisites, config, env, setup
+  stack.yaml               manifest: recommended, recommendedPlugins, agents, skills, files, optIn, requires, prerequisites, config, env, setup
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
   files/<repo-rel-path>    neutral syrup payload (CI workflow/script/config), rendered verbatim to that path
@@ -94,6 +94,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `evals.mjs` | Layer 2 eval harness (#109; runner entry `installer/evals.mjs`) |
 | `list.mjs` | `list` command: per-item state model + table + interactive picker (#119) |
 | `prerequisites.mjs` | Typed external prerequisites: normalize, scope, probe, bucket (#47/#129) |
+| `plugins.mjs` | Recommended EXTERNAL harness plugins a stack offers via `setup` (#199); never installed |
 | `sources.mjs` | External `source:` resolution: local path or pinned-git cache (#88/#125) |
 | `toolkit-ref.mjs` | Toolkit self-identification (#373), lock `toolkit` block (#374), write-side pin (#372) |
 
@@ -151,7 +152,7 @@ export function isWaffleWip(registry, stackName, refKind, name) // → boolean �
 export function replacementFor(registry, refKind, name) // → { ref, name, via } | null — walks the replacedBy chain transitively; null on a cycle or >8 hops
 
 // toolkit.mjs — load toolkit.yaml + stack manifests
-export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201); stale manifest `syrup:` key throws (0.10.0, #59)
+export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
 export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125); carries the BUILT-IN registry unchanged — external waffles are unregistered here, hence never gated (#335)
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) // → string[] (usedKeys Set scopes to referenced keys)
 
@@ -283,6 +284,14 @@ export function applicablePrerequisites(toolkit, selection) // → flat [{ …pr
 export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs } = {}) // → { unmetRequired, unmetRecommended, met }
 export function formatPrereq(p)                // → one actionable CLI line
 
+// plugins.mjs — recommended EXTERNAL harness plugins (#199): stack.yaml `recommendedPlugins:` → an OFFER the setup
+// wizard makes. A plugin is NOT a waffle: nothing is fetched, rendered, locked, pruned, or ejected, and the render
+// set is byte-identical whether a stack declares any or not. Lives on stack.yaml, NOT in the waffle registry (the
+// registry indexes shipped waffles with paths a render produces; a plugin has none) — see the plugins.mjs docblock.
+export const PLUGIN_ENTRY_KEYS                 // ['name','source','why','items','targets'] — anything else is a validate problem
+export function normalizeRecommendedPlugins(raw) // → [{ index, name, source, why, items, targets, unknownKeys, raw }] (tolerant: nulls, never throws; a non-list value becomes ONE unusable entry so validate reports rather than the key vanishing); items normalized to kind/name refs = the WAFFLE-level scope (no per-waffle key); targets advisory only (the inventory is generated before a project's targets are known)
+export function offerablePlugins(plugins)      // → entries with a usable name + source (what a surface may show; malformed ones are validate's report, not a half-line)
+
 // sources.mjs — external source: resolution (#88/#125)
 export function resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, refresh = false } = {}) // → { root, commit } (local path in place, or git fetched at the pinned ref into a content-addressed cache; rejects leading-`-` source/ref)
 export function resolveSourceRoot(ext, opts)   // → root path only (back-compat wrapper)
@@ -327,15 +336,16 @@ doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sou
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
 eject.mjs    → render, toolkit, refs, project, util
-validate.mjs → toolkit, template, refs, prerequisites, project, registry, util
-setup.mjs    → toolkit, render, project, refs, prerequisites, registry, util
+validate.mjs → toolkit, template, refs, prerequisites, plugins, project, registry, util
+setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registry, util
 list.mjs     → toolkit, render, refs, project, util
 waffledocs.mjs → template, project, refs, util
 avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
 migrations.mjs → project, util
-toolkit.mjs  → refs, sources, prerequisites, registry, project (VALID_TARGETS only), util
+toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID_TARGETS only), util
 prerequisites.mjs → refs
+plugins.mjs  → refs
 refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle)
 registry.mjs → util
 sources.mjs  → util
@@ -482,6 +492,28 @@ prerequisites:
 `doctor` runs every applicable check (unmet `require` = exit 1); `render` probes only the cheap
 `RENDER_PROBE_KINDS` (`tool`/`env`) as non-blocking warnings. The legacy `env:` map is subsumed
 as the `env` kind, read-compatibly.
+
+## Recommended external plugins
+
+External harness plugins a stack suggests pairing with (#199) — Claude Code plugins/marketplace
+entries, not waffles. Schema (`plugins.mjs`):
+
+```yaml
+recommendedPlugins:
+  - name: acme-reviewer
+    source: acme/claude-plugins   # marketplace ref or URL, surfaced verbatim; never fetched
+    why: Adds inline review comments the pr-response skill then answers.
+    items: [skills/pr-response]   # optional: waffle-level scope (same shape as prerequisites items:)
+    targets: [claude]             # optional, ADVISORY: printed, never a render/inventory filter
+```
+
+Purely advisory and **weaker than `recommended:`**: `setup` lists offerable entries per stack under
+`### recommended plugins` (plus a gated intro paragraph) and SETUP.md tells the agent to offer, not
+install. `render`/`doctor`/lock are untouched — enabling the key cannot change an output byte.
+`validate` requires `name`/`source`/`why`, rejects unknown keys and duplicate names, and resolves
+`items:`/`targets:`; malformed entries are lint problems (never load errors) and are not offered.
+Waffle-level recommendation = `items:` scoping; there is deliberately no per-waffle key and no
+registry entry (a plugin has no path, no render, nothing to prune).
 
 ## Template semantics
 

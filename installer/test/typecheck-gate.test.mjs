@@ -23,6 +23,8 @@ const MIGRATED = [
   // #373 — authored under the pragma from line 1 rather than migrated into it. Same guarantee to
   // protect either way: without an entry here, deleting its `// @ts-check` silently unchecks it.
   'installer/lib/toolkit-ref.mjs',
+  // #199 — likewise authored under the pragma from line 1.
+  'installer/lib/plugins.mjs',
 ];
 
 describe('typecheck gate (#177)', () => {

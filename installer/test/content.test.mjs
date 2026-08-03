@@ -2388,6 +2388,43 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
   });
 });
 
+// #199: `recommendedPlugins:` adds schema vocabulary for something the toolkit deliberately does
+// NOT install. Vocabulary only the code knows is vocabulary an author cannot use — and a wizard
+// that learns "offer" from the code but "install" from the docs is the one failure this key must
+// not have. So the docs are pinned in lockstep, exactly as the `recommended:` flag's block above.
+describe('recommended external plugins: documented in lockstep with the schema (#199)', () => {
+  const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
+  const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+  const agentsMd = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf8');
+
+  test('FORMAT.md documents the key, its three required fields, and both optional scopes', () => {
+    assert.match(formatMd, /`recommendedPlugins:` names \*\*external harness plugins\*\*/);
+    assert.match(formatMd, /recommendedPlugins:\s+# optional/); // the stack.yaml schema block
+    for (const field of ['name', 'source', 'why', 'items:', 'targets:']) {
+      assert.match(formatMd, new RegExp(`- \\*\\*\`${field}\`\\*\\*`), `FORMAT.md must define \`${field}\``);
+    }
+  });
+
+  test('FORMAT.md states the two things that keep the key harmless: not a waffle, never installed', () => {
+    assert.match(formatMd, /A plugin is \*\*not a waffle\*\*/);
+    assert.match(formatMd, /`render` never fetches,\s*\n?installs, tracks, or updates one/);
+    // And WHY it is not a registry entry — an author who cannot find it there must learn the
+    // reason, not conclude the registry is incomplete.
+    assert.match(formatMd, /deliberately lives on `stack\.yaml` rather than in the \*\*waffle registry\*\*/);
+  });
+
+  test('SETUP.md tells the wizard to offer, never to install', () => {
+    assert.match(setupMd, /\*\*Recommended plugins are an offer, never an install\.\*\*/);
+    assert.match(setupMd, /install only on an explicit yes/);
+    assert.match(setupMd, /never treat a\s*\n?recommendation as a prerequisite/);
+  });
+
+  test('AGENTS.md registers the loader field and the module', () => {
+    assert.match(agentsMd, /\.recommendedPlugins/);
+    assert.match(agentsMd, /## Recommended external plugins/);
+  });
+});
+
 // #335: the waffle registry adds schema vocabulary — a new file, four status values, and a
 // `replacedBy` forward-fix. Vocabulary that only the code knows is vocabulary an author cannot use,
 // so the docs move in lockstep with it, exactly as the `recommended:` flag's block above pins its

@@ -32,6 +32,22 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Stacks can recommend external harness plugins (#199).** A `stack.yaml` may now declare
+  `recommendedPlugins:` — a list of `{ name, source, why }` entries (plus optional `items:` and
+  `targets:` scopes) naming **external harness plugins** the stack pairs well with (a Claude Code
+  plugin or marketplace entry). `loadStack` exposes them as `Stack.recommendedPlugins`, and
+  `wafflestack setup` lists them per stack under **`### recommended plugins`** with a gated intro
+  paragraph teaching the posture: **offer, never install**. A plugin is *not* a waffle — the toolkit
+  never fetches, installs, tracks, or updates one, and a test pins that declaring recommendations
+  leaves the rendered output and lock byte-identical. `items:` scopes an entry to specific waffles
+  of the stack (the waffle-level form of the recommendation, reusing `prerequisites[].items:`
+  vocabulary); `targets:` names the harnesses it exists for and is printed for the setup agent, never
+  applied as a filter. `validate` requires `name`/`source`/`why` and rejects unknown keys, duplicate
+  names, a prose `source`, and unresolvable `items:`/`targets:` — every malformation is a lint
+  problem, never a load error. The key deliberately lives on `stack.yaml` rather than in the waffle
+  registry (#335), which indexes only waffles this toolkit ships. Documented in `schema/FORMAT.md`,
+  `schema/SETUP.md`, and `AGENTS.md`. **Consumer impact:** none — no rendered output changes and no
+  config change is required; no built-in stack declares a recommendation yet.
 - **Waffle registry: gate availability and control renames (#335).** New `stacks/registry.yaml` — the
   single source of truth for waffle identity, location, and availability. One entry per agent/skill
   (`{ name, kind, stack, path, status, replacedBy?, note? }`), populated from the current tree (14
