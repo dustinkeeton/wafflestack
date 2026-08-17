@@ -20,19 +20,8 @@ const MAX_SLACK_PCT = 10; // a grandfathered ceiling this far above actual must 
 // Measured 2026-08-17 (ratio% + 1, longest run as found). Delete a file's entry when it
 // is cleaned; the gate then holds it to the default ceilings above.
 const GRANDFATHERED = {
-  'installer/lib/eject.mjs': { pct: 19, run: 11 },
-  'installer/lib/refs.mjs': { pct: 16, run: 13 },
-  'installer/lib/render.mjs': { pct: 26, run: 9 },
-  'installer/lib/setup.mjs': { pct: 19, run: 10 },
-  'installer/lib/sources.mjs': { pct: 19, run: 6 },
-  'installer/lib/toolkit.mjs': { pct: 22, run: 16 },
-  'installer/lib/uninstall.mjs': { pct: 17, run: 10 },
   'installer/test/content.test.mjs': { pct: 33, run: 32 },
-  'installer/test/installer.test.mjs': { pct: 19, run: 35 },
   'installer/test/provenance.test.mjs': { pct: 26, run: 21 },
-  'installer/test/registry.test.mjs': { pct: 14, run: 14 },
-  'installer/test/telemetry.test.mjs': { pct: 12, run: 15 },
-  'installer/test/typecheck-gate.test.mjs': { pct: 25, run: 6 },
 };
 
 // Counts `//` lines (minus a line-1 `// @ts-check`) and block-comment lines, excluding

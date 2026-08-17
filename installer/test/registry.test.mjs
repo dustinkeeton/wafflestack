@@ -1,17 +1,5 @@
-// The waffle registry (#335) — `stacks/registry.yaml` as the single source of truth for waffle
-// identity, location, and availability.
-//
-// Three properties are worth a test each, and they are the three the issue exists for:
-//   1. ENFORCEMENT — a rename, a move, or an unregistered waffle turns `validate` red. If this
-//      suite passes while the registry disagrees with the tree, the registry is decoration.
-//   2. GATING — a `wip` waffle is offered by no consumer-facing surface, and is offered by ALL of
-//      them again once it goes `stable`. Each surface is tested separately: they are separate
-//      code paths, and one un-gated path is a `wip` waffle shipping.
-//   3. FORWARDING — a `replaced` tombstone carries a pinned consumer across a rename, at render
-//      (a warning, so the repo keeps working) and at upgrade (a rewrite, so it stops being stale).
-//
-// Plus the property that makes all three safe to add to an existing toolkit: a toolkit with NO
-// registry behaves exactly as it did before one existed.
+// The waffle registry (#335), `stacks/registry.yaml`: validate-time enforcement, `wip` gating per
+// consumer-facing surface, rename forwarding, and no-registry back-compat.
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
