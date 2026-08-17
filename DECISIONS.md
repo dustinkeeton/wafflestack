@@ -9,7 +9,41 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 2026-07-15: PR-gate staging paths carry the head SHA, and a status is stamped on the read-time head (#376, #412)
+## 2026-08-17: The comments-are-not-spec doctrine gets a mechanical gate, and the burn-down goes repo-wide (#388 follow-through)
+
+**Context**: The #388 doctrine (below, 2026-07-15) ruled that comments in deterministic files are
+short human orientation, never spec — but every rule enforcing it was review-side prose. The
+partial burn-down (#399–#401) shrank 5 of 21 `installer/lib` modules and stopped; eighteen days
+later `registry.mjs` was authored at 60% comment lines — the densest file in the repo — and went
+green through review. Measured 2026-08-17: `installer/lib` at 35.3% comment lines overall,
+~62–67% of that mass litigating prose (multi-sentence argument, counterfactuals, word-choice
+defenses), ~8% issue-number archaeology, and 15–35-line essays in front of `test()` calls.
+
+**Decision**: Three parts. (1) A mechanical gate, `installer/test/comment-gate.test.mjs`: per-file
+comment-ratio ceiling (15% default, 20% for consumer-rendered `stacks/**/*.mjs`) plus an 8-line
+max consecutive comment run, with typed JSDoc blocks (`@`-tagged) excluded as the keep-set and a
+`GRANDFATHERED` map pinning each legacy file's current mass — entries only ever tighten or get
+deleted, and a new file never gets one. (2) A repo-wide burn-down in wave PRs applying the triage
+rule: a displaced "why" earns a new DECISIONS entry only if grepping its issue/topic here comes up
+empty and the choice could plausibly be re-litigated; caller-actionable contract deltas graduate
+to the AGENTS.md module registry; everything else — litigation, archaeology, restatement — is
+deleted, not relocated. The survival test for a comment that stays: deleting it would make the
+next edit worse — one or two lines, present tense, saying something the surrounding ten lines
+don't; an issue ref is earned only when it anchors a live constraint. (3) An authoring-side rule
+in git-workflow (previously all rules were review-side) and a cap amendment to the docs-agent
+standard: language-tagged signature fences no longer count toward the 300-line machine-doc cap,
+resolving the recorded conflict between "full signatures" and the cap that AGENTS.md (621 lines)
+had been living in silently.
+
+**Alternatives considered**: Relocating every displaced why into this file — rejected: it floods a
+decision log with non-decisions; the #399–#401 precedent found zero whys worth relocating.
+Amending the #388 entry in place — rejected: dated entries are immutable. A lint dependency —
+rejected: the repo is deliberately dependency-light; a `node:test` gate rides `npm test` for free.
+
+**Impact**: `installer/**`, `stacks/**/*.mjs`, workflow YAML (rendered sources and this repo's
+own), the git-workflow skill (authoring bullets render to consumers), the docs-agent standard
+(`stacks/docs-system/stack.yaml` + this repo's `machineDocSpec` override), and the review skills
+that already enforce the doctrine. The after-number is recorded here once the sweep lands.
 
 **Context**: #324 (below) namespaced the PR-gate skills' staging files per PR, which killed
 cross-PR contamination — but successive rounds on the *same* PR still reused one file, so
