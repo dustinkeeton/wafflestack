@@ -15,13 +15,8 @@ import {
 
 /**
  * The agent-driven install wizard: the static playbook (schema/SETUP.md), an optional
- * "Current configuration" section injected when the project at `cwd` is already configured,
- * then an inventory generated from the installed toolkit — so the agent running the setup
- * always sees the stack/config/prerequisite surface of the exact version it will render
- * with (never a stale copy baked into docs) and, on a re-run, its own live selections.
- *
- * `cwd` is optional: without it (or on an unconfigured repo) the current-configuration
- * section is omitted and the guide is byte-for-byte the first-install output.
+ * "Current configuration" section when the project at `cwd` is already configured, then an
+ * inventory generated from the installed toolkit.
  */
 export function setupGuide(toolkitRoot, toolkitVersion, cwd) {
   const playbook = fs
@@ -32,17 +27,12 @@ export function setupGuide(toolkitRoot, toolkitVersion, cwd) {
   const current = cwd ? currentConfigSection(toolkit, cwd) : null;
   if (current) sections.push(current);
   sections.push(toolkitInventory(toolkit, toolkitVersion));
-  // toolkitInventory ends with a trailing newline, so the joined guide does too.
   return sections.join('\n\n---\n\n');
 }
 
 /**
- * The "Current configuration" section, injected only when the project is already
- * configured (`.waffle/waffle.yaml`, or a legacy fallback, exists). Reads the live config
- * with the same loaders the renderer uses — `loadProjectConfig`, `computeSelection`,
- * `makeResolver` — so the agent sees its actual targets, selections, effective values, and
- * unset required keys without opening the file, turning a re-run of `setup` into a curated
- * update pass rather than the first-install playbook. Returns null for an unconfigured repo.
+ * The "Current configuration" section, read with the same loaders the renderer uses.
+ * Returns null for an unconfigured repo.
  */
 function currentConfigSection(toolkit, cwd) {
   if (!exists(resolveConfigFile(cwd).file)) return null;
@@ -53,8 +43,6 @@ function currentConfigSection(toolkit, cwd) {
   try {
     project = loadProjectConfig(cwd, notes);
   } catch (err) {
-    // A malformed config must not crash the whole guide — surface it and let the agent fix
-    // it. The first-install prose above still applies once the config parses.
     return [
       header,
       '',
@@ -67,9 +55,8 @@ function currentConfigSection(toolkit, cwd) {
     ].join('\n');
   }
 
-  // The TREE lock (#317): `trackedFiles` answers "what is already installed in this working copy",
-  // which on a machine whose `.local` overlay shapes the render is the effective render, not the
-  // canonical one the committed lock describes.
+  // The TREE lock (#317), not the committed one: on a machine with a `.local` overlay it is the
+  // tree lock that answers "what is already installed in this working copy".
   const trackedFiles = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
   const selection = computeSelection(toolkit, project, trackedFiles);
   const primaryTarget = project.targets[0] ?? 'claude';
@@ -92,9 +79,6 @@ function currentConfigSection(toolkit, cwd) {
   lines.push('## Stacks enabled', '');
   lines.push(project.stacks.length ? project.stacks.map((b) => `- ${b}`).join('\n') : '(none)', '');
 
-  // External stack sources (#88): a `{ name, source, ref }` entry pulls a stack from a git URL
-  // (pinned by `ref`) or a local path; `render` resolves and merges it with the built-in stacks.
-  // The inventory below is the built-in surface — external stacks resolve at render time.
   if (project.externalStacks?.length) {
     lines.push('## External stack sources', '');
     for (const s of project.externalStacks) {
@@ -131,24 +115,19 @@ function currentConfigSection(toolkit, cwd) {
     );
   }
 
-  // Surface unknown/ambiguous refs the way the render would, so the agent can fix them here.
   if (selection.errors.length) {
     lines.push('## Problems in the current selection', '');
     for (const e of selection.errors) lines.push(`- ⚠ ${e}`);
     lines.push('');
   }
 
-  // Group by the stacks that actually contribute selected items (an included item does not
-  // drag in its stack's siblings) — matching render's per-stack grouping, and carrying the
-  // selected items so config can be scoped to the keys they reference.
   const groups = new Map();
   for (const { stackName, stack, kind, item } of selection.items) {
     if (!groups.has(stackName)) groups.set(stackName, { stack, items: [] });
     groups.get(stackName).items.push({ kind, item });
   }
-  // Scope each stack's config surface to the keys its *selected* items actually reference —
-  // exactly what the renderer does (`collectUsedKeys`). A partial stack selection (one skill
-  // of many) must not surface config only its unselected siblings use (#77).
+  // Scope each stack's config to the keys its *selected* items reference, exactly as the
+  // renderer does — a partial selection must not surface its siblings' config (#77).
   for (const g of groups.values()) g.usedKeys = collectUsedKeys(g.items);
 
   const valueLines = [];
@@ -177,10 +156,6 @@ function currentConfigSection(toolkit, cwd) {
     );
   }
 
-  // Required keys with no resolved value — the render blockers, collected across stacks.
-  // Computed exactly as render does: scoped to the selected items' `usedKeys` and resolved
-  // through `makeResolver` (default-aware), so setup reports only the blockers render will
-  // actually enforce — not every required key of a partially-selected stack (#77).
   const missing = [];
   for (const [stackName, { stack, usedKeys }] of groups) {
     const resolve = makeResolver(stack, project.values, primaryTarget);
@@ -197,19 +172,14 @@ function currentConfigSection(toolkit, cwd) {
     );
   }
 
-  // Opt-in syrup: sensitive files across enabled stacks, tracked/installed vs available-but-not.
-  // Reverse the requires: edge (#74) to flag a not-installed syrup that PAIRS with a selected
-  // companion waffle — a half-installed flow the agent must resolve with the both/one/neither
-  // question, not silently leave gated.
+  // Reverse the `requires:` edge (#74) to flag a not-installed syrup that PAIRS with a selected
+  // companion waffle — a half-installed flow the agent must resolve, not silently leave gated.
   const installedFiles = new Set(
     selection.items.filter((i) => i.kind === 'files').map((i) => i.item.name),
   );
   const companionsByRef = new Map(
-    // #364: pass the enabled targets, so the playbook never suggests POURING a target-scoped syrup
-    // file that could not render in this project anyway. A scoped-out pairing comes back MARKED
-    // (`scopedTo`), not dropped — the pairing is real and the playbook must still state it; only the
-    // `install` command is withheld. (Keyed by the whole entry, not just `companions`, so the note
-    // below can tell the two cases apart.)
+    // Keyed by the whole entry, not just `companions`, so the note below can tell a scoped-out
+    // pairing (marked `scopedTo`, #364) from an ordinary one.
     skippedSyrupCompanions(toolkit, selection).map((s) => [s.fileRef, s]),
   );
   const enabledStackNames = new Set([...project.stacks, ...groups.keys()]);
@@ -225,14 +195,8 @@ function currentConfigSection(toolkit, cwd) {
       if (installedFiles.has(f.name)) {
         note = 'installed — renders on this selection (explicitly included or already tracked)';
       } else if (!fileMatchesTargets(f, project.targets)) {
-        // #364: scoped to harnesses this project has not enabled — pouring it would render nothing,
-        // so say that outright rather than offering it as a choice the user could make.
-        //
-        // But if it ALSO pairs with a selected waffle (#74), say THAT too. This branch outranks the
-        // pairing branch below, so without this clause the scope note would silently swallow a real
-        // half-installed flow — the user would never learn the pairing exists, only that the file is
-        // refused. There is still no `install` command to offer (it would render nothing): enabling a
-        // target is the only way to complete the flow, so that is what the note says.
+        // This branch outranks the pairing branch below, so it must restate a pairing itself (#74)
+        // or a real half-installed flow goes unreported.
         const pairing = companions
           ? ` It **pairs with selected ${companions.join(', ')}**, so THAT FLOW IS INCOMPLETE here — ` +
             `enabling one of its targets is the only way to complete it (there is no \`install\` that would).`
@@ -252,13 +216,6 @@ function currentConfigSection(toolkit, cwd) {
     lines.push('## Opt-in syrup (sensitive files — opt-in)', '', ...optInLines, '');
   }
 
-  // Typed external prerequisites (#129/#130): run the applicable stacks' checks the way `doctor`
-  // does and flag any unmet **require** as a blocker for THIS repo — the update-mode analog of
-  // doctor's gate, surfaced for the human (the postinstall-prompt analog of #47), mirroring the
-  // unset-required-config and skipped-syrup flags above. Unmet `recommend` entries only report.
-  // Anything that creates or mutates shared external state (a secret, a label, a repo setting, a
-  // service) still needs the user's explicit go-ahead — the toolkit checks and prompts, it never
-  // provisions unasked.
   const { unmetRequired: unmetReqPrereqs, unmetRecommended: unmetRecPrereqs } = evaluatePrerequisites(
     applicablePrerequisites(toolkit, selection),
     cwd,
@@ -347,11 +304,8 @@ export function toolkitInventory(toolkit, version) {
     const marker = stack.recommended ? ' — **recommended (default-selected)**' : '';
     lines.push(`## stack: ${stack.name}${marker}`, '');
     if (stack.description) lines.push(stack.description, '');
-    // #335: the inventory is the OFFERING surface — the list a setup agent picks from — so a `wip`
-    // waffle must not appear on it. Offering one would be worse than a missing line: `resolveRef`
-    // refuses the ref, so the wizard would confidently install something that hard-errors. A
-    // `deprecated` waffle IS still installable, so it stays listed, marked, so the agent can prefer
-    // its successor without the entry silently vanishing from under an existing install.
+    // The inventory is the OFFERING surface, so a `wip` waffle is withheld — `resolveRef` refuses
+    // its ref (#335). A `deprecated` one is still installable, so it stays listed and marked.
     const offered = (items, kind) =>
       items
         .filter((i) => !isWipWaffle(toolkit, stack.name, kind, i.name))
@@ -382,11 +336,8 @@ export function toolkitInventory(toolkit, version) {
 }
 
 /**
- * The stack's typed external prerequisites (#47/#129), grouped by kind for the inventory — the
- * human-facing surface (#130) of the block `render` warns on and `doctor` gates. Each line names
- * the thing, its `require`/`recommend` level, any item scope, and the deterministic check, so the
- * setup agent can walk step 4 of the playbook kind by kind. Returns [] when a stack declares none,
- * so a prerequisite-free stack's inventory is byte-unchanged.
+ * The stack's typed external prerequisites grouped by kind for the inventory. Returns [] when a
+ * stack declares none, so a prerequisite-free stack's inventory is byte-unchanged.
  */
 function prerequisitesSection(prerequisites) {
   if (!prerequisites?.length) return [];
@@ -396,7 +347,6 @@ function prerequisitesSection(prerequisites) {
     if (!byKind.has(k)) byKind.set(k, []);
     byKind.get(k).push(p);
   }
-  // Canonical kind order first, then any leftover kind (a malformed one `validate` already flags).
   const kinds = [
     ...PREREQ_KINDS.filter((k) => byKind.has(k)),
     ...[...byKind.keys()].filter((k) => !PREREQ_KINDS.includes(k)),
