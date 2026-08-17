@@ -20,13 +20,8 @@ const MAX_SLACK_PCT = 10; // a grandfathered ceiling this far above actual must 
 // Measured 2026-08-17 (ratio% + 1, longest run as found). Delete a file's entry when it
 // is cleaned; the gate then holds it to the default ceilings above.
 const GRANDFATHERED = {
-  'installer/cli.mjs': { pct: 28, run: 10 },
-  'installer/evals.mjs': { pct: 14, run: 17 },
-  'installer/lib/doctor.mjs': { pct: 30, run: 17 },
   'installer/lib/eject.mjs': { pct: 19, run: 11 },
-  'installer/lib/evals.mjs': { pct: 25, run: 18 },
   'installer/lib/refs.mjs': { pct: 16, run: 13 },
-  'installer/lib/registry.mjs': { pct: 28, run: 43 },
   'installer/lib/render.mjs': { pct: 26, run: 9 },
   'installer/lib/setup.mjs': { pct: 19, run: 10 },
   'installer/lib/sources.mjs': { pct: 19, run: 6 },

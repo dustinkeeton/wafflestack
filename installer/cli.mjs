@@ -29,38 +29,24 @@ const pkg = JSON.parse(fs.readFileSync(path.join(toolkitRoot, 'package.json'), '
 const [, , command, ...args] = process.argv;
 const cwd = extractCwd(args) ?? process.cwd();
 
-// #373 — the write path refuses to run from a toolkit that is provably not a release. Extracted
-// here, globally, for two reasons: every command must accept the flag (the guard lives inside the
-// gated cases, but the FLAG has to be gone from `args` before any "takes no refs" check runs, or it
-// would be rejected as a stray ref), and toolkit development needs one switch, not eleven.
-//
-// It suppresses the REFUSAL, not the TRUTH: identity is still resolved (network lookup included) and
-// still reported, so a genuine release under the hatch keeps its `ref` (#383). This is why the two
-// flags are separate: `--allow-unreleased` answers "don't refuse me"; `--offline` answers "don't pay
-// for the answer" and is the only one that skips the lookup — for an air-gapped run that must not
-// stall on a doomed `ls-remote`.
+// Extracted globally because the flags must be gone from `args` before any "takes no refs" check
+// runs. `--allow-unreleased` suppresses the refusal only; `--offline` is what skips the lookup (#373).
 const allowUnreleased = extractFlag(args, '--allow-unreleased') || envAllowUnreleased();
 const offline = extractFlag(args, '--offline') || envOffline();
 
-// Resolved at most once, and only when a command actually needs it — `validate`, `help`, `init` and
-// `eject` must never so much as look at the network.
+// Resolved at most once, and only when a command needs it: `validate`/`help`/`init`/`eject` never do.
 /** @type {import('./lib/toolkit-ref.mjs').ToolkitIdentity | null} */
 let identityCache = null;
 /** @type {import('./lib/toolkit-ref.mjs').ToolkitIdentity | null} */
 let offlineIdentityCache = null;
 
-// Declared ABOVE the dispatch, not beside helpText() with the other helpers: `const` is not
-// hoisted, and the switch below reads it. Left at the bottom it would be in the temporal dead zone
-// on every help and unknown-command path — a ReferenceError the catch would quietly turn into a
-// baffling exit 1. (`banner()`/`helpText()` are function declarations, so they hoist and may stay.)
+// Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
+// on every help and unknown-command path.
 const USAGE =
   'usage: wafflestack <init|setup|list|install|render|bake|upgrade|doctor|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
-// `--help`/`-h` AFTER a command (`wafflestack uninstall --help`) prints the help instead of running
-// the command — the same full help text as bare `help`, not a per-command page. Checked before the
-// switch so a destructive command can never be reached by someone who was asking a question — and
-// before the flag reaches any "takes no refs" guard, which would otherwise reject it as a stray
-// ref. Bare `--help`/`-h` (no command) lands in the switch.
+// Checked BEFORE the switch: a destructive command must never be reached by someone asking a
+// question, and the flag must not survive into a "takes no refs" guard.
 if (args.includes('--help') || args.includes('-h')) {
   process.stdout.write(helpText());
   process.exit(0);
@@ -68,7 +54,6 @@ if (args.includes('--help') || args.includes('-h')) {
 
 try {
   switch (command) {
-    // `bake` is a pure alias for `render` — the baking metaphor, all the way down (#176).
     case 'bake':
     case 'render': {
       const force = extractFlag(args, '--force');
@@ -76,7 +61,6 @@ try {
       if (args.length) {
         fail(`${command} takes no refs — use \`wafflestack install <ref…>\` to add a stack or item (it persists the choice, then re-renders); bare \`${command}\` re-renders the current selection`);
       }
-      // #373: render writes files FROM toolkit content — the gated path itself.
       const toolkitIdentity = requireRelease(command);
       runRender(force, toolkitIdentity);
       if (gitignore) offerGitignore();
@@ -85,10 +69,8 @@ try {
     case 'install': {
       const force = extractFlag(args, '--force');
       const gitignore = extractFlag(args, '--gitignore');
-      // Gate BEFORE installRefs persists anything: a refused install must leave waffle.yaml as it
-      // found it, or the consumer is left holding a selection they were never able to render.
+      // Gate BEFORE installRefs persists anything: a refused install must leave waffle.yaml as it found it.
       const toolkitIdentity = requireRelease('install');
-      // Bare `install` is an alias for `render`; with refs it persists them first.
       if (args.length) installRefs({ toolkitRoot, cwd, refs: args, log: console.log });
       runRender(force, toolkitIdentity);
       if (gitignore) offerGitignore();
@@ -96,31 +78,20 @@ try {
     }
     case 'doctor': {
       const allowMissing = extractFlag(args, '--allow-missing');
-      // #314: verify the lock still matches what the committed config WOULD render (a temp-dir
-      // render; the working tree is never touched). Opt-in — plain doctor is unchanged.
       const verifyRender = extractFlag(args, '--verify-render');
-      // #373, and this line is the whole scoping decision: PLAIN doctor is not gated (it only hashes
-      // files against the lock — it reads no toolkit content, so it is correct from any toolkit, and
-      // gating it would red the unpinned-by-default waffle-doctor.yml for every consumer). It gets
-      // the OFFLINE identity, purely so the version-skew remedy below can name a command that works.
-      // `--verify-render` RENDERS, so it is gated like any other write — it is the #314 gate that
-      // #373 breaks, and rendering it from the default branch is exactly how it goes opaquely red.
+      // Plain doctor is NOT gated — it reads no toolkit content, and gating it would red the
+      // unpinned waffle-doctor.yml for every consumer; `--verify-render` renders, so it is (#373).
       const toolkitIdentity = verifyRender ? requireRelease('doctor --verify-render') : offlineIdentity();
       const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
-      // Absent files are only "tolerated" when *some* render survived, or when --verify-render
-      // reproduced the render instead (#314); when every managed file is absent and nothing was
-      // verified in their place, the flag no longer excuses them (#311).
       const tolerated = allowMissing && (!result.nothingPresent || result.render.evaluated);
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
       for (const f of result.missing) console.log((tolerated ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
-      // Render drift (#314): the lock disagrees with a fresh render of the committed config.
       for (const f of result.render.stale) console.log(`stale render: ${f}${from(f)} — the config would render different content than the lock records`);
       for (const f of result.render.absent) console.log(`stale lock entry: ${f}${from(f)} — tracked by the lock but no longer rendered by the config`);
       for (const f of result.render.unexpected) console.log(`unrendered: ${f} — the config would render this file but the lock does not track it`);
       for (const e of result.render.errors) console.log(`verify-render: ${e}`);
       for (const n of result.notes) console.log(n);
-      // Prerequisite gate (#129): an unmet `require` fails the check; a `recommend` only reports.
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
       if (result.ok) {
@@ -141,11 +112,7 @@ try {
     }
     case 'upgrade': {
       if (args.length) fail('upgrade takes no refs — it re-renders the current selection, moving it across toolkit versions');
-      // #373: the command the issue is named for. `upgrade` announces "0.8.0 → 0.12.0" and then
-      // writes whatever the fetched toolkit happens to hold — which, unpinned, is the default
-      // branch. Gating it is what makes `toVersion` (upgrade.mjs) mean something again.
       const toolkitIdentity = requireRelease('upgrade');
-      // upgrade() logs its narrative (version move, changelog, migrations, render) via `log`.
       const result = upgrade({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, log: console.log });
       for (const w of result.render.warnings) console.warn(`warning: ${w}`);
       if (!result.render.ok) {
@@ -169,22 +136,14 @@ try {
       console.log('the files remain in place and are now project-owned');
       break;
     }
-    // The toolkit's only destructive command (#182). Every delete is gated on the lock: a path is
-    // removed only if `.waffle/waffle.lock.json` tracks it AND its sha256 still matches what we
-    // rendered. It is a DRY RUN until `--yes` — the CLI is deliberately non-interactive (see the
-    // `--interactive` note under `list`), so the flag IS the consent, and a preview by default is
-    // the safer default for the agents and CI jobs that drive this toolkit.
+    // The toolkit's only destructive command: a DRY RUN until `--yes`, and every delete is gated
+    // on the lock (tracked path AND matching sha256).
     case 'uninstall': {
       const yes = extractFlag(args, '--yes');
       const force = extractFlag(args, '--force');
       const allowMissing = extractFlag(args, '--allow-missing');
-      // `.waffle/extensions/` holds files the CONSUMER wrote (render reads them as render sources),
-      // and a full uninstall deletes them with the rest of `.waffle/`. `keepConfig` is the library's
-      // answer to "take the rendered output, keep my authored inputs" — it has always been there; the
-      // CLI simply never let anyone ask for it, so the only way to keep an authored extension was to
-      // hope it was committed. It keeps the LOCK too (planUninstall) — the lock carries the poured
-      // syrup that `waffle.yaml` alone does not name, so a config without it re-renders a different
-      // install than the one you uninstalled.
+      // `--keep-config` keeps the LOCK too: the lock carries poured syrup `waffle.yaml` does not
+      // name, so a config without it re-renders a different install than the one you uninstalled.
       const keepConfig = extractFlag(args, '--keep-config');
       if (args.length) {
         fail(`uninstall takes no refs (got ${args.join(', ')}) — it removes the whole install; use \`wafflestack eject <ref>\` to release a single item to project ownership`);
@@ -202,14 +161,12 @@ try {
       if (args.length) {
         fail(`reinstall takes no refs (got ${args.join(', ')}) — it removes the rendered files and re-renders the current selection`);
       }
-      // No `--yes` for a plain refresh: every file it removes is written straight back by the
-      // render that follows. `--clean` deletes the config — authored input, nothing restores it.
+      // No `--yes` for a plain refresh: the render that follows writes every removed file straight
+      // back. `--clean` deletes the config — authored input, nothing restores it.
       if (clean && !yes) {
         fail(`reinstall --clean deletes ${CONFIG_FILE} and your whole selection, and does not re-render — re-run with \`--yes\` to confirm (plain \`reinstall\` refreshes in place and keeps your config)`);
       }
-      // Gated: it re-renders (#373). Refuse before the deletes, never between them — a reinstall
-      // that removed the tree and then refused to lay it back down is the one outcome worse than
-      // rendering unreleased content.
+      // Gated because it re-renders, and it must refuse BEFORE the deletes, never between them (#373).
       const toolkitIdentity = requireRelease('reinstall');
       const result = reinstall({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, clean, force, log: console.log });
       for (const w of result.render?.warnings ?? []) console.warn(`warning: ${w}`);
@@ -223,17 +180,13 @@ try {
       const file = init({ cwd });
       console.log(`wrote ${file} — pick stacks and config values, then run \`wafflestack render\``);
       console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
-      // Only the local overlay (`.waffle/waffle.local.yaml`) and its derivative the local lock
-      // (`.waffle/waffle.local.lock.json` — this machine's render, written only when the overlay
-      // feeds it; #317) are knowable at init, no stacks having been chosen yet; `install
-      // --gitignore` later adds the worktrees dir once a stack that declares it is enabled.
+      // Only the local overlay and its lock are knowable at init — no stacks are chosen yet;
+      // `install --gitignore` adds the rest once a stack that declares them is enabled.
       if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE]));
       break;
     }
     case 'setup': {
-      // Reporting only — it writes nothing, so it WARNS rather than refusing (#373). `setup` is the
-      // README's onboarding entry point; refusing the very first command a new consumer runs, to
-      // protect a render it is not doing, would be gratuitous. The warning names the tag to pin.
+      // Reporting only — it writes nothing, so it warns rather than refusing (#373).
       warnProvenance(identity());
       process.stdout.write(setupGuide(toolkitRoot, pkg.version, cwd));
       break;
@@ -245,15 +198,12 @@ try {
       warnProvenance(identity()); // read-only report: warn, never refuse (see `setup`)
       const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: pkg.version });
 
-      // Interactive is opt-in (`--interactive`) AND needs a real TTY on both ends. The DEFAULT is
-      // always the plain table — safe for CI, pipes and agents, consistent with the toolkit's
-      // deliberately non-interactive CLI. `--interactive` without a TTY degrades to the table
-      // (never blocks on readline).
+      // The DEFAULT must stay the plain table — CI, pipes and agents drive this CLI, so a missing
+      // TTY degrades to the table rather than blocking on readline.
       if (interactive && process.stdin.isTTY && process.stdout.isTTY) {
         const result = await interactiveSelect(model);
         if (result.applied && result.refs.length) {
-          // The one branch of `list` that writes: applying a selection installs refs and renders.
-          // The gate belongs here, not on the command — browsing the table is not a write.
+          // The one branch of `list` that writes — hence the gate here, not on the command.
           const toolkitIdentity = requireRelease('list --interactive');
           installRefs({ toolkitRoot, cwd, refs: result.refs, log: console.log });
           runRender(false, toolkitIdentity);
@@ -263,20 +213,16 @@ try {
         break;
       }
       if (interactive) console.error('note: --interactive needs a TTY on stdin/stdout; printing the plain table instead');
-      // Color only when writing to a real terminal and neither NO_COLOR nor --no-color opts out.
       const color = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !noColor;
       process.stdout.write(formatListTable(model, { color }));
       break;
     }
     case 'avatars': {
-      // Owner-side Gravatar pipeline (#285): `avatars sync` uploads/assigns each agent avatar for
-      // its already-verified commit email; `avatars status` reports drift without writing anything.
+      // Owner-side Gravatar pipeline: `sync` uploads/assigns agent avatars, `status` only reports (#285).
       const sub = args[0] ?? 'sync';
       if (!['sync', 'status'].includes(sub)) fail(`usage: wafflestack avatars <sync|status> [--cwd DIR]`);
       const { runAvatarsSync, avatarsExitCode } = await import('./lib/avatars-sync.mjs');
       const result = await runAvatarsSync({ toolkitRoot, cwd, mode: sub, log: console.log });
-      // `status` is a check: a drifted (unregistered) address exits non-zero so CI/scripts can gate;
-      // any per-agent failure remainder also exits non-zero so a partial `sync` never looks clean.
       process.exit(avatarsExitCode({ mode: sub, pending: result.pending, failed: result.failed }));
       break;
     }
@@ -287,9 +233,8 @@ try {
       process.exit(problems.length ? 1 : 0);
       break;
     }
-    // Asking for help is not an error (#187). Prints to STDOUT and exits 0 — so `wafflestack help
-    // | less` works and a script can tell "I asked" from "I fumbled". The unknown-command path
-    // below still prints usage to STDERR and exits 1, which is what scripts gate on.
+    // Asking for help is not an error (#187) — STDOUT and exit 0; the unknown-command path below
+    // is the STDERR/exit-1 one that scripts gate on.
     case 'help':
     case '--help':
     case '-h':
@@ -297,9 +242,8 @@ try {
       process.exit(0);
       break;
     default:
-      // Includes bare `wafflestack` (no command at all): deliberately an error, not a help screen.
-      // A script that invokes the CLI with an empty argument still gets a non-zero exit, which is
-      // the failure it needs to see. `wafflestack help` is one word away for a human.
+      // Includes bare `wafflestack`: deliberately an error, not a help screen — a script invoking
+      // the CLI with an empty argument still needs the non-zero exit.
       fail([banner(), USAGE, '', 'run `wafflestack help` for what each command does'].join('\n'));
   }
 } catch (err) {
@@ -307,14 +251,6 @@ try {
 }
 
 // ─── toolkit provenance (#373) ────────────────────────────────────────────────────────────────
-// A version number does not identify content: `npx github:dustinkeeton/wafflestack` with no `#ref`
-// fetches the DEFAULT BRANCH, whose package.json still says the last released version. So the CLI
-// asks what it actually is, and the commands that WRITE FILES FROM TOOLKIT CONTENT refuse when it
-// is provably not a release. Scoping is the whole design: gate the write path only. Plain `doctor`
-// never reads toolkit content — it hashes files against the lock — so gating it would turn the
-// shipped waffle-doctor.yml red for every consumer on the unpinned default, which is an outage, not
-// a fix. `list`/`setup` report, so they warn. `init`/`eject`/`uninstall`/`validate`/`help` never
-// touch toolkit content at all.
 
 /** The full identity, network lookup included unless `--offline`. Cached. */
 function identity() {
@@ -322,24 +258,13 @@ function identity() {
   return identityCache;
 }
 
-/**
- * Identity WITHOUT the network, for callers that want the truth but must not pay for it: the banner
- * (printed on `help`) and plain `doctor` (the CI drift gate every consumer runs on every PR — it
- * must stay fast, and it must not start depending on our reachability). A checkout still resolves
- * exactly; an npx install degrades to `unverified` unless its shipped CHANGELOG gives it away.
- */
+/** Identity WITHOUT the network — for the banner and plain `doctor`, which must not depend on our reachability. */
 function offlineIdentity() {
   if (!offlineIdentityCache) offlineIdentityCache = resolveToolkitIdentity({ toolkitRoot, offline: true });
   return offlineIdentityCache;
 }
 
-/**
- * The gate. Refuses a write command when the running toolkit is provably NOT a release, naming the
- * pinned command to run instead. `unverified` (offline, no git, unreadable npm lockfile) fails
- * OPEN — a warning, then proceed — because failing closed on ignorance would make every consumer's
- * CI depend on our reachability. Fail-closed applies only to a lookup that SUCCEEDED and said "not
- * a release".
- */
+/** The gate: refuses a write command from a provably-unreleased toolkit; `unverified` fails OPEN. */
 function requireRelease(cmd) {
   const id = identity();
   if (id.status === 'unreleased' && !allowUnreleased) fail(formatUnreleasedRefusal(id, cmd));
@@ -377,8 +302,7 @@ function banner() {
     `┣━╋━╋━┫  wafflestack v${pkg.version}`,
     '┣━╋━╋━┫  one batter, every repo',
     '┗━┻━┻━┛',
-    // Only when it is NOT a release — a released toolkit's version number identifies it completely,
-    // and the box has said so for eleven versions. Anything else needs the commit to be identified.
+    // Only when it is NOT a release — a released toolkit's version number identifies it completely.
     ...(id.status === 'release' ? [] : [`  ${id.status}${id.commit ? ` — ${id.commit.slice(0, 7)}` : ''}${id.status === 'unreleased' ? ' (not a release; `--allow-unreleased` to write anyway)' : ''}`]),
     '',
   ].join('\n');
@@ -431,10 +355,8 @@ function helpText() {
   ].join('\n');
 }
 
-// `toolkitIdentity` is the object `requireRelease()` already resolved — passed down so the render
-// (and the lock it writes) knows WHICH toolkit produced it, not merely which version number it
-// claimed (#373; #374 writes it into the lock). Every caller here is a gated command, so it is
-// always the real thing, never null.
+// `toolkitIdentity` is what `requireRelease()` already resolved; every caller here is a gated
+// command, so it is never null, and the lock records WHICH toolkit rendered (#374).
 function runRender(force = false, toolkitIdentity = null) {
   const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, log: console.log });
   for (const w of result.warnings) console.warn(`warning: ${w}`);
@@ -446,9 +368,7 @@ function runRender(force = false, toolkitIdentity = null) {
   if (result.removed.length) console.log(`removed stale: ${result.removed.join(', ')}`);
 }
 
-// `--gitignore` on a successful render/install: append the recommended entries the consumer
-// asked for (the explicit flag is their consent). Reached only after runRender succeeds — a
-// failed render exits first, so this never runs against an unrendered tree.
+// Reached only after `runRender` succeeds — the explicit `--gitignore` flag is the consent.
 function offerGitignore() {
   const toolkit = loadToolkit(toolkitRoot);
   const project = loadProjectConfig(cwd);
