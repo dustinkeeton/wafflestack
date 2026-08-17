@@ -1,21 +1,12 @@
 #!/usr/bin/env node
 //
-// checkpoint.mjs — validate a delegate run checkpoint at a phase boundary.
+// checkpoint.mjs — validate a delegate run checkpoint at a phase boundary, proving it holds what
+// the NEXT phase needs before any load-bearing field is read from it.
+// Dependency-free: it runs in a repo that may have no npm deps installed.
 //
-// The delegate skill writes one JSON checkpoint per run and, at each phase boundary,
-// runs this script to prove the checkpoint holds what the NEXT phase needs before
-// reading load-bearing fields (branch, worktree path, issue number) from it. A dropped
-// field or a hallucinated branch name fails here — loudly, with an exit code — instead
-// of surfacing downstream as a confusing agent failure.
+// Usage: node checkpoint.mjs --file <path> --phase <fetch|classify|plan|execute|report>
 //
-// Dependency-free on purpose: it runs inside a consuming repo that may not have any npm
-// deps installed, so it uses Node built-ins only and reads the co-located schema file.
-//
-// Usage:
-//   node checkpoint.mjs --file <path> --phase <fetch|classify|plan|execute|report>
-//
-// Exit 0 = valid for that phase. Exit 1 = invalid (JSON parse error, schema violation,
-// or a broken cross-reference) — the caller must STOP the run and report, never improvise.
+// Exit 0 = valid for that phase; exit 1 = invalid — the caller must STOP, never improvise.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,12 +30,9 @@ function parseArgs(argv) {
 const USAGE =
   'Usage: node checkpoint.mjs --file <checkpoint.json> --phase <fetch|classify|plan|execute|report>';
 
-// ---------------------------------------------------------------------------
-// Minimal JSON Schema validator — supports exactly the keyword subset used by
-// checkpoint.schema.json: type (incl. arrays and "integer"/"null"), const, enum,
-// required, properties, additionalProperties(false), items, minItems, minimum,
-// pattern. Anything richer is intentionally out of scope.
-// ---------------------------------------------------------------------------
+// Minimal JSON Schema validator — supports exactly the keyword subset checkpoint.schema.json
+// uses (type, const, enum, required, properties, additionalProperties, items, minItems,
+// minimum, pattern). Anything richer is intentionally out of scope.
 
 function typeOf(value) {
   if (value === null) return 'null';
@@ -121,11 +109,8 @@ function validateNode(value, schema, pathStr, errors) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Referential cross-checks — the part a pure shape validator can't do. These are
-// what actually catch a dropped issue, a mis-wired worktree, or a hallucinated
-// branch name. Each runs only once the sections it needs are in scope for `phase`.
-// ---------------------------------------------------------------------------
+// Referential cross-checks — the part a pure shape validator can't do. Each runs only once the
+// sections it needs are in scope for `phase`.
 
 function crossChecks(doc, sectionsInScope, errors) {
   const issueNumbers = new Set((doc.issues ?? []).map((i) => i.number));
@@ -206,7 +191,6 @@ function crossChecks(doc, sectionsInScope, errors) {
   delete doc.__planned;
 }
 
-// ---------------------------------------------------------------------------
 
 function main() {
   const args = parseArgs(process.argv.slice(2));

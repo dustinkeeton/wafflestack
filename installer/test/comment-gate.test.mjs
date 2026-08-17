@@ -20,19 +20,6 @@ const MAX_SLACK_PCT = 10; // a grandfathered ceiling this far above actual must 
 // Measured 2026-08-17 (ratio% + 1, longest run as found). Delete a file's entry when it
 // is cleaned; the gate then holds it to the default ceilings above.
 const GRANDFATHERED = {
-  '.github/workflows/tests.yml': { pct: 61, run: 23 },
-  '.github/workflows/waffle-post-merge-hook.yml': { pct: 34, run: 27 },
-  '.github/workflows/waffle-release-hook.yml': { pct: 40, run: 15 },
-  'stacks/github-workflow/files/.github/workflows/waffle-evals.yml': { pct: 29, run: 14 },
-  'stacks/github-workflow/files/.github/workflows/waffle-hygiene.yml': { pct: 33, run: 24 },
-  'stacks/github-workflow/files/.github/workflows/waffle-label-hook.yml': { pct: 27, run: 23 },
-  'stacks/github-workflow/files/.github/workflows/waffle-post-merge-hook.yml': { pct: 34, run: 27 },
-  'stacks/github-workflow/files/.github/workflows/waffle-pr-green-hook.yml': { pct: 16, run: 22 },
-  'stacks/github-workflow/files/.github/workflows/waffle-pr-response-hook.yml': { pct: 20, run: 15 },
-  'stacks/github-workflow/files/.github/workflows/waffle-release-hook.yml': { pct: 40, run: 15 },
-  'stacks/orchestration/skills/delegate/checkpoint.mjs': { pct: 17, run: 17 },
-  'stacks/orchestration/skills/delegate/identity.mjs': { pct: 30, run: 44 },
-  'stacks/orchestration/skills/delegate/memory.mjs': { pct: 30, run: 30 },
 };
 
 // Counts `//` lines (minus a line-1 `// @ts-check`) and block-comment lines, excluding

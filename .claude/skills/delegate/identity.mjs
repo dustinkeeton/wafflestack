@@ -1,48 +1,12 @@
 #!/usr/bin/env node
 //
-// identity.mjs — verify the git identities a delegate run will commit under, before it
-// spawns anything.
+// identity.mjs — verify the git identities (human / main-agent / sub-agent) a delegate run will
+// commit under. Dependency-free: it runs in a repo that may have no npm deps installed.
 //
-// Delegate has gates for plan confirmation, pre-push approval, and checkpoint validity,
-// but nothing ever proved the *identity* config coherent. A half-configured identity does
-// not fail loudly: it silently falls back to whatever ambient git config the machine has,
-// so bot commits land under the human's name, or get signed with the human's key, or hang
-// a non-interactive agent on a prompting signer. This script turns that silent default
-// into an exit code.
+// Usage: node identity.mjs --git-cmd '<resolved git.cmd>' [--agents-dir <dir>] \
+//          --agents <slug,slug,...>   (git.agentIdentities YAML on stdin, heredoc)
 //
-// It validates three tiers, all of which are static properties of the resolved config:
-//   * human      — bare git; never overridden by anything the toolkit renders
-//   * main-agent — the orchestrator's own commits, routed through the resolved git.cmd
-//   * sub-agent  — each spawned agent's commits, routed through the per-agent command
-//                  derived from git.cmd + the agentIdentities overrides
-//
-// It validates CONFIGURATION, not runtime process identity: it proves the right identity
-// WILL apply to each tier's commits, not who is at the keyboard.
-//
-// Dependency-free on purpose: it runs inside a consuming repo that may not have any npm
-// deps installed, so it uses Node built-ins only. Non-markdown skill files are copied
-// verbatim by the renderer (no placeholder substitution), so the caller passes the
-// resolved values in as arguments and on stdin.
-//
-// Usage:
-//   node identity.mjs --git-cmd '<resolved git.cmd>' \
-//     [--agents-dir <dir>] --agents <slug,slug,...> <<'WAFFLE_AGENT_IDENTITIES'
-//   <resolved git.agentIdentities, as YAML>
-//   WAFFLE_AGENT_IDENTITIES
-//
-// Findings print one per line, prefixed ERROR: / WARN: / NOTE:.
-//   ERROR — incoherent config: it will break, hang, or misattribute a cryptographic
-//           identity — including an identity-bearing command that leaves the signing posture
-//           unpinned, which is the #158 bug class above. Exit 1. The caller must STOP the run
-//           and report verbatim; it must never improvise an identity or fall back to the
-//           ambient one.
-//   WARN  — coherent, but expressed intent that cannot take effect, or almost certainly
-//           not what the user meant. Logged; the run proceeds.
-//   NOTE  — informational. A bare git.cmd is a NOTE, never an error: "no bot identity" is
-//           a legitimate documented state, not a misconfiguration.
-//
-// Exit 0 = pass (warnings allowed). Exit 1 = any ERROR — identical semantics to
-// checkpoint.mjs.
+// Prints ERROR:/WARN:/NOTE: lines; exit 1 on any ERROR — the caller must STOP, never improvise.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -50,20 +14,14 @@ import path from 'node:path';
 const USAGE =
   "Usage: node identity.mjs --git-cmd '<resolved git.cmd>' [--agents-dir <dir>] --agents <slug,slug,...>  (agentIdentities YAML on stdin)";
 
-// Kept byte-identical to the `entryPatterns` guards declared for git.agentIdentities in
-// stacks/orchestration/stack.yaml (and github-workflow's identical declaration). Those
-// guards run at render time; re-checking here is defense in depth — a hand-edited render
-// dodges the render-time guard entirely, and this script is what the run actually trusts.
+// Kept byte-identical to the `entryPatterns` guards on git.agentIdentities in the stack.yamls.
+// Re-checked here because a hand-edited render dodges the render-time guard entirely.
 const LEAF_PATTERNS = {
   botName: /^(?!.*\$\{\{)[A-Za-z0-9._[\]-]+(?: [A-Za-z0-9._[\]-]+)*$/,
   botEmail: /^(?!.*\$\{\{)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/,
   signingKey: /^(?!.*\$\{\{)[A-Za-z0-9._\/~+:-]+$/,
 };
 const LEAF_KEYS = Object.keys(LEAF_PATTERNS);
-
-// ---------------------------------------------------------------------------
-// Argument parsing
-// ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
   const out = {};
@@ -86,19 +44,9 @@ function readStdin() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// git.cmd tokenizer
-//
-// The rendered command is a flat prefix — `git` followed by `-c key=value` pairs (and possibly
-// other flags). Double quotes group a spaced value. Single quotes are NOT handled — and cannot
-// reach this tokenizer through a render: `git.cmd` declares an allowlist `pattern:` in both
-// stacks (#254) that rejects `'`, backtick, `$`, `;`, `&`, `|`, `<`, `>`, `\` and newlines at
-// render time, so the caller's `--git-cmd '…'` shell literal holds by construction — see
-// SKILL.md's "Identity preflight". (A hand-run invocation can still pass anything; a `'` is then
-// just an ordinary character to this tokenizer.) An unterminated double quote, or a stray bare
-// word, means the value was never quoted in the first place and git would word-split it — that
-// is an ERROR, not a guess.
-// ---------------------------------------------------------------------------
+// git.cmd tokenizer. Double quotes group a spaced value; single quotes are NOT handled and cannot
+// reach here through a render (`git.cmd`'s allowlist `pattern:` rejects them, #254). An
+// unterminated quote or stray bare word means git would word-split it — an ERROR, not a guess.
 
 function tokenize(cmd) {
   const tokens = [];
@@ -130,9 +78,8 @@ function tokenize(cmd) {
  */
 function parseGitCmd(cmd, errors) {
   const config = new Map();
-  // Keys whose last occurrence carried no `=`. git reads those as the literal string "true",
-  // which is a valid value for a flag and a broken one for an identity — the caller needs to
-  // tell `-c user.name` (⇒ "true") apart from `-c user.name=true`.
+  // Keys whose last occurrence carried no `=`: git reads those as the literal "true", so the
+  // caller needs to tell `-c user.name` (⇒ "true") apart from `-c user.name=true`.
   const valueless = new Set();
 
   if (/\{\{[^}]*\}\}/.test(cmd)) {
@@ -176,27 +123,16 @@ function parseGitCmd(cmd, errors) {
   return { config, valueless };
 }
 
-// git's boolean vocabulary (`git config --bool`). A `-c key` with no `=` is `true`, which
-// parseGitCmd already normalises. Anything outside this set is not "false" — it is a value git
-// rejects at commit time, which is a different (and louder) finding than "signing is off".
+// git's boolean vocabulary (`git config --bool`). Anything outside this set is not "false" — it
+// is a value git rejects at commit time, a different finding from "signing is off".
 const GIT_BOOLEANS = ['true', 'false', 'yes', 'no', 'on', 'off', '1', '0'];
 const isBoolean = (v) => v !== undefined && GIT_BOOLEANS.includes(String(v).toLowerCase());
 const isTrue = (v) => v !== undefined && ['true', 'yes', 'on', '1'].includes(String(v).toLowerCase());
 
-// ---------------------------------------------------------------------------
-// agentIdentities: a restricted two-level YAML-subset parser
-//
-// The caller pipes in `git.agentIdentities` exactly as the renderer formatted it —
-// YAML.stringify with lineWidth 0, i.e. `{}` when empty, otherwise `slug:` keys with
-// two-space-indented `botName` / `botEmail` / `signingKey` scalar leaves. Nothing richer
-// is in scope (checkpoint.mjs's hand-rolled JSON-Schema subset is the same precedent).
-//
-// The subset is SOUND because the split is on the FIRST colon, which is always the key/value
-// separator: a leaf name is one of three literals, none containing a colon. Colons *inside* a
-// value are therefore harmless — and they do occur, since the signingKey charset admits ":".
-// Anything this parser does not recognise throws, and the caller turns that into an ERROR
-// verdict: a parse surprise is fail-safe, never a silent skip.
-// ---------------------------------------------------------------------------
+// A restricted two-level YAML-subset parser for `git.agentIdentities` as the renderer formats it.
+// Sound because the split is on the FIRST colon: a leaf name is one of three literals, none
+// containing a colon, so colons inside a value (signingKey admits ":") are harmless. Anything
+// unrecognised throws, and the caller turns that into an ERROR — a parse surprise is fail-safe.
 
 function unquote(s) {
   const t = s.trim();
@@ -238,10 +174,6 @@ function parseAgentIdentities(text) {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Agent definition lookup
-// ---------------------------------------------------------------------------
-
 function agentSlugsOnDisk(dir) {
   if (!dir) return null;
   try {
@@ -266,10 +198,6 @@ function hasDisplayName(dir, slug) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Identity shape helpers
-// ---------------------------------------------------------------------------
-
 /** A base email cannot subaddress when its domain is a *.noreply.github.com, or its local part already spends the `+` tag. */
 function canSubaddress(email) {
   const at = email.lastIndexOf('@');
@@ -284,7 +212,6 @@ function canSubaddress(email) {
 const looksLikeKeyId = (k) => /^(0x)?[0-9A-Fa-f]{8,40}$/.test(k);
 const looksLikePath = (k) => k.includes('/') || k.startsWith('~');
 
-// ---------------------------------------------------------------------------
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -320,10 +247,8 @@ function main() {
   const gpgsign = config.get('commit.gpgsign');
   const gpgFormat = config.get('gpg.format');
 
-  // Tri-state, never binary: `unsigned` is a claim about the config, so it may only be printed when
-  // the config actually says so. The AMBIENT arm is unreachable while an unpinned posture is an
-  // ERROR below — it stands so that downgrading that taxonomy can never silently resurrect a
-  // verdict line that guesses in the reassuring direction.
+  // Tri-state, never binary: `unsigned` is a claim about the config, so it may only be printed
+  // when the config actually says so.
   const posture = isTrue(gpgsign)
     ? `signed, gpg.format=${gpgFormat}`
     : gpgsign === undefined
@@ -336,10 +261,8 @@ function main() {
   if (email !== undefined && name === undefined) {
     errors.push('git.cmd sets user.email but not user.name — half an identity; the missing half falls back to the ambient config');
   }
-  // PRESENCE IS NOT A VALUE. The two checks above ask only whether each half of the identity was
-  // set at all; `-c user.name=` and a valueless `-c user.name` both satisfy them and both produce a
-  // broken author. Same class as the empty user.signingkey below — git only objects at commit time
-  // (or, worse, does not object at all), so the gate has to object now.
+  // PRESENCE IS NOT A VALUE: the checks above ask only whether each half was set at all, and git
+  // objects only at commit time (or not at all), so the gate has to object now.
   //   -c user.name=          → `git commit` dies: "Author identity unknown"
   //   -c user.email=         → git commits happily, authored `<>`: no attribution at all
   //   -c user.name           → no `=`, so git reads the literal "true": commits authored by "true"
@@ -361,12 +284,9 @@ function main() {
       `git.cmd sets commit.gpgsign=${JSON.stringify(gpgsign)}, which is not a git boolean (${GIT_BOOLEANS.join('|')}, or valueless ⇒ true) — git rejects it only at commit time, so this fails silently until an agent tries to commit`,
     );
   }
-  // The #158 bug class this gate exists to kill: an identity-bearing command that never pins the
-  // signing posture leaves it AMBIENT. On a machine whose ~/.gitconfig sets commit.gpgsign=true,
-  // every bot commit is then signed with the human's key — or hangs a non-interactive agent on a
-  // prompting signer. The recipe owns the posture (see git.cmd's description in stack.yaml): pin
-  // it false for the canonical unsigned bot, or true alongside user.signingkey + gpg.format.
-  // A BARE git.cmd is exempt — no identity is claimed, so there is no posture to own.
+  // The #158 bug class: an identity-bearing command that never pins the signing posture leaves it
+  // AMBIENT, so a ~/.gitconfig with commit.gpgsign=true signs bot commits with the human's key or
+  // hangs a non-interactive agent. A BARE git.cmd is exempt — no identity, no posture to own.
   if (name !== undefined && email !== undefined && !config.has('commit.gpgsign')) {
     errors.push(
       'git.cmd pins an identity but leaves commit.gpgsign AMBIENT — the recipe owns the signing posture, and an unpinned one signs bot-authored commits with whatever key the ambient config names (or hangs a non-interactive agent on a prompting signer). Pin it: `-c commit.gpgsign=false` for an unsigned bot, or `-c commit.gpgsign=true` with user.signingkey and gpg.format for a signing one',
@@ -381,9 +301,8 @@ function main() {
     }
   }
 
-  // Everything below derives FROM the base command. If the base is already incoherent, any
-  // derived finding is noise about a value that will never be used — the base errors are
-  // the report. Leaf-shape validation still runs: it is independent of the base.
+  // Everything below derives FROM the base command, so an incoherent base makes every derived
+  // finding noise. Leaf-shape validation still runs: it is independent of the base.
   const baseIsCoherent = errors.length === 0;
 
   // --- sub-agent tier: is the derivation feasible for every planned agent? ----
@@ -407,15 +326,12 @@ function main() {
     }
   }
 
-  // A bare base is the documented no-opt-in state: every tier collapses to the ambient
-  // (human) identity, by design. Rule 1 of "Per-agent commit identity" short-circuits
-  // there, so nothing below can virtualize anything.
+  // A bare base is the documented no-opt-in state: every tier collapses to the ambient (human)
+  // identity, so nothing below can virtualize anything.
   const bare = name === undefined && email === undefined;
 
-  // ...but "no identity" is not "no configuration". A base may pin the signing posture and the key
-  // without pinning a name or an email, and rule 4 hands those flags verbatim to every tier. Such a
-  // command is bare of IDENTITY and anything but inert, so the NOTE must not say "nothing to verify"
-  // and the verdict must not drop the posture the lines above just computed.
+  // ...but "no identity" is not "no configuration": a base may pin the signing posture without
+  // pinning a name, so the NOTE must not say "nothing to verify" and must keep that posture.
   const postureOnly = bare && ['commit.gpgsign', 'user.signingkey', 'gpg.format', 'tag.gpgsign'].some((k) => config.has(k));
 
   if (!baseIsCoherent) {
@@ -458,8 +374,6 @@ function main() {
     }
   }
 
-  // The same key-shape-vs-gpg.format heuristic the per-agent leaves get above, pointed at the key
-  // every signing repo actually sets: the base one. A per-agent signingKey leaf is the rare case.
   // WARN, never ERROR — a key shape is a heuristic, and the signer is the real authority.
   if (isTrue(gpgsign) && signingKey) {
     if (gpgFormat === 'ssh' && looksLikeKeyId(signingKey)) {
@@ -473,20 +387,15 @@ function main() {
     }
   }
 
-  // Only a base that actually ENABLES signing has expressed a tag-signing intent to leave
-  // dangling. The canonical `commit.gpgsign=false` recipe never asked for signed tags, so a WARN
-  // there surfaces nothing and only teaches readers to skim past WARN lines.
+  // Only a base that actually ENABLES signing has a dangling tag-signing intent to report.
   if (isTrue(gpgsign) && !config.has('tag.gpgsign')) {
     warns.push(
       'git.cmd pins commit.gpgsign=true but leaves tag.gpgSign ambient — delegate agents never tag, so this is advisory, but a `git tag -s` elsewhere still rides the ambient signing config',
     );
   }
 
-  // A map entry for an agent that exists but is not in this run is fine and silent. An entry that
-  // matches neither a definition file nor a planned agent is PROBABLY a typo'd slug — but a
-  // harness built-in has no definition file either, so absence is not proof. When the definition
-  // set is unknowable (no --agents-dir, or an unreadable one) we say nothing at all: same policy
-  // as hasDisplayName below, which also fails open rather than assert on missing evidence.
+  // An entry matching neither a definition file nor a planned agent is PROBABLY a typo'd slug, but
+  // a harness built-in has no definition file either — so absence is not proof, and this fails open.
   const onDisk = agentSlugsOnDisk(args.agentsDir);
   if (onDisk) {
     for (const slug of Object.keys(identities)) {
