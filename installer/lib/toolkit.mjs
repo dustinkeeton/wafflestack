@@ -6,10 +6,12 @@ import { normalizeItemRef } from './refs.mjs';
 import { VALID_TARGETS } from './project.mjs';
 import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
+import { normalizeRecommendedPlugins } from './plugins.mjs';
 import { loadRegistry } from './registry.mjs';
 
 /** @import { ExternalStackEntry } from './project.mjs' */
 /** @import { Registry } from './registry.mjs' */
+/** @import { RecommendedPlugin } from './plugins.mjs' */
 
 /**
  * The core toolkit types. This module owns them; every other module imports them from here.
@@ -65,6 +67,10 @@ import { loadRegistry } from './registry.mjs';
  * @property {boolean} recommended true when the manifest sets `recommended: true`; the setup
  *   wizard pre-selects it by default (still user-overridable). Advisory only — it never forces a
  *   render or changes the render set.
+ * @property {RecommendedPlugin[]} recommendedPlugins external harness plugins this stack suggests
+ *   pairing with (#199). Advisory in the same sense as `recommended:`, and one step weaker: a
+ *   plugin is not a waffle, so nothing here is rendered, locked, or installed — `setup` offers it,
+ *   the user installs it. `[]` for a stack that declares none.
  * @property {AgentItem[]} agents
  * @property {SkillItem[]} skills
  * @property {FileItem[]} files
@@ -97,6 +103,7 @@ import { loadRegistry } from './registry.mjs';
  * @typedef {object} StackManifest
  * @property {string} [description]
  * @property {boolean} [recommended] pre-selected by the setup wizard unless the user opts out
+ * @property {unknown} [recommendedPlugins] external harness plugins the setup wizard offers (#199)
  * @property {string[]} [agents] bare agent names
  * @property {string[]} [skills] bare skill names
  * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths —
@@ -398,6 +405,12 @@ function loadStack(name, dir) {
     // defensive coercions used throughout this loader. Read generically from the manifest so #202
     // needs only a one-line `recommended: true` in its stack.yaml — never keyed on a stack name.
     recommended: manifest.recommended === true,
+    // External harness plugins this stack suggests pairing with (#199) — a curated offer the
+    // setup wizard reads to the user, and nothing more: no plugin is fetched, rendered, locked, or
+    // installed by the toolkit, so this field cannot change a single output byte. Normalized
+    // leniently and linted by `validate` (see plugins.mjs for why the registry is the wrong home
+    // for it, and why `items:` rather than a per-waffle key gives waffle-level scope).
+    recommendedPlugins: normalizeRecommendedPlugins(manifest.recommendedPlugins),
     agents,
     skills,
     files,
