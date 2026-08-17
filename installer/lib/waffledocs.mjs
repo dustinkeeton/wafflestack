@@ -1,25 +1,9 @@
 /**
- * Generate the default `.waffle/` overview docs from the computed render selection:
- *
- *   .waffle/CHEATSHEET.md   one-line cheat sheet of user-invocable skills (slash commands)
- *   .waffle/cheatsheet.html branded, self-contained web page of the same
- *   .waffle/TEAM.md         one-page introduction to the installed agents
- *   .waffle/team.html       branded, self-contained web page of the same
- *
- * These are emitted through render's `emit()` choke point, so they are lock-tracked,
- * `doctor`-drift-checked, pruned when a later render no longer produces them, and refreshed
- * on every render — the "updated when necessary" behaviour falls out of the render lifecycle.
- *
- * The Markdown is the agent-readable source of truth (plain, scannable body). The HTML pages
- * are the visual one-pagers — branded chrome (per `assets/README.md`: waffle glyph +
- * Golden/Syrup/Cocoa palette) around selectable, searchable, reflowing text. They carry a
- * hybrid font strategy: Google Fonts `<link>` tags load the brand type (Baloo 2 / Outfit /
- * JetBrains Mono) as progressive enhancement, with a brand-styled system-font stack as the
- * CSS fallback so the file renders correctly fully offline (fonts are the only external
- * reference — no external images, scripts, or stylesheets). Both formats are assembled purely
- * from item frontmatter (skills: `user-invocable` / `argument-hint` / `description`; agents:
- * `name` / `description` / `skills`), substituted with the same resolver render uses, so a
- * `{{project.name}}` in a description reads the same as in the rendered item.
+ * Generate the default `.waffle/` overview docs — CHEATSHEET.md, TEAM.md, AVATARS.md and the
+ * branded cheatsheet.html / team.html pages — from the computed render selection. All of it is
+ * emitted through render's `emit()` choke point, so it is lock-tracked, drift-checked and pruned
+ * by the render lifecycle, and all of it is assembled from item frontmatter substituted with the
+ * same resolver render uses. Brand chrome per `assets/README.md`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,39 +23,30 @@ const AVATARS_DIR = path.join('.waffle', 'avatars');
 const avatarRel = (name) => path.join(AVATARS_DIR, `${name}.svg`);
 
 /**
- * The same file as a `/`-joined REFERENCE (#248 review). Unlike `CHEATSHEET_MD`/`TEAM_MD` — used
- * only as `rel` keys — this value is interpolated into `AVATARS.md`'s *content*: the table cells,
- * the default `identity.avatar`, and the `rsvg-convert`/`npx`/`magick` bash one-liners. A
- * platform-separator join would emit `.waffle\avatars\x.svg` inside a bash snippet on Windows and
- * give the manifest an OS-dependent sha256 — for a lock-tracked, drift-checked generated file.
+ * The same file as a `/`-joined REFERENCE, interpolated into `AVATARS.md`'s content (#248). It must
+ * not use the platform separator: a `\` on Windows would land inside a bash snippet and give a
+ * drift-checked generated file an OS-dependent sha256.
  */
 const avatarRef = (name) => `.waffle/avatars/${name}.svg`;
 
-// Standalone avatar files are sized for a Gravatar upload (Gravatar serves down from the
-// source), not for the 26–56px inline uses on the HTML one-pagers.
+// Sized for a Gravatar upload (which serves down from the source), not for the inline uses.
 const AVATAR_FILE_PX = 512;
 
-// Description substitution never enforces `pattern:`/`entryPatterns:` guards (those police
-// config values spliced into structured contexts, not prose) — pass empty guards.
+// Prose is not a structured context, so description substitution enforces no guards.
 const NO_GUARDS = { patterns: new Map(), entryPatterns: new Map() };
 
 /**
- * A skill is a slash command unless it explicitly opts out with `user-invocable: false`.
- * An absent key defaults to invocable — matching harness behaviour, so a skill that only
- * sets `disable-model-invocation: true` (e.g. `audit`) still shows on the cheat sheet.
+ * A skill is a slash command unless it opts out with `user-invocable: false`. An absent key
+ * defaults to invocable, matching harness behaviour.
  */
 function isUserInvocable(data) {
   return data['user-invocable'] !== false;
 }
 
 // ---- Per-agent commit-email derivation --------------------------------------------------
-//
 // KEEP IN LOCKSTEP with `stacks/orchestration/skills/delegate/SKILL.md` → "Per-agent commit
-// identity", rules 1–3, and with the github-workflow stack's setup note. The delegate
-// orchestrator derives an agent's git author from prose at spawn time; these helpers derive the
-// same address here so `.waffle/AVATARS.md` can name the EXACT email a human must register on
-// Gravatar. Two derivations of one rule is the maintenance hazard — a change on either side is a
-// change on both, and `installer/test/installer.test.mjs` pins the three documented examples.
+// identity", rules 1–4: the orchestrator derives the same address from that prose at spawn time,
+// so a change on either side is a change on both.
 
 /** A resolved `user.email=` value, in the shapes `git.cmd` can legally carry it. */
 const USER_EMAIL_RE = /(?:^|\s)-c\s+user\.email=(?:"([^"]*)"|'([^']*)'|(\S+))/;
@@ -80,10 +55,8 @@ const EMAIL_SHAPE_RE = /^[^\s@{}"'`]+@[^\s@{}"'`]+\.[^\s@{}"'`]+$/;
 
 /**
  * The base committer email a project's resolved `git.cmd` sets, or `null` when it sets none —
- * rule 1: a bare `git` (or any command without `-c user.email=`) means the project has NOT opted
- * into a bot identity, so nothing is virtualized. An unresolved placeholder (a `git.cmd`
- * referencing a `{{git.botEmail}}` no selected stack declares) yields `null` too: the manifest
- * must say "not configured" rather than print a literal `{{…}}` as an address to register.
+ * rule 1. An unresolved `{{…}}` placeholder yields `null` too, so the manifest says "not
+ * configured" rather than printing a placeholder as an address to register.
  */
 export function extractBaseEmail(gitCmd) {
   const m = USER_EMAIL_RE.exec(String(gitCmd ?? ''));
@@ -93,16 +66,10 @@ export function extractBaseEmail(gitCmd) {
 }
 
 /**
- * The commit email an agent with slug `slug` will author under, given the project's base email —
- * rule 2: `+<slug>` is inserted immediately before the `@` (`bot@wafflenet.io` →
- * `bot+lead-engineer@wafflenet.io`), UNLESS the base cannot subaddress, in which case it is used
- * **verbatim**. It cannot subaddress when either:
- *   - the domain is `*.noreply.github.com` — that domain routes only the `<id>+<username>@`
- *     shape, so a second `+` segment resolves to nothing at all; or
- *   - the local part already carries a `+` (`12345+wafflebot@…`, `bot+ci@…`) — the tag is spent.
- * Returns `null` for a null base (no bot identity). An explicit
- * `git.agentIdentities[slug].botEmail` override is applied verbatim by the CALLER (rule 3) — it
- * never flows through here.
+ * The commit email an agent with slug `slug` authors under — rule 2: `+<slug>` before the `@`,
+ * unless the base cannot subaddress (a `*.noreply.github.com` domain, or a local part whose `+`
+ * tag is spent), in which case the base is returned verbatim. A `git.agentIdentities[slug]`
+ * override never flows through here — the caller applies it (rule 3).
  */
 export function deriveAgentEmail(baseEmail, slug) {
   if (!baseEmail) return null;
@@ -120,17 +87,10 @@ const USER_NAME_ASSIGN = /((?:^|\s)-c\s+user\.name=)(?:"[^"]*"|'[^']*'|\S+)/;
 const USER_EMAIL_ASSIGN = /((?:^|\s)-c\s+user\.email=)(?:"[^"]*"|'[^']*'|\S+)/;
 
 /**
- * The project's `git.cmd` with the committer identity swapped in place — delegate **rule 4**:
- * *"Swap the values in place; do not rebuild the command from scratch — everything else the
- * project put in `git.cmd` (a `-c commit.gpgsign=false`, say) must survive."* Rebuilding it
- * would silently re-enable signing on a repo that turned it off, which on a prompting signer
- * (1Password's SSH agent) blocks the commit and otherwise signs an agent-authored commit with
- * the human's key (#248 review). Only called on a configured `git.cmd` (one carrying a resolved
- * `-c user.email=`); the rebuild is a defensive fallback. Each swap uses a replacement FUNCTION,
- * not a replacement string, so `$&`/`$1`/`` $` `` in a value can never re-expand and corrupt the
- * command (#249 — a `$&`-bearing email once duplicated the `-c user.email` flag). The
- * `botName`/`botEmail` pattern guards, which exclude `$` and `` ` ``, remain the defense for the
- * *shell word* itself.
+ * The project's `git.cmd` with the committer identity swapped in place — delegate rule 4. Never
+ * rebuild the command: everything else the project put in `git.cmd` (a `-c commit.gpgsign=false`,
+ * say) must survive, so the rebuild here is only a fallback for an unconfigured command. Each swap
+ * uses a replacement FUNCTION so a `$&` in a value can never re-expand into the command (#249).
  */
 export function withIdentity(gitCmd, displayName, email) {
   const base = String(gitCmd ?? '').trim() || 'git';
@@ -151,17 +111,8 @@ function titleCaseSlug(slug) {
 }
 
 /**
- * Build the doc payloads for the current selection. Returns `[{ rel, content }]` — the
- * caller emits each. A doc pair is omitted when its set is empty (no user-invocable skills
- * → no cheat sheet; no agents → no team page), so it prunes cleanly if a later selection
- * drops every item of that kind. Substitution problems (should not occur on a validated
- * toolkit, since descriptions are policed by `validate`) are pushed onto `errors`.
- */
-/**
- * The per-stack resolver cache + `substitute` closure the doc generators share. One cache per
- * call (a fresh `Map`), so each generation resolves every stack's placeholders exactly as render
- * does. `generateWaffleDocs` and `collectAgentAvatars` both build their rows through this, so the
- * substituted values (and thus the registered addresses) can never diverge.
+ * The per-stack resolver cache and `substitute` closure the doc generators share, so the values
+ * `generateWaffleDocs` and `collectAgentAvatars` derive can never diverge.
  */
 function makeDocSubstitutor(project, errors) {
   const primaryTarget = project.targets[0] ?? 'claude';
@@ -176,10 +127,8 @@ function makeDocSubstitutor(project, errors) {
 }
 
 /**
- * Enumerate the installed agents from a selection into the single row shape both the rendered
- * `TEAM.md`/`AVATARS.md` and the `avatars sync` pipeline consume. `ctxPrefix` only scopes the
- * substitution error context (`waffledocs` vs `avatars`); the derived fields are identical, so
- * the two callers never drift. Returned alphabetically for a deterministic (stable-hash) output.
+ * Enumerate the installed agents into the single row shape both the rendered docs and the
+ * `avatars sync` pipeline consume. Alphabetical, for a deterministic (stable-hash) output.
  */
 function enumerateAgents(selection, sub, ctxPrefix) {
   const agents = [];
@@ -187,17 +136,13 @@ function enumerateAgents(selection, sub, ctxPrefix) {
     if (kind !== 'agents') continue;
     agents.push({
       name: item.data.name ?? item.name,
-      // The agent's SLUG — its definition filename, which is the key the delegate orchestrator
-      // plus-addresses with and `git.agentIdentities` is keyed by. `validateStack` pins
-      // `data.name` to the filename when both exist, so today they agree; keep them separate
-      // anyway, because the identity derivation is defined on the slug.
+      // Kept distinct from `name` even where the two agree: the identity derivation is defined on
+      // the slug, which is what `git.agentIdentities` is keyed by.
       slug: item.name,
-      // `stackName` is retained so agent `skills:` refs resolve preferring their own stack
-      // (matching render's own resolution) when building the cheatsheet reverse map.
+      // Retained so agent `skills:` refs resolve preferring their own stack, as render does.
       stackName: stack.name,
       description: sub(stack, item.data.description, `${ctxPrefix}:agents/${item.name}#description`),
       skills: Array.isArray(item.data.skills) ? item.data.skills : [],
-      // The validated `identity:` block (#156/#157), passed through by `renderAgent` verbatim.
       identity: item.data.identity ?? null,
     });
   }
@@ -214,8 +159,7 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
     const { data } = parseFrontmatter(fs.readFileSync(path.join(item.dir, 'SKILL.md'), 'utf8'));
     if (!isUserInvocable(data)) continue;
     commands.push({
-      // `ref` is the skill's item name (its dir name) — the key an agent's frontmatter
-      // `skills:` list resolves against, so the skill→agents reverse map can join on it.
+      // The key an agent's frontmatter `skills:` list resolves against, so the reverse map joins on it.
       ref: item.name,
       name: data.name ?? item.name,
       argumentHint:
@@ -229,11 +173,7 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
   // Alphabetical, so output is deterministic (stable lock hash) regardless of stack order.
   commands.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Skill→agents reverse map: for each installed agent, resolve every granted skill ref
-  // (leniently — an unresolved/ambiguous name is silently skipped, as elsewhere) and index
-  // the granting agents by the resolved skill's item name, so the cheatsheet can badge each
-  // skill block with the agents that hold it. Deterministic: agents are already sorted, so
-  // each ref's agent set iterates in stable alphabetical order.
+  // Skill→agents reverse map, resolved leniently: an unresolved or ambiguous name is skipped.
   const agentsByRef = new Map();
   for (const a of agents) {
     for (const skillName of a.skills) {
@@ -255,9 +195,7 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
     docs.push({ rel: TEAM_MD, content: teamMarkdown(agents, toolkit.name) });
     docs.push({ rel: TEAM_HTML, content: teamHtml(agents, toolkit.name) });
     // Per-agent avatar files (#157) — one static SVG each, plus the manifest pairing every file
-    // with the exact commit email to register on Gravatar. Emitted through the same `emit()`
-    // choke point as the docs above, so they are lock-tracked, drift-checked and pruned when a
-    // later selection drops every agent.
+    // with the exact commit email to register on Gravatar.
     for (const a of agents) {
       docs.push({ rel: avatarRel(a.name), content: `${agentAvatarSvg(a.name, a.skills.length, { px: AVATAR_FILE_PX, animated: false })}\n` });
     }
@@ -270,28 +208,11 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [] })
 const DERIVATION_SKILL = 'delegate';
 
 /**
- * The project's resolved bot-identity inputs, exactly as the delegate orchestrator sees them at
- * spawn time: the substituted `git.cmd` and the `git.agentIdentities` override map.
- *
- * `git.cmd` is resolved through the resolver of the stack that OWNS the derivation — the one
- * whose `delegate` skill renders the spawn-time commit command (#248 review). Resolution is
- * per-stack (`makeResolver` falls back to *that stack's* declared defaults), so picking any other
- * `git.cmd`-declaring stack can resolve a different address than the one the agent will actually
- * commit under: `orchestration` declares `git.cmd` but NOT the identity keys, while
- * `github-workflow` declares `git.botEmail` with a placeholder `default:`. Resolving through the
- * latter when the former renders the skill would print that placeholder default as every agent's
- * "exact" commit email while `delegate/SKILL.md` renders a literal `{{git.botEmail}}` — the
- * documented rule-2 hazard, silently papered over. Resolving through the derivation owner instead
- * leaves the placeholder unresolved, and `extractBaseEmail` reports "no bot identity": the honest
- * reading, and the one that agrees with the rendered skill.
- *
- * With no `delegate` skill selected, fall back to the first `git.cmd`-declaring stack in stable
- * alphabetical order; with no such stack at all, to the project's own value, substituted against
- * project values only (no stack defaults are in play, but nested `{{git.botEmail}}` set as a real
- * project value still expands — a project that has opted in must not be told to opt in).
- *
- * Substitution errors are swallowed into a throwaway array: this is a *report* of the project's
- * config, and a literal placeholder here must not fail the render that the skills render fine under.
+ * The project's resolved bot-identity inputs, as the delegate orchestrator sees them at spawn
+ * time. `git.cmd` must resolve through the stack that OWNS the derivation — the one whose
+ * `delegate` skill renders the spawn-time commit command (#248) — because resolution is per-stack,
+ * so any other `git.cmd`-declaring stack can resolve an address no agent will commit under.
+ * Substitution errors are swallowed: this reports config, and must not fail an otherwise fine render.
  */
 function resolveGitIdentity({ project, selection, resolverFor }) {
   const stacks = [...new Map(selection.items.map(({ stack }) => [stack.name, stack])).values()].sort((a, b) =>
@@ -306,9 +227,8 @@ function resolveGitIdentity({ project, selection, resolverFor }) {
   if (gitStack) {
     cmd = substitute('{{git.cmd}}', resolverFor(gitStack), new Set(['git.cmd']), [], 'waffledocs:avatars#git.cmd', NO_GUARDS).trim();
   } else {
-    // No selected stack declares `git.cmd`; a project may still set the value. Substitute it
-    // against a config-less synthetic stack: project values expand, stack defaults do not exist,
-    // and an unset key stays a literal `{{…}}` rather than resolving to some other stack's default.
+    // A config-less synthetic stack: project values expand, and an unset key stays a literal
+    // `{{…}}` rather than resolving to some other stack's default.
     const raw = lookupPath(project.values, 'git.cmd');
     if (typeof raw === 'string') {
       const resolve = resolverFor({ name: '\0project', config: {} });
@@ -379,21 +299,8 @@ function teamMarkdown(agents, toolkitName) {
 }
 
 /**
- * `.waffle/AVATARS.md` (#157) — the reproducibility artifact for per-agent avatars on GitHub
- * commit views. It pairs each agent's generated avatar file with the EXACT commit email that
- * agent authors under, and spells out the manual Gravatar procedure that makes GitHub render it.
- *
- * It deliberately never claims avatars appear on their own. GitHub renders a Gravatar for a
- * commit email that belongs to no GitHub account; registering that email on Gravatar is a manual,
- * external step, and Gravatar's own upload rules are external-service behaviour. What this file
- * guarantees is that the email/file pairs below are the correct INPUTS to that procedure.
- */
-/**
- * The per-agent avatar rows — the deterministic pairing of each agent with the exact commit
- * email it authors under, its display name, syrup flavor and avatar reference. Shared by
- * `avatarsMarkdown` (which renders it as a table) and `collectAgentAvatars` (which feeds the
- * `avatars sync` pipeline), so the addresses the CLI registers on Gravatar match AVATARS.md
- * byte-for-byte — one derivation, two consumers.
+ * The per-agent avatar rows, shared by `avatarsMarkdown` and `collectAgentAvatars` so the
+ * addresses the CLI registers match AVATARS.md byte-for-byte.
  */
 function avatarRows(agents, git) {
   const configured = Boolean(git.baseEmail);
@@ -405,8 +312,7 @@ function avatarRows(agents, git) {
       slug: a.slug,
       skillCount: a.skills.length,
       displayName: override.botName ?? a.identity?.displayName ?? titleCaseSlug(a.slug),
-      // An authored `identity.avatar` wins over the generated default — the identity metadata is
-      // the avatar reference; the generated file is only its deterministic default.
+      // An authored `identity.avatar` wins over the generated default.
       avatar: a.identity?.avatar ?? avatarRef(a.name),
       authored: Boolean(a.identity?.avatar),
       flavor: agentFlavor(a.name),
@@ -417,11 +323,8 @@ function avatarRows(agents, git) {
 }
 
 /**
- * The avatar rows for a computed selection, each paired with its rendered (static, 512px) SVG —
- * the input the `avatars sync` engine (`avatars-sync.mjs`) uploads to Gravatar. Reuses the same
- * agent enumeration, git-identity resolution and `avatarRows` derivation the rendered AVATARS.md
- * uses, so the addresses agree exactly. Returns `{ rows, git }`; `git.baseEmail` is `null` when
- * the project has not opted into a bot identity (no addresses to register).
+ * The avatar rows for a computed selection, each paired with its rendered 512px SVG — what the
+ * `avatars sync` engine uploads. `git.baseEmail` is `null` when no bot identity is configured.
  */
 export function collectAgentAvatars({ toolkit, project, selection }) {
   const errors = [];
@@ -438,21 +341,9 @@ export function collectAgentAvatars({ toolkit, project, selection }) {
 function avatarsMarkdown(agents, toolkitName, git) {
   const configured = Boolean(git.baseEmail);
   const rows = avatarRows(agents, git);
-  // A base that cannot subaddress hands every agent the same address (delegate rule 2), so the
-  // avatar can only ever be per-*project*, not per-agent, until overrides give agents own emails.
-  //
-  // Gate on SUBADDRESSABILITY, not on cardinality (#248 review). `deriveAgentEmail` returns the
-  // base verbatim exactly when it could not subaddress, so a derived row whose email IS the base
-  // is the signal — and it is the right one for a single-agent selection, or one where overrides
-  // leave a single derived row. Counting rows instead would drop this caveat for a
-  // `*.noreply.github.com` base (the base github-workflow's own setup note recommends) and print
-  // a registration procedure whose verification mail goes to a domain that accepts none.
-  //
-  // Three registration states (#249): no overrides (every address derives from the base), some
-  // overrides (derived rows plus verbatim `‡` rows), and ALL overridden — `derivedRows` empty, so
-  // `sharedEmail` is vacuously false and the registration gate still opens, but the base-inbox
-  // claim ("addresses above land in `<baseEmail>`") would describe an empty set and an inbox no
-  // agent commits under. `anyDerived` picks the honest copy for that third state.
+  // Gate on SUBADDRESSABILITY, never on row count (#248): a derived row whose email IS the base is
+  // the signal that every agent shares one address. The three flags below then pick copy that holds
+  // in all three registration states — no overrides, some, and all.
   const derivedRows = rows.filter((r) => !r.overridden);
   const sharedEmail = configured && derivedRows.some((r) => r.email === git.baseEmail);
   const anyOverridden = rows.some((r) => r.overridden);
@@ -493,8 +384,7 @@ function avatarsMarkdown(agents, toolkitName, git) {
     '',
   ];
 
-  // Footnote markers are fixed per meaning, not positional — so a marker means the same thing
-  // whether or not the project has a bot identity configured.
+  // Footnote markers are fixed per meaning, never positional.
   const AUTHORED = '†';
   const OVERRIDDEN = '‡';
   if (configured) {
@@ -520,10 +410,8 @@ function avatarsMarkdown(agents, toolkitName, git) {
   if (rows.some((r) => r.authored || r.overridden)) lines.push('');
   if (!configured) {
     const shownCmd = git.cmd || 'git';
-    // `git.cmd` can still carry an unresolved `{{…}}` — the rule-2 hazard, where the stack that
-    // renders the delegate skill declares `git.cmd` but not the identity keys it references. Say
-    // *that*, rather than calling the placeholder-bearing string "resolved" and telling a project
-    // that has already set `git.botEmail` to go set it (#248 review).
+    // An unresolved `{{…}}` needs its own copy: telling a project that already set `git.botEmail`
+    // to go set it is the wrong remedy (#248).
     if (/\{\{/.test(shownCmd)) {
       lines.push(
         '**No commit emails yet — `git.cmd` still carries an unresolved placeholder.** It reads',
@@ -565,10 +453,8 @@ function avatarsMarkdown(agents, toolkitName, git) {
   }
 
   if (configured && !sharedEmail) {
-    // The lead paragraph and the sign-in steps vary by state (#249): with every address set
-    // verbatim by an override, the plus-address delivery claim and the one-base-account sign-in
-    // step would be lies — no address derives from the base, and its inbox receives none of the
-    // verification mail. The conversion step and the smoke test hold in every state.
+    // The lead and the sign-in steps vary by state (#249): with every address overridden, the
+    // plus-address delivery claim and the one-account sign-in step would both be lies.
     const registrationLead = !anyDerived
       ? [
           'Each address must receive mail for Gravatar to verify it. Every address above is set verbatim by a',
@@ -592,9 +478,8 @@ function avatarsMarkdown(agents, toolkitName, git) {
           '3. **Add each agent\'s commit email** to its account and complete the verification mail.',
         ]
       : [
-          // Scope the parenthetical to the derived rows in the mixed state (#262 review): a
-          // separately-owned ‡ inbox is not covered by the base account — the same
-          // claim-over-the-wrong-set class F2 fixed for the all-overridden state.
+          // A separately-owned ‡ inbox is not covered by the base account, so the mixed state scopes
+          // its parenthetical to the derived rows (#262).
           anyOverridden
             ? '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every derived address).'
             : '2. **Sign in to <https://gravatar.com>** with the base address (one account covers every agent).',
@@ -673,19 +558,14 @@ function avatarsMarkdown(agents, toolkitName, git) {
 }
 
 // ---- Branded HTML one-pagers -----------------------------------------------------------
-//
-// Self-contained standalone documents: the ONLY external references are the Google Fonts
-// `<link>` tags (Baloo 2 / Outfit / JetBrains Mono — the brand type stack), included as
-// progressive enhancement. A brand-styled system-font stack is the CSS fallback, so each
-// page renders correctly with zero network access. Palette + type per assets/README.md; dark
-// is the brand default (BG #1A0D03), with a warm-paper light theme via `prefers-color-scheme`.
+// Self-contained documents: the ONLY external references are the Google Fonts `<link>` tags, and
+// they are progressive enhancement — each page must render correctly with no network at all.
 
 // Brand palette anchors (assets/README.md). The remaining shades live inline in the CSS.
 const GOLDEN = '#F5C752';
 const SYRUP = '#F08A1D';
 
-// Font stacks: brand face first (loaded via the Google Fonts link), then an intentional
-// system-font fallback so an offline page still reads on-brand.
+// Brand face first, then a system-font fallback so an offline page still reads on-brand.
 const DISPLAY = "'Baloo 2', 'Trebuchet MS', system-ui, sans-serif";
 const BODY = "'Outfit', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
@@ -694,8 +574,7 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
 }
 
-// The flat waffle mark (assets/wafflestack-flat.svg) as a standalone inline SVG glyph — an
-// inline element, not an external reference. `www.w3.org` is the SVG namespace, not a fetch.
+// The flat waffle mark (assets/wafflestack-flat.svg) as an inline SVG glyph, not a fetch.
 function waffleGlyphSvg(px) {
   const pockets = [16.75, 35.5, 54.25]
     .flatMap((x) => [16.75, 35.5, 54.25].map((y) => `<rect x="${x}" y="${y}" width="13" height="13" rx="4.5" fill="#DE8127"/>`))
@@ -711,28 +590,19 @@ function waffleGlyphSvg(px) {
 }
 
 // ---- Per-agent waffle avatars ----------------------------------------------------------
-//
-// A branded waffle character generated per agent, entirely from the agent NAME (plus its
-// installed-skill count) — no `Math.random`, no `Date`, no external asset. Rendered docs flow
-// through `emit()` and are lock-tracked + doctor-drift-checked, so every trait MUST be a pure
-// function of the name: same selection ⇒ byte-identical output.
-//
-// Character: a golden rounded-square waffle viewed straight-on, a 3×3 grid of pockets, a
-// swoosh of orange syrup on top like a hairdo, and two pockets darkened as eyes. The skill
-// count freckles the remaining pockets (capped at 7 = 9 pockets − 2 eyes).
+// Generated per agent from the agent NAME plus its skill count. These are lock-tracked and
+// drift-checked, so every trait MUST stay a pure function of the name — no `Math.random`, no
+// `Date`, no external asset: same selection ⇒ byte-identical output.
 
 // Brand cocoa is the default outline/ink; dark skins override it for legibility.
 const AV_INK_DEFAULT = '#5B2B0E';
 const AV_CREAM = '#FFF3DC'; // the eyes' sclera + the antenna bead
 
-// Number formatter — integers stay bare, else 2 decimals trimmed. Keeps computed eye/syrup
-// coordinates byte-stable across hosts (ported from the wafflebot reference generator).
+// Integers stay bare, else 2 decimals — keeps computed coordinates byte-stable across hosts.
 const f2 = (n) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
 
-// Skin "batter" tones, light → charcoal. Each carries its own `ink` and a matched
-// `pocketLight` (empty squares) / `pocketDark` (skill squares) shade — precomputed from
-// shade(fill, 0.90 | 0.80) so the table is literal and byte-stable. Charcoal is hand-tuned so
-// its outline and pupils stay legible dark-on-dark.
+// Skin "batter" tones, light → charcoal. The pocket shades are precomputed from
+// shade(fill, 0.90 | 0.80) so the table stays literal and byte-stable.
 const AV_SKINS = [
   { fill: '#F7D98B', ink: AV_INK_DEFAULT, pocketLight: '#DEC37D', pocketDark: '#C6AE6F' }, // pale
   { fill: GOLDEN, ink: AV_INK_DEFAULT, pocketLight: '#DDB34A', pocketDark: '#C49F42' }, // classic
@@ -762,8 +632,7 @@ const AV_DRIPS = {
 };
 const AV_DRIP_KEYS = ['classic', 'even', 'mirror', 'left', 'right'];
 
-// Eye expressions — mood set by lids + pupils. Each is a per-eye preset (ported EX):
-// [topLid, botLid, tilt, pupilDx, pupilDy, pupilScale]. Exactly two eyes are always present.
+// Eye expressions, as per-eye presets: [topLid, botLid, tilt, pupilDx, pupilDy, pupilScale].
 const AV_EXPRESSIONS = {
   neutral: { L: [0, 0, 0, 0, 0, 1], R: [0, 0, 0, 0, 0, 1] },
   curious: { L: [0, 0, 0, 0, -1.7, 1.18], R: [0, 0, 0, 0, -1.7, 1.18] },
@@ -778,8 +647,8 @@ const AV_EXPRESSIONS = {
 };
 const AV_EXPR_KEYS = ['neutral', 'curious', 'tired', 'sleepy', 'focused', 'determined', 'skeptical', 'sad', 'wide', 'wink'];
 
-// The 7 non-eye pocket cells (viewBox 0 0 96 96), row-major [x, y]; each pocket is 14×14. The
-// two eyes are fixed at the middle row's left/right cells, so exactly two eyes always render.
+// The 7 non-eye pocket cells (viewBox 0 0 96 96), row-major [x, y]; each pocket is 14×14. The two
+// eyes are fixed at the middle row's left/right cells, so exactly two eyes always render.
 const AV_CELLS = [[20, 20], [41, 20], [62, 20], [41, 41], [20, 62], [41, 62], [62, 62]];
 
 // FNV-1a — a tiny, stable, dependency-free string hash. Deterministic across runs/hosts.
@@ -793,8 +662,7 @@ function avHash(name) {
   return h >>> 0;
 }
 
-// mulberry32 — a seeded PRNG. Seeded from the name hash, it yields a stable trait stream, so
-// avatar traits are reproducible without `Math.random`.
+// mulberry32 — a seeded PRNG, so avatar traits are reproducible without `Math.random`.
 function avRng(seed) {
   let a = seed >>> 0;
   return () => {
@@ -827,10 +695,8 @@ function agentAnchorId(name) {
 }
 
 /**
- * The deterministic trait selection for an agent, drawn from the name hash in one fixed order
- * (skin → syrup → drip → expression → pocket-darken order). Single source of truth, so the
- * avatar and its ID-card flavor tag can never disagree. LOAD-BEARING: reordering these draws, or
- * adding/removing one, changes every avatar and every lock hash.
+ * The deterministic trait selection for an agent, drawn from the name hash in one fixed order.
+ * LOAD-BEARING: reordering these draws, or adding one, changes every avatar and every lock hash.
  */
 function agentTraits(name) {
   const rng = avRng(avHash(name));
@@ -847,9 +713,8 @@ export function agentFlavor(name) {
   return agentTraits(name).syrup.name;
 }
 
-// One eye, clipped to its rounded cell: a cream sclera (the countable `wd-av-eye` hook) + pupil +
-// glint, with skin-colored lids setting the mood; when animated, a blink rect and a look-around
-// glance. Ported from the wafflebot reference `eye()`. `side`: -1 left, +1 right (tilt direction).
+// One eye, clipped to its rounded cell: cream sclera (the countable `wd-av-eye` hook), pupil,
+// glint, skin-colored lids, and when animated a blink rect. `side`: -1 left, +1 right.
 function avEye(idx, side, cx, cellX, p, ink, cream, skin, uid, animated, begin) {
   const cellY = 41, cell = 14, cy = 48, erx = 4.5;
   const t = p[0], b = p[1], tilt = p[2], dx = p[3], dy = p[4], r = p[5];
@@ -883,9 +748,8 @@ function avEye(idx, side, cx, cellX, p, ink, cream, skin, uid, animated, begin) 
     + topLid + botLid + blink + '</g>';
 }
 
-// The syrup "hair" blob + its drip, drawn ON TOP of the eyes like bangs. Static: a resting bead.
-// Animated: the 9s drip — a bead swells at the active drip's tip, falls, then the drip recoils
-// past rest with an overshoot before settling. Ported from the wafflebot reference `syrupGroup()`.
+// The syrup "hair" blob and its drip, drawn ON TOP of the eyes like bangs — static is a resting
+// bead, animated is the 9s swell-fall-recoil cycle.
 function avSyrup(dripKey, syrup, ink, uid, animated, begin, recoil) {
   const s = AV_DRIPS[dripKey] || AV_DRIPS.classic, sL = s.sL, sR = s.sR, tL = sL + 5, tR = sR + 5;
   const pathFor = (dL, dR) =>
@@ -922,22 +786,16 @@ function avSyrup(dripKey, syrup, ink, uid, animated, begin, recoil) {
 }
 
 /**
- * Deterministic waffle avatar for an agent, as a self-contained inline SVG string. Every trait
- * (skin, syrup flavor + drip, eye expression, which pockets darken) is a pure function of `name`
- * via `agentTraits`; `skillCount` (clamped 0..7) sets how many of the 7 non-eye pockets darken as
- * skill squares. Exactly two eyes always. Pure — same (name, skillCount, uid) ⇒ identical string.
- *
- * `uid` prefixes the clip-path ids so many avatars can coexist on one page; it defaults to the
- * name slug (keeping the isolated function byte-stable). Callers that render the SAME agent more
- * than once on a page (the cheat sheet) MUST pass a page-unique uid to avoid id collisions.
- * `www.w3.org` is the SVG namespace, not a fetch.
+ * Deterministic waffle avatar for an agent, as a self-contained inline SVG string. `skillCount`
+ * (clamped 0..7) sets how many of the 7 non-eye pockets darken as skill squares. `uid` prefixes
+ * the clip-path ids and defaults to the name slug, so a caller that renders the SAME agent more
+ * than once on a page MUST pass a page-unique uid to avoid id collisions.
  */
 export function agentAvatarSvg(name, skillCount = 0, { px = 40, className = '', uid, animated = true } = {}) {
   const { skin, syrup, drip, expression, darkOrder } = agentTraits(name);
   const id = uid || agentAnchorId(name);
   const ink = skin.ink;
-  // A per-agent start offset so a grid of avatars doesn't blink/drip in lockstep — still a pure
-  // function of the name, so output stays byte-identical per name.
+  // A per-agent start offset so a grid of avatars doesn't blink in lockstep — still name-derived.
   const begin = animated ? `${((avHash(name) % 60) / 10).toFixed(1)}s` : '0s';
 
   const count = Math.max(0, Math.min(Math.trunc(Number(skillCount) || 0), 7));
@@ -969,8 +827,7 @@ export function agentAvatarSvg(name, skillCount = 0, { px = 40, className = '', 
   );
 }
 
-// Google Fonts links (hybrid strategy): the brand type as progressive enhancement. These are
-// the only external references any generated page carries.
+// The only external references any generated page carries.
 const FONT_LINKS = [
   '<link rel="preconnect" href="https://fonts.googleapis.com">',
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
@@ -1130,14 +987,8 @@ body {
 .wd-idcard-count { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px; color: var(--accent); }`;
 
 /**
- * One `<li>` per item. `rows` is `[{ primary, hint, secondary, tags, avatar, anchorId, extra }]`:
- *   primary   — the mono headline (`/name` or an agent name)
- *   hint      — optional mono chip (a skill's argument syntax)
- *   secondary — the one-line description (selectable, reflowing prose)
- *   tags      — optional pill list (an agent's granted skills / hand-offs)
- *   avatar    — optional pre-built inline SVG (already safe HTML) shown before the name
- *   anchorId  — optional stable `id` on the `<li>` for deep-linking (team.html#agent-<name>)
- *   extra     — optional pre-built trailing HTML block (the cheatsheet's agent avatars)
+ * One `<li>` per item. `avatar` and `extra` are pre-built HTML spliced in unescaped; every other
+ * field is escaped here.
  */
 function rowHtml({ primary, hint, secondary, tags, avatar, anchorId, extra }) {
   const hintHtml = hint ? ` <code class="wd-hint">${esc(hint)}</code>` : '';
@@ -1157,9 +1008,8 @@ function rowHtml({ primary, hint, secondary, tags, avatar, anchorId, extra }) {
 }
 
 /**
- * Shared standalone-document frame. Emits a valid HTML5 page: dark-default branded chrome
- * around a semantic `<ul>` of rows. The layout has no fixed height — it reflows to the item
- * count and the viewport. Fonts are the only external reference (see FONT_LINKS).
+ * Shared standalone-document frame: branded chrome around a semantic `<ul>` of rows, reflowing to
+ * the item count and the viewport.
  */
 function htmlDoc({ eyebrow, title, lede, rows, footer }) {
   return `<!DOCTYPE html>
@@ -1195,9 +1045,8 @@ ${rows.map(rowHtml).join('\n')}
 }
 
 /**
- * A skill block's trailing strip of agent avatars: every installed agent granted this skill,
- * as a small de-emphasised waffle that reveals a CSS-only "ID card" on hover/focus and links
- * through to that agent's row on team.html. Empty string when no agent holds the skill.
+ * A skill block's trailing strip of agent avatars, each linking to that agent's row on team.html.
+ * Empty string when no agent holds the skill.
  */
 function agentAvatarsHtml(agentNames, agentByName, skillRef = '') {
   if (!agentNames || !agentNames.length) return '';
@@ -1207,8 +1056,7 @@ function agentAvatarsHtml(agentNames, agentByName, skillRef = '') {
       if (!agent) return '';
       const n = agent.skills.length;
       const anchor = agentAnchorId(agent.name);
-      // One agent can appear under several skills on a page, each drawing two avatars; a
-      // page-unique uid per placement keeps their clip-path ids from colliding.
+      // One agent can appear under several skills on a page, so each placement needs its own uid.
       const base = skillRef ? `${anchor}-${skillRef}` : anchor;
       const uidMini = `${base}-mini`;
       const uidCard = `${base}-card`;
