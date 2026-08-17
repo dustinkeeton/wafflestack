@@ -5,12 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Guards the JSDoc typecheck gate itself (#177, PR #293 review F1). The gate's design —
-// `checkJs: false` with per-file `// @ts-check` pragmas — has exactly one silent failure
-// mode: a deleted pragma (or a broken `include` glob) leaves `npm run typecheck` green while
-// checking nothing. This test pins both halves so the net can't quietly go empty during the
-// wave-by-wave migration. Each wave appends its files to MIGRATED; the close-out PR that
-// flips `checkJs: true` and deletes the pragmas deletes this test with them.
+// Guards the typecheck gate itself (#177): under `checkJs: false`, a deleted `// @ts-check` pragma
+// leaves `npm run typecheck` green while checking nothing. Delete this test with the `checkJs: true` flip.
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -20,8 +16,6 @@ const MIGRATED = [
   'installer/lib/toolkit.mjs',
   'installer/lib/refs.mjs',
   'installer/lib/project.mjs',
-  // #373 — authored under the pragma from line 1 rather than migrated into it. Same guarantee to
-  // protect either way: without an entry here, deleting its `// @ts-check` silently unchecks it.
   'installer/lib/toolkit-ref.mjs',
 ];
 
@@ -34,10 +28,7 @@ describe('typecheck gate (#177)', () => {
   });
 
   test('the tsc program actually contains the migrated files', (t) => {
-    // `typescript` is a devDependency, and `npm test` deliberately does not require it —
-    // harness agents run the suite in checkouts without devDependencies installed. Skip
-    // (never fail) when tsc is absent; CI always installs it via `npm ci`, so the gate
-    // half of this test always runs where it matters.
+    // tsc is a devDependency agents often run without — skip, never fail; CI installs it, so this runs where it matters.
     const tscBin = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
     if (!fs.existsSync(tscBin)) {
       t.skip('typescript devDependency not installed — tsc program check runs in CI');

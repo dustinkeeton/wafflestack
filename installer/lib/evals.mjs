@@ -6,22 +6,8 @@ import { placeholderKeys } from './template.mjs';
 import { renderProject } from './render.mjs';
 
 // -----------------------------------------------------------------------------
-// Layer 2 eval harness (#109) — the metered, LLM-driven behavioral tier from #89.
-//
-// A *case* is a declarative file that pairs a rendered target prompt + a scenario
-// with one or more transcript-level assertions. The runner loads a case, renders
-// the target prompt through the real render pipeline, drives a model against it,
-// and evaluates each assertion — returning structured pass/fail plus the transcript.
-//
-// Unlike Layer 1 (content.test.mjs, deterministic key-phrase assertions with no
-// model call), this tier costs real API money, so it lives behind its OWN entry
-// point (`npm run evals`), never inside `npm test`, and every run is bounded by an
-// explicit, enforced call budget. A mock/dry-run mode exercises the whole harness
-// with no API key — that is what the cheap unit test in `npm test` uses.
-//
-// Cases live NEXT TO their stack at `stacks/<stack>/evals/*.eval.yaml`, mirroring
-// how skills/agents already colocate, so a third-party stack carries its own.
-// The format is documented in schema/FORMAT.md.
+// Layer 2 eval harness — the metered, LLM-driven tier. Cases live next to their
+// stack at `stacks/<stack>/evals/*.eval.yaml`; the format is in schema/FORMAT.md.
 // -----------------------------------------------------------------------------
 
 const CASE_SUFFIX = '.eval.yaml';
@@ -31,17 +17,11 @@ export const DEFAULT_MODEL = 'claude-opus-4-8';
 export const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
-// A tiny stand-in project config so a target renders without the author having to
-// enumerate every transitively-required config key (e.g. a target that pulls in the
-// `issue` skill via `requires:` needs `project.name`). A case's own `config:` is
-// deep-merged over this and wins on any conflict.
+// A stand-in project config so a target renders without the author enumerating every
+// transitively-required key; a case's own `config:` is deep-merged over it and wins.
 const DEFAULT_EVAL_CONFIG = { project: { name: 'EvalProject' } };
 
-/**
- * A run's metered budget: a hard cap on model calls, enforced BEFORE each call so
- * a run can never exceed it. Token usage is accumulated for a visible cost report.
- * `maxCalls: null` means unbounded (only ever used by dry-run / injected mocks).
- */
+/** A run's metered budget: a hard cap on model calls, enforced BEFORE each call. `null` = unbounded. */
 export class Budget {
   constructor(maxCalls = null) {
     this.maxCalls = maxCalls;
@@ -92,11 +72,7 @@ function collectCaseFiles(dir) {
   return out;
 }
 
-/**
- * Discover every eval case across the toolkit: `stacks/<stack>/evals/**\/*.eval.yaml`.
- * Returns loaded, validated case objects sorted by (stack, name). `onlyStack` filters
- * to a single stack.
- */
+/** Discover every eval case (`stacks/<stack>/evals/**\/*.eval.yaml`), loaded and sorted by (stack, name). */
 export function discoverCases(toolkitRoot, { onlyStack = null } = {}) {
   const stacksDir = path.join(toolkitRoot, 'stacks');
   if (!exists(stacksDir)) return [];
@@ -195,15 +171,7 @@ function normalizeAssertion(a) {
 // Rendering the target prompt through the real render pipeline
 // -----------------------------------------------------------------------------
 
-/**
- * Render a case's target item through the actual `renderProject` pipeline into a
- * throwaway project, then return the rendered prompt body a consumer would install.
- * Going through the real pipeline (template substitution, extensions, closure) means
- * an eval asserts against the SAME artifact a consuming repo runs — not a hand-copy.
- *
- * The stack is implicit in the case's location (`stacks/<stack>/evals/`); the item is
- * installed stack-qualified so a name shared across stacks resolves unambiguously.
- */
+/** Render a case's target through the REAL render pipeline, so an eval asserts the artifact a consumer installs. */
 export function renderTargetPrompt(toolkitRoot, { stack, target, config = {} }) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'waffle-eval-'));
   try {
@@ -237,9 +205,8 @@ export function renderTargetPrompt(toolkitRoot, { stack, target, config = {} }) 
   }
 }
 
-// Minimal, dependency-free YAML emitter for the tiny waffle.yaml we write. Only
-// handles the shapes we produce (scalars, string arrays, nested maps) — the real
-// config round-trips through the `yaml` lib inside renderProject.
+// Minimal YAML emitter for the tiny waffle.yaml we write — only the shapes we
+// produce (scalars, string arrays, nested maps), never a general-purpose dumper.
 function yamlDump(obj, indent = 0) {
   const pad = '  '.repeat(indent);
   const lines = [];
@@ -269,12 +236,7 @@ function yamlScalar(v) {
 // Assertion evaluation
 // -----------------------------------------------------------------------------
 
-/**
- * Evaluate one assertion against a transcript. Deterministic assertions
- * (includes/excludes/regex) resolve locally; a `judge` assertion delegates to
- * `callModel` (a metered call) and parses a PASS/FAIL verdict. Returns
- * `{ type, pass, detail }`. `judge` also returns `{ usage }` for accounting.
- */
+/** Evaluate one assertion; only `judge` spends a metered `callModel` call, and it also returns `usage`. */
 export async function evaluateAssertion(assertion, transcript, { callModel } = {}) {
   switch (assertion.type) {
     case 'includes': {
@@ -324,8 +286,7 @@ export function parseVerdict(text) {
       /* fall through to keyword heuristic */
     }
   }
-  // Fallback: an explicit PASS/FAIL token. Default to fail when ambiguous — a judge
-  // that can't be parsed must not silently pass a case.
+  // Default to FAIL when ambiguous — an unparseable judge must never silently pass a case.
   if (/\bpass\b/i.test(text || '') && !/\bfail\b/i.test(text || '')) return { pass: true, reason: 'verdict: pass' };
   return { pass: false, reason: `unparseable judge verdict: ${String(text).slice(0, 120)}` };
 }
@@ -334,13 +295,7 @@ export function parseVerdict(text) {
 // Running a case / a whole run
 // -----------------------------------------------------------------------------
 
-/**
- * Run a single case: render the target prompt, drive the model against the scenario,
- * evaluate every assertion. `callModel({system, messages, maxTokens}) -> {text, usage}`
- * is the (metered) model function — inject a mock for dry-run/tests. `budget` gates
- * every call. Returns a structured result; never throws for an assertion failure, but
- * re-throws `BudgetExceededError` so the caller can stop the run cleanly.
- */
+/** Run a single case. Never throws for an assertion failure, but re-throws `BudgetExceededError`. */
 export async function runCase(caseObj, { toolkitRoot, callModel, budget, model = DEFAULT_MODEL }) {
   const rendered = renderTargetPrompt(toolkitRoot, {
     stack: caseObj.stack,
@@ -355,7 +310,6 @@ export async function runCase(caseObj, { toolkitRoot, callModel, budget, model =
     return res;
   };
 
-  // 1. Drive the model against the rendered prompt with the case scenario.
   const scenario = await spend({
     system: rendered.body,
     messages: [{ role: 'user', content: caseObj.prompt }],
@@ -363,7 +317,6 @@ export async function runCase(caseObj, { toolkitRoot, callModel, budget, model =
   });
   const transcript = scenario.text;
 
-  // 2. Evaluate every assertion; judge assertions spend from the same budget.
   const assertionResults = [];
   for (const assertion of caseObj.assertions) {
     const result = await evaluateAssertion(assertion, transcript, { callModel: spend });
@@ -382,15 +335,8 @@ export async function runCase(caseObj, { toolkitRoot, callModel, budget, model =
   };
 }
 
-/**
- * Run a set of cases under one shared budget. Stops early (marking the rest as
- * skipped) the moment the budget is exhausted. Returns a run summary with per-case
- * results plus aggregate pass/fail/skip counts and token usage.
- *
- * Provide `callModel` for one shared model (live runs, unit tests) or `makeCallModel:
- * (caseObj) => callModel` when each case needs its own model function (dry-run uses
- * this to feed each case's `dryRunResponse`).
- */
+// Pass `callModel` for one shared model, or `makeCallModel: (caseObj) => callModel` when each case
+// needs its own (dry-run feeds each case's `dryRunResponse` that way).
 export async function runEvals(cases, { toolkitRoot, callModel, makeCallModel, budget, model = DEFAULT_MODEL, onResult } = {}) {
   const results = [];
   const skipped = [];
@@ -435,12 +381,7 @@ export async function runEvals(cases, { toolkitRoot, callModel, makeCallModel, b
 // Model clients
 // -----------------------------------------------------------------------------
 
-/**
- * A real Anthropic Messages-API client built on the global `fetch` (Node >= 18) —
- * no SDK dependency, keeping the toolkit's single-dep footprint. Returns
- * `{ text, usage, stopReason }`. Thinking is left off by default so the metered
- * tier stays cheap and its cost is predictable.
- */
+/** Anthropic Messages-API client on the global `fetch` — no SDK, keeping the single-dep footprint. */
 export function anthropicClient({ apiKey, defaultModel = DEFAULT_MODEL, fetchImpl = globalThis.fetch }) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is required for a live eval run (use --dry-run for a no-API smoke test)');
   if (typeof fetchImpl !== 'function') throw new Error('global fetch is unavailable — Node >= 18 is required');
@@ -467,12 +408,7 @@ export function anthropicClient({ apiKey, defaultModel = DEFAULT_MODEL, fetchImp
   };
 }
 
-/**
- * A deterministic mock model for `--dry-run` and unit tests: no network, no key, no
- * cost. It exercises the entire harness (discovery, render, budget, assertion
- * dispatch) end-to-end. A case's optional `dryRunResponse` becomes the scenario text;
- * judge calls always return pass so a dry run reflects the deterministic assertions.
- */
+/** Deterministic mock model for `--dry-run` and tests: no network, no key; judge calls always pass. */
 export function mockClient({ scenarioText = null } = {}) {
   return async ({ system, messages }) => {
     const isJudge = typeof system === 'string' && system.startsWith('You are a strict evaluator');

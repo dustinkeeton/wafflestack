@@ -1,21 +1,6 @@
 #!/usr/bin/env node
-//
-// evals.mjs — the metered, LLM-driven eval runner (Layer 2 of #89, harness from #109).
-//
-// This is a SEPARATE entry point from `npm test` on purpose: it calls a real model,
-// so it costs money. It is exposed as `npm run evals` and is never part of the default
-// per-PR test gate. Every run is bounded by an explicit, enforced call budget.
-//
-// Usage:
-//   node installer/evals.mjs --max-calls <N> [--stack NAME] [--case SUBSTR]
-//                            [--model ID] [--json] [--show-transcript]
-//   node installer/evals.mjs --dry-run [--stack NAME] [--case SUBSTR]   (no API key, no cost)
-//
-// Auth: reads ANTHROPIC_API_KEY from the environment for live runs.
-// Budget: --max-calls is REQUIRED for a live run (the explicit, visible cost cap);
-//         the runner refuses to start a model call once the cap is reached.
-//
-// Exit 0 when every selected case passes; exit 1 on any failure, skip, or error.
+// The metered eval runner: a SEPARATE entry point from `npm test` because it calls a real model
+// and costs money. Flags and auth are in `USAGE` below; live runs need ANTHROPIC_API_KEY.
 
 import process from 'node:process';
 import path from 'node:path';
