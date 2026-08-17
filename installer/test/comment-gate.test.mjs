@@ -23,8 +23,6 @@ const GRANDFATHERED = {
   '.github/workflows/tests.yml': { pct: 61, run: 23 },
   '.github/workflows/waffle-post-merge-hook.yml': { pct: 34, run: 27 },
   '.github/workflows/waffle-release-hook.yml': { pct: 40, run: 15 },
-  'installer/test/content.test.mjs': { pct: 33, run: 32 },
-  'installer/test/provenance.test.mjs': { pct: 26, run: 21 },
   'stacks/github-workflow/files/.github/workflows/waffle-evals.yml': { pct: 29, run: 14 },
   'stacks/github-workflow/files/.github/workflows/waffle-hygiene.yml': { pct: 33, run: 24 },
   'stacks/github-workflow/files/.github/workflows/waffle-label-hook.yml': { pct: 27, run: 23 },
