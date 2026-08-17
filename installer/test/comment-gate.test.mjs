@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,6 @@ const MAX_SLACK_PCT = 10; // a grandfathered ceiling this far above actual must 
 // is cleaned; the gate then holds it to the default ceilings above.
 const GRANDFATHERED = {
   '.github/workflows/tests.yml': { pct: 61, run: 23 },
-  '.github/workflows/waffle-label-hook.yml': { pct: 38, run: 23 },
   '.github/workflows/waffle-post-merge-hook.yml': { pct: 46, run: 27 },
   '.github/workflows/waffle-release-hook.yml': { pct: 48, run: 15 },
   'installer/lib/avatars-sync.mjs': { pct: 28, run: 22 },
@@ -152,11 +152,21 @@ function* walk(dir, filter) {
   }
 }
 
+// Scope is git-TRACKED files only: gitignored local renders (e.g. this repo's unarmed
+// waffle-label-hook.yml) are absent in CI checkouts and worktrees; their stack sources gate them.
+function trackedSet() {
+  const res = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' });
+  if (res.status !== 0) return null;
+  return new Set(res.stdout.split('\0').filter(Boolean));
+}
+
 function scopedFiles() {
+  const tracked = trackedSet();
+  const isTracked = (p) => tracked === null || tracked.has(rel(p));
   const mjs = [
     ...walk(path.join(ROOT, 'installer'), (p) => p.endsWith('.mjs')),
     ...walk(path.join(ROOT, 'stacks'), (p) => p.endsWith('.mjs')),
-  ];
+  ].filter(isTracked);
   const workflowsDir = path.join(ROOT, '.github', 'workflows');
   const yml = [
     ...fs
@@ -164,7 +174,7 @@ function scopedFiles() {
       .filter((f) => f.endsWith('.yml'))
       .map((f) => path.join(workflowsDir, f)),
     ...walk(path.join(ROOT, 'stacks'), (p) => /files[\\/]\.github[\\/]workflows[\\/].+\.yml$/.test(p)),
-  ];
+  ].filter(isTracked);
   return { mjs, yml };
 }
 
