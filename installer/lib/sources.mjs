@@ -9,26 +9,8 @@ import { exists, sha256 } from './util.mjs';
  * a local directory on disk that multi-root loading reads with the same `stack.yaml` machinery
  * as the built-in toolkit.
  *
- *   - a local path (`sourceType: 'path'`) is resolved relative to the consumer repo (`cwd`) and
- *     used in place — it must already exist as a directory and carries no `ref`.
- *   - a git source (`sourceType: 'git'`) is fetched at the pinned `ref` (tag, branch, or commit)
- *     into a content-addressed checkout under `cacheDir`, so an install is reproducible and
- *     offline after the first fetch. A cached checkout for the same `source@ref` is reused
- *     rather than re-cloned (a pin is immutable; a branch ref is cached for the session). Pass
- *     `refresh` to re-fetch anyway — how `upgrade` (#125) re-resolves each pin so a MOVED ref
- *     (e.g. a branch advanced) is observed rather than served stale from the cache.
- *
- * `gitFetch(source, ref, dest)` is injectable so tests can drive git resolution against a local
- * bare repo without touching the network; the default shells out to `git`. `gitResolveCommit(dir)`
- * likewise resolves the checked-out commit (its HEAD SHA) for provenance.
- *
- * Returns `{ root, commit }` — the absolute path to the resolved source root, plus the resolved
- * commit SHA for a git source (null for a local path, which carries no commit). `resolveSourceRoot`
- * is the back-compat wrapper for callers that only want the path.
- *
  * The `opts` shape is spelled out because the `= {}` default would otherwise let TS infer ONLY
- * the defaulted keys — silently dropping `cwd` from the signature and rejecting callers that
- * pass it (#177).
+ * the defaulted keys, silently dropping `cwd` from the signature (#177).
  *
  * @param {import('./project.mjs').ExternalStackEntry} ext
  * @param {object} [opts]
@@ -45,18 +27,14 @@ export function resolveSource(
 ) {
   if (ext.sourceType === 'git') {
     if (!ext.ref) {
-      // normalizeStackEntries already rejects an unpinned git source; guard the loader too so a
-      // hand-built entry can never fetch a moving target.
+      // Guarded here too, not just in normalizeStackEntries, so a hand-built entry can never
+      // fetch a moving target.
       throw new Error(
         `external stack "${ext.name}" git source "${ext.source}" has no \`ref:\` to pin — a git source must be pinned`,
       );
     }
-    // Harden against argument injection: `source`/`ref` come from waffle.yaml and are passed as
-    // git argv. A value beginning with `-` would be parsed by git as an OPTION rather than a
-    // positional — e.g. a `--upload-pack=…` on a `.git`-suffixed source, or an ssh
-    // `-oProxyCommand=…` on an scp-form host — which can escalate to command execution. A real
-    // git URL or ref never begins with `-`, so reject it outright (belt to the `--`
-    // end-of-options marker at the exec site).
+    // Argument injection: a `source`/`ref` beginning with `-` is parsed by git as an OPTION
+    // (`--upload-pack=…`, ssh `-oProxyCommand=…`), which can escalate to command execution.
     for (const [label, value] of [['source', ext.source], ['ref', ext.ref]]) {
       if (String(value).startsWith('-')) {
         throw new Error(
@@ -77,10 +55,8 @@ export function resolveSource(
         );
       }
     } else if (refresh) {
-      // Re-resolve the pin (upgrade): re-fetch so a moved ref is picked up rather than served
-      // from the session cache. Best-effort — fetch into a sibling dir and swap only on success,
-      // so an unreachable remote leaves the cached checkout intact (upgrade stays usable offline;
-      // it just can't observe a move it couldn't fetch).
+      // Best-effort: fetch into a sibling dir and swap only on success, so an unreachable remote
+      // leaves the cached checkout intact and `upgrade` stays usable offline.
       const tmp = `${dest}.refresh`;
       fs.rmSync(tmp, { recursive: true, force: true });
       try {
@@ -116,23 +92,17 @@ export function resolveSourceRoot(ext, opts) {
 }
 
 /**
- * Default git fetch: clone the source and check out the pinned ref into `dest`. `clone` +
- * `checkout <ref>` (rather than a shallow `fetch`) is the most portable way to pin to any of a
- * tag, branch, or full commit SHA, and works against a local bare repo — the hermetic, offline
- * fixture the tests use. Runs quietly; a non-zero git exit throws with git's stderr attached.
+ * Default git fetch. `clone` + `checkout <ref>` rather than a shallow `fetch`: it pins to a tag,
+ * branch, or full SHA alike, and works against the local bare repo the tests fixture with.
  */
 export function gitFetchCheckout(source, ref, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  // `--` ends option parsing so a `source`/`ref` can never be read as a git flag (resolveSourceRoot
-  // also rejects a leading `-` up front — defense in depth against argument injection).
+  // `--` ends option parsing so a `source` can never be read as a git flag.
   run('git', ['clone', '--quiet', '--', source, dest]);
   run('git', ['-C', dest, 'checkout', '--quiet', ref]);
 }
 
-/**
- * Resolve the commit a fetched git source is checked out at (its HEAD SHA), for lock provenance.
- * Injectable via `resolveSource`'s `gitResolveCommit`; the default shells out to `git rev-parse`.
- */
+/** Resolve the commit a fetched git source is checked out at (its HEAD SHA), for lock provenance. */
 export function gitHeadCommit(dir) {
   return runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']).trim();
 }

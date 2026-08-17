@@ -14,16 +14,6 @@ import { loadRegistry } from './registry.mjs';
 /**
  * The core toolkit types. This module owns them; every other module imports them from here.
  *
- * NOTE — two `kind` vocabularies coexist, and they are NOT interchangeable:
- *   - an ITEM's intrinsic `kind` (below) is `'agent'` | `'skill'` | `'files'` — singular for
- *     agents and skills, but plural for files;
- *   - a REF/selection `kind` (see refs.mjs `ItemKind`) is always plural: `'agents'` | `'skills'`
- *     | `'files'`.
- * A selection entry wraps an item as `{ kind: 'agents', item: AgentItem }` — outer kind plural,
- * inner `item.kind` singular. Typing both literally is deliberate: it makes tsc reject a
- * cross-vocabulary comparison like `item.kind === 'agents'`, which today would silently be
- * false forever. Do not "harmonize" these types without changing the runtime that produces them.
- *
  * @typedef {object} AgentItem
  * @property {'agent'} kind
  * @property {string} name
@@ -42,12 +32,8 @@ import { loadRegistry } from './registry.mjs';
  * @property {string} name the repo-relative output path (also the item's name)
  * @property {string} path absolute path to the source file under `files/`
  * @property {boolean} binary byte-copied when true, template-substituted when false
- * @property {string[] | null} targets declared harness scope, or null when unscoped (#364).
- *   null (no `targets:` key on the manifest entry) = renders unconditionally — the pre-#364
- *   contract, and the overwhelmingly common case, since a `.github/` payload has nothing to do
- *   with which harness you run. A list = renders only when the consumer has enabled at least one
- *   of these targets. Unlike an agent or a skill, a file has no per-harness variant, so `targets:`
- *   FILTERS it (whether it renders) rather than fanning it out (how many times).
+ * @property {string[] | null} targets declared harness scope (#364): null renders unconditionally,
+ *   a list renders only when the consumer has enabled at least one listed target
  *
  * @typedef {AgentItem | SkillItem | FileItem} Item
  *
@@ -62,9 +48,8 @@ import { loadRegistry } from './registry.mjs';
  * @property {string} name
  * @property {string} dir
  * @property {string} description
- * @property {boolean} recommended true when the manifest sets `recommended: true`; the setup
- *   wizard pre-selects it by default (still user-overridable). Advisory only — it never forces a
- *   render or changes the render set.
+ * @property {boolean} recommended pre-selected by the setup wizard; advisory only, never changes
+ *   the render set
  * @property {AgentItem[]} agents
  * @property {SkillItem[]} skills
  * @property {FileItem[]} files
@@ -81,26 +66,20 @@ import { loadRegistry } from './registry.mjs';
  * @property {string} name
  * @property {string} description
  * @property {Map<string, Stack>} stacks
- * @property {Registry} registry the waffle registry (#335) — identity, location, and availability
- *   for every agent and skill in the BUILT-IN stacks. A toolkit shipping no `stacks/registry.yaml`
- *   carries `{ present: false }` and every gate keyed on it no-ops. External (provenance-bearing)
- *   stacks are never registered here; see registry.mjs.
+ * @property {Registry} registry the waffle registry (#335) for the BUILT-IN stacks; absent file ⇒
+ *   `{ present: false }` and every gate keyed on it no-ops
  */
 
 /**
- * The parsed `stack.yaml`, as AUTHORED — i.e. the shape a well-formed manifest has, not a shape
- * anything has yet proven. It comes straight off `readYaml`, so a malformed manifest can violate
- * it at runtime; `validate` (plus the defensive `String()`/`typeof` coercions below) stays
- * authoritative. Declaring it buys the `agents:`/`skills:`/`files:`/`optIn:` map callbacks a real
- * element type instead of an implicit `any`.
+ * The parsed `stack.yaml` as AUTHORED — a malformed manifest can violate it at runtime, so
+ * `validate` plus the defensive coercions below stay authoritative.
  *
  * @typedef {object} StackManifest
  * @property {string} [description]
  * @property {boolean} [recommended] pre-selected by the setup wizard unless the user opts out
  * @property {string[]} [agents] bare agent names
  * @property {string[]} [skills] bare skill names
- * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths —
- *   a bare string, or the map form `{ path, targets }` that scopes the payload to harnesses (#364)
+ * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths
  * @property {string[]} [optIn] item refs gated out of a default render
  * @property {Record<string, any>} [config] declared template keys (key → spec)
  * @property {Record<string, string>} [env] legacy harness env map
@@ -110,7 +89,6 @@ import { loadRegistry } from './registry.mjs';
  * @property {unknown} [syrup] removed in 0.10.0 — its presence is a hard error
  */
 
-/** The only keys a map-form `files:` entry may carry (#364). */
 const FILE_ENTRY_KEYS = new Set(['path', 'targets']);
 
 /**
@@ -120,8 +98,6 @@ const FILE_ENTRY_KEYS = new Set(['path', 'targets']);
  * @returns {Toolkit}
  */
 export function loadToolkit(rootDir) {
-  // `toolkit.yaml` — the STACK list. Named `manifest` here to keep it distinct from the WAFFLE
-  // registry loaded below (#335); the two answer different questions and neither subsumes the other.
   const manifest = readYaml(path.join(rootDir, 'toolkit.yaml'));
   const stacks = new Map();
   for (const name of manifest.stacks ?? []) {
@@ -129,31 +105,12 @@ export function loadToolkit(rootDir) {
     if (!exists(path.join(dir, 'stack.yaml'))) continue; // not yet authored
     stacks.set(name, loadStack(name, dir));
   }
-  // The waffle registry (#335) rides on the loaded toolkit so every gate — ref resolution, stack
-  // expansion, the setup inventory — reads the same indexed copy the validator reconciled, rather
-  // than each re-reading the file. Absent file ⇒ `{ present: false }` ⇒ an ungated toolkit.
   return { name: manifest.name, description: manifest.description, stacks, registry: loadRegistry(rootDir) };
 }
 
 /**
  * Load the built-in toolkit plus every external `source` declared in the project, merging them
  * into one registry so a single render/lock/doctor pipeline handles all of them (#88).
- *
- * Each external `{ name, source, ref }` entry resolves to a toolkit root on disk (a git URL
- * fetched at the pinned `ref`, or a local path read in place — see `resolveSource`) and its
- * `name` selects a single stack from that root, loaded with the same `loadStack` machinery the
- * built-in stacks use. The stack is registered under the entry `name`, carrying a `provenance`
- * record ({ name, source, sourceType, ref, commit }) so `render` can attribute every file it
- * emits to its source in the lock (#125). `refreshSources` forces a git re-fetch of each pinned
- * ref (how `upgrade` observes a moved ref) rather than reusing the session cache.
- *
- * Collision detection is a hard error, never a silent shadow: if an external stack name is
- * already defined by another source — the built-in toolkit or an earlier external source — the
- * load fails loudly naming BOTH sources. (Item-name clashes among the *enabled* stacks of two
- * sources surface downstream as the render's per-output-path `emit()` conflict, which names the
- * two contributing stacks — hence a stack name uniquely identifies its source.)
- *
- * With no external stacks this is exactly `loadToolkit(builtinRoot)` — nothing is fetched.
  *
  * @param {object} opts
  * @param {string} opts.builtinRoot toolkit root of the built-in stacks
@@ -189,9 +146,6 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
       );
     }
     const stack = loadStack(ext.name, dir);
-    // Full provenance (#125): where every file this stack renders came from, recorded in the lock
-    // so drift and upgrades attribute per source. Git → URL + pinned ref + resolved commit; a
-    // local path → the path (no ref/commit).
     stack.provenance = {
       name: ext.name,
       source: ext.source,
@@ -203,17 +157,14 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
     origin.set(ext.name, `external source ${describeSource(ext)}`);
   }
 
-  // The BUILT-IN registry rides through unchanged (#335). An external stack is governed by its own
-  // toolkit's registry, not ours: its waffles are simply unregistered here, which every gate reads
-  // as "available" — so merging a source can never be gated, reddened, or forwarded by our file.
+  // The BUILT-IN registry rides through unchanged (#335): an external stack is governed by its own
+  // toolkit's registry, and its unregistered waffles read as "available" to every gate here.
   return { name: builtin.name, description: builtin.description, stacks, registry: builtin.registry };
 }
 
 /**
- * Locate the stack `name` under a resolved external source root. A source may be a full toolkit
- * root (the stack lives at `stacks/<name>/`, exactly like the built-in layout) or point directly
- * at a single stack directory (a `stack.yaml` at its root). Prefers the toolkit-root shape.
- * Returns the stack directory, or null when neither layout has a `stack.yaml`.
+ * Locate the stack `name` under a resolved external source root, preferring the toolkit-root
+ * shape (`stacks/<name>/`) over a single-stack source (`stack.yaml` at its root).
  *
  * @param {string} root
  * @param {string} name
@@ -245,11 +196,9 @@ function loadStack(name, dir) {
   const config = manifest.config ?? {};
   const declared = new Set(Object.keys(config));
 
-  // A manifest `agents:`/`skills:` entry is a bare name used verbatim as a path segment under
-  // the stack dir. Reject separators and the dot segments BEFORE the first path.join, so a
-  // traversal entry like `../../secret` is never dereferenced outside the toolkit root at load
-  // time — the same load-time posture `files:` entries get below (#247 review). Fine-grained
-  // slug shape is validateStack's job (AGENT_SLUG_RE); this only stops a name acting as a path.
+  // Reject separators and dot segments BEFORE the first path.join, so a traversal entry like
+  // `../../secret` is never dereferenced outside the toolkit root (#247). Slug shape is
+  // validateStack's job; this only stops a name acting as a path.
   /**
    * @param {string} kind
    * @param {string} entry
@@ -263,9 +212,8 @@ function loadStack(name, dir) {
     return n;
   };
 
-  // The `@type` is load-bearing, not decoration: it contextually types the map callback's return
-  // so `kind: 'agent'` keeps its LITERAL type instead of widening to `string`. Same for the two
-  // below. (See the two-kind-vocabularies note on the typedefs.)
+  // The `@type` is load-bearing: it types the map callback's return so `kind` keeps its LITERAL
+  // type instead of widening to `string`. Same for the two below.
   /** @type {AgentItem[]} */
   const agents = (manifest.agents ?? []).map((entry) => {
     const agentName = bareName('agents', entry);
@@ -290,20 +238,12 @@ function loadStack(name, dir) {
     return { kind: 'skill', name: skillName, dir: skillDir, files };
   });
 
-  // Generic payloads: a file authored under `files/<repo-relative-path>` renders verbatim
-  // to that same path in the consuming project (CI workflows, scripts, config). Text files
-  // are template-substituted, binaries byte-copied — text/binary is sniffed by content, so
-  // any text type works, not just `.md`.
-  //
-  // An entry is a bare path string, or the map form `{ path, targets }` (#364) that scopes a
-  // harness-specific payload to the harnesses it is actually for.
   /** @type {FileItem[]} */
   const files = (manifest.files ?? []).map((entry) => {
     const isMap = Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry);
     if (isMap) {
       // Reject an unknown key rather than ignoring it: a `target:` (singular) typo would otherwise
-      // leave the payload silently UNSCOPED — the exact failure this field exists to prevent. Same
-      // reasoning as STACK_ENTRY_KEYS (project.mjs) and the `syrup:` → `optIn:` hard error.
+      // leave the payload silently UNSCOPED.
       for (const k of Object.keys(entry)) {
         if (!FILE_ENTRY_KEYS.has(k)) {
           throw new Error(
@@ -317,39 +257,18 @@ function loadStack(name, dir) {
       if (entry.targets !== undefined && !Array.isArray(entry.targets)) {
         throw new Error(`stack ${name}: files entry "${entry.path}" \`targets:\` must be a list of target names`);
       }
-      // A `targets:` list the render cannot honour is the one manifest shape whose only possible
-      // effect is DESTRUCTIVE: because the render prunes every lock path it no longer produces
-      // (#364), an already-poured copy is DELETED from the consumer's tree, with `ok: true` and no
-      // warning. So the loader — not `validate` — owns EVERY name in this list.
-      //
-      // An EMPTY list scopes the file to nothing, so it can never render. It also cannot mean
-      // anything an author intended: "scoped to no harness" is not a thing to want.
+      // A `targets:` list the render cannot honour DELETES an already-poured copy from the
+      // consumer's tree (the render prunes every lock path it no longer produces, #364), so the
+      // loader — not `validate` — owns every name in this list.
       if (Array.isArray(entry.targets) && !entry.targets.length) {
         throw new Error(
           `stack ${name}: files entry "${entry.path}" declares an empty \`targets:\` list, so it can never render — ` +
             `omit \`targets:\` to render it unconditionally`,
         );
       }
-      // An UNKNOWN NAME is the same hazard reached by a one-character typo, and it was once left to
-      // `validate` on the grounds that a stale name is "inert — nothing renders, nothing is
-      // destroyed". THAT PREMISE IS FALSE, in both directions, and each is reproduced in the tests:
-      //   - `targets: [claud]` resolves to NOTHING, so it is `targets: []` spelled differently: the
-      //     poured copy is pruned out of EVERY consumer's tree.
-      //   - `targets: [claude, codxe]` (partially valid — one real name survives) still deletes the
-      //     poured copy out of a CODEX consumer's tree. "One valid name survives" does not make the
-      //     entry safe; it only narrows WHICH consumers it destroys.
-      // So there is no inert case to be tolerant of, and a rule keyed on "resolves to zero valid
-      // names" would have closed only the first hole. `validate` is toolkit-developer lint that
-      // consumers never run over built-in stacks (`render` imports only `validateExternalStacks`),
-      // and the toolkit is explicitly forkable — a fork without that CI gate must not be able to
-      // ship a silent delete. The consumer's own config has always hard-errored on an unknown target
-      // name (project.mjs); the manifest is the side that can DESTROY a file, so it is not the side
-      // that gets to be lenient. A name outside VALID_TARGETS can only ever be an authoring bug:
-      // the set is closed and code-defined, not an open extension point.
       if (Array.isArray(entry.targets)) {
-        // Widened to string[] deliberately: the whole point is to test UNTRUSTED manifest strings
-        // against the closed Target set, so `includes` must accept a plain string rather than
-        // presupposing the very thing being checked.
+        // Widened to string[] deliberately: `includes` must accept an untrusted manifest string
+        // rather than presupposing the very thing being checked.
         const known = /** @type {string[]} */ (VALID_TARGETS);
         const bad = entry.targets.map(String).filter((t) => !known.includes(t));
         if (bad.length) {
@@ -367,36 +286,22 @@ function loadStack(name, dir) {
     }
     const file = path.join(dir, 'files', rel);
     if (!exists(file)) throw new Error(`stack ${name}: files entry "${rel}" not found under files/`);
-    // Target scoping (#364), optional: null = unscoped = renders regardless of the consumer's
-    // `targets:` (the pre-#364 contract). Every declared name is validated ABOVE, at load — unlike
-    // `optIn:` and `prerequisites:`, this field is load-strict, because it is the only one whose
-    // malformation deletes a file out of a consumer's repo.
     const targets = isMap && entry.targets !== undefined ? entry.targets.map(String) : null;
     return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)), targets };
   });
 
-  // The `syrup:` gate key was renamed to `optIn:` in 0.10.0. Fail loudly on a stale manifest
-  // key rather than silently ignoring it — a silently-dropped gate would un-gate sensitive
-  // syrup (e.g. a workflow needing repo write permissions) into the default render.
   if (manifest.syrup !== undefined) {
     throw new Error(`stack ${name}: manifest key \`syrup:\` was renamed to \`optIn:\` in 0.10.0 — rename it in stack.yaml`);
   }
 
-  // optIn: sensitive items (e.g. a workflow needing repo write permissions) whose syrup must
-  // be poured only on request. Each entry is an item ref (`files/<path>`) defined in this
-  // stack; an opt-in item is excluded from a stack's default render unless the consumer
-  // explicitly installs it or already tracks its path in the lock. The gate lives in
-  // `computeSelection()`/`renderProject()`; `validate` checks each ref resolves.
+  // Item refs excluded from a stack's default render; the gate itself lives in
+  // `computeSelection()`/`renderProject()`.
   const optIn = new Set((manifest.optIn ?? []).map((ref) => normalizeItemRef(String(ref))));
 
   return {
     name,
     dir,
     description: manifest.description ?? '',
-    // Advisory pre-selection flag (#201): the setup wizard defaults recommended stacks ON, still
-    // user-overridable. `=== true` so a missing/malformed value is a plain `false`, mirroring the
-    // defensive coercions used throughout this loader. Read generically from the manifest so #202
-    // needs only a one-line `recommended: true` in its stack.yaml — never keyed on a stack name.
     recommended: manifest.recommended === true,
     agents,
     skills,
@@ -404,26 +309,17 @@ function loadStack(name, dir) {
     optIn,
     config,
     declared,
-    // Legacy harness `env:` map — read-compatible and unchanged (#129): still warned at render
-    // by `checkEnvPrerequisites` (target-aware — it checks the harness settings file). The typed
-    // `prerequisites:` list below SUBSUMES env as one of its kinds without forcing this map to
-    // migrate; a stack may use either or both.
+    // Legacy `env:` map (#129) — subsumed by the typed `prerequisites:` below; a stack may use
+    // either or both.
     env: manifest.env ?? {},
-    // Typed external prerequisites (#47/#129): a declared list of environment things the stack
-    // needs (tool/secret/scope/label/setting/service/env), each with a deterministic `check`
-    // and a require/recommend `level`. Verified by the `doctor` gate and warned at render.
     prerequisites: normalizePrerequisites(manifest.prerequisites),
-    // Optional per-item dependency declarations: `skills/<name>`/`agents/<name>` →
-    // list of `skills/<name>`/`agents/<name>` refs. Formalizes prose-only skill deps.
     requires: manifest.requires ?? {},
     setup: typeof manifest.setup === 'string' ? manifest.setup : '',
   };
 }
 
 /**
- * Config keys that are `required` and unresolved. When `usedKeys` is supplied, only
- * keys actually referenced by the selected items are considered — so a partial install
- * (one item from a stack) does not demand config only the stack's other items use.
+ * Config keys that are `required` and unresolved.
  *
  * @param {Stack} stack
  * @param {Record<string, any>} values resolved project config values
