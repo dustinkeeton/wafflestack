@@ -19,7 +19,8 @@ const MAX_SLACK_PCT = 10; // a grandfathered ceiling this far above actual must 
 
 // Measured 2026-08-17 (ratio% + 1, longest run as found). Delete a file's entry when it
 // is cleaned; the gate then holds it to the default ceilings above.
-const GRANDFATHERED = {};
+const GRANDFATHERED = {
+};
 
 // Counts `//` lines (minus a line-1 `// @ts-check`) and block-comment lines, excluding
 // `/**` blocks that carry a JSDoc `@tag` — typed contracts are the keep-set (#388).
