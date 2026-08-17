@@ -1,64 +1,34 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
-# Post-merge hook: when a pull request is MERGED, do the two remote-side chores that follow —
-# delete its (same-repo) head branch so nothing lingers after the merge (emitting a prune
-# signal in the run summary so local clones know a `git fetch --prune` will drop the now-stale
-# origin/* tracking ref), and fold the PR's recorded token spend (#227) into the global
-# counter JSON on the dedicated `waffle-telemetry` branch — the shields.io endpoint file
-# behind the README badge. Deterministic — a plain Actions job, NO Claude dispatch and NO API
-# spend (unlike the sibling waffle-label-hook), same trigger shape as waffle-release-hook.
-# Both writes go through the GitHub API only (no checkout, no local git), so the job stays
-# identity-neutral: the counter commits author as the job token's identity.
-#
-# This is the REMOTE half of post-merge hygiene. The LOCAL half — deleting the merged local
-# branch + worktree and pruning — stays the merging agent's job via the `clean-up` skill
-# (`clean-up git --yes`), because a CI job cannot reach a developer's machine. Board/issue
-# reconciliation is likewise a local-agent step (see the clean-up + git-workflow skills), NOT
-# done here: keeping it local costs zero API budget and lets the agent that just merged fix
-# board drift in place — this job stays scoped to remote-only hygiene (branch delete +
-# counter tick) on purpose.
-#
-# Safety: only a branch in THIS repo is ever touched — a fork PR's head lives on the fork, so
-# the same-repo gate skips it (and the base repo's read-only fork token could not delete it
-# anyway) — and never the default branch. An already-deleted head (GitHub's native
-# auto-delete-head-branches beat us to it) is treated as success, and a branch that cannot be
-# deleted but still exists (protected, missing perms, or a transient API error) is a WARNING, not a
-# failed run: a lingering branch is a hygiene miss, not a delivery failure, so it never reds a
-# clean merge. Prerequisite (see the stack setup note): Actions allowed `contents: write`.
+# The REMOTE half of post-merge hygiene (branch delete + token-counter tick); the LOCAL half is
+# the `clean-up` skill. Both writes go through the GitHub API only, so the job stays
+# identity-neutral. Full rationale: the github-workflow stack setup note.
 name: waffle-post-merge-hook
 
 on:
   pull_request:
     types: [closed]
 
-# One run at a time per PR; never cancel an in-flight branch delete.
+# Never cancel an in-flight branch delete.
 concurrency:
   group: waffle-post-merge-hook-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   cleanup:
-    # Fire only when the PR was actually MERGED (not merely closed), its head branch lives in
-    # THIS repo (fork heads are unreachable and left alone), and that head is not the default
-    # branch (never delete the trunk).
+    # Same-repo heads only (a fork head is unreachable), and never the default branch.
     if: >-
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref != github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Least privilege: contents: write covers the two writes this job performs (deleting a
-    # branch ref; committing the counter tick on the telemetry branch via the Contents/Git
-    # Data API); pull-requests: read lets it list the merged PR's comments to find the
-    # recorded token spend.
     permissions:
       contents: write
       pull-requests: read
     steps:
       - name: Delete the merged head branch
         env:
-          # The branch name reaches the shell only through the environment and is passed to
-          # `gh api` as a data argument (never eval'd); GitHub branch names cannot contain shell
-          # metacharacters, spaces, or `..`, so the quoted expansion below is safe.
+          # The branch name reaches the shell only via the environment, never eval'd.
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -75,33 +45,8 @@ jobs:
           else
             echo "::warning title=waffle-post-merge-hook::Could not delete remote branch '${BRANCH}' (PR #${PR_NUMBER}) though it still exists — it may be protected, missing perms (Actions lacking contents: write), or a transient API error (5xx / rate-limit / network). Delete it by hand if you want it gone; this hygiene hook does not fail the run over a lingering branch."
           fi
-      # Global token counter (#227). Sum the merged PR's recorded token spend — the
-      # machine-readable waffle-token-data line inside the <!-- waffle-token-count --> comment
-      # the dispatching hooks maintain (the table is never parsed) — and fold it into
-      # .waffle/telemetry/tokens.json on the dedicated `waffle-telemetry` branch. That file IS
-      # the shields.io endpoint-badge JSON (schemaVersion/label/message/color at top level;
-      # the accumulating totals nest under `waffle`, which shields ignores).
-      #
-      # Why a dedicated unprotected branch, not main: a fresh API commit to a protected
-      # default branch is rejected by required status checks (this repo's doctor gate), it
-      # would spam main's history with a commit per merge, and a lock-managed counter would
-      # red the doctor drift gate on every tick. A non-default branch triggers no workflows
-      # (doctor fires on push to main + PRs only), so no `[skip ci]` is needed either.
-      #
-      # Identity-neutral by construction (#160): everything is pure `gh api` — the branch is
-      # bootstrapped as an ORPHAN ref via the Git Data API (blob → tree → no-parent commit →
-      # ref) and each tick is a sha-conditional Contents-API PUT, so there is no checkout, no
-      # local git, and no identity config; the commits author as the token identity
-      # (github-actions[bot] under github.token). The sha-conditional PUT plus a bounded
-      # retry handles the real race (per-PR concurrency groups do NOT serialize two different
-      # PRs' post-merge runs), and the per-PR entry in `waffle.prs` makes the update
-      # idempotent — a hook re-run or a lost-race retry never double-counts (`has($pr)` short-
-      # circuits). Telemetry never fails the merge cleanup: continue-on-error is the hard
-      # backstop and the script only ever exits 0 — an exhausted retry or a failed read is a
-      # warning (a missed counter tick is a hygiene miss, not a delivery failure), and a PR
-      # with no recorded spend (the common case while an API key is dead: every run dies at
-      # turn 1 with zero usage) still bootstraps the branch so the badge resolves, then adds
-      # nothing.
+      # Folds the PR's recorded spend into the shields.io endpoint JSON on the dedicated
+      # `waffle-telemetry` branch. Idempotent per PR, and never fails the merge cleanup.
       - name: Update global token counter
         if: always()
         continue-on-error: true

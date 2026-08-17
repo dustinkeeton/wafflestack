@@ -1,27 +1,10 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
-# Scheduled Layer 2 eval hook: on a nightly cron (and on manual dispatch) it runs the metered,
-# LLM-driven eval tier (`node installer/evals.mjs`) against the toolkit's own stack prompts and
-# reports pass/fail per case. This is the scheduled counterpart to the free per-PR Layer 1 gate
-# (`npm test`): Layer 2 calls a real model, so it costs real Anthropic API money EVERY run and
-# must NOT gate every PR. Unlike the sibling hooks it dispatches NO Claude harness — it is a
-# plain Node job that checks out the toolkit, installs deps, and runs the eval runner directly.
-# The run is bounded by an explicit, ENFORCED call budget (evals.maxCalls → --max-calls): the
-# runner refuses to start a model call once the cap is reached and marks the rest skipped, and
-# the Check step fails the job loudly when any case fails OR the budget was exhausted. Because a
-# scheduled trigger spends money on a timer, this is opt-in syrup and stays inert until you set
-# the ANTHROPIC_API_KEY secret and install it — see the stack setup note. (This workflow only
-# makes sense in the wafflestack toolkit repo or a fork of it, where installer/evals.mjs and the
-# stacks/*/evals/ cases live; a plain consuming project has neither, so it never installs this.)
 name: waffle-evals
 
 on:
   schedule:
-    # Cron is UTC. Default '0 8 * * *' ≈ 00:00 America/Los_Angeles (PST; 01:00 during PDT).
-    # Override via the evals.cron config key. (A scheduled workflow with no repo activity for
-    # 60 days is auto-disabled by GitHub until a manual dispatch re-enables it.)
+    # Cron is UTC; GitHub auto-disables a scheduled workflow after 60 days of repo inactivity.
     - cron: '{{evals.cron}}'
-  # Manual runs (test the flow, or run the suite on demand). The max_calls input overrides the
-  # configured budget for this run only — raise it to fit a suite that grew past evals.maxCalls.
   workflow_dispatch:
     inputs:
       max_calls:
@@ -29,8 +12,7 @@ on:
         required: false
         default: '{{evals.maxCalls}}'
 
-# One eval run at a time: a manual dispatch fired during a scheduled run queues behind it rather
-# than cancelling a mid-flight (paid) run.
+# Queue rather than cancel: a mid-flight run is paid for.
 concurrency:
   group: waffle-evals
   cancel-in-progress: false
@@ -39,40 +21,26 @@ jobs:
   evals:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Least privilege: the job only reads the checked-out toolkit and calls the Anthropic API.
-    # No git writes, no PR, no issue — so contents:read is all it needs (the API key is a secret).
     permissions:
       contents: read
     env:
-      # The runner writes its --json summary (per-case pass/fail, assertions, AND the transcript
-      # of each case) here; the Upload + Check steps both read it. Defined once at job scope so
-      # every step agrees on the path even if an earlier step exits early.
+      # Job-scoped so every step agrees on the path even if an earlier one exits early.
       RESULTS_FILE: ${{ runner.temp }}/eval-results.json
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
-      # The eval runner imports the toolkit's one runtime dep (`yaml`) to load cases, so a fresh
-      # Actions checkout must install before it can run. `npm ci` is deterministic against the
-      # committed package-lock.json — this is the toolkit's own checkout, not a consumer project.
       - name: Install toolkit dependencies
         run: npm ci
-      # Run the metered eval tier. --json emits the full structured summary (with transcripts) to
-      # stdout, which we capture to RESULTS_FILE for the artifact + result check. The runner exits
-      # non-zero on any failure/skip, but we DON'T fail this step on that — the Check step below is
-      # the loud, classifying gate and runs on always(); this step only hard-fails on a
-      # missing/invalid budget or a missing API key, where there is nothing to report.
+      # Deliberately does NOT fail on a case failure — the Check step below is the gate.
       - name: Run Layer 2 evals
         id: run
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # workflow_dispatch may override the budget; every other trigger uses the configured
-          # default. evals.maxCalls is a digits-only config value (render-time pattern), so this
-          # never injects into the shell.
+          # Digits-only at render time, and re-checked in the run block: never injects.
           MAX_CALLS: ${{ github.event.inputs.max_calls || '{{evals.maxCalls}}' }}
-          # Optional model override for cost control (empty ⇒ the runner's own default). Restricted
-          # to a model-id charset at render time, so it reaches the runner only as inert data.
+          # Restricted to a model-id charset at render time, so it arrives as inert data.
           MODEL: '{{evals.model}}'
         run: |
           set -o pipefail
@@ -101,10 +69,6 @@ jobs:
           echo "Eval runner exited with code $code; structured results written to $RESULTS_FILE."
           # Never fail here — the Check step reads RESULTS_FILE and is the hard gate.
           exit 0
-      # Preserve the structured results (per-case pass/fail + assertion detail + the full
-      # transcript of every case) as a workflow artifact so a regression can be inspected after
-      # the fact, following the same observability pattern as the other hooks. always() so even a
-      # failed/partial run still uploads whatever the runner wrote.
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -113,9 +77,7 @@ jobs:
           path: ${{ runner.temp }}/eval-results.json
           if-no-files-found: warn
           retention-days: 7
-      # Result-check gate: read the runner's JSON summary strictly as DATA (jq, never eval'd),
-      # write a human digest to the run summary, and FAIL the job loudly when any case failed or
-      # the run exhausted its budget — so a regression is a red X, not a silent green check.
+      # Reads the runner's JSON summary strictly as DATA (jq, never eval'd).
       - name: Check eval result
         if: always()
         run: |
