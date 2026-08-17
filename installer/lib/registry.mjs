@@ -1,47 +1,6 @@
 // @ts-check
-/**
- * The **waffle registry** (#335) — `stacks/registry.yaml`, the single source of truth for waffle
- * identity, location, and availability.
- *
- * Before it existed, a waffle's existence was purely disk-driven: `stack.yaml` named it by bare
- * name and `refs.mjs` resolved that name against whatever directories happened to be present. Two
- * things followed. A rename or a move broke NOTHING loudly at the toolkit level — it just silently
- * changed what existed, and the consumer whose `include:` pinned the old ref found out at their
- * next render. And every waffle on disk was installable, so there was no way to develop one in the
- * open without shipping it, and no way to retire one without stranding whoever had pinned it.
- *
- * The registry closes both. It is *enforced*, not advisory:
- *   - `validate` reconciles registry ↔ filesystem ↔ every `stack.yaml` and reds on any divergence,
- *     which is what makes a rename impossible to land without updating the registry;
- *   - `refs.mjs` gates consumer-facing resolution on it, so a `wip` waffle is never offered;
- *   - a `replaced` entry carries the forward-fix, so a pinned consumer ref is FORWARDED rather
- *     than erroring, and `upgrade` rewrites the pin for good.
- *
- * ## Scope: what is registered, and what deliberately is not
- *
- * **Waffles only** — agents and skills. `files/` payloads (syrup) are NOT registered: syrup is
- * addressed by its repo-relative OUTPUT PATH rather than by a name, so its identity is already
- * pinned by the thing it renders to, and it has its own availability gate (`optIn:`). Registering
- * it would duplicate both with nothing left to decide. `stacks/registry.yaml` is likewise not a
- * stack list — `toolkit.yaml` owns that.
- *
- * **Built-in stacks only.** An external stack merged in from a `source:` (one carrying a
- * `provenance` record) belongs to a DIFFERENT toolkit and is governed by that toolkit's registry,
- * if it has one. Nothing here reds on it and nothing here gates it: a lookup for an unregistered
- * waffle returns `null`, which every gate reads as "available".
- *
- * ## The fail-open rule
- *
- * A lookup answers `null` for anything it does not recognise, and **only the exact string `wip`
- * gates**. That is not laziness, it is the safe direction: the render prunes every lock path it no
- * longer produces, so gating a waffle out DELETES it from a consumer's tree. A typo (`stabel`,
- * `WIP`) must therefore never be read as "gate this out" — it stays available and `validate` reds
- * on it. The destructive reading is the one that requires an exact, recognised spelling.
- *
- * A missing registry file is likewise a total no-op: the toolkit is simply ungated (this is what
- * lets a fixture or a fork run without one). What a registry-less toolkit loses is the enforcement,
- * not the ability to render.
- */
+// The waffle registry (#335): `stacks/registry.yaml` → waffle identity, location, availability.
+// Fail-open — only the exact string `wip` gates, because gating DELETES a poured waffle.
 
 import path from 'node:path';
 import { readYaml, exists } from './util.mjs';
@@ -49,36 +8,19 @@ import { readYaml, exists } from './util.mjs';
 /** The registry file, relative to the toolkit root. */
 export const REGISTRY_FILE = path.join('stacks', 'registry.yaml');
 
-/**
- * The registered waffle kinds, in the SINGULAR item vocabulary (`item.kind` in toolkit.mjs) —
- * `files` is deliberately absent; syrup is out of registry scope (see the module docblock).
- */
+/** The registered waffle kinds, in the SINGULAR item vocabulary (`item.kind` in toolkit.mjs). */
 export const WAFFLE_KINDS = Object.freeze(['agent', 'skill']);
 
 /**
- * The waffle lifecycle, and the whole of it:
- *   - `stable`     — offered, installable, supported. The default state of a shipped waffle.
- *   - `wip`        — present in the repo, never offered. Develop a waffle in the open without
- *                    shipping it. It is skipped by stack expansion, refused by an explicit
- *                    install, dropped from an agent's `skills:` closure, and absent from the setup
- *                    inventory. NEVER mark an already-shipped waffle `wip` — the render's prune
- *                    would delete it from every consumer that has it; use `deprecated`.
- *   - `deprecated` — still offered and still installable, but on the way out. May carry
- *                    `replacedBy` to name its successor, which `upgrade` surfaces as advice.
- *   - `replaced`   — a TOMBSTONE. The waffle no longer exists on disk; the entry survives so its
- *                    `replacedBy` can forward a consumer who pinned the old ref.
+ * The waffle lifecycle. NEVER mark an already-shipped waffle `wip` — the render's prune would
+ * delete it from every consumer that has it; use `deprecated`.
  */
 export const WAFFLE_STATUSES = Object.freeze(['stable', 'wip', 'deprecated', 'replaced']);
 
 /** Statuses of a waffle that still EXISTS on disk (so it carries a `stack:` and a `path:`). */
 export const LIVE_STATUSES = Object.freeze(['stable', 'wip', 'deprecated']);
 
-/**
- * The only keys a registry entry may carry. Unknown keys are rejected by `validate` rather than
- * ignored, for the reason every other manifest in this toolkit rejects them: a `replacedby:`
- * casing slip or a `status2:` typo would otherwise leave the entry silently in its DEFAULT
- * reading, which for a tombstone means a pinned consumer is never forwarded.
- */
+/** The only keys a registry entry may carry; anything else is a `validate` red, never ignored. */
 export const REGISTRY_ENTRY_KEYS = Object.freeze(['name', 'kind', 'stack', 'path', 'status', 'replacedBy', 'note']);
 
 /** How deep a `replacedBy` chain may be followed before we call it a cycle. */
@@ -119,8 +61,7 @@ export function refKindOf(kind) {
 }
 
 /**
- * The singular item kind for a plural REF kind. `files` has no registry kind — syrup is out of
- * scope — so it answers null, which every caller reads as "not a registered waffle".
+ * The singular item kind for a plural REF kind; `files` answers null — syrup is out of scope.
  *
  * @param {unknown} kind
  * @returns {'agent' | 'skill' | null}
@@ -132,11 +73,7 @@ export function waffleKindOf(kind) {
 }
 
 /**
- * The toolkit-root-relative path a live waffle MUST occupy. The registry records a path rather
- * than deriving one so the file reads as a location index, but the location is not a free choice:
- * `loadStack` joins the bare manifest name under the stack dir, so any other path would be a
- * fiction. `validate` checks the recorded path against this — which is exactly what turns a MOVE
- * into a red rather than a silent change of what exists.
+ * The toolkit-root-relative path a live waffle MUST occupy; `validate` reds on any other path.
  *
  * @param {string} stack
  * @param {string} kind singular waffle kind
@@ -150,14 +87,7 @@ export function canonicalWafflePath(stack, kind, name) {
 }
 
 /**
- * Read `stacks/registry.yaml` from a toolkit root.
- *
- * An ABSENT file is a first-class, silent no-op (`present: false`) — see the module docblock.
- * A file that exists but is not a mapping with a `waffles:` list is a HARD ERROR, and the split is
- * deliberate: absence means "this toolkit does not use a registry", whereas a corrupt one means
- * "this toolkit uses a registry and we cannot read it", and quietly degrading THAT to an ungated
- * render is how a `wip` waffle ships. Per-entry shape problems are not errors here — they are
- * reported by `validateRegistry`, because every one of them is inert under the fail-open rule.
+ * Read `stacks/registry.yaml`: an ABSENT file is a silent no-op, a corrupt one is a HARD ERROR.
  *
  * @param {string} rootDir toolkit root
  * @returns {Registry}
@@ -188,8 +118,7 @@ export function loadRegistry(rootDir) {
   raw.forEach((entry, index) => {
     const record = normalizeEntry(entry, index);
     registry.entries.push(record);
-    // Index only what is USABLE. A malformed entry stays in `entries` (so `validate` reports it)
-    // but never reaches a gate — under the fail-open rule an unindexed waffle is simply available.
+    // Index only what is USABLE: a malformed entry stays in `entries` for `validate` but never gates.
     if (!record.name || !record.refKind || !record.status) return;
     if (record.status === 'replaced') {
       const key = `${record.refKind}/${record.name}`;
@@ -243,11 +172,7 @@ function liveKey(stack, refKind, name) {
 
 /**
  * The registered status of a live waffle, or `null` when it is not registered — an external
- * (provenance-bearing) stack, a toolkit with no registry file, or a malformed entry.
- *
- * Keyed on the OWNING STACK as well as the ref, because a waffle name is not toolkit-unique (the
- * ref grammar has a stack-qualified form precisely because two stacks may define the same name),
- * and one of the two being `wip` must not gate the other.
+ * stack, a toolkit with no registry file, or a malformed entry.
  *
  * @param {Registry | null | undefined} registry
  * @param {string} stackName
@@ -261,8 +186,7 @@ export function waffleStatus(registry, stackName, refKind, name) {
 }
 
 /**
- * Is this waffle gated out of every consumer-facing surface? True for the exact status `wip` and
- * nothing else — see the fail-open rule in the module docblock.
+ * Is this waffle gated out of every consumer-facing surface? True for the exact status `wip` only.
  *
  * @param {Registry | null | undefined} registry
  * @param {string} stackName
@@ -275,14 +199,8 @@ export function isWaffleWip(registry, stackName, refKind, name) {
 }
 
 /**
- * Follow a `replaced` tombstone to the ref that supersedes it — the forward-fix for a consumer
- * whose config still pins the old name.
- *
- * The chain is followed transitively (`a` → `b` → `c` returns `c`), so a waffle renamed twice
- * still forwards in one hop from a very old pin, and a cycle or an over-long chain answers null
- * rather than looping — `validate` reds on both, and a gate must not hang on a bad registry.
- * A tombstone whose successor is ITSELF a live entry is the terminal case; a tombstone with no
- * `replacedBy` (a plain removal) answers null, and the caller reports the ref as unknown.
+ * Follow a `replaced` tombstone transitively to the ref that supersedes it; a cycle or an
+ * over-long chain answers null rather than looping.
  *
  * @param {Registry | null | undefined} registry
  * @param {string} refKind the PLURAL ref kind
@@ -298,8 +216,6 @@ export function replacementFor(registry, refKind, name) {
   for (let hop = 0; hop < MAX_REPLACEMENT_HOPS; hop += 1) {
     const entry = registry.replaced.get(`${refKind}/${current}`);
     if (!entry) {
-      // `current` is no longer a tombstone: either we walked at least one hop (a real forward) or
-      // the very first lookup missed (nothing to forward).
       return via.length ? { ref: `${refKind}/${current}`, name: current, via } : null;
     }
     if (!entry.replacedBy) return null; // a plain removal — there is nothing to forward TO
