@@ -558,15 +558,15 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:30`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1207 tests, 156 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1258 tests, 164 suites) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
 | render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — flag REQUIRED (#373: a working tree is never at a release tag). Commit the updated render + lock (the doctor drift gate is a required check) |
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:72`, which gets the env twin from the job `env:` at `tests.yml:36` instead of the flag) |
-| evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 15 cases: `code-quality` (2) + `github-workflow` (10) + `orchestration` (3). NOT in `npm test` |
+| evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 16 cases: `code-quality` (2) + `github-workflow` (11) + `orchestration` (3). NOT in `npm test` |
 
-Test files (11): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
+Test files (13): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render),
 `evals.test.mjs` (eval layer 2 harness with the mock model, free inside `npm test`),
@@ -576,7 +576,11 @@ against fixtures), `avatars-sync.test.mjs` (#285: injected HTTP + rasterizer),
 `typecheck-gate.test.mjs` (#177), `provenance.test.mjs` (#373/#374/#372: identity, release gate,
 lock toolkit block, pin reconcile — hermetic, strips the env var per spawn),
 `preflight-ci-parity.test.mjs` (#375: the four `project.*Cmd` config slots mirror `tests.yml`'s
-required `test` job).
+required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation),
+`comment-gate.test.mjs` (#388 doctrine enforced mechanically: per-file comment-ratio ceiling
+15% — 20% for `stacks/**/*.mjs` — plus an 8-line max comment run, typed JSDoc excluded, with a
+monotonically shrinking `GRANDFATHERED` map over `installer/**`, `stacks/**/*.mjs`, and workflow
+YAML; delete a file's entry when it is cleaned).
 
 ## Dogfood state
 
