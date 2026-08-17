@@ -21,36 +21,28 @@ const MAX_SLACK_PCT = 10; // a grandfathered ceiling this far above actual must 
 // is cleaned; the gate then holds it to the default ceilings above.
 const GRANDFATHERED = {
   '.github/workflows/tests.yml': { pct: 61, run: 23 },
-  '.github/workflows/waffle-post-merge-hook.yml': { pct: 46, run: 27 },
-  '.github/workflows/waffle-release-hook.yml': { pct: 48, run: 15 },
-  'installer/lib/avatars-sync.mjs': { pct: 28, run: 22 },
+  '.github/workflows/waffle-post-merge-hook.yml': { pct: 34, run: 27 },
+  '.github/workflows/waffle-release-hook.yml': { pct: 40, run: 15 },
   'installer/lib/eject.mjs': { pct: 19, run: 11 },
-  'installer/lib/list.mjs': { pct: 34, run: 32 },
-  'installer/lib/migrations.mjs': { pct: 49, run: 25 },
-  'installer/lib/prerequisites.mjs': { pct: 41, run: 12 },
   'installer/lib/refs.mjs': { pct: 16, run: 13 },
   'installer/lib/render.mjs': { pct: 26, run: 9 },
   'installer/lib/setup.mjs': { pct: 19, run: 10 },
   'installer/lib/sources.mjs': { pct: 19, run: 6 },
-  'installer/lib/template.mjs': { pct: 51, run: 19 },
   'installer/lib/toolkit.mjs': { pct: 22, run: 16 },
   'installer/lib/uninstall.mjs': { pct: 17, run: 10 },
-  'installer/lib/upgrade.mjs': { pct: 29, run: 33 },
-  'installer/lib/validate.mjs': { pct: 28, run: 26 },
-  'installer/lib/waffledocs.mjs': { pct: 27, run: 24 },
   'installer/test/content.test.mjs': { pct: 33, run: 32 },
   'installer/test/installer.test.mjs': { pct: 19, run: 35 },
   'installer/test/provenance.test.mjs': { pct: 26, run: 21 },
   'installer/test/registry.test.mjs': { pct: 14, run: 14 },
   'installer/test/telemetry.test.mjs': { pct: 12, run: 15 },
   'installer/test/typecheck-gate.test.mjs': { pct: 25, run: 6 },
-  'stacks/github-workflow/files/.github/workflows/waffle-evals.yml': { pct: 35, run: 14 },
-  'stacks/github-workflow/files/.github/workflows/waffle-hygiene.yml': { pct: 46, run: 24 },
-  'stacks/github-workflow/files/.github/workflows/waffle-label-hook.yml': { pct: 38, run: 23 },
-  'stacks/github-workflow/files/.github/workflows/waffle-post-merge-hook.yml': { pct: 46, run: 27 },
-  'stacks/github-workflow/files/.github/workflows/waffle-pr-green-hook.yml': { pct: 57, run: 96 },
-  'stacks/github-workflow/files/.github/workflows/waffle-pr-response-hook.yml': { pct: 45, run: 31 },
-  'stacks/github-workflow/files/.github/workflows/waffle-release-hook.yml': { pct: 48, run: 15 },
+  'stacks/github-workflow/files/.github/workflows/waffle-evals.yml': { pct: 29, run: 14 },
+  'stacks/github-workflow/files/.github/workflows/waffle-hygiene.yml': { pct: 33, run: 24 },
+  'stacks/github-workflow/files/.github/workflows/waffle-label-hook.yml': { pct: 27, run: 23 },
+  'stacks/github-workflow/files/.github/workflows/waffle-post-merge-hook.yml': { pct: 34, run: 27 },
+  'stacks/github-workflow/files/.github/workflows/waffle-pr-green-hook.yml': { pct: 16, run: 22 },
+  'stacks/github-workflow/files/.github/workflows/waffle-pr-response-hook.yml': { pct: 20, run: 15 },
+  'stacks/github-workflow/files/.github/workflows/waffle-release-hook.yml': { pct: 40, run: 15 },
   'stacks/orchestration/skills/delegate/checkpoint.mjs': { pct: 17, run: 17 },
   'stacks/orchestration/skills/delegate/identity.mjs': { pct: 30, run: 44 },
   'stacks/orchestration/skills/delegate/memory.mjs': { pct: 30, run: 30 },
@@ -116,18 +108,30 @@ export function classifyMjs(src) {
   return { nonBlank, commentLines, maxRun };
 }
 
+// A `#` inside a block scalar (`run: |`) is embedded-language content, not YAML comment mass.
 export function classifyYaml(src) {
   const lines = src.split(/\r?\n/);
   let nonBlank = 0;
   let commentLines = 0;
   let maxRun = 0;
   let run = 0;
+  let blockIndent = null;
   lines.forEach((line, idx) => {
     const t = line.trim();
+    const indent = line.length - line.trimStart().length;
     if (t === '') {
       if (run > maxRun) maxRun = run;
       run = 0;
       return;
+    }
+    if (blockIndent !== null) {
+      if (indent > blockIndent) {
+        nonBlank++;
+        if (run > maxRun) maxRun = run;
+        run = 0;
+        return;
+      }
+      blockIndent = null;
     }
     nonBlank++;
     if (t.startsWith('#') && !(idx === 0 && t.startsWith('#!'))) {
@@ -135,6 +139,7 @@ export function classifyYaml(src) {
       run++;
       if (run > maxRun) maxRun = run;
     } else {
+      if (/[|>][+-]?\s*$/.test(t)) blockIndent = indent;
       if (run > maxRun) maxRun = run;
       run = 0;
     }
