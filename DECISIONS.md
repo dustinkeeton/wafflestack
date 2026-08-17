@@ -9,6 +9,59 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-08-17: The waffle registry gates fail-open, and `wip` is for never-shipped waffles only (#335)
+
+**Context**: The registry (`stacks/registry.yaml`, merged in PR #429) is the single source of
+truth for waffle identity and availability, but its two operating hazards were recorded only as
+code comments — deleted by the comment sweep below — and as Layer-1 pins. Recorded here so they
+have a citable decision record.
+
+**Decision**: Availability gating **fails open**: a lookup answers `null` for anything it does not
+recognise, and only the exact string `wip` gates a waffle out. The direction is deliberate — the
+render prunes every lock path it no longer produces, so gating a waffle out DELETES it from a
+consumer's tree; a typo (`stabel`, `WIP`) must therefore never be read as "gate this out". It
+stays available and `validate` reds on the typo instead. Corollary: **never mark an
+already-shipped waffle `wip`** — the prune would delete it from every consumer; retiring a shipped
+waffle uses `deprecated` (or a `replaced` entry carrying the forward-fix). Scope: waffles only
+(agents + skills), built-in stacks only — an external `source:` stack is governed by its own
+toolkit's registry, and a missing registry file just means an ungated toolkit (forks and fixtures
+render fine, they only forfeit enforcement).
+
+**Alternatives considered**: Fail-closed (unrecognised status gates out) — rejected: it converts a
+typo into a consumer-tree deletion. Registering syrup and stacks too — rejected: syrup identity is
+its output path and stacks are `toolkit.yaml`'s.
+
+**Impact**: `registry.mjs` (fail-open lookups), `refs.mjs` (resolution gating), `validate.mjs`
+(registry ↔ filesystem ↔ stack.yaml reconciliation), `upgrade.mjs` (pin rewrite on `replaced`).
+
+---
+
+## 2026-08-17: Config value guards reject malformed values — they never coerce, and they report everything (#341 family)
+
+**Context**: The template system guards consumer-supplied config values (`pattern:`,
+`patternHint:`, `entryPatterns:`). The rationale for its five load-bearing rules lived in comment
+essays deleted by the comment sweep below; each rule has a plausible-looking reversal a reviewer
+could propose, so the choices are recorded here once.
+
+**Decision**: Five rules, one direction — reject, loudly, with everything named. (1) A
+scalar-guarded key **rejects** a list or map rather than flattening it (#341) — flattening once
+shipped exactly the dead permission-grant the pattern exists to prevent. (2) A rejection names
+only the **failing** patterns and their declaring stacks, never the ones the value satisfies
+(#244). (3) `patternHint:` is prose because no tool can safely auto-split a compound command like
+`tsc --noEmit && eslint .` (#218). (4) An unknown `entryPatterns` leaf is an **error**, not a
+passthrough — a typoed key must not ride along unguarded (#156). (5) Guards compile
+**toolkit-wide**, and all entry problems are reported in one render (#155/#246) — enforcement is
+not an accident of which stack is installed, and fixing config is not a whack-a-mole loop.
+
+**Alternatives considered**: Coerce-and-warn (join lists, downcase statuses) — rejected: every
+coercion converts a config mistake into silently-changed behavior. First-error-only reporting —
+rejected: it hides the true fix count from the consumer.
+
+**Impact**: `template.mjs` (guard compilation), `validate.mjs`, `list.mjs`; consumer-facing
+behavior of every `project.*Cmd`-style guarded key.
+
+---
+
 ## 2026-08-17: The comments-are-not-spec doctrine gets a mechanical gate, and the burn-down goes repo-wide (#388 follow-through)
 
 **Context**: The #388 doctrine (below, 2026-07-15) ruled that comments in deterministic files are
@@ -43,7 +96,11 @@ rejected: the repo is deliberately dependency-light; a `node:test` gate rides `n
 **Impact**: `installer/**`, `stacks/**/*.mjs`, workflow YAML (rendered sources and this repo's
 own), the git-workflow skill (authoring bullets render to consumers), the docs-agent standard
 (`stacks/docs-system/stack.yaml` + this repo's `machineDocSpec` override), and the review skills
-that already enforce the doctrine. The after-number is recorded here once the sweep lands.
+that already enforce the doctrine. Measured after the sweep (same classifier, typed JSDoc
+excluded): `installer/lib` 30% → 10.4%, all scoped files 9.8%, every comment run ≤8 lines, the
+grandfather map empty — 6,070 comment lines deleted, 1,244 added, across seven residue-proven
+comment-only PRs. Remaining debt: bash comment essays inside workflow `run: |` blocks (~420
+lines), deliberately out of the YAML classifier's scope, awaiting a bash-aware residue proof.
 
 **Context**: #324 (below) namespaced the PR-gate skills' staging files per PR, which killed
 cross-PR contamination — but successive rounds on the *same* PR still reused one file, so
