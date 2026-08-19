@@ -3,8 +3,8 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.13.0 (tagged 2026-07-15; pre-1.0 — the file contract can still change
-  between minor releases). A large unreleased batch sits on `main` — see Current focus.
+- **Version**: v0.14.0 (tagged 2026-08-19; pre-1.0 — the file contract can still change
+  between minor releases).
 - **Last updated**: 2026-07-16
 - **Health**: 🟢 tests 1207/1207 (156 suites) · `validate` clean · CI green on `main`
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)

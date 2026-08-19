@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-19
+
 ### Added
 - **Waffle registry: gate availability and control renames (#335).** New `stacks/registry.yaml` — the
   single source of truth for waffle identity, location, and availability. One entry per agent/skill
@@ -62,6 +64,19 @@ is what you reach for across a breaking one.
   `recommended: true`, so `wafflestack setup` pre-selects it by default (still user-overridable).
   Uses the #201 mechanism — a one-line manifest edit, no schema or code change. **Consumer impact:**
   none — no rendered output changes.
+
+### Changed
+- **Comment burn-down, mechanically gated (#388, #431–#439).** Comments across the toolkit and the
+  shipped stack payloads shrink to orientation-only — installer/lib drops from ~30% to ~10% comment
+  ratio, and the github-workflow hook YAML, delegate scripts (`identity.mjs`, `checkpoint.mjs`,
+  `memory.mjs`), and git-workflow SKILL.md are trimmed likewise. Enforced by the new
+  `comment-gate.test.mjs` (15% file-ratio / 8-line block caps, git-tracked files only, YAML
+  block-scalar `run: |` interiors skipped) with an **empty** grandfather map, so regressions fail
+  `npm test`. Doctrine per DECISIONS #388: comments orient, the skill markdown is the program. Also
+  adds a Layer-2 eval (`git-workflow-comment-authoring.eval.yaml`) pinning the authoring guidance.
+  **Consumer impact:** re-rendering refreshes the github-workflow hook workflows, orchestration
+  delegate scripts, and git-workflow skill — comment/prose changes only, no behavior change and no
+  config change; a plain re-render suffices.
 
 ## [0.13.0] - 2026-07-15
 
