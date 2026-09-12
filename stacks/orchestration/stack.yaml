@@ -4,6 +4,17 @@ description: Multi-agent orchestration — a project-manager coordinator (delive
 recommended: true
 agents: [project-manager, product-manager, task-planner]
 skills: [delegate, autopilot, audit, docs, standup]
+# The /audit chain as two staged Claude workflow scripts (#363) — opt-in, Claude-scoped syrup.
+# Opt-in because the primitive is paid-plan, version-gated and kill-switchable, so a poured script
+# can be silently inert; the prose `audit` skill stays the fallback that runs everywhere.
+files:
+  - path: .claude/workflows/audit-stage-1.js
+    targets: [claude]
+  - path: .claude/workflows/audit-stage-2.js
+    targets: [claude]
+optIn:
+  - files/.claude/workflows/audit-stage-1.js
+  - files/.claude/workflows/audit-stage-2.js
 # Cross-stack skill dependencies pulled in when an item is installed on its own.
 requires:
   skills/delegate:
@@ -24,6 +35,11 @@ requires:
     - skills/docs-agent
     - skills/docs-human
   skills/audit:
+    - skills/docs
+  files/.claude/workflows/audit-stage-1.js:
+    - skills/audit
+  files/.claude/workflows/audit-stage-2.js:
+    - skills/audit
     - skills/docs
 # Typed external prerequisites (#47/#129). Only the `command -v` tool probes are `require` (they
 # fail `doctor`) — certain in every environment doctor runs; everything auth/label/setting is

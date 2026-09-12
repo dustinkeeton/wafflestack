@@ -2987,3 +2987,110 @@ describe('repo-local prompts: no bare gated toolkit command (#373)', () => {
     }
   });
 });
+
+// #363: the /audit chain as two staged Claude workflow scripts — opt-in syrup whose phases invoke the skills.
+describe('audit as two staged workflow scripts (#363)', () => {
+  const SRC_DIR = path.join(STACKS, 'orchestration', 'files', '.claude', 'workflows');
+  const RENDERED_DIR = path.join(CLAUDE, 'workflows');
+  const STAGES = ['audit-stage-1.js', 'audit-stage-2.js'];
+  const source = (f) => fs.readFileSync(path.join(SRC_DIR, f), 'utf8');
+
+  // `meta` is a PURE literal by the runtime's rule, so the test evaluates exactly that literal and nothing else.
+  const metaOf = (src) => {
+    const m = src.match(/^export const meta = (\{[\s\S]*?\n\})\n/);
+    assert.ok(m, 'script must open with `export const meta = {` and close the literal with a `}` at column 0');
+    return new Function(`return (${m[1]})`)();
+  };
+  const phaseCalls = (src) => [...src.matchAll(/\bphase\(\s*(['"])(.+?)\1\s*\)/g)].map((m) => m[2]);
+  const norm = (title) => title.toLowerCase().replace(/\s+/g, ' ').trim();
+
+  // The runtime grammar is "module header + ASYNC FUNCTION BODY": top-level await/return are legal and
+  // `node --check` is the wrong checker. Constructing proves the parse; the body is never called.
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const parse = (src) =>
+    new AsyncFunction('args', 'agent', 'parallel', 'pipeline', 'phase', 'log', 'workflow', 'budget', src.replace(/^export const meta/m, 'const meta'));
+
+  test('both stage scripts exist, open with a pure meta literal, and parse as a workflow body', () => {
+    for (const f of STAGES) {
+      const src = source(f);
+      assert.ok(src.startsWith('export const meta = {'), `${f}: must start with \`export const meta = {\``);
+      const meta = metaOf(src);
+      assert.equal(typeof meta.name, 'string', `${f}: meta.name`);
+      assert.equal(typeof meta.description, 'string', `${f}: meta.description`);
+      assert.ok(Array.isArray(meta.phases) && meta.phases.length > 0, `${f}: meta.phases`);
+      assert.doesNotThrow(() => parse(src), `${f}: does not parse as an async function body`);
+      assert.doesNotMatch(src, /^\s*import\b|Date\.now\(|Math\.random\(|new Date\(\)/m, `${f}: no imports and nothing that breaks resume`);
+      assert.match(src, /^return \{/m, `${f}: a workflow hands its result back with a top-level return`);
+    }
+  });
+
+  test('meta.phases titles equal the phase() calls, in order', () => {
+    for (const f of STAGES) {
+      const src = source(f);
+      assert.deepEqual(metaOf(src).phases.map((p) => p.title), phaseCalls(src), `${f}: meta.phases and the phase() calls drifted`);
+    }
+  });
+
+  test('stage 1 runs the audit skill and stops on Critical/High; stage 2 runs docs step-by-step and honours sign-off', () => {
+    const s1 = source('audit-stage-1.js');
+    const s2 = source('audit-stage-2.js');
+    assert.match(s1, /audit\/SKILL\.md/, 'stage 1 points at the audit skill');
+    assert.match(s1, /stoppedAt/);
+    assert.match(s1, /signOffRequired/);
+    assert.match(s1, /required: \['findings', 'fixesApplied', 'severity'\]/, 'a gate keyed on an optional severity is decorative');
+    assert.match(s2, /audit\/SKILL\.md/, 'stage 2 points at the audit skill');
+    assert.match(s2, /docs\/SKILL\.md/, 'stage 2 points at the docs skill');
+    assert.match(s2, /docs-agent/);
+    assert.match(s2, /docs-human/);
+    assert.match(s2, /signedOff/);
+    assert.match(s2, /refused: true/, 'stage 2 refuses an un-signed-off stop');
+    // The docs phase mirrors docs/SKILL.md steps 1→2→3 as three SEQUENTIAL awaits — sequencing in JS, content in the skill.
+    const at = ['docs-change-report', 'docs-agent', 'docs-human'].map((l) => s2.indexOf(`label: '${l}'`));
+    assert.ok(at.every((i) => i !== -1) && at[0] < at[1] && at[1] < at[2], `docs steps out of order or missing: ${at}`);
+    assert.doesNotMatch(s2, /parallel\(|pipeline\(/, 'the docs steps are sequential agent() calls, never fanned out');
+    for (const f of STAGES) assert.doesNotMatch(source(f), /\bteams?\b/i, `${f}: the abolished team concept (#360)`);
+  });
+
+  test('the rendered copies are poured and locked with no residual placeholder', () => {
+    const lock = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, '.waffle', 'waffle.lock.json'), 'utf8'));
+    for (const f of STAGES) {
+      const rendered = path.join(RENDERED_DIR, f);
+      assert.ok(fs.existsSync(rendered), `${who(rendered)}: this repo include:s the script, so it must be poured`);
+      const out = fs.readFileSync(rendered, 'utf8');
+      assert.doesNotMatch(out, /\{\{/, `${who(rendered)}: residual {{ after render`);
+      assert.deepEqual(phaseCalls(out), phaseCalls(source(f)), `${f}: the render must not change the phase sequence`);
+      assert.ok(`.claude/workflows/${f}` in lock.files, `${f}: an include:d ref renders AND locks`);
+    }
+  });
+
+  // SEQUENCING PARITY: the prose chain and the scripts must never drift apart silently (the #360 failure mode).
+  // Chain-order items are classified by SHAPE, which survives rendering: the `docs` skill item → docs;
+  // a "(pass N)" qualifier → security N; any other qualifier is the project-supplied compliance label →
+  // compliance; a bold agent with no qualifier → architecture. Script titles are lowercased and
+  // whitespace-collapsed, so `phase('Security 1')` ⇔ "(pass 1)".
+  const chainOrder = (md, label) => {
+    const section = md.match(/^## Chain Order\n([\s\S]*?)\n## /m);
+    assert.ok(section, `${label}: no "## Chain Order" section`);
+    const items = [...section[1].matchAll(/^\d+\. \*\*(.+?)\*\*\s*(?:\(([^)]*)\))?\s*—/gm)];
+    assert.ok(items.length >= 5, `${label}: the chain-order regex matched only ${items.length} items`);
+    return items.map(([, agentCell, qualifier = '']) => {
+      if (/`docs` skill/.test(agentCell)) return 'docs';
+      const pass = qualifier.match(/^pass (\d+)$/);
+      if (pass) return `security ${pass[1]}`;
+      return qualifier ? 'compliance' : 'architecture';
+    });
+  };
+
+  test('the prose chain order equals stage-1 phases then stage-2 phases, in order', () => {
+    const scripted = STAGES.flatMap((f) => phaseCalls(source(f))).map(norm);
+    assert.deepEqual(scripted, ['architecture', 'security 1', 'compliance', 'docs', 'security 2'], 'the scripted chain itself moved — update the prose too');
+    for (const f of [path.join(STACKS, 'orchestration', 'skills', 'audit', 'SKILL.md'), path.join(CLAUDE, 'skills', 'audit', 'SKILL.md')]) {
+      assert.ok(fs.existsSync(f), `${who(f)} is missing — parity would pass vacuously`);
+      assert.deepEqual(
+        chainOrder(fs.readFileSync(f, 'utf8'), who(f)),
+        scripted,
+        `${who(f)}: the prose "Chain Order" and the workflow scripts' phase() sequence drifted (normalised: lowercase, "(pass N)" ⇔ "security N", compliance label ⇔ "compliance")`,
+      );
+    }
+  });
+});

@@ -35,6 +35,10 @@ include:
   # composes it, so render it here (whole-stack installs don't pull requires closures).
   - code-quality/skills/qa
   - files/.github/workflows/waffle-post-merge-hook.yml
+  # The /audit chain as two staged Claude workflow scripts (#363): inert files until a session
+  # invokes them, no spend — dogfooded here so the render + lock exercise the opt-in path.
+  - files/.claude/workflows/audit-stage-1.js
+  - files/.claude/workflows/audit-stage-2.js
 config:
   git:
     # #155: the managed Wafflebot identity, injected into the rendered `commit` examples via
