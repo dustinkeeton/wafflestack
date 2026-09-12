@@ -9,6 +9,31 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-12: The spawn-and-collect scaffold is a contract section in `audit`, not a skill (#365, spike #184)
+
+**Context**: `audit`, `autopilot` and `standup` each hand-typed the same orchestration scaffold —
+named spawn, collection, shutdown-then-stop teardown — and #360 proved the copies had drifted. The
+#363 entry below retains the prose orchestrators permanently as the fallback (constraint ④), so the
+workflow runtime does not erase this duplication; it had to be extracted in prose.
+
+**Decision**: The scaffold gets **one home — a normative `## Spawn-and-collect contract` section in
+`audit/SKILL.md`** (audit held the original) — and `standup` and `autopilot` cite it by heading. It is
+**not a new skill**: a skill is the unit of work, and a contract is a rule about how work is spawned,
+not work. It adds **no `requires:` edge for `standup`**: the pointer is a prose citation, and a
+strict edge would drag `audit`'s `gh` prerequisites into a standup-only install; `autopilot` already
+requires `skills/audit`. The contract also states that an invoked skill's spawns belong to that skill,
+never to the invoker's roster or teardown.
+
+**Alternatives considered**: A `spawn-and-collect` skill — rejected: it would be an orchestration
+primitive masquerading as work, and every orchestrator would have to `requires:` it. A shared file
+payload — rejected: the render machinery has no include mechanism, and the pointers are two lines.
+
+**Consequences**: A Layer-1 test pins the heading in `audit` (source and render), the citation in
+`standup` and `autopilot`, and that neither re-types the teardown rationale. The audit roster pin
+stays at four: the contract section carries prose only, no spawn or stop calls.
+
+---
+
 ## 2026-09-12: `/audit` ships as two staged Claude workflow scripts — opt-in, Claude-scoped syrup (#363, epic #184)
 
 **Context**: The 2026-07-13 decision below ("Workflow" means the Claude primitive) left adoption of the

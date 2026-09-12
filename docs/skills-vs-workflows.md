@@ -268,6 +268,8 @@ fix urgent independent of any workflow decision.
 Three hand-written copies of one pattern — precisely the DRY violation a real orchestration
 runtime erases at a stroke.
 
+**Resolved by [#365](https://github.com/dustinkeeton/wafflestack/issues/365):** the scaffold now has one home — a normative *Spawn-and-collect contract* section in `audit/SKILL.md` (named spawn + address, collection, shutdown-then-stop teardown, flat-roster fallback) — and `standup` and `autopilot` cite it by heading instead of re-typing it; a Layer-1 test pins the single home. The quote above ("create → run → `TeamDelete`") is stale: #368 abolished the team concept, so the lifecycle it described no longer exists in any copy.
+
 ---
 
 ## 5. Why prose orchestration rots

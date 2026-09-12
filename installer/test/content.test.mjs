@@ -3094,3 +3094,52 @@ describe('audit as two staged workflow scripts (#363)', () => {
     }
   });
 });
+
+describe('spawn-and-collect contract has one home (#365)', () => {
+  const CONTRACT_HEADING = /^## Spawn-and-collect contract$/m;
+  // A sentence that lives only in the contract's teardown clause — a pointer cites it, never re-types it.
+  const TEARDOWN_RATIONALE = /The request is the courtesy; the stop is the guarantee\./;
+  const surfaces = (name) =>
+    [path.join(STACKS, 'orchestration', 'skills', name, 'SKILL.md'), path.join(CLAUDE, 'skills', name, 'SKILL.md')].filter((f) => fs.existsSync(f));
+  const contractSection = (md) => {
+    const start = md.search(CONTRACT_HEADING);
+    const rest = md.slice(start + 1);
+    const end = rest.search(/^## /m);
+    return end === -1 ? md.slice(start) : md.slice(start, start + 1 + end);
+  };
+
+  test('audit holds the contract — heading, four clauses, and the invoked-skill rule, on both surfaces', () => {
+    const files = surfaces('audit');
+    assert.equal(files.length, 2, 'the audit skill must be on both the source and the rendered surface');
+    for (const f of files) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.match(md, CONTRACT_HEADING, `${who(f)}: the contract section is gone`);
+      const section = contractSection(md);
+      assert.match(section, /\*\*Named spawn, name as address\.\*\*/, `${who(f)}: clause 1`);
+      assert.match(section, /\*\*Collection\.\*\*/, `${who(f)}: clause 2`);
+      assert.match(section, /\*\*Teardown is shutdown-then-stop\.\*\*/, `${who(f)}: clause 3`);
+      assert.match(section, /\*\*Flat-roster fallback\.\*\*/, `${who(f)}: clause 4`);
+      assert.match(section, TEARDOWN_RATIONALE, `${who(f)}: the teardown rationale must live in the contract`);
+      assert.match(section, /never waits on a message or a task update from a silent specialist/, `${who(f)}: clause 2 lost the silent-specialist rule`);
+      assert.match(section, /omit `name:` and address the agent by the `agentId` the spawn returns/, `${who(f)}: clause 4 lost the agentId fallback`);
+      assert.match(section, /An invoked skill's spawns belong to that skill/, `${who(f)}: the contract must say an invoked skill's spawns are not the invoker's`);
+      assert.equal(callBodies(section, 'Agent').length, 0, `${who(f)}: the contract must not add Agent( calls — that would move the audit roster pin`);
+      assert.equal(callBodies(section, 'TaskStop').filter((b) => /task_id:\s*['"]/.test(b)).length, 0, `${who(f)}: the contract must not add TaskStop calls`);
+    }
+  });
+
+  test('standup and autopilot cite the contract by heading and do not re-type its rationale', () => {
+    for (const name of ['standup', 'autopilot']) {
+      const files = surfaces(name);
+      assert.equal(files.length, 2, `${name} must be on both the source and the rendered surface`);
+      for (const f of files) {
+        const md = fs.readFileSync(f, 'utf8');
+        assert.match(md, /Spawn-and-collect contract/, `${who(f)}: must point at the audit skill's contract heading`);
+        assert.doesNotMatch(md, CONTRACT_HEADING, `${who(f)}: the contract has one home — audit`);
+        assert.doesNotMatch(md, TEARDOWN_RATIONALE, `${who(f)}: re-types the teardown rationale instead of citing the contract`);
+        assert.doesNotMatch(md, /reuses their spawn-and-collect scaffold/, `${who(f)}: the hand-copy admission is the thing #365 retired`);
+      }
+    }
+    assert.match(readSkill('standup'), /minus the task chain — one wave, no barriers/);
+  });
+});

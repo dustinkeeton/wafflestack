@@ -19,11 +19,18 @@ The documentation passes are **not this skill's to run**. A skill is the unit of
 4. **`docs` skill** (invoked, not spawned) — Refresh the machine docs and the human docs. The skill runs its own three-step pipeline: a read-only architecture change report, then `docs-agent`, then `docs-human`, each step informed by the one before.
 5. **general-purpose** (pass 2) — Re-audit the entire codebase including all changes made by earlier agents and by the docs pipeline. Ensure no new issues were introduced.
 
+## Spawn-and-collect contract
+
+Every orchestrator in this stack spawns and collects agents the same way — this chain, `autopilot`'s gate loops and audit gate, `standup`'s one-wave round-up. This section is that scaffold's **one home**: the others cite it by heading and state only what differs (a task chain here; per-round persistence in `autopilot`; no barriers in `standup`). An invoked skill's spawns belong to that skill — the `docs` skill's, for instance, are spawned, collected and torn down by the `docs` skill's own prose and are never part of the invoker's roster or teardown.
+
+1. **Named spawn, name as address.** Every spawn carries `name:`. The name is the agent's address — `SendMessage(to:)` reaches it and `TaskStop(task_id:)` stops it — so the orchestrator holds nothing else to talk to or stop an agent it started.
+2. **Collection.** Each agent reports back to the orchestrator with `SendMessage`. An agent whose toolset lacks `SendMessage`/`TaskUpdate` finishes silently — its returned tool result is its report — and the orchestrator verifies the work directly and does any task bookkeeping itself. The orchestrator never waits on a message or a task update from a silent specialist.
+3. **Teardown is shutdown-then-stop.** At every exit — success, cap reached, a red round, an error — the orchestrator sends `shutdown_request` and then calls `TaskStop`, for each agent it actually spawned and only those. The request is the courtesy; the stop is the guarantee. A requested agent can go idle but stay alive, so the request alone never proves the agent is gone; the stop terminates it and is safe on an agent that has already exited. Wrap the run so an error still reaches the teardown — a leaked agent is never acceptable.
+4. **Flat-roster fallback.** If a spawn is rejected because the roster is flat (an agent cannot name its own spawns — only the main conversation loop can), omit `name:` and address the agent by the `agentId` the spawn returns. `SendMessage` and `TaskStop` both accept it in place of a name.
+
 ## Execution Steps
 
-The chain is **four named agents** plus one invoked skill, run one at a time and chained on task dependencies. There is no team to create or delete: the session has a **single implicit team**, and the `Agent` tool's `team_name` parameter is deprecated and ignored. An agent's `name:` is its address — `SendMessage(to: "<name>")` reaches it and `TaskStop(task_id: "<name>")` stops it.
-
-> **If a spawn is rejected because the roster is flat** (an agent cannot name its own spawns — only the main conversation loop can), omit `name:` and address the agent by the `agentId` the spawn returns. `SendMessage` and `TaskStop` both accept it in place of a name.
+The chain is **four named agents** plus one invoked skill, run one at a time and chained on task dependencies. There is no team to create or delete: the session has a **single implicit team**, and the `Agent` tool's `team_name` parameter is deprecated and ignored. An agent's `name:` is its address — `SendMessage(to: "<name>")` reaches it and `TaskStop(task_id: "<name>")` stops it. Spawning, collection, teardown and the flat-roster fallback follow the [Spawn-and-collect contract](#spawn-and-collect-contract) above.
 
 ### 1. Create the Tasks, Then Chain Them
 
