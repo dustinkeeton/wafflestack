@@ -142,7 +142,13 @@ git checkout -b feat/my-feature
   rare, and non-normative — the rule lives in the code and its tests; the why lives in
   `DECISIONS.md`. When you touch a file, shrink its comment mass rather than growing it, and
   never grow a comment to answer a review finding. Skill and agent markdown is the exception:
-  that prose is the program.
+  that prose is the program. When you do write a comment:
+  - Say what the reader cannot see locally — a live constraint or a pointer, never a
+    paraphrase of the code or the history of the change.
+  - Two lines at most; anything longer belongs in `DECISIONS.md` or the machine docs, with a
+    one-line pointer left behind.
+  - Typed JSDoc (`@param`/`@returns`/`@typedef`) is the exception: tags plus at most one
+    summary line, no prose paragraphs between tags.
 
 ### Example
 

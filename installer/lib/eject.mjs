@@ -16,11 +16,8 @@ import {
 } from './project.mjs';
 
 /**
- * Stop managing an item: add it to the config's `eject:` list (comment-preserving
- * YAML edit) and drop its rendered files from the lock so they become project-owned.
- * The files themselves are left in place. An item installed via `include:` is also
- * removed from that list — otherwise the eject filter would leave a dead entry that
- * silently does nothing.
+ * Stop managing an item: add it to the config's `eject:` list and drop its rendered files
+ * from the lock so they become project-owned. The files themselves are left in place.
  */
 export function eject({ cwd, item, log = () => {} }) {
   const ref = normalizeItemRef(item);
@@ -52,17 +49,8 @@ export function eject({ cwd, item, log = () => {} }) {
   }
   if (dirty) fs.writeFileSync(configFile, doc.toString());
 
-  // Release the item's paths from EVERY lock that tracks them — the committed one, and (when a
-  // `.local` overlay shapes this machine's render) the gitignored local one too (#317). Both matter,
-  // for different reasons: the committed lock is what stops the *project* managing the file, and the
-  // local lock is what the next render's stale-prune reads to decide what to delete. Leave the local
-  // lock still listing an ejected path and the very next `render` sweeps the now project-owned file
-  // off disk — the opposite of ejecting it.
-  //
-  // A `files/` item is a single output at its repo-relative path — matched exactly (no prefix match,
-  // so `scripts/build` never sweeps up `scripts/build.mjs`). Agents and skills expand to their
-  // per-target render dirs. `itemOutputMatcher` is the shared inverse of the render's item→path
-  // mapping (also used by `list` for per-item drift).
+  // Release the paths from BOTH locks (#317): the committed one stops the project managing the
+  // file, and a local lock still listing the path makes the next render's stale-prune delete it.
   const matches = itemOutputMatcher(kind, name);
   const released = new Set();
   const locks = [
@@ -77,8 +65,7 @@ export function eject({ cwd, item, log = () => {} }) {
         released.add(rel);
       }
     }
-    // Always write to the current location (creating `.waffle/` when a legacy-layout repo
-    // has no dir yet) — a lock read via the legacy fallback migrates here as a side effect.
+    // Always write to the current location — a lock read via the legacy fallback migrates here.
     writeFileEnsuringDir(path.join(cwd, file), `${JSON.stringify(lock, null, 2)}\n`);
   }
 
@@ -86,14 +73,9 @@ export function eject({ cwd, item, log = () => {} }) {
 }
 
 /**
- * Additive per-item/stack install — the mirror of `eject`. Resolves each ref against
- * the toolkit, then does a comment-preserving YAML edit of `.waffle/waffle.yaml`: stack
- * refs append to `stacks:`, item refs (canonicalized, stack-qualified only when the
- * name is ambiguous) append to `include:`. Persistence is required, not cosmetic — the
- * frozen-image contract would otherwise delete an ad-hoc install on the next render.
- * Dependency closure is NOT persisted; it is recomputed each render, so this only
- * records the user's chosen refs. Returns { added, closures } for reporting; the caller
- * runs a normal full render afterwards.
+ * Additive per-item/stack install — the mirror of `eject`. Persistence is required, not
+ * cosmetic: the frozen-image contract would otherwise delete an ad-hoc install on the next
+ * render. Dependency closure is NOT persisted; it is recomputed each render.
  */
 export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const { file: configFile, legacy, note } = resolveConfigFile(cwd);
@@ -200,8 +182,6 @@ config:
 export function init({ cwd }) {
   const configFile = path.join(cwd, CONFIG_FILE);
   if (exists(configFile)) throw new Error(`${CONFIG_FILE} already exists`);
-  // Refuse to scaffold a duplicate next to either legacy generation — a plain render
-  // moves those into place instead.
   for (const legacyName of [LEGACY_ROOT_CONFIG_FILE, LEGACY_CONFIG_FILE]) {
     if (exists(path.join(cwd, legacyName))) {
       throw new Error(`${legacyName} already exists — run \`wafflestack render\` to move it to ${CONFIG_FILE}`);

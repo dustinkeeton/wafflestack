@@ -9,7 +9,98 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 2026-07-15: PR-gate staging paths carry the head SHA, and a status is stamped on the read-time head (#376, #412)
+## 2026-08-17: The waffle registry gates fail-open, and `wip` is for never-shipped waffles only (#335)
+
+**Context**: The registry (`stacks/registry.yaml`, merged in PR #429) is the single source of
+truth for waffle identity and availability, but its two operating hazards were recorded only as
+code comments — deleted by the comment sweep below — and as Layer-1 pins. Recorded here so they
+have a citable decision record.
+
+**Decision**: Availability gating **fails open**: a lookup answers `null` for anything it does not
+recognise, and only the exact string `wip` gates a waffle out. The direction is deliberate — the
+render prunes every lock path it no longer produces, so gating a waffle out DELETES it from a
+consumer's tree; a typo (`stabel`, `WIP`) must therefore never be read as "gate this out". It
+stays available and `validate` reds on the typo instead. Corollary: **never mark an
+already-shipped waffle `wip`** — the prune would delete it from every consumer; retiring a shipped
+waffle uses `deprecated` (or a `replaced` entry carrying the forward-fix). Scope: waffles only
+(agents + skills), built-in stacks only — an external `source:` stack is governed by its own
+toolkit's registry, and a missing registry file just means an ungated toolkit (forks and fixtures
+render fine, they only forfeit enforcement).
+
+**Alternatives considered**: Fail-closed (unrecognised status gates out) — rejected: it converts a
+typo into a consumer-tree deletion. Registering syrup and stacks too — rejected: syrup identity is
+its output path and stacks are `toolkit.yaml`'s.
+
+**Impact**: `registry.mjs` (fail-open lookups), `refs.mjs` (resolution gating), `validate.mjs`
+(registry ↔ filesystem ↔ stack.yaml reconciliation), `upgrade.mjs` (pin rewrite on `replaced`).
+
+---
+
+## 2026-08-17: Config value guards reject malformed values — they never coerce, and they report everything (#341 family)
+
+**Context**: The template system guards consumer-supplied config values (`pattern:`,
+`patternHint:`, `entryPatterns:`). The rationale for its five load-bearing rules lived in comment
+essays deleted by the comment sweep below; each rule has a plausible-looking reversal a reviewer
+could propose, so the choices are recorded here once.
+
+**Decision**: Five rules, one direction — reject, loudly, with everything named. (1) A
+scalar-guarded key **rejects** a list or map rather than flattening it (#341) — flattening once
+shipped exactly the dead permission-grant the pattern exists to prevent. (2) A rejection names
+only the **failing** patterns and their declaring stacks, never the ones the value satisfies
+(#244). (3) `patternHint:` is prose because no tool can safely auto-split a compound command like
+`tsc --noEmit && eslint .` (#218). (4) An unknown `entryPatterns` leaf is an **error**, not a
+passthrough — a typoed key must not ride along unguarded (#156). (5) Guards compile
+**toolkit-wide**, and all entry problems are reported in one render (#155/#246) — enforcement is
+not an accident of which stack is installed, and fixing config is not a whack-a-mole loop.
+
+**Alternatives considered**: Coerce-and-warn (join lists, downcase statuses) — rejected: every
+coercion converts a config mistake into silently-changed behavior. First-error-only reporting —
+rejected: it hides the true fix count from the consumer.
+
+**Impact**: `template.mjs` (guard compilation), `validate.mjs`, `list.mjs`; consumer-facing
+behavior of every `project.*Cmd`-style guarded key.
+
+---
+
+## 2026-08-17: The comments-are-not-spec doctrine gets a mechanical gate, and the burn-down goes repo-wide (#388 follow-through)
+
+**Context**: The #388 doctrine (below, 2026-07-15) ruled that comments in deterministic files are
+short human orientation, never spec — but every rule enforcing it was review-side prose. The
+partial burn-down (#399–#401) shrank 5 of 21 `installer/lib` modules and stopped; eighteen days
+later `registry.mjs` was authored at 60% comment lines — the densest file in the repo — and went
+green through review. Measured 2026-08-17: `installer/lib` at 35.3% comment lines overall,
+~62–67% of that mass litigating prose (multi-sentence argument, counterfactuals, word-choice
+defenses), ~8% issue-number archaeology, and 15–35-line essays in front of `test()` calls.
+
+**Decision**: Three parts. (1) A mechanical gate, `installer/test/comment-gate.test.mjs`: per-file
+comment-ratio ceiling (15% default, 20% for consumer-rendered `stacks/**/*.mjs`) plus an 8-line
+max consecutive comment run, with typed JSDoc blocks (`@`-tagged) excluded as the keep-set and a
+`GRANDFATHERED` map pinning each legacy file's current mass — entries only ever tighten or get
+deleted, and a new file never gets one. (2) A repo-wide burn-down in wave PRs applying the triage
+rule: a displaced "why" earns a new DECISIONS entry only if grepping its issue/topic here comes up
+empty and the choice could plausibly be re-litigated; caller-actionable contract deltas graduate
+to the AGENTS.md module registry; everything else — litigation, archaeology, restatement — is
+deleted, not relocated. The survival test for a comment that stays: deleting it would make the
+next edit worse — one or two lines, present tense, saying something the surrounding ten lines
+don't; an issue ref is earned only when it anchors a live constraint. (3) An authoring-side rule
+in git-workflow (previously all rules were review-side) and a cap amendment to the docs-agent
+standard: language-tagged signature fences no longer count toward the 300-line machine-doc cap,
+resolving the recorded conflict between "full signatures" and the cap that AGENTS.md (621 lines)
+had been living in silently.
+
+**Alternatives considered**: Relocating every displaced why into this file — rejected: it floods a
+decision log with non-decisions; the #399–#401 precedent found zero whys worth relocating.
+Amending the #388 entry in place — rejected: dated entries are immutable. A lint dependency —
+rejected: the repo is deliberately dependency-light; a `node:test` gate rides `npm test` for free.
+
+**Impact**: `installer/**`, `stacks/**/*.mjs`, workflow YAML (rendered sources and this repo's
+own), the git-workflow skill (authoring bullets render to consumers), the docs-agent standard
+(`stacks/docs-system/stack.yaml` + this repo's `machineDocSpec` override), and the review skills
+that already enforce the doctrine. Measured after the sweep (same classifier, typed JSDoc
+excluded): `installer/lib` 30% → 10.4%, all scoped files 9.8%, every comment run ≤8 lines, the
+grandfather map empty — 6,070 comment lines deleted, 1,244 added, across seven residue-proven
+comment-only PRs. Remaining debt: bash comment essays inside workflow `run: |` blocks (~420
+lines), deliberately out of the YAML classifier's scope, awaiting a bash-aware residue proof.
 
 **Context**: #324 (below) namespaced the PR-gate skills' staging files per PR, which killed
 cross-PR contamination — but successive rounds on the *same* PR still reused one file, so

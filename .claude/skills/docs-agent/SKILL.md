@@ -38,7 +38,8 @@ Single machine-doc registry for the toolkit. Contains:
 3. Use `file.mjs:42` format for source references (line number after the colon)
 4. No markdown emphasis (bold/italic) in structured sections
 5. Frontmatter with `last-updated` timestamp (YYYY-MM-DD)
-6. Keep the file under 300 lines — the stack registry summarizes; per-stack
-   detail stays in each `stack.yaml`
+6. Keep the file's prose under 300 lines — the language-tagged signature fence is
+   excluded from the count; the stack registry summarizes, and per-stack detail
+   stays in each `stack.yaml`
 
 

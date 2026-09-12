@@ -3,8 +3,8 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.13.0 (tagged 2026-07-15; pre-1.0 — the file contract can still change
-  between minor releases). A large unreleased batch sits on `main` — see Current focus.
+- **Version**: v0.14.0 (tagged 2026-08-19; pre-1.0 — the file contract can still change
+  between minor releases).
 - **Last updated**: 2026-07-16
 - **Health**: 🟢 tests 1207/1207 (156 suites) · `validate` clean · CI green on `main`
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
@@ -49,9 +49,11 @@ Everything below is merged but not yet tagged (CHANGELOG `[Unreleased]`; latest 
   are the first destructive commands — the lock decides what may be deleted, dry run until
   `--yes`. Four rough edges ship with them (#359, see Known issues).
 - **Comments are not spec (#388) + pr-response rubric v3 (#385).** Deterministic files carry rules
-  in code + behavior tests; a comment-vs-code finding shrinks the comment. The burn-down landed
-  across PRs #389–#402; the rubric's Implement bar moves ≥10 → **≥11**, so a merely valid, cheap
-  nit now Defers.
+  in code + behavior tests; a comment-vs-code finding shrinks the comment. The 2026-08-17 sweep
+  finished the burn-down repo-wide (~6,070 comment lines deleted; `installer/lib` 35% → 10%) and
+  added a mechanical gate — `comment-gate.test.mjs` caps every file at 15% ratio / 8-line runs,
+  grandfather map now empty. The rubric's Implement bar is **≥11**, so a merely valid, cheap nit
+  Defers. Remaining debt: bash essays inside workflow `run:` blocks (~420 lines).
 - **CI hooks key on out-of-band signals (#338/#354):** commit statuses and a pre-dispatch label,
   never a marker pasted in prose; PR-gate staging paths now also carry the head SHA (#376/#412).
 - **Orchestration skills call the tools the harness actually has (#360)** — dead primitives

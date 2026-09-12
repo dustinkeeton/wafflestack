@@ -23,12 +23,9 @@ import {
 /**
  * `uninstall` / `reinstall` (#182) — removing a wafflestack install from a consumer repo.
  *
- * SAFETY MODEL: a rendered file is deleted iff the lock names it AND its sha256 still matches. A
- * DRIFTED file (present, hash differs) is skipped and reported unless `--force`; an EJECTED file is
- * invisible to the lock and stays; absence is idempotent; it is a DRY RUN until `--yes` (one plan
- * drives both preview and execution). The one exception is `.waffle/` itself — config, overlay,
- * locks, `extensions/` are authored inputs the lock cannot track, so a full uninstall removes them
- * and `--keep-config` preserves them; every `.waffle/` path removed is still named (`plan.meta`).
+ * SAFETY MODEL: a rendered file is deleted iff the lock names it AND its sha256 still matches.
+ * `.waffle/` itself is the exception — authored inputs the lock cannot track, removed by a full
+ * uninstall and preserved by `--keep-config`.
  */
 
 /** @typedef {'canonical' | 'local'} LockKind */
@@ -178,9 +175,8 @@ export function planUninstall({
   /** @type {string[]} */
   const notes = [];
 
-  // The lock describing the files ON DISK — local when an overlay shaped this render, else committed
-  // (#317). NOT `readLock`: on an overlay machine canonical hashes would mark every overlay-touched
-  // file hand-edited and skip it. Same lock `doctor` drift-checks, for the same reason.
+  // NOT `readLock` (#317): on an overlay machine canonical hashes would mark every overlay-touched
+  // file hand-edited and skip it.
   const tree = readTreeLock(cwd);
   if (!tree) {
     return {
@@ -199,8 +195,7 @@ export function planUninstall({
     );
   }
 
-  // Compute the .gitignore offer BEFORE deleting: it reads the config we may remove. Degrade to the
-  // baseline entries if the config is unreadable — a partial strip beats a crash mid-uninstall.
+  // Computed BEFORE deleting: it reads the config we may remove.
   /** @type {string[]} */
   let gitignore = [];
   try {
@@ -249,8 +244,7 @@ export function planUninstall({
   drifted.sort();
   absent.sort();
 
-  // Ejected items are project-owned: `eject` drops them from `lock.files` but leaves the files, so
-  // uninstall cannot see them and must announce them or the consumer is left with orphans (#182).
+  // `eject` drops these from `lock.files` but leaves the files, so uninstall can only announce them.
   /** @type {string[]} */
   let ejected = [];
   try {
@@ -265,11 +259,9 @@ export function planUninstall({
     if (!exists(abs)) return;
     meta.push({ rel: posix(path.relative(path.resolve(cwd), abs)), abs, type });
   };
-  // THE LOCK OUTLIVES A SKIP (#182): a kept drifted file is still ours, and the lock is the only
-  // record that says so, which `--force` re-reads — so a skip means the uninstall is INCOMPLETE and
-  // the lock stays. `keepLockOnSkip: false` opts out (reinstall's `--clean` leg, where nothing
-  // restores the file). KEEPING THE CONFIG KEEPS THE LOCK: `computeSelection` keeps an already-poured
-  // opt-in selected BECAUSE its path is in the lock, so a config with no lock is half a selection.
+  // THE LOCK OUTLIVES A SKIP (#182): a kept drifted file is still ours and the lock is the only
+  // record that says so. Keeping the config keeps the lock too — a config with no lock is half a
+  // selection, since `computeSelection` reads an already-poured opt-in out of the lock.
   const lockRetained = keepLock || keepConfig || (keepLockOnSkip && !force && drifted.length > 0);
   if (!lockRetained) {
     addMeta(resolveLockFile(cwd).file, 'file');
@@ -281,8 +273,6 @@ export function planUninstall({
     addMeta(path.join(cwd, EXTENSIONS_DIR), 'dir');
   }
 
-  // `removing` = what actually goes (drifted only under --force); `candidates` = where to look for
-  // an emptied dir = every lock-tracked path, absent ones included.
   const removing = [
     ...(force ? [...remove, ...drifted] : remove).map((rel) => path.join(cwd, rel)),
     ...meta.map((m) => m.abs),
@@ -341,15 +331,13 @@ export function uninstall({
   keepConfig = false,
   keepLock = false,
   keepLockOnSkip = true,
-  // Deleting is opt-in at the library boundary too: this is the one function that destroys consumer
-  // files, so the safe default is the one that fails loudly. Both real callers pass it explicitly.
+  // Deleting is opt-in at the library boundary too — this function destroys consumer files.
   dryRun = true,
   log = () => {},
 }) {
   const plan = planUninstall({ cwd, toolkitRoot, force, keepConfig, keepLock, keepLockOnSkip });
 
-  // No lock, no uninstall. Without it we have no record of what is ours, and guessing is the one
-  // thing this command must never do.
+  // No lock, no record of what is ours — and guessing is the one thing this command must not do.
   if (!plan.lock) {
     return {
       ok: false,
@@ -391,8 +379,7 @@ export function uninstall({
     for (const rel of plan.absent) log(`absent (nothing to do): ${rel}`);
   }
 
-  // Skip messages live BELOW the execution block (not here): a removal failure decides the lock's
-  // fate at execution time, so emitting them at plan time made the report contradict itself.
+  // Skip messages live BELOW the execution block: a removal failure decides the lock's fate there.
 
   /** @type {string[]} */
   const removed = [];
@@ -406,8 +393,6 @@ export function uninstall({
   let metaKeptOnError = false;
 
   if (!dryRun) {
-    // The `exists()`-guarded rmSync of render's stale-prune loop: tolerant of an already-absent
-    // path, loud about anything else.
     for (const rel of doomed) {
       const abs = resolveInside(cwd, rel);
       if (!abs) continue; // unreachable — refused above; belt and braces before an rmSync
@@ -419,9 +404,8 @@ export function uninstall({
       }
     }
 
-    // A FAILED REMOVAL IS AN INCOMPLETE UNINSTALL — like a skip, it must not take the lock/config
-    // down with it (that would strand the undeletable file with no record), so the meta outlives an
-    // error and says so below (#182). Decided at EXECUTION time, where the plan-time `lockRetained` cannot see it.
+    // A FAILED REMOVAL IS AN INCOMPLETE UNINSTALL, so the meta outlives it rather than stranding
+    // an undeletable file with no record (#182) — decided here, where `lockRetained` cannot see it.
     metaKeptOnError = errors.length > 0 && plan.meta.length > 0;
     if (!metaKeptOnError) {
       for (const m of plan.meta) {
@@ -434,8 +418,7 @@ export function uninstall({
         }
       }
     }
-    // Prune only dirs the plan proved empty AND that are still empty now — a dir still holding a file
-    // a removal above failed on is silently skipped, so collect what ACTUALLY went (not the plan).
+    // Only dirs the plan proved empty AND that are still empty now; collect what ACTUALLY went.
     for (const rel of plan.prunedDirs) {
       const abs = path.join(cwd, rel);
       try {
@@ -449,13 +432,10 @@ export function uninstall({
     }
   }
 
-  // Does the lock survive this run? Reconciled ONCE here, from the plan-time prediction and the
-  // execution-time `metaKeptOnError` — everything below (and the returned `plan`) reads THIS, not the
-  // prediction. Plain OR: the two cannot conflict, and on a dry run it collapses to the plan's answer.
+  // Reconciled ONCE here; everything below (and the returned `plan`) reads THIS, not the prediction.
   const lockKept = plan.lockRetained || metaKeptOnError;
 
-  // Only promise the `--force` re-run where the lock survives to honour it; where it does not
-  // (`reinstall --clean`), say the true thing — the skipped files are the project's now.
+  // Only promise the `--force` re-run where the lock survives to honour it.
   for (const rel of skipped) {
     log(
       lockKept
@@ -469,8 +449,7 @@ export function uninstall({
     );
   }
 
-  // Report what HAPPENED, not what was planned: on a dry run the plan is the story, but once disk is
-  // touched a failed removal means the report must never say `pruned` about a dir still on disk.
+  // Report what HAPPENED, not what was planned — a failed removal must never be reported as pruned.
   const reportMeta = dryRun ? plan.meta : removedMeta;
   const reportPruned = dryRun ? plan.prunedDirs : prunedDirs;
   if (reportMeta.length) {
@@ -486,8 +465,7 @@ export function uninstall({
     log(`${dryRun ? 'would prune' : 'pruned'} empty dir(s): ${reportPruned.join(', ')}`);
   }
 
-  // .gitignore last: only wafflestack's offered lines, matched exactly. Skipped on a dry run or when
-  // the config is kept (incl. kept-on-error) — the entries still describe a live install.
+  // .gitignore last: only wafflestack's offered lines, matched exactly.
   /** @type {string[]} */
   let unignored = [];
   if (!keepConfig && !metaKeptOnError && plan.gitignore.length) {
@@ -505,9 +483,7 @@ export function uninstall({
     );
   }
   for (const n of plan.notes) log(`note: ${n}`);
-  // Errors are RETURNED, not logged — the caller prints them (to stderr), so logging here would
-  // double each one. The plan goes back RECONCILED (`lockRetained: lockKept`) so a caller reading it
-  // off the result gets the run's outcome, not the plan-time forecast.
+  // Errors are RETURNED, not logged — the caller prints them, so logging here would double each.
   return { ok: errors.length === 0, dryRun, plan: { ...plan, lockRetained: lockKept }, removed, skipped, errors };
 }
 
@@ -538,8 +514,7 @@ function snapshotFiles(cwd, rels) {
     try {
       snapshot.push({ rel, abs, body: fs.readFileSync(abs) });
     } catch {
-      // Don't abort the refresh (the render leg usually rewrites it), but record it so the rollback
-      // cannot certify a total restore it did not achieve.
+      // Recorded, not thrown, so the rollback cannot certify a restore it did not achieve.
       unreadable.push(rel);
     }
   }
@@ -609,23 +584,18 @@ function restoreFiles(snapshot) {
  * @returns {ReinstallResult}
  */
 export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = null, clean = false, force = false, log = () => {} }) {
-  // CRASH-SAFETY ON THE REFRESH PATH (delete-THEN-render): a failing render leg would leave the tree
-  // stripped and (rendered output being gitignored) git may not restore it, so snapshot the bytes
-  // before deleting and put them back on failure. Nothing to do on `--clean` — the wipe IS the point.
-  //
-  // ONE options object shared by the snapshot's plan and the uninstall leg, because the snapshot is
-  // only a rollback if it covers EXACTLY the files that leg removes — stating them twice invites drift.
+  // CRASH-SAFETY ON THE REFRESH PATH (delete-THEN-render): snapshot the bytes before deleting, since
+  // rendered output is gitignored and git may not restore a failed leg. ONE options object shared
+  // with the uninstall leg — the snapshot is only a rollback if it covers exactly what that removes.
   const unOpts = {
     cwd,
     toolkitRoot,
-    // Refresh: every managed file is about to be rewritten, so drift protection buys nothing and
-    // costs a false warning. Clean: nothing will restore it, so the drift skip stands (see above).
+    // Refresh rewrites every managed file, so drift protection buys nothing; on clean it stands.
     force: clean ? force : true,
     keepConfig: !clean,
     keepLock: !clean,
     // On `--clean` the lock must go even when a drifted file is skipped: keeping it would leave
-    // render's stale-prune (no hash check) armed against that very file on the next render. The
-    // kept files are announced as project-owned instead — uninstall says so when the lock goes.
+    // render's stale-prune (no hash check) armed against that very file on the next render.
     keepLockOnSkip: false,
   };
 
@@ -634,8 +604,7 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = 
   /** @type {string[]} */
   let unsnapshotable = [];
   if (!clean) {
-    // `remove` + `drifted` is every file this leg will delete: the refresh runs `force: true`, so
-    // the drifted ones go too — which is precisely why they must be snapshotted with the rest.
+    // The refresh runs `force: true`, so the drifted files go too and must be snapshotted as well.
     const plan = planUninstall(unOpts);
     ({ snapshot, unreadable: unsnapshotable } = snapshotFiles(cwd, [...plan.remove, ...plan.drifted]));
   }
@@ -658,8 +627,8 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = 
    */
   const rollback = (errors, render, why) => {
     const { restored, failed } = restoreFiles(snapshot);
-    // Certify only what is true: a file the snapshot could not READ may be gone and is not restorable
-    // here, so name it rather than claim the tree is as it was (a later `render` rebuilds it).
+    // A file the snapshot could not READ is not restorable here, so name it rather than claim the
+    // tree is as it was.
     const lost = unsnapshotable.filter((rel) => !exists(path.join(cwd, rel)));
     if (restored.length) {
       log(
@@ -672,8 +641,7 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = 
     return { ok: false, uninstall: un, render, initialized: false, restored, errors: [...errors, ...failed] };
   };
 
-  // A failing uninstall leg gets the same restore as a failing render leg. On `--clean` the
-  // snapshot is empty by construction, so this correctly restores nothing.
+  // A failing uninstall leg gets the same restore as a failing render leg.
   if (!un.ok) return rollback(un.errors, null, 'the refresh could not remove every managed file, and did not re-render');
 
   if (clean) {
@@ -689,12 +657,9 @@ export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = 
 
   let render;
   try {
-    // `toolkitIdentity` (#373): what the CLI that authorized this reinstall IS — threaded to the
-    // lock write site so the re-laid install records the toolkit that laid it, not just a version.
     render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, force, log: renderLog });
   } catch (err) {
-    // renderProject reports its known failures as `ok: false`, but an unexpected throw must not be
-    // the one path that leaves the tree stripped.
+    // An unexpected throw must not be the one path that leaves the tree stripped.
     return rollback([`the re-render failed: ${/** @type {Error} */ (err).message}`], null, 'the re-render failed');
   }
   if (!render.ok) return rollback(render.errors, render, 'the re-render failed');

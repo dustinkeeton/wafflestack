@@ -8,29 +8,14 @@ import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { renderProject } from '../lib/render.mjs';
 
-// -----------------------------------------------------------------------------
-// #227 (QA follow-up) — EXECUTED tests over the token-spend telemetry programs.
-//
-// content.test.mjs pins the steps' presence and shape; these run the load-bearing
-// jq/bash programs themselves, so a broken accumulation merge, comma/USD renderer,
-// or counter math fails CI instead of shipping green behind intact prose. Method:
-// render the workflows through the installer's own pipeline (the exact form a
-// consumer commits), YAML-parse the rendered file, extract the step's `run` script,
-// and execute it with bash against fixture execution logs and a stubbed `gh` on
-// PATH that serves canned API responses and records every write payload.
-//
-// The suite needs bash + jq (the programs' own runtime). jq is a documented
-// prerequisite of these workflows but only `recommend`-level for the toolkit, so
-// the suite skips — loudly, not silently green — where jq is unavailable.
-// -----------------------------------------------------------------------------
+// #227 — EXECUTED tests over the token-spend telemetry programs: render the workflows, extract each
+// step's `run`, and run it under bash against a stubbed `gh`. Skips loudly (never green) without bash + jq.
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const HAS_JQ = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
 const HAS_BASH = spawnSync('bash', ['--version'], { encoding: 'utf8' }).status === 0;
 
-// The stub gh: pattern-matches the endpoint each call targets, serves fixtures from
-// the per-test state dir, and copies every --input payload aside for assertions.
-// Unhandled endpoints fail loudly so a script change cannot silently no-op the test.
+// Stub gh: serves fixtures per endpoint and copies every --input payload aside; unhandled endpoints fail loudly.
 const GH_STUB = `#!/usr/bin/env bash
 set -u
 STATE="\${GH_STUB_STATE:?}"
@@ -172,9 +157,8 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   const readBody = (state, which) =>
     JSON.parse(fs.readFileSync(path.join(state, which), 'utf8')).body;
 
-  // Drives one Record-token-spend execution (pr-green variant: target from TARGET_PR).
-  // `comments` may be a raw string, to reproduce gh api --paginate's stream shape:
-  // one JSON array PER PAGE, concatenated — not one merged array.
+  // Drives one Record-token-spend execution (pr-green variant: target from TARGET_PR). `comments` may be a
+  // raw string, reproducing gh api --paginate's shape: one JSON array PER PAGE, not one merged array.
   const record = (state, { runKey, log, comments }) => {
     fs.writeFileSync(
       path.join(state, 'comments.json'),
@@ -272,11 +256,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   });
 
   test('cross-page duplicate marker comments: the update targets the one OLDEST comment', () => {
-    // gh api --paginate emits one array PER PAGE and jq runs once per array, so with a
-    // marked comment on each page (the documented create-race, on a 100+-comment thread)
-    // the per-page `first` yields a two-line stream. head -n1 must collapse it to the
-    // oldest comment — otherwise the extracted id is two lines, the PATCH URL embeds a
-    // newline, and the row is dropped on every later run against that thread.
+    // jq runs once per --paginate page, so head -n1 must collapse the per-page `first` stream to the oldest comment.
     const state = mkState();
     record(state, { runKey: '100.1', log: writeLog(state, RUN_A), comments: [] });
     const older = readBody(state, 'post-body.json');
@@ -294,10 +274,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   });
 
   // ---- target resolution: the hygiene / implement variants --------------------
-  // pr-green's target arrives pre-resolved via TARGET_PR; these two resolve it from
-  // the result's final text — a PR URL grep SCOPED TO THIS REPO (a cross-repo link
-  // must never redirect the comment), with implement falling back to the labeled
-  // issue. Executed here so the scoping can't be silently dropped.
+  // Both resolve the target from the result text by a PR-URL grep SCOPED TO THIS REPO; implement falls back to the labeled issue.
 
   const recordVariant = (script, state, { runKey, log, comments, extraEnv = {} }) => {
     fs.writeFileSync(path.join(state, 'comments.json'), JSON.stringify(comments));
@@ -342,9 +319,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   });
 
   test('a dotted repo name stays an exact match — a near-miss URL never redirects the comment', () => {
-    // Unescaped, the `.` in octo/waffles.js matches any character, so
-    // octo/wafflesXjs/pull/9 would pass the same-repo gate. The escape must not
-    // break the true-positive match either.
+    // Unescaped, the `.` in octo/waffles.js would let octo/wafflesXjs/pull/9 pass the same-repo gate.
     let state = mkState();
     let res = recordVariant(hygieneScript, state, {
       runKey: '310.1',
@@ -493,9 +468,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   test('self-heals when the ref exists but tokens.json is missing — sha-less create PUT', () => {
     const scratch = mkState();
     const body = prComment(scratch);
-    // No contents fixture: the GET fails while the ref exists — the wedge case where the
-    // bootstrap (gated on the ref alone) never re-runs. The step must recreate the file
-    // via the Contents-API CREATE form (no sha) instead of warning forever.
+    // Ref exists but the contents GET fails — the step must CREATE the file (no sha) rather than warn forever.
     const state = counterState({ comments: [{ id: 7, body }], tokens: null });
     const res = runStep(counterScript, state, { PR_NUMBER: '42' });
     assert.equal(res.status, 0, res.stderr);

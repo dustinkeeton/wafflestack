@@ -1,64 +1,39 @@
 # Managed by wafflestack (github-workflow stack) — do not edit by hand; re-render instead.
-# Release-label hook: when a pull request carrying the configured release label is MERGED,
-# push a lightweight tag `v<version>` on the merge commit, reading <version> from the merged
-# package.json. Deterministic — a plain Actions job with `contents: write`, NO Claude dispatch
-# and NO API spend (unlike the sibling waffle-label-hook). The label string never reaches a
-# shell or prompt; it lives only in the job gate, and render-time validation rejects
-# quotes/newlines/${{ in both the label and the tag-format config values.
-# Prerequisites (see the stack setup note): the release label existing in the repo, Actions
-# allowed `contents: write`, and release PRs originating from a branch in THIS repo (a fork PR
-# gets a read-only token, so its tag push would fail — by design, not via pull_request_target).
-# Downstream `on: push: tags` pipelines (build, provenance, GitHub Release assets): the tag is
-# pushed with the WAFFLE_RELEASE_TOKEN secret when set, else the default GITHUB_TOKEN — and a tag
-# pushed with GITHUB_TOKEN does NOT trigger other workflows (GitHub's anti-recursion rule keys on
-# the token that creates the event, not on who authored the workflow). Set a PAT/GitHub App token
-# in WAFFLE_RELEASE_TOKEN if your repo needs the tag to kick off downstream CI (see the setup note).
 name: waffle-release-hook
 
 on:
   pull_request:
     types: [closed]
 
-# One run at a time per PR; never cancel an in-flight tag push.
+# Never cancel an in-flight tag push.
 concurrency:
   group: waffle-release-hook-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   tag:
-    # Fire only when the PR was actually MERGED (not merely closed) AND it carries the
-    # configured release label. `contains` over the label-name array never matches an empty
-    # string, so an empty labelHook.releaseLabel leaves this job inert (fail-closed).
+    # `contains` never matches an empty string, so an empty releaseLabel leaves this job inert.
     if: >-
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'waffle:release')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Least privilege: the only write this job performs is pushing a tag ref.
     permissions:
       contents: write
     steps:
-      # Check out the actual post-merge commit on the base branch (NOT the ephemeral
-      # refs/pull/N/merge test-merge) so package.json reflects the merged state and the tag
-      # lands on the real merge commit.
+      # The post-merge commit, NOT the ephemeral refs/pull/N/merge test-merge.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
-          # checkout persists this token as the credential the `git push` below reuses, so it also
-          # decides WHICH identity creates the tag-push event. Prefer a PAT/GitHub App token
-          # (WAFFLE_RELEASE_TOKEN) so downstream `on: push: tags` workflows fire; fall back to the
-          # default GITHUB_TOKEN, under which the tag still lands but GitHub's anti-recursion rule
-          # keeps it from triggering other workflows (documented in the setup note).
+          # This token creates the tag-push EVENT: under the default GITHUB_TOKEN the tag lands but
+          # GitHub's anti-recursion rule fires no downstream `on: push: tags` workflow.
           token: ${{ secrets.WAFFLE_RELEASE_TOKEN || github.token }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
       - name: Tag the merge commit
         env:
-          # Data, not code: every value reaches the shell only through the environment, and the
-          # render-time pattern already rejects quotes/newlines/${{. TAG_FORMAT's `{version}`
-          # token is replaced textually below; SHA is the merge commit to tag; all three
-          # (SHA, PR_NUMBER) are GitHub-generated, not attacker-controlled strings.
+          # Data, not code: every value reaches the shell only through the environment.
           TAG_FORMAT: 'v{version}'
           SHA: ${{ github.event.pull_request.merge_commit_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

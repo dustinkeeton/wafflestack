@@ -36,22 +36,11 @@ import { reinstall } from '../lib/uninstall.mjs';
 import { eject } from '../lib/eject.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// #373 — toolkit provenance: what am I, and what ref reproduces me?
+// #373/#374/#372 — toolkit provenance: identity resolution, the `ref` string format, the lock
+// block, and the per-command gate matrix driven through the real CLI.
 //
-// The bug: `npx github:dustinkeeton/wafflestack <cmd>` with no `#ref` resolves the DEFAULT BRANCH.
-// It renders unreleased content while stamping the last released version number into the
-// consumer's lock, so `doctor --verify-render` (which renders through a PINNED ref) goes red on a
-// lock that is, from the consumer's side, perfectly correct. The fix: the CLI works out whether
-// the code it is running is a RELEASED commit, and the write path refuses when it provably is not.
-//
-// This file owns that contract end to end — identity resolution (both origins), the ls-remote
-// parse, the offline CHANGELOG corroborator, the `ref` STRING FORMAT (#372 writes it into
-// waffle.yaml; #374 writes it into the lock — both are pinned here), and the per-command gate
-// matrix, driven by spawning the real CLI. #374 and #372 extend this file rather than growing
-// installer.test.mjs, which is already ~12k lines.
-//
-// NOTHING here touches the network. Every test either injects `lsRemote`/`runGit`, or drives an
-// origin that resolves offline by construction (a checkout: `git describe` answers it).
+// NOTHING here touches the network: every test injects `lsRemote`/`runGit`, or drives an origin
+// that resolves offline by construction.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -96,9 +85,8 @@ describe('parseLsRemoteTags (#373)', () => {
   });
 
   test('an annotated tag indexes the PEELED commit, not the tag object', () => {
-    // git emits both lines for an annotated tag. The unpeeled one points at the tag OBJECT, which
-    // is not any commit a fetch ever lands on — indexing it would make a genuine release look
-    // unreleased. The `^{}` line is the commit, and it must win in EITHER arrival order.
+    // git emits both lines for an annotated tag; the `^{}` line is the commit, and it must win in
+    // EITHER arrival order — the unpeeled one points at the tag object, which no fetch lands on.
     const peeledLast = parseLsRemoteTags(
       [`${TAG_OBJECT_SHA}\trefs/tags/v1.0.0`, `${SHA_A}\trefs/tags/v1.0.0^{}`].join('\n'),
     );
@@ -142,14 +130,12 @@ describe('parseLsRemoteTags (#373)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The `ref` string — THE CONTRACT. #372 writes it into `.waffle/waffle.yaml`
-// (`doctor.toolkitRef` / `waffle.toolkitRef`) and #374 writes it into the lock.
+// The `ref` string — THE CONTRACT: #372 writes it into `.waffle/waffle.yaml`, #374 into the lock.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 → #372/#374)', () => {
   test('toolkitRef() renders the npx spec, and nothing else', () => {
     assert.equal(toolkitRef({ owner: 'dustinkeeton', repo: 'wafflestack' }, 'v0.12.0'), 'github:dustinkeeton/wafflestack#v0.12.0');
-    // Null unless BOTH halves are known — a half-formed ref in a lock is worse than none.
     assert.equal(toolkitRef({ owner: 'o', repo: 'r' }, null), null);
     assert.equal(toolkitRef(null, 'v1.0.0'), null);
   });
@@ -160,7 +146,6 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
 
   test('parseRepoSlug reads every form a GitHub repo is written in', () => {
     const want = { owner: 'dustinkeeton', repo: 'wafflestack' };
-    // npm records the resolved URL in this shape — it is the one that MUST parse.
     assert.deepEqual(parseRepoSlug('git+ssh://git@github.com/dustinkeeton/wafflestack.git#' + SHA_A), want);
     assert.deepEqual(parseRepoSlug('git+https://github.com/dustinkeeton/wafflestack.git'), want);
     assert.deepEqual(parseRepoSlug('https://github.com/dustinkeeton/wafflestack'), want);
@@ -169,8 +154,6 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
     assert.deepEqual(parseRepoSlug('dustinkeeton/wafflestack'), want);
     assert.equal(parseRepoSlug(null), null);
     assert.equal(parseRepoSlug(''), null);
-    // A relative path must NEVER be mistaken for `owner/repo` — that would point ls-remote at
-    // a nonsense URL and turn a resolvable identity into an `unverified` one.
     assert.equal(parseRepoSlug('../elsewhere'), null);
     assert.equal(parseRepoSlug('./x'), null);
   });
@@ -180,28 +163,19 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
   });
 
   test('repoSlug reads PROVENANCE before DECLARATION — and the git remote outranks `repository` too', () => {
-    // The declared field says what a toolkit CLAIMS to be; `resolved` and `origin` say where it came
-    // FROM. A fork inherits the claim verbatim, so preferring it asks the wrong remote — see the
-    // fork test in the npm-install suite. Order: npm `resolved` → git `origin` → `repository`.
+    // Order: npm `resolved` → git `origin` → the declared `repository`, which a fork inherits verbatim.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-slug-'));
     try {
       const pkg = { name: 'wafflestack', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } };
-      // No lockfile, no .git → the declared field is all there is, and it answers. (Last resort, and
-      // a correct one: a vendored copy or a registry tarball has no provenance to read.)
       assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: () => null }), { owner: 'dustinkeeton', repo: 'wafflestack' });
 
-      // A CHECKOUT whose `origin` is a fork, still carrying upstream's declared `repository`: the
-      // remote wins. This is the toolkit developer working in their own fork.
       fs.mkdirSync(path.join(root, '.git'), { recursive: true });
       assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: () => 'git@github.com:acme/wafflestack.git' }), {
         owner: 'acme',
         repo: 'wafflestack',
       });
-      // …and with no usable remote, it still falls back to the declaration rather than to nothing.
       assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: () => null }), { owner: 'dustinkeeton', repo: 'wafflestack' });
 
-      // This repo really does carry the field (it is what keeps the remedy printable for a toolkit
-      // with no provenance to read), and this checkout's own remote agrees with it.
       const real = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
       assert.deepEqual(repoSlug({ toolkitRoot: REPO_ROOT, pkg: real, runGit: () => null }), {
         owner: 'dustinkeeton',
@@ -213,28 +187,20 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
   });
 
   test('lockRepoSlug asks the LOCK\'s question — the pin, never `remote.origin.url` (#384 F2)', () => {
-    // `repoSlug` answers "which remote do I ASK about tags?" — origin-first, and right (#373 F14).
-    // The LOCK asks a different question: "which toolkit is this, GIVEN THE PIN?" On a checkout,
-    // `origin` is a property of the clone the renderer happened to use — not of the pin, the commit,
-    // or the rendered bytes — and it must never reach a committed artifact (#317).
+    // `repoSlug` answers "which remote do I ASK about tags?"; the LOCK asks "which toolkit is this,
+    // GIVEN THE PIN?" — `origin` is a property of the clone and must never reach a committed artifact (#317).
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-lockslug-'));
     try {
       const pkg = { name: 'wafflestack', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } };
       const fork = () => 'git@github.com:contributor/wafflestack.git';
       fs.mkdirSync(path.join(root, '.git'), { recursive: true });
 
-      // THE DIVERGENCE, on one line: same checkout, same bytes, two different questions.
       assert.deepEqual(repoSlug({ toolkitRoot: root, pkg, runGit: fork }), { owner: 'contributor', repo: 'wafflestack' });
       assert.deepEqual(lockRepoSlug({ toolkitRoot: root, pkg }), { owner: 'dustinkeeton', repo: 'wafflestack' });
 
       // It takes no `runGit` AT ALL — the origin step cannot be reached even by accident.
       assert.equal(lockRepoSlug.length, 1, 'one arg: there is no git seam to consult');
 
-      // #373 F14 is carried entirely by step 1, which `lockRepoSlug` KEEPS: npm's `resolved` is not
-      // machine state, it is the pin the operator typed. `npx github:acme/wafflestack#v1.0.0`
-      // resolves to acme on every machine — so a fork still names ITSELF in its own lock. (And an
-      // npm-installed toolkit has no `.git`, which is why removing the origin step cannot regress
-      // the npx path: it never ran there.)
       const npm = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-lockslug-npm-'));
       try {
         // The real npx layout: the toolkit lives INSIDE node_modules, beside the hidden lockfile.
@@ -254,8 +220,6 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
   });
 
   test('resolveToolkitIdentity: the reviewer\'s repro — two clones, one commit, one lock block (#384 F2)', () => {
-    // The live path, end to end, stubbing ONLY `runGit` (the module's own injection seam) exactly as
-    // the review did. Everything else is real: a checkout, an untagged HEAD, a declared `repository`.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-clone-'));
     try {
       fs.mkdirSync(path.join(root, '.git'), { recursive: true });
@@ -280,7 +244,6 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
 
       assert.deepEqual(forked, upstream, 'the committed lock cannot depend on which clone rendered it');
       assert.equal(upstream.source, 'github:dustinkeeton/wafflestack');
-      // …while the value the NETWORK path needs still tracks the clone in hand (#373 F14 intact).
       assert.equal(resolveToolkitIdentity({ toolkitRoot: root, runGit: clone('git@github.com:contributor/wafflestack.git') }).repo, 'contributor/wafflestack');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -288,14 +251,6 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
   });
 
   test('a checkout on a RELEASE TAG asks NO remote — so it records NO source (#384 F11, F13)', () => {
-    // The counted stub is the whole point, and it now carries TWO findings. The `release` carve-out was
-    // justified by "`ls-remote` asked THAT remote"; this proves no remote is asked at all on a checkout —
-    // `git describe --exact-match` decides it offline and `resolveToolkitIdentity` returns before the
-    // lookup. F11 concluded "so record the DECLARED repo, which at least is deterministic". F13 showed
-    // that conclusion still wrote a lie: `source` + `ref` ARE the pin (`toolkitPinFromLock` is
-    // `` `${source}#${ref}` ``), so naming the declared repo CLAIMS that repo holds this tag — and the
-    // 0 ls-remote calls this test counts are the proof that nobody ever checked. Zero corroboration
-    // must buy zero claims: the block records `source: null` and pins nothing.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-relclone-'));
     try {
       fs.mkdirSync(path.join(root, '.git'), { recursive: true });
@@ -380,11 +335,9 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.tag, 'v0.9.0');
     assert.equal(id.commit, head());
     assert.equal(id.version, '0.9.0');
-    // The repo comes from the git remote here (no `repository` in the fixture's package.json).
     assert.equal(id.repo, 'acme/toolkit');
     assert.equal(id.ref, 'github:acme/toolkit#v0.9.0');
     assert.equal(id.lookupError, null);
-    // A released toolkit has nothing to warn about — its version number identifies it completely.
     assert.equal(formatProvenanceWarning(id), null);
   });
 
@@ -396,7 +349,6 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.tag, null);
     assert.equal(id.ref, null, 'ref is non-null ONLY for a release — this is what #374 writes into the lock');
     assert.equal(id.commit, head());
-    // The remedy names the latest LOCAL tag: the checkout knows its own tags, so it never has to ask.
     assert.equal(id.latestTag, 'v0.9.0');
     assert.match(formatProvenanceWarning(id) ?? '', /NOT a release/);
   });
@@ -421,9 +373,6 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
   });
 
   test('identity is hatch-independent — an unreleased checkout is `unreleased`, ref null (#383)', () => {
-    // `--allow-unreleased` is a cli.mjs refusal-suppressor, not an argument to `resolveToolkitIdentity`
-    // (the gate matrix drives that end). Identity itself only ever tells the truth: this keeps the lock
-    // #374 writes honest rather than merely permitted.
     advance('unreleased work');
     const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
     assert.equal(id.status, 'unreleased');
@@ -432,12 +381,8 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
   });
 
   test('A DIRTY TREE ON A RELEASE TAG IS NOT A RELEASE — the tag stops describing what renders', () => {
-    // `git describe --exact-match` answers about the COMMIT and ignores the WORKING TREE. So a
-    // maintainer who checks out `v0.9.0` to reproduce a consumer issue, edits `stacks/**`, and
-    // renders, was classified `release` and handed `ref: github:…#v0.9.0` — a ref that does NOT
-    // reproduce what just rendered. An unreleased toolkit landing in `release`: #373's own disease
-    // through the checkout door, and once #374 writes `ref` into the lock, a provenance marker
-    // naming content it did not produce.
+    // `git describe --exact-match` answers about the COMMIT and ignores the WORKING TREE, so a
+    // maintainer's uncommitted `stacks/**` edits would otherwise render as a `release`.
     write(work, 'stacks/x/stack.yaml', 'name: x\ndescription: X.\n');
     git('add', '-A');
     git('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'stacks');
@@ -447,8 +392,7 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(clean.status, 'release', 'a CLEAN tree on the tag is still a release — do not over-refuse');
     assert.equal(clean.ref, 'github:acme/toolkit#v0.9.0');
 
-    // An UNTRACKED scratch file is NOT a dirty toolkit: nothing that renders has changed, and
-    // refusing here would refuse every maintainer with a note in their tree.
+    // An UNTRACKED scratch file is NOT a dirty toolkit — nothing that renders has changed.
     write(work, 'scratch.txt', 'a note to self');
     const scratched = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
     assert.equal(scratched.status, 'release', 'untracked files must NOT trip the dirty check');
@@ -461,7 +405,6 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(dirty.tag, null);
     assert.equal(dirty.latestTag, 'v0.9.0', 'the remedy can still name the release to pin');
 
-    // The refusal must say WHY. "No release tag points here" would be a flat lie — one points here.
     const msg = formatUnreleasedRefusal(dirty, 'render');
     assert.doesNotMatch(msg, /no release tag points here/);
     assert.match(msg, /uncommitted changes to tracked files/);
@@ -469,14 +412,6 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
   });
 
   test('A CHECKOUT NEVER QUERIES THE REMOTE — so the refusal must hedge, never assert', () => {
-    // The THIRD state that reaches `latestTag === null`, and the one the `origin === 'npm-install'`
-    // conjunct in `provablyNone` exists to catch. A checkout has `lookupError === null` — nothing
-    // FAILED; the checkout path simply never asks — so `lookupError` alone does NOT discriminate it.
-    // Only `origin` does. Delete that conjunct and this checkout asserts "acme/toolkit has no
-    // vX.Y.Z release tags" about a remote it never contacted: the exact over-claim class this PR has
-    // now shipped twice (round 1's "a bare `upgrade` would refuse"; round 2's "there is no release
-    // to pin to"). Without this test the whole guard rests on one conjunct a refactor can silently
-    // drop — and the suite stayed green when I dropped it.
     git('tag', '-d', 'v0.9.0'); // no local release tags…
     write(work, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n- work in progress\n'); // …and no `## [X.Y.Z]` to fall back on
     const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
@@ -493,16 +428,8 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
   });
 
   test('THE CONTRACT #374/#372 REST ON: `status: release` does NOT imply a non-null `ref`', () => {
-    // The JSDoc says `ref` is non-null ONLY for a release. True — and one-directional, which is the
-    // trap: it does not say non-null WHENEVER. `status` is fixed at 'release' by `git describe`
-    // BEFORE the repo slug is consulted, so a release whose slug is unknowable — no `repository` in
-    // package.json (this fixture), no npm lockfile, no `origin` remote — is a genuine release with
-    // `ref: null`. A consumer that branches on `status === 'release'` and then dereferences `ref`
-    // (#374 writes it into the lock; #372 into `doctor.toolkitRef` / `waffle.toolkitRef`) writes a
-    // null into a lock the first time someone renders from a bare clone.
-    //
-    // KEY ON `ref != null`, NOT ON `status === 'release'`. This test is what makes that
-    // enforceable rather than merely stated.
+    // KEY ON `ref != null`, NOT ON `status === 'release'`: `status` is fixed by `git describe`
+    // before the slug is consulted, so a release whose slug is unknowable has `ref: null`.
     git('remote', 'remove', 'origin');
     const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
     assert.equal(id.status, 'release', 'it IS a release — the tag is right there on HEAD');
@@ -514,8 +441,8 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// origin: 'npm-install' — the `npx github:` consumer path. No `.git`; npm's hidden
-// lockfile records the SHA it cloned, and ONE ls-remote classifies it.
+// origin: 'npm-install' — the `npx github:` consumer path. No `.git`; npm's hidden lockfile
+// records the SHA it cloned, and ONE ls-remote classifies it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('identity from an npm-install layout (#373)', () => {
@@ -558,13 +485,11 @@ describe('identity from an npm-install layout (#373)', () => {
     assert.equal(id.commit, SHA_A);
     assert.equal(id.tag, 'v0.12.0');
     assert.equal(id.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
-    // ONE lookup, and against HTTPS — npm records `git+ssh://`, and an unauthenticated ls-remote
-    // against THAT demands an ssh key, which a CI runner does not have.
+    // ONE lookup, against HTTPS: an unauthenticated ls-remote over npm's `git+ssh://` needs a key.
     assert.deepEqual(lsRemote.calls, ['https://github.com/dustinkeeton/wafflestack.git']);
   });
 
   test('the fetched SHA is NOT any tag (the unpinned default branch) → `unreleased`', () => {
-    // This is issue #373 itself: `npx github:dustinkeeton/wafflestack render`, no `#ref`.
     const root = layout({ resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${SHA_B}` });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
 
@@ -577,8 +502,6 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('a pinned NON-release ref (a branch) refuses too — that IS unreleased content', () => {
-    // `npx github:…/wafflestack#some-branch`. The invariant is not "was a #ref typed" but "is the
-    // code I am running a released commit" — which also catches a re-cut or force-pushed tag.
     const root = layout({ resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${'f'.repeat(40)}` });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
     assert.equal(id.status, 'unreleased');
@@ -595,25 +518,13 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('AN UNEDITED FORK IS ASKED ABOUT ITSELF — provenance beats the declared `repository`', () => {
-    // The realistic fork: `gh repo fork`, cut a tag, push, change NOTHING else. It carries UPSTREAM's
-    // `repository` field verbatim — nothing prompts anyone to rewrite it (the package is
-    // `private: true` and never published; #373 is what introduced the field) — while npm's
-    // `resolved` records where this build actually came from.
-    //
-    // With `repository` consulted first, `ls-remote` went to UPSTREAM, which has never heard of the
-    // fork's commit → `unreleased` → a correctly-pinned fork release HARD-REFUSED (the inverse of
-    // #373), and the remedy told them to `npx github:dustinkeeton/wafflestack#v0.12.0` — installing a
-    // DIFFERENT REPO'S TOOLKIT and rendering upstream content into their repo. #374 would then bake
-    // upstream's slug into the fork's lock as provenance.
     const root = layout({
       resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_A}`,
-      // repository: left as the default — UPSTREAM's, inherited. This is the whole point.
     });
     /** Answers per-URL, so the test pins WHICH REMOTE WAS ASKED and cannot pass by fixture. */
     const asked = [];
     const lsRemote = (url) => {
       asked.push(url);
-      // acme cut its own v1.0.0 at this exact commit. Upstream has never seen the commit.
       return url.includes('acme') ? `${SHA_A}\trefs/tags/v1.0.0` : `${SHA_B}\trefs/tags/v0.12.0`;
     };
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
@@ -626,8 +537,6 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('the DECLARED `repository` is the last resort — used only when provenance is unknowable', () => {
-    // No lockfile and no `.git`: a vendored copy or a registry tarball. Here the declared field is
-    // all there is, and it is right to use it — it is only wrong to PREFER it.
     const root = path.join(tmp, 'node_modules', 'wafflestack');
     write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: 'github:dustinkeeton/wafflestack' }));
     assert.deepEqual(repoSlug({ toolkitRoot: root, pkg: { name: 'wafflestack', repository: 'github:dustinkeeton/wafflestack' }, runGit: () => null }), {
@@ -637,19 +546,6 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('a remote with ZERO release tags names no pinned command — it never inherits UPSTREAM\'s tag', () => {
-    // A fork or a vendored copy that has cut none of its own tags. `git clone` + push to a new remote
-    // carries no tags, so this is the ORDINARY shape of a derivative, not an exotic one — and it is
-    // exactly the population `repoSlug` exists to serve ("a fork names ITSELF in the remedy").
-    //
-    // The lookup SUCCEEDS and returns nothing. That is POSITIVE knowledge that there is nothing to
-    // pin — categorically different from "we could not look" — so `latestTag` must not fall back to
-    // the tag scraped from the SHIPPED changelog, which came from upstream. Doing so printed
-    // `npx …github:acme/wafflestack#v0.12.0`, a ref acme's remote does not have: a refusal whose
-    // `Run this instead:` command errors, which is the one thing this message must never do.
-    // NOTE the fixture leaves `repository` as UPSTREAM's — the realistic fork, which inherited the
-    // field and never rewrote it. Pre-editing it here (as this fixture once did) made the
-    // "it asked the FORK" assertion below pass on the FIXTURE rather than on the code: it answered
-    // the question before `repoSlug` was asked. The slug must come from `resolved`, i.e. provenance.
     const root = layout({
       resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_B}`,
       changelog: '# Changelog\n\n## [Unreleased]\n\n- fork work\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
@@ -665,22 +561,12 @@ describe('identity from an npm-install layout (#373)', () => {
     const msg = formatUnreleasedRefusal(id, 'render');
     assert.doesNotMatch(msg, /#v0\.12\.0/, 'never name a ref the remote does not have');
     assert.doesNotMatch(msg, /#<latest release tag>/, 'nor a placeholder command that cannot resolve');
-    // We LOOKED and there is nothing there, so the strong claim is licensed here — and only here.
     assert.match(msg, /acme\/wafflestack has no `vX\.Y\.Z` release tags/);
     assert.match(msg, /--allow-unreleased/, 'lead with the hatch — here it is the only path that works');
-    // The warning printed by the ungated commands must not invent a pin either.
     assert.match(formatProvenanceWarning(id) ?? '', /cannot name a pin/);
   });
 
   test('a lookup that NEVER RAN must not claim the remote has no tags — hedge, do not assert', () => {
-    // The same `latestTag: null` state, reached from ignorance instead of knowledge (#373 review).
-    // `corroborate()` tightens to `unreleased` off the shipped changelog after `ls-remote` THREW, and
-    // with no `## [X.Y.Z]` headings in that changelog there is no tag to name — but WE NEVER ASKED
-    // THE REMOTE. Asserting "acme has no release tags" here is exactly the over-claim that was
-    // rejected in round 1, and it is not harmless: it tells a fork's user that `--allow-unreleased`
-    // is their only path, when a perfectly good release tag may exist that this run merely could not
-    // see. `lookupError` is the discriminator, and it is already on the contract: null on exactly the
-    // paths where a lookup ran and SUCCEEDED.
     const root = layout({
       resolved: `git+ssh://git@github.com/acme/wafflestack.git#${SHA_B}`,
       repository: 'github:acme/wafflestack',
@@ -702,8 +588,6 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('no lockfile at all → `unverified`, never a throw (npm internals may change shape)', () => {
-    // Note the changelog: `## [Unreleased]` present but EMPTY, which a release leaves behind. So
-    // the corroborator has nothing to say and the verdict stays honestly ignorant.
     const root = layout({ changelog: '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n' });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork });
     assert.equal(id.status, 'unverified');
@@ -711,7 +595,6 @@ describe('identity from an npm-install layout (#373)', () => {
     assert.equal(id.commit, null);
     assert.equal(id.ref, null);
     assert.match(id.lookupError ?? '', /lockfile/i);
-    // Fails OPEN: the command proceeds, with a warning that says exactly what we could not learn.
     assert.match(formatProvenanceWarning(id) ?? '', /could not verify/i);
   });
 
@@ -721,7 +604,6 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('a lockfile with no resolvable 40-char SHA → `unverified`', () => {
-    // A registry install (no `#sha`), and a truncated sha — neither is provenance.
     for (const resolved of ['https://registry.npmjs.org/wafflestack/-/wafflestack-0.12.0.tgz', 'git+ssh://git@github.com/o/r.git#abc123']) {
       const root = layout({ resolved, changelog: '# Changelog\n\n## [Unreleased]\n' });
       assert.equal(resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork }).status, 'unverified', resolved);
@@ -730,9 +612,6 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('THE LOOKUP THROWS (offline, GitHub blip) → `unverified` + lookupError, and we proceed', () => {
-    // Fail OPEN on ignorance. Failing closed here would make every consumer's CI depend on OUR
-    // reachability — a far worse bug than the one being fixed. Fail-closed applies only to a
-    // lookup that SUCCEEDED and said "not a release".
     const root = layout({
       resolved: `git+https://github.com/dustinkeeton/wafflestack.git#${SHA_A}`,
       changelog: '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
@@ -746,24 +625,17 @@ describe('identity from an npm-install layout (#373)', () => {
     assert.equal(id.commit, SHA_A, 'the SHA is read OFFLINE — a failed lookup does not lose it');
     assert.equal(id.ref, null);
     assert.match(id.lookupError ?? '', /Could not resolve host/);
-    // The remedy still has a tag to name: the SHIPPED changelog's newest released heading.
     assert.equal(id.latestTag, 'v0.12.0');
   });
 
   test('the lookup is skippable ONLY by `offline` — a genuine release pin keeps its `ref` (#383)', () => {
     const root = layout({ resolved: `git+https://github.com/dustinkeeton/wafflestack.git#${SHA_A}` });
-    // Online (the default). There is no `allowUnreleased` argument that could short-circuit the
-    // lookup — that WAS the #383 bug: the hatch forfeited a release you genuinely had. Now a
-    // release-pinned npx install resolves `release`, ref intact, and the hatch (cli.mjs) only
-    // suppresses the refusal it would never have raised for a release anyway.
     const online = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
     assert.equal(online.status, 'release');
     assert.equal(online.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
   });
 
   test('`offline: true` (plain doctor, the banner, `--offline`) skips the lookup — never a release', () => {
-    // The air-gapped escape: fail OPEN (no stall on a doomed `ls-remote`), and never MANUFACTURE a
-    // release. `forbidNetwork` fails the test if the lookup is attempted at all.
     const root = layout({ resolved: `git+https://github.com/dustinkeeton/wafflestack.git#${SHA_A}` });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
     assert.equal(id.commit, SHA_A);
@@ -781,17 +653,12 @@ describe('identity from an npm-install layout (#373)', () => {
   });
 
   test('the sha and the slug are read from the SAME lockfile entry — one lookup, two callers', () => {
-    // `commitFromNpmLockfile` (the sha) and `repoSlug` (the owner/repo) both need npm's hidden
-    // lockfile, and they must never disagree about WHICH package entry they are reading. Two copies
-    // of the key lookup is a divergence hazard: change the fallback key in one and the other keeps
-    // the old behaviour silently. They now share one resolver, and this pins both ends of it.
     const root = layout({
       resolved: `git+ssh://git@github.com/acme/forked.git#${SHA_A}`,
       repository: null, // no usable `repository` field → the slug MUST come from the lockfile
     });
     assert.deepEqual(repoSlug({ toolkitRoot: root, pkg: { name: 'wafflestack' }, runGit: () => null }), { owner: 'acme', repo: 'forked' });
     assert.equal(commitFromNpmLockfile(root, 'wafflestack'), SHA_A);
-    // …and the identity agrees with both, having asked the fork's own remote.
     const lsRemote = fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]);
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
     assert.equal(id.repo, 'acme/forked');
@@ -802,9 +669,8 @@ describe('identity from an npm-install layout (#373)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The offline corroborator. The CHANGELOG *ships* (package.json `files`), and a release stamps
-// `## [Unreleased]` down into `## [X.Y.Z]`. So a shipped changelog carrying a non-empty
-// `## [Unreleased]` section is proof — needing no network — that this build is not a release.
+// The offline corroborator: the CHANGELOG ships, and a release stamps `## [Unreleased]` down — so
+// a shipped changelog with a NON-EMPTY `## [Unreleased]` proves, with no network, this is no release.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#373)', () => {
@@ -850,14 +716,6 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
   });
 
   test('an empty Keep-a-Changelog SCAFFOLD is not evidence either — it must not refuse a real release', () => {
-    // The three shapes a release process routinely LEAVES BEHIND under `## [Unreleased]`. Reading
-    // any of them as an entry lets `corroborate()` tighten a GENUINELY TAGGED release to
-    // `unreleased` — and `unreleased` REFUSES. So a derivative whose release process leaves the
-    // scaffold ships a real release whose own CHANGELOG testifies against it, and the first lookup
-    // failure (git egress blocked while the registry is not — a common CI shape) hard-refuses a
-    // correctly-pinned consumer. Bricking a legitimate consumer is NOT "wrong in the safe
-    // direction"; the accepted false positive is a default branch that matches the tag, which is a
-    // much more benign thing than a release.
     for (const scaffold of [
       '# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Fixed\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
       '# Changelog\n\n## [Unreleased]\n\n_Nothing yet._\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n',
@@ -877,12 +735,6 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
   });
 
   test('an EMPHASIZED entry is an entry — stripping it would fail OPEN, which is #373 itself', () => {
-    // The scaffold-stripper's dangerous edge. `**Breaking: …**` and `_Support for pnpm added._` are
-    // real, substantive entries that happen to be emphasized. Eating them leaves `unverified`, and
-    // `unverified` PROCEEDS — so an unpinned default-branch fetch would render straight into the
-    // consumer's lock, which is the exact bug this whole PR exists to prevent. F8's defect was
-    // fail-CLOSED (a recoverable refusal); its first fix traded it for fail-OPEN, which by this
-    // module's own stated ordering is the strictly worse direction. Both edges are now pinned.
     for (const entry of ['**Breaking: render now refuses.**', '_Support for pnpm added._']) {
       const id = resolveToolkitIdentity({
         toolkitRoot: npmLayout(`# Changelog\n\n## [Unreleased]\n\n${entry}\n\n## [0.12.0] - 2026-07-11\n`),
@@ -893,7 +745,6 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
   });
 
   test('the corroborator never OVERRIDES a successful lookup that said `release`', () => {
-    // main's changelog shape, but the SHA really is the tag: the network wins, every time.
     const id = resolveToolkitIdentity({
       toolkitRoot: npmLayout('# Changelog\n\n## [Unreleased]\n\n- entries\n\n## [0.12.0] - 2026-07-11\n'),
       lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]),
@@ -906,9 +757,7 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n## [1.0.0] - 2026\n'), false);
     assert.equal(changelogHasUnreleasedEntries('## Unreleased\n\n- a thing\n'), true, 'the brackets are optional');
     assert.equal(changelogHasUnreleasedEntries(null), false);
-    // ── EDGE 1, fail-CLOSED: the SCAFFOLD a release leaves behind. None of these is an entry.
-    // Reading one AS an entry refuses a genuine release (F8). Recoverable — the refusal names the
-    // pin — but wrong.
+    // EDGE 1, fail-CLOSED: the scaffold a release leaves behind is not an entry.
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n### Fixed\n'), false, 'empty sub-headings');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_Nothing yet._\n'), false, 'emphasis-only placeholder');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n**No changes.**\n'), false, 'bold placeholder');
@@ -916,15 +765,11 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_TBD_\n'), false);
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n<!-- add entries\n     here -->\n'), false, 'HTML comment, even across lines');
 
-    // ── EDGE 2, fail-OPEN: THE DANGEROUS DIRECTION — and the one the F8 fix itself got wrong (F11).
-    // Missing a real entry leaves `unverified`, which PROCEEDS: a default branch renders into a
-    // consumer's lock, silently. That is issue #373, reintroduced through the back door. An
-    // emphasized line is an ENTRY unless its WORDS say otherwise — the filter keys on placeholder
-    // vocabulary, never on emphasis, because shape is the vocabulary of entries.
+    // EDGE 2, fail-OPEN (the dangerous direction): an emphasized line is an ENTRY unless its WORDS
+    // say otherwise — the filter keys on placeholder vocabulary, never on emphasis.
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n**Breaking: render now refuses.**\n'), true, 'a BOLD entry is still an entry');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n_Support for pnpm added._\n'), true, 'an ITALIC entry is still an entry');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n**Nothing is broken by this release.**\n'), true, 'opens with "Nothing" — but it is prose, not a placeholder');
-    // …and everything that always was an entry still reads as one.
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n### Added\n\n- a real entry\n'), true, 'an entry under a sub-heading');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n* an asterisk bullet\n'), true, 'a bullet is not a placeholder');
     assert.equal(changelogHasUnreleasedEntries('## [Unreleased]\n\n* a *bold* asterisk bullet\n'), true);
@@ -936,12 +781,7 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
   });
 
   test('THIS repo\'s own shipped CHANGELOG is the live case — the corroborator reads it', () => {
-    // Not a fixture: the real file. It is what lets a consumer who fetched the default branch be
-    // told the truth even when GitHub is unreachable. Both `[Unreleased]` states are legitimate and
-    // both are safe: mid-cycle main carries entries (past the tag ⇒ `unreleased`), and a freshly-cut
-    // release sits AT the tag with an empty `[Unreleased]` — the corroborator simply does not fire,
-    // which is correct, because main is not yet past the tag. If a release ever ships with a
-    // non-empty `[Unreleased]`, this module would call it `unreleased` — the safe direction to err.
+    // Not a fixture, the real file: both `[Unreleased]` states are legitimate and both are safe.
     const real = fs.readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
     assert.equal(typeof changelogHasUnreleasedEntries(real), 'boolean', 'the corroborator reads the real file without throwing');
     assert.match(changelogLatestRelease(real) ?? '', /^v\d+\.\d+\.\d+$/);
@@ -949,8 +789,7 @@ describe('the CHANGELOG corroborator tightens `unverified` → `unreleased` (#37
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The refusal message. This IS the feature: the whole value of failing closed over
-// silently rendering the default branch is the copy-pasteable command it hands back.
+// The refusal message — the copy-pasteable command is the whole value of failing closed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('formatUnreleasedRefusal (#373)', () => {
@@ -977,13 +816,6 @@ describe('formatUnreleasedRefusal (#373)', () => {
   });
 
   test('with NO release tag known, it says so — it does not print a command that cannot resolve', () => {
-    // This used to print `npx …#<latest release tag> render`, a shaped placeholder, on the theory
-    // that a shape beats a dead end. It does not: a `Run this instead:` block whose command errors
-    // is worse than the refusal it decorates, and the whole justification for failing closed is that
-    // the message hands back something that WORKS. When there is no release to pin to, the only
-    // command that works is the hatch — so lead with it and say plainly why.
-    // `lookupError: null` + `origin: 'npm-install'` on this fixture ⇒ the lookup RAN and succeeded,
-    // so the strong claim is licensed. (The hedged twin is pinned in the npm-install suite above.)
     const msg = formatUnreleasedRefusal({ ...unreleased, latestTag: null }, 'render');
     assert.doesNotMatch(msg, /#<latest release tag>/);
     assert.match(msg, /latest release: none known for dustinkeeton\/wafflestack/);
@@ -999,21 +831,16 @@ describe('formatUnreleasedRefusal (#373)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE GATE MATRIX — one assertion per command, driven through the real CLI.
-//
-// The toolkit under test is THIS checkout, which is `unreleased` by construction: a feature
-// branch (or, in CI, an `actions/checkout` that fetches no tags at all). That resolves OFFLINE
-// via `git describe`, so these spawns make zero network calls. The one case that would not is a
-// checkout sitting exactly ON a release tag — rare, but real during a release — so the refusal
-// half is skipped there rather than asserted falsely.
+// THE GATE MATRIX — one assertion per command, driven through the real CLI. This checkout is
+// `unreleased` by construction and resolves OFFLINE, so the spawns make zero network calls; a
+// checkout sitting exactly on a release tag skips the refusal half rather than asserting it falsely.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', () => {
   let cwd;
 
-  // CI sets WAFFLESTACK_ALLOW_UNRELEASED=1 at the job level (tests.yml) and installer.test.mjs sets
-  // it process-wide — both correct for suites that need to RENDER. This suite asserts the gate, so
-  // it must run with the hatch CLOSED. Strip it per spawn rather than trusting the ambient env.
+  // This suite asserts the GATE, so it must run with the hatch CLOSED — CI and installer.test.mjs
+  // both set WAFFLESTACK_ALLOW_UNRELEASED, so strip it per spawn rather than trusting the env.
   const gated = (args) => {
     const env = { ...process.env };
     delete env.WAFFLESTACK_ALLOW_UNRELEASED;
@@ -1036,8 +863,7 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
 
   beforeEach(() => {
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-gate-'));
-    // A minimal but VALID project, so a command that gets past the gate fails (if at all) on its
-    // own merits rather than on a missing config — otherwise "did not refuse" proves nothing.
+    // A minimal but VALID project, so "did not refuse" is about the gate and not a missing config.
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
   });
   afterEach(() => fs.rmSync(cwd, { recursive: true, force: true }));
@@ -1050,17 +876,13 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
       const r = gated(args);
       assert.equal(r.status, 1, `expected a refusal, got:\n${r.stdout}\n${r.stderr}`);
       assert.match(r.stderr, REFUSAL);
-      // The refusal must be actionable, or failing closed is just breakage.
       assert.match(r.stderr, /Run this instead:/);
       assert.match(r.stderr, new RegExp(`npx --yes github:\\S+#v\\d+\\.\\d+\\.\\d+ ${args[0]}\\b`));
       assert.match(r.stderr, /--allow-unreleased/);
-      // …and it must refuse BEFORE doing anything: nothing rendered, nothing written.
       assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'a refused command must write nothing');
     });
   }
 
-  // `install <ref>` must refuse BEFORE persisting the selection — a consumer left holding a
-  // selection they were never able to render is worse than a clean refusal.
   test('`install <ref>` refuses without persisting the ref into waffle.yaml', { skip: skipUnlessUnreleased }, () => {
     const before = fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8');
     const r = gated(['install', 'stacks/github-workflow']);
@@ -1069,10 +891,8 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
     assert.equal(fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8'), before, 'waffle.yaml must be untouched');
   });
 
-  // Everything that does NOT write files from toolkit content. These may still exit non-zero on
-  // their own merits (a `doctor` with no lock, an `eject` of a nonexistent item) — what is asserted
-  // is that they never REFUSE. Gating them would be the outage: plain `doctor` is the drift check
-  // every consumer runs on every PR, off the unpinned default `doctor.toolkitRef`.
+  // Everything that does NOT write files from toolkit content. These may exit non-zero on their own
+  // merits; what is asserted is that they never REFUSE — gating plain `doctor` would be the outage.
   for (const args of [['doctor'], ['doctor', '--allow-missing'], ['list'], ['setup'], ['init'], ['eject', 'skills/nope'], ['uninstall'], ['validate'], ['help']]) {
     test(`\`${args.join(' ')}\` is NOT gated — it never refuses`, () => {
       const r = gated(args);
@@ -1118,8 +938,7 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
   });
 
   test('`--allow-unreleased` and `--offline` are accepted by every command, not just the gated ones', () => {
-    // Both flags are stripped globally, before any "takes no refs" guard runs — otherwise they would
-    // be rejected as stray refs by exactly the commands that need them least.
+    // Both flags are stripped globally, before any "takes no refs" guard can reject them as stray refs.
     for (const flag of ['--allow-unreleased', '--offline']) {
       for (const cmd of ['render', 'upgrade', 'reinstall', 'list', 'doctor']) {
         const r = allowed([cmd, flag]);
@@ -1129,8 +948,6 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
   });
 
   test('`--offline` renders under the hatch without stalling — the air-gapped shape (#383)', () => {
-    // An air-gapped CI: `--allow-unreleased` (don't refuse me) + `--offline` (don't pay for the
-    // answer). The lookup is skipped, so nothing waits on a doomed `ls-remote`; the render proceeds.
     const r = gated(['render', '--allow-unreleased', '--offline']);
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
     assert.doesNotMatch(r.stderr, REFUSAL);
@@ -1148,12 +965,9 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The CLI's own flag wiring, driven end-to-end (#383 / PR #419 QA). Every other spawned-CLI test
-// resolves THIS checkout — origin `checkout`, answered by `git describe`, never `ls-remote` — so
-// reverting cli.mjs's identity() to `offline: offline || allowUnreleased` (the exact #383
-// conflation) left the whole suite green. These spawns run a COPY of the toolkit from a fabricated
-// release-pinned npx-install layout, with a stub `git` on PATH recording its invocations, so the
-// CLI's flag plumbing is the only thing deciding whether the lookup runs.
+// The CLI's own flag wiring, end to end (#383): every other spawned-CLI test resolves THIS
+// checkout, which never calls `ls-remote` — so these spawns run a COPY from a fabricated
+// release-pinned npx layout, with a stub `git` on PATH recording its invocations.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the CLI wires `--offline` — not the hatch — to the lookup (#383)', { skip: process.platform === 'win32' ? 'POSIX git stub' : false }, () => {
@@ -1225,8 +1039,7 @@ describe('the CLI wires `--offline` — not the hatch — to the lookup (#383)',
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The identity object reaches the write site — #374 writes it into the lock, #372 into
-// waffle.yaml. Neither can, if `renderProject`/`upgrade` never see it.
+// The identity reaches the write site — #374 writes it into the lock, #372 into waffle.yaml.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the identity is threaded to the render/upgrade write sites (#373 → #374/#372)', () => {
@@ -1254,14 +1067,11 @@ describe('the identity is threaded to the render/upgrade write sites (#373 → #
       assert.equal(result.ok, true, JSON.stringify(result.errors));
       assert.equal(result.identity?.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
 
-      // …and #374 lands it in the lock. `toolkitVersion` is untouched — the block ADDS identity, it
-      // replaces nothing (it is still `upgrade`'s migration baseline and `list`'s skew signal).
       const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
       assert.equal(lock.toolkitVersion, '0.0.test');
       assert.equal(lock.toolkit.ref, 'v0.12.0', 'the PIN, not the npx spec — `sources[].ref` shape');
       assert.equal(lock.toolkit.commit, SHA_A);
 
-      // Absent, everything behaves exactly as it always did (evals.mjs and most tests render this way).
       const bare = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
       assert.equal(bare.ok, true);
       assert.equal(bare.identity, null);
@@ -1292,8 +1102,6 @@ describe('the identity is threaded to the render/upgrade write sites (#373 → #
         lookupError: null,
       });
       const result = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.13.0', toolkitIdentity: identity, changelog: '# Changelog\n', migrations: [] });
-      // `toVersion` finally MEANS something: a gated upgrade can only run at a release, so the
-      // number it announces names a tag whose content is exactly what it just rendered.
       assert.equal(result.toVersion, '0.13.0');
       assert.equal(result.identity?.ref, 'github:dustinkeeton/wafflestack#v0.13.0');
     } finally {
@@ -1323,7 +1131,6 @@ describe('the version-skew remedy names a command that WORKS (#373 / #372)', () 
     for (const d of [toolkitRoot, cwd]) fs.rmSync(d, { recursive: true, force: true });
   });
 
-  // …and the running CLI says 0.12.0 → version skew. The note is the thing under test.
   const notes = (toolkitIdentity) =>
     doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity, toolkitRoot }).notes.join('\n');
 
@@ -1341,9 +1148,6 @@ describe('the version-skew remedy names a command that WORKS (#373 / #372)', () 
   });
 
   test('an UNRELEASED CLI prints the pinned command, not the bare `upgrade` that resolves main', () => {
-    // #372's "self-defeating remedy": doctor said "run `wafflestack upgrade`", which for most
-    // people IS the unpinned `npx github:…` — the command that fetches the default branch, and the
-    // one the gate now refuses. Sending the reader there would be handing them a loop.
     const out = notes(identityAt('unreleased'));
     assert.match(out, /version skew/);
     assert.match(out, /npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0 upgrade/);
@@ -1352,32 +1156,18 @@ describe('the version-skew remedy names a command that WORKS (#373 / #372)', () 
   });
 
   test('THE NOTE MUST NOT PREDICT THE GATE — a release-pinned npx install is told no such thing', () => {
-    // The note reasons from the identity plain `doctor` is handed, which is the OFFLINE one — and
-    // offline, an npx install can NEVER reach `release`: the lookup is short-circuited (`noNetwork`)
-    // and `corroborate()` only ever tightens toward `unreleased`. So this fixture — a consumer
-    // pinned at an exact release tag, the most common shape there is — reports `unverified`.
-    //
-    // Meanwhile `requireRelease()` refuses ONLY on `unreleased`, and it resolves its OWN networked
-    // identity, which classifies this very commit as `release` and proceeds. The old text said
-    // "this CLI is unverified, so a bare `upgrade` would refuse": false in both directions at once.
-    // An offline status is structurally incapable of predicting what the gate will do — so the note
-    // states what the CLI IS, and lets the gate speak for itself.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-skew-npx-'));
     try {
       const root = path.join(tmp, 'node_modules', 'wafflestack');
       write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: 'github:dustinkeeton/wafflestack' }));
-      // A RELEASE's changelog: `## [Unreleased]` stamped down, nothing under it.
       write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n');
       write(tmp, 'node_modules/.package-lock.json', JSON.stringify({
         lockfileVersion: 3,
         packages: { 'node_modules/wafflestack': { resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${SHA_A}` } },
       }));
 
-      // Exactly what cli.mjs's `offlineIdentity()` builds for plain `doctor` — the shipped,
-      // unpinned-by-default check every consumer runs on every PR.
       const offline = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
       assert.equal(offline.status, 'unverified', 'the offline path cannot see the tag — that IS the design');
-      // …and the same commit, classified WITH the network (what the gate does), is a release:
       const networked = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
       assert.equal(networked.status, 'release', 'so `upgrade` would PROCEED, not refuse');
 
@@ -1397,36 +1187,14 @@ describe('the version-skew remedy names a command that WORKS (#373 / #372)', () 
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// #374 — THE LOCK RECORDS WHICH TOOLKIT PRODUCED THE RENDER
-//
-// `toolkitVersion: "0.12.0"` does not identify content: the default branch and the tag 74 commits
-// behind it both carry that string. So the lock gains a top-level `toolkit` block, keyed exactly
-// like a `sources[]` entry (the external-stack prior art, #125) plus a `status` field `sources`
-// cannot need — because an external source's `ref` is AUTHORED and mandatory, while the built-in
-// toolkit's is DISCOVERED at runtime, so a null there is ambiguous without a reason attached.
-//
-// Two invariants carry the whole design, and both are load-bearing enough to be stated here:
-//
-//   1. **NO FIELD IS A FUNCTION OF A MOVING HEAD.** `commit` is recorded IF AND ONLY IF
-//      `status === 'release'`. A HEAD-derived SHA in a self-rendering repo's committed lock is
-//      self-referential (it names the commit BEFORE the one containing it), false whenever the tree
-//      is dirty, and would churn the lock on every single commit — reddening the documented
-//      `render` + `git diff --exit-code` recipe forever, for a change that moved no rendered byte.
-//   2. **DOCTOR'S CHECK IS A WARNING.** `doctor.toolkitRef` ships UNPINNED and `waffle-doctor.yml`
-//      runs on every consumer PR, so an error would red the entire install base the moment anything
-//      merges to this repo's `main` — and it would catch only mismatches whose rendered bytes are
-//      identical, i.e. ones that provably did not matter. `--verify-render` is the content gate.
+// #374 — the lock records WHICH TOOLKIT produced the render, keyed like a `sources[]` entry.
+// `commit` is recorded IFF `status === 'release'`: no field may be a function of a moving HEAD,
+// or a self-rendering repo's committed lock churns on every commit. doctor's check only WARNS.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * A synthetic release identity — the shape `resolveToolkitIdentity` hands back.
- *
- * `lockRepo` is deliberately ABSENT from the defaults, and `origin` is `npm-install`: there, `repo`
- * and `lockRepo` are computed from the same npm `resolved` URL and are always identical (`repoSlug`'s
- * origin step is `.git`-gated), so a fixture that overrides `repo` alone still models a real npx
- * toolkit — a fork's `repo: 'acme/…'` records acme, as it must (#373 F14). Defaulting `lockRepo` to
- * upstream would silently bake upstream's slug into every such fixture, which is the very failure F14
- * exists to stop. A CHECKOUT fixture is the one that must state both (see `unreleasedIdentity`).
+ * A synthetic release identity — the shape `resolveToolkitIdentity` hands back. `lockRepo` is
+ * deliberately ABSENT, and `origin` is `npm-install`, where `repo` and `lockRepo` always agree.
  */
 const releaseIdentity = (over = {}) => /** @type {any} */ ({
   status: 'release',
@@ -1442,12 +1210,8 @@ const releaseIdentity = (over = {}) => /** @type {any} */ ({
 });
 
 /**
- * The same, for a toolkit that is provably NOT a release — no tag, no ref, but a real commit.
- *
- * A checkout, so it states BOTH slugs: this is the one origin where they can differ (`repoSlug` reads
- * `remote.origin.url` only when `.git` exists), and a real checkout of a toolkit that declares
- * `repository` — as this one does — resolves `lockRepo` from it. Tests that model a divergent clone
- * pass the two explicitly; the one that models a toolkit declaring NO `repository` drops `lockRepo`.
+ * The same, for a toolkit that is provably NOT a release. A checkout, so it states BOTH slugs —
+ * this is the one origin where they can differ.
  */
 const unreleasedIdentity = (over = {}) =>
   releaseIdentity({ status: 'unreleased', tag: null, ref: null, origin: 'checkout', lockRepo: 'dustinkeeton/wafflestack', ...over });
@@ -1465,10 +1229,8 @@ const RELEASE_BLOCK = {
 };
 
 /**
- * The same release, rendered from a CHECKOUT — and it names no repo (#384 F13). `git describe` reads
- * the clone's local tag refs and asks no remote, so nothing corroborates that ANY repo holds this tag;
- * `source` + `ref` are a pin, and a pin is a claim. The local facts (`ref`, `commit`, `status`) are
- * recorded because they are real and checkable; the repo is not, because it is not.
+ * The same release rendered from a CHECKOUT, naming no repo: `git describe` asks no remote, and
+ * `source` + `ref` are a pin — a claim. The local facts are recorded because they are checkable.
  */
 const CHECKOUT_RELEASE_BLOCK = { ...RELEASE_BLOCK, source: null };
 
@@ -1482,9 +1244,6 @@ describe('toolkitLockEntry — the block\'s shape (#374)', () => {
   });
 
   test('an UNRELEASED identity records nulls and a status that says WHY — never HEAD\'s sha', () => {
-    // The identity HAS a commit (a checkout always knows its HEAD). The block still records null:
-    // that SHA does not identify what rendered (the tree may be dirty, and in this repo it is dirty
-    // by definition — rendering uncommitted stacks/** edits is the point of a local render).
     const identity = unreleasedIdentity({ commit: SHA_A });
     assert.equal(identity.commit, SHA_A, 'the identity knows HEAD…');
     assert.deepEqual(toolkitLockEntry(identity), {
@@ -1507,15 +1266,12 @@ describe('toolkitLockEntry — the block\'s shape (#374)', () => {
   });
 
   test('NO identity → NO block. The library caller\'s lock is byte-identical to the pre-#374 shape', () => {
-    // ~50 existing `renderProject({ toolkitVersion: '0.0.test' })` call sites, plus evals.mjs, pass
-    // no identity. Omitting the block is what keeps every one of them green — and it is honest: a
-    // block asserting provenance nobody supplied would be a lie.
+    // ~50 existing render call sites pass no identity: omitting the block is what keeps them green.
     assert.equal(toolkitLockEntry(null), null);
   });
 
   test('a release whose repo slug is unknowable records source: null — and no pin can be built', () => {
-    // #373's contract, verbatim: `status: 'release'` does NOT imply a non-null ref. A bare clone with
-    // no `origin`, no npm lockfile and no `repository` field is a release nobody can name.
+    // #373's contract: `status: 'release'` does NOT imply a non-null ref.
     const entry = toolkitLockEntry(releaseIdentity({ repo: null, ref: null }));
     assert.deepEqual(entry, { source: null, sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' });
     assert.equal(toolkitPinFromLock({ toolkit: entry }), null, 'no slug → no reproducible npx spec');
@@ -1531,28 +1287,17 @@ describe('the `unverified` carry-forward (#374)', () => {
   const prevLock = { toolkitVersion: '0.12.0', toolkit: RELEASE_BLOCK, files: FILES };
 
   test('a network blip does NOT churn a good release block to nulls', () => {
-    // Without this, an `unverified` render (a GitHub blip, a proxy, the hatch, a `dlx` install)
-    // would rewrite a full release block to nulls — so two teammates on the SAME pinned toolkit
-    // commit two different locks, and the documented `render` + `git diff --exit-code` CI gate goes
-    // red with no content change anywhere.
+    // Without the carry-forward an `unverified` render rewrites a full release block to nulls, so two
+    // teammates on the SAME pinned toolkit commit two different locks and the diff gate reds.
     const entry = toolkitLockEntry(unverifiedIdentity(), {
       prevLock,
       newFiles: { ...FILES },
       toolkitVersion: '0.12.0',
     });
-    // #384 F9: the guarantee is REPRODUCIBILITY, not attribution. The recorded toolkit still produces
-    // these exact bytes — it is not a claim that it is the toolkit that PERFORMED this render (an
-    // unverified CLI knows its own commit; it just could not classify it). Keep the block for the
-    // former, and do not let the assertion message promise the latter.
     assert.deepEqual(entry, RELEASE_BLOCK, 'the recorded toolkit still reproduces these exact bytes — keep it');
   });
 
   test('the carry-forward\'s guarantee is REPRODUCIBILITY, not attribution (#384 F9)', () => {
-    // The doc used to promise the carried-forward block is "still exactly true". It is not: this
-    // render was performed at commit B, and the block it writes names commit A. That is CORRECT
-    // behavior — A still reproduces these bytes, and churning to nulls on a blip is the bug this
-    // guards — but the claim had to be narrowed to what actually holds. This test pins the gap the
-    // doc now describes, so nobody "fixes" the behavior to match the old, wrong sentence.
     const ranAtB = unverifiedIdentity({ commit: SHA_B }); // an unverified CLI KNOWS its own commit
     const entry = toolkitLockEntry(ranAtB, { prevLock, newFiles: { ...FILES }, toolkitVersion: '0.12.0' });
     assert.equal(entry.commit, SHA_A, 'the block names A…');
@@ -1561,9 +1306,7 @@ describe('the `unverified` carry-forward (#374)', () => {
   });
 
   test('…but only when it asserts NOTHING NEW: different content rewrites the block honestly', () => {
-    // The carry-forward is airtight, not a guess: it fires only when the freshly rendered bytes are
-    // IDENTICAL to the bytes the recorded provenance already describes. Move a byte and the old
-    // block would be a claim about content that no longer exists.
+    // It fires only when the freshly rendered bytes are IDENTICAL to the ones the block describes.
     const entry = toolkitLockEntry(unverifiedIdentity(), {
       prevLock,
       newFiles: { ...FILES, 'b.md': 'hash-b-CHANGED' },
@@ -1584,8 +1327,7 @@ describe('the `unverified` carry-forward (#374)', () => {
   });
 
   test('an added or removed file is caught even when every surviving hash matches', () => {
-    // `sameFiles` must compare the key SETS, not just the shared keys — a subset would carry a
-    // release block forward across a render that added or dropped an output.
+    // `sameFiles` compares the key SETS: a subset would carry the block across an added/dropped output.
     const added = toolkitLockEntry(unverifiedIdentity(), {
       prevLock,
       newFiles: { ...FILES, 'c.md': 'hash-c' },
@@ -1601,9 +1343,7 @@ describe('the `unverified` carry-forward (#374)', () => {
   });
 
   test('UNRELEASED never carries forward — it is a POSITIVE determination, not an absence', () => {
-    // Two people rendering the same unreleased toolkit compute the same nulls offline, so there is
-    // nothing to protect. Carrying forward here would preserve a release block for a render that
-    // provably was NOT that release.
+    // Two people rendering the same unreleased toolkit compute the same nulls — nothing to protect.
     const entry = toolkitLockEntry(unreleasedIdentity(), {
       prevLock,
       newFiles: { ...FILES },
@@ -1615,7 +1355,7 @@ describe('the `unverified` carry-forward (#374)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// #372's read-back. The triple equality IS the contract, and it stops the lock's pin format and
+// #372's read-back. The triple equality IS the contract: it stops the lock's pin format and
 // `toolkitRef()`'s from drifting apart.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1628,8 +1368,6 @@ describe('toolkitPinFromLock — #372 reads the pin back out (#374)', () => {
     assert.equal(toolkitPinFromLock(lock), 'github:dustinkeeton/wafflestack#v0.12.0');
     assert.equal(toolkitPinFromLock(lock), toolkitRef(slug, 'v0.12.0'));
     assert.equal(toolkitPinFromLock(lock), identity.ref);
-    // …and it is a spec `npx` accepts: base + '#' + pin, with the pin held separately in the lock
-    // exactly as `sources[].ref` holds an external stack's.
     assert.equal(`${toolkitSource(identity.repo)}#${lock.toolkit.ref}`, identity.ref);
   });
 
@@ -1676,17 +1414,13 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     const lock = readLockJson();
     assert.deepEqual(lock.toolkit, RELEASE_BLOCK);
-    // The block ADDS identity; it replaces nothing. `toolkitVersion` is still `upgrade`'s migration
-    // baseline and `list`'s skew signal, and no existing reader changes behavior.
     assert.equal(lock.toolkitVersion, '0.12.0');
-    // …and the render surfaces the block it wrote, which is what `upgrade` diffs against.
     assert.deepEqual(result.toolkit, RELEASE_BLOCK);
     // Placement: immediately after `toolkitVersion`, before `targets`.
     assert.deepEqual(Object.keys(lock).slice(0, 3), ['toolkitVersion', 'toolkit', 'targets']);
   });
 
   test('an UNRELEASED render records `{ ref: null, commit: null, status: "unreleased" }`', () => {
-    // This is THIS REPO's own lock, on every render, forever: an untagged checkout of the toolkit.
     assert.equal(render(unreleasedIdentity()).ok, true);
     assert.deepEqual(readLockJson().toolkit, {
       source: 'github:dustinkeeton/wafflestack',
@@ -1703,12 +1437,8 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('THE ANTI-CHURN TEST — two unreleased toolkits, different commits, BYTE-IDENTICAL lock', () => {
-    // THE non-negotiable regression guard. If a future change ever records HEAD's sha for a checkout
-    // render, this test fails — and it must, because that lock would churn on every single commit to
-    // `main`, conflict on every long-lived branch, and permanently red the documented
-    // `render` + `git diff --exit-code .waffle/waffle.lock.json` recipe for a no-op change.
-    //
-    // The two identities differ in the ONE field a naive implementation would reach for.
+    // THE anti-churn guard: recording HEAD's sha for a checkout render would churn the lock on every
+    // commit and permanently red the documented `render` + `git diff --exit-code` recipe.
     assert.equal(render(unreleasedIdentity({ commit: SHA_A })).ok, true);
     const first = lockBytes();
     assert.equal(render(unreleasedIdentity({ commit: SHA_B })).ok, true);
@@ -1718,15 +1448,8 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('THE DETERMINISM TEST — two clones, different `origin`, BYTE-IDENTICAL lock (#384 F2)', () => {
-    // THE ANTI-CHURN TEST's sibling, and the gap it structurally could not see: it varies `commit`,
-    // so a moving value that arrives through `repo` sails straight past it.
-    //
-    // `identity.repo` is origin-first (#373 F14) — correct for "which remote do I ASK about tags",
-    // and machine state on a checkout. Two contributors on the SAME commit rendering the SAME bytes
-    // (one cloned upstream, one cloned their fork) wrote different `source` values into the COMMITTED
-    // lock, churning it back and forth and redding `render` + `git diff --exit-code` for a change
-    // that moved no rendered byte. `lockRepo` is the pin-derived answer, and it is what the lock
-    // records.
+    // Its sibling, varying `repo` rather than `commit`: `identity.repo` is origin-first, so two
+    // contributors on the same commit would write different `source` values. `lockRepo` is pin-derived.
     const upstreamClone = unreleasedIdentity({ repo: 'dustinkeeton/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
     const forkClone = unreleasedIdentity({ repo: 'contributor/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
 
@@ -1740,20 +1463,6 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('a RELEASE is NOT an exception — a checkout records NO source at all (#384 F11, F13)', () => {
-    // This test has now asserted three different things, and the journey IS the finding. F2's first fix
-    // carved `release` out of "the lock records the pin, not the clone", on the reasoning that
-    // `identity.repo` had been "corroborated" by `ls-remote`. F11 showed that is false on a CHECKOUT —
-    // `release` is decided offline by `git describe --exact-match` and the function returns before any
-    // lookup, ZERO ls-remote calls — and concluded: record the DECLARED repo, which is at least
-    // deterministic. F13 showed that STILL wrote a lie, because `source` is not a label, it is half of
-    // a PIN (`toolkitPinFromLock` === `` `${source}#${ref}` ``): naming the declared repo asserts that
-    // repo holds this tag, and on a checkout nobody asked it. A fork clean on its own `v1.0.0`, carrying
-    // upstream's `repository` verbatim, pinned `github:dustinkeeton/wafflestack#v1.0.0` — a repo that
-    // never cut that tag.
-    //
-    // Determinism was never the whole obligation; it was one of two. `null` satisfies BOTH: no clone
-    // leaks in, and no unverified repo is named. NOTE `origin: 'checkout'` — the fixture used to say
-    // `npm-install` while its name said checkout, so it never once exercised the path it was guarding.
     const checkout = { origin: /** @type {const} */ ('checkout') };
     const fromUpstreamClone = releaseIdentity({ ...checkout, repo: 'dustinkeeton/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
     const fromForkClone = releaseIdentity({ ...checkout, repo: 'contributor/wafflestack', lockRepo: 'dustinkeeton/wafflestack' });
@@ -1769,14 +1478,6 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('THE PIN NEVER NAMES A REPO THAT DOES NOT HOLD THE REF — the checkout twin (#384 F13)', () => {
-    // The checkout twin of the npx fork test above, which was the ONLY path that pinned this property —
-    // and on the checkout it was false. THE REALISTIC FORK: `gh repo fork`, cut `v1.0.0`, push, change
-    // nothing else. `repository` still says upstream (`repoSlug`'s docblock: "nothing prompts anyone to
-    // rewrite it"), `origin` says acme, and `git describe` reads acme's OWN tag out of the local refs.
-    //
-    // The two candidate sources are BOTH wrong here, which is why the answer is neither:
-    //   - `repo` (acme, from origin)      → correct repo, but it is the CLONE — F2/F11 nondeterminism.
-    //   - `lockRepo` (dustinkeeton)       → deterministic, and a pin for a tag upstream NEVER CUT.
     const forkCheckout = releaseIdentity({
       version: '1.0.0',
       tag: 'v1.0.0',
@@ -1801,11 +1502,6 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('…and #373 F14 still holds where it actually lives: the NPX path names the fork', () => {
-    // The direction a naive fix breaks — a fork must name ITSELF — but pinned on the path F14 is
-    // about. On npm/npx there is no `.git`, so `repoSlug`'s origin step cannot fire and BOTH slugs are
-    // computed from npm's `resolved` URL: `repo === lockRepo === acme`. `resolved` is not machine
-    // state, it is the pin the operator typed (`npx github:acme/wafflestack#v1.0.0`), so the fork's
-    // lock names the fork on every machine — deterministic AND self-naming, no exception needed.
     const forkViaNpx = releaseIdentity({
       origin: 'npm-install',
       repo: 'acme/wafflestack',
@@ -1819,15 +1515,8 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('the FALLBACK cannot reopen the hole: an unknown repo is recorded as unknown, never as the clone (#384 F11)', () => {
-    // `lockSourceRepo`'s tail (`?? identity.repo`) is where the fix could have leaked straight back
-    // out. A toolkit checkout whose `package.json` declares NO `repository` has `lockRepo: null` and
-    // `repo:` whatever `remote.origin.url` said — so an ungated fallback writes the CLONE into the
-    // committed lock, which is F11 again through a side door. The tail is therefore gated on the same
-    // fact that makes it safe elsewhere: `repoSlug`'s origin step is `.git`-gated, so on npm-install
-    // `repo` IS the pin-derived slug (the test above depends on that), and on a checkout it is not.
-    //
-    // The honest answer is `null` — "an unknown toolkit", which `toolkitPinFromLock` already declines
-    // to pin. Determinism is preserved by recording nothing, not by recording a guess.
+    // `lockSourceRepo`'s `?? identity.repo` tail is safe only because `repoSlug`'s origin step is
+    // `.git`-gated: on npm-install `repo` IS pin-derived; on a checkout it is the clone, so record null.
     const upstreamClone = unreleasedIdentity({ repo: 'dustinkeeton/wafflestack', lockRepo: null });
     const forkClone = unreleasedIdentity({ repo: 'contributor/wafflestack', lockRepo: null });
 
@@ -1844,7 +1533,6 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   test('carry-forward, end to end: a blip after a release render preserves the release block', () => {
     assert.equal(render(releaseIdentity()).ok, true);
     const afterRelease = lockBytes();
-    // Same toolkit, same content — but this run could not reach GitHub.
     assert.equal(render(unverifiedIdentity()).ok, true);
     assert.equal(lockBytes(), afterRelease, 'the lock does not move: the old provenance is still true');
     assert.deepEqual(readLockJson().toolkit, RELEASE_BLOCK);
@@ -1860,8 +1548,7 @@ describe('the lock records the toolkit that produced the render (#374)', () => {
   });
 
   test('backward compat: a lock with no `toolkit` block doctors CLEAN, with a note (mirrors #125)', () => {
-    // The prior art, pinned: `installer.test.mjs` — "a lock with no `sources` block doctors clean".
-    // Additive key + tolerant readers, no lock-format version bump, no migration.
+    // Prior art: a lock with no `sources` block doctors clean — additive key, tolerant readers.
     assert.equal(render(releaseIdentity()).ok, true);
     const lock = readLockJson();
     delete lock.toolkit;
@@ -1908,10 +1595,7 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
   });
 
   test('NO LOCK: `toolkitProvenance` is part of the RETURN SHAPE — reading it must not throw (#384 F5)', () => {
-    // The no-lock early return omitted the key entirely, so `doctor(…).toolkitProvenance.status` —
-    // which #372 is specced to read — threw a TypeError on a repo that has never rendered. A field
-    // that exists only on the happy path is not a contract; every consumer would need a guard the
-    // docs never mention. `not-recorded` is the honest status: no lock records no provenance.
+    // The no-lock early return must still carry `toolkitProvenance` — #372 reads `.status` unguarded.
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'prov374-nolock-'));
     try {
       const dr = doctor({ cwd: fresh, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
@@ -1933,10 +1617,8 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
   });
 
   test('THE CONSUMER-SAFETY TEST: a provenance mismatch is a WARNING — `ok` stays TRUE', () => {
-    // If this ever flips to false, EVERY consumer's required `waffle-doctor` check goes red the
-    // moment anything merges to this repo's `main`: `doctor.toolkitRef` ships UNPINNED by default
-    // (stacks/github-workflow/stack.yaml) and `waffle-doctor.yml` runs on every consumer PR, so that
-    // CLI's commit differs from every consumer's lock by construction. Fatal. Ends the discussion.
+    // If this ever flips to false, every consumer's required `waffle-doctor` check reds the moment
+    // anything merges to this repo's `main`: `doctor.toolkitRef` ships UNPINNED by default.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0', toolkitIdentity: releaseIdentity({ version: '0.11.0', tag: 'v0.11.0', commit: SHA_A, ref: 'github:dustinkeeton/wafflestack#v0.11.0' }) });
     const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_B }), toolkitRoot });
     assert.equal(dr.ok, true, 'a provenance mismatch MUST NOT fail the gate');
@@ -1948,8 +1630,6 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
   });
 
   test('THE HEADLINE: same version, DIFFERENT commit — the case a version string cannot express', () => {
-    // A re-cut or force-pushed tag. `"0.12.0"` on both sides: the version-skew note is SILENT, and
-    // before #374 the lock had nothing else to say. This is the entire point of the issue.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
     const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_B }), toolkitRoot });
     assert.equal(dr.ok, true, 'still a warning');
@@ -1958,17 +1638,13 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
     assert.doesNotMatch(out, /version skew/, 'the versions MATCH — only the commits differ');
     assert.match(out, /both report version 0\.12\.0 from the same repository but resolve to DIFFERENT commits/);
     assert.match(out, /re-cut or force-pushed/);
-    // #384 F3: the note now shows its WORK. `recut` asserts a cause — a moved tag — and the reader
-    // must be able to see the evidence it rests on: the same repo on both sides, and the two commits.
     assert.match(out, /aaaaaaaaaaaa/, 'names the lock\'s commit');
     assert.match(out, /bbbbbbbbbbbb/, 'names this CLI\'s commit');
     assert.match(out, /github:dustinkeeton\/wafflestack/, 'and names the repository it checked');
   });
 
   test('THE GATE-DOESN\'T-GO-RED TEST: --verify-render with different provenance, identical content', () => {
-    // `--verify-render`'s comparison is `files`-only, deliberately (see the comment at the site).
-    // Extending it to provenance is the single most natural-looking future change that would
-    // red-gate the entire install base — this test is what stops it.
+    // `--verify-render` stays files-only: extending it to provenance would red-gate the install base.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
     const dr = doctor({
       cwd,
@@ -1985,23 +1661,16 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
   });
 
   test('an UNRELEASED lock + an unidentifiable CLI: informational, no comparison, ok (this repo)', () => {
-    // Exactly `waffle-doctor.yml` running on THIS repo: our lock says `unreleased`/null, and the
-    // unpinned CI doctor is some other unreleased commit. Mismatch by construction, every run.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: unreleasedIdentity() });
     const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: null, toolkitRoot });
     assert.equal(dr.ok, true);
     assert.equal(dr.toolkitProvenance.status, 'unpinnable');
     const out = dr.notes.join('\n');
-    // "marked UNRELEASED", not "an UNRELEASED toolkit" — the article could not be right for every
-    // status, and the same line printed `an RELEASE` / `an UNDEFINED` (#384 F7).
     assert.match(out, /rendered by a toolkit marked UNRELEASED/);
     assert.doesNotMatch(out, /provenance mismatch/, 'there is nothing to compare — do not invent a mismatch');
   });
 
   test('a release lock + an offline (unverified) CLI is NOT a mismatch — it is an unknown', () => {
-    // The normal state for plain `doctor` on an npx install: it resolves its identity OFFLINE, which
-    // structurally cannot reach `release` (#373). Calling that a mismatch would cry wolf on the most
-    // common consumer path there is.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
     const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: unverifiedIdentity(), toolkitRoot });
     assert.equal(dr.ok, true);
@@ -2010,21 +1679,12 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
   });
 
   test('THE OVERLAY-MUST-NOT-PROPAGATE TEST: provenance is read from the CANONICAL lock, never the local one', () => {
-    // doctor reads `lock.toolkit`, NOT `tree.toolkit` — a deliberate choice reasoned out at the call
-    // site, and until now pinned by nothing: flipping it to `tree.toolkit ?? lock.toolkit` left the
-    // whole suite green (#384 review, F1). This test is what makes the comment an invariant.
-    //
-    // The two blocks genuinely CAN diverge — canonical carries forward against `canonicalFiles`, the
-    // local one against `effectiveFiles` — so a content-changing overlay can leave canonical holding
-    // a `release` block while local holds `unverified` nulls. Reading `tree` would then report a
-    // MACHINE-PRIVATE provenance no teammate can be told about: the exact "local overlay must not
-    // propagate" class this repo was bitten by in #317. Provenance is a property of the COMMITTED
-    // render — an overlay changes VALUES, never which toolkit produced them.
+    // doctor reads `lock.toolkit`, never `tree.toolkit`: the two can diverge, and provenance is a
+    // property of the COMMITTED render — an overlay changes VALUES, not which toolkit produced them (#317).
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity() });
     const canonical = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
     assert.deepEqual(canonical.toolkit, RELEASE_BLOCK, 'precondition: the committed block is a release');
 
-    // This machine's private render: same files, but a provenance block that says something else.
     const local = { ...canonical, toolkit: { ...RELEASE_BLOCK, ref: null, commit: null, status: 'unverified' } };
     fs.writeFileSync(path.join(cwd, '.waffle/waffle.local.lock.json'), `${JSON.stringify(local, null, 2)}\n`);
 
@@ -2081,8 +1741,6 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
   });
 
   test('SAME VERSION, different commit — still reported. This is #372\'s self-upgrade trap', () => {
-    // `toVersion === lock.toolkitVersion` → `status: 'current'` → "already on toolkit X" → upgrade
-    // falls silent on a toolkit that genuinely moved. Now it says so.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_A }) });
 
     const result = runUpgrade(releaseIdentity({ commit: SHA_B }), '0.12.0');
@@ -2092,18 +1750,10 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
     assert.match(out, /already on toolkit 0\.12\.0/, 'the old, blind line still prints…');
     assert.match(out, /toolkit 0\.12\.0 is unchanged by version, but its commit moved aaaaaaaaaaaa → bbbbbbbbbbbb/);
     assert.match(out, /the tag was re-cut/);
-    // #384 F4: the line used to also offer "…or one of the two renders used an unreleased toolkit".
-    // That cause is STRUCTURALLY IMPOSSIBLE on this branch — `moved` requires both commits non-null,
-    // and `toolkitLockEntry` writes `commit` IFF `status === 'release'` (the anti-churn invariant),
-    // so an unreleased render lands in `unknown`, never `moved`. A test pinned the false clause;
-    // this one pins its absence.
     assert.doesNotMatch(out, /unreleased toolkit/, 'a cause this branch cannot have');
   });
 
   test('a REPO SWAP is not a re-cut tag at the second site either (#384 F3)', () => {
-    // `describeToolkitMove` compared commits alone — the same unasked question, in `upgrade`. A lock
-    // rendered by a fork's v0.12.0, upgraded with an upstream CLI reporting v0.12.0, was told its tag
-    // had been re-cut. `diffToolkit` now carries the two sources so the line can tell them apart.
     renderProject({
       toolkitRoot,
       cwd,
@@ -2118,23 +1768,14 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
     const out = logged.join('\n');
     assert.match(out, /DIFFERENT REPOSITORIES/);
     assert.match(out, /github:acme\/wafflestack @ aaaaaaaaaaaa → github:dustinkeeton\/wafflestack @ bbbbbbbbbbbb/);
-    // The line may *deny* a re-cut ("neither tag need have been re-cut"); what it must never do is
-    // ASSERT one. Pin the assertion, not the word.
     assert.doesNotMatch(out, /the tag was re-cut/, 'a cause it never checked');
   });
 
   test('an UNKNOWN source is not a re-cut either — the three-state rule holds at BOTH sites (#384 F12)', () => {
-    // F3's fix taught this line to compare sources, but `differentRepos` is false when a source is
-    // merely NULL — so a lock whose `source` was never recorded (a bare clone; any lock written before
-    // #374 gained the field) fell into the strong arm and was told its tag had been RE-CUT OR
-    // FORCE-PUSHED. That is an assertion about a remote nobody queried, from evidence that does not
-    // exist — F3's own defect, surviving inside F3's fix. Same / different / UNKNOWN.
     renderProject({
       toolkitRoot,
       cwd,
       toolkitVersion: '0.12.0',
-      // `repo: null` ⇒ `source: null` in the committed block — the bare-clone lock, which
-      // `toolkitLockEntry` demonstrably emits.
       toolkitIdentity: releaseIdentity({ commit: SHA_A, repo: null, lockRepo: null }),
     });
 
@@ -2150,13 +1791,6 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
   });
 
   test('NO commit on the previous side: provenance is FILLED IN, never "moved 0.12.0 → 0.12.0" (#384 F8)', () => {
-    // The `unknown` branch's `to`-truthy arm — which had NO test at all: gutting the line left the
-    // whole suite green. Its own comment says "no move can be honestly claimed", and the next line
-    // claimed one: `toolkit moved 0.12.0 → 0.12.0`.
-    //
-    // Not exotic. A first render lands `unverified` on any network blip — and per #383 a pnpm/yarn
-    // `dlx` consumer has no npm lockfile, so it is `unverified` ALWAYS. The moment they upgrade on a
-    // CLI that does resolve a release at the same version, they hit exactly this.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: unverifiedIdentity() });
     const written = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8')).toolkit;
     assert.equal(written.commit, null, 'the previous render recorded no commit');
@@ -2170,8 +1804,6 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
   });
 
   test('…while a genuine CROSS-VERSION fill-in still reads as a move', () => {
-    // The other arm of the same ternary must keep its wording: the versions really did move, even
-    // though the previous side recorded no commit to move FROM.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0', toolkitIdentity: unverifiedIdentity({ version: '0.11.0' }) });
     const result = runUpgrade(releaseIdentity({ commit: SHA_A }), '0.12.0');
     assert.equal(result.toolkitMove.status, 'unknown');
@@ -2200,7 +1832,6 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
     const block = { ...RELEASE_BLOCK };
     const move = diffToolkit(block, { ...block }, { fromVersion: '0.12.0', toVersion: '0.12.0' });
     assert.equal(move.status, 'unchanged');
-    // …and `null` when neither side ever recorded provenance: no move, and no absence worth a line.
     assert.equal(diffToolkit(null, null, {}), null);
   });
 });
@@ -2211,11 +1842,7 @@ describe('upgrade reports the toolkit\'s commit move (#374)', () => {
 
 describe('describeToolkitProvenance (#374)', () => {
   test('every state produces exactly one note, and the note SAYS THE RIGHT THING (#384 F10)', () => {
-    // This table used to assert only `notes[0].length > 20` — and that is precisely how a note reading
-    // "rendered by an RELEASE toolkit … cannot be pinned to a release" (for a block
-    // `toolkitPinFromLock` pins fine) shipped past a green suite: 100+ characters of wrong is still
-    // > 20. A row now carries the substring its note must contain, so a state and its message cannot
-    // drift apart. The length check stays as a backstop, but it is no longer the only guard.
+    // Each row carries the substring its note must contain, so a state and its message cannot drift.
     const states = [
       [{ lockToolkit: null }, 'not-recorded', /records no toolkit provenance/],
       [{ lockToolkit: toolkitLockEntry(unreleasedIdentity()) }, 'unpinnable', /marked UNRELEASED .* cannot be pinned to a release/],
@@ -2223,11 +1850,8 @@ describe('describeToolkitProvenance (#374)', () => {
       [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity() }, 'match', /matches this CLI/],
       [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.12.0', identity: releaseIdentity({ commit: SHA_B }) }, 'recut', /re-cut or force-pushed/],
       [{ lockToolkit: RELEASE_BLOCK, lockVersion: '0.11.0', identity: releaseIdentity({ commit: SHA_B }) }, 'mismatch', /the lock was rendered by/],
-      // A release block with no commit — impossible from `toolkitLockEntry`, but a hand-edited,
-      // foreign, or future-CLI lock can carry one, and doctor must not crash OR LIE about it. It is
-      // PINNABLE (see the pin below) and merely not comparable, so the note must not say otherwise.
+      // Impossible from `toolkitLockEntry`, but a hand-edited or foreign lock can carry one.
       [{ lockToolkit: { ...RELEASE_BLOCK, commit: null } }, 'unverifiable', /names github:dustinkeeton\/wafflestack#v0\.12\.0 but recorded no commit/],
-      // A malformed block with no `status` at all: it printed `an UNDEFINED toolkit`.
       [{ lockToolkit: { ...RELEASE_BLOCK, status: undefined } }, 'unpinnable', /marked UNIDENTIFIED/],
     ];
     for (const [input, expected, noteMatches] of states) {
@@ -2241,9 +1865,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('the two exported halves of the contract AGREE about a pinnable block (#384 F7)', () => {
-    // `describeToolkitProvenance` said the lock "cannot be pinned to a release" while
-    // `toolkitPinFromLock` — the other half of the contract #372 consumes — pinned that exact block.
-    // Shipping them contradictory hands the ambiguity to the next PR. They must agree.
     const block = { ...RELEASE_BLOCK, commit: null };
     const pin = toolkitPinFromLock({ toolkit: block });
     assert.equal(pin, 'github:dustinkeeton/wafflestack#v0.12.0', 'it IS pinnable…');
@@ -2255,11 +1876,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('a FORK\'s v0.12.0 vs UPSTREAM\'s v0.12.0 is not a re-cut tag — it is two repos (#384 F3)', () => {
-    // `recut` used to fire on `sameVersion && differentCommit` and assert "the tag was re-cut or
-    // force-pushed" — an assertion about a remote it never queried. Two repositories that each cut a
-    // genuine v0.12.0 land here, neither tag touched. This is the ORDINARY shape for the fork
-    // population #373 F14 exists to serve, and the correct diagnosis was sitting unread in
-    // `lockToolkit.source` and `identity.repo`.
     const result = describeToolkitProvenance({
       lockToolkit: { source: 'github:acme/wafflestack', sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' },
       lockVersion: '0.12.0',
@@ -2275,7 +1891,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('…while a genuine re-cut — SAME repo, same version, different commit — still reports `recut`', () => {
-    // The headline capability must survive the fix: gating on the sources agreeing must not gut it.
     const result = describeToolkitProvenance({
       lockToolkit: RELEASE_BLOCK, // github:dustinkeeton/wafflestack
       lockVersion: '0.12.0',
@@ -2287,10 +1902,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('an UNKNOWN source is neither "same" nor "different" — it gets a hedge, not membership (#384 F12)', () => {
-    // The three-state rule. F3's fix compared sources but treated `unknown` as `same`, so a bare
-    // clone's release block (`source: null` — `toolkitLockEntry` emits these) was told the two "both
-    // report version 0.12.0 FROM THE SAME REPOSITORY" — in a sentence that had just called the lock
-    // "an unknown toolkit". F3 fixed an over-claim by introducing one; this pins the third state.
     const result = describeToolkitProvenance({
       lockToolkit: { ...RELEASE_BLOCK, source: null },
       lockVersion: '0.12.0',
@@ -2305,9 +1916,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('…and the same-repo claim is still MADE when it is actually established', () => {
-    // The opposite miss: a fix that hedged everything would gut the headline. When both sources are
-    // known and equal, "from the same repository" is established fact and must still be asserted —
-    // that is the evidence the re-cut cause rests on.
     const result = describeToolkitProvenance({
       lockToolkit: RELEASE_BLOCK, // github:dustinkeeton/wafflestack
       lockVersion: '0.12.0',
@@ -2320,15 +1928,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('a FORK CHECKOUT\'s genuine re-cut reads `recut`, not DIFFERENT REPOSITORIES (#384 F13)', () => {
-    // #374's headline, INVERTED for the fork population this PR exists to serve — and the writer is what
-    // fixed it. The lock was written by the fork's own checkout render, so under F13 its `source` was the
-    // DECLARED repo (upstream, inherited) while the CLI's was `origin` (acme): apples to oranges, and the
-    // comparison then labelled ONE repo with a re-cut tag as TWO repos whose tags "need not have moved",
-    // with a remedy pointing at a toolkit that did not produce the lock.
-    //
-    // Now the checkout records `source: null` — it corroborated no repo, so it names none — and the
-    // comparison falls to F12's hedge: still `recut` (the commits DID move), with the cause honestly
-    // hedged rather than a repo split invented out of a `package.json` field nobody rewrote.
     const forkCheckoutLock = toolkitLockEntry(
       releaseIdentity({
         version: '1.0.0', tag: 'v1.0.0', ref: 'github:acme/wafflestack#v1.0.0',
@@ -2352,23 +1951,6 @@ describe('describeToolkitProvenance (#374)', () => {
   });
 
   test('the CLI names itself by where it CAME FROM — the reader must not read `lockRepo` (#384 F13)', () => {
-    // The reader-side fix F13's review proposed — compare `lockToolkit.source` against
-    // `toolkitSource(identity.lockRepo ?? identity.repo)` — and the reason it is NOT the fix. It reds
-    // right here, and the note it produces refutes itself in one sentence.
-    //
-    // A lock rendered by the fork VIA NPX carries a CORROBORATED source (`ls-remote` found v0.12.0 on
-    // that commit in acme's remote). The CLI is a CHECKOUT of that same fork: `origin` = acme, declared
-    // `repository` = upstream (inherited). One repository; the tag was re-cut. Reading `lockRepo` for the
-    // CLI's side compares acme against dustinkeeton, returns `mismatch`, and prints:
-    //
-    //   "the lock was rendered by github:acme/wafflestack#v0.12.0 @ aaaa…; this CLI is
-    //    github:acme/wafflestack#v0.12.0 @ bbbb…. These are DIFFERENT REPOSITORIES"
-    //
-    // — two IDENTICAL sources, declared different. `cliWho` is built from `identity.ref`, which is
-    // origin-derived (#373 F14, and it must stay so: the remedy has to name the toolkit in your hand).
-    // So a verdict computed from a DIFFERENT slug than the sentence prints is F12's self-contradiction
-    // class, and it re-inverts the very diagnosis F13 is about. The CLI has ONE self-identification, and
-    // this is it.
     const result = describeToolkitProvenance({
       lockToolkit: { source: 'github:acme/wafflestack', sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' },
       lockVersion: '0.12.0',
@@ -2388,17 +1970,8 @@ describe('describeToolkitProvenance (#374)', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// #372 — MOVE. The last link of epic #377: resolve (#373) → record (#374) → move.
-//
-// `upgrade` moved the toolkit forward everywhere except the two places that decide WHICH TOOLKIT
-// ACTUALLY RUNS: `doctor.toolkitRef` (CI's doctor job) and `waffle.toolkitRef` (every `/waffle-*`
-// skill). They are plain config in `.waffle/waffle.yaml`, and `upgrade` never wrote that file — so a
-// consumer who followed the REQUIRED PRACTICE and pinned ended up with a lock rendered by the NEW
-// toolkit and a CI job re-rendering with the OLD one. The two disagree, and the next unrelated PR
-// goes red for a change nobody made.
-//
-// The rule under test, in one sentence: **rewrite a pin the consumer already chose, to the pin the
-// lock is about to record — never introduce one, never write a pin we cannot back.**
+// #372 — MOVE: rewrite a pin the consumer already chose, to the pin the lock is about to record.
+// Never introduce one, and never write a pin we cannot back.
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe('classifyToolkitRefValue — which values are ours to move (#372)', () => {
@@ -2418,9 +1991,6 @@ describe('classifyToolkitRefValue — which values are ours to move (#372)', () 
     const v = classifyToolkitRefValue('github:dustinkeeton/wafflestack#v0.12.0');
     assert.equal(v.kind, 'release-pin');
     assert.equal(v.fragment, 'v0.12.0');
-    // A release tag is ALWAYS `v`-prefixed (RELEASE_TAG), so `#0.12.0` names a tag that does not
-    // exist. Recognising it is precisely how `upgrade` fixes it: we read the bare form and write the
-    // real one. "Preserving the authored style" would write another tag that does not resolve.
     const bare = classifyToolkitRefValue('github:dustinkeeton/wafflestack#0.12.0');
     assert.equal(bare.kind, 'release-pin');
     assert.equal(bare.fragment, '0.12.0');
@@ -2436,9 +2006,8 @@ describe('classifyToolkitRefValue — which values are ours to move (#372)', () 
   test('not-github: a local path, a non-github URL, a bare slug, a non-string — none of them ours', () => {
     assert.equal(classifyToolkitRefValue('../wafflestack').kind, 'not-github');
     assert.equal(classifyToolkitRefValue('/Users/dev/wafflestack').kind, 'not-github');
-    // A BARE `owner/repo` parses as a slug (`parseRepoSlug` takes it) and is still not a candidate:
-    // `vendor/wafflestack` is a relative path as readily as a slug, and this answer decides whether a
-    // consumer's committed config gets rewritten. Only an explicit `github:` spec or github.com URL qualifies.
+    // A bare `owner/repo` is as readily a relative path, and this answer decides whether a committed
+    // config gets rewritten — only an explicit `github:` spec or a github.com URL qualifies.
     assert.equal(classifyToolkitRefValue('vendor/wafflestack').kind, 'not-github');
     assert.equal(classifyToolkitRefValue('vendor/wafflestack#v0.12.0').kind, 'not-github', 'even with a release fragment');
     assert.equal(classifyToolkitRefValue('https://gitlab.com/dustinkeeton/wafflestack#v0.12.0').kind, 'not-github', 'another host');
@@ -2447,12 +2016,8 @@ describe('classifyToolkitRefValue — which values are ours to move (#372)', () 
     assert.equal(classifyToolkitRefValue('github:').kind, 'not-github', 'unparseable behind the scheme');
   });
 
-  // ── the git-URL form (#386 F3) ────────────────────────────────────────────────────────────────
-  // These used to fall in with local paths as `not-github` and be skipped in SILENCE, so a consumer
-  // who pinned in URL form watched `doctor.toolkitRef` and the lock diverge with no output at all.
-  // They are npx specs the rendered `npx --yes <ref> doctor` line resolves, and no `pattern:` in
-  // either key's schema rejects one. They are now READ (so the divergence can be reported) and still
-  // never REWRITTEN — `form` is the axis that separates those two questions.
+  // git-URL pins are READ, so a divergence can be reported, and never REWRITTEN — `form` is the
+  // axis that separates those two questions.
   describe('the git-URL form is recognised, and marked as one we do not rewrite (#386 F3)', () => {
     const URLS = [
       'git+https://github.com/dustinkeeton/wafflestack#v0.12.0',
@@ -2478,8 +2043,7 @@ describe('classifyToolkitRefValue — which values are ours to move (#372)', () 
     });
 
     test('a URL carries its fragment kind across, exactly as the shorthand does', () => {
-      // Same value, same kind, different form. The kind says WHAT it is; the form says whether we may
-      // rewrite it. Folding the two together is what produced the silent skip.
+      // The kind says WHAT it is; the form says whether we may rewrite it.
       assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack').kind, 'unpinned', 'floating, and still floating');
       assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack').form, 'url');
       assert.equal(classifyToolkitRefValue('https://github.com/dustinkeeton/wafflestack#main').kind, 'other-pin');
@@ -2487,8 +2051,6 @@ describe('classifyToolkitRefValue — which values are ours to move (#372)', () 
     });
 
     test('the host is anchored — a lookalike or a path segment is NOT a github URL', () => {
-      // `parseRepoSlug` is the second gate, but the form test must not admit these on its own: this
-      // answer decides whether we report a repo the consumer never named.
       assert.equal(classifyToolkitRefValue('https://evil.com/github.com/o/r#v0.12.0').kind, 'not-github');
       assert.equal(classifyToolkitRefValue('https://github.com.evil.com/o/r#v0.12.0').kind, 'not-github');
     });
@@ -2499,17 +2061,13 @@ describe('toolkitPinFromIdentity — the pin is DERIVED, never surgically edited
   test('a release npx toolkit yields the pin the lock is about to record — by construction', () => {
     const identity = releaseIdentity();
     assert.equal(toolkitPinFromIdentity(identity), 'github:dustinkeeton/wafflestack#v0.12.0');
-    // THE COMPOSITION, stated as an assertion: what #372 writes into waffle.yaml is literally what
-    // #374 writes into the lock, read back by #372's own read-back function. They cannot drift.
+    // THE COMPOSITION: what #372 writes into waffle.yaml is what #374 writes into the lock.
     assert.equal(toolkitPinFromIdentity(identity), toolkitPinFromLock({ toolkit: toolkitLockEntry(identity) }));
     assert.equal(toolkitPinFromIdentity(identity), identity.ref);
   });
 
   test('a CHECKOUT release yields NULL — #384 F13, inherited for free', () => {
-    // `git describe` reads the clone's LOCAL tag refs and asks no remote, so nothing corroborates
-    // that any repository holds this tag. `toolkitLockEntry` records `source: null`; the pin is a
-    // claim about a repo, so there is no pin. A toolkit developer's `upgrade` therefore never writes
-    // their clone's origin into a consumer's committed config.
+    // `git describe` asks no remote, so a checkout records `source: null` and there is no pin to write.
     const identity = releaseIdentity({ origin: 'checkout', lockRepo: 'dustinkeeton/wafflestack' });
     assert.equal(toolkitLockEntry(identity).source, null, 'the F13 shape, on merged main');
     assert.equal(toolkitPinFromIdentity(identity), null);
@@ -2532,16 +2090,14 @@ describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
   const OLD = 'github:dustinkeeton/wafflestack#v0.12.0';
   const NEW = 'github:dustinkeeton/wafflestack#v0.13.0';
 
-  // The one assertion worth making about a "verbatim" write, and the one the #372 tests were missing:
-  // the output is the input with the PIN'S BYTES swapped and NOTHING else moved. Substring matches
-  // cannot see a reflow — they pass just as happily on a file the serializer has re-laid-out.
+  // A "verbatim" write means the output is the input with the PIN'S BYTES swapped and nothing else
+  // moved — a substring match passes just as happily on a file the serializer has re-laid-out.
   const assertOnlyThePinMoved = (src, out) =>
     assert.equal(out, src.replaceAll(OLD, NEW), 'the pin moved; every other byte must be where it was');
 
   test('BYTE-VERBATIM: only the pin’s own bytes change — the rest of the file is untouched', () => {
-    // Every element here is one a `doc.toString()` re-serialize DEMONSTRABLY reflows (#386), which is
-    // what makes this test non-vacuous: an unpadded flow collection (the shape `schema/FORMAT.md:43`
-    // documents), a plain scalar past 80 columns, and a double-spaced inline comment.
+    // Every element here is one `doc.toString()` demonstrably reflows (#386) — that is what makes
+    // this test non-vacuous.
     const src = [
       '# the pin CI fetches',
       'targets: [claude]',
@@ -2560,7 +2116,6 @@ describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
 
     const out = setScalarIn(src, PIN_PATH, NEW);
     assertOnlyThePinMoved(src, out);
-    // Spelled out, so a failure names the thing that broke rather than dumping two files:
     assert.match(out, /^targets: \[claude\]$/m, 'the flow collection is not re-padded to `[ claude ]`');
     assert.match(out, /^ {4}description: A description .{40,}columns yaml folds a plain scalar at$/m, 'not folded at 80');
     assert.match(out, new RegExp(`toolkitRef: ${NEW.replace(/[.#/]/g, '\\$&')} {2}# pinned deliberately$`, 'm'), 'the comment keeps its own spacing');
@@ -2579,8 +2134,7 @@ describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
   });
 
   test('a BLOCK scalar cannot be spliced, so it falls back to a re-serialize — correct, not verbatim', () => {
-    // The one shape the splice refuses (its bytes carry a block header + indentation). The value must
-    // still land: a pin we decline to move would silently leave CI fetching the old toolkit.
+    // The one shape the splice refuses (block header + indentation) — the value must still land.
     const src = `config:\n  doctor:\n    toolkitRef: >-\n      ${OLD}\n`;
     const out = setScalarIn(src, PIN_PATH, NEW);
     assert.equal(YAML.parse(out).config.doctor.toolkitRef, NEW, 'the pin still moved');
@@ -2594,9 +2148,8 @@ describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
   });
 
   test('a FLAT literal key is not found — matching `lookupPath`, which never resolves one', () => {
-    // `makeResolver` reads config via `lookupPath`, which splits on `.` and walks NESTED objects. A
-    // literal `"doctor.toolkitRef":` key in waffle.yaml is therefore INERT — it pins nothing. So the
-    // bumper must not touch it either: rewriting a key the renderer ignores would be a lie.
+    // A literal `doctor.toolkitRef:` key is INERT — `lookupPath` walks NESTED objects — so rewriting
+    // it would be a lie.
     assert.equal(setScalarIn(`config:\n  doctor.toolkitRef: ${OLD}\n`, PIN_PATH, NEW), null);
   });
 
@@ -2608,18 +2161,14 @@ describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
     assert.equal(setScalarIn('config:\n  doctor:\n   toolkitRef: [unclosed\n', PIN_PATH, NEW), null);
   });
 
-  // The rationale this helper carried until #386 — "`doc.setIn` drops the comments attached to the old
-  // node" — was FALSE for `yaml` v2, and it was documented as fact in six places. `YAMLMap.set` keeps
-  // the old node on a scalar→scalar overwrite, so `setIn` preserves comments exactly as an in-place
-  // mutation does. Pinning it here means the six corrected sites cannot silently rot back.
+  // `setIn` DOES keep the comments on a scalar→scalar overwrite (#386); what #372 forbids is
+  // CREATING a pin the consumer never chose.
   test('the REAL contract: `doc.setIn` would CREATE the pin — which is what #372 forbids', () => {
     const doc = YAML.parseDocument('config:\n  doctor: {}\n');
     doc.setIn(PIN_PATH, NEW);
     assert.match(doc.toString(), /toolkitRef: github/, 'setIn invents a pin the consumer never chose…');
     assert.equal(setScalarIn('config:\n  doctor: {}\n', PIN_PATH, NEW), null, '…and setScalarIn refuses to');
 
-    // And the claim that justified the ban is simply not true of this `yaml`, so it must not be
-    // re-asserted in the docs: on an EXISTING scalar, setIn keeps the comments too.
     const live = YAML.parseDocument(`config:\n  doctor:\n    toolkitRef: ${OLD} # pinned deliberately\n`);
     live.setIn(PIN_PATH, NEW);
     assert.match(live.toString(), /# pinned deliberately/, 'setIn does NOT drop comments (yaml v2)');
@@ -2627,8 +2176,8 @@ describe('setScalarIn — the byte-verbatim write (#372, #386)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The write, end to end, through a real `upgrade` over a fixture toolkit that declares BOTH keys and
-// renders BOTH placeholders — so the sequencing claim (config → render → lock, one run) is provable.
+// The write, end to end, over a fixture toolkit that declares BOTH keys and renders BOTH
+// placeholders — so the sequencing claim (config → render → lock, one run) is provable.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
@@ -2668,9 +2217,8 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-toolkit-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'prov372-project-'));
     write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: fixture\nstacks: [core]\n');
-    // The fixture stack DECLARES both keys and RENDERS both placeholders — `alpha` stands in for the
-    // nine `waffle-*` skills, `ci` for `.github/workflows/waffle-doctor.yml`. Same substitution
-    // machinery, same lock hashing; the point is that one `upgrade` moves config, render and lock.
+    // The fixture stack declares both keys and renders both placeholders, so one `upgrade` is shown
+    // moving config, render and lock together.
     write(
       toolkitRoot,
       'stacks/core/stack.yaml',
@@ -2721,10 +2269,8 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('THE SEQUENCING PROOF: one run bakes the NEW pin into the rendered files and the lock', () => {
-    // The write lands AFTER migrations and BEFORE render — and `renderProject` re-reads waffle.yaml
-    // from disk. So the same `upgrade` that moves the config also renders the moved value into every
-    // consumer of the placeholder, and hashes THAT into the lock. A bump applied after the render
-    // would leave the stale ref in the rendered output until someone ran `render` again.
+    // The write lands AFTER migrations and BEFORE render, and `renderProject` re-reads waffle.yaml
+    // from disk — so the same run renders the moved value and hashes it into the lock.
     writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
     assert.match(fs.readFileSync(skillPath(), 'utf8'), /v0\.12\.0/, 'the OLD pin is what rendered before');
@@ -2734,8 +2280,6 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
     assert.match(fs.readFileSync(skillPath(), 'utf8'), /npx --yes github:dustinkeeton\/wafflestack#v0\.13\.0 doctor/, 'the waffle-* skills');
     assert.match(fs.readFileSync(ciPath(), 'utf8'), /npx --yes github:dustinkeeton\/wafflestack#v0\.13\.0 doctor/, 'the doctor workflow');
 
-    // …and the lock's hashes describe the bytes actually on disk. `doctor` folds that into `ok`, so
-    // this is the assertion that the whole thing is coherent rather than merely written.
     assert.equal(result.doctor.ok, true, JSON.stringify(result.doctor?.modified));
     assert.equal(result.doctor.modified.length, 0);
   });
@@ -2756,10 +2300,6 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('`status: current` STILL reconciles — the already-red-CI repo heals itself', () => {
-    // The epic's third *Done when*, and the state the bug actually leaves people in: they upgraded,
-    // the lock moved to 0.13.0, the pin stayed at v0.12.0, CI went red. Running `upgrade` again is a
-    // no-op by version (`current`) — and it must STILL move the pin, or the remedy doctor prints
-    // ("run `wafflestack upgrade`") remains the command that cannot fix it.
     writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.13.0', toolkitIdentity: at('0.13.0', { commit: SHA_A }) });
 
@@ -2781,12 +2321,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('comments and formatting survive the rewrite, VERBATIM — byte for byte but the pins (#386)', () => {
-    // The claim #372 makes about this file is `verbatim`, and only ONE assertion tests it: the bytes
-    // after == the bytes before with the pins swapped. Substring matches cannot see a whole-document
-    // reflow — the flow collection, the over-long plain scalar and the double-spaced inline comment
-    // below are each a thing `doc.toString()` demonstrably re-lays-out, and each passed the old test.
-    // Written whole, not through `writeConfig`, so the assertion owns EVERY byte of the file — the
-    // unpadded `targets: [claude]` flow collection included.
+    // Written whole, not through `writeConfig`, so the assertion owns EVERY byte of the file.
     const before = [
       '# CI fetches this exact toolkit — see docs/gitignore.md',
       'targets: [claude]',
@@ -2811,15 +2346,12 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('NO-OP, BYTE FOR BYTE: an absent key is never given a pin — and the file is never WRITTEN', () => {
-    // This repo's own shape, and most consumers'. Introducing a pin here would silently change what
-    // their CI fetches — a decision that is theirs, not ours.
+    // Introducing a pin where the consumer has none would silently change what their CI fetches.
     writeConfig('config: {}\n');
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
     const before = configBytes();
     // Since #386 the write is byte-verbatim, so "wrote the same bytes back" and "did not write" are
-    // INDISTINGUISHABLE by content — a byte assertion can no longer catch a dropped dirty guard. The
-    // mtime can: age the file, and require that upgrade never touched it. (Before #386 the guard was
-    // caught only because an unguarded write REFLOWED the file, i.e. by the very bug that PR fixed.)
+    // indistinguishable by content — the mtime is what catches a dropped dirty guard.
     const aged = new Date(Date.now() - 60_000);
     fs.utimesSync(configPath(), aged, aged);
     const untouched = fs.statSync(configPath()).mtimeMs; // fs-reported, not `aged.getTime()`: APFS keeps
@@ -2865,11 +2397,6 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
     assert.match(out, new RegExp(`waffle\\.toolkitRef is pinned to \`#${SHA_A}\``));
   });
 
-  // ── the git-URL pin (#386 F3) ─────────────────────────────────────────────────────────────────
-  // The bug this replaces: a release-pinned git URL classified as `not-github`, fell in with local
-  // paths, and was skipped in SILENCE — no pinMove, no log. The other key moved, the lock recorded the
-  // new toolkit, and CI went on fetching the old one. That is the lock/pin divergence #372 exists to
-  // kill, reintroduced through a pin form the classifier did not recognise.
   test('a release-pinned GIT URL is left alone — and SAID so, with the remedy, while the other key moves', () => {
     writeConfig(pinnedConfig('git+https://github.com/dustinkeeton/wafflestack#v0.12.0', 'github:dustinkeeton/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
@@ -2877,10 +2404,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
 
     const result = runUpgrade(at('0.13.0'), '0.13.0');
 
-    // BYTE IDENTITY: the ONLY bytes that moved are the shorthand pin's. The URL pin is not rewritten
-    // (the conservative call), and nothing else in the file is either. `github:…#v0.12.0` is not a
-    // substring of `git+https://github.com/…#v0.12.0` (`github:` vs `github.com/`), so this one
-    // replacement names exactly the shorthand line.
+    // BYTE IDENTITY: the only bytes that move are the shorthand pin's; the URL pin is left alone.
     assert.equal(
       configBytes(),
       before.replace('github:dustinkeeton/wafflestack#v0.12.0', 'github:dustinkeeton/wafflestack#v0.13.0'),
@@ -2906,7 +2430,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
 
   test('every git-URL spelling is caught — https, git+https, scp-style ssh, git+ssh', () => {
     // One test per form would pin the same branch four times; what matters is that no spelling slips
-    // back into the silent `not-github` bucket. Each is a spec `npx --yes` resolves.
+    // back into the silent `not-github` bucket.
     for (const url of [
       'https://github.com/dustinkeeton/wafflestack#v0.12.0',
       'git+https://github.com/dustinkeeton/wafflestack#v0.12.0',
@@ -2922,10 +2446,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('a git URL that ALREADY names the toolkit that rendered says NOTHING — it must not cry wolf', () => {
-    // Same pin, different notation: `git+https://…#v0.13.0` fetches exactly what `github:…#v0.13.0`
-    // does. Nothing diverges, so a warning here would fire on every upgrade at a consumer who is
-    // already correct — and a warning that fires when nothing is wrong is how consumers learn to
-    // ignore warnings.
+    // Same pin, different notation — a warning here would fire on a consumer who is already correct.
     writeConfig(pinnedConfig('git+https://github.com/dustinkeeton/wafflestack#v0.13.0', 'github:dustinkeeton/wafflestack#v0.13.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.13.0', toolkitIdentity: at('0.13.0', { commit: SHA_B }) });
     const before = configBytes();
@@ -2937,9 +2458,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('a git URL naming a DIFFERENT repo diverges even at the same tag — and is reported', () => {
-    // The fragment matches, but the repo does not: a pin at `acme/wafflestack#v0.13.0` does not name
-    // the toolkit that rendered this lock, so it is a divergence like any other. Matching the tag is
-    // not enough — the repo has to be the one that rendered (#384 F14, inherited).
+    // The fragment matches but the repo does not: matching the tag is not enough.
     writeConfig(pinnedConfig('https://github.com/acme/wafflestack#v0.13.0', 'github:dustinkeeton/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
     const before = configBytes();
@@ -2961,9 +2480,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('a NON-RELEASE toolkit never writes a pin — and says why it did not', () => {
-    // The hatch, a `dlx` install, a network blip (#383): `ref` is null, so there is no pin. Writing
-    // one anyway would stamp a claim this run could not establish. Read `ref == null` as "no
-    // provenance captured", NEVER as "not a release".
+    // Read `ref == null` as "no provenance captured", NEVER as "not a release".
     writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
     const before = configBytes();
@@ -2998,9 +2515,6 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('a CROSS-REPO rewrite is truthful — and loud', () => {
-    // An acme pin, upgraded by an UPSTREAM toolkit. The rewrite is correct (the pin must name the
-    // toolkit that produced the lock, or `--verify-render` reds by construction) and it is exactly
-    // the case a consumer must see, so it never happens quietly.
     writeConfig(pinnedConfig('github:acme/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A, repo: 'acme/wafflestack', ref: 'github:acme/wafflestack#v0.12.0' }) });
 
@@ -3010,9 +2524,8 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('the gitignored overlay is neither read nor written (#317)', () => {
-    // `waffle.local.yaml` is a developer's private tooling — a pin there (typically a local checkout)
-    // is a deliberate machine-local override, and it must not trigger a write to the committed file
-    // OR receive one itself.
+    // `waffle.local.yaml` is private tooling: it must neither trigger a write to the committed file
+    // nor receive one itself.
     writeConfig('config: {}\n'); // the COMMITTED file pins nothing
     write(cwd, '.waffle/waffle.local.yaml', pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.12.0', toolkitIdentity: at('0.12.0', { commit: SHA_A }) });
@@ -3044,10 +2557,7 @@ describe('upgrade moves the pinned toolkitRef keys (#372)', () => {
   });
 
   test('a write that does not land is reported `unwritable`, to: null — never a bump we did not make (#387)', () => {
-    // A release pin that WOULD move (`from !== pin`), but the byte-level writer returns null — a path no
-    // config input can reach on its own, so it is driven through the `writeScalar` seam. The branch used
-    // to assert `unchanged, to: <pin>` — a bump on the one path where nothing was written. It must now
-    // say what is true: nothing landed.
+    // Driven through the `writeScalar` seam — no config input reaches a null return on its own.
     writeConfig(pinnedConfig('github:dustinkeeton/wafflestack#v0.12.0'));
     const before = configBytes();
     const moves = reconcileToolkitRefPins({ cwd, identity: at('0.13.0'), log, writeScalar: () => null });
@@ -3092,17 +2602,12 @@ describe('upgrade reports a newer release, and names the exact command (#372)', 
     upgrade({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, changelog: '# Changelog\n', migrations: [], log });
 
   test('a pinned CLI one release behind names the command that escapes the trap — and does NOT re-exec', () => {
-    // The whole trap: `waffle.toolkitRef` pinned to v0.13.0 runs the v0.13.0 CLI, which reports
-    // `current` and would otherwise fall silent. It cannot BE v0.14.0 — but `latestTag` told it that
-    // v0.14.0 exists, so it can say exactly what to run. Report and name; never re-exec (#373).
     const identity = releaseIdentity({ version: '0.13.0', tag: 'v0.13.0', ref: 'github:dustinkeeton/wafflestack#v0.13.0', latestTag: 'v0.14.0' });
     const result = runUpgrade(identity, '0.13.0');
     assert.deepEqual(result.newerRelease, { tag: 'v0.14.0', command: 'npx --yes github:dustinkeeton/wafflestack#v0.14.0 upgrade' });
     const out = logged.join('\n');
     assert.match(out, /a newer toolkit release exists: v0\.14\.0/);
     assert.match(out, /npx --yes github:dustinkeeton\/wafflestack#v0\.14\.0 upgrade/);
-    // …and the pins/lock still record what ACTUALLY rendered, which is 0.13.0. A pin names the
-    // toolkit that produced the render, never one it merely heard about.
     assert.equal(readLock(cwd).toolkitVersion, '0.13.0');
   });
 

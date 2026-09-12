@@ -2,12 +2,6 @@
 /**
  * Ref grammar, toolkit-wide resolution, and dependency-closure logic shared by
  * `install`, `render`, and `validate`.
- *
- * A ref names something installable:
- *   - a stack:                  `github-workflow`
- *   - an item:                  `skills/issue`, `agents/project-manager`, `files/.github/workflows/ci.yml`
- *   - a stack-qualified item:   `engineering-team/skills/security-audit`
- * The qualified form disambiguates names defined in more than one stack.
  */
 
 import path from 'node:path';
@@ -17,18 +11,15 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
 /** @import { Toolkit, Stack, Item } from './toolkit.mjs' */
 
 /**
- * A REF kind — always PLURAL. Distinct from an item's intrinsic `kind` (`'agent'` | `'skill'` |
- * `'files'`), which is singular for agents and skills. See the note on toolkit.mjs's typedefs.
+ * A REF kind — always PLURAL, distinct from an item's intrinsic singular `kind`.
  * @typedef {'agents' | 'skills' | 'files'} ItemKind
  *
- * A raw ref parsed into its grammatical form — discriminated on `form`.
  * @typedef {{ form: 'qualified', stack: string, kind: ItemKind, name: string }
  *         | { form: 'item', kind: ItemKind, name: string }
  *         | { form: 'stack', name: string }} ParsedRef
  *
- * A ref resolved against the toolkit — discriminated on `type`. `forwardedFrom` is present only
- * when the raw ref named a `replaced` waffle and the registry forwarded it (#335): it is the ref
- * the caller ASKED for, so the caller can say which pin moved and to what.
+ * A ref resolved against the toolkit — discriminated on `type`. `forwardedFrom` is the ref the
+ * caller ASKED for, present only when the registry forwarded a `replaced` waffle (#335).
  * @typedef {{ type: 'stack', name: string }
  *         | { type: 'item', kind: ItemKind, name: string, stack: string, item: Item,
  *             canonicalRef: string, forwardedFrom?: string }} ResolvedRef
@@ -50,37 +41,22 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
  * @property {SelectionItem[]} items deduped by stack+kind+name, eject-filtered
  * @property {{ rootRef: string, deps: string[] }[]} closures pulled-in dependencies, for reporting
  * @property {string[]} errors resolution errors (unknown stack, unknown/ambiguous ref)
- * @property {string[]} targets the enabled targets this selection was computed against — the SAME
- *   derived value the scope filter used (`project.targets`, defaulted to VALID_TARGETS when the key
- *   is absent). Carried on the result so a downstream consumer of the selection (`render`'s syrup
- *   pairing, `setup`'s playbook) cannot judge scope against a DIFFERENT target set than the one that
- *   produced these items. It was a defaulted parameter first, and the default — "every target
- *   enabled" — was the one value that silently restores pre-#364 behavior for a caller who forgets
- *   it; there is now no argument to forget (#364)
+ * @property {string[]} targets the enabled targets this selection was filtered by — carried on the
+ *   result so a downstream consumer cannot judge scope against a DIFFERENT target set (#364)
  * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
- *   items whose declared `targets:` are all disabled here — nothing renders, and that must not be
- *   silent (#364)
- * @property {{ from: string, to: string, via: string[] }[]} forwarded `include:` refs that named a
- *   `replaced` waffle and were forwarded to its successor by the registry (#335). The render
- *   proceeds — a toolkit-side rename must not break a downstream repo — but it must not proceed in
- *   SILENCE either: the caller prints these so the consumer learns their pin is stale, and
- *   `upgrade` rewrites it. Empty on every repo whose pins are current, which is nearly all of them
+ *   items whose declared `targets:` are all disabled here, so nothing renders (#364)
+ * @property {{ from: string, to: string, via: string[] }[]} forwarded `include:` refs the registry
+ *   forwarded to a renamed waffle's successor (#335) — the render proceeds, but the pin is stale
  * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
  *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
- *   filtered out: the dependent renders, its declared dependency never does. Eject-filtered on both
- *   ends. Newly possible with #364, and it must not be silent either (#74). `optIn` = the dependency
- *   is opt-in syrup in its own stack, so enabling one of its targets is necessary but NOT sufficient
- *   to render it — the caller must state BOTH steps or the remedy it prints does not work
+ *   filtered out, eject-filtered on both ends. `optIn` = the dependency is opt-in syrup in its own
+ *   stack, so enabling one of its targets is necessary but NOT sufficient to render it
  */
 
 /**
- * Predicate matching the repo-relative output paths a rendered item owns, across ALL targets
- * (claude/codex/agents-dir) — the inverse of the render's item→path mapping. A `files/` item is
- * its own single repo-relative path (matched exactly, so `scripts/build` never sweeps up
- * `scripts/build.mjs`); an agent or skill expands to its per-target render dirs. Deliberately
- * target-blind: a lock only holds paths for the *enabled* targets, so an over-broad pattern set
- * can never over-match — it just finds whichever of an item's paths the lock actually tracks.
- * Shared by `eject` (drop an item's files from the lock) and `list` (drift-check them).
+ * Predicate matching the repo-relative output paths a rendered item owns, across ALL targets — the
+ * inverse of the render's item→path mapping. Deliberately target-blind: a lock only holds paths for
+ * the *enabled* targets, so an over-broad pattern set can never over-match.
  *
  * @param {ItemKind} kind
  * @param {string} name
@@ -146,9 +122,8 @@ export function findItems(toolkit, kind, name) {
  *   { form: 'item', kind, name }               — `(agents|skills|files)[:/]<name>`
  *   { form: 'stack', name }                    — anything else (a stack name)
  *
- * The `kind` casts are safe by construction: each regex alternates over exactly the three
- * ItemKind literals, so a captured group can only be one of them — tsc just can't see that
- * through a capture group.
+ * The `kind` casts are safe by construction: each regex alternates over exactly the three ItemKind
+ * literals, which tsc cannot see through a capture group.
  *
  * @param {string} raw
  * @returns {ParsedRef}
@@ -163,10 +138,8 @@ export function parseRef(raw) {
 }
 
 /**
- * Is this waffle gated out of every consumer-facing surface by the registry (#335)? A thin,
- * toolkit-shaped wrapper over `isWaffleWip` so the gate reads the same at each of the four sites
- * below, and so a toolkit with no registry (or a hand-built test one carrying no `registry` key at
- * all) is uniformly ungated rather than each call site remembering to check.
+ * Is this waffle gated out of every consumer-facing surface by the registry (#335)? A toolkit with
+ * no registry is uniformly ungated, rather than each call site remembering to check.
  *
  * @param {Toolkit} toolkit
  * @param {string} stackName the stack the item was resolved FROM — a name is not toolkit-unique,
@@ -181,9 +154,8 @@ export function isWipWaffle(toolkit, stackName, kind, name) {
 
 /**
  * @param {Toolkit} toolkit
- * @returns {string[]} every INSTALLABLE `kind/name` item ref in the toolkit, sorted. `wip` waffles
- *   are omitted (#335): this list is the "Available items:" remedy printed on an unknown ref, and
- *   naming a waffle there that `resolveRef` would then refuse is worse than saying nothing.
+ * @returns {string[]} every INSTALLABLE `kind/name` item ref in the toolkit, sorted; `wip` waffles
+ *   are omitted (#335), since this list is the remedy printed on an unknown ref
  */
 function availableItemRefs(toolkit) {
   const refs = new Set();
@@ -196,10 +168,8 @@ function availableItemRefs(toolkit) {
 }
 
 /**
- * The error a consumer-facing resolution raises when a ref names a `wip` waffle (#335). A `wip`
- * waffle is present in the repo and absent from every offering, so "unknown ref" would be a lie
- * that sends the reader looking for a typo — say what it actually is, and that it is not yet
- * offered.
+ * The error a consumer-facing resolution raises when a ref names a `wip` waffle (#335) — such a
+ * waffle is present in the repo, so "unknown ref" would send the reader looking for a typo.
  *
  * @param {string} raw the ref as the consumer wrote it
  * @param {ItemKind} kind
@@ -215,20 +185,11 @@ function wipRefError(raw, kind, name) {
 }
 
 /**
- * Resolve a single ref against the whole toolkit.
- * Returns { type: 'stack', name } or
- *         { type: 'item', kind, name, stack, item, canonicalRef }.
- * `canonicalRef` is the minimal ref that re-resolves uniquely: unqualified when the
- * name is unique toolkit-wide, stack-qualified when it is not.
- * Throws with an actionable message on unknown or ambiguous refs.
+ * Resolve a single ref against the whole toolkit. `canonicalRef` is the minimal ref that re-resolves
+ * uniquely: unqualified when the name is unique toolkit-wide, stack-qualified when it is not.
  *
- * This is the CONSUMER-FACING resolver (`install`, `include:`, `eject`), so it is where the waffle
- * registry's two consumer-facing rules apply (#335):
- *   - a ref naming a `replaced` waffle is **forwarded** to its successor rather than refused. A
- *     consumer who pinned the old name keeps rendering — the alternative, erroring until they hand-
- *     edit their config, makes a toolkit-side rename break every downstream repo. The result
- *     carries `forwardedFrom` so the caller can SAY the pin moved, and `upgrade` rewrites it.
- *   - a ref naming a `wip` waffle is **refused**, with a message that says so rather than "unknown".
+ * The CONSUMER-FACING resolver, so the registry's two consumer rules apply here (#335): a `replaced`
+ * waffle is FORWARDED to its successor (carrying `forwardedFrom`), a `wip` one is REFUSED.
  *
  * @param {Toolkit} toolkit
  * @param {string} raw
@@ -247,12 +208,8 @@ export function resolveRef(toolkit, raw) {
     );
   }
 
-  // Forward a renamed waffle before anything else looks on disk (#335). A tombstone exists exactly
-  // BECAUSE the old name is gone, so every lookup below would fail; and the stack qualifier of a
-  // qualified ref is equally stale (the successor may well live in a different stack), which is why
-  // the forward target is resolved unqualified. `replacementFor` walks the chain, so a pin two
-  // renames old still lands in one hop; it answers null on a cycle, and the ref then reports as
-  // unknown rather than looping.
+  // Forwarded before anything else looks on disk (#335): a tombstone exists exactly BECAUSE the old
+  // name is gone, and a qualified ref's stack is equally stale — hence the unqualified re-resolve.
   const forward = replacementFor(toolkit?.registry, parsed.kind, parsed.name);
   if (forward) {
     const resolved = resolveRef(toolkit, forward.ref);
@@ -286,11 +243,8 @@ export function resolveRef(toolkit, raw) {
   }
 
   const allMatches = findItems(toolkit, parsed.kind, parsed.name);
-  // A `wip` waffle is not a CANDIDATE, so it is filtered before the count decides between
-  // unknown / ambiguous / unique. That ordering is what makes the ambiguity rule keep working
-  // across the gate: with one `wip` and one `stable` waffle of the same name, the ref is not
-  // ambiguous — there is exactly one thing it can mean, and demanding a qualifier for a choice
-  // the consumer cannot make would be nonsense.
+  // A `wip` waffle is not a CANDIDATE, so it is filtered BEFORE the count decides between
+  // unknown / ambiguous / unique — one `wip` plus one `stable` of a name is not ambiguous.
   const matches = allMatches.filter((m) => !isWipWaffle(toolkit, m.stackName, parsed.kind, parsed.name));
   if (matches.length === 0) {
     // Everything that matched was gated: say WHY, rather than sending the reader after a typo.
@@ -315,10 +269,8 @@ export function resolveRef(toolkit, raw) {
 }
 
 /**
- * Strictly resolve a dependency ref (an entry in a stack's `requires:`), preferring
- * the declaring item's own stack for bare names, then a unique toolkit-wide match.
- * Throws on unknown or ambiguous refs — `requires:` is authored, so a dangling entry
- * is a toolkit bug.
+ * Strictly resolve a dependency ref (an entry in a stack's `requires:`), preferring the declaring
+ * item's own stack for bare names. `requires:` is authored, so a dangling entry is a toolkit bug.
  *
  * @param {Toolkit} toolkit
  * @param {string} refString
@@ -350,18 +302,9 @@ export function resolveDepStrict(toolkit, refString, preferStack) {
 }
 
 /**
- * Leniently resolve an agent frontmatter `skills:` entry (a bare skill name). Agent
- * skill lists are harness grant-pointers that may reference skills provided outside
- * this toolkit (project-local, or not yet authored), so an unresolved name is not an
- * error — it is simply skipped. Prefers the agent's own stack, then a unique
- * toolkit-wide match. Returns the resolved item or null (unknown or ambiguous).
- *
- * A `wip` skill is skipped too (#335), and the lenient doctrine is exactly why: a grant-pointer at
- * a skill that does not render here is already the NORMAL case this function is built for (a
- * project-local skill, one not yet authored), so a not-yet-offered skill needs no new behavior —
- * it is the same absence. That is what lets an agent ship while a skill it will eventually point
- * at is still being written. The strict counterpart, `requires:`, gets the opposite treatment:
- * `validate` reds when an offered waffle declares a hard dependency on a `wip` one.
+ * Leniently resolve an agent frontmatter `skills:` entry (a bare skill name). Agent skill lists are
+ * harness grant-pointers that may name skills provided outside this toolkit, so an unresolved name
+ * is skipped rather than an error. A `wip` skill (#335) is the same absence and is skipped too.
  *
  * @param {Toolkit} toolkit
  * @param {string} name a bare skill name
@@ -404,9 +347,8 @@ function directDeps(toolkit, node) {
 }
 
 /**
- * Transitive, cross-stack dependency closure of a resolved item, breadth-first, with
- * the root first. Each node is { kind, name, stack, item }. Dedup is by
- * stack+kind+name so the same item pulled via two paths appears once.
+ * Transitive, cross-stack dependency closure of a resolved item, breadth-first with the root first.
+ * Dedup is by stack+kind+name, so the same item pulled via two paths appears once.
  *
  * @param {Toolkit} toolkit
  * @param {DepNode} root
@@ -445,13 +387,8 @@ export function closureDeps(toolkit, root) {
 
 /**
  * Does a `files:` item render for a consumer whose enabled harness targets are `targets`? (#364)
- *
- * An UNSCOPED item (`item.targets === null` — no `targets:` on its manifest entry) renders
- * unconditionally: that is the pre-#364 contract and the overwhelmingly common case, because a
- * `.github/` payload is harness-independent. A SCOPED item renders iff at least one of the targets
- * it declares is enabled here. Agents and skills are never filtered — they FAN OUT across the
- * enabled targets (renderAgent/renderSkill emit one output each), they do not gate on them; a file
- * has no per-harness variant, so a filter is the only coherent reading of a scope on one.
+ * An unscoped item renders unconditionally; a scoped one renders iff it declares an enabled target.
+ * Agents and skills are never filtered — they FAN OUT across the enabled targets instead.
  *
  * @param {Item} item
  * @param {string[]} targets the consumer's enabled targets (`project.targets`)
@@ -478,13 +415,8 @@ export function includeRefMatches(includeRef, kind, name) {
 /**
  * The full set of items to render:
  *   union(items of enabled `stacks:`) ∪ closure(each `include:` item) − `eject:`
- * `trackedFiles` is the set of repo-relative paths the previous lock managed (`oldLock.files`
- * keys); it lets an **opt-in** item a repo already renders keep updating even though a fresh
- * stack expansion would gate it out.
- * Returns:
- *   items:    [{ stackName, stack, kind, item }] deduped by stack+kind+name, eject-filtered
- *   closures: [{ rootRef, deps: [kind/name…] }] for reporting pulled-in dependencies
- *   errors:   resolution errors (unknown stack, unknown/ambiguous ref)
+ * `trackedFiles` is the set of repo-relative paths the previous lock managed; it lets an **opt-in**
+ * item a repo already renders keep updating even though a fresh stack expansion would gate it out.
  *
  * @param {Toolkit} toolkit
  * @param {import('./project.mjs').ProjectConfig} project
@@ -496,23 +428,16 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   const errors = [];
   /** @type {Map<string, SelectionItem>} */
   const chosen = new Map();
-  // `loadProjectConfig` always sets `targets` (defaulting to VALID_TARGETS when the key is absent),
-  // but a bare test-constructed project object may not — default here too, rather than filtering
-  // every scoped file out.
+  // `loadProjectConfig` always sets `targets`, but a bare test-constructed project may not —
+  // defaulted here too, rather than filtering every scoped file out.
   const targets = project.targets ?? VALID_TARGETS;
   /** @type {{ ref: string, targets: string[] }[]} */
   const targetSkipped = [];
   /** @type {(stackName: string, kind: ItemKind, item: Item) => void} */
   const addItem = (stackName, kind, item) => {
-    // #364: a target-scoped syrup file is not SELECTED when none of its targets is enabled — so it
-    // never renders, and (because the render prunes every lock path it no longer produces) an
-    // already-rendered copy is removed on the next render. Unscoped items are untouched.
-    //
-    // This gate belongs here, at the single choke point every entry path funnels through — stack
-    // expansion, the `include:` closure loop, and a `requires:` dependency edge — so an explicit
-    // include cannot bypass a scope. It must also sit AFTER addStack's opt-in/trackedFiles
-    // re-admission, which deliberately keeps an already-poured syrup file selected: scope has to
-    // override tracking, or a file that falls out of scope would never be pruned.
+    // The single choke point every entry path funnels through, so an explicit include cannot bypass
+    // a scope (#364); it must stay AFTER addStack's trackedFiles re-admission, or a file that falls
+    // out of scope would never be pruned.
     if (!fileMatchesTargets(item, targets)) return;
     const key = `${stackName}::${kind}/${item.name}`;
     if (!chosen.has(key)) chosen.set(key, { stackName, stack: toolkit.stacks.get(stackName), kind, item });
@@ -520,20 +445,13 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   /** @type {(stackName: string) => void} */
   const addStack = (stackName) => {
     const stack = toolkit.stacks.get(stackName);
-    // #335: a `wip` waffle is present in the repo and offered to nobody, so adopting its whole
-    // stack must not pull it in. Gated here in the STACK EXPANSION rather than in `addItem`,
-    // because the two other entry paths into `addItem` are already gated by the resolvers that
-    // feed them: an explicit `include:` goes through `resolveRef` (which refuses a `wip` ref), and
-    // an agent's `skills:` closure through `resolveAgentSkill` (which drops one). Gating `addItem`
-    // as well would put the check where it cannot distinguish those cases — and where a `requires:`
-    // edge, whose `wip` target `validate` already reds on, would be silently half-honoured.
+    // Gated in the STACK EXPANSION rather than in `addItem` (#335): the other entry paths are
+    // already gated by the resolvers that feed them (`resolveRef`, `resolveAgentSkill`).
     for (const a of stack.agents) if (!isWipWaffle(toolkit, stackName, 'agents', a.name)) addItem(stackName, 'agents', a);
     for (const s of stack.skills) if (!isWipWaffle(toolkit, stackName, 'skills', s.name)) addItem(stackName, 'skills', s);
     for (const f of stack.files) {
-      // Opt-in syrup is poured on request only: a stack's default expansion skips an opt-in
-      // file unless the repo already tracks its path in the lock (an existing install keeps
-      // getting updates). An explicit `include:` of the file ref bypasses this gate — it is
-      // added via the closure loop below, whose root is the file itself.
+      // Opt-in syrup is poured on request only, unless the repo already tracks its path. An
+      // explicit `include:` bypasses this gate via the closure loop below.
       if (stack.optIn.has(`files/${f.name}`) && !trackedFiles.has(f.name)) continue;
       addItem(stackName, 'files', f);
     }
@@ -564,18 +482,13 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       addStack(resolved.name);
       continue;
     }
-    // #335: the ref named a waffle that has since been renamed. It rendered — `resolveRef` walked
-    // the tombstone to its successor — but a silent forward would leave the consumer's config
-    // permanently stale and them none the wiser, so record it for the caller to report.
+    // Recorded for the caller to report: a silent forward leaves the consumer's config stale (#335).
     if (resolved.forwardedFrom) {
       const old = parseRef(resolved.forwardedFrom);
       const chain = old.form === 'stack' ? null : replacementFor(toolkit?.registry, old.kind, old.name);
       forwarded.push({ from: resolved.forwardedFrom, to: resolved.canonicalRef, via: chain?.via ?? [] });
     }
-    // #364: an explicitly-included file scoped to targets this project has not enabled renders
-    // nothing. Record it so the caller can SAY so — a silent no-op on an explicit `include:` is
-    // precisely the "half-installed and silent" failure #74 exists to prevent. A stack-expansion
-    // skip stays silent (exactly like the `optIn:` gate); only an explicit include warns.
+    // Recorded so the caller can SAY so; a stack-expansion skip stays silent (#364).
     if (resolved.item.kind === 'files' && !fileMatchesTargets(resolved.item, targets)) {
       targetSkipped.push({ ref: resolved.canonicalRef, targets: resolved.item.targets ?? [] });
       continue; // do not walk its closure — nothing of it renders
@@ -600,18 +513,8 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   const ejected = new Set((project.eject ?? []).map(normalizeItemRef));
   const items = [...chosen.values()].filter((c) => !ejected.has(`${c.kind}/${c.item.name}`));
 
-  // #364: a `requires:` edge onto a file the SCOPE filtered out is newly possible — before this
-  // change a `files/` item always rendered, so a strict edge was always satisfied at render time.
-  // Scope the file, and the dependent renders WITHOUT the thing it declares it needs. The renderer
-  // only ever walks that edge FORWARD (dep → dependent), so nothing downstream would ever notice:
-  // the consumer gets a half-wired flow and hears nothing — the same "half-installed and silent"
-  // failure #74 exists to prevent, and the one entry path into the gate that got neither a warning
-  // nor a lint. Collect each broken edge so the caller can SAY the flow is incomplete.
-  //
-  // Walked over `items` (post-eject), not `chosen`, for two reasons: an EJECTED dependent is not
-  // rendered, so its unsatisfied edge is nobody's problem; and an EJECTED dependency is handed to
-  // the project (it stays on disk, unmanaged, and `eject` drops it from both locks), so the edge is
-  // satisfied by a file wafflestack no longer owns — warning about either would be noise.
+  // Walked over `items` (post-eject), not `chosen`: an ejected dependent is not rendered, and an
+  // ejected dependency is the project's, so neither edge is worth a warning.
   /** @type {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]} */
   const targetBrokenRequires = [];
   const seenEdges = new Set();
@@ -625,65 +528,40 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       } catch {
         continue; // a dangling requires: is a toolkit bug `validate` reports; not this gate's business
       }
-      // Narrowed on the ITEM's intrinsic kind, not the ref kind: `dep.kind` is the plural ref
-      // vocabulary and does not discriminate the `Item` union, so it cannot reach `targets` (a
-      // FileItem field). The two always agree — `resolveDepStrict` draws the item from
-      // `itemsOfKind(stack, kind)` — so this is the same runtime test, stated so tsc can see it.
-      // Same idiom as the explicit-include gate above.
+      // Narrowed on the ITEM's intrinsic kind: the plural `dep.kind` does not discriminate the
+      // `Item` union, so it cannot reach `targets`. The two always agree at runtime.
       if (dep.item.kind !== 'files' || fileMatchesTargets(dep.item, targets)) continue;
       const ref = `files/${dep.name}`;
       if (ejected.has(ref)) continue;
       const edge = `${requiredBy}→${ref}`;
       if (seenEdges.has(edge)) continue;
       seenEdges.add(edge);
-      // Whether the dependency is OPT-IN syrup decides what the caller may tell the consumer to do
-      // about it, and getting that wrong is worse than saying nothing: for an opt-in file, enabling
-      // a target is NECESSARY BUT NOT SUFFICIENT (`addStack` still gates it out until it is
-      // explicitly installed), so a bare "enable one of its targets" is a remedy that does not work
-      // — and once the target IS enabled this edge stops being scope-broken, so the warning would
-      // VANISH while the dependency still does not render, reading as resolved. Opt-in is a property
-      // of the dependency's OWN stack, which is `dep.stack` and need not be the dependent's.
+      // Opt-in is a property of the dependency's OWN stack (`dep.stack`), not the dependent's, and
+      // it decides the remedy: enabling a target alone leaves an opt-in file still ungated.
       const optIn = Boolean(toolkit.stacks.get(dep.stack)?.optIn.has(ref));
       targetBrokenRequires.push({ ref, requiredBy, stackName, targets: dep.item.targets ?? [], optIn });
     }
   }
 
-  // `targets` rides along on the result (see the Selection typedef): every downstream scope judgment
-  // must be made against the SAME set this selection was filtered by, and the only way to guarantee
-  // that is to stop asking the caller to pass it again.
+  // `targets` rides along so every downstream scope judgment reads the set this was filtered by.
   return { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded };
 }
 
 /**
  * Opt-in syrup companions that pair with a selected item but were gated out of the render.
  *
- * A stack declares its opt-in syrup's companion waffle with a `requires: [kind/name]` edge —
- * installing the syrup pulls the companion (`directDeps`). The render only ever walks that
- * edge forward, so installing the companion *skill* (or enabling its whole stack) never
- * surfaces the syrup it pairs with: the flow lands half-installed and silent (issue #74). This
- * walks the edge in REVERSE. For every opt-in syrup file a stack-in-the-selection did NOT
- * render, if any waffle it `requires:` IS in the selection, the syrup is a skipped companion of
- * that selection.
- *
- * Scope is the stacks that actually contribute selected items — a companion selected from
- * stack X means X is in that set, so no relevant pairing is missed, and syrup from an
- * uninvolved stack is never suggested.
+ * A stack declares its opt-in syrup's companion waffle with a `requires: [kind/name]` edge, and the
+ * render only ever walks that edge forward (#74) — this walks it in REVERSE, over the stacks that
+ * actually contribute selected items.
  *
  * @param {Toolkit} toolkit loaded toolkit
- * @param {Selection} selection a `computeSelection` result — its `targets` (the consumer's enabled
- *   harnesses) are read straight off it. A syrup file scoped away from all of them cannot be POURED
- *   here (#364), so its entry comes back marked (`scopedTo`) rather than dropped: the pairing is
- *   still real and must still be stated. This was a defaulted third PARAMETER until the default —
- *   `VALID_TARGETS`, i.e. "every target enabled" — was spotted as the one value that silently
- *   restores pre-#364 behavior: a caller who forgot the argument would judge a scoped-out file
- *   POURABLE and print an `install` command that renders nothing. Reading it off the selection that
- *   was already argument #2 means the two can never disagree, and there is no argument to forget.
+ * @param {Selection} selection a `computeSelection` result — its `targets` are read straight off it,
+ *   so the two can never disagree (#364)
  * @returns {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]}
  *   one entry per skipped syrup file, `companions` naming the selected waffles that pull it into
- *   relevance. `scopedTo` is null for a pourable file — then `fileRef` is a ready
- *   `wafflestack install <fileRef>` argument. When non-null it is the file's `targets:` scope, and
- *   the pairing CANNOT be completed here: the caller must state it without offering an install
- *   command (which would render nothing). Deterministic order (stack, then manifest).
+ *   relevance. `scopedTo` null ⇒ pourable, and `fileRef` is a ready `wafflestack install` argument;
+ *   non-null ⇒ the file's `targets:` scope, and the pairing cannot be completed here. Deterministic
+ *   order (stack, then manifest).
  */
 export function skippedSyrupCompanions(toolkit, selection) {
   const targets = selection.targets;
@@ -698,12 +576,8 @@ export function skippedSyrupCompanions(toolkit, selection) {
       const fileRef = `files/${f.name}`;
       if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
       if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
-      // #364: a syrup file scoped away from every enabled target cannot be poured here, so the
-      // caller must never hand out an `install` command for it — that command would render nothing.
-      // But dropping the whole NOTIFICATION is #74 wearing a new hat: the consumer keeps the manual
-      // half of the flow, can never get the automated half, and is told nothing. So do not suppress
-      // — RESTATE. `scopedTo` non-null means "this pairing is real AND uncompletable here", and the
-      // caller phrases it without a pour command, naming the scope instead.
+      // `scopedTo` non-null means the pairing is real AND uncompletable here (#364), so the caller
+      // states it without a pour command rather than suppressing the notification.
       const scopedTo = fileMatchesTargets(f, targets) ? null : (f.targets ?? []);
       /** @type {string[]} */
       const companions = [];

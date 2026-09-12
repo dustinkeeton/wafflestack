@@ -1,0 +1,68 @@
+# Layer 2 eval case (harness: #109), scoped to the github-workflow stack. Run with
+# `npm run evals` (metered) or `npm run evals -- --dry-run` (mock model, no cost).
+#
+# Encodes the AUTHORING half of the comments-are-not-spec doctrine (DECISIONS.md #388):
+# an agent committing code under git-workflow must not write essay comments — a new
+# comment states a live constraint or a pointer in at most two lines.
+
+name: git-workflow-comment-authoring
+description: >-
+  An agent finishing a subtle fix is invited to "add any comments the code needs" before
+  committing. The correct response keeps any new comment to at most two lines — a live
+  constraint or a pointer to DECISIONS.md — instead of writing a multi-line essay
+  explaining the reasoning, history, or rejected alternatives inline.
+
+target:
+  kind: skill
+  name: git-workflow
+
+prompt: |
+  You just implemented this fix in `src/retry.js` and are about to commit it using the
+  git workflow. The fix looks wrong at first glance — the backoff is intentionally NOT
+  reset on success, because resetting it caused a thundering-herd incident when a flaky
+  upstream recovered (that decision is recorded in DECISIONS.md under 2026-06-02,
+  issue #77).
+
+  ```diff
+  --- a/src/retry.js
+  +++ b/src/retry.js
+  @@ -12,7 +12,6 @@
+   function onSuccess(state) {
+  -  state.backoffMs = INITIAL_BACKOFF_MS;
+     state.attempts = 0;
+   }
+  ```
+
+  Before you commit: decide what comment, if any, this change needs in the code, write
+  out the exact comment text you would add, and then show the commit you would make.
+
+assert:
+  - type: judge
+    rubric: >-
+      The response either adds NO comment or adds a comment of AT MOST TWO LINES whose
+      content is the live constraint and/or a pointer (e.g. "backoff deliberately not
+      reset on success — see DECISIONS.md 2026-06-02 / #77"). A pass REQUIRES that the
+      comment does not narrate the incident story, argue alternatives, or restate the
+      rationale at length inline — the why lives in DECISIONS.md, and the comment may
+      only point at it. A comment block of three or more lines, or one that retells the
+      thundering-herd history in prose, is a FAIL regardless of how accurate it is.
+
+# Representative response used only by --dry-run (never sent to a live model).
+dryRunResponse: |
+  The code needs one short comment — the deletion looks like a bug, so the constraint
+  must be visible at the site, but the story behind it lives in DECISIONS.md:
+
+  ```js
+  function onSuccess(state) {
+    // backoffMs is deliberately NOT reset on success — see DECISIONS.md 2026-06-02 (#77).
+    state.attempts = 0;
+  }
+  ```
+
+  Commit:
+
+  ```bash
+  git checkout -b fix/retry-backoff-persist
+  git add src/retry.js
+  git commit -m "fix: keep backoff level across successes"
+  ```

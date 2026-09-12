@@ -1,34 +1,12 @@
 #!/usr/bin/env node
 //
 // memory.mjs — validate a delegate run-memory doc against its size cap and entry format.
-//
-// A delegate run has no durable memory across runs beyond GitHub artifacts and whatever
-// survives the orchestrator's context window. The run-memory doc is the fix: ONE curated,
-// capped Markdown file per repo of durable, forward-useful facts (repo quirks, recurring
-// failures, issue entanglements). The Report phase distils lessons into it — replacing and
-// pruning stale entries, never blind-appending — and the Classify / Plan phases read it back.
-//
-// The whole point is that it stays SMALL: an append-only log bloats until it poisons context
-// instead of helping it. So the doc carries a hard byte cap, and this script is the
-// deterministic gate that enforces it — the same pattern checkpoint.mjs establishes for phase
-// state. Exceeding the cap fails here, loudly, forcing curation before the run may complete;
-// it never silently truncates.
-//
-// It also enforces the entry FORMAT, so pruning is judged rather than FIFO: every entry must
-// carry a **Why** (why it is forward-useful), a **Since** (the issue/PR that taught it — its
-// staleness anchor), and an **Area** (the module tag that lets Execute hand each agent only
-// the entries relevant to its issue). An entry missing any of these fails.
-//
-// Dependency-free on purpose: it runs inside a consuming repo that may not have any npm deps
-// installed, so it uses Node built-ins only.
+// Dependency-free on purpose: it runs in a consuming repo that may have no npm deps installed.
 //
 // Usage:
 //   node memory.mjs --file <path> [--max-bytes <N>]
 //
-// A missing file is VALID — a repo with no delegate history yet simply has no memory doc, and
-// the first run creates one. Exit 0 = within cap and every entry well-formed. Exit 1 = over
-// cap, a malformed entry, or a bad argument — the caller must curate and re-validate, never
-// improvise past it.
+// A missing file is VALID. Exit 0 = within cap and well-formed; exit 1 = over cap or malformed.
 
 import fs from 'node:fs';
 
@@ -51,13 +29,8 @@ function parseArgs(argv) {
 
 const USAGE = 'Usage: node memory.mjs --file <memory.md> [--max-bytes <N>]';
 
-// ---------------------------------------------------------------------------
-// Parse the doc into entries. An entry is an H2 (`## …`) heading — the fact/lesson —
-// followed by its labelled `- **Field:** value` lines, up to the next H2 or EOF.
-// The H1 title and any preamble prose before the first H2 are not entries (they still
-// count toward the byte cap — the cap is on the whole file, which is what loads into context).
-// ---------------------------------------------------------------------------
-
+// An entry is an H2 heading plus its `- **Field:** value` lines. The H1 title and any preamble
+// are not entries, but still count toward the byte cap — the cap is on the whole file.
 function parseEntries(content) {
   const lines = content.split(/\r?\n/);
   const entries = [];
@@ -91,15 +64,12 @@ function validateEntries(entries, errors) {
         errors.push(`${where}: field **${f}:** is empty`);
       }
     }
-    // Since is the staleness anchor — it must point at the issue/PR that taught the lesson,
-    // so pruning can be judged ("was #42's area reworked?") instead of FIFO. Require a #N ref.
+    // Since is the staleness anchor, so pruning can be judged instead of FIFO — require a #N ref.
     if (e.fields.Since && !/#\d+/.test(e.fields.Since)) {
       errors.push(`${where}: **Since:** must reference the issue/PR that taught it (e.g. "#42") — got "${e.fields.Since}"`);
     }
   }
 }
-
-// ---------------------------------------------------------------------------
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
