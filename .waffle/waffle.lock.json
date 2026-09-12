@@ -32,8 +32,8 @@
     ".claude/agents/task-planner.md": "629b0f8e5c8ba1845a3e8086c4637ac75ec75e8c0c313e6f817c683103196604",
     ".claude/skills/accurate/SKILL.md": "b4afc3f598b5fbd6255e89bf54cb1fc362fc1fe3294d2230abb0978faec681b7",
     ".claude/skills/adversarial-review/SKILL.md": "c8b4eee9c3ec48635a26129f80ace214195c69beffbbbb13783847aef70b20a5",
-    ".claude/skills/audit/SKILL.md": "1a3d5b5f5a03a7cfac4e7db16ab14cb7630584da6552c3fc7265b6d21b323486",
-    ".claude/skills/autopilot/SKILL.md": "1a0d372663222c9d3886542bca742a554be56a33cd0d62ce97d47cfad4b70c6d",
+    ".claude/skills/audit/SKILL.md": "1fff8c91d63ae37c7d929d008eb9aabfc6e3a9b5b3b103c6ee1447cca645e98a",
+    ".claude/skills/autopilot/SKILL.md": "0f1f251046eb042434176ddd345114c9cbde061fd1dec30d6e23da7705ebead2",
     ".claude/skills/clean-up/scripts/clean_up.sh": "7df01756bdb73a60bf3dfa9e000f0331a8e531049994be5ee6d280f1617b4630",
     ".claude/skills/clean-up/SKILL.md": "b10a7a5542524479473e572f79d1af9543185f3681836b5e28a93632ab6ceec9",
     ".claude/skills/delegate/checkpoint.mjs": "5935c4c262f6a055d085454b03aed0857985be6fde7cd3c36f59075949441884",
@@ -81,8 +81,8 @@
     ".waffle/avatars/product-manager.svg": "dd3e1d2a1cb4b26292df2c7661e17059b930740553ccbff1f5e8892150100dd2",
     ".waffle/avatars/project-manager.svg": "336d96cedd1bb58ef98357e2c6a772a1a0e67ea114b6d870e72588541c585be8",
     ".waffle/avatars/task-planner.svg": "1bd6892e305bc5aa05dca39d1f7953928eee07212b6c3c3b0ef815607135edfd",
-    ".waffle/cheatsheet.html": "3caf6242f2db98e6c9bbb49729c8daf1ab927c4adeb3fa4c8a082dce1fa972fd",
-    ".waffle/CHEATSHEET.md": "7a8e13a656a0ecf3043c590aed4b021982f61e4fe4e4204079417d9cadf5eab5",
+    ".waffle/cheatsheet.html": "1c533d3de4af6bcbfe96c950e6d132a65da88e75b9e713673b4dce26b4a425eb",
+    ".waffle/CHEATSHEET.md": "9d4a1665a35ca8a5690e6b72828fa32ec4f1f0515679b23e9e6b75cf303e6137",
     ".waffle/team.html": "360981abfc2ee0f23ec9a0d1e73182a038ec83083df5884046443e3233452c30",
     ".waffle/TEAM.md": "12cb90367289a4188ca53775319a04e0db62d2de065e680223f851985cc9a071"
   }

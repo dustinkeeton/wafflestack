@@ -31,6 +31,23 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **`/audit` composes `/docs` instead of re-implementing it (#361).** The audit chain's two
+  documentation passes used to re-spawn `docs-agent` and `docs-human` with their own prompts — a
+  second, already-drifted copy of the `docs` skill's pipeline (no read-only change report, nothing
+  threaded between the doc writers). Per the rule adopted in #184 — a skill is the unit of work,
+  orchestration only sequences — the chain now **invokes the `docs` skill** for its documentation
+  step and spawns **four** named agents (architecture → security pass 1 → compliance → `docs`
+  skill, invoked → security pass 2). The `docs` skill's own read-only report → `docs-agent` →
+  `docs-human` chain runs inside the invocation, so only one copy of that pipeline remains. The
+  orchestration stack gains a `requires: skills/audit: [skills/docs]` edge so a per-item `audit`
+  install never names a missing skill; `autopilot`'s description of the audit gate is reworded
+  to match. Tests pin the four-agent roster, the prose invocation, and — for the first time — the
+  `docs` skill's read-only step 1 and its `{step-1 output}` hand-off. **Consumer impact:**
+  re-rendering refreshes the `audit` and `autopilot` skills; a consumer that installed `audit`
+  on its own now also receives `docs` (and its `docs-agent`/`docs-human` dependencies) through
+  the new `requires:` edge. No config change.
+
 ## [0.14.0] - 2026-08-19
 
 ### Added

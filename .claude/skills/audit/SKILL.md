@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Run a full codebase audit chain — architecture, security, toolkit integrity, machine docs, human docs, then security again. Spawns six named agents consecutively, chained on task dependencies, and reports results.
+description: Run a full codebase audit chain — architecture, security, toolkit integrity, then the docs pipeline by invoking the `docs` skill, then security again. Spawns four named agents consecutively, chained on task dependencies, and reports results.
 disable-model-invocation: true
 argument-hint: [optional focus area]
 ---
@@ -9,18 +9,19 @@ argument-hint: [optional focus area]
 
 Run the full audit pipeline in consecutive order. Each agent audits the codebase and (where its role grants edit tools) implements fixes before the next one starts; report-only agents deliver findings for the user or a later agent to fix.
 
+The documentation passes are **not this skill's to run**. A skill is the unit of work and orchestration is only sequencing: this chain **invokes the `docs` skill** for its documentation step and never re-spawns `docs-agent` or `docs-human` itself. The `docs` skill owns its own pipeline — a read-only architecture change report, then `docs-agent` fed by that report, then `docs-human` — so nothing about the doc passes is wired here.
+
 ## Chain Order
 
 1. **harness-architect** — Audit and improve codebase structure (module patterns, file organization, naming, dependency rules, import paths)
 2. **general-purpose** (pass 1) — Full security audit per the security-audit skill checklist
 3. **general-purpose** (Toolkit integrity) — Validates manifests, placeholders, tests, and render/lock integrity (validate + test + render + doctor).
-4. **docs-agent** — Create/update the machine docs (a single root `AGENTS.md` registry) optimized for LLM consumption
-5. **docs-human** — Create/update the human docs (`DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root) for human stakeholders
-6. **general-purpose** (pass 2) — Re-audit the entire codebase including all changes made by earlier agents. Ensure no new issues were introduced.
+4. **`docs` skill** (invoked, not spawned) — Refresh the machine docs and the human docs. The skill runs its own three-step pipeline: a read-only architecture change report, then `docs-agent`, then `docs-human`, each step informed by the one before.
+5. **general-purpose** (pass 2) — Re-audit the entire codebase including all changes made by earlier agents and by the docs pipeline. Ensure no new issues were introduced.
 
 ## Execution Steps
 
-The chain is **six named agents**, spawned one at a time and chained on task dependencies. There is no team to create or delete: the session has a **single implicit team**, and the `Agent` tool's `team_name` parameter is deprecated and ignored. An agent's `name:` is its address — `SendMessage(to: "<name>")` reaches it and `TaskStop(task_id: "<name>")` stops it.
+The chain is **four named agents** plus one invoked skill, run one at a time and chained on task dependencies. There is no team to create or delete: the session has a **single implicit team**, and the `Agent` tool's `team_name` parameter is deprecated and ignored. An agent's `name:` is its address — `SendMessage(to: "<name>")` reaches it and `TaskStop(task_id: "<name>")` stops it.
 
 > **If a spawn is rejected because the roster is flat** (an agent cannot name its own spawns — only the main conversation loop can), omit `name:` and address the agent by the `agentId` the spawn returns. `SendMessage` and `TaskStop` both accept it in place of a name.
 
@@ -32,16 +33,14 @@ The chain is **six named agents**, spawned one at a time and chained on task dep
 task1 = TaskCreate(subject: "Architecture audit", description: "Audit and improve codebase structure")
 task2 = TaskCreate(subject: "Security pass 1",    description: "Full security audit per the security-audit checklist")
 task3 = TaskCreate(subject: "Toolkit integrity check", description: "Validates manifests, placeholders, tests, and render/lock integrity (validate + test + render + doctor).")
-task4 = TaskCreate(subject: "Machine docs",       description: "Create/update the machine docs")
-task5 = TaskCreate(subject: "Human docs",         description: "Create/update the human docs")
-task6 = TaskCreate(subject: "Security pass 2",    description: "Re-audit including all changes made by earlier agents")
+task4 = TaskCreate(subject: "Documentation",      description: "Invoke the docs skill — change report, machine docs, human docs")
+task5 = TaskCreate(subject: "Security pass 2",    description: "Re-audit including all changes made by earlier agents")
 
 # addBlockedBy is a TaskUpdate parameter, not a TaskCreate one — and the key is taskId, not id
 TaskUpdate(taskId: task2.id, addBlockedBy: [task1.id])
 TaskUpdate(taskId: task3.id, addBlockedBy: [task2.id])
 TaskUpdate(taskId: task4.id, addBlockedBy: [task3.id])
 TaskUpdate(taskId: task5.id, addBlockedBy: [task4.id])
-TaskUpdate(taskId: task6.id, addBlockedBy: [task5.id])
 ```
 
 ### 2. Spawn Agents Sequentially
@@ -78,22 +77,11 @@ Agent(
 TaskUpdate(taskId: task3.id, status: "completed")
 ```
 
-```
-Agent(
-  subagent_type: "docs-agent",
-  name: "docs-agent",
-  prompt: <docs-agent prompt>
-)
-TaskUpdate(taskId: task4.id, status: "completed")
-```
+**Documentation (Task 4) — invoke, do not spawn.** Invoke the `docs` skill (`.claude/skills/docs/SKILL.md`) and run it to completion exactly as it documents itself: its step 1 is a **read-only** architecture change report, its step 2 hands that report to `docs-agent`, its step 3 runs `docs-human` after `docs-agent` completes. Pass the focus area along (see [Focus Area](#focus-area)). Do not spawn `docs-agent` or `docs-human` from this chain and do not thread anything between them — the `docs` skill owns that wiring. Its spawns are its own: they finish and return, and they are not part of this chain's named roster or its teardown. That the `docs` skill spawns `harness-architect` a second time is by design — pass 1 above *remediates* structure; the docs pipeline's pass only *reports* what changed so the doc writers are informed.
 
 ```
-Agent(
-  subagent_type: "docs-human",
-  name: "docs-human",
-  prompt: <docs-human prompt>
-)
-TaskUpdate(taskId: task5.id, status: "completed")
+# After the docs skill completes:
+TaskUpdate(taskId: task4.id, status: "completed")
 ```
 
 ```
@@ -102,36 +90,32 @@ Agent(
   name: "security-final",
   prompt: <security pass 2 prompt>
 )
-TaskUpdate(taskId: task6.id, status: "completed")
+TaskUpdate(taskId: task5.id, status: "completed")
 ```
 
 ### 3. Summary and Teardown
 
-After all 6 complete, present the user a consolidated summary table of findings and fixes per agent, then tear the agents down:
+After all 5 complete, present the user a consolidated summary table of findings and fixes per step, then tear the named agents down:
 
 ```
 # Politely ask each agent to wind down…
 SendMessage(to: "architecture-pass", message: {type: "shutdown_request", reason: "Audit chain complete"})
 SendMessage(to: "security-pass1",    message: {type: "shutdown_request", reason: "Audit chain complete"})
 SendMessage(to: "toolkit-integrity", message: {type: "shutdown_request", reason: "Audit chain complete"})
-SendMessage(to: "docs-agent",        message: {type: "shutdown_request", reason: "Audit chain complete"})
-SendMessage(to: "docs-human",        message: {type: "shutdown_request", reason: "Audit chain complete"})
 SendMessage(to: "security-final",    message: {type: "shutdown_request", reason: "Audit chain complete"})
 
 # …then confirm the kill.
 TaskStop(task_id: "architecture-pass")
 TaskStop(task_id: "security-pass1")
 TaskStop(task_id: "toolkit-integrity")
-TaskStop(task_id: "docs-agent")
-TaskStop(task_id: "docs-human")
 TaskStop(task_id: "security-final")
 ```
 
-**Teardown is shutdown-then-stop.** `shutdown_request` is the polite first step, and an agent that honours it terminates cleanly. It is **not** reliable on its own — a requested agent can go idle but stay alive, still emitting idle notifications. `TaskStop(task_id: "<agent-name>")` is what actually terminates it, and it is safe to call on an agent that has already exited. Never treat a sent `shutdown_request` as proof the agent is gone; always follow through. There is nothing else to tear down — with a single implicit team per session, no team object is created and none is deleted.
+**Teardown is shutdown-then-stop.** `shutdown_request` is the polite first step, and an agent that honours it terminates cleanly. It is **not** reliable on its own — a requested agent can go idle but stay alive, still emitting idle notifications. `TaskStop(task_id: "<agent-name>")` is what actually terminates it, and it is safe to call on an agent that has already exited. Never treat a sent `shutdown_request` as proof the agent is gone; always follow through. There is nothing else to tear down — with a single implicit team per session, no team object is created and none is deleted, and the `docs` skill's own spawns are not this chain's to stop.
 
 ## Agent Prompts
 
-Each agent should:
+Each agent this chain spawns should:
 
 - Read its corresponding skill in `.claude/skills/` for standards and checklists
 - Read the full project source and root
@@ -141,6 +125,8 @@ Each agent should:
 - Mark its task as completed: `TaskUpdate(taskId: <task_id>, status: "completed")`
 
 If an agent's toolset lacks `SendMessage`/`TaskUpdate`, it finishes silently — verify its output directly and do the task bookkeeping yourself.
+
+The docs pipeline's agents take their prompts from the `docs` skill, not from here.
 
 ### Architecture (Task 1)
 
@@ -161,37 +147,28 @@ Run the toolkit's own checks in order and report violations:
 
 Fix what your role permits (source side only, then re-render); otherwise report each failure with the command output quoted.
 
-### Docs-Agent (Task 4)
+### Security Pass 2 (Task 5)
 
-Create/update the machine docs — a single root `AGENTS.md` registry. Machine-readable format and required sections per `.claude/skills/docs-agent/SKILL.md` (the skill defines the file set).
-
-### Docs-Human (Task 5)
-
-Create/update the human docs — `DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root — per `.claude/skills/docs-human/SKILL.md` (the skill defines the file set, sections, and guardrails). Derive from codebase and machine docs.
-
-### Security Pass 2 (Task 6)
-
-Repeat the full security audit checklist. Focus especially on: new files created by earlier agents, any content written to project root, ensuring no sensitive information was documented, all previous fixes still intact. Same fix-or-report behavior as pass 1.
+Repeat the full security audit checklist. Focus especially on: new files created by earlier agents and by the docs pipeline, any content written to project root, ensuring no sensitive information was documented, all previous fixes still intact. Same fix-or-report behavior as pass 1.
 
 ## Focus Area
 
-If `$ARGUMENTS` is provided, instruct all agents to pay special attention to that area while still performing their full audit. For example: `/audit data pipeline` focuses extra attention on the data-layer modules.
+If `$ARGUMENTS` is provided, instruct all agents to pay special attention to that area while still performing their full audit, and pass the same focus to the `docs` skill when you invoke it. For example: `/audit data pipeline` focuses extra attention on the data-layer modules.
 
 ## Summary Format
 
-After all agents complete, present:
+After all steps complete, present:
 
 ```
 ## Audit Complete
 
-| # | Agent | Findings | Fixes Applied |
-|---|-------|----------|---------------|
+| # | Step | Findings | Fixes Applied |
+|---|------|----------|---------------|
 | 1 | harness-architect | N issues | brief list |
 | 2 | general-purpose (pass 1) | N issues | brief list |
 | 3 | general-purpose (Toolkit integrity) | N issues | brief list or "clean" |
-| 4 | docs-agent | N files created/updated | file list |
-| 5 | docs-human | N files created/updated | file list |
-| 6 | general-purpose (pass 2) | N issues | brief list or "clean" |
+| 4 | `docs` skill (docs-agent, docs-human) | N files created/updated | file list |
+| 5 | general-purpose (pass 2) | N issues | brief list or "clean" |
 
 Build status: passing/failing
 ```

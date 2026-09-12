@@ -2609,9 +2609,13 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
       // A change-detector on the skill's own spawn count: it must never drift silently.
       assert.equal(
         roster.length,
-        6,
-        `${who(f)}: audit's chain is six named agents, but the skill spawns ${roster.length} (${roster.join(', ')}) — if the chain genuinely changed, update this pin on purpose`,
+        4,
+        `${who(f)}: audit's chain is four named agents (the docs passes are the invoked \`docs\` skill, #361), but the skill spawns ${roster.length} (${roster.join(', ')}) — if the chain genuinely changed, update this pin on purpose`,
       );
+      // #361: the docs passes are composed, never re-spawned — /docs is the only copy of that pipeline.
+      assert.ok(!roster.includes('docs-agent') && !roster.includes('docs-human'), `${who(f)}: audit re-spawns a docs agent instead of invoking the docs skill (#361)`);
+      assert.match(md, /Invoke the \`docs\` skill/, `${who(f)}: audit must invoke the docs skill by prose reference (#361)`);
+      assert.doesNotMatch(md, /subagent_type: "docs-(agent|human)"/, `${who(f)}: audit spawns docs-agent/docs-human itself — that is the docs skill's job (#361)`);
 
       const shutdowns = shutdownTargets(md);
       const stopped = stoppedAgents(md);
@@ -2627,6 +2631,20 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
       }
     }
     assert.match(readSkill('audit'), /TaskUpdate\(taskId: task2\.id, addBlockedBy: \[task1\.id\]\)/);
+  });
+
+  // #361: the contract audit relies on when it invokes /docs — a read-only step 1 whose report feeds step 2.
+  test('docs keeps the read-only change report that feeds docs-agent — the contract audit composes (#361)', () => {
+    const files = [
+      path.join(STACKS, 'orchestration', 'skills', 'docs', 'SKILL.md'),
+      path.join(CLAUDE, 'skills', 'docs', 'SKILL.md'),
+    ].filter((f) => fs.existsSync(f));
+    assert.ok(files.length > 0, 'the docs skill is on neither surface — this test would vacuously pass');
+    for (const f of files) {
+      const md = fs.readFileSync(f, 'utf8');
+      assert.match(md, /Do NOT modify any files/, `${who(f)}: the docs pipeline's architecture step must stay read-only`);
+      assert.match(md, /\{step-1 output\}/, `${who(f)}: docs-agent must receive the step-1 change report`);
+    }
   });
 });
 
