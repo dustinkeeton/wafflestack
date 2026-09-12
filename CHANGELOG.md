@@ -48,6 +48,19 @@ is what you reach for across a breaking one.
   Variant" section.
 
 ### Changed
+- **The spawn-and-collect scaffold has one home (#365, spike #184).** `audit`, `autopilot` and
+  `standup` each carried a hand-typed copy of the same orchestration scaffold — named spawn,
+  collection, shutdown-then-stop teardown — and #360 proved the copies had drifted. The `audit` skill
+  now holds a normative **Spawn-and-collect contract** section (four clauses: named spawn + address,
+  collection, teardown as shutdown-then-stop at every exit, flat-roster fallback; plus the rule that
+  an invoked skill's spawns belong to that skill, never to the invoker's roster or teardown).
+  `standup` and `autopilot` cite the contract by heading instead of re-typing it — `standup`'s
+  "reuses their scaffold" admission and `autopilot`'s four teardown rationale copies become one-clause
+  pointers, with every mechanic and every pinned phrase intact. No new skill (a contract is not a unit
+  of work) and no new `requires:` edge for `standup` (it would drag `gh` prerequisites into a
+  standup-only install). A Layer-1 test pins the single home on both the source and the render.
+  **Consumer impact:** re-rendering refreshes the `audit`, `autopilot` and `standup` skills — prose
+  only; no config change.
 - **`/audit` composes `/docs` instead of re-implementing it (#361).** The audit chain's two
   documentation passes used to re-spawn `docs-agent` and `docs-human` with their own prompts — a
   second, already-drifted copy of the `docs` skill's pipeline (no read-only change report, nothing
