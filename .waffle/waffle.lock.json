@@ -21,7 +21,9 @@
     "files/.github/workflows/waffle-release-hook.yml",
     "code-quality/skills/adversarial-review",
     "code-quality/skills/qa",
-    "files/.github/workflows/waffle-post-merge-hook.yml"
+    "files/.github/workflows/waffle-post-merge-hook.yml",
+    "files/.claude/workflows/audit-stage-1.js",
+    "files/.claude/workflows/audit-stage-2.js"
   ],
   "files": {
     ".claude/agents/docs-agent.md": "2906db901f756096c6d40ab61bafc340f31d9a9664d508796789ee4c2933ac56",
@@ -32,7 +34,7 @@
     ".claude/agents/task-planner.md": "629b0f8e5c8ba1845a3e8086c4637ac75ec75e8c0c313e6f817c683103196604",
     ".claude/skills/accurate/SKILL.md": "b4afc3f598b5fbd6255e89bf54cb1fc362fc1fe3294d2230abb0978faec681b7",
     ".claude/skills/adversarial-review/SKILL.md": "c8b4eee9c3ec48635a26129f80ace214195c69beffbbbb13783847aef70b20a5",
-    ".claude/skills/audit/SKILL.md": "1fff8c91d63ae37c7d929d008eb9aabfc6e3a9b5b3b103c6ee1447cca645e98a",
+    ".claude/skills/audit/SKILL.md": "8a27a71b5847dc83f2dcabab607b8a9f2e7c07491b5064e84dbe352371156912",
     ".claude/skills/autopilot/SKILL.md": "0f1f251046eb042434176ddd345114c9cbde061fd1dec30d6e23da7705ebead2",
     ".claude/skills/clean-up/scripts/clean_up.sh": "7df01756bdb73a60bf3dfa9e000f0331a8e531049994be5ee6d280f1617b4630",
     ".claude/skills/clean-up/SKILL.md": "b10a7a5542524479473e572f79d1af9543185f3681836b5e28a93632ab6ceec9",
@@ -64,6 +66,8 @@
     ".claude/skills/waffle-setup/SKILL.md": "e2224a8d5ebf372c9b2908cf1cc494a8ba9c8227a7b1b2e099c8ee65d3aa0e0e",
     ".claude/skills/waffle-upgrade/SKILL.md": "29f69cf57a37cd56496920e5cfa9b4a75aaec8cb981f976c3d1ecbff90393eff",
     ".claude/skills/waffle-validate/SKILL.md": "f3efdd48bd9c87dc8ec370d0d9177c373a7e5698cd9bbdf22a24dc90968320f8",
+    ".claude/workflows/audit-stage-1.js": "76f61aeedb9b126fa23503989a642875bb86fac5db51b9d3bdd4cf769248b7fb",
+    ".claude/workflows/audit-stage-2.js": "b7c890b6d01747e073e60717f08445db62beb9999560321a118f4ba2da5f44f4",
     ".github/ISSUE_TEMPLATE/bug.yml": "e599d66505a9180afc737df8bfdbad98852a608c43a9474ade7784863dd8f494",
     ".github/ISSUE_TEMPLATE/config.yml": "367d815fd7aa411a1a262f8f13a20d3e07f2b8a751ccc5b9f80e8ddf5df1241c",
     ".github/ISSUE_TEMPLATE/feature.yml": "639d832d74657bff1fc6bbf06c36a88b9b1654c7018430e4ff7390d2baf826d3",

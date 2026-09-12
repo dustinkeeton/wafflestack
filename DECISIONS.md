@@ -9,6 +9,49 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-12: `/audit` ships as two staged Claude workflow scripts — opt-in, Claude-scoped syrup (#363, epic #184)
+
+**Context**: The 2026-07-13 decision below ("Workflow" means the Claude primitive) left adoption of the
+`Workflow` primitive on a three-item gate: #360 (dead harness primitives in `/audit`), #364 (target
+scoping for syrup), and ① — `/audit`'s human sign-off gate after security pass 1, which a workflow
+cannot express mid-run ("No mid-run user input… run each stage as its own workflow"). #360 (PR #368)
+and #364 (PR #370) merged; #361 (PR #447) made `/audit` invoke the `docs` skill instead of copying it.
+Only ① remained, and it was a design decision, not a wait.
+
+**Decision**: **Gate ① is resolved by splitting the chain in two.** `audit-stage-1.js` runs
+architecture → security pass 1 and returns `{ stoppedAt, signOffRequired, … }`, setting `stoppedAt`
+on any Critical/High finding (a null security result also stops — the gate never fails open);
+`audit-stage-2.js` runs compliance → the `docs` skill's three steps in sequence → security pass 2, and
+**refuses** (`{ refused: true }`) when `stage1.stoppedAt` is set without `signedOff: true`. The human
+review happens **between the runs**, which is the primitive's own remedy. **Adoption ships as opt-in
+syrup, Claude-scoped**: two `files:` entries with `targets: [claude]` on the `orchestration` stack,
+listed under `optIn:` so enabling the stack pours nothing; a consumer `wafflestack install`s them. No
+fourth item kind. **Each phase invokes a skill**: every agent prompt is a one-line pointer to a section
+of `audit/SKILL.md` or `docs/SKILL.md`, so the scripts hold sequencing only and the skills stay the
+source of truth. **The prose orchestrator is retained permanently** as the fallback (constraint ④:
+workflows are paid-plan, version-gated and kill-switchable — a poured script can be inert). A
+**sequencing-parity test** parses the prose "Chain Order" list and asserts it equals stage-1's
+`phase()` titles followed by stage-2's, on both the source skill and the render, so the two
+expressions of the sequence can never drift silently — the #360 failure mode, now mechanically gated.
+
+**Alternatives considered**: One script with the gate degraded to a hard abort — rejected: a stop
+without an override is strictly less capable than the prose gate and would make the workflow the
+worse path. Dropping the gate from the chain — rejected: it is a safety gate. A fourth item kind for
+workflows — rejected as before: syrup already means "a file rendered verbatim to a load-bearing path",
+and opt-in syrup is already the gate for target-specific payloads (#94 governs agents and skills only).
+Default-on rendering — rejected: the primitive is plan- and version-gated, so a default render would
+pour a possibly-inert file into every Claude repo.
+
+**Consequences**: The in-script API (`agent()`, `phase()`, `meta`, top-level `return`) is specified in
+a tool description, not a versioned reference, so the tests pin the surface the scripts use: a pure
+`meta` literal whose `phases` equal the `phase()` calls, an async-function-body parse check (a
+workflow body is not an ES module; `node --check` is the wrong checker), and no `Date.now()` /
+`Math.random()` / imports. This repo `include:`s both scripts (inert, no spend) so the render + lock
+exercise the opt-in path. Consumers on other targets see nothing; `list`/`setup` report the scripts as
+not installable there (#364).
+
+---
+
 ## 2026-08-17: The waffle registry gates fail-open, and `wip` is for never-shipped waffles only (#335)
 
 **Context**: The registry (`stacks/registry.yaml`, merged in PR #429) is the single source of

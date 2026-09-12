@@ -434,7 +434,7 @@ So separate them. **One is a gate. One is already cleared. Three were never gate
 |---|---|---|
 | **⑤** | **[#360](https://github.com/dustinkeeton/wafflestack/issues/360) must land first.** `/audit` is unrunnable as written ([§5](#5-why-prose-orchestration-rots)) — it calls `TeamCreate`/`TeamDelete`, which no longer exist. Converting a broken skill is building on sand. | **#360 merges.** |
 | **⑥** | **[#364](https://github.com/dustinkeeton/wafflestack/issues/364) — optional target scoping for syrup — must land.** Syrup renders **once regardless of `targets:`**, so a Claude-only workflow shipped as syrup lands in a codex-only repo as dead weight. Point 3 below calls this a **hard prerequisite**, and it is: it is the thing that makes "ship it as opt-in syrup" actually work. | **#364 merges.** It is a *ship* prerequisite, not a *decide* one — by its own body it is **independently correct and should land even if the workflow decision slips** — but adoption cannot ship without it. |
-| **①** | **`/audit`'s human sign-off gate must be redesigned.** The docs are explicit: *"No mid-run user input… For sign-off between stages, run each stage as its own workflow."* `/audit` has a **hard gate after security pass 1** — *"Do not auto-proceed if there are Critical or High findings."* A gate as such *is* expressible (a hard abort); **sign-off with a human override is not**, and silently dropping it would convert a safety stop into an auto-proceed. | **A design decision, not a wait** — either `/audit` splits into staged workflows (gate *between* runs, per the docs' own remedy), or the gate leaves the chain. Nothing external blocks it. But it is **unsettled**, and it is a *safety* gate, so it is on the list. |
+| **①** | **`/audit`'s human sign-off gate must be redesigned.** The docs are explicit: *"No mid-run user input… For sign-off between stages, run each stage as its own workflow."* `/audit` has a **hard gate after security pass 1** — *"Do not auto-proceed if there are Critical or High findings."* A gate as such *is* expressible (a hard abort); **sign-off with a human override is not**, and silently dropping it would convert a safety stop into an auto-proceed. | **RESOLVED — 2026-09-12, [#363](https://github.com/dustinkeeton/wafflestack/issues/363).** `/audit` splits into **two staged workflows** (gate *between* runs, per the docs' own remedy): `audit-stage-1.js` stops on Critical/High and returns `stoppedAt`; a human reviews; `audit-stage-2.js` runs only with `signedOff: true`. The alternative — the gate leaving the chain — was rejected: it is a *safety* gate. |
 
 > [!WARNING]
 > **This is a three-item gate, and an earlier draft of this section said "two".** It omitted **⑥**
@@ -480,8 +480,7 @@ opt-in-shaped forever with the prose orchestrator retained as the fallback that 
 against a surface that is specified but **unversioned** — a toolkit that *renders* scripts is betting
 on a contract nobody has promised to keep.
 
-**Revisit when #360 and #364 have merged and ①'s gate is designed.** Not "when all five clear" —
-that day would never have come. Three items, each of which can actually be checked off.
+**Revisited — all three cleared, and adopted as opt-in ([#363](https://github.com/dustinkeeton/wafflestack/issues/363)).** #360 merged (PR #368), #364 merged (PR #370), and ① was settled by the two-stage split above. The shape is exactly the one described below: opt-in, Claude-scoped syrup whose phases invoke the skills, with this prose orchestrator retained as the fallback. Not "when all five clear" — that day would never have come. Three items, each of which could actually be checked off, and were.
 
 ### The shape it takes when it *is* adopted — and it needs no new machinery
 
@@ -540,6 +539,12 @@ artifact is just a file. Concretely:
 > this sketch**, and the obvious "correction" — restructuring the `return`s away to satisfy a checker
 > that was never the right one — would make the artifact *less* faithful to the primitive, not more.
 > The honest gap is that this is **unverified against a real runtime**; the parse is not the gap.
+
+> [!NOTE]
+> **The shipped scripts differ from this sketch.** [#363](https://github.com/dustinkeeton/wafflestack/issues/363) ships
+> `stacks/orchestration/files/.claude/workflows/audit-stage-1.js` and `audit-stage-2.js`: **two** staged scripts (sign-off
+> between runs, which is how blocker ① was resolved), `agentType` pinned to the roster config, a `meta.phases` list, and a
+> docs phase that mirrors `docs/SKILL.md` steps 1→2→3 as three sequential calls. The sketch stays as the illustration it was.
 
 Note what it demonstrates and what it cannot:
 

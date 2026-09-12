@@ -31,6 +31,22 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **`/audit` as two staged Claude workflow scripts, shipped as opt-in syrup (#363, epic #184).** The
+  `orchestration` stack gains two Claude-scoped `files:` payloads, `.claude/workflows/audit-stage-1.js`
+  (architecture → security pass 1; returns `stoppedAt` / `signOffRequired` on Critical/High findings)
+  and `.claude/workflows/audit-stage-2.js` (compliance → the `docs` skill's three steps in sequence →
+  security pass 2; refuses an un-signed-off stop). The human sign-off happens **between** the two
+  runs, which resolves the last gate of the #184 spike. Every phase is a one-line pointer to a section
+  of `audit/SKILL.md` or `docs/SKILL.md` — the scripts hold sequencing only, the prose skill stays
+  the source of truth and the permanent fallback (workflows are paid-plan and version-gated). A
+  sequencing-parity test pins the prose "Chain Order" to the scripts' `phase()` sequence on both the
+  source and the render. **Consumer impact:** none unless included — both files are `optIn:` and
+  `targets: [claude]`, so enabling the stack pours nothing; install them with `wafflestack install
+  files/.claude/workflows/audit-stage-1.js files/.claude/workflows/audit-stage-2.js` (a non-Claude
+  target reports them as not installable). The `audit` skill re-renders with a short "Claude Workflow
+  Variant" section.
+
 ### Changed
 - **`/audit` composes `/docs` instead of re-implementing it (#361).** The audit chain's two
   documentation passes used to re-spawn `docs-agent` and `docs-human` with their own prompts — a

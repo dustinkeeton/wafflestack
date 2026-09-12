@@ -1945,6 +1945,89 @@ describe('project commands never join with && (#218)', () => {
   });
 });
 
+// The /audit chain's two workflow scripts are Claude-scoped OPT-IN syrup (#363): enabling the stack pours nothing, an include
+// pours and locks both under [claude], and under [codex] the same include renders nothing while the render still succeeds.
+describe('orchestration: the audit workflow scripts are Claude-scoped opt-in syrup (#363)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const SCRIPTS = ['.claude/workflows/audit-stage-1.js', '.claude/workflows/audit-stage-2.js'];
+  const REFS = SCRIPTS.map((s) => `files/${s}`);
+  let cwd;
+
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-363-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+  const lockFiles = () => JSON.parse(read(cwd, '.waffle/waffle.lock.json')).files;
+  const has = (rel) => fs.existsSync(path.join(cwd, rel));
+  /** orchestration alone, with every key it marks `required: true` (mirrors #254's orchBase). */
+  const config = (targets, include = []) => write(cwd, '.waffle/waffle.yaml', [
+    `targets: [${targets}]`,
+    'stacks: [orchestration]',
+    `include: [${include.join(', ')}]`,
+    'config:',
+    '  project:',
+    '    name: Audit363',
+    '    longName: the Audit363 project',
+    '  pm:',
+    '    brief: You are the PM.',
+    '    principles: "- Ship small."',
+    '    handoffs: "- Everything else -> general-purpose"',
+    '  roster:',
+    '    specialistTable: "| Agent | Responsibility |"',
+    '    classificationTable: "| Signal | Agent |"',
+    '    labelFallback: "| Label | Agent |"',
+    '    rootFiles: package.json',
+    '    sharedModule: lib/',
+    '    moduleDependencies: none',
+    '  audit:',
+    '    complianceLabel: Integrity',
+    '    complianceFrontmatterLabel: integrity',
+    '    complianceTaskLabel: Integrity check',
+    '    complianceAgentName: integrity',
+    '    complianceDescription: Validates the thing.',
+    '    compliancePrompt: Run the checks.',
+    '',
+  ].join('\n'));
+
+  test('enabling the stack alone pours neither script and locks neither', () => {
+    config('claude');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    for (const rel of SCRIPTS) {
+      assert.equal(has(rel), false, `${rel} must not render by default — it is opt-in`);
+      assert.ok(!(rel in lockFiles()), `${rel} must not be locked by default`);
+    }
+    assert.ok(has('.claude/skills/audit/SKILL.md'), 'the prose audit skill still renders — it is the fallback');
+  });
+
+  test('under [claude] an explicit include pours both scripts, locks them, and leaves no placeholder', () => {
+    config('claude', REFS);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    for (const rel of SCRIPTS) {
+      assert.ok(has(rel), `${rel} poured`);
+      assert.ok(rel in lockFiles(), `${rel} locked`);
+      const out = read(cwd, rel);
+      assert.doesNotMatch(out, /\{\{/, `${rel}: residual placeholder`);
+      assert.match(out, /\.claude\/skills\/audit\/SKILL\.md/, `${rel}: harness.skillsDir resolved for claude`);
+    }
+    assert.match(read(cwd, SCRIPTS[0]), /agentType: 'lead-engineer'/, 'roster.architectAgent default substituted');
+    assert.match(read(cwd, SCRIPTS[1]), /Run the Integrity check pass/, 'audit.complianceTaskLabel substituted');
+    assert.ok(has('.claude/skills/docs/SKILL.md'), 'the stage-2 requires: edge pulls the docs skill');
+  });
+
+  test('under [codex] the same include renders neither script, and the render still succeeds', () => {
+    config('codex', REFS);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    for (const rel of SCRIPTS) {
+      assert.equal(has(rel), false, `${rel} is Claude-scoped — a codex-only repo gets no dead weight`);
+      assert.ok(!(rel in lockFiles()), `${rel} not locked`);
+    }
+    assert.ok(result.warnings.some((w) => /scoped to targets \[claude\]/.test(w)), `expected a target-skip warning, got: ${JSON.stringify(result.warnings)}`);
+  });
+});
+
 // Syrup is opt-in (#51): enabling the stack no longer renders it — only an explicit install, or a prior lock tracking its path, does.
 describe('github-workflow: label-hook is syrup (opt-in) (#51)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');

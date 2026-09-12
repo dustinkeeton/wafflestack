@@ -146,6 +146,14 @@ Repeat the full security audit checklist. Focus especially on: new files created
 
 If `$ARGUMENTS` is provided, instruct all agents to pay special attention to that area while still performing their full audit, and pass the same focus to the `docs` skill when you invoke it. For example: `/audit data pipeline` focuses extra attention on the data-layer modules.
 
+## Claude Workflow Variant
+
+The same chain ships as two staged Claude workflow scripts — opt-in syrup, Claude target only: `.claude/workflows/audit-stage-1.js` (architecture → security pass 1) and `.claude/workflows/audit-stage-2.js` ({{audit.complianceLabel}} → the `docs` skill, step by step → security pass 2). Install both with `wafflestack install files/.claude/workflows/audit-stage-1.js files/.claude/workflows/audit-stage-2.js`. Every phase runs a section of this skill or of the `docs` skill; the scripts hold sequencing only, so the prose here stays the source of truth for what a pass does.
+
+**Sign-off happens between the two runs.** Stage 1 returns `{ stoppedAt, signOffRequired, architecture, security1 }` and sets `stoppedAt: "security-1"` when Critical/High findings remain — the gate after pass 1 above, as a hard stop. Present the findings; only after a human has reviewed them, run stage 2 with `args: { stage1: <stage-1 result>, signedOff: true }` (it refuses an un-signed-off stop). With no stop, run stage 2 with `args: { stage1: <stage-1 result> }`.
+
+This prose chain is the permanent fallback: workflows are paid-plan, version-gated and can be switched off, so a poured script may be inert — whenever the `Workflow` tool is unavailable, run the chain above.
+
 ## Summary Format
 
 After all steps complete, present:
