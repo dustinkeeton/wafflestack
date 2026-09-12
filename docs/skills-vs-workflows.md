@@ -257,6 +257,8 @@ fix urgent independent of any workflow decision.
 > than re-spawning `docs-agent` and `docs-human` itself.** That fix is available today, at zero
 > cost, with no new primitive. It is filed as a follow-up.
 
+**Resolved by [#361](https://github.com/dustinkeeton/wafflestack/issues/361):** `/audit` now invokes the `docs` skill for its documentation step instead of re-spawning `docs-agent` and `docs-human`; the chain is four named agents plus the invoked skill, and both drifts above are gone because only one copy of the docs pipeline remains.
+
 ### 4.2 The same scaffold, hand-copied three times
 
 - **`autopilot` re-implements `audit`'s team lifecycle** — it "owns the Team lifecycle (create →

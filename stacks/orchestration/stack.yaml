@@ -23,6 +23,8 @@ requires:
   skills/docs:
     - skills/docs-agent
     - skills/docs-human
+  skills/audit:
+    - skills/docs
 # Typed external prerequisites (#47/#129). Only the `command -v` tool probes are `require` (they
 # fail `doctor`) — certain in every environment doctor runs; everything auth/label/setting is
 # `recommend` (reports, never fails). gh is scoped to the skills that actually drive it, so
