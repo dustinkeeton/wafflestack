@@ -565,7 +565,13 @@ Render targets (`VALID_TARGETS`, `project.mjs:58`) — every target renders both
 
 codex + agents-dir share `.agents/skills/<n>/` (`renderSkill` dedupes by output dir). Skills
 render byte-for-byte except substitution + extension append; non-`.md` supporting files copy
-verbatim.
+verbatim. Expected `.codex/` layout: `agents/<n>.toml` only (plus a consumer's own
+`config.toml`) — skills are in `.agents/skills/`; a sparse `.codex/` is the complete render (#190).
+The codex TOML carries no skill grant by decision: Codex's `[[skills.config]]` (`path` + `enabled`)
+is a per-skill enable/disable override with undocumented relative-path resolution, not a grant, so
+`agentToml` conveys skill access in body prose only (`DECISIONS.md` 2026-09-12; guarded by
+`content.test.mjs` #224 + the #190 literal-Claude-path sweep over sources and a codex/agents-dir
+scratch render).
 
 ## Consuming-project contract
 

@@ -316,6 +316,6 @@ cold-start rules below, when you are the fresh spawn that *replaces* a resumable
 > (per head commit), not on every check re-run, with a duplicate-review guard keyed on this
 > skill's review marker. It is **opt-in syrup** (it spends API money on every green PR), so it
 > renders only when installed, and it needs this skill rendered alongside it
-> (`.claude/skills/adversarial-review/SKILL.md`) — see that stack's setup note for the opt-ins.
+> (`{{harness.skillsDir}}/adversarial-review/SKILL.md`) — see that stack's setup note for the opt-ins.
 > This skill remains independently useful invoked manually (`/adversarial-review <PR#>`) or by an
 > agent, with or without the trigger.

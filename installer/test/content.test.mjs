@@ -2738,6 +2738,112 @@ describe('source + rendered content: the abolished team concept does not survive
 });
 
 // A guard is only worth its green if it can go red — these are the shapes that once smuggled past.
+// #190: a literal `.claude/skills/…` or `.claude/agents/…` renders unchanged for codex and agents-dir,
+// where that directory does not exist — `{{harness.skillsDir}}` / `{{harness.agentsDir}}` resolve per
+// target. Exemptions are derived, never enumerated: a line that also names `.codex/` or `.agents/` is
+// portability prose, and `targets: [claude]` syrup is Claude by declared contract (#364).
+const LITERAL_CLAUDE_PATH = /\.claude\/(skills|agents)\//;
+const namesAnotherHarnessDir = (line) => /\.codex\/|\.agents\//.test(line);
+const claudePathLeaks = (text, label) =>
+  text.split('\n').flatMap((line, i) =>
+    LITERAL_CLAUDE_PATH.test(line) && !namesAnotherHarnessDir(line)
+      ? [`${label}:${i + 1}: ${line.trim().slice(0, 120)}`]
+      : [],
+  );
+const leaksInFile = (f, label = who(f)) => claudePathLeaks(fs.readFileSync(f, 'utf8'), label);
+
+// Markdown syrup is substituted like a skill body, so it can leak the same way — unless scoped to claude.
+const portableSyrupMdFiles = () =>
+  [...loadToolkit(REPO_ROOT).stacks.values()].flatMap((stack) =>
+    stack.files
+      .filter((f) => f.name.endsWith('.md') && !f.binary && (f.targets === null || f.targets.some((t) => t !== 'claude')))
+      .map((f) => f.path),
+  );
+
+describe('source + rendered content: no literal Claude-only paths where a harness built-in belongs (#190)', () => {
+  const sources = () => [...sourceSkillFiles(), ...sourceAgentFiles(), ...portableSyrupMdFiles()];
+
+  test('the sweep reaches every source skill, agent, and portable markdown syrup', () => {
+    const swept = sources();
+    for (const f of [...sourceSkillFiles(), ...sourceAgentFiles()]) {
+      assert.ok(swept.includes(f), `${who(f)} is not swept by the #190 guard`);
+    }
+    assert.ok(
+      portableSyrupMdFiles().some((f) => f.endsWith(path.join('.github', 'REVIEW_TEMPLATE.md'))),
+      'markdown syrup must be swept — REVIEW_TEMPLATE.md is where a #190 leak lived',
+    );
+  });
+
+  test('no source body hardcodes .claude/skills/ or .claude/agents/', () => {
+    const leaks = sources().flatMap((f) => leaksInFile(f));
+    assert.deepEqual(
+      leaks,
+      [],
+      `literal Claude paths — use {{harness.skillsDir}} / {{harness.agentsDir}}, or name the other harness dirs on the same line:\n${leaks.join('\n')}`,
+    );
+  });
+
+  describe("a codex + agents-dir render of this repo's own stacks", () => {
+    let cwd;
+    let rendered;
+
+    before(() => {
+      cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-190-'));
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      const own = fs.readFileSync(path.join(REPO_ROOT, '.waffle', 'waffle.yaml'), 'utf8');
+      const mirrored = own.replace(/^targets:.*$/m, 'targets: [codex, agents-dir]');
+      assert.notEqual(mirrored, own, 'the repo waffle.yaml must carry a single-line targets: to mirror');
+      fs.writeFileSync(path.join(cwd, '.waffle', 'waffle.yaml'), mirrored);
+      const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+      assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+      const walk = (d) =>
+        fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+      rendered = walk(cwd)
+        .map((f) => path.relative(cwd, f))
+        .filter((f) => !f.startsWith('.waffle' + path.sep));
+    });
+
+    after(() => {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    });
+
+    test('the render reaches codex agents, the shared skills dir, and the markdown syrup — and nothing under .claude/', () => {
+      assert.ok(rendered.some((f) => /^\.codex\/agents\/[^/]+\.toml$/.test(f)), 'expected .codex/agents/*.toml');
+      const skills = rendered.filter((f) => /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(f));
+      assert.ok(skills.length >= 10, `expected the shared .agents/skills render, found ${skills.length}`);
+      assert.ok(rendered.includes(path.join('.github', 'REVIEW_TEMPLATE.md')), 'expected the markdown syrup to render');
+      assert.ok(!rendered.some((f) => f.startsWith('.claude' + path.sep)), 'a codex + agents-dir render emits nothing under .claude/');
+    });
+
+    test('nothing rendered for codex / agents-dir points into .claude/', () => {
+      const swept = rendered.filter((f) => f.startsWith('.codex' + path.sep) || f.startsWith('.agents' + path.sep) || f.endsWith('.md'));
+      const leaks = swept.flatMap((f) => leaksInFile(path.join(cwd, f), f));
+      assert.deepEqual(leaks, [], `rendered for a non-claude target, yet points at a Claude dir that does not exist there:\n${leaks.join('\n')}`);
+    });
+  });
+});
+
+describe('the #190 guard can actually fail (regression fixtures)', () => {
+  test('a literal skill or agent path is flagged, with its line', () => {
+    const leaks = claudePathLeaks('ok\nsee `.claude/skills/qa/SKILL.md` first\nread .claude/agents/reviewer.md', 'fixture');
+    assert.deepEqual(leaks.map((l) => l.split(':').slice(0, 2).join(':')), ['fixture:2', 'fixture:3']);
+  });
+
+  test('prose naming the harness dirs side by side is portability, not a leak', () => {
+    assert.deepEqual(claudePathLeaks('agents → `.claude/agents/<n>.md` (+ `.codex/agents/<n>.toml`)', 'f'), []);
+    assert.deepEqual(claudePathLeaks('Under Claude `.claude/skills/x`; under codex `.agents/skills/x`', 'f'), []);
+  });
+
+  test('Claude-only-by-nature paths and harness built-ins are not flagged', () => {
+    const text = [
+      'cd .claude/worktrees/issue-1',
+      'node .claude/workflows/audit-stage-1.js',
+      'read {{harness.skillsDir}}/qa/SKILL.md and {{harness.agentsDir}}/reviewer.md',
+    ].join('\n');
+    assert.deepEqual(claudePathLeaks(text, 'f'), []);
+  });
+});
+
 describe('the #360 guard can actually fail (regression fixtures)', () => {
   test('a `)` inside a string argument no longer hides a dead TaskCreate(addBlockedBy:)', () => {
     const smuggled = 'TaskCreate(subject: "audit", description: "run the gate (validate + test + render + doctor).", addBlockedBy: [task1.id])';

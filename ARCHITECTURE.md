@@ -210,7 +210,10 @@ A **target** is a coding assistant you render for. Three are supported:
 **Every target renders both agents and skills** — there is no half-covered
 harness. Because Codex and the cross-tool `agents-dir` both consume skills from
 the same `.agents/skills/` convention, a repo that enables both renders that
-directory once (shared, not duplicated).
+directory once (shared, not duplicated). So the expected `.codex/` layout is
+small on purpose: `agents/*.toml` only (plus your own `config.toml`) — the skills
+Codex loads are in `.agents/skills/`. A two-file `.codex/` is the whole render,
+not missing coverage.
 
 The small per-harness differences (like whose name goes in an attribution line)
 come from a reserved `harness.*` set of values that resolve differently per

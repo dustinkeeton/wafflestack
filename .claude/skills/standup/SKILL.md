@@ -13,7 +13,7 @@ Unlike `audit` and `docs` (fixed rosters run through a serial task chain), stand
 
 ## Step 1: Enumerate the roster (dynamic — never hard-coded)
 
-Glob the harness **agents** directory — the `agents/` directory beside `.claude/skills` (take `.claude/skills`, swap the trailing `skills` segment for `agents`, and match `*.md`). Under Claude that resolves to `.claude/agents/*.md`.
+Glob the harness **agents** directory — the `agents/` directory beside `.claude/skills` (take `.claude/skills`, swap the trailing `skills` segment for `agents`, and match `*.md`). Under Claude that resolves to `.claude/agents/*.md`; under codex and agents-dir, to `.agents/agents/*.md`.
 
 For each matched file, parse the YAML frontmatter and capture:
 

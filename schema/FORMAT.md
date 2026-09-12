@@ -319,11 +319,21 @@ Renders to:
 - **claude** → `.claude/agents/<name>.md` — frontmatter `name`, `description`, `skills`,
   `identity`, plus every key under `claude:` hoisted to the top level; body as-is.
 - **codex** → `.codex/agents/<name>.toml` — `name`, `description`,
-  `developer_instructions` = body (skill access is conveyed in body prose; the
-  `skills:`/`identity:`/`claude:` frontmatter has no TOML equivalent, so it is dropped).
+  `developer_instructions` = body. Skill access is conveyed in **body prose**, deliberately:
+  Codex's agent TOML does accept `[[skills.config]]` entries (`path` to a `SKILL.md` folder +
+  an `enabled` boolean), but that key is a per-skill **enable/disable override** on the parent
+  config's skill set, not a grant, and OpenAI's docs never state how a relative `path` in a
+  project-scoped agent file resolves — so the frontmatter `skills:` list is not translated
+  into it (#190, `DECISIONS.md` 2026-09-12). `identity:` and `claude:` have no TOML shape at
+  all. All three frontmatter keys are dropped from the TOML.
 - **agents-dir** → `.agents/agents/<name>.md` — harness-neutral Markdown: frontmatter
   `name`, `description`, the neutral `skills:` grant-pointer and `identity:`, then the body.
   The Claude-only `claude:` passthrough block is dropped (it has no cross-tool meaning).
+
+**Expected `.codex/` layout, in one sentence:** `.codex/` holds `agents/<name>.toml` only
+(plus your own hand-written `.codex/config.toml`) — skills live in the cross-tool
+`.agents/skills/<name>/` directory Codex scans — so a `.codex/` containing nothing but a few
+TOML files is the complete render, not missing coverage.
 
 ## Skill definition (`skills/<name>/SKILL.md`)
 
@@ -337,7 +347,14 @@ Renders to:
 - **agents-dir** → `.agents/skills/<name>/` (identical content; cross-tool convention)
 - **codex** → `.agents/skills/<name>/` — Codex consumes skills from the same cross-tool
   `.agents/skills` directory (it scans from the cwd up to the repo root), so codex and
-  agents-dir share one render; enabling both renders the directory once, not twice.
+  agents-dir share one render; enabling both renders the directory once, not twice. `.codex/`
+  itself never gets a `skills/` dir — see the expected `.codex/` layout above.
+
+Skill and agent bodies (and Markdown syrup) must not hardcode `.claude/skills/…` or
+`.claude/agents/…`: under codex and agents-dir those directories do not exist. Use
+`{{harness.skillsDir}}` / `{{harness.agentsDir}}`, which resolve per target; a line that names
+the other harness dirs alongside (`.codex/`, `.agents/`) is portability prose and is fine. The
+toolkit's own content tests enforce this on every shipped stack (#190).
 
 ## Files definition — syrup (`files/<repo-relative-path>`)
 
