@@ -1,14 +1,4 @@
-// Recommended external plugins (#199) — a stack pointing at harness plugins that live OUTSIDE the
-// toolkit, so `setup` can offer them with the author's rationale.
-//
-// Three properties are worth a test each, and they are the three the feature stands or falls on:
-//   1. INERTNESS — declaring recommendations changes no rendered byte and no lock entry. A plugin
-//      is not a waffle; if this suite passes while the render moves, the key has quietly become an
-//      install mechanism, which is exactly what it must never be.
-//   2. OFFERED, NOT INSTALLED — the entries reach the setup surface (per-stack section + a gated
-//      intro paragraph teaching offer-never-install), and a stack declaring none is byte-unchanged.
-//   3. LINTED, NOT THROWN — every malformation is a `validate` problem, never a load error, and a
-//      malformed entry is dropped from the offer rather than shown half-formed.
+// Recommended external plugins (#199): inert to render, offered by setup, linted rather than thrown.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,11 +16,7 @@ function write(root, rel, content) {
   fs.writeFileSync(path.join(root, rel), content);
 }
 
-/**
- * A one-stack fixture toolkit (`demo`: one agent + one skill), plus whatever `recommendedPlugins:`
- * YAML the test wants appended to its manifest. No registry file — this feature is orthogonal to
- * the waffle registry, and leaving it out proves it.
- */
+/** One-stack fixture (`demo`: one agent + one skill) with optional `recommendedPlugins:` YAML appended; no registry file. */
 function makeToolkit(pluginsYaml = '') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-plugins-'));
   write(root, 'toolkit.yaml', 'name: fixture\ndescription: plugins fixture\nstacks: [demo]\n');
@@ -82,8 +68,6 @@ describe('recommended plugins: the manifest key and its normalization (#199)', (
   });
 
   test('normalization is total: no shape throws, and every unusable field lands as null', () => {
-    // The loader's contract is tolerance — this key can never be the reason a toolkit fails to
-    // load, because at absolute worst a bad recommendation goes unmentioned.
     for (const raw of [undefined, null, 'a string', 42, [null], [['nested']], [{ name: 7 }]]) {
       assert.doesNotThrow(() => normalizeRecommendedPlugins(raw), `threw on ${JSON.stringify(raw ?? null)}`);
     }
@@ -94,7 +78,6 @@ describe('recommended plugins: the manifest key and its normalization (#199)', (
   });
 
   test('a present-but-not-a-list value becomes ONE unusable entry, so validate reports it', () => {
-    // The failure mode this avoids is silence: `prerequisites:` written as a map simply vanishes.
     const entries = normalizeRecommendedPlugins({ name: 'x' });
     assert.equal(entries.length, 1);
     const root = makeToolkit('recommendedPlugins: acme/claude-plugins\n');
@@ -131,16 +114,12 @@ describe('recommended plugins: validate lints every malformation (#199)', () => 
   }
 
   test('each of the three required fields is required', () => {
-    // `why` is required for a reason worth pinning: a wizard pitching an unexplained third-party
-    // install is worse than one that stays quiet.
     assert.ok(problemsForEntry(['  - source: acme/x', '    why: Because.']).some((p) => /missing a `name`/.test(p)));
     assert.ok(problemsForEntry(['  - name: acme', '    why: Because.']).some((p) => /missing a `source`/.test(p)));
     assert.ok(problemsForEntry(['  - name: acme', '    source: acme/x']).some((p) => /missing a `why`/.test(p)));
   });
 
   test('an unknown key is reported, not ignored', () => {
-    // The real slip is a near-miss on the rationale field, which would otherwise leave the entry
-    // silently unexplained — the one thing it exists to carry.
     const problems = problemsForEntry(['  - name: acme', '    source: acme/x', '    reason: Because.']);
     assert.ok(problems.some((p) => /unknown key "reason"/.test(p) && p.includes(PLUGIN_ENTRY_KEYS.join(', '))), problems.join('\n'));
   });
@@ -197,7 +176,6 @@ describe('recommended plugins: offered by setup, installed by nobody (#199)', ()
         inventory,
         /- `acme-reviewer` \[for: claude\] \(suggested with skills\/demo-skill\) — Adds inline review comments the demo skill answers\. — source: `acme\/claude-plugins`/,
       );
-      // The gated intro paragraph: what teaches the setup agent the posture, not just the data.
       assert.match(inventory, /A \*\*recommended plugin\*\* \(listed under a stack below\) is an \*\*external harness plugin\*\*/);
       assert.match(inventory, /only on the user's explicit yes/);
     } finally {
@@ -228,8 +206,6 @@ describe('recommended plugins: offered by setup, installed by nobody (#199)', ()
   });
 
   test('INERTNESS: declaring recommendations changes no rendered byte and no lock entry', () => {
-    // The property the whole design rests on. A plugin is not a waffle: `setup` may talk about it,
-    // but `render` must be unable to tell the difference.
     const renderInto = (root) => {
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-plugins-'));
       write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\n');

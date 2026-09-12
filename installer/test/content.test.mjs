@@ -1772,8 +1772,6 @@ describe('recommended external plugins: documented in lockstep with the schema (
   test('FORMAT.md states the two things that keep the key harmless: not a waffle, never installed', () => {
     assert.match(formatMd, /A plugin is \*\*not a waffle\*\*/);
     assert.match(formatMd, /`render` never fetches,\s*\n?installs, tracks, or updates one/);
-    // And WHY it is not a registry entry — an author who cannot find it there must learn the
-    // reason, not conclude the registry is incomplete.
     assert.match(formatMd, /deliberately lives on `stack\.yaml` rather than in the \*\*waffle registry\*\*/);
   });
 

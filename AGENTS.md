@@ -281,13 +281,10 @@ export function applicablePrerequisites(toolkit, selection) // → flat [{ …pr
 export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs } = {}) // → { unmetRequired, unmetRecommended, met }
 export function formatPrereq(p)                // → one actionable CLI line
 
-// plugins.mjs — recommended EXTERNAL harness plugins (#199): stack.yaml `recommendedPlugins:` → an OFFER the setup
-// wizard makes. A plugin is NOT a waffle: nothing is fetched, rendered, locked, pruned, or ejected, and the render
-// set is byte-identical whether a stack declares any or not. Lives on stack.yaml, NOT in the waffle registry (the
-// registry indexes shipped waffles with paths a render produces; a plugin has none) — see the plugins.mjs docblock.
+// plugins.mjs — recommended EXTERNAL harness plugins (#199): stack.yaml `recommendedPlugins:` → an OFFER `setup` makes; never fetched/rendered/locked (rationale: FORMAT.md)
 export const PLUGIN_ENTRY_KEYS                 // ['name','source','why','items','targets'] — anything else is a validate problem
-export function normalizeRecommendedPlugins(raw) // → [{ index, name, source, why, items, targets, unknownKeys, raw }] (tolerant: nulls, never throws; a non-list value becomes ONE unusable entry so validate reports rather than the key vanishing); items normalized to kind/name refs = the WAFFLE-level scope (no per-waffle key); targets advisory only (the inventory is generated before a project's targets are known)
-export function offerablePlugins(plugins)      // → entries with a usable name + source (what a surface may show; malformed ones are validate's report, not a half-line)
+export function normalizeRecommendedPlugins(raw) // → [{ index, name, source, why, items, targets, unknownKeys, raw }] — never throws; a non-list value becomes ONE unusable entry so validate reports it; items normalized to kind/name refs; targets advisory (printed, never a filter)
+export function offerablePlugins(plugins)      // → entries with a usable name + source; malformed ones are validate's report and are not shown
 
 // sources.mjs — external source: resolution (#88/#125)
 export function resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, refresh = false } = {}) // → { root, commit } (local path in place, or git fetched at the pinned ref into a content-addressed cache; rejects leading-`-` source/ref)

@@ -388,15 +388,7 @@ function prerequisitesSection(prerequisites) {
   return lines;
 }
 
-/**
- * The stack's recommended external plugins (#199) — harness plugins that live OUTSIDE the toolkit,
- * offered here with the author's rationale so the setup agent can put the choice to the user. This
- * is the one inventory section describing something the toolkit will never install: `render` does
- * not fetch, track, or update a plugin, so the line must carry everything the user needs to decide
- * and act (name, where to get it, why, and what it is scoped to). Malformed entries are dropped —
- * `validate` reports them, and half a line naming an unfindable plugin helps nobody. Returns [] for
- * a stack that declares none, so its inventory is byte-unchanged.
- */
+/** Per-stack `recommendedPlugins:` section (#199); [] when the stack offers none. */
 function recommendedPluginsSection(plugins) {
   const offerable = offerablePlugins(plugins);
   if (!offerable.length) return [];

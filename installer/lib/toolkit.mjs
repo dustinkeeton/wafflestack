@@ -308,11 +308,6 @@ function loadStack(name, dir) {
     dir,
     description: manifest.description ?? '',
     recommended: manifest.recommended === true,
-    // External harness plugins this stack suggests pairing with (#199) — a curated offer the
-    // setup wizard reads to the user, and nothing more: no plugin is fetched, rendered, locked, or
-    // installed by the toolkit, so this field cannot change a single output byte. Normalized
-    // leniently and linted by `validate` (see plugins.mjs for why the registry is the wrong home
-    // for it, and why `items:` rather than a per-waffle key gives waffle-level scope).
     recommendedPlugins: normalizeRecommendedPlugins(manifest.recommendedPlugins),
     agents,
     skills,

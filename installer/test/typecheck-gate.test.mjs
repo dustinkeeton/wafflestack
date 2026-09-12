@@ -17,7 +17,6 @@ const MIGRATED = [
   'installer/lib/refs.mjs',
   'installer/lib/project.mjs',
   'installer/lib/toolkit-ref.mjs',
-  // #199 — likewise authored under the pragma from line 1.
   'installer/lib/plugins.mjs',
 ];
 

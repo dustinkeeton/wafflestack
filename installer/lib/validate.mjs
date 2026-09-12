@@ -509,15 +509,8 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
         }
       }
     }
-    // Recommended external plugins (#199): pointers at harness plugins OUTSIDE this toolkit, which
-    // `setup` offers to the user with the author's rationale. Nothing here is fetched, rendered, or
-    // installed, so this lint guards the only thing that can go wrong — an offer the user cannot
-    // act on. Each of the three required fields is one half of that: no `name` and there is nothing
-    // to look for, no `source` and nowhere to look, no `why` and no reason to say yes (a wizard
-    // pitching an unexplained third-party install is worse than one that stays quiet). The
-    // `items:`/`targets:` scopes are linted like every other ref/target list so a typo mis-scopes
-    // rather than silently widens. A malformed entry is reported here and skipped by the inventory
-    // — never a load error: see the tolerance note in plugins.mjs.
+    // Recommended external plugins (#199): malformed entries are reported here and skipped by
+    // the inventory, never a load error.
     const pluginNames = new Set();
     for (const p of stack.recommendedPlugins ?? []) {
       const label = p.name ? `recommended plugin "${p.name}"` : `recommended plugin entry #${p.index + 1}`;
