@@ -12,6 +12,7 @@ import {
   formatPrereq,
   PREREQ_KINDS,
 } from './prerequisites.mjs';
+import { offerablePlugins } from './plugins.mjs';
 
 /**
  * The agent-driven install wizard: the static playbook (schema/SETUP.md), an optional
@@ -266,6 +267,7 @@ function formatConfigValue(key, spec, set, current) {
 export function toolkitInventory(toolkit, version) {
   const hasOptIn = [...toolkit.stacks.values()].some((s) => s.optIn.size);
   const hasRecommended = [...toolkit.stacks.values()].some((s) => s.recommended);
+  const hasPlugins = [...toolkit.stacks.values()].some((s) => offerablePlugins(s.recommendedPlugins).length);
   const lines = [
     `# Toolkit inventory — ${toolkit.name}${version ? ` v${version}` : ''}`,
     '',
@@ -286,6 +288,18 @@ export function toolkitInventory(toolkit, version) {
       'Pre-select it by default and include it unless the user opts out — this is in addition to,',
       'and independent of, any repository-signal recommendation. The user can always remove a',
       'recommended stack; it is advisory pre-selection only and never force-installed.',
+      '',
+    );
+  }
+  if (hasPlugins) {
+    lines.push(
+      'A **recommended plugin** (listed under a stack below) is an **external harness plugin** the',
+      'stack author suggests pairing with — a Claude Code plugin or marketplace entry, not a waffle.',
+      'It is **not part of the toolkit**: `render` never installs, tracks, or updates one, and every',
+      'entry is just the author saying "this stack works better alongside that". Surface each one',
+      "with its stated reason and install it **only on the user's explicit yes** — it is an offer,",
+      'never an action. Skip one scoped (`for:`) to a harness this project does not enable, and one',
+      'scoped (`suggested with`) to waffles the selection leaves out.',
       '',
     );
   }
@@ -329,6 +343,7 @@ export function toolkitInventory(toolkit, version) {
     }
     lines.push('');
     lines.push(...prerequisitesSection(stack.prerequisites));
+    lines.push(...recommendedPluginsSection(stack.recommendedPlugins));
     lines.push(...configSection(stack.config));
     if (stack.setup) lines.push('### setup notes', '', stack.setup.trim(), '');
   }
@@ -368,6 +383,27 @@ function prerequisitesSection(prerequisites) {
       const check = p.check ? ` — check: \`${p.check}\`` : '';
       lines.push(`  - \`${p.name}\` [${p.level}]${scope}${desc}${check}`);
     }
+  }
+  lines.push('');
+  return lines;
+}
+
+/** Per-stack `recommendedPlugins:` section (#199); [] when the stack offers none. */
+function recommendedPluginsSection(plugins) {
+  const offerable = offerablePlugins(plugins);
+  if (!offerable.length) return [];
+  const lines = [
+    '### recommended plugins (external — offer, never auto-install)',
+    '',
+    'External harness plugins this stack pairs well with. They are **not installed by wafflestack**',
+    "— present each with its reason and install only on the user's explicit yes.",
+    '',
+  ];
+  for (const p of offerable) {
+    const scope = p.items?.length ? ` (suggested with ${p.items.join(', ')})` : '';
+    const targets = p.targets?.length ? ` [for: ${p.targets.join(', ')}]` : '';
+    const why = p.why ? ` — ${p.why}` : '';
+    lines.push(`- \`${p.name}\`${targets}${scope}${why} — source: \`${p.source}\``);
   }
   lines.push('');
   return lines;

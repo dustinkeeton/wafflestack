@@ -6,10 +6,12 @@ import { normalizeItemRef } from './refs.mjs';
 import { VALID_TARGETS } from './project.mjs';
 import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
+import { normalizeRecommendedPlugins } from './plugins.mjs';
 import { loadRegistry } from './registry.mjs';
 
 /** @import { ExternalStackEntry } from './project.mjs' */
 /** @import { Registry } from './registry.mjs' */
+/** @import { RecommendedPlugin } from './plugins.mjs' */
 
 /**
  * The core toolkit types. This module owns them; every other module imports them from here.
@@ -50,6 +52,8 @@ import { loadRegistry } from './registry.mjs';
  * @property {string} description
  * @property {boolean} recommended pre-selected by the setup wizard; advisory only, never changes
  *   the render set
+ * @property {RecommendedPlugin[]} recommendedPlugins external harness plugins `setup` offers;
+   never rendered, locked, or installed (#199)
  * @property {AgentItem[]} agents
  * @property {SkillItem[]} skills
  * @property {FileItem[]} files
@@ -77,6 +81,7 @@ import { loadRegistry } from './registry.mjs';
  * @typedef {object} StackManifest
  * @property {string} [description]
  * @property {boolean} [recommended] pre-selected by the setup wizard unless the user opts out
+ * @property {unknown} [recommendedPlugins] external harness plugins the setup wizard offers (#199)
  * @property {string[]} [agents] bare agent names
  * @property {string[]} [skills] bare skill names
  * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths
@@ -303,6 +308,7 @@ function loadStack(name, dir) {
     dir,
     description: manifest.description ?? '',
     recommended: manifest.recommended === true,
+    recommendedPlugins: normalizeRecommendedPlugins(manifest.recommendedPlugins),
     agents,
     skills,
     files,

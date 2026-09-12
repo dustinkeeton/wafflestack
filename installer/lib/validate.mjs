@@ -5,7 +5,8 @@ import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems } from
 import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
-import { HARNESS_BUILTINS, HARNESS_PATTERNS } from './project.mjs';
+import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
+import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
 import {
   REGISTRY_FILE,
   WAFFLE_KINDS,
@@ -506,6 +507,57 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
         if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
           problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
         }
+      }
+    }
+    // Recommended external plugins (#199): malformed entries are reported here and skipped by
+    // the inventory, never a load error.
+    const pluginNames = new Set();
+    for (const p of stack.recommendedPlugins ?? []) {
+      const label = p.name ? `recommended plugin "${p.name}"` : `recommended plugin entry #${p.index + 1}`;
+      if (!isPlainObject(p.raw)) {
+        problems.push(`${ctx}: ${label} must be a mapping (name, source, why) — \`recommendedPlugins:\` is a list of them`);
+        continue;
+      }
+      if (p.unknownKeys.length) {
+        problems.push(
+          `${ctx}: ${label} has unknown key${p.unknownKeys.length > 1 ? 's' : ''} ` +
+            `${p.unknownKeys.map((k) => `"${k}"`).join(', ')} (allowed: ${PLUGIN_ENTRY_KEYS.join(', ')})`,
+        );
+      }
+      if (!p.name) problems.push(`${ctx}: ${label} is missing a \`name\``);
+      if (!p.source) {
+        problems.push(`${ctx}: ${label} is missing a \`source\` — where the user gets the plugin (a marketplace ref or a URL)`);
+      } else if (/\s/.test(p.source)) {
+        problems.push(
+          `${ctx}: ${label} \`source\` "${p.source}" contains whitespace — it must be a single marketplace ref or URL ` +
+            `the user can act on; put the prose in \`why\``,
+        );
+      }
+      if (!p.why) {
+        problems.push(`${ctx}: ${label} is missing a \`why\` — the one-line rationale \`setup\` shows before offering it`);
+      }
+      if (p.name) {
+        if (pluginNames.has(p.name)) problems.push(`${ctx}: ${label} is recommended twice — one entry per plugin`);
+        pluginNames.add(p.name);
+      }
+      if (p.items === null && p.raw.items !== undefined) {
+        problems.push(`${ctx}: ${label} \`items:\` must be a list of item refs in this stack`);
+      }
+      for (const ref of p.items ?? []) {
+        const parsed = parseRef(ref);
+        if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
+          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
+        }
+      }
+      if (p.targets === null && p.raw.targets !== undefined) {
+        problems.push(`${ctx}: ${label} \`targets:\` must be a list of harness names (${VALID_TARGETS.join(', ')})`);
+      }
+      const badTargets = (p.targets ?? []).filter((t) => !(/** @type {string[]} */ (VALID_TARGETS)).includes(t));
+      if (badTargets.length) {
+        problems.push(
+          `${ctx}: ${label} declares unknown target${badTargets.length > 1 ? 's' : ''} ` +
+            `${badTargets.map((t) => `"${t}"`).join(', ')} (valid: ${VALID_TARGETS.join(', ')})`,
+        );
       }
     }
 

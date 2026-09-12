@@ -84,6 +84,16 @@ its successor when one is named. A ref for a waffle that has been **renamed** ke
 it is forwarded to the new name, and `wafflestack upgrade` rewrites the stale ref in
 `.waffle/waffle.yaml`.
 
+**Recommended plugins are an offer, never an install.** A stack may list **external harness
+plugins** it pairs well with under **`### recommended plugins`** in its inventory section — a
+Claude Code plugin or marketplace entry, not a waffle. wafflestack does not install, track, or
+update them: `render` produces the same files whether the user takes the suggestion or not.
+Surface each applicable one to the user with the stated reason and its `source`, and let them
+decide; install only on an explicit yes, using the harness's own plugin command. Skip an entry
+marked `[for: …]` for a harness this project does not enable, and one marked `(suggested with …)`
+whose waffles your selection leaves out. Never install a plugin silently, and never treat a
+recommendation as a prerequisite — nothing in the stack fails without it.
+
 **Opt-in syrup items are opt-in — never pour them silently.** A stack's generic `files/`
 payloads are called **syrup**; the inventory flags some as **opt-in syrup**: sensitive files
 (e.g. a workflow that needs write permissions on the repo) that enabling their stack does
@@ -269,5 +279,6 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
   skipped (with reasons); the both/one/neither call for each opt-in syrup pairing
-  (step 2) and which way the user went; files rendered; and any follow-ups the user
+  (step 2) and which way the user went; any recommended plugins offered and the
+  user's answer to each; files rendered; and any follow-ups the user
   still owes (env vars they declined, boards that don't exist yet).

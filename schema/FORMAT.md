@@ -77,6 +77,12 @@ prerequisites:                       # optional: typed external prerequisites, c
     check: gh secret list | grep -q '^ANTHROPIC_API_KEY'
     items: [files/.github/workflows/waffle-hygiene.yml]  # scope to specific waffles (optional)
     description: Repo secret billing the dispatched harness runs.
+recommendedPlugins:                  # optional: external harness plugins setup offers (never installs)
+  - name: acme-reviewer
+    source: acme/claude-plugins      # marketplace ref or URL the user acts on
+    why: Adds inline review comments the pr-response skill then answers.
+    items: [skills/pr-response]      # optional: scope to specific waffles of this stack
+    targets: [claude]                # optional: the harnesses it exists for
 setup: |-                            # optional, agent-facing install notes
   Service-side prerequisites and how to verify/create them (CLI auth, labels, boards).
 ```
@@ -126,6 +132,36 @@ wizard **pre-selects by default** — a stack that belongs in most setups. The g
 flags it, and `wafflestack setup` includes it unless the user opts out. It is **purely advisory**:
 it is user-overridable and never forces a render or changes a stack's render set — it only changes
 which stacks the wizard defaults ON. A missing or non-`true` value is `false`.
+
+`recommendedPlugins:` names **external harness plugins** — a Claude Code plugin or marketplace
+entry, a Codex extension — that this stack pairs well with, so `wafflestack setup` can **offer**
+them. A plugin is **not a waffle**: it lives outside the toolkit, and `render` never fetches,
+installs, tracks, or updates one. The key changes no output byte; it changes only what the setup
+wizard *says*. Each entry is a mapping:
+
+- **`name`** (required) — what the user looks for.
+- **`source`** (required) — where they get it: a marketplace ref (`owner/repo`) or a URL. A single
+  actionable token, not prose — it is surfaced verbatim for the user to act on, never fetched.
+- **`why`** (required) — the one-line rationale shown before the offer. A wizard pitching an
+  unexplained third-party install is worse than one that stays quiet, so this is not optional.
+- **`items:`** (optional) — item refs defined in this stack, scoping the recommendation to the
+  waffles it is really for (exactly like `prerequisites[].items:`). **This is how a *waffle*
+  recommends a plugin** — no per-waffle key exists, because scoping the stack-level entry says the
+  same thing with vocabulary the author already knows.
+- **`targets:`** (optional) — the harnesses the plugin exists for (`claude`, `codex`,
+  `agents-dir`). **Advisory**: the inventory is generated before a project's targets are known, so
+  the value is *printed* for the setup agent to honour, never a filter the renderer applies.
+
+`wafflestack setup` lists them per stack under **`### recommended plugins`**, and the playbook is
+explicit that they are an **opt-in offer, never a silent install**. `validate` checks the three
+required fields, unknown keys, duplicate names, and that every `items:`/`targets:` entry resolves —
+a malformed entry is a lint problem, never a load error, and is simply not offered.
+
+The key deliberately lives on `stack.yaml` rather than in the **waffle registry**: the registry
+indexes waffles this toolkit *ships* (each entry names a path a render can produce, and its key set
+is closed so nothing unrecognised can change what exists). An external plugin has no path, no
+render, and nothing to prune — so it is curation, and curation belongs next to the stack doing the
+curating, alongside the equally advisory `recommended:` flag.
 
 `setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
 playbook, `schema/SETUP.md`, followed by a generated inventory of every stack's items,

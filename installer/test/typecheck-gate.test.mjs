@@ -17,6 +17,7 @@ const MIGRATED = [
   'installer/lib/refs.mjs',
   'installer/lib/project.mjs',
   'installer/lib/toolkit-ref.mjs',
+  'installer/lib/plugins.mjs',
 ];
 
 describe('typecheck gate (#177)', () => {

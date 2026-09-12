@@ -1756,6 +1756,37 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
   });
 });
 
+describe('recommended external plugins: documented in lockstep with the schema (#199)', () => {
+  const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
+  const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+  const agentsMd = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf8');
+
+  test('FORMAT.md documents the key, its three required fields, and both optional scopes', () => {
+    assert.match(formatMd, /`recommendedPlugins:` names \*\*external harness plugins\*\*/);
+    assert.match(formatMd, /recommendedPlugins:\s+# optional/); // the stack.yaml schema block
+    for (const field of ['name', 'source', 'why', 'items:', 'targets:']) {
+      assert.match(formatMd, new RegExp(`- \\*\\*\`${field}\`\\*\\*`), `FORMAT.md must define \`${field}\``);
+    }
+  });
+
+  test('FORMAT.md states the two things that keep the key harmless: not a waffle, never installed', () => {
+    assert.match(formatMd, /A plugin is \*\*not a waffle\*\*/);
+    assert.match(formatMd, /`render` never fetches,\s*\n?installs, tracks, or updates one/);
+    assert.match(formatMd, /deliberately lives on `stack\.yaml` rather than in the \*\*waffle registry\*\*/);
+  });
+
+  test('SETUP.md tells the wizard to offer, never to install', () => {
+    assert.match(setupMd, /\*\*Recommended plugins are an offer, never an install\.\*\*/);
+    assert.match(setupMd, /install only on an explicit yes/);
+    assert.match(setupMd, /never treat a\s*\n?recommendation as a prerequisite/);
+  });
+
+  test('AGENTS.md registers the loader field and the module', () => {
+    assert.match(agentsMd, /\.recommendedPlugins/);
+    assert.match(agentsMd, /## Recommended external plugins/);
+  });
+});
+
 describe('waffle registry: documented in lockstep with the schema (#335)', () => {
   const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
   const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
