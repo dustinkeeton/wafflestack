@@ -34,7 +34,14 @@ names `.codex/` or `.agents/` is portability prose; `targets: [claude]` syrup is
 contract (#364); `.claude/worktrees/` and `.claude/workflows/` never match. (3) State the expected
 `.codex/` layout in one sentence wherever the codex target is described — `agents/<name>.toml`
 only, plus the consumer's own `config.toml`; skills are in `.agents/skills/` — and add a "renders
-for every target it claims" item to the external-stack author's pre-tag checklist.
+for every target it claims" item to the external-stack author's pre-tag checklist. (4) Scope the
+four Claude-dispatch hook workflows (`waffle-label-hook`, `waffle-hygiene`, `waffle-pr-green-hook`,
+`waffle-pr-response-hook`) `targets: [claude]`: each runs claude-code-action and prompts it with a
+`.claude/skills/<n>/SKILL.md` path, which is Claude by nature — the sweep in (2) covers Markdown
+bodies only, so the declared `targets:` contract (#364) is what keeps a Claude-only workflow out of
+a codex or agents-dir consumer's tree. The doctor, release, and post-merge workflows are
+harness-neutral and stay unscoped; the evals workflow renders its own scratch claude target inside
+the runner and stays unscoped too.
 
 **Alternatives considered**: *Emit `[[skills.config]]` with `enabled = true` per granted skill.*
 Rejected: it asserts a grant semantics the key does not have, the path would have to be absolute
@@ -46,7 +53,8 @@ check is a non-claude render plus the sources of the stacks this repo does not i
 
 **Impact**: `schema/FORMAT.md`, `AGENTS.md`, `ARCHITECTURE.md`, and
 `schema/AUTHORING-EXTERNAL-STACKS.md` (docs); `installer/test/content.test.mjs` (the #190 sweep
-and its regression fixtures); the three leaking sources, re-rendered. Syrup substitutes against
+and its regression fixtures); the three leaking sources, re-rendered; `stacks/github-workflow/stack.yaml`
+(the four hooks in map form with `targets: [claude]`). Syrup substitutes against
 the **primary** (first-listed) target, so `{{harness.skillsDir}}` in `REVIEW_TEMPLATE.md` resolves
 to whichever target a consumer lists first — unchanged bytes for a Claude-primary render.
 

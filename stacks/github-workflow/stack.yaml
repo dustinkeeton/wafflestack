@@ -1,15 +1,26 @@
 name: github-workflow
 description: Git, GitHub issue, and Projects v2 workflow skills — branching/commit/PR standards, issue creation & enrichment, project-board automation, and post-merge housekeeping (clean-up).
 skills: [git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release, pr-response]
+# The four Claude-dispatch hooks (label-hook, hygiene, pr-green, pr-response) are scoped
+# `targets: [claude]` (#190): each runs claude-code-action and prompts it with a
+# `.claude/skills/<n>/SKILL.md` path, so under a codex or agents-dir consumer the poured workflow
+# would dispatch a harness the repo does not render for. Scoping keeps it out of that tree (and
+# prunes an already-poured copy on the next render — see FORMAT.md § syrup `targets:`). The
+# doctor, release and post-merge workflows are harness-neutral, and the evals workflow renders its
+# own scratch claude target inside the runner (evals.mjs) — none depend on the consumer's targets.
 files:
   - .github/workflows/waffle-doctor.yml
-  - .github/workflows/waffle-label-hook.yml
-  - .github/workflows/waffle-hygiene.yml
+  - path: .github/workflows/waffle-label-hook.yml
+    targets: [claude]
+  - path: .github/workflows/waffle-hygiene.yml
+    targets: [claude]
   - .github/workflows/waffle-release-hook.yml
   - .github/workflows/waffle-post-merge-hook.yml
   - .github/workflows/waffle-evals.yml
-  - .github/workflows/waffle-pr-green-hook.yml
-  - .github/workflows/waffle-pr-response-hook.yml
+  - path: .github/workflows/waffle-pr-green-hook.yml
+    targets: [claude]
+  - path: .github/workflows/waffle-pr-response-hook.yml
+    targets: [claude]
   - .github/ISSUE_TEMPLATE/config.yml
   - .github/ISSUE_TEMPLATE/bug.yml
   - .github/ISSUE_TEMPLATE/feature.yml
