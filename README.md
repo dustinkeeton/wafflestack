@@ -45,7 +45,7 @@ follow the playbook it prints. Ask me which stacks to enable before you render.
 in-session and feeds its output back to the model; `--yes` keeps `npx` non-interactive):
 
 ```text
-! npx --yes github:dustinkeeton/wafflestack#v0.13.0 setup
+! npx --yes github:dustinkeeton/wafflestack setup
 ```
 
 `setup` prints an agent playbook plus a generated inventory of every stack, config key, and
@@ -61,9 +61,6 @@ npx github:dustinkeeton/wafflestack init              # writes a starter .waffle
 npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness files + lock manifest
 ```
 
-> **Pin the tag on anything that writes files.** An unpinned `npx github:` spec resolves the
-> **default branch**, not the latest release — so `render`, `install`, `upgrade`, `reinstall`, and
-> `doctor --verify-render` refuse it and name the pinned command to run. See
 > [release resolution](docs/upgrades.md#release-resolution).
 
 ## Commands
@@ -86,7 +83,7 @@ npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness file
 
 Run `npx github:dustinkeeton/wafflestack help` for the full flag detail on any command.
 
-## Perchance
+## Some guidance
 1. **Never edit rendered files** — `render` overwrites them. Put additions in
    `.waffle/extensions/{agents,skills}/<name>.md` and parameters in `.waffle/waffle.yaml`.
 2. **Account-specific values** (bot identities, board IDs) go in `.waffle/waffle.local.yaml` —
