@@ -385,7 +385,7 @@ const NAMES_GITHUB_HOST = /github\.com/i;
  *
  *   | kind          | value                                    | what #372 does                      |
  *   |---------------|------------------------------------------|-------------------------------------|
- *   | `absent`      | key unset (this repo; most consumers)     | nothing — a pin is never INTRODUCED |
+ *   | `absent`      | key unset (most consumers; default pins, #461) | nothing — a pin is never INTRODUCED |
  *   | `unpinned`    | `github:owner/repo` (no `#fragment`)      | nothing — deliberately floating     |
  *   | `release-pin` | `github:owner/repo#v0.12.0` / `#0.12.0`   | **rewrite the whole value**         |
  *   | `other-pin`   | `#main`, `#<sha>`, `#nightly`             | nothing — left alone, and NOTED     |

@@ -590,7 +590,7 @@ not a release — enough to tighten `unverified` to `unreleased`.
 
 | Gated (refuses when `unreleased`) | Not gated |
 |---|---|
-| `render` / `bake`, `install`, `upgrade`, `reinstall` | plain `doctor` — pure hash-vs-lock; it reads no toolkit content, so it is correct from *any* toolkit. Gating it would red the unpinned-by-default `waffle-doctor.yml` for every consumer. |
+| `render` / `bake`, `install`, `upgrade`, `reinstall` | plain `doctor` — pure hash-vs-lock; it reads no toolkit content, so it is correct from *any* toolkit. Gating it would red `waffle-doctor.yml` for every consumer that pins CI to something other than a release (the toolkit's own repo runs it unpinned). |
 | `doctor --verify-render` — it *renders* | `list`, `setup` — read-only reports: they **warn**, naming the tag to pin |
 | `list --interactive`, once a selection is applied | `init`, `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
 
@@ -755,9 +755,9 @@ including the case the bare version string structurally cannot express: **same v
 commit**. It names the cause it actually checked: a **re-cut or force-pushed tag** when both blocks
 name the *same* repository, and **different repositories** when they do not (a fork's `v0.12.0` and
 upstream's `v0.12.0` are two releases, and neither tag need have moved). It is a **note, never an
-error**: `doctor.toolkitRef` ships
-unpinned by default, so an error would red every consumer's required check the moment anything merges
-to the toolkit's `main` — and `--verify-render` is already the *content* gate, so the only mismatch an
+error**: a consumer may pin `doctor.toolkitRef`
+to a fork or leave it unpinned (the toolkit's own repo does), and an error would red such a repo's required
+check the moment anything merges upstream — and `--verify-render` is already the *content* gate, so the only mismatch an
 error could add is one whose rendered bytes are identical, i.e. one that provably did not matter.
 `upgrade` reports the commit move, exactly as it already does for external sources.
 
@@ -1048,6 +1048,13 @@ rendered workflow:
 | `harness.actionRef` | `anthropics/claude-code-action` |
 | `harness.actionVersion` | the current pinned SHA, with its `# vX.Y.Z` comment preserved |
 | `harness.apiKeySecret` | `ANTHROPIC_API_KEY` |
+| `harness.toolkitVersion` | the running toolkit's `package.json` version — the lock's `toolkitVersion` |
+
+`harness.toolkitVersion` is supplied by the running CLI rather than a static built-in (#461): it
+is what lets the `github-workflow` stack default `doctor.toolkitRef` to
+`github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}`, so the shipped `waffle-doctor.yml`
+pins CI to the release that rendered the lock and a re-render (`upgrade`) moves the pin. A
+library caller that renders without a `toolkitVersion` leaves the placeholder unexpanded.
 
 These splice into the `uses:` and `anthropic_api_key:` lines of `waffle-label-hook.yml` and
 `waffle-hygiene.yml`. Override `config.harness.actionVersion` to pin a different version of

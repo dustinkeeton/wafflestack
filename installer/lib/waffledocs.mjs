@@ -114,11 +114,11 @@ function titleCaseSlug(slug) {
  * The per-stack resolver cache and `substitute` closure the doc generators share, so the values
  * `generateWaffleDocs` and `collectAgentAvatars` derive can never diverge.
  */
-function makeDocSubstitutor(project, errors) {
+function makeDocSubstitutor(project, errors, runtime = {}) {
   const primaryTarget = project.targets[0] ?? 'claude';
   const resolvers = new Map();
   const resolverFor = (stack) => {
-    if (!resolvers.has(stack.name)) resolvers.set(stack.name, makeResolver(stack, project.values, primaryTarget));
+    if (!resolvers.has(stack.name)) resolvers.set(stack.name, makeResolver(stack, project.values, primaryTarget, runtime));
     return resolvers.get(stack.name);
   };
   const sub = (stack, text, ctx) =>
@@ -150,8 +150,8 @@ function enumerateAgents(selection, sub, ctxPrefix) {
   return agents;
 }
 
-export function generateWaffleDocs({ toolkit, project, selection, errors = [] }) {
-  const { resolverFor, sub } = makeDocSubstitutor(project, errors);
+export function generateWaffleDocs({ toolkit, project, selection, errors = [], toolkitVersion = undefined }) {
+  const { resolverFor, sub } = makeDocSubstitutor(project, errors, { toolkitVersion });
 
   const commands = [];
   for (const { stack, kind, item } of selection.items) {

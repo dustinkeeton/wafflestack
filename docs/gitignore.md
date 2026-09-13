@@ -427,8 +427,10 @@ This is the one flag that makes the **toolkit itself load-bearing**, and that ch
 unpinned ref costs you. The plain drift check never reads the toolkit at all — it just hashes
 your files against your lock — so a floating `doctor.toolkitRef` is merely untidy. But
 `--verify-render` *re-renders your committed config*, using whatever toolkit `npx --yes <ref>`
-just fetched. On the unpinned default (`github:dustinkeeton/wafflestack`, no `#tag`) that is
-**whatever is on our default branch the moment your CI runs**.
+just fetched. On an unpinned value (`github:dustinkeeton/wafflestack`, no `#tag`) that is
+**whatever is on our default branch the moment your CI runs**. Since #461 the *default* is
+pinned — `github:dustinkeeton/wafflestack#v<the version your lock records>` — so you only meet
+this if you set the key unpinned yourself.
 
 So: we ship any content change to a stack, and your next pull request goes red — for a change
 nobody on your side made, on a PR that has nothing to do with it. Your CI is hostage to our

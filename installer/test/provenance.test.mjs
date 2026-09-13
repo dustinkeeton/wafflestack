@@ -1617,8 +1617,8 @@ describe('doctor reports the toolkit that produced the render, and WARNS on a mi
   });
 
   test('THE CONSUMER-SAFETY TEST: a provenance mismatch is a WARNING — `ok` stays TRUE', () => {
-    // If this ever flips to false, every consumer's required `waffle-doctor` check reds the moment
-    // anything merges to this repo's `main`: `doctor.toolkitRef` ships UNPINNED by default.
+    // If this ever flips to false, every consumer that overrides `doctor.toolkitRef` to an unpinned
+    // value (this repo included) reds its required `waffle-doctor` check the moment anything merges.
     renderProject({ toolkitRoot, cwd, toolkitVersion: '0.11.0', toolkitIdentity: releaseIdentity({ version: '0.11.0', tag: 'v0.11.0', commit: SHA_A, ref: 'github:dustinkeeton/wafflestack#v0.11.0' }) });
     const dr = doctor({ cwd, toolkitVersion: '0.12.0', toolkitIdentity: releaseIdentity({ commit: SHA_B }), toolkitRoot });
     assert.equal(dr.ok, true, 'a provenance mismatch MUST NOT fail the gate');

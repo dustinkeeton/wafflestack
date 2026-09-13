@@ -240,9 +240,10 @@ setup: |-
   managed file drifts from `.waffle/waffle.lock.json`. It only works when the consuming repo
   commits BOTH the rendered output AND `.waffle/waffle.lock.json` (the step-6 version-control
   flow in schema/SETUP.md) — a repo that gitignores its render or lock will see doctor exit
-  1 with everything reported `missing:`, or fail on the missing lock. Point `doctor.toolkitRef`
-  at a release tag (e.g. `github:dustinkeeton/wafflestack#v0.5.0`) to pin the toolkit version
-  and silence doctor's version-skew note. Repos that deliberately gitignore a subset of
+  1 with everything reported `missing:`, or fail on the missing lock. `doctor.toolkitRef`
+  defaults to the toolkit release that rendered the lock (`github:dustinkeeton/wafflestack#vX.Y.Z`,
+  #461) and `upgrade` moves it with the lock; set it only to pin a different toolkit — never an
+  unpinned `github:owner/repo`, which runs the default branch. Repos that deliberately gitignore a subset of
   renders can set `doctor.flags: --allow-missing` to keep the workflow managed (only modified
   files fail; a missing lock still fails) — no hand-editing the run line, no eject.
   Pushing this file needs the `workflow` credential
@@ -1761,31 +1762,33 @@ config:
       repo's priority labels. Override to match the repo's taxonomy (e.g. priority/p0..p2).
   doctor.toolkitRef:
     required: false
-    default: github:dustinkeeton/wafflestack
+    default: github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
     description: >-
       npx spec the doctor CI workflow (.github/workflows/waffle-doctor.yml) invokes
-      as `npx --yes <ref> doctor <flags>`. Pin to a release tag to freeze the toolkit version,
-      e.g. "github:dustinkeeton/wafflestack#v0.5.0". The default is UNPINNED — it resolves to
-      whatever is on the toolkit's default branch at the moment CI runs. That is merely untidy
-      for the plain drift check (which never reads the toolkit, only hashes files against the
-      lock) and it costs you a version-skew note: plain `doctor` is deliberately NOT gated on
-      the toolkit being a release, precisely so this default keeps working.
-      But it is a HARD ERROR, not merely required practice, once `doctor.flags` includes
-      `--verify-render`: that flag RE-RENDERS your committed config using whatever toolkit npx
-      just fetched, and since #373 the toolkit REFUSES to render when it can prove it is not
-      running at a release tag — which an unpinned fetch of the default branch always is. The
-      job will fail with a message naming the exact pinned command. That is the intended
-      outcome: it used to render unreleased content and stamp the last released version number
-      into your lock, so any upstream content release re-rendered your config differently from
-      the toolkit your lock was built with — turning the next unrelated PR red for a change
-      nobody on your side made, with no clue why. Pin first, arm second; bump the pin
-      deliberately (`wafflestack upgrade`) and commit the re-render with it.
-      Since #372 `upgrade` DOES the bump for you: a release-pinned value here is rewritten to the
-      toolkit that just rendered your lock — before the render, so the new ref lands in this
-      workflow in the same run — and the pin CI fetches is by construction the pin the lock
-      records. It rewrites only a pin you already chose: an UNPINNED value keeps floating and an
-      absent key is never given one, because that would silently change what your CI fetches. A
-      `#main`/`#<sha>` pin is left alone and noted.
+      as `npx --yes <ref> doctor <flags>`. The default is PINNED to the toolkit release that
+      rendered your lock: `{{harness.toolkitVersion}}` is the running toolkit's package version —
+      the value the lock records as `toolkitVersion` — so an unset key renders as
+      "github:dustinkeeton/wafflestack#v0.14.0" and the pin CI fetches is by construction the
+      version your lock says (#461). `wafflestack upgrade` re-renders, so the pin moves with the
+      lock on every upgrade with no key to maintain. Set the key only to pin a DIFFERENT toolkit
+      (a fork, or an explicit release tag such as "github:dustinkeeton/wafflestack#v0.5.0"); since
+      #372 `upgrade` rewrites an explicit release-shaped pin to the toolkit that just rendered
+      your lock — before the render, so the new ref lands in this workflow in the same run — and
+      leaves a `#main`/`#<sha>` pin alone, noted.
+      An UNPINNED value ("github:dustinkeeton/wafflestack", no `#tag`) is deliberately NOT the
+      default: it runs whatever is on the toolkit's DEFAULT BRANCH at the moment CI runs, so every
+      push and PR in your repo executes an unreviewed upstream commit against your checked-out
+      source — a private tree exposed to the toolkit's default branch, with `contents: read` and no
+      secrets the only mitigation. It also costs a version-skew note on every run, and it is a HARD
+      ERROR once `doctor.flags` includes `--verify-render`: that flag RE-RENDERS your committed
+      config using whatever toolkit npx just fetched, and since #373 the toolkit REFUSES to render
+      when it can prove it is not at a release tag — which an unpinned fetch of the default branch
+      always is. (Before #373 it rendered unreleased content and stamped the last released version
+      number into your lock, turning the next unrelated PR red for a change nobody on your side
+      made.) `upgrade` leaves an unpinned value floating rather than silently changing what your CI
+      fetches. The toolkit's OWN repo is the one place an unpinned value is right: its default branch
+      IS the tree under test, and a version-tag pin would name a tag that does not exist yet on every
+      release-bump PR.
   doctor.flags:
     required: false
     default: ""
@@ -1801,14 +1804,14 @@ config:
       extension change that was never re-rendered — invisible to the plain check, since the files
       and the lock go stale together. `--allow-missing --verify-render` is therefore the gate for
       a repo that gitignores its whole render: nothing is present to compare, so the render is
-      reproduced and checked against the lock instead. PIN BEFORE YOU ARM: `--verify-render` is
-      the one flag that makes the toolkit load-bearing — it RENDERS from whatever toolkit
+      reproduced and checked against the lock instead. STAY PINNED WHEN YOU ARM: `--verify-render`
+      is the one flag that makes the toolkit load-bearing — it RENDERS from whatever toolkit
       `doctor.toolkitRef` resolved to, and since #373 the toolkit refuses to render at all when
       it can prove it is not a release, which an unpinned fetch of the default branch always is.
-      So on the unpinned default this flag is now a HARD ERROR (a legible one, naming the pinned
-      command) rather than the silent trap it was — where an upstream release could turn your next
-      unrelated PR red with no change on your side. Set `doctor.toolkitRef` to a release tag (see
-      its description) before you add this flag. Empty by default.
+      The default `doctor.toolkitRef` is pinned to the release that rendered your lock (#461), so
+      this flag works out of the box; on an explicitly UNPINNED value it is a HARD ERROR (a legible
+      one, naming the pinned command) rather than the silent trap it was — where an upstream release
+      could turn your next unrelated PR red with no change on your side. Empty by default.
   labelHook.enrichLabel:
     required: false
     default: "waffle:enrich"

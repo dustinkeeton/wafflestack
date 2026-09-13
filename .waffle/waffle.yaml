@@ -135,6 +135,12 @@ config:
     # one level up: it is why this repo can commit its RENDER at all, since a render-affecting
     # overlay would bake a personal value into a committed .claude/ file.
     flags: --allow-missing
+    # #461 pinned the stack default to `#v{{harness.toolkitVersion}}` — the release that rendered
+    # the lock. The toolkit's own repo is the one consumer where that is wrong: its default branch
+    # IS the tree under test (no third-party exposure), and a version pin would name a tag that
+    # does not exist yet on every release-bump PR, wedging the required check. Explicitly
+    # unpinned; `upgrade` leaves an unpinned value alone (#372).
+    toolkitRef: github:dustinkeeton/wafflestack
   hygiene:
     # #82: this repo dogfoods the scheduled hygiene hook, and its own skill prompts steer the
     # dispatched harness to run the toolkit CLI DIRECTLY — `node installer/cli.mjs doctor
