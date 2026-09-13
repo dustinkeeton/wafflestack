@@ -2666,6 +2666,7 @@ describe('source + rendered content: the abolished team concept does not survive
     { pattern: /team beats a single loop/gi, why: 'harness-architect: generic fan-out design advice' },
     { pattern: /engineering-team/gi, why: 'a stack name that merely contains the word' },
     { pattern: /Team Standup/gi, why: 'the standup skill\'s title' },
+    { pattern: /GitHub Pro \/ Team \/ Enterprise/g, why: 'GitHub\'s paid plan tiers, named in the auto-merge prerequisite (#205)' },
   ];
 
   // Emphasis and line wrapping must not smuggle a phrase past the allowlist.
