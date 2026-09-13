@@ -134,10 +134,20 @@ the user, beyond the both/one/neither choice above** — because the file is thi
 demand elevated permissions, e.g. repo write). Name the source and its pinned `ref`, spell out what
 the file does, and get a clear yes before you install it; `render` also surfaces this as a warning
 whenever external opt-in syrup is selected. This is distinct from built-in opt-in syrup, which the
-normal opt-in flow already covers. One gate does **not** exist: an external stack's
-`prerequisites[].check` commands execute as shell commands on this machine (`render` runs the
-`tool`/`env` checks, `doctor` runs all of them) with no acknowledgement — read the stack's
-`prerequisites:` block before adding it, and prefer a tag or commit `ref:` over a branch.
+normal opt-in flow already covers. Third, an external stack's **`prerequisites[].check` commands
+are not run until acknowledged** — the same trust boundary, because a check string is shell that
+executes on this machine (`render` runs the `tool`/`env` checks, `doctor` runs all of them, and
+`doctor` runs in CI). Until the list is acknowledged, `render` and `doctor` **skip** those
+checks and report them as `not run — external stack <name> awaiting acknowledgement` (never as
+met or unmet), and print, per external stack, every prerequisite's `name`, `kind`, `level`, and
+**exact `check:` string** alongside the source and its pinned `ref`, plus the
+`acknowledgedChecks: <digest>` line to record. Show the user that list, name the source and ref,
+and get a clear yes **before** you write the acknowledgement: put `acknowledgedChecks: <digest>` on
+that stack's entry under `stacks:` in the **committed** `.waffle/waffle.yaml` (not the `.local`
+overlay — CI reads the committed config and cannot answer a prompt), then re-render. The digest
+is a sha256 of the stack's check strings, so a changed command list invalidates it: the list is
+shown again and the checks are skipped again until re-acknowledged. A branch `ref:` earns an extra
+warning — the commands can change under the pin — so prefer a tag or commit.
 
 ## 3. Fill config values
 

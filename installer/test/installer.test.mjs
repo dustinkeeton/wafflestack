@@ -16,7 +16,7 @@ import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
 import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, itemOutputMatcher } from '../lib/refs.mjs';
 import { computeListModel, formatListTable, selectableChoices, STATUS } from '../lib/list.mjs';
-import { normalizePrerequisites, applicablePrerequisites } from '../lib/prerequisites.mjs';
+import { normalizePrerequisites, applicablePrerequisites, checksDigest, formatCheckGate, looksLikeBranchRef } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 import { uninstall, reinstall, planUninstall } from '../lib/uninstall.mjs';
@@ -11461,5 +11461,197 @@ describe('planUninstall (#182) — the plan is the single source of truth', () =
     assert.ok(full.meta.some((m) => m.rel === '.waffle/waffle.yaml'));
     assert.ok(full.meta.some((m) => m.rel === '.waffle/waffle.lock.json'));
     assert.deepEqual(kept.meta, [], 'a refresh destroys neither the selection nor the lock it re-renders from');
+  });
+});
+
+// External stacks' `prerequisites[].check` commands are shell; they must not run until the
+// consumer has acknowledged the exact list, mirroring the external opt-in syrup gate (#458).
+describe('external stack check commands: gated on a recorded acknowledgement (#458)', () => {
+  let builtinRoot;
+  let extRoot;
+  let cwd;
+  let cacheDir;
+
+  beforeEach(() => {
+    builtinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'v458-builtin-'));
+    extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'v458-ext-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'v458-project-'));
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v458-cache-'));
+    write(builtinRoot, 'toolkit.yaml', 'name: builtin\ndescription: built-in fixture\nstacks: [core]\n');
+    write(builtinRoot, 'schema/SETUP.md', '# fixture playbook\n');
+    write(builtinRoot, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha.\n');
+    write(extRoot, 'stacks/acme/skills/tool/SKILL.md', '---\nname: tool\ndescription: Tool.\n---\n\nTool.\n');
+  });
+  afterEach(() => {
+    for (const d of [builtinRoot, extRoot, cwd, cacheDir]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  const sentinel = (name) => path.join(cwd, `${name}.ran`);
+  // A `check:` that leaves proof it executed: the test asserts on the file, not the exit code.
+  const touchCheck = (name) => `touch "${sentinel(name)}"`;
+  const writeStack = (root, name, skill, checks) =>
+    write(root, `stacks/${name}/stack.yaml`, [
+      `name: ${name}`,
+      `description: ${name} stack.`,
+      `skills: [${skill}]`,
+      'prerequisites:',
+      ...checks.flatMap(([pname, check, level = 'require']) => [
+        '  - kind: tool',
+        `    name: ${pname}`,
+        `    level: ${level}`,
+        `    check: '${check}'`,
+        `    description: ${pname} probe.`,
+      ]),
+      '',
+    ].join('\n'));
+  const writeConfig = (ack) =>
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      '  - name: acme',
+      `    source: ${extRoot}`,
+      ...(ack ? [`    acknowledgedChecks: ${ack}`] : []),
+      'config: {}',
+      '',
+    ].join('\n'));
+  const render = () => renderProject({ toolkitRoot: builtinRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir });
+  const runDoctor = () => doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: builtinRoot, allowMissing: true, sourceCacheDir: cacheDir });
+  const digestOf = () =>
+    checksDigest(loadToolkitWithSources({ builtinRoot, externalStacks: [{ name: 'acme', source: extRoot, sourceType: 'path', ref: null }], cwd, cacheDir }).stacks.get('acme'));
+  const ran = (name) => fs.existsSync(sentinel(name));
+  const gateWarning = (result) => result.warnings.find((w) => /awaiting acknowledgement/.test(w));
+
+  test('unacknowledged: render lists the commands with source and digest, and does not run them; the built-in check still runs', () => {
+    writeStack(builtinRoot, 'core', 'alpha', [['core-probe', touchCheck('core')]]);
+    writeStack(extRoot, 'acme', 'tool', [['gh', touchCheck('acme')], ['soft', touchCheck('acme-soft'), 'recommend']]);
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(ran('core'), true, 'a built-in stack\'s check runs with no acknowledgement, exactly as before');
+    assert.equal(ran('acme'), false, 'the external require check did not execute');
+    assert.equal(ran('acme-soft'), false, 'the external recommend check did not execute');
+    const w = gateWarning(result);
+    assert.ok(w, JSON.stringify(result.warnings));
+    assert.match(w, /EXTERNAL prerequisite checks from external source "acme"/);
+    assert.ok(w.includes(extRoot), 'names the source');
+    assert.match(w, /external stack "acme" awaiting acknowledgement/);
+    assert.match(w, /trust boundary/);
+    assert.ok(w.includes(`- [require] tool gh: gh probe. — check: \`${touchCheck('acme')}\``), w);
+    assert.ok(w.includes(`- [recommend] tool soft: soft probe. — check: \`${touchCheck('acme-soft')}\``), w);
+    assert.ok(w.includes(`acknowledgedChecks: ${digestOf()}`), 'prints the exact line to record');
+    assert.match(w, /COMMITTED config/);
+    assert.doesNotMatch(w, /looks like a branch/, 'a local path has no ref to warn about');
+    // Skipped is neither met nor unmet: no "requires tool gh" unmet warning was raised.
+    assert.ok(!result.warnings.some((x) => /stack "acme" requires tool gh/.test(x)), JSON.stringify(result.warnings));
+  });
+
+  test('unacknowledged: doctor skips the checks into notRun, stays green, and carries the listing as a note', () => {
+    writeStack(builtinRoot, 'core', 'alpha', [['core-probe', 'true']]);
+    writeStack(extRoot, 'acme', 'tool', [['gh', touchCheck('acme')]]);
+    writeConfig();
+    assert.equal(render().ok, true);
+    fs.rmSync(sentinel('acme'), { force: true });
+    const result = runDoctor();
+    assert.equal(result.ok, true, JSON.stringify(result.notes));
+    assert.equal(ran('acme'), false, 'doctor did not execute the external check either');
+    assert.deepEqual(result.prerequisites.notRun.map((p) => [p.stackName, p.name]), [['acme', 'gh']]);
+    assert.deepEqual(result.prerequisites.unmetRequired, [], 'not run is not unmet');
+    assert.ok(result.prerequisites.met.some((p) => p.name === 'core-probe'), 'the built-in check still ran and was met');
+    assert.ok(result.notes.some((n) => /external stack "acme" awaiting acknowledgement/.test(n)), JSON.stringify(result.notes));
+  });
+
+  test('acknowledged: the recorded digest matches, so the checks run and nothing is listed', () => {
+    writeStack(builtinRoot, 'core', 'alpha', [['core-probe', 'true']]);
+    writeStack(extRoot, 'acme', 'tool', [['gh', touchCheck('acme')]]);
+    writeConfig(digestOf());
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(ran('acme'), true, 'the external check executed once acknowledged');
+    assert.equal(gateWarning(result), undefined, JSON.stringify(result.warnings));
+    fs.rmSync(sentinel('acme'));
+    const d = runDoctor();
+    assert.equal(ran('acme'), true, 'doctor runs it too');
+    assert.deepEqual(d.prerequisites.notRun, []);
+    assert.ok(!d.notes.some((n) => /awaiting acknowledgement/.test(n)));
+  });
+
+  test('re-gated: a changed check string invalidates the recorded digest until re-acknowledged', () => {
+    writeStack(builtinRoot, 'core', 'alpha', [['core-probe', 'true']]);
+    writeStack(extRoot, 'acme', 'tool', [['gh', touchCheck('acme')]]);
+    const stale = digestOf();
+    writeConfig(stale);
+    assert.equal(ran('acme'), false);
+    // The author (or a moving branch) changes the command under the same stack.
+    writeStack(extRoot, 'acme', 'tool', [['gh', touchCheck('acme-v2')]]);
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.equal(ran('acme-v2'), false, 'the changed command did not run');
+    assert.equal(ran('acme'), false);
+    const w = gateWarning(result);
+    assert.ok(w, JSON.stringify(result.warnings));
+    assert.ok(w.includes(`acknowledgedChecks: ${stale}\` no longer matches`), w);
+    assert.match(w, /CHANGED since they were acknowledged/);
+    const fresh = digestOf();
+    assert.notEqual(fresh, stale);
+    assert.ok(w.includes(`acknowledgedChecks: ${fresh}`), 'prints the new digest to record');
+    writeConfig(fresh);
+    assert.equal(render().ok, true);
+    assert.equal(ran('acme-v2'), true, 'runs again once re-acknowledged');
+  });
+
+  test('an external stack with no check strings needs no acknowledgement', () => {
+    writeStack(builtinRoot, 'core', 'alpha', [['core-probe', 'true']]);
+    write(extRoot, 'stacks/acme/stack.yaml', 'name: acme\ndescription: Acme.\nskills: [tool]\n');
+    writeConfig();
+    const result = render();
+    assert.equal(result.ok, true);
+    assert.equal(gateWarning(result), undefined, JSON.stringify(result.warnings));
+    assert.equal(checksDigest({ prerequisites: [] }), null);
+    assert.equal(checksDigest({ prerequisites: [{ check: '' }] }), null);
+  });
+
+  test('setup update mode names the gate in its trust-boundary note and runs no external check', () => {
+    writeStack(builtinRoot, 'core', 'alpha', [['core-probe', 'true']]);
+    writeStack(extRoot, 'acme', 'tool', [['gh', touchCheck('acme')]]);
+    writeConfig();
+    const guide = setupGuide(builtinRoot, '0.0.test', cwd);
+    assert.equal(ran('acme'), false, 'the inventory reads only the built-in toolkit, so no external check runs');
+    assert.match(guide, /NOT run until acknowledged\*\* \(#458\)/);
+    assert.match(guide, /`acknowledgedChecks: <digest>` is recorded/);
+    assert.match(guide, /COMMITTED `\.waffle\/waffle\.yaml`/);
+  });
+
+  test('config: acknowledgedChecks must be a non-empty string; unknown keys are still rejected', () => {
+    assert.throws(
+      () => normalizeStackEntries([{ name: 'acme', source: extRoot, acknowledgedChecks: '' }]),
+      /external stack "acme".*empty `acknowledgedChecks:`/,
+    );
+    assert.throws(() => normalizeStackEntries([{ name: 'acme', source: extRoot, acknowledged: 'abc' }]), /unknown key\(s\) acknowledged/);
+    const { externalStacks } = normalizeStackEntries([{ name: 'acme', source: extRoot, acknowledgedChecks: ' abc ' }]);
+    assert.equal(externalStacks[0].acknowledgedChecks, 'abc');
+    assert.ok(!('acknowledgedChecks' in normalizeStackEntries([{ name: 'acme', source: extRoot }]).externalStacks[0]));
+  });
+
+  test('a branch-shaped git ref earns the moving-target warning; tags and SHAs do not', () => {
+    assert.equal(looksLikeBranchRef('main'), true);
+    assert.equal(looksLikeBranchRef('release/2026'), true);
+    assert.equal(looksLikeBranchRef('v1.2.0'), false);
+    assert.equal(looksLikeBranchRef('1.2.0-rc.1'), false);
+    assert.equal(looksLikeBranchRef('a'.repeat(40)), false);
+    assert.equal(looksLikeBranchRef(null), false);
+    const gate = (ref) => ({
+      stackName: 'acme',
+      stack: { prerequisites: [{ kind: 'tool', name: 'gh', level: 'require', description: 'gh.', check: 'command -v gh' }] },
+      provenance: { name: 'acme', source: 'https://example.invalid/acme.git', sourceType: 'git', ref, commit: null },
+      digest: 'd'.repeat(64),
+      recorded: null,
+      acknowledged: false,
+    });
+    const onBranch = formatCheckGate(gate('main'));
+    assert.match(onBranch, /https:\/\/example\.invalid\/acme\.git@main/);
+    assert.match(onBranch, /ref "main" looks like a branch, not a tag or commit — these commands can change under the pin/);
+    assert.match(onBranch, /- \[require\] tool gh: gh\. — check: `command -v gh`/);
+    assert.doesNotMatch(formatCheckGate(gate('v1.2.0')), /looks like a branch/);
   });
 });

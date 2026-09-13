@@ -99,7 +99,12 @@ function currentConfigSection(toolkit, cwd, toolkitVersion) {
       '> acknowledgement from the user, beyond the normal opt-in and the both/one/neither question**',
       '> in step 2 — the content is third-party. Name the source and its pinned `ref`, note it may',
       '> demand elevated permissions, and get a clear yes before you pour it; `render` also prints',
-      '> this as a warning when such syrup is selected.',
+      '> this as a warning when such syrup is selected. (3) An external stack\'s `prerequisites[].check`',
+      '> commands are **NOT run until acknowledged** (#458): `render`/`doctor` list every command with',
+      '> the source and its `ref`, and skip them until `acknowledgedChecks: <digest>` is recorded on',
+      '> that stack\'s entry in the COMMITTED `.waffle/waffle.yaml`. Run `render` to see the list',
+      '> (this inventory reads only the built-in toolkit), show it to the user, get a clear yes, then',
+      '> record the digest — a changed command list re-gates it.',
       '',
     );
   }

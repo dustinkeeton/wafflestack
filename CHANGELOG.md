@@ -148,6 +148,26 @@ is what you reach for across a breaking one.
   the new `requires:` edge. No config change.
 
 ### Fixed
+- **External stacks' `prerequisites[].check` commands are not run until acknowledged (#458).**
+  Every stack's check string is handed to the shell verbatim — `render` runs the `tool`/`env`
+  kinds, `doctor` runs all of them, locally and in the shipped `waffle-doctor` workflow — and an
+  external stack (a git URL or local path under `stacks:`) joined that path with no listing and no
+  prompt, so a stack that looks like skills and YAML could run arbitrary commands before the first
+  file was rendered. The gate now mirrors the external opt-in syrup trust boundary (#126):
+  `render` and `doctor` **skip** an external stack's checks — reported as `not run —
+  external stack <name> awaiting acknowledgement`, a new `notRun` bucket that never counts as met
+  or unmet and never fails the run — and print, per stack, every prerequisite's `name`, `kind`,
+  `level`, and exact `check:` string with the source and pinned `ref` (a branch-shaped `ref` gets
+  an extra warning that the commands can change under the pin). The acknowledgement is recorded
+  the way syrup opt-in is: in the committed `.waffle/waffle.yaml`, as `acknowledgedChecks:
+  <digest>` on the stack's `stacks:` entry, where the digest is a sha256 of the stack's check
+  strings in manifest order — so it survives re-renders and CI, and a changed command list
+  invalidates it until re-acknowledged. Built-in stacks are unchanged. `SETUP.md`,
+  `AUTHORING-EXTERNAL-STACKS.md`, and `FORMAT.md` document the gate; the setup inventory's
+  trust-boundary note names it. **Consumer impact:** a consumer with an external stack that
+  declares `prerequisites:` sees its checks stop running until `acknowledgedChecks:` is recorded
+  (`render` prints the exact line); `doctor` stays green meanwhile. No change without an external
+  stack.
 - **External-stack git sources are cached per-user and a cached checkout is verified before it is
   served (#460).** The cache lived at `os.tmpdir()/wafflestack-sources/<sha(source@ref)>` — a path
   anyone on a shared-`/tmp` host can derive — and a present `.git` there was taken as proof the

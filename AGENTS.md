@@ -161,9 +161,9 @@ export const LEGACY_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE, LEGACY_LOCK_FILE, LEG
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'] // project.mjs:58
 export const HARNESS_BUILTINS                  // per-target { assistantName, attributionPath, skillsDir, agentsDir } + target-independent CI-dispatcher scalars { actionRef, actionVersion, apiKeySecret } (#131/#156; project.mjs:563); `harness.toolkitVersion` is NOT here — it is a runtime value the CLI hands `makeResolver` (#461)
 export const HARNESS_PATTERNS                  // injection-guard regexes for agentsDir, skillsDir, actionRef, actionVersion, apiKeySecret (reject `${{`, quotes, newlines; project.mjs:587); seeded into render's guards + checked by validate
-export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) // → { targets, stacks, externalStacks, include, values, eject }; merges the .local overlay UNLESS canonical (#317); splits bare vs {name,source,ref} stacks: entries; legacy bundles: read fallback
+export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) // → { targets, stacks, externalStacks, include, values, eject }; merges the .local overlay UNLESS canonical (#317); splits bare vs {name,source,ref,acknowledgedChecks} stacks: entries; legacy bundles: read fallback
 export function classifyStackSource(source)    // → 'git' | 'path'
-export function normalizeStackEntries(raw)     // → { stacks, externalStacks } (#88; unique names, git-needs-ref / path-forbids-ref, unknown-key rejection)
+export function normalizeStackEntries(raw)     // → { stacks, externalStacks } (#88; unique names, git-needs-ref / path-forbids-ref, unknown-key rejection; optional non-empty acknowledgedChecks, #458)
 export function renameLegacyStacksKey(doc)     // in-place comment-preserving bundles:→stacks: KEY rename; → true if renamed
 export function setScalarIn(source, keyPath, value) // → new text | null (#372/#386: splices ONE scalar's own bytes via node.range, re-parse-verified; NEVER creates a key — missing key/parent, non-scalar, or already-equal value → null, writes nothing)
 export function resolveConfigFile(cwd), resolveLocalConfigFile(cwd), resolveLockFile(cwd) // → { file, legacy, note }
@@ -279,7 +279,13 @@ export const RENDER_PROBE_KINDS                // Set{'tool','env'} — the chea
 export function normalizePrerequisites(raw)    // → [{ kind, name, description, check, level, items }] (tolerant; linted by validate)
 export function runCheck(check, cwd, { timeoutMs = 15000 } = {}) // → { ran, ok } (shell check, exit 0 = ok, stdio ignored)
 export function applicablePrerequisites(toolkit, selection) // → flat [{ …prereq, stackName }] scoped to the selection
-export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs } = {}) // → { unmetRequired, unmetRecommended, met }
+export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs, skipStacks = new Set() } = {}) // → { unmetRequired, unmetRecommended, met, notRun } — a prereq whose stackName is in skipStacks is bucketed notRun, never spawned (#458)
+export function describeProvenance(prov)       // → `source@ref` | `source`
+export function checksDigest(stack)            // → sha256 hex of prerequisites[].check (manifest order) | null when none would run
+export function looksLikeBranchRef(ref)        // → true unless SHA-shaped or v1.2.3-shaped
+export function externalCheckGates(toolkit, project) // → [{ stackName, stack, provenance, digest, recorded, acknowledged }] per enabled external stack with checks (#458)
+export function unacknowledgedStacks(gates)    // → Set<stackName> whose checks must not run
+export function formatCheckGate(gate)          // → multi-line trust-boundary listing (source, ref, every [level] kind name — check, the acknowledgedChecks line; branch-ref warning)
 export function formatPrereq(p)                // → one actionable CLI line
 
 // plugins.mjs — recommended EXTERNAL harness plugins (#199): stack.yaml `recommendedPlugins:` → an OFFER `setup` makes; never fetched/rendered/locked (rationale: FORMAT.md)
@@ -464,12 +470,15 @@ source (#88). Parsed by `normalizeStackEntries` (`project.mjs`), resolved at ren
 | `name` | required; unique across ALL `stacks:` entries; collision = hard error naming both sources |
 | `source` | required; git URL (`https://`, `ssh://`, `git@host:o/r`, `*.git`) or local path (`classifyStackSource`) |
 | `ref` | git source: REQUIRED; local path: MUST be omitted |
+| `acknowledgedChecks` | optional; sha256 digest (`checksDigest`) of the stack's `prerequisites[].check` strings the consumer reviewed (#458); mismatch/absent = checks skipped + listed, never run |
 
 Git sources fetch at the pinned `ref` into a content-addressed cache (reused unless refresh);
 a leading-`-` source/ref is rejected (argument-injection guard). External files get lock
 `sources` provenance (`{ name, source, sourceType, ref, commit, files }`); `doctor` attributes
 drift per source, `upgrade` reports commit moves. `render` lints every external stack pre-write
-(#126) and warns extra when external opt-in syrup is poured.
+(#126) and warns extra when external opt-in syrup is poured. An external stack's `check:` commands
+are NOT run until `acknowledgedChecks` matches (#458): `render`/`doctor` list them
+(`formatCheckGate`) and bucket them under `notRun`; a branch-shaped `ref` gets an extra warning.
 
 ## Stack prerequisites
 
@@ -486,7 +495,9 @@ prerequisites:
 ```
 
 `doctor` runs every applicable check (unmet `require` = exit 1); `render` probes only the cheap
-`RENDER_PROBE_KINDS` (`tool`/`env`) as non-blocking warnings. The legacy `env:` map is subsumed
+`RENDER_PROBE_KINDS` (`tool`/`env`) as non-blocking warnings. An EXTERNAL stack's checks run only
+once `acknowledgedChecks` on its `stacks:` entry equals `checksDigest(stack)` (#458); otherwise
+they land in `notRun` (never met/unmet, never gating) and the command list is printed. The legacy `env:` map is subsumed
 as the `env` kind, read-compatibly. The `label` kinds' bootstrap (`gh label create --force` for
 every `waffle:*` default) is the "Required labels" table in `schema/SETUP.md:220` (#452).
 

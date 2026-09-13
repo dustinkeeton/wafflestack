@@ -909,6 +909,14 @@ Mapping fields:
 - **`ref`** (git sources: **required**; local paths: **must be omitted**) — the pin for a git
   source: a tag, branch, or commit. Pinning is mandatory so an external install is reproducible.
   A local path is used as-is and carries no `ref`.
+- **`acknowledgedChecks`** (optional) — the sha256 digest of the stack's `prerequisites[].check`
+  strings that the consumer has reviewed and accepted (#458). An external stack's check commands
+  are shell that would run on the consumer's machine and in CI, so `render`/`doctor` do **not**
+  run them until this key matches: they list every command with the source and `ref`, skip the
+  checks (reported as `not run — external stack <name> awaiting acknowledgement`, never met or
+  unmet), and print the digest to record. Record it in the **committed** `.waffle/waffle.yaml`
+  (CI reads the committed config); a changed check list changes the digest and re-gates the
+  stack. Built-in stacks never need it.
 
 An unknown key on the mapping (a `pin:` or `rev:` typo, say) is rejected rather than silently
 ignored. A malformed entry — missing `name`/`source`, an unpinned git source, a `ref` on a

@@ -3373,3 +3373,33 @@ describe('spawn-and-collect contract has one home (#365)', () => {
     assert.match(readSkill('standup'), /minus the task chain — one wave, no barriers/);
   });
 });
+
+describe('external check commands are gated on acknowledgement in the docs (#458)', () => {
+  const read = (f) => fs.readFileSync(path.join(REPO_ROOT, 'schema', f), 'utf8');
+
+  test('SETUP.md tells the setup agent to list the commands and get the yes before writing the acknowledgement', () => {
+    const md = read('SETUP.md');
+    assert.match(md, /`prerequisites\[\]\.check` commands\s*\nare not run until acknowledged/);
+    assert.match(md, /not run — external stack <name> awaiting acknowledgement/);
+    assert.match(md, /`acknowledgedChecks: <digest>`/);
+    assert.match(md, /get a clear yes \*\*before\*\* you write the acknowledgement/);
+    assert.match(md, /\*\*committed\*\* `\.waffle\/waffle\.yaml`/);
+    assert.match(md, /A branch `ref:` earns an extra\s*\nwarning/);
+    assert.doesNotMatch(md, /One gate does \*\*not\*\* exist/, 'the pre-#458 disclosure of the missing gate is gone');
+  });
+
+  test('AUTHORING-EXTERNAL-STACKS.md tells the author the checks are gated and a change re-gates consumers', () => {
+    const md = read('AUTHORING-EXTERNAL-STACKS.md');
+    assert.match(md, /not run until\s*\n\s*the consumer acknowledges them/);
+    assert.match(md, /not run — external stack <name> awaiting acknowledgement/);
+    assert.match(md, /`acknowledgedChecks: <digest>`/);
+    assert.match(md, /changing any `check:`\s*\n\s*re-gates every consumer/);
+    assert.doesNotMatch(md, /with no separate acknowledgement/);
+  });
+
+  test('FORMAT.md documents the acknowledgedChecks entry key as committed config', () => {
+    const md = read('FORMAT.md');
+    assert.match(md, /- \*\*`acknowledgedChecks`\*\* \(optional\)/);
+    assert.match(md, /\*\*committed\*\* `\.waffle\/waffle\.yaml`/);
+  });
+});
