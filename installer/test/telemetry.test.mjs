@@ -366,6 +366,10 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
 
   // ---- the post-merge counter ------------------------------------------------
 
+  // The Record-token-spend steps post with the job token, so this is the only author the counter accepts (#462).
+  const BOT = { login: 'github-actions[bot]', type: 'Bot' };
+  const HUMAN = { login: 'mallory', type: 'User' };
+
   const SEED = {
     schemaVersion: 1,
     label: 'claude tokens',
@@ -399,7 +403,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   test('first tick: sums the data line into the counter, records the PR, humanizes the message', () => {
     const scratch = mkState();
     const body = prComment(scratch);
-    const state = counterState({ comments: [{ id: 7, body }], tokens: SEED });
+    const state = counterState({ comments: [{ id: 7, user: BOT, body }], tokens: SEED });
     const res = runStep(counterScript, state, { PR_NUMBER: '42' });
     assert.equal(res.status, 0, res.stderr);
     const put = JSON.parse(fs.readFileSync(path.join(state, 'put-body.json'), 'utf8'));
@@ -416,12 +420,52 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     assert.equal(updated.message, '51.1k'); // shields message = humanized total
   });
 
+  test('a marker comment from anyone but the harness bot is ignored — the badge cannot be inflated (#462)', () => {
+    const scratch = mkState();
+    const body = prComment(scratch);
+    const forged = body.replace(/<!-- waffle-token-data .* -->/, '<!-- waffle-token-data {"runs":{"999.1":{"in":900000000,"out":100000000,"costUsd":9999}}} -->');
+    // Forged marker first (oldest), a same-login impostor of type User next, then the real bot comment.
+    const state = counterState({
+      comments: [
+        { id: 5, user: HUMAN, body: forged },
+        { id: 6, user: { login: 'github-actions[bot]', type: 'User' }, body: forged },
+        { id: 7, user: BOT, body },
+      ],
+      tokens: SEED,
+    });
+    const res = runStep(counterScript, state, { PR_NUMBER: '42' });
+    assert.equal(res.status, 0, res.stderr);
+    const put = JSON.parse(fs.readFileSync(path.join(state, 'put-body.json'), 'utf8'));
+    assert.match(put.message, /\+51192 tokens for PR #42/);
+    // With ONLY forged markers on the PR, nothing is recorded at all.
+    const only = counterState({ comments: [{ id: 5, user: HUMAN, body: forged }], tokens: SEED });
+    const res2 = runStep(counterScript, only, { PR_NUMBER: '42' });
+    assert.equal(res2.status, 0, res2.stderr);
+    assert.ok(!fs.existsSync(path.join(only, 'put-body.json')), 'a forged marker must not tick the counter');
+    assert.match(fs.readFileSync(path.join(only, 'summary.md'), 'utf8'), /no recorded token spend/);
+  });
+
+  test('the NEWEST accepted marker wins across --paginate pages — a re-run supersedes the earlier comment', () => {
+    const scratch = mkState();
+    record(scratch, { runKey: '100.1', log: writeLog(scratch, RUN_A), comments: [] });
+    const older = readBody(scratch, 'post-body.json'); // RUN_A only
+    const newer = prComment(mkState()); // RUN_A + RUN_B
+    // Two pages, as `gh api --paginate` emits them: one JSON array per page, the newer comment on page two.
+    const twoPages = `${JSON.stringify([{ id: 7, user: BOT, body: older }])}\n${JSON.stringify([{ id: 9, user: BOT, body: newer }])}\n`;
+    const state = counterState({ comments: [], tokens: SEED });
+    fs.writeFileSync(path.join(state, 'comments.json'), twoPages);
+    const res = runStep(counterScript, state, { PR_NUMBER: '42' });
+    assert.equal(res.status, 0, res.stderr);
+    const put = JSON.parse(fs.readFileSync(path.join(state, 'put-body.json'), 'utf8'));
+    assert.match(put.message, /\+51192 tokens for PR #42/); // both rows, not RUN_A alone
+  });
+
   test('an already-recorded PR short-circuits — an idempotent re-run never double-counts', () => {
     const scratch = mkState();
     const body = prComment(scratch);
     const tokens = structuredClone(SEED);
     tokens.waffle.prs['42'] = { tokens: 51192, costUsd: 0.93 };
-    const state = counterState({ comments: [{ id: 7, body }], tokens });
+    const state = counterState({ comments: [{ id: 7, user: BOT, body }], tokens });
     const res = runStep(counterScript, state, { PR_NUMBER: '42' });
     assert.equal(res.status, 0, res.stderr);
     assert.ok(!fs.existsSync(path.join(state, 'put-body.json')), 'must not PUT twice for one PR');
@@ -451,7 +495,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   test('exhausted retries warn and exit 0 — bounded at exactly 5 sha-conditional attempts', () => {
     const scratch = mkState();
     const body = prComment(scratch);
-    const state = counterState({ comments: [{ id: 7, body }], tokens: SEED });
+    const state = counterState({ comments: [{ id: 7, user: BOT, body }], tokens: SEED });
     fs.writeFileSync(path.join(state, 'put-fail'), ''); // every PUT loses the write race
     const res = runStep(counterScript, state, { PR_NUMBER: '42' });
     assert.equal(res.status, 0, res.stderr); // a missed tick never reds the merge
@@ -469,7 +513,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     const scratch = mkState();
     const body = prComment(scratch);
     // Ref exists but the contents GET fails — the step must CREATE the file (no sha) rather than warn forever.
-    const state = counterState({ comments: [{ id: 7, body }], tokens: null });
+    const state = counterState({ comments: [{ id: 7, user: BOT, body }], tokens: null });
     const res = runStep(counterScript, state, { PR_NUMBER: '42' });
     assert.equal(res.status, 0, res.stderr);
     const put = JSON.parse(fs.readFileSync(path.join(state, 'put-body.json'), 'utf8'));
