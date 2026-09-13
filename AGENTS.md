@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-08-17
+last-updated: 2026-09-13
 ---
 
 # AGENTS.md — wafflestack
@@ -57,10 +57,10 @@ unenforced (a fork), a corrupt one = hard error.
 | Stack | Path | Agents | Skills | Purpose |
 |--------|------|--------|--------|---------|
 | `docs-system` | `stacks/docs-system/` | docs-agent, docs-human | docs-agent, docs-human, prose, md-maximalist, accurate | Two-audience doc system; doc-set shapes (`docs.machineDocSet/Spec`, `docs.humanDocSet/Spec`) are config. Writing-craft skills (#224): `prose` + `md-maximalist` granted to docs-human, `accurate` to docs-agent — split is orthogonal by audience (#299): `accurate` is deliberately NOT granted to docs-human. All three user-invocable (`/prose`, `/md-maximalist`, `/accurate`). One `requires:` edge: `skills/prose` → `skills/md-maximalist`. |
-| `github-workflow` | `stacks/github-workflow/` | (none) | git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release, pr-response | Git / GitHub issue / Projects v2 / release workflow. Ships 14 `files/` payloads: `waffle-doctor.yml` (default render, read-only drift gate); 7 opt-in syrup workflows (`waffle-label-hook`, `waffle-hygiene`, `waffle-release-hook`, `waffle-post-merge-hook`, `waffle-evals`, `waffle-pr-green-hook`, `waffle-pr-response-hook` — each holds write permissions and/or spends API money, so enabling the stack never renders them); and 6 default-render inert templates (#337: `.github/ISSUE_TEMPLATE/{config,bug,feature,rough-idea}.yml`, `PULL_REQUEST_TEMPLATE.md`, `REVIEW_TEMPLATE.md` — a template must never auto-apply `labelHook.*` labels, pinned by `content.test.mjs`). 5 of the 7 opt-in workflows carry a `files/`-keyed `requires:` edge to a companion skill (label-hook→label-hook, hygiene→hygiene, release-hook→release, post-merge-hook→clean-up, pr-response-hook→pr-response; `stack.yaml:67`); `waffle-pr-green-hook.yml` and `waffle-evals.yml` have NO edge, so the #74 companion warning never fires for them. `pr-response` posts one append-only `<!-- waffle-pr-response -->` comment per round (#318); rubric v3 (Implement ≥11, #390). pr-green dedupes per green head via the `waffle/adversarial-review` commit status; pr-response-hook bounds its loop with `prResponse.responseLabel` applied BEFORE the paid dispatch (#338: no hook predicate reads a body). Config: `issue.*`, `labelHook.*`, `hygiene.{cron,claudeArgs}`, `release.{tagFormat,versionFiles}`, `prGreen.*`, `prResponse.*`, `evals.{cron,maxCalls,model}`, `autoMerge.label`, `doctor.{toolkitRef,flags}` — pin `doctor.toolkitRef` to a release tag BEFORE arming `--verify-render` in `doctor.flags` (#322). Only stack with a `setup:` block. |
+| `github-workflow` | `stacks/github-workflow/` | (none) | git-workflow, issue, github-project-management, github-project-board, clean-up, label-hook, hygiene, release, pr-response | Git / GitHub issue / Projects v2 / release workflow. Ships 14 `files/` payloads: `waffle-doctor.yml` (default render, read-only drift gate); 7 opt-in syrup workflows (`waffle-label-hook`, `waffle-hygiene`, `waffle-release-hook`, `waffle-post-merge-hook`, `waffle-evals`, `waffle-pr-green-hook`, `waffle-pr-response-hook` — each holds write permissions and/or spends API money, so enabling the stack never renders them; the four Claude-dispatch hooks `label-hook`/`hygiene`/`pr-green-hook`/`pr-response-hook` are `{ path, targets: [claude] }` entries (#190, `stack.yaml:13-23`) — pruned for a codex/agents-dir-only consumer by the #364 gate; doctor/release/post-merge/evals + the templates are unscoped); and 6 default-render inert templates (#337: `.github/ISSUE_TEMPLATE/{config,bug,feature,rough-idea}.yml`, `PULL_REQUEST_TEMPLATE.md`, `REVIEW_TEMPLATE.md` — a template must never auto-apply `labelHook.*` labels, pinned by `content.test.mjs`). 5 of the 7 opt-in workflows carry a `files/`-keyed `requires:` edge to a companion skill (label-hook→label-hook, hygiene→hygiene, release-hook→release, post-merge-hook→clean-up, pr-response-hook→pr-response; `stack.yaml:78`); `waffle-pr-green-hook.yml` and `waffle-evals.yml` have NO edge, so the #74 companion warning never fires for them. `pr-response` posts one append-only `<!-- waffle-pr-response -->` comment per round (#318); rubric v3 (Implement ≥11, #390). pr-green dedupes per green head via the `waffle/adversarial-review` commit status; pr-response-hook bounds its loop with `prResponse.responseLabel` applied BEFORE the paid dispatch (#338: no hook predicate reads a body). Config: `issue.*`, `labelHook.*`, `hygiene.{cron,claudeArgs}`, `release.{tagFormat,versionFiles}`, `prGreen.*`, `prResponse.*`, `evals.{cron,maxCalls,model}`, `autoMerge.label`, `doctor.{toolkitRef,flags}` — label defaults moved to the `waffle:` namespace in #451 (`issue.inferenceLabel` = `waffle:needs-inference` `stack.yaml:1668`, `autoMerge.label` = `waffle:auto-merged` `stack.yaml:1873`; the `label` prerequisites and the rendered `rough-idea.yml` follow) — pin `doctor.toolkitRef` to a release tag BEFORE arming `--verify-render` in `doctor.flags` (#322). Only stack with a `setup:` block. |
 | `code-quality` | `stacks/code-quality/` | (none) | tdd, codebase-architecture, adversarial-review, qa, dry | Cross-cutting practice skills (#117; test command, tiers, module map are config). `adversarial-review` (#112): config-free hostile post-green PR review, auto-triggered by the pr-green hook (#180). `qa` (#228): functional sibling — checks a green PR against the linked issue's intent, own `<!-- waffle-qa -->` marker, report-only, composed by autopilot's `autopilot.qaLoop`. `dry` (#116): de-duplication under rule-of-three guardrails. |
 | `obsidian-dev` | `stacks/obsidian-dev/` | plugin-architect | obsidian-plugin-dev, electron-security-audit | Obsidian plugin development + desktop-app security-audit variant; plugin-architect is the domain architect. |
-| `orchestration` | `stacks/orchestration/` | project-manager, product-manager, task-planner | delegate, autopilot, audit, docs, standup | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config. `delegate` ships three dependency-free supporting files: `checkpoint.mjs` + `checkpoint.schema.json` (#105/#106, per-phase run checkpoint validator) and `memory.mjs` (#107, byte-capped curated run-memory gate). Config: `delegate.{defaultScope,extraPreflight,checkpointDir,approveBeforePush,autoMerge,batchMode,memoryFile,memoryMaxBytes}` (`checkpointDir`/`memoryFile` defaults exercise depth-4 nested expansion), `autopilot.{autoMerge,planDir,qaLoop,maxQaRounds,reviewLoop,maxReviewRounds,auditStep,holdLabel}`. `autopilot` (#100/#143) composes delegate (batchMode + per-run autoMerge consent, never sticky) into a per-issue plan→implement→PR loop with three opt-in gates in fixed order: QA (#228), review loop (#220), diff-scoped `/audit` (#221); can't-converge files an `autopilot.holdLabel` follow-up. `requires:` edges: delegate→git-workflow+github-project-management+github-project-board, docs→docs-agent+docs-human, autopilot→delegate+clean-up+git-workflow+github-project-management+qa+adversarial-review+pr-response+audit+issue. Guardrails: never push main, never `--admin`-merge, merge commits not squash. |
+| `orchestration` | `stacks/orchestration/` | project-manager, product-manager, task-planner | delegate, autopilot, audit, docs, standup | Multi-agent orchestration; sets env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Roster + audit compliance are config. Ships 2 `files/` payloads (#363): `.claude/workflows/audit-stage-{1,2}.js` — the `/audit` chain as staged Claude workflow scripts, both `optIn:` AND `targets: [claude]` (`stack.yaml:10-17`; the prose `audit` skill stays the everywhere fallback). `delegate` ships three dependency-free supporting files: `checkpoint.mjs` + `checkpoint.schema.json` (#105/#106, per-phase run checkpoint validator) and `memory.mjs` (#107, byte-capped curated run-memory gate). Config: `delegate.{defaultScope,extraPreflight,checkpointDir,approveBeforePush,autoMerge,batchMode,memoryFile,memoryMaxBytes}` (`checkpointDir`/`memoryFile` defaults exercise depth-4 nested expansion), `autopilot.{autoMerge,planDir,qaLoop,maxQaRounds,reviewLoop,maxReviewRounds,auditStep,holdLabel}` (`holdLabel` default `waffle:manual-review`, `autoMerge.label` default `waffle:auto-merged` — #451, `stack.yaml:734`/`:605`). `autopilot` (#100/#143) composes delegate (batchMode + per-run autoMerge consent, never sticky) into a per-issue plan→implement→PR loop with three opt-in gates in fixed order: QA (#228), review loop (#220), diff-scoped `/audit` (#221); can't-converge files an `autopilot.holdLabel` follow-up. `requires:` edges: delegate→git-workflow+github-project-management+github-project-board, docs→docs-agent+docs-human, autopilot→delegate+clean-up+git-workflow+github-project-management+qa+adversarial-review+pr-response+audit+issue, audit→docs, `files/…/audit-stage-1.js`→audit, `files/…/audit-stage-2.js`→audit+docs (`stack.yaml:19-42`). Prerequisites (`stack.yaml:50-96`): `require` tool probes node/git/gh; `recommend` gh-auth scope, the two labels above, and two `setting` checks scoped to delegate+autopilot — `allow-auto-merge` (1 of 3) and `required-status-check` (#205: 2 and 3 of 3 — a required check on the default branch via branch protection or a ruleset, which on GitHub Free exists only for public repos; otherwise `gh pr merge --auto` leaves the PR open-but-not-armed). Guardrails: never push main, never `--admin`-merge, merge commits not squash. |
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development; mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in agent harness design. One optional config key (`project.longName`). This repo appends a project extension grounding it in the toolkit's own paradigms. |
@@ -218,7 +218,7 @@ export function installRefs({ toolkitRoot, cwd, refs, log }) // → { added, clo
 export function init({ cwd })                  // → configFile path (starter .waffle/waffle.yaml)
 
 // validate.mjs — see the module table; targets: is NOT linted here (every malformation is a hard LOAD error in toolkit.mjs)
-export const RESERVED_AGENT_KEYS = ['name', 'description', 'skills', 'identity'] // validate.mjs:55
+export const RESERVED_AGENT_KEYS = ['name', 'description', 'skills', 'identity'] // validate.mjs:56
 export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, prerequisites fields, harness built-ins, waffle-registry reconcile
 export function validateRegistry(rootDir, toolkit) // → string[] — the registry ↔ filesystem ↔ stack.yaml three-way reconcile (#335): entry shape/unknown keys, duplicates, stack+path must be the loader's path and exist, stack.yaml must list it, tombstone must NOT still resolve and its replacedBy chain must end live, un-registered waffles on disk OR in a manifest, and an offered waffle requiring a `wip` one. [] when the toolkit ships no registry (fork/fixture) or the stack is external
 export function validateSourceBytes(rootDir)   // → string[] — raw control bytes in installer/ + stacks/ text sources
@@ -391,7 +391,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | Command | Behavior |
 |---------|----------|
 | `init` | Write starter `.waffle/waffle.yaml`; errors if one exists at any generation. `--gitignore` appends the two pre-stack-knowable entries (local overlay + local lock). `eject.mjs:182` |
-| `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section. `setup.mjs:21` |
+| `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section. `setup.mjs:22` |
 | `list` | Per-stack per-item state table (`current`/`outdated`/`not-installed`/`not-installable`/`PENDING REMOVAL`); plain aligned table by default (ANSI only on a TTY); `--interactive` multi-select installs + renders. Takes no refs. `list.mjs`, `cli.mjs:194` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. Bare `install` = `render`. `eject.mjs:80` |
 | `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:178`). `render.mjs:41` |
@@ -402,7 +402,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `uninstall` | Remove the whole install, driven entirely off the lock: `remove` only when the sha256 still matches the render; `drifted` skipped unless `--force`; refuses the whole run on an absent lock or a path resolving outside `cwd` (incl. symlink escapes). Also removes `.waffle/` meta (unless `--keep-config`), prunes genuinely-emptied dirs, strips wafflestack's `.gitignore` lines. Dry run until `--yes`. Skips exit 0; errors exit 1 (#359). Read `lockRetained` off the result, not the plan. `uninstall.mjs` (#182) |
 | `reinstall` | Refresh in place: snapshot → uninstall(keepConfig+keepLock, force) → re-render, rollback on failure; keeping the lock is load-bearing (the `trackedFiles` re-admission keeps poured opt-in syrup selected). `--clean` = wipe to empty + `init` (requires `--yes`, no render). Both shapes need a lock (#359). `uninstall.mjs` (#182) |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285): `sync` rasters + uploads/assigns each verified agent email's avatar; `status` reports drift only. Token from `WAFFLE_GRAVATAR_TOKEN`; unverified addresses are a manual remainder. `status` exits 1 on drift; any `failed` exits 1. `avatars-sync.mjs`, `cli.mjs:220` |
-| `validate` | Toolkit-developer lint (see `validate.mjs` above). Exit 1 on problems. `validate.mjs:58` |
+| `validate` | Toolkit-developer lint (see `validate.mjs` above). Exit 1 on problems. `validate.mjs:59` |
 | `help` | Banner + usage + one line per command/flag to stdout, exit 0. `helpText` `cli.mjs:312` (#187) |
 
 ## Item refs and render selection
@@ -483,7 +483,8 @@ prerequisites:
 
 `doctor` runs every applicable check (unmet `require` = exit 1); `render` probes only the cheap
 `RENDER_PROBE_KINDS` (`tool`/`env`) as non-blocking warnings. The legacy `env:` map is subsumed
-as the `env` kind, read-compatibly.
+as the `env` kind, read-compatibly. The `label` kinds' bootstrap (`gh label create --force` for
+every `waffle:*` default) is the "Required labels" table in `schema/SETUP.md:220` (#452).
 
 ## Recommended external plugins
 
@@ -594,7 +595,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1258 tests, 164 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1298 tests, 174 suites) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
@@ -602,9 +603,12 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
 | evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 16 cases: `code-quality` (2) + `github-workflow` (11) + `orchestration` (3). NOT in `npm test` |
 
-Test files (13): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
+Test files (14): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
-1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render),
+1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render AND every
+`stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
+can-fail fixture, `content.test.mjs:2571`), `plugins.test.mjs` (#199: `recommendedPlugins:`
+normalize/offer/lint over a one-stack fixture),
 `evals.test.mjs` (eval layer 2 harness with the mock model, free inside `npm test`),
 `checkpoint.test.mjs` / `memory.test.mjs` / `identity.test.mjs` (the delegate skill's shipped
 validator/preflight scripts), `telemetry.test.mjs` (#227: rendered token-spend jq/bash programs
@@ -623,8 +627,10 @@ comment lines exempts a small file — plus an 8-line max comment run, typed JSD
 This repo renders 5 stacks into itself — `github-workflow`, `docs-system`, `orchestration`,
 `harness-architect`, `wafflestack` (`targets: [claude]`; `.waffle/waffle.yaml`). `include:` arms
 `files/.github/workflows/waffle-release-hook.yml`, `files/.github/workflows/waffle-post-merge-hook.yml`,
-`code-quality/skills/adversarial-review` (run by pr-green when armed), and `code-quality/skills/qa`
-(autopilot's opt-in QA gate). The paid Claude-dispatch hooks (hygiene, pr-green, pr-response) are
+`code-quality/skills/adversarial-review` (run by pr-green when armed), `code-quality/skills/qa`
+(autopilot's opt-in QA gate), and the two orchestration syrup scripts
+`files/.claude/workflows/audit-stage-{1,2}.js` (#363: inert until a session invokes them, no spend —
+poured so the render + lock exercise the opt-in `targets:` path; tracked in git). The paid Claude-dispatch hooks (hygiene, pr-green, pr-response) are
 DISARMED while the repo deliberately carries no `ANTHROPIC_API_KEY` secret: #396 (2026-07-15)
 removed them from `include:` and from git tracking, and #414 (PR #417, 2026-07-16) finished the
 disarm by `eject:`-ing the three `files/` refs via the CLI — the lock no longer tracks their

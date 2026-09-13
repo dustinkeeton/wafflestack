@@ -134,7 +134,10 @@ the user, beyond the both/one/neither choice above** — because the file is thi
 demand elevated permissions, e.g. repo write). Name the source and its pinned `ref`, spell out what
 the file does, and get a clear yes before you install it; `render` also surfaces this as a warning
 whenever external opt-in syrup is selected. This is distinct from built-in opt-in syrup, which the
-normal opt-in flow already covers.
+normal opt-in flow already covers. One gate does **not** exist: an external stack's
+`prerequisites[].check` commands execute as shell commands on this machine (`render` runs the
+`tool`/`env` checks, `doctor` runs all of them) with no acknowledgement — read the stack's
+`prerequisites:` block before adding it, and prefer a tag or commit `ref:` over a branch.
 
 ## 3. Fill config values
 

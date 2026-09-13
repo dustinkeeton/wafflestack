@@ -82,6 +82,23 @@ documented:
 This is separate from `requires:` (below): `requires:` wires up *other waffles* inside the
 toolkit; `prerequisites:` names things in *your own environment*.
 
+**Labels and repo settings are checked the same way.** Every label the stacks own is named
+`waffle:<label>` (#451), and the **Required labels** table in `schema/SETUP.md` step 4 is the one
+bootstrap list — a copy-paste `gh label create --force` block covering every label the stacks
+declare (#452). The `orchestration` stack also probes two repo settings before `delegate` /
+`autopilot` arm auto-merge: **Allow auto-merge** is on, and the default branch has a **required
+status check** — which needs branch protection or a ruleset, and on GitHub Free those exist only
+for public repos (#205). In that stack only the tool probes (`node`, `git`, `gh`) are `require`;
+auth, label, and setting checks are `recommend`, so `doctor` reports them but never fails on them.
+
+### Recommended plugins
+
+A stack can also name **external harness plugins** it pairs well with (a Claude Code plugin or
+marketplace entry) via `recommendedPlugins:` (#199). This is an **offer, never an install**:
+`wafflestack setup` lists each entry with its required one-line `why`, and the render, `doctor`,
+and lock are untouched — declaring one cannot change an output byte. No built-in stack declares
+one yet.
+
 ### Picking what to install
 
 You don't have to take a whole stack. A **ref** names something installable. An
@@ -117,20 +134,25 @@ placeholders your selected items actually use — so a one-item install doesn't
 demand config that its unselected siblings need.
 
 **Opt-in syrup — a gate for sensitive syrup.** The generic `files/` payload is called
-**syrup**; a stack can mark certain payloads (seven of the github-workflow stack's CI
-workflows — label-hook, hygiene, release, post-merge, evals, pr-green, pr-response — the
-ones that hold repo write permissions or spend API budget) as **opt-in syrup** via the
-`optIn:` manifest key. Enabling the stack does *not* render them. They render only when
-you install the ref explicitly or when your repo already tracks the file in its lock. That
-way an existing install keeps getting updates, but a fresh enable never silently arms a
-workflow you didn't ask for.
+**syrup**; a stack can mark certain payloads as **opt-in syrup** via the `optIn:` manifest key
+— seven of the github-workflow stack's CI workflows (label-hook, hygiene, release, post-merge,
+evals, pr-green, pr-response — the ones that hold repo write permissions or spend API budget)
+and the orchestration stack's two `/audit` workflow scripts
+(`.claude/workflows/audit-stage-{1,2}.js`, inert until a session runs them). Enabling the
+stack does *not* render them. They render only when you install the ref explicitly or when
+your repo already tracks the file in its lock. That way an existing install keeps getting
+updates, but a fresh enable never silently arms a workflow you didn't ask for.
 
-**Target scoping (unreleased, next tag).** A `files/` payload can also declare `targets:` —
+**Target scoping (since v0.13.0, #364).** A `files/` payload can also declare `targets:` —
 it then renders only when your project enables at least one of the listed harnesses, and
 disabling the last one means the next `render` **prunes** the poured copy (the same
 contract as dropping a stack). Because that prune deletes files, every malformed `targets:`
 (a typo'd name, an empty list) is a hard load error, and `list` reports a poured,
-scoped-out file as `PENDING REMOVAL` rather than pretending it isn't installed.
+scoped-out file as `PENDING REMOVAL` rather than pretending it isn't installed. Six payloads
+use it today, all `targets: [claude]`: the four github-workflow hooks that dispatch Claude
+(label-hook, hygiene, pr-green, pr-response — #190) and the two `/audit` workflow scripts (#363).
+A Codex- or agents-dir-only project never receives a workflow that dispatches a harness it
+doesn't render for.
 
 ### Agents and skills
 
@@ -161,6 +183,24 @@ gates around the LLM's judgment —
 An opt-in config flag (`delegate.approveBeforePush`) adds a human gate on top:
 agents commit locally and stop, and nothing is pushed or PR'd until you approve
 each branch; a rejection stays local and is recorded in the checkpoint.
+
+The checkpoint outlives the run. `/clean-up` reads the same `.delegate/*.json` files to sweep
+agents an interrupted run left behind, and judges each by its **work**, not its task status: an
+agent is stopped only once its PR is merged or closed (#172).
+
+### Orchestrators are skills; workflow scripts only sequence them
+
+The `/audit` chain shows the split. The prose `audit` skill runs on every harness and is the
+permanent fallback. For Claude, the same chain also ships as two staged workflow scripts (opt-in
+syrup, #363): `audit-stage-1.js` runs architecture → security pass 1 and stops on any
+Critical/High finding; `audit-stage-2.js` runs compliance → the `docs` skill → security pass 2,
+and refuses to run after an un-signed-off stop. Your review happens **between** the two runs.
+Every phase in the scripts is a one-line pointer into `audit/SKILL.md` or `docs/SKILL.md`, and a
+test keeps the prose chain order and the scripts' phase order identical.
+
+Two related rules keep the orchestrators from drifting apart: `/audit` invokes `/docs` rather
+than re-implementing it (#361), and the spawn-and-collect scaffold every orchestrator uses has
+one home — a contract section in `audit` that `standup` and `autopilot` cite (#365).
 
 ### Agent identity and avatars
 
@@ -213,7 +253,10 @@ the same `.agents/skills/` convention, a repo that enables both renders that
 directory once (shared, not duplicated). So the expected `.codex/` layout is
 small on purpose: `agents/*.toml` only (plus your own `config.toml`) — the skills
 Codex loads are in `.agents/skills/`. A two-file `.codex/` is the whole render,
-not missing coverage.
+not missing coverage. The Codex agent TOML carries **no skill grant** — Codex's
+`[[skills.config]]` is a per-skill on/off override, not a grant — so an agent's skill access is
+stated in its body prose instead, and a content test keeps every harness-neutral source free of
+literal `.claude/skills/` paths (#190).
 
 The small per-harness differences (like whose name goes in an attribution line)
 come from a reserved `harness.*` set of values that resolve differently per
@@ -241,7 +284,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 |---------|--------------|
 | `init` | Write a starter `.waffle/waffle.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
-| `list` | Show every stack/item as installed & current / out of date / not installed — plus, with the unreleased target scoping, `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
+| `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
@@ -253,16 +296,16 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 20 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 22 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
 the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
 own identity, etc.). The full function-level registry is in the root `AGENTS.md`.
 
-### Which toolkit am I running? (the release gate — unreleased, next tag)
+### Which toolkit am I running? (the release gate, since v0.13.0)
 
 An `npx github:…` spec with no `#tag` fetches the repo's **default branch**, not the
-latest release, while reporting the released version number. On `main` (unreleased as of
-v0.12.0) the CLI resolves its own identity before writing anything:
+latest release, while reporting the released version number. Since v0.13.0 (#373) the CLI
+resolves its own identity before writing anything:
 
 - **Write commands refuse when provably unreleased.** `render`, `install`, `upgrade`,
   `reinstall`, and `doctor --verify-render` stop with an error naming the exact pinned
@@ -363,8 +406,10 @@ wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders **fi
 stacks — `github-workflow`, `docs-system`, `orchestration`, `harness-architect`, and
 the self-referential `wafflestack` — into this repo, so the toolkit's own agents and
 skills are available while developing it. `include:` arms the two deterministic opt-in
-syrup workflows — the release and post-merge hooks — plus two code-quality skills the
-PR gates run: `adversarial-review` and `qa`. (While developing the toolkit you still
+syrup workflows — the release and post-merge hooks — two code-quality skills the PR gates
+run (`adversarial-review` and `qa`), and the two `/audit` workflow scripts
+(`audit-stage-1.js`, `audit-stage-2.js` — inert until a session invokes them, poured so the
+render and lock exercise the opt-in `targets:` path). (While developing the toolkit you still
 drive it with `node installer/cli.mjs` directly rather than the rendered `/waffle-*`
 wrappers.)
 
@@ -401,7 +446,7 @@ so that gate stays green — which is why the `tests` workflow ends with
 run with the checkout's own CLI: it re-renders the PR's committed inputs into a temp dir and
 diffs the result against the committed lock (#314/#316). The env twin is shown inline because
 that is what *executes* — the job supplies it once at the `env:` block rather than per-step, so
-`tests.yml:72` itself carries no flag. Running that step **by hand** from a branch needs
+the step at `tests.yml:36` itself carries no flag (the value sits at `tests.yml:22`). Running that step **by hand** from a branch needs
 `--allow-unreleased`, since `--verify-render` renders and is gated (#373). It uses the
 checkout's CLI (not the shipped
 `doctor.flags` route) because the shipped workflow fetches the toolkit from `main` — the
