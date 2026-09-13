@@ -180,9 +180,9 @@ prerequisites:
     items: [files/.github/workflows/waffle-release-hook.yml]
     description: Label whose merge fires the release tag hook (default labelHook.releaseLabel).
   - kind: label
-    name: waffle-auto-merged
+    name: "waffle:auto-merged"
     level: recommend
-    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle-auto-merged'"
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:auto-merged'"
     items: [files/.github/workflows/waffle-hygiene.yml]
     description: Paper-trail label applied after auto-merge is armed (default autoMerge.label). Must pre-exist — gh will not create it.
   - kind: label
@@ -197,9 +197,9 @@ prerequisites:
       create it, and the bound is FAIL-CLOSED: without the label the job reds rather than dispatching
       an unbounded run. Create with `gh label create 'waffle:pr-response'`.
   - kind: label
-    name: Needs Inference
+    name: "waffle:needs-inference"
     level: recommend
-    check: "gh label list --limit 500 2>/dev/null | grep -q 'Needs Inference'"
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:needs-inference'"
     items: [skills/issue]
     description: Lifecycle label the issue skill toggles (default issue.inferenceLabel); the type/priority taxonomy must also exist.
   - kind: setting
@@ -265,7 +265,7 @@ setup: |-
   match; heading level does not. The enrich pass re-drafts the whole body into the canonical template
   anyway, so it normalizes on the way through — do not "fix" it by renaming the fields.
   **The rough-idea form is the enrichment on-ramp, and it is safe by construction.** It takes a
-  one-line idea and auto-applies `issue.inferenceLabel` (default `Needs Inference`) via the form's
+  one-line idea and auto-applies `issue.inferenceLabel` (default `waffle:needs-inference`) via the form's
   `labels:` key, so filing a one-liner IS the request to enrich it: `/issue` with no argument batch-
   enriches every open issue carrying that label. That label is a **queue marker** — no workflow
   dispatches on it, it spends nothing, and a human picks the queue up when they choose to. This is
@@ -533,9 +533,9 @@ setup: |-
   project-owned rather than deleting it).
 
   **Auto-merge paper-trail label.** The hygiene skill (and delegate, when it arms auto-merge)
-  labels a PR with `autoMerge.label` (default `waffle-auto-merged`) right after arming. Applying
+  labels a PR with `autoMerge.label` (default `waffle:auto-merged`) right after arming. Applying
   a label that doesn't exist makes `gh pr edit --add-label` fail, so create it:
-    gh label create "waffle-auto-merged" --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
+    gh label create "waffle:auto-merged" --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
 
   **Release hook workflow (opt-in syrup).** This stack also carries
   `.github/workflows/waffle-release-hook.yml`, also opt-in syrup: enabling the stack does NOT render
@@ -901,7 +901,7 @@ setup: |-
     gh label create "priority: high"     --color D93F0B --description "Broken workflow, regression, significant UX issue"
     gh label create "priority: medium"   --color FBCA04 --description "New feature, improvement, moderate bug"
     gh label create "priority: low"      --color 0E8A16 --description "Cosmetic, nice-to-have, minor, tech debt"
-    gh label create "Needs Inference"    --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
+    gh label create "waffle:needs-inference" --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
 
   **Projects v2.** The issue and github-project-management skills look up a Projects v2
   board whose title matches `project.name` (case-insensitively) and skip board steps with a
@@ -1665,7 +1665,7 @@ config:
       read-only `enrich` job, which makes no file edits and runs no pre-flight.
   issue.inferenceLabel:
     required: false
-    default: Needs Inference
+    default: "waffle:needs-inference"
     # Label-name allowlist, shared byte-for-byte with issue.bugLabel / issue.featureLabel below.
     # A label value is spliced into (a) a DOUBLE-QUOTED shell word — `gh issue list --label
     # "{{issue.inferenceLabel}}"` in the issue skill — and, since #337, (b) a DOUBLE-QUOTED YAML
@@ -1675,7 +1675,7 @@ config:
     # the shell site (and `$` alone kills a surviving `${{ … }}`); `{`/`}` for the YAML flow-scalar
     # site and any nested-placeholder trickery. Single interior spaces only, no leading/trailing —
     # same idiom as git.botName. GitHub's own label taxonomy fits: `bug`, `type/bug`,
-    # `priority: medium`, `Needs Inference`.
+    # `priority: medium`, `waffle:needs-inference`.
     pattern: '^[A-Za-z0-9][A-Za-z0-9:._/+#()-]*(?: [A-Za-z0-9:._/+#()-]+)*$'
     description: >-
       Lifecycle label marking an issue as awaiting AI enrichment; removed once enriched. It is a
@@ -1870,7 +1870,7 @@ config:
       understand and trust.
   autoMerge.label:
     required: false
-    default: waffle-auto-merged
+    default: "waffle:auto-merged"
     description: >-
       Label applied to a PR immediately after auto-merge is successfully armed
       (`gh pr merge --auto`), as a durable paper trail that automation — not a human —

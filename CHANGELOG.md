@@ -48,6 +48,22 @@ is what you reach for across a breaking one.
   Variant" section.
 
 ### Changed
+- **Harness label defaults move to the `waffle:<label>` namespace (#451, parent #197).** Three
+  config-overridable label defaults were the last outliers from the `waffle:<label>` rule the owner
+  set on #197: `autoMerge.label` (`github-workflow`, `orchestration`) `waffle-auto-merged` →
+  `waffle:auto-merged`; `autopilot.holdLabel` (`orchestration`) `waffle-manual-review` →
+  `waffle:manual-review`; `issue.inferenceLabel` (`github-workflow`) `Needs Inference` →
+  `waffle:needs-inference`. The queue marker and the `waffle:enrich` CI trigger stay **two** labels
+  (deliberate, see #197) — only the name changes. Each stack's `requirements:` label entry, its
+  `setup:` `gh label create` line, the skills that reference the key (`issue`, `hygiene`, `delegate`,
+  `autopilot`), and the `rough-idea` issue form all follow the new defaults through the placeholder.
+  **Consumer impact: breaking default — migrate on re-render.** Either rename the live labels so the
+  render's `doctor` checks and the skills keep matching (`gh label edit "waffle-auto-merged" --name
+  "waffle:auto-merged"`, `gh label edit "waffle-manual-review" --name "waffle:manual-review"`,
+  `gh label edit "Needs Inference" --name "waffle:needs-inference"` — `gh label edit` renames in
+  place, so issues and PRs already carrying the label keep it), or pin the old names in
+  `.waffle/waffle.yaml` via the config keys (`autoMerge.label`, `autopilot.holdLabel`,
+  `issue.inferenceLabel`) and change nothing on GitHub.
 - **The spawn-and-collect scaffold has one home (#365, spike #184).** `audit`, `autopilot` and
   `standup` each carried a hand-typed copy of the same orchestration scaffold — named spawn,
   collection, shutdown-then-stop teardown — and #360 proved the copies had drifted. The `audit` skill
