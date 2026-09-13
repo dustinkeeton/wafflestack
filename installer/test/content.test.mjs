@@ -614,6 +614,21 @@ describe('token spend telemetry (#227)', () => {
     assert.doesNotMatch(wf, /actions\/checkout/);
     assert.doesNotMatch(stripYamlComments(wf), /git commit/);
   });
+
+  test('the post-merge counter accepts the token-count marker only from the harness bot, newest first (#462)', () => {
+    const wf = wfSource('waffle-post-merge-hook.yml');
+    const step = wf.slice(wf.indexOf('- name: Update global token counter'));
+    const selector = step.match(/^\s*line="\$\(printf '%s' "\$comments" \| jq (-\S+) '([^']*)'/m);
+    assert.ok(selector, 'marker-comment jq selector not found');
+    const [, flags, program] = selector;
+    assert.match(flags, /s/); // slurp the per-page arrays so `last` spans every page
+    assert.match(program, /\(add \/\/ \[\]\)/);
+    assert.match(program, /\.user\.login == "github-actions\[bot\]"/);
+    assert.match(program, /\.user\.type == "Bot"/);
+    assert.match(program, /contains\("<!-- waffle-token-count -->"\)/);
+    assert.match(program, /\(last \/\/ empty\)/);
+    assert.doesNotMatch(program, /\bfirst\b/);
+  });
 });
 
 describe('autopilot skill: instantiation contract, handoff, and guardrails', () => {

@@ -139,6 +139,18 @@ is what you reach for across a breaking one.
   `uninstall` has carried since #182 — moves to `util.mjs` and now gates the prune too: a rejected
   key is skipped with a warning naming it, the rewritten lock drops it, and a normal stale key is
   still pruned. **Consumer impact:** none — a well-formed lock renders identically.
+- **The post-merge token counter only trusts the harness's own marker comment (#462).** The
+  `Update global token counter` step in `waffle-post-merge-hook.yml` used to take the FIRST
+  `<!-- waffle-token-count -->` comment on the merged PR from ANY commenter, so anyone could post
+  the marker with inflated numbers and the badge would add them. The jq selector now slurps the
+  `--paginate` pages into one list, accepts a marker only when its author is `github-actions[bot]`
+  of type `Bot` (the job-token identity every `Record token spend` step posts under), and takes the
+  NEWEST match so a re-run supersedes an earlier comment. Shell handling was already safe (values
+  via `env:`, `printf '%s' | jq`, a numeric `case` guard) — this was badge integrity, not code
+  execution. Executed tests cover a forged human marker, a same-login `User`-type impostor, and
+  newest-wins across pages; a content test pins the guard in the selector. Found by the #457
+  security pass.
+  *Consumer impact:* patch — `render` regenerates the workflow; nothing else to do.
 - **Codex render coverage has a definition of done, and the stale "no TOML equivalent" claim is
   gone (#190).** Three residuals of the #94 audit. (1) `schema/FORMAT.md` / `AGENTS.md` /
   `DECISIONS.md` now make the accurate claim: Codex's agent TOML *does* accept `[[skills.config]]`

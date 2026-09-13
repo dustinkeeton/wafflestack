@@ -58,10 +58,14 @@ jobs:
           TBRANCH="waffle-telemetry"
           TPATH=".waffle/telemetry/tokens.json"
           seed='{"schemaVersion":1,"label":"claude tokens","message":"0","color":"F08A1D","labelColor":"241204","waffle":{"totalTokens":0,"inputTokens":0,"outputTokens":0,"totalCostUsd":0,"prs":{},"updatedAt":""}}'
-          # (1) Sum the PR's recorded runs from the marker comment's data line. No comment,
-          #     no data line, or malformed JSON all mean zero recorded spend (never an error).
+          # (1) Sum the PR's recorded runs from the marker comment's data line. Only the
+          #     harness's own comment counts — the Record-token-spend steps post with the job
+          #     token, so the author is github-actions[bot] (#462); anyone else's marker is
+          #     ignored. -s folds --paginate's per-page arrays into one so `last` is the newest
+          #     accepted comment across pages (a re-run supersedes). No comment, no data line,
+          #     or malformed JSON all mean zero recorded spend (never an error).
           comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate 2>/dev/null || echo '[]')"
-          line="$(printf '%s' "$comments" | jq -r '[ .[] | select((.body // "") | contains("<!-- waffle-token-count -->")) ] | (first // empty) | .body // ""' 2>/dev/null | grep -m1 '^<!-- waffle-token-data ' || true)"
+          line="$(printf '%s' "$comments" | jq -rs '(add // []) | [ .[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and ((.body // "") | contains("<!-- waffle-token-count -->"))) ] | (last // empty) | .body // ""' 2>/dev/null | grep -m1 '^<!-- waffle-token-data ' || true)"
           data='{}'
           if [ -n "$line" ]; then data="$(printf '%s' "$line" | sed -e 's/^<!-- waffle-token-data //' -e 's/ -->[[:space:]]*$//')"; fi
           printf '%s' "$data" | jq -e '.runs' >/dev/null 2>&1 || data='{}'

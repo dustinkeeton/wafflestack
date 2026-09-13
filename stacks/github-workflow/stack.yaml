@@ -593,8 +593,10 @@ setup: |-
   default branch. It needs no repo secret and no label — it fires on every merged same-repo PR.
   **Global token counter + badge (#227).** The hook's second step, `Update global token counter`,
   reads the merged PR's `<!-- waffle-token-count -->` comment (maintained by the dispatching
-  hooks' `Record token spend` steps — see those sections), sums its machine-readable per-run
-  data line (the visible table is never parsed), and folds the total into
+  hooks' `Record token spend` steps — see those sections; only the newest comment authored by
+  `github-actions[bot]`, the job-token identity those steps post under, is accepted — a marker
+  from any other commenter is ignored, #462), sums its machine-readable per-run data line (the
+  visible table is never parsed), and folds the total into
   `.waffle/telemetry/tokens.json` on the dedicated **`waffle-telemetry`** branch. That file IS a
   shields.io **endpoint-badge JSON** — `schemaVersion`/`label`/`message`/`color` at top level,
   with the accumulating totals (`totalTokens`/`inputTokens`/`outputTokens`/`totalCostUsd`, a
