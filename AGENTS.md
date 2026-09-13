@@ -288,11 +288,14 @@ export function normalizeRecommendedPlugins(raw) // → [{ index, name, source, 
 export function offerablePlugins(plugins)      // → entries with a usable name + source; malformed ones are validate's report and are not shown
 
 // sources.mjs — external source: resolution (#88/#125)
-export function resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, refresh = false } = {}) // → { root, commit } (local path in place, or git fetched at the pinned ref into a content-addressed cache; rejects leading-`-` source/ref)
+export function resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, gitOriginUrl, gitRefCommit, refresh = false } = {}) // → { root, commit } (local path in place, or git fetched at the pinned ref into a content-addressed cache; rejects leading-`-` source/ref; a present `.git` is served ONLY if checkoutMatches, else discarded + re-fetched (#460))
 export function resolveSourceRoot(ext, opts)   // → root path only (back-compat wrapper)
 export function gitFetchCheckout(source, ref, dest) // default git clone + checkout (injectable)
 export function gitHeadCommit(dir)             // → resolved HEAD SHA (injectable)
-export function defaultSourceCacheDir()        // → os.tmpdir()/wafflestack-sources
+export function gitRemoteOriginUrl(dir)        // → `origin` remote URL (injectable)
+export function gitResolveRefCommit(dir, ref)  // → SHA `ref^{commit}` resolves to in the checkout (injectable)
+export function checkoutMatches(dir, ext, { gitResolveCommit, gitOriginUrl, gitRefCommit } = {}) // → boolean: HEAD resolves AND origin === ext.source AND ref^{commit} === HEAD; any throw → false
+export function defaultSourceCacheDir(env = process.env) // → $XDG_CACHE_HOME/wafflestack/sources (absolute only), else ~/.cache/wafflestack/sources; created 0700 — never os.tmpdir() (#460)
 
 // toolkit-ref.mjs — see the module table. INVARIANT: ref/commit recorded IFF status === 'release'; identity failure fails OPEN (unverified → warn + proceed); an unverified render carries the previous toolkit block forward when version + files map are unchanged
 export function resolveToolkitIdentity({ toolkitRoot, lsRemote, runGit, offline }) // → { status: 'release'|'unreleased'|'unverified', version, commit, tag, ref, origin: 'checkout'|'npm-install'|'unknown', repo, latestTag, lookupError } — checkout resolves via `git describe --tags --exact-match` (offline); npm-install reads the SHA from npm's hidden lockfile then classifies via ONE `git ls-remote --tags` (never the REST API); lookup skipped ONLY by `offline`, never by the hatch (#383); lsRemote/runGit injectable
