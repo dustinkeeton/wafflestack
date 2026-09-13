@@ -3,7 +3,7 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.14.0 (tagged 2026-08-19; pre-1.0 — the file contract can still change
+- **Version**: v0.15.0 (tagged 2026-09-13; pre-1.0 — the file contract can still change
   between minor releases).
 - **Last updated**: 2026-09-13
 - **Health**: 🟢 tests 1298/1298 (174 suites) · `validate` clean · CI green on `main` (`880a13e`)
@@ -31,9 +31,9 @@ All 13 commands work (plus `bake`, a pure alias for `render`), over 22 pipeline 
 `installer/lib/`: `init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` ·
 `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
-## Current focus — unreleased, on `main`
+## Current focus — shipped in v0.15.0
 
-Everything below merged on 2026-09-12 and is not yet tagged (CHANGELOG `[Unreleased]`; latest tag v0.14.0):
+Everything below merged on 2026-09-12 and ships in v0.15.0 (CHANGELOG `[0.15.0]`):
 
 - **`/clean-up` sweeps a `/delegate` run's leaked agents (#172, closes epic #380).** It reads
   the run checkpoint and judges each agent by its *work* — the PR is merged or closed — never by
@@ -59,8 +59,6 @@ Everything below merged on 2026-09-12 and is not yet tagged (CHANGELOG `[Unrelea
 
 ## Known issues & things to watch
 
-- **CHANGELOG misfiles #199.** PR #430 merged 2026-09-12 — after the v0.14.0 tag — but its
-  entry sits under `[0.14.0]`; the next bump should move it to the new version.
 - **`uninstall`/`reinstall` rough edges (#359, open):** a skipped hand-edit still loses config +
   `.gitignore` block; an incomplete `--yes` exits 0; `reinstall` hard-fails on config-but-no-lock;
   `--no-color` missing from `help`.
