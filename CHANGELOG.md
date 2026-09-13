@@ -132,6 +132,21 @@ is what you reach for across a breaking one.
   the new `requires:` edge. No config change.
 
 ### Fixed
+- **External-stack git sources are cached per-user and a cached checkout is verified before it is
+  served (#460).** The cache lived at `os.tmpdir()/wafflestack-sources/<sha(source@ref)>` — a path
+  anyone on a shared-`/tmp` host can derive — and a present `.git` there was taken as proof the
+  checkout was ours, so a pre-seeded directory would be served as the stack (skills, agents, and
+  `prerequisites[].check` strings included). `defaultSourceCacheDir()` now returns
+  `$XDG_CACHE_HOME/wafflestack/sources` (absolute values only), else `~/.cache/wafflestack/sources`,
+  created `0700`; the explicit `cacheDir` override `doctor`/`render`/`upgrade` already thread keeps
+  precedence. Before a cached checkout is served, `checkoutMatches` requires that `git rev-parse HEAD`
+  resolves, that the `origin` remote URL equals the pinned `source`, and that `<ref>^{commit}` in the
+  checkout IS that HEAD — any failure or mismatch discards the directory and re-fetches. The two new
+  git probes are injectable like the existing `gitFetch`/`gitResolveCommit`, so the tests stay
+  offline; a real-git case plants a clone of a different repo (same tag name) at the derived path
+  and shows it replaced. Found by the #457 security pass.
+  *Consumer impact:* patch — the first `render` after upgrading re-fetches each pinned git source
+  into the new location (one network round-trip per source); the old `/tmp` cache is simply unused.
 - **`render`'s stale-prune now refuses lock keys that resolve outside the repo (#459).** The prune
   loop removed any lock-tracked path the new render no longer produced with no containment check, so
   a hostile or hand-edited `waffle.lock.json` naming `../../<file>` (or a path under an in-tree

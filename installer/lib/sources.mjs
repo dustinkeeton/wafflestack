@@ -18,12 +18,22 @@ import { exists, sha256 } from './util.mjs';
  * @param {string} [opts.cacheDir] where git sources are checked out
  * @param {(source: string, ref: string, dest: string) => void} [opts.gitFetch] injectable for tests
  * @param {(dir: string) => string | null} [opts.gitResolveCommit] injectable for tests
+ * @param {(dir: string) => string | null} [opts.gitOriginUrl] injectable for tests
+ * @param {(dir: string, ref: string) => string | null} [opts.gitRefCommit] injectable for tests
  * @param {boolean} [opts.refresh] re-fetch a pinned ref instead of serving the session cache
  * @returns {{ root: string, commit: string | null }}
  */
 export function resolveSource(
   ext,
-  { cwd, cacheDir = defaultSourceCacheDir(), gitFetch = gitFetchCheckout, gitResolveCommit = gitHeadCommit, refresh = false } = {},
+  {
+    cwd,
+    cacheDir = defaultSourceCacheDir(),
+    gitFetch = gitFetchCheckout,
+    gitResolveCommit = gitHeadCommit,
+    gitOriginUrl = gitRemoteOriginUrl,
+    gitRefCommit = gitResolveRefCommit,
+    refresh = false,
+  } = {},
 ) {
   if (ext.sourceType === 'git') {
     if (!ext.ref) {
@@ -42,8 +52,10 @@ export function resolveSource(
         );
       }
     }
+    fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const dest = path.join(cacheDir, sha256(`${ext.source}@${ext.ref}`).slice(0, 24));
-    const cached = exists(path.join(dest, '.git'));
+    // A present `.git` is not proof (#460): the checkout must also be OUR clone of the pinned source.
+    const cached = exists(path.join(dest, '.git')) && checkoutMatches(dest, ext, { gitResolveCommit, gitOriginUrl, gitRefCommit });
     if (!cached) {
       fs.rmSync(dest, { recursive: true, force: true }); // clear any partial/failed prior fetch
       try {
@@ -107,9 +119,33 @@ export function gitHeadCommit(dir) {
   return runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']).trim();
 }
 
-/** Where fetched git sources are cached when the caller does not override it. */
-export function defaultSourceCacheDir() {
-  return path.join(os.tmpdir(), 'wafflestack-sources');
+/** The `origin` remote URL of a checkout — the source it was actually cloned from. */
+export function gitRemoteOriginUrl(dir) {
+  return runCapture('git', ['-C', dir, 'remote', 'get-url', 'origin']).trim();
+}
+
+/** The commit a ref (tag, branch, or SHA) resolves to inside a checkout; `--verify` rejects guesses. */
+export function gitResolveRefCommit(dir, ref) {
+  return runCapture('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).trim();
+}
+
+/** Serve a cached checkout only if HEAD resolves, `origin` is the pinned `source`, and HEAD is what `ref` names there. */
+export function checkoutMatches(dir, ext, { gitResolveCommit = gitHeadCommit, gitOriginUrl = gitRemoteOriginUrl, gitRefCommit = gitResolveRefCommit } = {}) {
+  try {
+    const head = gitResolveCommit(dir);
+    if (!head) return false;
+    if (gitOriginUrl(dir) !== ext.source) return false;
+    return gitRefCommit(dir, ext.ref) === head;
+  } catch {
+    return false;
+  }
+}
+
+/** Default cache: per-user `$XDG_CACHE_HOME/wafflestack/sources`, else `~/.cache/wafflestack/sources` — never a shared tmp (#460). */
+export function defaultSourceCacheDir(env = process.env) {
+  const xdg = env.XDG_CACHE_HOME;
+  const base = xdg && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), '.cache');
+  return path.join(base, 'wafflestack', 'sources');
 }
 
 function run(cmd, args) {
