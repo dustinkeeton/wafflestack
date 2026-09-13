@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { normalizeItemRef } from './refs.mjs';
 
 /** The external environment a stack declares it leans on — distinct from `requires:`, which maps render-closure edges. */
@@ -60,13 +61,85 @@ export function applicablePrerequisites(toolkit, selection) {
   return out;
 }
 
-/** Probe every applicable prerequisite (`kinds` restricts which) into `{ unmetRequired, unmetRecommended, met }`. */
-export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs } = {}) {
+/** Human-readable identity of an external source: `source@ref`, or `source` for a local path. */
+export function describeProvenance(prov) {
+  return prov?.ref ? `${prov.source}@${prov.ref}` : prov?.source;
+}
+
+/** sha256 over a stack's `prerequisites[].check` strings in manifest order; null when none would run. */
+export function checksDigest(stack) {
+  const checks = (stack?.prerequisites ?? []).map((p) => p.check ?? '');
+  if (!checks.some(Boolean)) return null;
+  return createHash('sha256').update(JSON.stringify(checks)).digest('hex');
+}
+
+/** A ref that is neither a commit SHA nor a `v1.2.3`-shaped tag is treated as a branch (a moving target). */
+export function looksLikeBranchRef(ref) {
+  if (!ref) return false;
+  return !/^[0-9a-f]{7,40}$/i.test(ref) && !/^v?\d+(\.\d+)*([-+.][0-9A-Za-z.-]+)?$/.test(ref);
+}
+
+/**
+ * The trust gate on external check commands (#458): one entry per enabled external stack whose
+ * `prerequisites[].check` strings would run, with whether the project has acknowledged that exact list.
+ */
+export function externalCheckGates(toolkit, project) {
+  const out = [];
+  for (const ext of project.externalStacks ?? []) {
+    const stack = toolkit.stacks.get(ext.name);
+    if (!stack?.provenance) continue;
+    const digest = checksDigest(stack);
+    if (!digest) continue;
+    const recorded = ext.acknowledgedChecks ?? null;
+    out.push({ stackName: ext.name, stack, provenance: stack.provenance, digest, recorded, acknowledged: recorded === digest });
+  }
+  return out;
+}
+
+/** The stack names whose external checks must NOT run yet. */
+export function unacknowledgedStacks(gates) {
+  return new Set(gates.filter((g) => !g.acknowledged).map((g) => g.stackName));
+}
+
+/** The syrup-style trust-boundary listing for one unacknowledged gate: source, ref, every command, and the line to record. */
+export function formatCheckGate(gate) {
+  const { stackName, stack, provenance, digest, recorded } = gate;
+  const checks = stack.prerequisites.filter((p) => p.check);
+  const why = recorded
+    ? `the recorded \`acknowledgedChecks: ${recorded}\` no longer matches — its check commands CHANGED since they were acknowledged, so review them again`
+    : 'they have not been acknowledged';
+  const lines = [
+    `EXTERNAL prerequisite checks from external source "${stackName}" (${describeProvenance(provenance)}) were NOT run — ` +
+      `external stack "${stackName}" awaiting acknowledgement: ${why}. These ${checks.length} command(s) were authored OUTSIDE ` +
+      `this repo and would execute as shell commands on this machine and in CI — acknowledge this trust boundary: review each ` +
+      `command below and, only if you trust the source, record \`acknowledgedChecks: ${digest}\` on the "${stackName}" entry ` +
+      `under \`stacks:\` in .waffle/waffle.yaml (the COMMITTED config — CI cannot answer a prompt), then re-render`,
+    ...checks.map((p) => `  - [${p.level}] ${p.kind} ${p.name}: ${p.description} — check: \`${p.check}\``),
+  ];
+  if (provenance.sourceType === 'git' && looksLikeBranchRef(provenance.ref)) {
+    lines.push(
+      `  ! ref "${provenance.ref}" looks like a branch, not a tag or commit — these commands can change under the pin ` +
+        `(a change re-gates them, since the digest no longer matches); prefer a tag or commit \`ref:\``,
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Probe every applicable prerequisite (`kinds` restricts which) into `{ unmetRequired, unmetRecommended, met, notRun }`;
+ * a stack in `skipStacks` has its checks skipped, not run, and bucketed under `notRun` (#458).
+ */
+export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs, skipStacks = new Set() } = {}) {
   const unmetRequired = [];
   const unmetRecommended = [];
   const met = [];
+  const notRun = [];
   for (const p of prereqs) {
     if (kinds && !kinds.has(p.kind)) continue;
+    if (p.stackName && skipStacks.has(p.stackName)) {
+      notRun.push(p);
+      continue;
+    }
     const { ok } = runCheck(p.check, cwd, { timeoutMs });
     if (ok) {
       met.push(p);
@@ -76,7 +149,7 @@ export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs } 
       unmetRecommended.push(p);
     }
   }
-  return { unmetRequired, unmetRecommended, met };
+  return { unmetRequired, unmetRecommended, met, notRun };
 }
 
 /** One actionable line describing an (applicable) prerequisite, for CLI + render output. */

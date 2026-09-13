@@ -185,11 +185,18 @@ render — plan for both:
   deliberately **non-interactive** (it warns; it does not prompt), so this surfaces as a warning
   the setup/install flow must put to the user, distinct from the ordinary opt-in. Keep your syrup
   minimal, mark anything sensitive `optIn:`, and describe exactly what it needs in `setup:`.
-- **Your `prerequisites[].check` commands run as shell on the consumer's machine.** `render`
-  executes every `tool`/`env` check and `doctor` executes every check of each selected stack —
-  external stacks included — through the shell, with no separate acknowledgement, locally and in
-  CI (the shipped `waffle-doctor` workflow). Keep each check a short, read-only probe such as
-  `command -v gh`, and tell consumers to pin a tag or commit: a branch `ref:` is a moving target.
+- **Your `prerequisites[].check` commands cross the same trust boundary — they are not run until
+  the consumer acknowledges them.** `render` executes every `tool`/`env` check and `doctor`
+  executes every check of each selected stack through the shell, locally and in CI (the shipped
+  `waffle-doctor` workflow) — but for an external stack only **after** the consumer has reviewed
+  the list. Until then, `render`/`doctor` print every prerequisite's `name`, `kind`, `level`, and
+  exact `check:` string with your source and `ref`, skip the checks (reported as
+  `not run — external stack <name> awaiting acknowledgement`, never as met or unmet), and ask the
+  consumer to record `acknowledgedChecks: <digest>` on your stack's entry in their committed
+  `.waffle/waffle.yaml`. The digest is a sha256 of your check strings, so **changing any `check:`
+  re-gates every consumer** until they re-acknowledge — cut a new tag and say so in your notes.
+  Keep each check a short, read-only probe such as `command -v gh`, and tell consumers to pin a tag
+  or commit: a branch `ref:` is a moving target and earns an extra warning in the listing.
 
 **Authoring test loop.** The practical way to exercise all of this is a scratch consumer repo that
 points at your working tree via a **local-path source** (no `ref`), then render:

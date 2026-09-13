@@ -14,6 +14,7 @@ import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
  * @property {string} source a git URL or a local filesystem path
  * @property {'git' | 'path'} sourceType classified by `classifyStackSource`
  * @property {string | null} ref pinned tag/branch/commit; always null for a local path
+ * @property {string} [acknowledgedChecks] digest of the `prerequisites[].check` list the consumer acknowledged (#458); absent when unset
  *
  * @typedef {object} ProjectConfig the loaded `.waffle/waffle.yaml` (+ local overlay)
  * @property {Target[]} targets
@@ -438,7 +439,7 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
 }
 
 // Keys a `{ name, source, ref }` external stack entry may carry; an unknown key is rejected (typo-catch).
-const STACK_ENTRY_KEYS = new Set(['name', 'source', 'ref']);
+const STACK_ENTRY_KEYS = new Set(['name', 'source', 'ref', 'acknowledgedChecks']);
 
 /**
  * Classify an external stack `source:` as a `'git'` URL (scheme, scp-style `user@host:…`, or a
@@ -525,7 +526,16 @@ export function normalizeStackEntries(raw) {
           `external stack "${name}" in ${CONFIG_FILE} has a local-path \`source:\` (${source}); \`ref:\` is only valid for a git source — remove it`,
         );
       }
-      externalStacks.push({ name, source, sourceType, ref: ref ?? null });
+      let acknowledgedChecks;
+      if (entry.acknowledgedChecks !== undefined) {
+        if (typeof entry.acknowledgedChecks !== 'string' || !entry.acknowledgedChecks.trim()) {
+          throw new Error(
+            `external stack "${name}" in ${CONFIG_FILE} has an empty \`acknowledgedChecks:\` — record the digest \`render\` prints after reviewing the stack's check commands, or remove it`,
+          );
+        }
+        acknowledgedChecks = entry.acknowledgedChecks.trim();
+      }
+      externalStacks.push({ name, source, sourceType, ref: ref ?? null, ...(acknowledgedChecks ? { acknowledgedChecks } : {}) });
     } else {
       throw new Error(
         `stack entry #${pos} in ${CONFIG_FILE} must be a stack name or a { name, source } mapping (got ${entry === null ? 'null' : typeof entry})`,

@@ -16,12 +16,12 @@ import {
 import { describeToolkitProvenance } from './toolkit-ref.mjs';
 import { loadToolkitWithSources } from './toolkit.mjs';
 import { computeSelection } from './refs.mjs';
-import { applicablePrerequisites, evaluatePrerequisites } from './prerequisites.mjs';
+import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, formatCheckGate, unacknowledgedStacks } from './prerequisites.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
-  return { evaluated: false, unmetRequired: [], unmetRecommended: [], met: [] };
+  return { evaluated: false, unmetRequired: [], unmetRecommended: [], met: [], notRun: [] };
 }
 
 /** The empty render-verification result — the flag was not passed, so no render was reproduced. */
@@ -132,7 +132,10 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
       const trackedFiles = new Set(Object.keys(lock.files ?? {}));
       const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
       const applicable = applicablePrerequisites(toolkit, selection);
-      prerequisites = { evaluated: true, ...evaluatePrerequisites(applicable, cwd) };
+      // Unacknowledged external check commands are listed, never run (#458); this never gates `ok`.
+      const gates = externalCheckGates(toolkit, project);
+      for (const gate of gates) if (!gate.acknowledged) notes.push(formatCheckGate(gate));
+      prerequisites = { evaluated: true, ...evaluatePrerequisites(applicable, cwd, { skipStacks: unacknowledgedStacks(gates) }) };
 
       // Runs in every doctor mode without a re-render: tree and lock can hash-match a value the
       // toolkit now rejects, having rendered before the guard existed (#218).

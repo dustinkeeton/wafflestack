@@ -94,6 +94,7 @@ try {
       for (const n of result.notes) console.log(n);
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
+      for (const p of result.prerequisites.notRun ?? []) console.log(`prerequisite not run — external stack "${p.stackName}" awaiting acknowledgement: ${formatPrereq(p)}`);
       if (result.ok) {
         if (result.render.evaluated) {
           console.log(`render verified: a fresh render of ${CONFIG_FILE} reproduces the lock (${result.render.checked} files); the working tree was not touched`);
@@ -105,6 +106,9 @@ try {
         );
         if (result.prerequisites.unmetRecommended.length) {
           console.log(`${result.prerequisites.unmetRecommended.length} recommended prerequisite(s) unmet — reported above, not blocking`);
+        }
+        if (result.prerequisites.notRun?.length) {
+          console.log(`${result.prerequisites.notRun.length} external prerequisite check(s) not run — awaiting acknowledgement, listed above, not blocking`);
         }
       }
       process.exit(result.ok ? 0 : 1);

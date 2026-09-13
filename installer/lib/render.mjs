@@ -13,7 +13,16 @@ import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
-import { applicablePrerequisites, evaluatePrerequisites, formatPrereq, RENDER_PROBE_KINDS } from './prerequisites.mjs';
+import {
+  applicablePrerequisites,
+  describeProvenance,
+  evaluatePrerequisites,
+  externalCheckGates,
+  formatCheckGate,
+  formatPrereq,
+  RENDER_PROBE_KINDS,
+  unacknowledgedStacks,
+} from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import {
   loadProjectConfig,
@@ -117,11 +126,15 @@ export function renderProject({
   });
 
   // Deliberately OUTSIDE `computeOutputs`: this shells out, so it runs once. Warns, never fails.
+  // An external stack's checks stay unrun until its command list is acknowledged (#458).
   {
+    const gates = externalCheckGates(toolkit, project);
+    for (const gate of gates) if (!gate.acknowledged) warnings.push(formatCheckGate(gate));
     const prereqs = applicablePrerequisites(toolkit, { items: effective.selection.items });
     const { unmetRequired, unmetRecommended } = evaluatePrerequisites(prereqs, cwd, {
       kinds: RENDER_PROBE_KINDS,
       timeoutMs: 5000,
+      skipStacks: unacknowledgedStacks(gates),
     });
     for (const p of [...unmetRequired, ...unmetRecommended]) warnings.push(formatPrereq(p));
   }
@@ -589,11 +602,6 @@ export function readLocalLock(cwd) {
  */
 export function readTreeLock(cwd) {
   return readLocalLock(cwd) ?? readLock(cwd);
-}
-
-/** Human-readable identity of an external source: `source@ref`, or `source` for a local path. */
-function describeProvenance(prov) {
-  return prov?.ref ? `${prov.source}@${prov.ref}` : prov?.source;
 }
 
 /**
