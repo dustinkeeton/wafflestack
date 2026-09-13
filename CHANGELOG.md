@@ -32,6 +32,19 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`/clean-up` sweeps a `/delegate` run's leaked agents from the run checkpoint (#172, epic #380).**
+  The harness scope used to point at "the run's checkpoint" and stop there; now it is a procedure:
+  glob `{{git.worktreesDir}}/.delegate/*.json` (or `--run <path>` for a moved `delegate.checkpointDir`),
+  reconstruct `issue-<number>-<agent>` from `execution[]` (or `plan.groups[].assignments[]` for a run
+  interrupted mid-Phase 4), judge each entry by its **real work** — `gh pr view <pr> --json state` is
+  `MERGED`/`CLOSED`, or the run's `report` section exists — rather than by task status, reconcile the
+  stale `in_progress` task (`TaskUpdate … completed`) and only then run the existing shutdown-then-stop
+  path. `delegate-single-*` runs are reported as unsweepable (no `name:`, no task). The report gains a
+  `Delegate runs swept:` block; the "no run record available; agents not swept" line stays when no
+  checkpoint exists. A content test pins the glob, the reconstruction, the PR-state rule, the
+  reconcile→shutdown→stop order, and the report block on both the source and the render, with a
+  can-fail fixture. **Consumer impact:** `clean-up` render changes (prose only); no config change —
+  the checkpoint directory is the conventional default, not a new github-workflow key.
 - **`/audit` as two staged Claude workflow scripts, shipped as opt-in syrup (#363, epic #184).** The
   `orchestration` stack gains two Claude-scoped `files:` payloads, `.claude/workflows/audit-stage-1.js`
   (architecture → security pass 1; returns `stoppedAt` / `signOffRequired` on Critical/High findings)
