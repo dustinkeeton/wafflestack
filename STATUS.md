@@ -5,8 +5,8 @@
 
 - **Version**: v0.14.0 (tagged 2026-08-19; pre-1.0 — the file contract can still change
   between minor releases).
-- **Last updated**: 2026-07-16
-- **Health**: 🟢 tests 1207/1207 (156 suites) · `validate` clean · CI green on `main`
+- **Last updated**: 2026-09-13
+- **Health**: 🟢 tests 1298/1298 (174 suites) · `validate` clean · CI green on `main` (`880a13e`)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -16,9 +16,9 @@ All 9 stacks are shipped and stable — **14 agents and 37 skills** in total. Pi
 | Stack | What you get |
 |--------|--------------|
 | `docs-system` | Two-audience docs: machine (`AGENTS.md`) + human (these files), plus the writing-craft skills (`prose`, `md-maximalist`, `accurate`) |
-| `github-workflow` | Git / GitHub issue / Projects / release skills + 14 prefab `files/` payloads: the doctor drift-gate workflow, **7 opt-in syrup hooks** (label-hook, hygiene, release, post-merge, evals, pr-green, pr-response), and 6 issue/PR/review templates. Only stack with a `setup:` step; declares typed `prerequisites:` |
+| `github-workflow` | Git / GitHub issue / Projects / release skills + 14 prefab `files/` payloads: the doctor drift-gate workflow, **7 opt-in syrup hooks** (label-hook, hygiene, release, post-merge, evals, pr-green, pr-response — the four that dispatch Claude are `targets: [claude]`, #190), and 6 issue/PR/review templates. Only stack with a `setup:` step; declares typed `prerequisites:` |
 | `code-quality` | Cross-cutting practice skills: tdd, codebase-architecture, adversarial-review (hostile green-PR review), qa (green PR vs. the linked issue's intent), dry |
-| `orchestration` | Multi-agent orchestration: delegate (typed checkpoints, run memory, approval gate), autopilot (unattended backlog runner with opt-in QA / review / audit gates), audit, docs, standup + 3 manager/planner agents |
+| `orchestration` | Multi-agent orchestration: delegate (typed checkpoints, run memory, approval gate), autopilot (unattended backlog runner with opt-in QA / review / audit gates), audit, docs, standup + 3 manager/planner agents. Also ships `/audit` as **2 opt-in Claude workflow scripts** (#363) |
 | `engineering-team` | 6-agent product-engineering roster + webapp-security-audit |
 | `obsidian-dev` | Obsidian plugin development (+ electron-security-audit) |
 | `expo-dev` | Expo / React Native app development |
@@ -27,46 +27,49 @@ All 9 stacks are shipped and stable — **14 agents and 37 skills** in total. Pi
 
 ## Installer & CLI
 
-All 13 commands work (plus `bake`, a pure alias for `render`), over 20 pipeline modules in
+All 13 commands work (plus `bake`, a pure alias for `render`), over 22 pipeline modules in
 `installer/lib/`: `init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` ·
 `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
 ## Current focus — unreleased, on `main`
 
-Everything below is merged but not yet tagged (CHANGELOG `[Unreleased]`; latest tag v0.12.0):
+Everything below merged on 2026-09-12 and is not yet tagged (CHANGELOG `[Unreleased]`; latest tag v0.14.0):
 
-- **The CLI proves what toolkit it is before writing (#373/#374/#372).** An unpinned `npx github:…`
-  fetches the default branch, not the latest release — so `render`, `install`, `upgrade`,
-  `reinstall`, and `doctor --verify-render` now **refuse** when the CLI is provably not at a
-  release tag, naming the exact pinned command. The lock records which toolkit rendered it
-  (ref + commit, release-only), and `upgrade` moves `toolkitRef` pins you already chose.
-  [Why](DECISIONS.md#2026-07-13-upgrade-rewrites-only-the-pins-a-consumer-already-chose-and-never-re-execs-372)
-- **Syrup can scope itself to harness targets (#364).** A `files/` payload with `targets:` renders
-  only for enabled harnesses; dropping its last target prunes it. `list` gains `not installable`
-  and `PENDING REMOVAL`; every scope malformation is a hard load error, because the prune deletes
-  files. [Why](DECISIONS.md#2026-07-13-syrup-can-scope-itself-to-harness-targets--and-every-way-to-get-the-scope-wrong-is-a-hard-load-error-364-pr-370)
-- **The CLI surface is complete (epic #346).** `help` exits 0 on stdout; `uninstall`/`reinstall`
-  are the first destructive commands — the lock decides what may be deleted, dry run until
-  `--yes`. Four rough edges ship with them (#359, see Known issues).
-- **Comments are not spec (#388) + pr-response rubric v3 (#385).** Deterministic files carry rules
-  in code + behavior tests; a comment-vs-code finding shrinks the comment. The 2026-08-17 sweep
-  finished the burn-down repo-wide (~6,070 comment lines deleted; `installer/lib` 35% → 10%) and
-  added a mechanical gate — `comment-gate.test.mjs` caps every file at 15% ratio / 8-line runs,
-  grandfather map now empty. The rubric's Implement bar is **≥11**, so a merely valid, cheap nit
-  Defers. Remaining debt: bash essays inside workflow `run:` blocks (~420 lines).
-- **CI hooks key on out-of-band signals (#338/#354):** commit statuses and a pre-dispatch label,
-  never a marker pasted in prose; PR-gate staging paths now also carry the head SHA (#376/#412).
-- **Orchestration skills call the tools the harness actually has (#360)** — dead primitives
-  (`TeamCreate` etc.) removed, with a source-wide regression sweep.
+- **`/clean-up` sweeps a `/delegate` run's leaked agents (#172, closes epic #380).** It reads
+  the run checkpoint and judges each agent by its *work* — the PR is merged or closed — never by
+  the task status the interruption corrupted. [Why](DECISIONS.md#2026-09-12-clean-up-judges-a-delegate-runs-agents-by-pr-state-from-a-hardcoded-checkpoint-glob-172)
+- **`/audit` ships as two staged Claude workflow scripts (#363, closes epic #184).** Opt-in,
+  Claude-only syrup; your sign-off happens between the two runs. `/audit` now invokes `/docs`
+  instead of copying it (#361), and the spawn-and-collect scaffold has one home in `audit` (#365).
+  [Why](DECISIONS.md#2026-09-12-audit-ships-as-two-staged-claude-workflow-scripts--opt-in-claude-scoped-syrup-363-epic-184)
+- **Codex coverage has a definition of done (#190).** A content test fails on any literal
+  `.claude/…` path in harness-neutral source; the four Claude-dispatch hook workflows are now
+  `targets: [claude]`. [Why](DECISIONS.md#2026-09-12-the-codex-toml-carries-no-skill-grant-and-a-sparse-codex-is-the-whole-render-190)
+- **Labels: `waffle:<label>` everywhere, one bootstrap table (#451, #452). Breaking default.**
+  `waffle-auto-merged` → `waffle:auto-merged`, `waffle-manual-review` → `waffle:manual-review`,
+  `Needs Inference` → `waffle:needs-inference`. Rename with `gh label edit` or pin the old names
+  via config. Bootstrap block: `schema/SETUP.md` step 4, "Required labels".
+  [Why](DECISIONS.md#2026-09-12-harness-labels-live-in-the-waffle-namespace-with-one-bootstrap-list-in-setupmd-451-452)
+- **Auto-merge needs three things, and the third is now preflighted (#205).** The required check
+  needs branch protection or a ruleset — on GitHub Free, public repos only. New `recommend`-level
+  `required-status-check` prerequisite on `orchestration`. [Why](DECISIONS.md#2026-09-12-auto-merge-has-three-prerequisites-and-the-third-is-preflighted-205)
+- **Stacks can recommend external plugins (#199).** `recommendedPlugins:` is an offer `setup`
+  makes, never an install; no built-in stack declares one yet.
+  [Why](DECISIONS.md#2026-09-12-a-stack-may-recommend-external-plugins-that-setup-offers-but-never-installs-199)
 
 ## Known issues & things to watch
 
-- **`uninstall`/`reinstall` rough edges (#359):** a skipped hand-edit still loses config +
+- **CHANGELOG misfiles #199.** PR #430 merged 2026-09-12 — after the v0.14.0 tag — but its
+  entry sits under `[0.14.0]`; the next bump should move it to the new version.
+- **`uninstall`/`reinstall` rough edges (#359, open):** a skipped hand-edit still loses config +
   `.gitignore` block; an incomplete `--yes` exits 0; `reinstall` hard-fails on config-but-no-lock;
   `--no-color` missing from `help`.
-- **Hidden deletion gap (#371):** a poured syrup file whose whole *stack* was deselected is pruned
-  while `list` says `not-installed`.
-- **No npm package yet** — install only via `npx github:dustinkeeton/wafflestack`.
+- **Hidden deletion gap (#371, open):** a poured syrup file whose whole *stack* was deselected is
+  pruned while `list` says `not-installed`.
+- **Paid hooks stay disarmed** (no `ANTHROPIC_API_KEY` secret by design). Re-arming waits on
+  #343 (pluggable CI engine) and #355 (pr-response hook never dispatches). Both open.
+- **Comment burn-down follow-ups (open):** #440 bash essays inside workflow `run:` blocks
+  (~420 lines), #441 DECISIONS triage, #442 `AGENTS.md` prose over its 300-line cap.
 - **The self-render is committed.** After editing `stacks/**`, re-run
   `node installer/cli.mjs render --allow-unreleased` (flag required, #373) and commit files +
   lock. Two required checks guard it: the `waffle-doctor` drift gate and the `tests` workflow's
@@ -79,18 +82,18 @@ Everything below is merged but not yet tagged (CHANGELOG `[Unreleased]`; latest 
 
 | Dependency | Version / need | Used for |
 |------------|----------------|----------|
-| Node.js | ≥ 18 | Running the CLI |
+| Node.js | ≥ 18 | Running the CLI (also a `require` prerequisite of `orchestration`) |
 | `yaml` | ^2.4.5 | The only runtime dependency (parsing manifests/config) |
-| `git` | any | All git operations |
-| `gh` (GitHub CLI) | authenticated | Required only by the `github-workflow` stack |
+| `git` | any | All git operations (also a `require` prerequisite of `orchestration`) |
+| `gh` (GitHub CLI) | authenticated | `github-workflow`, and `orchestration`'s delegate / autopilot / audit skills |
 | SVG rasterizer + `WAFFLE_GRAVATAR_TOKEN` | optional | Owner-side only, for `avatars sync` |
 
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1207 tests, 156 suites)
+npm test                          # installer test suite (1298 tests, 174 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate
-npm run evals -- --dry-run        # Layer-2 evals (15 cases), mock model, free
+npm run evals -- --dry-run        # Layer-2 evals (16 cases), mock model, free
 ```

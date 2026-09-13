@@ -38,6 +38,72 @@ run with an open PR as in flight without stopping anything from it. A consumer t
 
 ---
 
+## 2026-09-12: Auto-merge has three prerequisites, and the third is preflighted (#205)
+
+**Context**: `delegate` and `autopilot` arm `gh pr merge --auto --merge`. The docs listed two
+prerequisites — "Allow auto-merge" on the repo and a required status check on the base branch —
+and stopped. A third was silent: that required check needs branch protection or a ruleset, which
+on GitHub Free exists only for **public** repos. A private free-plan repo got an open-but-not-armed
+PR and no warning.
+
+**Decision**: Every surface that arms auto-merge states the same three-part rule verbatim — the
+`delegate` and `autopilot` skills, the `delegate.autoMerge` / `autopilot.autoMerge` option
+descriptions and `setup:` notes in `orchestration`, and the `hygiene` skill and its setup gotcha in
+`github-workflow`. The `orchestration` stack gains a `required-status-check` prerequisite
+(`kind: setting`, `level: recommend`, scoped to delegate + autopilot) that resolves the default
+branch and passes only when the branch-protection endpoint *or* the rulesets endpoint reports a
+required status check. A 404 (no protection at all) is unmet, not swallowed.
+
+**Alternatives considered**: `require` level — rejected by the stack's standing rule: only the
+`command -v` tool probes are `require`, because they are certain in every environment `doctor`
+runs; everything that needs auth (scope, label, setting) is `recommend`.
+
+**Rationale**: Verified against GitHub's plans page — the auto-merge *toggle* is not plan-gated;
+protected branches and rulesets are. The third fact is the one that actually bites, so it is the
+one the preflight probes.
+
+**Impact**: `stacks/orchestration/stack.yaml` (the prerequisite and four prose surfaces),
+`stacks/github-workflow` (`hygiene`). No config change; `doctor` reports on it and never fails.
+
+---
+
+## 2026-09-12: Harness labels live in the `waffle:` namespace, with one bootstrap list in SETUP.md (#451, #452)
+
+**Context**: On #197 the owner set the rule that every harness-owned label is `waffle:<label>`.
+Three config-overridable defaults were still outliers — `autoMerge.label` (`waffle-auto-merged`),
+`autopilot.holdLabel` (`waffle-manual-review`), and `issue.inferenceLabel` (`Needs Inference`) —
+and no single list of every label the stacks need existed. Worse, the priority taxonomy was spelled
+two ways: `github-project-management` bootstrapped `priority:high` while the `issue` skill,
+`issue.priorityLabels`, and `gh issue edit` used `priority: high`, so labels created from one
+skill were unusable from the other.
+
+**Decision**: (1) Rename the three defaults to `waffle:auto-merged`, `waffle:manual-review`, and
+`waffle:needs-inference`; every dependent — each stack's `label` prerequisite, its `setup:`
+`gh label create` line, the `issue` / `hygiene` / `delegate` / `autopilot` skills, and the
+`rough-idea` issue form — follows through the placeholder. The queue marker and the `waffle:enrich`
+CI trigger stay **two** labels; only names change. (2) `schema/SETUP.md` step 4 gains one
+**Required labels** table (label → overriding config key → which stack/item needs it →
+harness-owned vs. taxonomy) plus a copy-paste `gh label create --force` block covering every label
+the stacks declare; `README.md` cross-links it instead of repeating it. (3) The priority taxonomy is
+`priority: high` / `medium` / `low` everywhere.
+
+**Alternatives considered**: Keeping the old names to avoid a breaking default — rejected: the
+rule is the owner's, and the three config keys already give a consumer the escape hatch. The
+bare-`implement` label mismatch #197 first reported did not reproduce: the `label-hook` skill's
+`enrich` / `implement` words are action tokens the workflow hands it, never label text.
+
+**Rationale**: One namespace makes a harness label recognisable at a glance and impossible to
+confuse with a project's own taxonomy; one table makes "what labels do I need" a copy-paste
+answer instead of a hunt across nine `stack.yaml` files.
+
+**Impact**: **Breaking default — migrate on re-render.** Either rename the live labels in place
+(`gh label edit "waffle-auto-merged" --name "waffle:auto-merged"`, and likewise for the other
+two — issues and PRs already carrying the label keep it), or pin the old names in
+`.waffle/waffle.yaml` via `autoMerge.label`, `autopilot.holdLabel`, and `issue.inferenceLabel`
+and change nothing on GitHub. The bootstrap lives at `schema/SETUP.md:220`.
+
+---
+
 ## 2026-09-12: The codex TOML carries no skill grant, and a sparse `.codex/` is the whole render (#190)
 
 **Context**: #94 (2026-07-07, below) closed the render-target asymmetry, but three residuals kept
@@ -86,6 +152,8 @@ and its regression fixtures); the three leaking sources, re-rendered; `stacks/gi
 (the four hooks in map form with `targets: [claude]`). Syrup substitutes against
 the **primary** (first-listed) target, so `{{harness.skillsDir}}` in `REVIEW_TEMPLATE.md` resolves
 to whichever target a consumer lists first — unchanged bytes for a Claude-primary render.
+
+---
 
 ## 2026-09-12: The spawn-and-collect scaffold is a contract section in `audit`, not a skill (#365, spike #184)
 
@@ -152,6 +220,66 @@ workflow body is not an ES module; `node --check` is the wrong checker), and no 
 `Math.random()` / imports. This repo `include:`s both scripts (inert, no spend) so the render + lock
 exercise the opt-in path. Consumers on other targets see nothing; `list`/`setup` report the scripts as
 not installable there (#364).
+
+---
+
+## 2026-09-12: `/audit` invokes `/docs` instead of re-implementing it (#361, epic #184)
+
+**Context**: The audit chain's two documentation passes re-spawned `docs-agent` and `docs-human`
+with their own prompts — a second copy of the `docs` skill's pipeline that had already drifted (no
+read-only change report, nothing threaded between the two writers). The 2026-07-13 rule below says
+a skill is the unit of work and orchestration only sequences.
+
+**Decision**: The chain **invokes the `docs` skill** for its documentation step and spawns four
+named agents: architecture → security pass 1 → compliance → `docs` (invoked) → security pass 2.
+The `docs` skill's own read-only report → `docs-agent` → `docs-human` chain runs inside that
+invocation, so one copy of the pipeline remains. The `orchestration` stack gains a
+`requires: skills/audit: [skills/docs]` edge so a per-item `audit` install never names a missing
+skill.
+
+**Alternatives considered**: Keeping the two copies and pinning them equal by test — the drift
+#360 had just found in the same skills is what this rejects.
+
+**Rationale**: A pipeline with one home cannot drift from itself, and the `docs` skill's
+read-only first step (the change report) is exactly what the copy had lost.
+
+**Impact**: `audit` and `autopilot` re-render (prose only). A consumer who installed `audit` alone
+now also receives `docs`, `docs-agent`, and `docs-human` through the new edge. Tests pin the
+four-agent roster, the invocation, and the `docs` skill's read-only step 1 with its
+`{step-1 output}` hand-off.
+
+---
+
+## 2026-09-12: A stack may recommend external plugins that setup offers but never installs (#199)
+
+**Context**: Some stacks pair well with an external harness plugin (a Claude Code plugin or
+marketplace entry), and there was no way for a stack to say so.
+
+**Decision**: `stack.yaml` may declare `recommendedPlugins:` — a list of `{ name, source, why }`
+entries with optional `items:` (scope to specific waffles, the same vocabulary as
+`prerequisites[].items:`) and `targets:` (the harnesses it exists for — printed for the setup
+agent, never applied as a filter). `wafflestack setup` lists them per stack under
+`### recommended plugins` behind an intro that teaches the posture: **offer, never install**. The
+toolkit never fetches, installs, tracks, or updates a plugin, and a test pins that declaring one
+leaves the render and lock byte-identical. `validate` requires the three fields and rejects
+unknown keys, duplicate names, a prose `source`, and unresolvable `items:` / `targets:` — every
+malformation is a lint problem, never a load error, and a malformed entry is simply not offered.
+
+**Alternatives considered**: A per-waffle key — rejected: scoping the stack-level entry with
+`items:` says the same thing with vocabulary the author already knows. An entry in the waffle
+registry (#335) — rejected: the registry indexes waffles this toolkit *ships*, each with a path a
+render can produce; a plugin has no path, no render, and nothing to prune, so it is curation, and
+curation belongs next to the stack doing the curating, alongside the equally advisory
+`recommended:` flag.
+
+**Rationale**: `why` is required because a wizard pitching an unexplained third-party install is
+worse than one that stays quiet.
+
+**Impact**: `installer/lib/plugins.mjs` (new), `toolkit.mjs` (`Stack.recommendedPlugins`),
+`validate.mjs`, `setup.mjs`; `installer/test/plugins.test.mjs`; `schema/FORMAT.md`,
+`schema/SETUP.md`, `AGENTS.md`. No config change and no rendered-output change; no built-in stack
+declares a recommendation yet. Merged 2026-09-12 (PR #430), after the v0.14.0 tag — the CHANGELOG
+files it under `[0.14.0]`.
 
 ---
 
