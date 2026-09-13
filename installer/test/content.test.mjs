@@ -708,7 +708,7 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.match(reviewStep, /cap\+1/);
     assert.match(reviewStep, /file nothing/);
     assert.doesNotMatch(md, /last adversarial-review findings/);
-    assert.match(reviewStep, /--add-label "waffle-manual-review"/);
+    assert.match(reviewStep, /--add-label "waffle:manual-review"/);
   });
 
   test('hold-labeled issues are out of automatic scope, released only by an explicit #N', () => {
@@ -760,7 +760,7 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     assert.match(md, /do NOT merge, even if auto-merge was consented/i);
     assert.match(md, /never merges past an unresolved security gate/);
     assert.match(md, /triage unresolved audit findings on PR/);
-    assert.match(md, /--add-label "waffle-manual-review"/);
+    assert.match(md, /--add-label "waffle:manual-review"/);
   });
 
   test('failure handling: audit fix leaving CI red stops-and-reports; chain errors bounded, agents torn down', () => {
@@ -809,7 +809,7 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     assert.match(qaStep, /No `pr-response` follows it/);
     assert.match(qaStep, /cap\+1/);
     assert.match(qaStep, /file nothing/);
-    assert.match(qaStep, /--add-label "waffle-manual-review"/);
+    assert.match(qaStep, /--add-label "waffle:manual-review"/);
     assert.doesNotMatch(md, /last QA findings/);
   });
 

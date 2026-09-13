@@ -54,7 +54,7 @@ After a task produces changes, follow the `git-workflow` skill end-to-end:
    human) queued the merge:
 
    ```bash
-   gh pr edit <PR#> --add-label "waffle-auto-merged"
+   gh pr edit <PR#> --add-label "waffle:auto-merged"
    ```
 
    Label **only** when `--auto` actually armed — the label means "auto-merge armed," not
