@@ -5,8 +5,8 @@ automation already writes. A review round is two halves, and each has a canonica
 
 | Half | Who writes it | Canonical source (the enforcement point) |
 |---|---|---|
-| **Findings** — what is wrong with this PR | `adversarial-review` / `qa`, or a human reviewer | `.claude/skills/adversarial-review/SKILL.md` (§ "Rank findings by honest severity") |
-| **Verdicts** — what the author will do about each finding | `pr-response`, or the PR author | `.claude/skills/pr-response/SKILL.md` (§ "Score each finding — rubric v3") |
+| **Findings** — what is wrong with this PR | `adversarial-review` / `qa`, or a human reviewer | `{{harness.skillsDir}}/adversarial-review/SKILL.md` (§ "Rank findings by honest severity") |
+| **Verdicts** — what the author will do about each finding | `pr-response`, or the PR author | `{{harness.skillsDir}}/pr-response/SKILL.md` (§ "Score each finding — rubric v3") |
 
 **The skills are canonical; this file is a convenience.** The scoring anchors, the composite
 thresholds, and the override rules live in the skills and are deliberately *not* restated here — one

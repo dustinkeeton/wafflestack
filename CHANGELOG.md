@@ -77,6 +77,32 @@ is what you reach for across a breaking one.
   on its own now also receives `docs` (and its `docs-agent`/`docs-human` dependencies) through
   the new `requires:` edge. No config change.
 
+### Fixed
+- **Codex render coverage has a definition of done, and the stale "no TOML equivalent" claim is
+  gone (#190).** Three residuals of the #94 audit. (1) `schema/FORMAT.md` / `AGENTS.md` /
+  `DECISIONS.md` now make the accurate claim: Codex's agent TOML *does* accept `[[skills.config]]`
+  (`path` + `enabled`), but it is a per-skill enable/disable override with undocumented relative-path
+  resolution, not a grant — so the frontmatter `skills:` list is deliberately still conveyed in body
+  prose, and the docs say why. (2) A new content test sweeps every source skill, agent, and portable
+  Markdown syrup, plus a scratch codex + agents-dir render of this repo's own stacks, and fails on a
+  literal `.claude/skills/` / `.claude/agents/` path where `{{harness.skillsDir}}` /
+  `{{harness.agentsDir}}` belongs (a line naming `.codex/` or `.agents/` alongside is portability
+  prose and passes). It caught four leaks — `adversarial-review` § auto-invocation, `standup` step 1,
+  and both skill pointers in `.github/REVIEW_TEMPLATE.md` — now fixed. (3) The external-stack author's
+  pre-tag checklist gains a "renders for every target it claims" item, and the expected `.codex/`
+  layout is stated in one sentence wherever the codex target is described. (4) The four
+  Claude-dispatch hook workflows in `github-workflow` — `waffle-label-hook`, `waffle-hygiene`,
+  `waffle-pr-green-hook`, `waffle-pr-response-hook` — are now `targets: [claude]` syrup: each runs
+  claude-code-action against a `.claude/skills/<n>/SKILL.md` prompt, so a codex or agents-dir
+  consumer no longer receives a workflow that dispatches a harness its repo does not render for.
+  **Consumer impact:**
+  re-rendering refreshes `adversarial-review`, `standup`, and `REVIEW_TEMPLATE.md`; under a
+  Claude-primary render only the `standup` example line changes bytes. Syrup substitutes against the
+  **primary** (first-listed) target, so `REVIEW_TEMPLATE.md` now points at that target's skills dir.
+  A consumer with `targets:` that exclude `claude` and one of the four hooks installed will see that
+  hook **pruned** on the next render (its lock entry goes with it — the documented `targets:`
+  contract, #364); Claude-target consumers see no change.
+
 ## [0.14.0] - 2026-08-19
 
 ### Added

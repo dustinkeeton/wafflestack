@@ -9,6 +9,55 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-12: The codex TOML carries no skill grant, and a sparse `.codex/` is the whole render (#190)
+
+**Context**: #94 (2026-07-07, below) closed the render-target asymmetry, but three residuals kept
+the codex story re-openable. `FORMAT.md` claimed the agent `skills:` frontmatter "has no TOML
+equivalent" — no longer true: Codex's custom-agent TOML accepts `[[skills.config]]` entries
+(`path` to a `SKILL.md` folder + an `enabled` boolean). Nothing in the definition of done required
+non-claude coverage, and the tree had real leaks: `adversarial-review`, `standup`, and both skill
+pointers in `.github/REVIEW_TEMPLATE.md` hardcoded `.claude/skills/…` / `.claude/agents/…`, paths
+that do not exist under a codex or agents-dir render. And a consumer staring at a two-file
+`.codex/` had no single sentence telling them that is the complete layout.
+
+**Decision**: (1) Keep conveying skill access in body prose and record the *accurate* reason:
+`[[skills.config]]` is a per-skill **enable/disable override** on the parent config's skill set,
+not a grant or allowlist, and OpenAI's reference gives only absolute-path examples and never says
+how a relative `path` in a project-scoped agent file resolves. Emitting it would translate a grant
+into a toggle with a path we cannot make portable — a semantic mismatch, not a missing key. The
+#224 guard already proves the prose names each granted skill under a codex render. (2) Make
+non-claude coverage mechanical: a content test sweeps every source skill, agent, and portable
+Markdown syrup, plus a scratch codex + agents-dir render of this repo's own stacks, and fails on a
+literal `.claude/skills/` / `.claude/agents/` where `{{harness.skillsDir}}` /
+`{{harness.agentsDir}}` belongs. Exemptions are derived, never enumerated: a line that also
+names `.codex/` or `.agents/` is portability prose; `targets: [claude]` syrup is Claude by declared
+contract (#364); `.claude/worktrees/` and `.claude/workflows/` never match. (3) State the expected
+`.codex/` layout in one sentence wherever the codex target is described — `agents/<name>.toml`
+only, plus the consumer's own `config.toml`; skills are in `.agents/skills/` — and add a "renders
+for every target it claims" item to the external-stack author's pre-tag checklist. (4) Scope the
+four Claude-dispatch hook workflows (`waffle-label-hook`, `waffle-hygiene`, `waffle-pr-green-hook`,
+`waffle-pr-response-hook`) `targets: [claude]`: each runs claude-code-action and prompts it with a
+`.claude/skills/<n>/SKILL.md` path, which is Claude by nature — the sweep in (2) covers Markdown
+bodies only, so the declared `targets:` contract (#364) is what keeps a Claude-only workflow out of
+a codex or agents-dir consumer's tree. The doctor, release, and post-merge workflows are
+harness-neutral and stay unscoped; the evals workflow renders its own scratch claude target inside
+the runner and stays unscoped too.
+
+**Alternatives considered**: *Emit `[[skills.config]]` with `enabled = true` per granted skill.*
+Rejected: it asserts a grant semantics the key does not have, the path would have to be absolute
+or rely on undocumented resolution, and a wrong path silently disables nothing while looking
+authoritative. *Enumerate the known exemptions in the test.* Rejected on the repo's standing rule —
+a hardcoded exemption list exempts whatever is added next. *Sweep only this repo's `.claude/`
+render.* Rejected: a Claude render legitimately contains `.claude/skills/`, so the meaningful
+check is a non-claude render plus the sources of the stacks this repo does not install.
+
+**Impact**: `schema/FORMAT.md`, `AGENTS.md`, `ARCHITECTURE.md`, and
+`schema/AUTHORING-EXTERNAL-STACKS.md` (docs); `installer/test/content.test.mjs` (the #190 sweep
+and its regression fixtures); the three leaking sources, re-rendered; `stacks/github-workflow/stack.yaml`
+(the four hooks in map form with `targets: [claude]`). Syrup substitutes against
+the **primary** (first-listed) target, so `{{harness.skillsDir}}` in `REVIEW_TEMPLATE.md` resolves
+to whichever target a consumer lists first — unchanged bytes for a Claude-primary render.
+
 ## 2026-09-12: The spawn-and-collect scaffold is a contract section in `audit`, not a skill (#365, spike #184)
 
 **Context**: `audit`, `autopilot` and `standup` each hand-typed the same orchestration scaffold —
