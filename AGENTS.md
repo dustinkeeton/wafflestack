@@ -81,7 +81,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:` guard machinery |
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) |
 | `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers |
-| `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver |
+| `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver, `resolveInside` containment guard |
 | `doctor.mjs` | Drift check vs `readTreeLock`; `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129) |
 | `eject.mjs` | `eject` / `installRefs` / `init` |
 | `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) |
@@ -189,6 +189,7 @@ export function parseFrontmatter(text)         // → { data, body }
 export function stringifyFrontmatter(data, body) // → string
 export function parseVersion(v)                // → [major, minor, patch] | null
 export function compareVersions(a, b)          // → -1 | 0 | 1 (unparseable sorts low)
+export function resolveInside(cwd, rel)        // → abs path | null — null when `rel` escapes cwd (lexical `../`, or a symlinked parent realpathing outside); shared by uninstall and render's stale-prune (#182, #459)
 
 // doctor.mjs — drift check against the lock that describes the tree (readTreeLock, #317)
 export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) // → { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, toolkitProvenance } — unmet `require` prerequisite fails ok; attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok

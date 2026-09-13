@@ -132,6 +132,13 @@ is what you reach for across a breaking one.
   the new `requires:` edge. No config change.
 
 ### Fixed
+- **`render`'s stale-prune now refuses lock keys that resolve outside the repo (#459).** The prune
+  loop removed any lock-tracked path the new render no longer produced with no containment check, so
+  a hostile or hand-edited `waffle.lock.json` naming `../../<file>` (or a path under an in-tree
+  symlink pointing out) deleted that file on the next `render`. `resolveInside` — the guard
+  `uninstall` has carried since #182 — moves to `util.mjs` and now gates the prune too: a rejected
+  key is skipped with a warning naming it, the rewritten lock drops it, and a normal stale key is
+  still pruned. **Consumer impact:** none — a well-formed lock renders identically.
 - **Codex render coverage has a definition of done, and the stale "no TOML equivalent" claim is
   gone (#190).** Three residuals of the #94 audit. (1) `schema/FORMAT.md` / `AGENTS.md` /
   `DECISIONS.md` now make the accurate claim: Codex's agent TOML *does* accept `[[skills.config]]`

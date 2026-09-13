@@ -1,7 +1,7 @@
 // @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
-import { exists, sha256 } from './util.mjs';
+import { exists, resolveInside, sha256 } from './util.mjs';
 import { readLocalLock, readTreeLock, renderProject } from './render.mjs';
 import { init } from './eject.mjs';
 import { loadToolkit } from './toolkit.mjs';
@@ -57,51 +57,6 @@ import {
 
 /** posix-ise a path for display, so messages read the same on every platform. */
 const posix = (/** @type {string} */ p) => p.split(path.sep).join('/');
-
-/**
- * Resolve a lock key to an absolute path, refusing anything that escapes `cwd` (#182).
- *
- * Two guards, because a hostile/hand-edited lock could name `../../.ssh/id_rsa`: refuse lexical
- * `../` escapes, AND resolve symlinks on the deepest existing ancestor (the leaf's PARENT, since a
- * managed file may itself be a symlink safe to unlink) and require the real path to stay inside the
- * real `cwd` — lexical containment alone is defeated by an in-tree symlinked parent. Re-checked at
- * delete time too, which narrows the TOCTOU window.
- *
- * @param {string} cwd
- * @param {string} rel
- * @returns {string | null} the absolute path, or null when it is not strictly inside `cwd`
- */
-function resolveInside(cwd, rel) {
-  const root = path.resolve(cwd);
-  const abs = path.resolve(root, rel);
-  if (abs === root || !abs.startsWith(root + path.sep)) return null;
-
-  // Lexical check passed; now defeat symlink escape by canonicalising the deepest existing ancestor
-  // of `abs` and re-attaching the missing tail — an ancestor linking out lands outside `realRoot`.
-  let realRoot;
-  try {
-    realRoot = fs.realpathSync(root);
-  } catch {
-    return null; // cannot even canonicalise cwd — cannot prove anything is inside it
-  }
-  /** @type {string[]} */
-  const tail = [];
-  let probe = path.dirname(abs); // the leaf may be a symlink we intend to unlink — resolve its PARENT
-  while (probe !== path.dirname(probe)) {
-    if (exists(probe)) break; // deepest existing ancestor found
-    tail.unshift(path.basename(probe));
-    probe = path.dirname(probe);
-  }
-  let realProbe;
-  try {
-    realProbe = fs.realpathSync(probe);
-  } catch {
-    return null;
-  }
-  const realAbs = path.resolve(realProbe, ...tail, path.basename(abs));
-  if (realAbs !== realRoot && realAbs.startsWith(realRoot + path.sep)) return abs;
-  return null;
-}
 
 /**
  * Which directories are left empty once `removing` is gone — computed WITHOUT deleting, so the dry

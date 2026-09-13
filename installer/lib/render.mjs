@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   sha256,
   exists,
+  resolveInside,
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
@@ -183,10 +184,15 @@ export function renderProject({
 
   const removed = [];
   for (const rel of Object.keys(managed)) {
-    if (!effective.outputs.has(rel) && exists(path.join(cwd, rel))) {
-      fs.rmSync(path.join(cwd, rel));
-      removed.push(rel);
+    if (effective.outputs.has(rel)) continue;
+    const abs = resolveInside(cwd, rel); // a lock key must never reach outside the repo (#459)
+    if (!abs) {
+      warnings.push(`refusing to prune lock entry "${rel}": it resolves outside the project root — remove it from the lock by hand`);
+      continue;
     }
+    if (!exists(abs)) continue;
+    fs.rmSync(abs);
+    removed.push(rel);
   }
 
   for (const [rel, content] of sortedOutputs(effective.outputs)) {

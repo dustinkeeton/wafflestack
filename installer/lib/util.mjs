@@ -157,3 +157,42 @@ export function stringifyFrontmatter(data, body) {
   const yaml = YAML.stringify(data, { lineWidth: 0 }).trimEnd();
   return `---\n${yaml}\n---\n\n${body.replace(/^\n+/, '')}`;
 }
+
+/**
+ * Resolve a lock key to an absolute path strictly inside `cwd`, or null (#182, #459). Refuses
+ * lexical `../` escapes, then realpaths the deepest existing ancestor of the leaf's PARENT (the
+ * leaf may itself be a symlink safe to unlink) so an in-tree symlinked parent cannot escape either.
+ *
+ * @param {string} cwd
+ * @param {string} rel
+ * @returns {string | null}
+ */
+export function resolveInside(cwd, rel) {
+  const root = path.resolve(cwd);
+  const abs = path.resolve(root, rel);
+  if (abs === root || !abs.startsWith(root + path.sep)) return null;
+
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch {
+    return null;
+  }
+  /** @type {string[]} */
+  const tail = [];
+  let probe = path.dirname(abs);
+  while (probe !== path.dirname(probe)) {
+    if (exists(probe)) break;
+    tail.unshift(path.basename(probe));
+    probe = path.dirname(probe);
+  }
+  let realProbe;
+  try {
+    realProbe = fs.realpathSync(probe);
+  } catch {
+    return null;
+  }
+  const realAbs = path.resolve(realProbe, ...tail, path.basename(abs));
+  if (realAbs !== realRoot && realAbs.startsWith(realRoot + path.sep)) return abs;
+  return null;
+}

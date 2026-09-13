@@ -183,6 +183,42 @@ describe('end to end', () => {
     assert.equal(fs.existsSync(path.join(cwd, '.codex/agents/helper.toml')), false);
   });
 
+  test('stale-prune refuses lock keys that resolve outside cwd — ../ and symlinked-parent escapes (#459)', () => {
+    render();
+    const outside = path.join(cwd, '..', `evil-${path.basename(cwd)}.txt`);
+    fs.writeFileSync(outside, 'DO NOT DELETE\n');
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-victim-'));
+    const victim = path.join(outsideDir, 'victim.txt');
+    fs.writeFileSync(victim, 'PRECIOUS out-of-tree file\n');
+    try {
+      fs.symlinkSync(outsideDir, path.join(cwd, 'evil'));
+      // Three stale keys: two escape, one is a genuinely stale in-tree render that must still go.
+      const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+      lock.files[`../${path.basename(outside)}`] = sha256(fs.readFileSync(outside));
+      lock.files['evil/victim.txt'] = sha256(fs.readFileSync(victim));
+      write(cwd, '.claude/agents/stale.md', 'old render\n');
+      lock.files['.claude/agents/stale.md'] = sha256('old render\n');
+      write(cwd, '.waffle/waffle.lock.json', JSON.stringify(lock, null, 2));
+
+      const result = render();
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      assert.equal(fs.readFileSync(outside, 'utf8'), 'DO NOT DELETE\n', 'the ../ target is untouched');
+      assert.equal(fs.readFileSync(victim, 'utf8'), 'PRECIOUS out-of-tree file\n', 'the symlink-out target is untouched');
+      assert.equal(fs.existsSync(path.join(cwd, '.claude/agents/stale.md')), false, 'a normal stale key is still pruned');
+      assert.deepEqual(result.removed, ['.claude/agents/stale.md']);
+      const refusals = result.warnings.filter((w) => /refusing to prune lock entry/.test(w));
+      assert.equal(refusals.length, 2, JSON.stringify(result.warnings));
+      assert.ok(refusals.some((w) => w.includes(`"../${path.basename(outside)}"`)), 'the warning names the ../ key');
+      assert.ok(refusals.some((w) => w.includes('"evil/victim.txt"')), 'the warning names the symlink key');
+
+      const relock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+      assert.ok(!('evil/victim.txt' in relock.files), 'the rewritten lock carries only real outputs');
+    } finally {
+      fs.rmSync(outside, { force: true });
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test('missing required config fails with actionable error', () => {
     write(cwd, '.waffle/waffle.yaml', 'stacks: [demo]\nconfig: {}\n');
     const result = render();
