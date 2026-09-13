@@ -214,6 +214,51 @@ secret the github-workflow label hook bills to) are walked **only once the user 
 that file** (step 2): `waffle-label-hook.yml` is not rendered by enabling the stack, so do not
 provision for syrup you have not poured.
 
+### Required labels
+
+Every `label` prerequisite the stacks declare, in one place. **Config key** is the `.waffle/waffle.yaml`
+override that renames the label everywhere it is used; **harness-owned** labels exist for a workflow or
+skill to gate on, **taxonomy** labels are the ones the `issue` skill applies. `doctor` checks each row at
+the `recommend` level, and the setup inventory's `### prerequisites` block surfaces them per stack.
+
+| Label | Config key | Needed by | Kind |
+|---|---|---|---|
+| `waffle:enrich` | `labelHook.enrichLabel` | github-workflow · `waffle-label-hook.yml` (opt-in) | harness-owned |
+| `waffle:implement` | `labelHook.implementLabel` | github-workflow · `waffle-label-hook.yml` (opt-in) | harness-owned |
+| `waffle:release` | `labelHook.releaseLabel` | github-workflow · `waffle-release-hook.yml` (opt-in) | harness-owned |
+| `waffle:pr-response` | `prResponse.responseLabel` | github-workflow · `waffle-pr-response-hook.yml` (opt-in) | harness-owned |
+| `waffle:auto-merged` | `autoMerge.label` | github-workflow · `waffle-hygiene.yml` (opt-in); orchestration · `delegate`, `autopilot` | harness-owned |
+| `waffle:manual-review` | `autopilot.holdLabel` | orchestration · `autopilot` | harness-owned |
+| `waffle:needs-inference` | `issue.inferenceLabel` | github-workflow · `issue` | harness-owned |
+| `priority: critical` / `priority: high` / `priority: medium` / `priority: low` | `issue.priorityLabels` | github-workflow · `issue` | taxonomy |
+| `bug` | `issue.bugLabel` (also `issue.typeLabels`) | github-workflow · `issue` | taxonomy |
+| `enhancement` | `issue.featureLabel` (also `issue.typeLabels`) | github-workflow · `issue` | taxonomy |
+
+Bootstrap — shared repo state, so get the go-ahead first (`--force` makes it idempotent: an existing
+label is updated, not duplicated):
+
+```bash
+gh label create "waffle:enrich"          --force --color 5319E7 --description "Dispatch the CI harness to enrich this issue"
+gh label create "waffle:implement"       --force --color 1D76DB --description "Dispatch the CI harness to implement this issue and open a PR"
+gh label create "waffle:release"         --force --color 0E8A16 --description "Merging pushes the release tag (waffle-release-hook)"
+gh label create "waffle:pr-response"     --force --color 0052CC --description "The harness has posted its one automated review response"
+gh label create "waffle:auto-merged"     --force --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
+gh label create "waffle:manual-review"   --force --color D93F0B --description "Held for human triage — autopilot skips this issue until it is actioned by number"
+gh label create "waffle:needs-inference" --force --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
+gh label create "priority: critical"     --force --color B60205 --description "Crash, data loss, security, blocks all users"
+gh label create "priority: high"         --force --color D93F0B --description "Broken workflow, regression, significant UX issue"
+gh label create "priority: medium"       --force --color FBCA04 --description "New feature, improvement, moderate bug"
+gh label create "priority: low"          --force --color 0E8A16 --description "Cosmetic, nice-to-have, minor, tech debt"
+gh label create "bug"                    --force --color D73A4A --description "Something isn't working"
+gh label create "enhancement"            --force --color A2EEEF --description "New feature or request"
+```
+
+Priority labels carry a space after the colon (`priority: high`); `gh issue edit --add-label` fails
+against a repo that only has the other spelling, so use one form everywhere. The bare `enrich` /
+`implement` words in the `label-hook` skill are **action tokens**, not label text: the label-hook
+workflow gates on the `labelHook.enrichLabel` / `labelHook.implementLabel` values and hands the skill
+the token, so renaming a trigger label via config changes nothing in the skill.
+
 ## 5. Render
 
 Run `wafflestack render`. On error it lists the missing config values — fill them and

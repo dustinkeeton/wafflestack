@@ -52,6 +52,9 @@ in-session and feeds its output back to the model; `--yes` keeps `npx` non-inter
 prerequisite. The agent then detects targets, asks which stacks to enable, fills
 `.waffle/waffle.yaml`, renders, runs `doctor`, and reports what it did.
 
+The labels wafflestack's workflows and skills gate on are listed once — table plus a copy-paste
+`gh label create` bootstrap — in [`schema/SETUP.md` § Required labels](schema/SETUP.md#required-labels).
+
 ### Manual
 
 ```bash

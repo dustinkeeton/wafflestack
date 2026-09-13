@@ -48,6 +48,17 @@ is what you reach for across a breaking one.
   Variant" section.
 
 ### Changed
+- **One canonical required-labels list, and `priority: <level>` spelled with a space (#452, parent #197).**
+  `schema/SETUP.md` step 4 gains a **Required labels** table (label → overriding config key → which
+  stack/item needs it → harness-owned vs taxonomy) plus a copy-paste `gh label create --force` bootstrap
+  covering every `label` prerequisite and taxonomy default the stacks declare, and README's setup
+  section cross-links it instead of repeating it. The `github-project-management` skill's label
+  bootstrap and examples now spell the priority taxonomy `priority: high` / `medium` / `low` — the same
+  form the `issue` skill, `issue.priorityLabels`, and `gh issue edit` on a repo bootstrapped from the
+  list all use; the two spellings had been mutually unusable. The bare-`implement` mismatch #197
+  originally reported does not reproduce: the `label-hook` skill's `enrich` / `implement` words are
+  action tokens the workflow hands it, never label text. **Consumer impact:** none — re-render picks up
+  the skill spelling fix; no config or label changes required.
 - **Harness label defaults move to the `waffle:<label>` namespace (#451, parent #197).** Three
   config-overridable label defaults were the last outliers from the `waffle:<label>` rule the owner
   set on #197: `autoMerge.label` (`github-workflow`, `orchestration`) `waffle-auto-merged` →
