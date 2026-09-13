@@ -18,7 +18,7 @@ The flag is **required** (#373): `render` refuses from a toolkit that is not at 
 - **`schema/FORMAT.md`** — the owner-voiced authoring contract (do not rewrite it). It defines `stack.yaml`, the three payload types, template values, the `harness.*` namespace, and project extensions.
 - **`schema/SETUP.md`** — the agent-facing install playbook surfaced by `wafflestack setup`.
 - **`DECISIONS.md`** — the human decision log (ADRs) behind the contract; cite it for *why*.
-- **`installer/lib/*.mjs`** — the render pipeline (see the import graph in `AGENTS.md`): `render.mjs` (selection → verbatim regeneration → stale prune → lock), `refs.mjs` (ref grammar + dependency closure, a pure leaf), `template.mjs` (`{{placeholder}}` substitution), `toolkit.mjs` (`loadStack` / manifest parsing), `project.mjs` (consumer config, targets, `harness.*` built-ins), `validate.mjs`, `doctor.mjs`, `setup.mjs`, `eject.mjs`, `upgrade.mjs`, `migrations.mjs`, `util.mjs`.
+- **`installer/lib/*.mjs`** — the render pipeline (see the import graph in `AGENTS.md`): `render.mjs` (selection → verbatim regeneration → stale prune → lock), `refs.mjs` (ref grammar + dependency closure; imports only `VALID_TARGETS` from `project.mjs` and the wip/replaced gate from `registry.mjs` — no cycle), `template.mjs` (`{{placeholder}}` substitution), `toolkit.mjs` (`loadStack` / manifest parsing), `project.mjs` (consumer config, targets, `harness.*` built-ins), `validate.mjs`, `doctor.mjs`, `setup.mjs`, `eject.mjs`, `upgrade.mjs`, `migrations.mjs`, `util.mjs`.
 
 ### The authoring contract (`schema/FORMAT.md`)
 
