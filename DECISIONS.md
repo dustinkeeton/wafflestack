@@ -9,6 +9,35 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-12: `/clean-up` judges a delegate run's agents by PR state, from a hardcoded checkpoint glob (#172)
+
+**Context**: #360 abolished the team concept and, with it, `/clean-up`'s only completion signal
+("delete the run's team when every task is completed"). What survived was the leak: a `/delegate`
+run interrupted before its Phase 5 teardown leaves agents alive and per-issue tasks `in_progress`,
+and `clean-up` — which never stops an `in_progress` task and had no procedure for the checkpoint it
+pointed at — treated that dead work as untouchable forever (epic #380).
+
+**Decision**: (1) `clean-up` hardcodes the conventional `{{git.worktreesDir}}/.delegate/*.json`
+glob plus a `--run <path>` override, rather than declaring `delegate.checkpointDir` in
+`github-workflow` too. `validate` scopes placeholders to the declaring stack, and a duplicate
+declaration is two defaults that can drift; both stacks already declare `git.worktreesDir`, so the
+glob is expressible without coupling the stacks. (2) An entry is "done" when its **work** is proven
+landed — its PR is `MERGED`/`CLOSED` per `gh`, or the run wrote its `report` section — never by its
+task status, which is exactly the state the interruption corrupted. The stale task is reconciled to
+`completed` first, then the existing shutdown-then-stop path runs. (3) `delegate` is untouched: its
+Phase 5 already does the right thing when it runs, and the PR-state check covers the case where it
+did not, so no `report` schema change is needed.
+
+**Alternatives**: declaring `delegate.checkpointDir` in github-workflow (rejected: drift); a
+`report.tornDown` flag in the checkpoint schema (rejected: the interrupted run is precisely the one
+that never writes it); trusting task status (rejected: it is the corrupted signal).
+
+**Consequences**: `clean-up agents` can sweep an interrupted run once its PRs merge, and reports a
+run with an open PR as in flight without stopping anything from it. A consumer that moves
+`delegate.checkpointDir` must pass `--run`. Guarded by a content test on the source and the render.
+
+---
+
 ## 2026-09-12: The codex TOML carries no skill grant, and a sparse `.codex/` is the whole render (#190)
 
 **Context**: #94 (2026-07-07, below) closed the render-target asymmetry, but three residuals kept

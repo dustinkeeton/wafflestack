@@ -2568,6 +2568,59 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
     }
   });
 
+  // #172: a /delegate run interrupted before Phase 5 leaks its agents; clean-up must sweep them
+  // FROM THE CHECKPOINT, not merely point at it. Pinned on the source AND the render.
+  const cleanUpSurfaces = () => [
+    {
+      surface: 'source',
+      md: fs.readFileSync(path.join(STACKS, 'github-workflow', 'skills', 'clean-up', 'SKILL.md'), 'utf8'),
+      worktrees: '{{git.worktreesDir}}',
+    },
+    { surface: 'render', md: readSkill('clean-up'), worktrees: '.claude/worktrees' },
+  ];
+  const sweepsDelegateFromCheckpoint = (md, worktrees) =>
+    md.includes(`${worktrees}/.delegate/*.json`) &&
+    /issue-<number>-<agent>/.test(md) &&
+    /`execution\[\]`/.test(md) &&
+    /Delegate runs swept:/.test(md);
+
+  test('clean-up sweeps a delegate run from its checkpoint: glob, name reconstruction, report block (#172)', () => {
+    for (const { surface, md, worktrees } of cleanUpSurfaces()) {
+      assert.ok(
+        sweepsDelegateFromCheckpoint(md, worktrees),
+        `clean-up (${surface}): the harness scope must name the ${worktrees}/.delegate/*.json checkpoint glob, the issue-<number>-<agent> reconstruction from execution[], and the "Delegate runs swept:" report block`,
+      );
+      assert.match(md, /`--run <path>`/, `clean-up (${surface}): the --run override for a moved checkpoint dir is not documented`);
+      assert.match(md, /delegate-single-\*/, `clean-up (${surface}): single-issue fast-path runs must be reported as unsweepable, not silently skipped`);
+      assert.match(
+        md,
+        /gh pr view <pr> --json state -q \.state/,
+        `clean-up (${surface}): an entry is judged by its PR state, not by its task status`,
+      );
+      assert.match(md, /no run record available; agents not swept/, `clean-up (${surface}): lost the no-checkpoint honesty line`);
+      // Reconcile THEN shutdown-then-stop: the stale in_progress task is completed before its agent is stopped.
+      const reconcile = md.indexOf('TaskUpdate(taskId:');
+      const shutdown = md.indexOf('SendMessage(to: "issue-<N>-<agent>", message: {type: "shutdown_request"');
+      const stop = md.indexOf('TaskStop(task_id: "issue-<N>-<agent>")');
+      assert.ok(
+        reconcile !== -1 && shutdown > reconcile && stop > shutdown,
+        `clean-up (${surface}): the delegate sweep is reconcile → shutdown_request → TaskStop, in that order`,
+      );
+    }
+  });
+
+  test('the #172 guard can fail: the pre-#172 pointer sentence is not a procedure', () => {
+    const pointerOnly = [
+      '| `/delegate` | `issue-<N>-<agent-type>` | the run\'s checkpoint — `execution[]` carries each issue\'s `number` and `agent` |',
+      'reconstruct the candidate names from whichever run you are cleaning up after',
+    ].join('\n');
+    assert.ok(!sweepsDelegateFromCheckpoint(pointerOnly, '.claude/worktrees'), 'a pointer at "the run\'s checkpoint" named no path and no report block');
+    const noReport = 'ls .claude/worktrees/.delegate/*.json\nreconstruct `issue-<number>-<agent>` from `execution[]`';
+    assert.ok(!sweepsDelegateFromCheckpoint(noReport, '.claude/worktrees'), 'the glob and reconstruction without the report block is not enough');
+    const wrongDir = 'ls .delegate/*.json\nreconstruct `issue-<number>-<agent>` from `execution[]`\nDelegate runs swept:';
+    assert.ok(!sweepsDelegateFromCheckpoint(wrongDir, '.claude/worktrees'), 'the glob must be rooted at the worktrees dir');
+  });
+
   // The roster is DERIVED FROM THE SKILL — read out of its own `Agent(... name: "X" ...)` calls,
   // never maintained beside it — and every capture accepts BOTH quote styles.
   const QUOTED = (key) => new RegExp(`${key}:\\s*(['"])(.+?)\\1`);
