@@ -48,6 +48,7 @@ Whether this run may arm `gh pr merge --auto --merge` on the PRs it opens. The d
 - **Consent is per-run and never sticky.** It is captured fresh every invocation. There is no config setting, no remembered preference, no carry-over from a previous run that turns auto-merge on — a new run starts from off and must be told again. Do **not** read a prior run's consent from any checkpoint or memory doc.
 - **Consent off** → every PR is opened and **left for human review**; autopilot never merges it. This is still a complete run: the final outcome of each issue is a PR.
 - **Consent on** → autopilot sets `delegate.autoMerge` for the run so each PR arms itself on green, under the exact guardrails below — **unless the QA gate (§5), the review loop (§3), or the audit step (§4) is also on**, in which case arming is deferred out of the delegate run and autopilot arms the PRs itself after the **last gate that is on** (the QA gate, then the review loop, then — when it is on — the audit gate, which is always last). See Steps 3, 5, 6, and 7.
+- **What arming needs** — `--auto` only arms when all three hold: (1) the repo has **"Allow auto-merge"** enabled; (2) a **required status check** is configured on the base branch; (3) that check needs **branch protection or a ruleset**, which on **GitHub Free exists only for public repos** — a private repo needs GitHub Pro / Team / Enterprise. Otherwise `--auto` has nothing to wait on and the PR is left open-but-not-armed.
 
 ### 3. Review-loop consent — per-run, separate from auto-merge, default OFF
 
@@ -153,7 +154,7 @@ gh pr list --head <branch-name> --json number,url,state
   gh pr view <pr> --json autoMergeRequest -q '.autoMergeRequest != null'   # expect true
   ```
 
-  `false` means the PR is **open but not armed** (the repo lacks "Allow auto-merge", or the base branch has no required status check for `--auto` to wait on). Record it as open-but-not-armed and surface it in the report — it will **not** merge itself, so a human still has to. **Never** react to a failed arm by merging immediately or with `--admin`.
+  `false` means the PR is **open but not armed** (auto-merge disabled on the repo, no required check on the base branch, or no branch protection / ruleset to hold one — on GitHub Free, private repos have none). Record it as open-but-not-armed and surface it in the report — it will **not** merge itself, so a human still has to. **Never** react to a failed arm by merging immediately or with `--admin`.
 - **QA gate, review loop, or the audit step on** → the PR is intentionally **not armed yet** at this point (Step 3 deferred arming to the last gate that is on), so *skip the arm check here* even when auto-merge was consented — a `false` now is expected, not a failure. The last gate arms and verifies the PR: the QA gate (Step 5) when only it is on, the review loop (Step 6) when it is on and the audit step is off, or the audit gate (Step 7) whenever the audit step is on.
 
 ### Step 5 — QA → respond loop (opt-in)

@@ -515,8 +515,8 @@ setup: |-
   task is skipped with a note;
   (3) enable auto-merge on the repo so `--auto` can arm — a repo setting, in scope to flip for
   the user: `gh api repos/<owner>/<repo> -X PATCH -F allow_auto_merge=true`;
-  (4) auto-merge needs something to wait on. Two gotchas: a **required status check** must be
-  configured on the base branch (else `--auto` has no gate and cannot arm), AND PRs opened with
+  (4) auto-merge needs something to wait on. `--auto` only arms when all three hold: (1) the repo has **"Allow auto-merge"** enabled; (2) a **required status check** is configured on the base branch; (3) that check needs **branch protection or a ruleset**, which on **GitHub Free exists only for public repos** — a private repo needs GitHub Pro / Team / Enterprise. Otherwise `--auto` has nothing to wait on and the PR is left open-but-not-armed.
+  A second gotcha: PRs opened with
   the default `GITHUB_TOKEN` **do not trigger the repo's own `pull_request` CI** (a GitHub
   limitation — so `waffle-doctor` never runs on the hygiene PR and the required check never
   reports). To make auto-merge actually fire, the workflow reads the `WAFFLE_HYGIENE_TOKEN`

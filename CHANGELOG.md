@@ -48,6 +48,20 @@ is what you reach for across a breaking one.
   Variant" section.
 
 ### Changed
+- **Auto-merge prerequisites are three, not two, and the third is now preflighted (#205).** Every
+  surface that arms `gh pr merge --auto --merge` — the `delegate` and `autopilot` skills, the
+  `delegate.autoMerge` / `autopilot.autoMerge` option descriptions and `setup:` notes
+  (`orchestration`), the `hygiene` skill and its setup gotcha (`github-workflow`) — now states the
+  same rule verbatim: (1) "Allow auto-merge" on the repo, (2) a required status check on the base
+  branch, and (3) that check needs branch protection or a ruleset, which on GitHub Free exists only
+  for **public** repos (a private repo needs Pro / Team / Enterprise). Previously only (1) and (2)
+  were documented, so a private free-plan repo got an open-but-not-armed PR with no warning. The
+  `orchestration` stack gains a `required-status-check` prerequisite (`kind: setting`,
+  `level: recommend`) that resolves the default branch and passes only when the branch-protection
+  endpoint or the rulesets endpoint reports a required status check — a 404 (no protection) is
+  unmet, not swallowed. Verified against GitHub's plans page: the auto-merge *toggle* is not
+  plan-gated; protected branches / rulesets are. **Consumer impact:** none — docs and a
+  `recommend`-level preflight; re-render picks it up and `doctor` reports (never fails) on it.
 - **One canonical required-labels list, and `priority: <level>` spelled with a space (#452, parent #197).**
   `schema/SETUP.md` step 4 gains a **Required labels** table (label → overriding config key → which
   stack/item needs it → harness-owned vs taxonomy) plus a copy-paste `gh label create --force` bootstrap
