@@ -1011,9 +1011,9 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     assert.ok(fs.existsSync(path.join(cwd, REL)), 'workflow rendered to its .github path');
     const wf = read(cwd, REL);
 
-    // (b, default) {{doctor.toolkitRef}} → stack default; {{doctor.flags}} → empty (its
-    // default), so the invocation is behaviorally unchanged from today. No leftover placeholders.
-    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack doctor/);
+    // (b, default) {{doctor.toolkitRef}} → stack default, pinned to the rendering toolkit version
+    // (#461); {{doctor.flags}} → empty (its default). No leftover placeholders.
+    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack#v0\.0\.test doctor/);
     assert.doesNotMatch(wf, /\{\{\s*doctor\.toolkitRef\s*\}\}/);
     assert.doesNotMatch(wf, /\{\{\s*doctor\.flags\s*\}\}/);
     assert.doesNotMatch(wf, /doctor --/); // empty flags default adds no flag
@@ -1061,8 +1061,8 @@ describe('github-workflow: waffle-doctor CI payload (#14)', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     const wf = read(cwd, REL);
 
-    // the flag lands after the doctor subcommand, alongside the default toolkitRef
-    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack doctor --allow-missing/);
+    // the flag lands after the doctor subcommand, alongside the default (pinned) toolkitRef
+    assert.match(wf, /run: npx --yes github:dustinkeeton\/wafflestack#v0\.0\.test doctor --allow-missing/);
     assert.doesNotMatch(wf, /\{\{\s*doctor\.flags\s*\}\}/);
     // ${{ }} expressions still pass through untouched
     assert.match(wf, /\$\{\{ github\.workflow \}\}/);

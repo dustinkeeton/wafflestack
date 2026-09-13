@@ -159,7 +159,7 @@ export const CONFIG_FILE, LOCAL_CONFIG_FILE, LOCK_FILE, LOCAL_LOCK_FILE, EXTENSI
 export const LEGACY_ROOT_CONFIG_FILE, LEGACY_ROOT_LOCAL_CONFIG_FILE, LEGACY_ROOT_LOCK_FILE // 0.6.0–0.7.x root .waffle.* names
 export const LEGACY_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE, LEGACY_LOCK_FILE, LEGACY_EXTENSIONS_DIR // pre-0.6.0 .wafflestack.* names
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'] // project.mjs:58
-export const HARNESS_BUILTINS                  // per-target { assistantName, attributionPath, skillsDir, agentsDir } + target-independent CI-dispatcher scalars { actionRef, actionVersion, apiKeySecret } (#131/#156; project.mjs:563)
+export const HARNESS_BUILTINS                  // per-target { assistantName, attributionPath, skillsDir, agentsDir } + target-independent CI-dispatcher scalars { actionRef, actionVersion, apiKeySecret } (#131/#156; project.mjs:563); `harness.toolkitVersion` is NOT here — it is a runtime value the CLI hands `makeResolver` (#461)
 export const HARNESS_PATTERNS                  // injection-guard regexes for agentsDir, skillsDir, actionRef, actionVersion, apiKeySecret (reject `${{`, quotes, newlines; project.mjs:587); seeded into render's guards + checked by validate
 export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) // → { targets, stacks, externalStacks, include, values, eject }; merges the .local overlay UNLESS canonical (#317); splits bare vs {name,source,ref} stacks: entries; legacy bundles: read fallback
 export function classifyStackSource(source)    // → 'git' | 'path'
@@ -175,7 +175,7 @@ export const GITIGNORE_MARKER = '# wafflestack'
 export function ensureGitignoreEntries(cwd, entries)  // consent-gated idempotent append (exact-line dedupe); → entries added
 export function removeGitignoreEntries(cwd, entries)  // exact-line inverse (#182); strips the marker only once it labels nothing
 export function recommendedGitignoreEntries(toolkit, project) // → [local overlay, local lock, + resolved git.worktreesDir when an enabled stack declares it]
-export function makeResolver(stack, values, target)   // → (key) => value | undefined (harness.* override → built-in fallback; else config value → stack default)
+export function makeResolver(stack, values, target, runtime = {})   // → (key) => value | undefined (harness.* override → built-in → `runtime[sub]` fallback, the CLI-supplied `toolkitVersion` (#461); else config value → stack default)
 
 // util.mjs — shared helpers
 export function sha256(content)                // → hex string
@@ -525,7 +525,11 @@ registry entry (a plugin has no path, no render, nothing to prune).
   map). Guarded keys (`HARNESS_PATTERNS`, `project.mjs:587`): `agentsDir`, `skillsDir`, and the
   three target-independent CI-dispatcher scalars `actionRef`/`actionVersion`/`apiKeySecret`
   (#131) spliced into rendered workflow `uses:`/`with:` lines — each rejects `${{`, quotes,
-  newlines, so an override can repin the action without ejecting the workflow.
+  newlines, so an override can repin the action without ejecting the workflow. One key is
+  supplied at run time rather than built in: `harness.toolkitVersion`, the CLI's `package.json`
+  version (`makeResolver`'s `runtime` arg, threaded by `renderProject`/`setupGuide`/
+  `generateWaffleDocs`), which the github-workflow stack's `doctor.toolkitRef` default nests to
+  pin `waffle-doctor.yml` to the release that rendered the lock (#461).
 - Nested substitution — substituted values re-expand up to depth 4 (`MAX_SUBSTITUTION_DEPTH`,
   `template.mjs:7`): a committed value can reference a key kept in the local overlay. Canonical
   text surviving the first pass is never re-scanned.

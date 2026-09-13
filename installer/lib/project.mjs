@@ -599,15 +599,17 @@ export const HARNESS_PATTERNS = {
 /**
  * Resolver for a stack rendering to `target`:
  * - `harness.<sub>` — project override (scalar for all targets, or per-target map),
- *   falling back to the built-in for `target`.
+ *   falling back to the built-in for `target`, then to a `runtime` value (#461).
  * - anything else — project config value, else the stack-declared default.
  *
  * @param {Stack} stack
  * @param {Record<string, any>} values the project `config:` values
  * @param {Target} target
+ * @param {Record<string, string|undefined>} [runtime] reserved `harness.*` values known only to the
+ *   running CLI — `toolkitVersion`, the `package.json` version the lock records as `toolkitVersion`
  * @returns {(key: string) => any} resolves a template key to its value (undefined when unset)
  */
-export function makeResolver(stack, values, target) {
+export function makeResolver(stack, values, target, runtime = {}) {
   return (key) => {
     if (key.startsWith('harness.')) {
       const sub = key.slice('harness.'.length);
@@ -622,6 +624,7 @@ export function makeResolver(stack, values, target) {
         const builtin = HARNESS_BUILTINS[sub];
         v = isPlainObject(builtin) ? builtin[target] : builtin;
       }
+      if (v === undefined) v = runtime[sub];
       return v;
     }
     const v = lookupPath(values, key);

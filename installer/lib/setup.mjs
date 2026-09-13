@@ -25,7 +25,7 @@ export function setupGuide(toolkitRoot, toolkitVersion, cwd) {
     .trimEnd();
   const toolkit = loadToolkit(toolkitRoot);
   const sections = [playbook];
-  const current = cwd ? currentConfigSection(toolkit, cwd) : null;
+  const current = cwd ? currentConfigSection(toolkit, cwd, toolkitVersion) : null;
   if (current) sections.push(current);
   sections.push(toolkitInventory(toolkit, toolkitVersion));
   return sections.join('\n\n---\n\n');
@@ -35,7 +35,7 @@ export function setupGuide(toolkitRoot, toolkitVersion, cwd) {
  * The "Current configuration" section, read with the same loaders the renderer uses.
  * Returns null for an unconfigured repo.
  */
-function currentConfigSection(toolkit, cwd) {
+function currentConfigSection(toolkit, cwd, toolkitVersion) {
   if (!exists(resolveConfigFile(cwd).file)) return null;
 
   const header = '# Current configuration — update mode';
@@ -135,7 +135,7 @@ function currentConfigSection(toolkit, cwd) {
   for (const [stackName, { stack, usedKeys }] of groups) {
     const entries = Object.entries(stack.config).filter(([key]) => usedKeys.has(key));
     if (!entries.length) continue;
-    const resolve = makeResolver(stack, project.values, primaryTarget);
+    const resolve = makeResolver(stack, project.values, primaryTarget, { toolkitVersion });
     valueLines.push(`### stack: ${stackName}`, '');
     for (const [key, spec] of entries) {
       const set = lookupPath(project.values, key) !== undefined;
@@ -159,7 +159,7 @@ function currentConfigSection(toolkit, cwd) {
 
   const missing = [];
   for (const [stackName, { stack, usedKeys }] of groups) {
-    const resolve = makeResolver(stack, project.values, primaryTarget);
+    const resolve = makeResolver(stack, project.values, primaryTarget, { toolkitVersion });
     for (const key of missingRequiredKeys(stack, project.values, (_values, k) => resolve(k), usedKeys)) {
       missing.push(`${stackName}: config.${key}`);
     }

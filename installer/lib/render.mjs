@@ -113,6 +113,7 @@ export function renderProject({
     cwd,
     errors,
     warnings,
+    toolkitVersion,
     trackedFiles: new Set(Object.keys(treeLock?.files ?? {})),
   });
 
@@ -139,6 +140,7 @@ export function renderProject({
           cwd,
           errors: canonicalErrors,
           warnings: [],
+          toolkitVersion,
           trackedFiles: new Set(Object.keys(lock?.files ?? {})),
         });
 
@@ -268,7 +270,7 @@ export function renderProject({
  * Compute every file a `project` config would render — the pure core of `renderProject`, run once
  * per config (effective and canonical). Writes nothing; `errors`/`warnings` are caller-owned sinks.
  */
-function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings }) {
+function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings, toolkitVersion }) {
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "stack/kind/name" that emitted it
   // Two enabled stacks defining a same-named item would silently last-write-wins; fail loudly instead.
@@ -368,8 +370,9 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
     // One resolver per enabled target — the reserved `harness.*` keys resolve per target.
     const primaryTarget = project.targets[0] ?? 'claude';
     const resolvers = {};
-    for (const target of project.targets) resolvers[target] = makeResolver(stack, project.values, target);
-    const primaryResolver = resolvers[primaryTarget] ?? makeResolver(stack, project.values, primaryTarget);
+    const runtime = { toolkitVersion };
+    for (const target of project.targets) resolvers[target] = makeResolver(stack, project.values, target, runtime);
+    const primaryResolver = resolvers[primaryTarget] ?? makeResolver(stack, project.values, primaryTarget, runtime);
     // A scoped file substitutes with the primary-most target it DECLARES (#364).
     const resolverFor = (f) =>
       (f.targets ? resolvers[project.targets.find((t) => f.targets.includes(t))] : primaryResolver) ?? primaryResolver;
@@ -393,7 +396,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings 
   }
 
   if (!errors.length) {
-    for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors })) {
+    for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors, toolkitVersion })) {
       emit(rel, content, 'waffledocs');
     }
   }

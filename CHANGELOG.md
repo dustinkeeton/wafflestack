@@ -61,6 +61,22 @@ is what you reach for across a breaking one.
   Variant" section.
 
 ### Changed
+- **The shipped `waffle-doctor.yml` pins CI to the toolkit release that rendered the lock (#461).**
+  `doctor.toolkitRef` used to default to the UNPINNED `github:dustinkeeton/wafflestack`, so every
+  consumer push and PR ran whatever was on the toolkit's default branch — an unreviewed upstream
+  commit executing against the checked-out source (mitigated only by `contents: read` and no
+  secrets). The default is now `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}`:
+  `harness.toolkitVersion` is a new reserved value the running CLI hands the resolver
+  (`makeResolver`'s `runtime` arg), equal to the version the lock records, so the pin CI fetches
+  is by construction the release that rendered — and `upgrade` re-renders, so the pin moves with
+  the lock with no key to maintain (an explicit release-shaped pin is still rewritten by #372; an
+  explicit unpinned value is left floating). The key's description now says what an unpinned
+  value runs and why that is not the default. A content test pins the source line, the default,
+  the rendered pin at two versions, and the verbatim unpinned override. The toolkit's own repo
+  sets `doctor.toolkitRef` unpinned explicitly: its default branch IS the tree under test, and a
+  version pin would name a tag that does not exist yet on every release-bump PR. **Consumer
+  impact:** `waffle-doctor.yml` re-renders with a `#vX.Y.Z` pin — commit the render + lock; a
+  repo that had pinned by hand keeps its pin; set `doctor.toolkitRef` only to target a fork.
 - **Auto-merge prerequisites are three, not two, and the third is now preflighted (#205).** Every
   surface that arms `gh pr merge --auto --merge` — the `delegate` and `autopilot` skills, the
   `delegate.autoMerge` / `autopilot.autoMerge` option descriptions and `setup:` notes

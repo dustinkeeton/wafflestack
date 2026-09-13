@@ -1616,6 +1616,61 @@ describe('label-hook workflow (rendered in-test): dispatch gates', () => {
   });
 });
 
+describe('doctor workflow: the npx spec is pinned to the rendering toolkit release (#461)', () => {
+  const stackYaml = parseYaml(fs.readFileSync(path.join(STACKS, 'github-workflow', 'stack.yaml'), 'utf8'));
+  const source = fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, 'waffle-doctor.yml'), 'utf8');
+
+  test('the shipped source invokes `{{doctor.toolkitRef}}`, whose default carries a version-tag ref', () => {
+    assert.match(source, /run: npx --yes \{\{doctor\.toolkitRef\}\} doctor \{\{doctor\.flags\}\}/);
+    const spec = stackYaml.config['doctor.toolkitRef'];
+    assert.equal(spec.default, 'github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}');
+    assert.match(spec.description, /default branch/i, 'the description says what an unpinned value runs');
+  });
+
+  test('a consumer that never sets the key renders CI pinned to the toolkit version its lock records', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-doctor-pin-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      fs.writeFileSync(
+        path.join(cwd, '.waffle', 'waffle.yaml'),
+        ['targets: [claude]', 'stacks: []', 'include:', '  - files/.github/workflows/waffle-doctor.yml', 'config:', '  project:', '    name: EvalFixture', ''].join('\n'),
+      );
+      const first = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.12.0' });
+      assert.ok(first.ok, `render failed: ${JSON.stringify(first.errors)}`);
+      const rendered = () => fs.readFileSync(path.join(cwd, '.github', 'workflows', 'waffle-doctor.yml'), 'utf8');
+      const lock = () => JSON.parse(fs.readFileSync(path.join(cwd, '.waffle', 'waffle.lock.json'), 'utf8'));
+      assert.match(rendered(), /run: npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0 doctor\s*$/m);
+      assert.equal(lock().toolkitVersion, '0.12.0', 'the pin CI fetches is the version the lock records');
+      assert.deepEqual([...placeholderKeys(rendered())], [], 'no leftover placeholders');
+
+      // `upgrade` is a re-render by a newer toolkit: the pin moves with the lock, no key to maintain.
+      const second = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.13.0' });
+      assert.ok(second.ok, `re-render failed: ${JSON.stringify(second.errors)}`);
+      assert.match(rendered(), /#v0\.13\.0 doctor\s*$/m);
+      assert.equal(lock().toolkitVersion, '0.13.0');
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test('an explicit unpinned override still renders verbatim (the toolkit repo relies on it)', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-doctor-unpinned-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      fs.writeFileSync(
+        path.join(cwd, '.waffle', 'waffle.yaml'),
+        ['targets: [claude]', 'stacks: []', 'include:', '  - files/.github/workflows/waffle-doctor.yml', 'config:', '  project:', '    name: EvalFixture', '  doctor:', '    toolkitRef: github:dustinkeeton/wafflestack', ''].join('\n'),
+      );
+      const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.12.0' });
+      assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+      const rendered = fs.readFileSync(path.join(cwd, '.github', 'workflows', 'waffle-doctor.yml'), 'utf8');
+      assert.match(rendered, /run: npx --yes github:dustinkeeton\/wafflestack doctor\s*$/m);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('every waffle workflow (rendered in-test): no toolkit bot identity (#160)', () => {
   const WORKFLOWS = ALL_WAFFLE_WORKFLOWS;
   let cwd;
