@@ -32,6 +32,16 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **`docs.voiceGuardrailSection` now defaults to the docs the harness treats as owner-voiced
+  (#472).** A `docs-system` install that never overrode the key rendered no guardrail at all, so
+  a docs pass was free to rewrite the consumer's `README.md` or `CLAUDE.md` even though the `docs`
+  and `prose` skills assume owner-voiced docs are flagged, never rewritten. The default now names
+  `README.md`, `CLAUDE.md`, the governance docs (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
+  `SECURITY.md`, `LICENSE`), `CHANGELOG.md` (the release flow's file), and the `.waffle/` config,
+  local overlay, and `extensions/**`; it carves out the agent-managed doc sets by nested
+  `docs.machineDocSet` / `docs.humanDocSet` substitution so it tracks an overridden doc set. An
+  override still REPLACES the block. Consumer impact: re-render — a repo that never set the key
+  gains the guardrail in `docs-human` (agent + skill); a repo that overrides it sees no change.
 - **`WebFetch` + `WebSearch` are granted by default, as a pair, across the shipped agents (#474).**
   Of the 14 agents in `stacks/*/agents/*.md`, only 4 carried both, 2 carried exactly one, and 8
   carried neither — drift from whenever each was authored, not a decision, and the cost landed on

@@ -159,6 +159,9 @@ Walk the config schema of every enabled stack (from the inventory):
   commands from `package.json` scripts, `Makefile`, `pyproject.toml`, or CI workflows,
   and confirm with the user when ambiguous. Multi-line defaults (label tables, prose
   sections) encode conventions — override them when the project's own taxonomy differs.
+  An override replaces the whole block, so restate any default entries you keep — e.g.
+  `docs.voiceGuardrailSection` defaults to the docs the harness treats as owner-voiced
+  (`README.md`, `CLAUDE.md`, governance docs, `CHANGELOG.md`, `.waffle/` config + extensions).
 - **Layering**: shared values go in the committed `.waffle/waffle.yaml` under `config:`;
   account-specific values (bot emails, board IDs, tokens' owners) go in
   `.waffle/waffle.local.yaml`, which must be gitignored. A committed value may reference
