@@ -7,7 +7,7 @@ skills:
   - md-maximalist
 identity:
   displayName: Docs Human
-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, SendMessage, TaskUpdate
+tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, Agent, SendMessage, TaskUpdate
 ---
 
 You are the human documentation specialist for the wafflestack agent/skill toolkit. Your responsibilities:

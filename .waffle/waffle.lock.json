@@ -26,10 +26,10 @@
     "files/.claude/workflows/audit-stage-2.js"
   ],
   "files": {
-    ".claude/agents/docs-agent.md": "2906db901f756096c6d40ab61bafc340f31d9a9664d508796789ee4c2933ac56",
-    ".claude/agents/docs-human.md": "d204bd90ca07c4f5f1a075542779ea62c65cc56ed134a33ab0d9edaa8bc3f5e4",
+    ".claude/agents/docs-agent.md": "91b2b393e431891275b9b1be68261eebe0f2175a1b0e21084c3265d4459c7e51",
+    ".claude/agents/docs-human.md": "23d4c6dc8168bd3413ce7e3683d9054771ffb507f62e73ae1c14ef16e1b74386",
     ".claude/agents/harness-architect.md": "323c149c7427efef1313234438c87fcd98043df0d4273eca254ce32961f409a5",
-    ".claude/agents/product-manager.md": "0e31ef14c546e3e0994b04d2fbb34d74c8e8966601af3ec6cc57e68731727fcc",
+    ".claude/agents/product-manager.md": "ac43e4c161cf3c5f71e72a27c3e474eab582ff1a09ee18035a1dc2e33d5340b6",
     ".claude/agents/project-manager.md": "64ab733483180482ffd881d5f9587754ff7c3b89acedbb774ef3dc64eda90854",
     ".claude/agents/task-planner.md": "629b0f8e5c8ba1845a3e8086c4637ac75ec75e8c0c313e6f817c683103196604",
     ".claude/skills/accurate/SKILL.md": "b4afc3f598b5fbd6255e89bf54cb1fc362fc1fe3294d2230abb0978faec681b7",

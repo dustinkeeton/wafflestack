@@ -278,6 +278,17 @@ strips them: otherwise a passthrough copy would be hoisted *over* the validated 
 `identity.displayName` allowlist below — a trust boundary, not a lint — could be bypassed by
 declaring the value one level down.
 
+**Web tools are granted by default, and as a pair.** An agent whose role involves checking facts
+that live outside the repo — a CVE or advisory, a release changelog, a test-runner API that moved
+between majors, an upstream doc it needs to cite — carries both `WebFetch` and `WebSearch` in its
+tool grant. Web read access is non-mutating and low-risk; the cost of withholding it is an agent
+that guesses at an upstream fact instead of checking it. The pair is never split: search without
+fetch finds a page it cannot read, and fetch without search reads only what it was handed, so
+grant both or neither. Pure coordination roles that read the board and dispatch specialists
+(`project-manager`, `task-planner`) are the deliberate exception today — the upstream facts live
+with the specialists they hand work to — and get the pair the moment a concrete need shows up,
+as a one-line frontmatter change.
+
 The body is the agent's instructions. It may reference declared config keys as
 `{{dotted.key}}`. The frontmatter `description` is also substituted (per target, like the
 body) — it is the one frontmatter field that carries prose; all other frontmatter passes
