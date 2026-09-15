@@ -31,6 +31,30 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **Every `/waffle-*` skill pins its `npx` fetch to the toolkit release that rendered it (#469).**
+  `waffle.toolkitRef` used to default to the UNPINNED `github:dustinkeeton/wafflestack`, so the
+  read-only wrappers (`/waffle-doctor`, `/waffle-setup`, `/waffle-init`, `/waffle-eject`,
+  `/waffle-validate`) ran whatever was on the toolkit's default branch — the #461 exposure moved
+  from CI to the developer's own machine. The writing wrappers already refused when unpinned
+  (#373), but that is a UX gate, not a trust boundary. The default is now
+  `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}`, the same runtime value and the
+  same shape #461 gave `doctor.toolkitRef`: the pin your skills fetch is by construction the
+  release that rendered them, and `render`/`upgrade` move it with the lock with no key to
+  maintain (#372 still rewrites an explicit release-shaped pin; an explicit unpinned value is
+  still left floating). Because the default now pins, `/waffle-upgrade` always starts from the
+  old CLI — so the skill leads with that being expected and routes through the
+  `a newer toolkit release exists: vX.Y.Z` report it prints, rather than treating the unpinned
+  probe as the normal path; `/waffle-doctor`'s version-skew note is reworded for the same reason.
+  A content test pins all eight source invocations, the default, the rendered pin at two
+  versions, and the verbatim unpinned override. The toolkit's own repo sets `waffle.toolkitRef`
+  unpinned explicitly — a version pin would name a tag that does not exist yet on every
+  release-bump PR and would churn its committed render on every bump, and toolkit development
+  runs `node installer/cli.mjs <cmd> --allow-unreleased` against the working tree anyway.
+  **Consumer impact:** all eight `/waffle-*` skills re-render with a `#vX.Y.Z` pin — commit the
+  render + lock; a repo that had pinned by hand keeps its pin; set `waffle.toolkitRef` only to
+  target a fork or a local checkout.
+
 ## [0.15.0] - 2026-09-13
 
 ### Added

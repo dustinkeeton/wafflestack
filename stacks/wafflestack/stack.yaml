@@ -18,26 +18,35 @@ skills:
 config:
   waffle.toolkitRef:
     required: false
-    default: github:dustinkeeton/wafflestack
+    default: github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
     description: >-
-      npx spec every `/waffle-*` skill invokes as `npx --yes <ref> <subcommand>` —
-      the same knob as the doctor CI workflow's `doctor.toolkitRef`. PIN IT to a release
-      tag, e.g. "github:dustinkeeton/wafflestack#v0.10.0": that freezes the toolkit version
-      the wrappers run (and matches the version this repo is pinned to), and since #373 it is
-      the only value on which the writing skills work at all. The default is UNPINNED, which
-      resolves to the toolkit's DEFAULT BRANCH — not the latest release — so `/waffle-render`,
-      `/waffle-install`, `/waffle-upgrade` and `/waffle-reinstall` will REFUSE, with an error
-      naming the exact pinned command to run instead. (That refusal is the feature: an unpinned
-      render writes unreleased content while stamping the last released version number into your
-      lock, which is what silently breaks `doctor --verify-render` in CI.) `/waffle-doctor`,
-      `/waffle-setup`, `/waffle-init`, `/waffle-eject` and `/waffle-validate` read no toolkit
-      content and keep working either way. Developing the toolkit ITSELF? Point this at a local
-      checkout path, or use `node installer/cli.mjs --allow-unreleased` directly — rendering a
-      working tree is the one case where unreleased content is the point.
-      ONCE PINNED, `wafflestack upgrade` MOVES THE PIN FOR YOU (#372): a release-pinned value here
-      is rewritten to the toolkit that just rendered — before the render, so every `/waffle-*`
-      skill picks the new ref up in the same run. It never introduces a pin and never touches an
-      unpinned or `#main`-pinned one. The old chicken-and-egg (a pin to an old tag runs the OLD
-      CLI, which reports "already on toolkit X" and moves nothing) is answered by REPORTING, not
-      by re-exec: `upgrade` prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned
-      command to run, and `/waffle-upgrade` runs it.
+      npx spec every `/waffle-*` skill invokes as `npx --yes <ref> <subcommand>` — the same knob
+      as the doctor CI workflow's `doctor.toolkitRef`. The default is PINNED to the toolkit release
+      that rendered your repo: `{{harness.toolkitVersion}}` is the running toolkit's package version
+      — the value the lock records as `toolkitVersion` — so an unset key renders as
+      "github:dustinkeeton/wafflestack#v0.15.0" and the toolkit your skills run is by construction
+      the one that produced your render (#469, the local-invocation half of #461's CI pin). Every
+      `render` re-renders these skills, so the pin moves with the lock and there is no key to
+      maintain. Set the key only to run a DIFFERENT toolkit (a fork, or an explicit older tag such
+      as "github:dustinkeeton/wafflestack#v0.5.0"); since #372 `upgrade` rewrites an explicit
+      release-shaped pin to the toolkit that just rendered — before the render, so every `/waffle-*`
+      skill picks the new ref up in the same run — and leaves a `#main`/`#<sha>` pin alone, noted.
+      An UNPINNED value ("github:dustinkeeton/wafflestack", no `#tag`) is deliberately NOT the
+      default: it resolves to the toolkit's DEFAULT BRANCH — not the latest release — so
+      `/waffle-doctor`, `/waffle-setup`, `/waffle-init`, `/waffle-eject` and `/waffle-validate`,
+      which read no toolkit content and therefore keep working, would each run an unreviewed
+      upstream commit on the invoker's own machine; and `/waffle-render`, `/waffle-install`,
+      `/waffle-upgrade` and `/waffle-reinstall` REFUSE (#373), with an error naming the exact pinned
+      command to run instead. (That refusal is the feature: an unpinned render writes unreleased
+      content while stamping the last released version number into your lock, which is what silently
+      breaks `doctor --verify-render` in CI.)
+      BECAUSE THE DEFAULT PINS, `/waffle-upgrade` ALWAYS STARTS FROM THE OLD CLI — expected, not a
+      misconfiguration, and answered by REPORTING rather than by re-exec: a pinned CLI renders only
+      its own content, so it prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned
+      command to run, and `/waffle-upgrade` runs that. Read "already on toolkit X" from a pinned CLI
+      as "now ask the newer one", never as "you are up to date".
+      Developing the toolkit ITSELF? Point this at a local checkout path, or use
+      `node installer/cli.mjs --allow-unreleased` directly — rendering a working tree is the one
+      case where unreleased content is the point. The toolkit's OWN repo is also the one place an
+      unpinned value is right: its default branch IS the tree under test, and a version-tag pin
+      would name a tag that does not exist yet on every release-bump PR.

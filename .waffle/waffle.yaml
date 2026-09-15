@@ -109,7 +109,7 @@ config:
     # .github/workflows/tests.yml instead, as `node installer/cli.mjs doctor --allow-missing
     # --verify-render`. The reason is that --verify-render re-renders the committed config with
     # whatever toolkit it is handed, and the workflow THIS key feeds (waffle-doctor.yml) gets its
-    # toolkit from `npx --yes <doctor.toolkitRef>` — by default GitHub's default branch. For a
+    # toolkit from `npx --yes <doctor.toolkitRef>` — by default (#461) the release that rendered. For a
     # consuming repo that is exactly right: their toolkit really is external. For the toolkit's own
     # repo it is the wrong toolkit, and adding the flag here would fail in BOTH directions:
     #   - a PR that edits stacks/** and correctly re-renders would false-RED (its lock is built
@@ -140,6 +140,14 @@ config:
     # IS the tree under test (no third-party exposure), and a version pin would name a tag that
     # does not exist yet on every release-bump PR, wedging the required check. Explicitly
     # unpinned; `upgrade` leaves an unpinned value alone (#372).
+    toolkitRef: github:dustinkeeton/wafflestack
+  waffle:
+    # Same call as doctor.toolkitRef above, for the same reason. #469 pinned the stack default to
+    # `#v{{harness.toolkitVersion}}`, so a consumer's /waffle-* skills run the release that rendered
+    # them. Here that would (a) name a tag that does not exist yet on every release-bump PR and
+    # (b) make this repo's COMMITTED render churn on every version bump. Toolkit development runs
+    # `node installer/cli.mjs <cmd> --allow-unreleased` against the working tree anyway, so the
+    # #373 refusal these skills hit when unpinned is the correct answer here, not a regression.
     toolkitRef: github:dustinkeeton/wafflestack
   hygiene:
     # #82: this repo dogfoods the scheduled hygiene hook, and its own skill prompts steer the
