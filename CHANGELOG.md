@@ -32,6 +32,19 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **`WebFetch` + `WebSearch` are granted by default, as a pair, across the shipped agents (#474).**
+  Of the 14 agents in `stacks/*/agents/*.md`, only 4 carried both, 2 carried exactly one, and 8
+  carried neither — drift from whenever each was authored, not a decision, and the cost landed on
+  the roles whose work most depends on facts that change outside the repo (`devops-engineer`
+  reading an Actions changelog, `security-engineer` checking a CVE, `lead-engineer` vetting a
+  dependency, `qa-engineer` looking up a runner API, the docs agents verifying an upstream link).
+  `devops-engineer`, `lead-engineer`, `qa-engineer`, `security-engineer`, `docs-agent`, and
+  `docs-human` gain both; `ux-designer` gains `WebSearch` and `product-manager` gains `WebFetch`
+  so no agent is left holding one half of a loop it cannot complete. `project-manager` and
+  `task-planner` stay ungranted as coordination roles — as-needed, not a permanent exclusion.
+  `schema/FORMAT.md` now states the convention next to the `claude:` passthrough docs: grant both
+  or neither. **Consumer impact:** the `docs-system`, `orchestration`, and `engineering-team`
+  agent renders change — commit the render + lock; nothing else moves.
 - **Every `/waffle-*` skill pins its `npx` fetch to the toolkit release that rendered it (#469).**
   `waffle.toolkitRef` used to default to the UNPINNED `github:dustinkeeton/wafflestack`, so the
   read-only wrappers (`/waffle-doctor`, `/waffle-setup`, `/waffle-init`, `/waffle-eject`,

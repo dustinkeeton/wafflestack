@@ -6,7 +6,7 @@ identity:
 skills:
   - issue
 claude:
-  tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch
+  tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch
 ---
 
 {{pm.brief}}
