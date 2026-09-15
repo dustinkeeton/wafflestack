@@ -9,6 +9,38 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-15: External providers sit behind a capability-named proxy skill, offered but never tracked (#471)
+
+**Context**: [Archify](https://github.com/tt-a1i/archify) (MIT) is the preferred renderer for the
+system diagram `ARCHITECTURE.md` asks for, but it is a 192-file third-party skill package with its
+own renderers and update check, installed by `npx skills add tt-a1i/archify -g` outside the
+toolkit. A skill that said "use archify" would have nothing to fall back on wherever the global
+install is absent — a consumer who declined the offer, a fresh worktree, CI.
+
+**Decision**: (1) Archify is the first shipped use of `recommendedPlugins:` (#199) — an offer
+`setup` makes on `docs-system`, scoped with `items:` to one skill. (2) That skill is a **proxy**,
+`diagram`, named for the capability rather than the provider: its body carries an ordered provider
+table (archify, then Mermaid), a file-exists detection step per optional row, a built-in floor that
+needs nothing installed, a rule that it never installs a provider itself, and a fixed
+`Diagram provider: …` result line so a reader knows when a richer provider was skipped. (3)
+`docs-human` is granted `diagram`, and the `ARCHITECTURE.md` spec default points at it. (4) The
+convention is written down in `schema/FORMAT.md` ("Proxy skills") for the next external provider.
+
+**Alternatives considered**: Vendoring archify as syrup — rejected: 192 files under lock
+management, and drift accounting for an upstream the toolkit does not own. Lock-tracking the
+external install — rejected for the same reason; `render` would have to fetch. A provider-named
+skill (`archify`) with an "if missing" clause — rejected: callers would bind to a provider name,
+and adding or reordering providers would rename the skill. A `docs.diagramProviders` config key —
+deferred: no cheap shape presented itself, and v1 needs only the two rows.
+
+**Consequences**: `/diagram` works on every machine; with archify installed it links a standalone
+HTML diagram, without it it embeds a Mermaid block, and both say which ran. Adding a provider is a
+table row plus one `recommendedPlugins:` entry. The toolkit fetches, locks, and drift-checks
+nothing external. Guarded by content tests on the source skill, the render, the agent grant, and
+the `setup` inventory.
+
+---
+
 ## 2026-09-12: `/clean-up` judges a delegate run's agents by PR state, from a hardcoded checkpoint glob (#172)
 
 **Context**: #360 abolished the team concept and, with it, `/clean-up`'s only completion signal

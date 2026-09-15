@@ -163,6 +163,33 @@ is closed so nothing unrecognised can change what exists). An external plugin ha
 render, and nothing to prune — so it is curation, and curation belongs next to the stack doing the
 curating, alongside the equally advisory `recommended:` flag.
 
+### Proxy skills — preferring an external provider without depending on it
+
+A stack that *prefers* an external tool for some capability must not *break* without it: a
+consumer may decline the offer, and an agent may run in a worktree or CI where a globally
+installed skill is absent. The convention is a **proxy skill** — a toolkit-shipped skill named
+for the **capability** (`diagram`, not `archify`) that resolves to the best available provider at
+invocation time. Its body carries:
+
+- **An ordered provider list.** A table from most to least preferred, each row with a
+  **detection step** (a file-exists or `command -v` check — never an install) and the output that
+  provider produces. The skill tries the rows in order and uses the first whose detection passes.
+- **A built-in floor.** The last row needs nothing installed — no package, network call, or
+  credential — so the skill always produces something. Every row above it is optional.
+- **Provider named in the result.** The reply states which provider ran, so a reader knows
+  whether a richer one was skipped and how to opt in.
+- **No self-install.** Offering the optional provider is `setup`'s job; the skill only uses what
+  the user already accepted.
+
+Each optional provider is declared **once** as a `recommendedPlugins:` entry on the owning stack,
+scoped with `items:` to the proxy skill — which is the existing "how a waffle recommends a
+plugin" mechanism, so the offer, the detection, and the fallback all reference the same name.
+Detection paths use `{{harness.skillsDir}}` (plus the cross-tool `.agents/skills/` and the
+global install dirs) so the proxy renders portably. The shipped example is `docs-system`'s
+`diagram` skill: archify first, Mermaid as the floor. Nothing about the proxy is lock-tracked
+beyond the skill itself — the external provider is offered, never fetched, locked, or
+drift-checked.
+
 `setup:` is free text surfaced verbatim by `wafflestack setup` (the agent-driven install
 playbook, `schema/SETUP.md`, followed by a generated inventory of every stack's items,
 config schema, env, and these notes). It is printed **before** any project config exists,

@@ -31,6 +31,17 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **`diagram` proxy skill on `docs-system`, with archify as the first shipped
+  `recommendedPlugins:` offer (#471).** `/diagram <what>` resolves to the best diagram provider
+  present at invocation — the external [archify](https://github.com/tt-a1i/archify) skill when
+  installed (standalone interactive HTML), otherwise a Mermaid block in the target doc — and names
+  the provider it used. It never installs a provider; `wafflestack setup` offers archify under
+  docs-system's recommended plugins, scoped to `skills/diagram`. `docs-human` is granted the skill
+  and the default `ARCHITECTURE.md` spec now asks for the system diagram through it. The pattern is
+  documented as "Proxy skills" in `schema/FORMAT.md`. Consumer impact: additive — re-render picks
+  up the new skill and the agent grant; nothing external is fetched or locked.
+
 ### Changed
 - **`docs.voiceGuardrailSection` now defaults to the docs the harness treats as owner-voiced
   (#472).** A `docs-system` install that never overrode the key rendered no guardrail at all, so
