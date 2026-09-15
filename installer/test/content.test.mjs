@@ -2113,6 +2113,90 @@ describe('docs agents: the body-prose grant survives the CODEX render (#224)', (
   });
 });
 
+// A default docs-system install must carry the owner-voiced guardrail, and an override REPLACES
+// it — both promised by the key's `description` (#472). Rendered for real, not read off this
+// repo's `.claude/`, because this repo overrides the key.
+describe('docs-human: docs.voiceGuardrailSection defaults to the owner-voiced doc list (#472)', () => {
+  const DEFAULT_HEADING = /^## Owner-voiced docs — do not rewrite$/m;
+  const OUTPUTS = [
+    path.join('.claude', 'agents', 'docs-human.md'),
+    path.join('.claude', 'skills', 'docs-human', 'SKILL.md'),
+  ];
+  const render = (configLines) => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-voice-guardrail-'));
+    fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.waffle', 'waffle.yaml'),
+      [
+        'targets: [claude]',
+        'stacks: [docs-system]',
+        'config:',
+        '  project:',
+        '    name: EvalFixture',
+        '    longName: the EvalFixture project',
+        ...configLines,
+        '',
+      ].join('\n'),
+    );
+    const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+    assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+    return { cwd, read: (rel) => fs.readFileSync(path.join(cwd, rel), 'utf8') };
+  };
+
+  let unset;
+  let overridden;
+
+  before(() => {
+    unset = render([]);
+    overridden = render([
+      '  docs:',
+      '    voiceGuardrailSection: |-',
+      '      ## Project guardrail',
+      '',
+      '      `HANDBOOK.md` is owner-voiced; flag drift, never rewrite it.',
+    ]);
+  });
+
+  after(() => {
+    for (const r of [unset, overridden]) fs.rmSync(r.cwd, { recursive: true, force: true });
+  });
+
+  for (const rel of OUTPUTS) {
+    test(`unset: ${rel} carries the default guardrail`, () => {
+      const md = unset.read(rel);
+      assert.match(md, DEFAULT_HEADING);
+      assert.match(md, /flag the drift in your report instead/);
+      for (const doc of [
+        '`README.md`',
+        '`CLAUDE.md`',
+        '`CONTRIBUTING.md`',
+        '`LICENSE`',
+        '`CHANGELOG.md`',
+        '`.waffle/waffle.yaml`',
+        '`.waffle/waffle.local.yaml`',
+        '`.waffle/extensions/**`',
+      ]) {
+        assert.ok(md.includes(doc), `${rel} must name ${doc} as owner-voiced`);
+      }
+    });
+
+    test(`unset: ${rel} carves out the agent-managed doc sets by nested substitution`, () => {
+      const md = unset.read(rel);
+      assert.doesNotMatch(md, /\{\{docs\./, 'nested doc-set placeholders must resolve');
+      assert.match(md, /does not cover the agent-managed docs — a root `AGENTS\.md`/);
+      assert.match(md, /`DECISIONS\.md`, `STATUS\.md`, and `ARCHITECTURE\.md` at the repo root — which/);
+    });
+
+    test(`set: ${rel} carries the override and none of the default`, () => {
+      const md = overridden.read(rel);
+      assert.match(md, /^## Project guardrail$/m);
+      assert.match(md, /`HANDBOOK\.md` is owner-voiced/);
+      assert.doesNotMatch(md, DEFAULT_HEADING);
+      assert.doesNotMatch(md, /`CLAUDE\.md`/, 'an override replaces the block, it does not extend it');
+    });
+  }
+});
+
 // -----------------------------------------------------------------------------
 // Asserted against the SOURCE agents (the usual rule here is the render): the invariant covers
 // every stack the toolkit ships, not just the ones this repo installs. Derived, never enumerated.
