@@ -77,6 +77,7 @@ npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness file
 | `install [ref…]` | Add stacks/items to `.waffle/waffle.yaml`, pull dependencies, then render. Bare = `render`. |
 | `upgrade` | Move an install across toolkit versions: print CHANGELOG, run migrations, re-render, `doctor`. |
 | `doctor` | Diff managed files against the lock; report edits, missing files, env gaps. Exit 1 on drift. |
+| `report` | Print redacted diagnostics (lock, config keys, doctor summary) for an upstream toolkit bug report; `--json` for machines. |
 | `eject <item>` | Stop managing an item — its files stay and become project-owned; drops it from `include:`. |
 | `uninstall` | Remove the whole install (reports until you pass `--yes`; keeps hand-edited files). |
 | `reinstall` | Re-render the same selection from clean; `--clean --yes` for a full reset. |
@@ -100,6 +101,12 @@ Run `npx github:dustinkeeton/wafflestack help` for the full flag detail on any c
 
 **Deciding what to commit?** [Committing vs. gitignoring the rendered output](docs/gitignore.md)
 walks the trade-off.
+
+**Hit a toolkit bug?** Report it *upstream*, not in your own tracker: `/waffle-report <what went
+wrong>` (from the `wafflestack` stack) collects `wafflestack report`'s redacted diagnostics —
+config **keys** only, no overlay, no absolute paths — shows you the exact payload, and files it
+against the toolkit's issue forms on your yes. No `gh` auth? It prints the body and a prefilled
+new-issue URL instead.
 
 ## Updating
 

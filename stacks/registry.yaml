@@ -302,3 +302,8 @@ waffles:
     stack: wafflestack
     path: stacks/wafflestack/skills/waffle-validate
     status: stable
+  - name: waffle-report
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-report
+    status: stable

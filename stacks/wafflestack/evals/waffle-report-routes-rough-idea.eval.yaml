@@ -1,0 +1,54 @@
+# Layer 2 eval case (harness: #109). Scoped to the wafflestack stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (waffle-report skill, "Classify and draft"): a half-formed one-liner is
+# routed to the rough-idea form with the enrichment-queue label, verbatim — not padded into a
+# fabricated bug report, and never given a priority label.
+
+name: waffle-report-routes-one-liner-to-rough-idea
+description: >-
+  A one-sentence, half-formed report routes to `rough-idea.yml` with the `waffle:needs-inference`
+  label and the user's words kept verbatim, instead of being inflated into a bug or feature.
+
+target:
+  kind: skill
+  name: waffle-report
+
+prompt: |
+  /waffle-report it'd be nice if doctor could somehow tell me which stack a drifted file came from
+
+  That's all I've got. Assume `npx --yes github:dustinkeeton/wafflestack#v0.15.0 report` printed a
+  normal <details> block. Show me what you would present at the confirmation gate.
+
+assert:
+  - type: includes
+    value: "rough-idea.yml"
+  - type: includes
+    value: "waffle:needs-inference"
+  - type: excludes
+    value: "priority:"
+  - type: judge
+    rubric: >-
+      The response routes the report to the rough-idea form (`rough-idea.yml`) with ONLY the
+      `waffle:needs-inference` label, keeps the user's sentence verbatim as "The idea", and does
+      NOT invent Expected/Actual/Repro details or a Proposed Solution to make it look like a bug
+      or feature request. The target is the upstream toolkit repo, not the user's repo. A pass
+      requires: rough-idea form, that single label, verbatim idea text, no fabricated detail.
+
+dryRunResponse: |
+  This is a half-formed one-liner, so it routes to the rough-idea form — the enrichment queue
+  fleshes it out upstream; I will not pad it into a bug report.
+
+  **Target**: `dustinkeeton/wafflestack` (from `github:dustinkeeton/wafflestack#v0.15.0`)
+  **Form / label**: `rough-idea.yml` → `waffle:needs-inference`
+  **Title**: doctor: attribute a drifted file to the stack that rendered it
+
+  **Body (post-redaction)**:
+
+  ## The idea
+  it'd be nice if doctor could somehow tell me which stack a drifted file came from
+
+  ## Context
+  <details> … the `wafflestack report` block, verbatim … </details>
+
+  File it? (yes / no)
