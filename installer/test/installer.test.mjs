@@ -9834,9 +9834,10 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
     assert.ok(stack, 'wafflestack stack registered in toolkit.yaml');
     assert.deepEqual(stack.skills.map((s) => s.name).sort(), [...SKILLS].sort());
     assert.equal(stack.agents.length, 0);
-    // waffle.toolkitRef is optional and defaults to the github ref (same knob as doctor.toolkitRef)
+    // waffle.toolkitRef is optional and defaults to the RENDERING release (#469; same knob and
+    // now the same shape as doctor.toolkitRef, #461)
     assert.equal(stack.config['waffle.toolkitRef'].required, false);
-    assert.match(stack.config['waffle.toolkitRef'].default, /^github:dustinkeeton\/wafflestack$/);
+    assert.equal(stack.config['waffle.toolkitRef'].default, 'github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}');
   });
 
   test('enabling the stack renders every /waffle-* skill for both skill targets; toolkitRef default substituted; doctor clean', () => {
@@ -9848,9 +9849,10 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
       assert.ok(fs.existsSync(path.join(cwd, `.claude/skills/${name}/SKILL.md`)), `${name} → .claude`);
       assert.ok(fs.existsSync(path.join(cwd, `.agents/skills/${name}/SKILL.md`)), `${name} → .agents`);
     }
-    // the default toolkitRef flows into the npx invocation; no leftover wafflestack placeholder
+    // the default toolkitRef flows into the npx invocation, pinned to the rendering toolkit
+    // version (#469); no leftover wafflestack placeholder
     const renderSkill = read(cwd, '.claude/skills/waffle-render/SKILL.md');
-    assert.match(renderSkill, /npx --yes github:dustinkeeton\/wafflestack render/);
+    assert.match(renderSkill, /npx --yes github:dustinkeeton\/wafflestack#v0\.0\.test render/);
     assert.doesNotMatch(renderSkill, /\{\{\s*waffle\.toolkitRef\s*\}\}/);
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
   });

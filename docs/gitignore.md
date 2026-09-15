@@ -460,14 +460,15 @@ It moves only a pin **you already chose**:
 |---|---|
 | `github:owner/repo#v0.11.0` | rewrites it to the toolkit that rendered |
 | `github:owner/repo` (no tag) | nothing — floating is a choice, and pinning you silently would change what CI fetches |
-| key absent | nothing — a pin is never introduced |
+| key absent | nothing — a pin is never introduced, and none is needed: both stack defaults already pin to the release that rendered your lock (`doctor.toolkitRef` since #461, `waffle.toolkitRef` since #469), so the re-render moves them |
 | `#main`, `#<sha>` | nothing — left alone, and noted in the output |
 
 A run that cannot prove it *is* a release (`--allow-unreleased`, a `dlx` install, a lookup that
 could not answer) writes **no pin at all** and says so. A pin is a claim about what a remote
 holds; a claim we cannot back is one we do not make.
 
-**Upgrading past a pinned toolkit.** The pin means `npx --yes <pinned-ref> upgrade` runs the *old*
+**Upgrading past a pinned toolkit.** This is the normal path, not an edge case: since #469
+`waffle.toolkitRef` defaults to a pin, so `npx --yes <pinned-ref> upgrade` runs the *old*
 CLI, which can only render itself — it reports `already on toolkit X` and moves nothing. It does
 know the answer, though: it prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned
 command to run. Run that, and the pins move from there. (`/waffle-upgrade` does this for you.)

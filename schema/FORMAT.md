@@ -1059,10 +1059,12 @@ rendered workflow:
 | `harness.toolkitVersion` | the running toolkit's `package.json` version — the lock's `toolkitVersion` |
 
 `harness.toolkitVersion` is supplied by the running CLI rather than a static built-in (#461): it
-is what lets the `github-workflow` stack default `doctor.toolkitRef` to
-`github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}`, so the shipped `waffle-doctor.yml`
-pins CI to the release that rendered the lock and a re-render (`upgrade`) moves the pin. A
-library caller that renders without a `toolkitVersion` leaves the placeholder unexpanded.
+is what lets the two `toolkitRef` keys default to
+`github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — `doctor.toolkitRef` in the
+`github-workflow` stack (#461) and `waffle.toolkitRef` in the `wafflestack` stack (#469) — so the
+shipped `waffle-doctor.yml` pins CI, and every rendered `/waffle-*` skill pins the local `npx`, to
+the release that rendered the lock, and a re-render (`upgrade`) moves both pins. A library caller
+that renders without a `toolkitVersion` leaves the placeholder unexpanded.
 
 These splice into the `uses:` and `anthropic_api_key:` lines of `waffle-label-hook.yml` and
 `waffle-hygiene.yml`. Override `config.harness.actionVersion` to pin a different version of

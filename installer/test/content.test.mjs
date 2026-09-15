@@ -1671,6 +1671,67 @@ describe('doctor workflow: the npx spec is pinned to the rendering toolkit relea
   });
 });
 
+describe('/waffle-* skills: the npx spec is pinned to the rendering toolkit release (#469)', () => {
+  const stackYaml = parseYaml(fs.readFileSync(path.join(STACKS, 'wafflestack', 'stack.yaml'), 'utf8'));
+  // Every wrapper shells out through the same key, so the pin has to reach all eight.
+  const SKILLS = ['waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render', 'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate'];
+
+  test('every shipped wrapper invokes `{{waffle.toolkitRef}}`, whose default carries a version-tag ref', () => {
+    for (const name of SKILLS) {
+      const source = fs.readFileSync(path.join(STACKS, 'wafflestack', 'skills', name, 'SKILL.md'), 'utf8');
+      assert.match(source, /npx --yes \{\{waffle\.toolkitRef\}\} /, `${name} shells out through the key`);
+    }
+    const spec = stackYaml.config['waffle.toolkitRef'];
+    assert.equal(spec.default, 'github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}');
+    assert.match(spec.description, /default branch/i, 'the description says what an unpinned value runs');
+  });
+
+  test('a consumer that never sets the key renders skills pinned to the toolkit version its lock records', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-skills-pin-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      fs.writeFileSync(
+        path.join(cwd, '.waffle', 'waffle.yaml'),
+        ['targets: [claude]', 'stacks: [wafflestack]', 'config:', '  project:', '    name: EvalFixture', ''].join('\n'),
+      );
+      const first = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.12.0' });
+      assert.ok(first.ok, `render failed: ${JSON.stringify(first.errors)}`);
+      const rendered = (name) => fs.readFileSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'), 'utf8');
+      const lock = () => JSON.parse(fs.readFileSync(path.join(cwd, '.waffle', 'waffle.lock.json'), 'utf8'));
+      for (const name of SKILLS) {
+        assert.match(rendered(name), /npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0 /, name);
+        assert.deepEqual([...placeholderKeys(rendered(name))], [], `${name}: no leftover placeholders`);
+      }
+      assert.equal(lock().toolkitVersion, '0.12.0', 'the pin the skills fetch is the version the lock records');
+
+      // `upgrade` is a re-render by a newer toolkit: the pin moves with the lock, no key to maintain.
+      const second = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.13.0' });
+      assert.ok(second.ok, `re-render failed: ${JSON.stringify(second.errors)}`);
+      assert.match(rendered('waffle-render'), /npx --yes github:dustinkeeton\/wafflestack#v0\.13\.0 render/);
+      assert.equal(lock().toolkitVersion, '0.13.0');
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test('an explicit unpinned override still renders verbatim (the toolkit repo relies on it)', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-skills-unpinned-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      fs.writeFileSync(
+        path.join(cwd, '.waffle', 'waffle.yaml'),
+        ['targets: [claude]', 'stacks: [wafflestack]', 'config:', '  project:', '    name: EvalFixture', '  waffle:', '    toolkitRef: github:dustinkeeton/wafflestack', ''].join('\n'),
+      );
+      const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.12.0' });
+      assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+      const rendered = fs.readFileSync(path.join(cwd, '.claude', 'skills', 'waffle-render', 'SKILL.md'), 'utf8');
+      assert.match(rendered, /npx --yes github:dustinkeeton\/wafflestack render/);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('every waffle workflow (rendered in-test): no toolkit bot identity (#160)', () => {
   const WORKFLOWS = ALL_WAFFLE_WORKFLOWS;
   let cwd;

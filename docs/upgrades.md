@@ -81,7 +81,9 @@ skill in the same run. The pin your CI fetches always matches the pin your lock 
 It only ever moves a pin you already chose:
 
 - **Unpinned** ref → keeps floating.
-- **Absent** key → never gets one.
+- **Absent** key → never gets one, and never needs one: both stack defaults pin to the release
+  that rendered your lock (`doctor.toolkitRef` since #461, `waffle.toolkitRef` since #469), so
+  the re-render alone moves what CI and your `/waffle-*` skills fetch.
 - **`#main` or `#<sha>`** → left alone, and noted.
 - **Can't prove it's a release** (`--allow-unreleased`, a `dlx` install, an unanswerable lookup) →
   no pin written.
