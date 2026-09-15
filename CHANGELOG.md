@@ -32,6 +32,23 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`wafflestack report` + `/waffle-report` — file a toolkit bug upstream, with redacted
+  diagnostics (#473).** A consumer had no paved path for reporting a toolkit defect back to
+  wafflestack: `/issue` files into the repo you are standing in, so #424 arrived as hand-pasted
+  prose with none of the facts a maintainer needs. The CLI grows a read-only `report` subcommand
+  that prints a collapsed `<details>` environment block (or `--json`): lock `toolkitVersion` +
+  `toolkit` source/ref/commit/status, targets, stacks, include/eject refs, external-source names,
+  config **key paths** (values withheld), node/platform, overlay **presence**, and a summarized
+  `doctor`. Redaction is structural — the config is loaded `canonical` and `doctor` gains a
+  `canonical: true` option, so `.waffle/waffle.local.yaml` and `waffle.local.lock.json` are never
+  opened — plus a scrub pass (`cwd` → `<repo>`, home → `~`, emails and git remotes → placeholders).
+  Not release-gated (warns, resolves identity offline); exits 0 even when doctor is red. The
+  ninth `/waffle-*` wrapper drives it: plan-then-act with a `--yes` skip, target repo resolved
+  from `waffle.toolkitRef` (a fork's consumer reports to the fork), routing onto the upstream
+  `bug.yml` / `feature.yml` / `rough-idea.yml` forms with only the form's own label, the
+  **post-redaction** payload shown at the gate, and a no-`gh`-auth fallback that prints the body
+  plus a prefilled `issues/new?template=…` URL. Consumer impact: additive — re-render picks up
+  `/waffle-report`; nothing else moves.
 - **`diagram` proxy skill on `docs-system`, with archify as the first shipped
   `recommendedPlugins:` offer (#471).** `/diagram <what>` resolves to the best diagram provider
   present at invocation — the external [archify](https://github.com/tt-a1i/archify) skill when

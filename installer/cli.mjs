@@ -8,6 +8,7 @@ import { doctor } from './lib/doctor.mjs';
 import { eject, init, installRefs } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
+import { collectReport, formatReportMarkdown } from './lib/report.mjs';
 import { upgrade } from './lib/upgrade.mjs';
 import { uninstall, reinstall } from './lib/uninstall.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
@@ -43,7 +44,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <init|setup|list|install|render|bake|upgrade|doctor|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <init|setup|list|install|render|bake|upgrade|doctor|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -112,6 +113,16 @@ try {
         }
       }
       process.exit(result.ok ? 0 : 1);
+      break;
+    }
+    case 'report': {
+      const json = extractFlag(args, '--json');
+      if (args.length) fail(`report takes no refs (got ${args.join(', ')}) — it prints this repo's wafflestack diagnostics for an upstream bug report`);
+      // Read-only and offline (#473): it never opens the local overlay or local lock, and a red
+      // doctor is the report's subject, not its exit code.
+      const toolkitIdentity = warnProvenance(offlineIdentity());
+      const bundle = collectReport({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity });
+      process.stdout.write(json ? `${JSON.stringify(bundle, null, 2)}\n` : formatReportMarkdown(bundle));
       break;
     }
     case 'upgrade': {
@@ -327,6 +338,7 @@ function helpText() {
     '  bake        alias for render — same command, better metaphor',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',
+    '  report      print redacted diagnostics (lock, config keys, doctor) for an upstream bug report',
     '  eject       release one item to project ownership; the files stay, the lock forgets them',
     '  uninstall   remove every wafflestack-managed file this repo has (dry run without --yes)',
     '  reinstall   remove the rendered files and re-render the same selection (--clean wipes config)',
@@ -347,6 +359,7 @@ function helpText() {
     '  --clean           reinstall: also delete the config and re-scaffold it empty (needs --yes)',
     '  --allow-missing   doctor/uninstall: tolerate managed files that are absent from disk',
     '  --verify-render   doctor: also check the config still renders what the lock records',
+    '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
     '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
     '  --allow-unreleased  render/install/upgrade/reinstall/doctor --verify-render: write files from',
     '                    a toolkit that is not a release (a working tree, or an unpinned `npx',

@@ -29,8 +29,12 @@ function noVerify() {
   return { evaluated: false, ok: true, checked: 0, stale: [], absent: [], unexpected: [], errors: [] };
 }
 
-/** Compare managed files against the lock manifest — see the doctor entry in AGENTS.md. */
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) {
+/**
+ * Compare managed files against the lock manifest — see the doctor entry in AGENTS.md.
+ * `canonical: true` (#473) reads the committed lock and config ONLY: neither the local overlay nor
+ * the local lock is opened, so the result carries nothing from either.
+ */
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false }) {
   const lock = readLock(cwd);
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
@@ -38,9 +42,9 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify() };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
-  const tree = readTreeLock(cwd);
+  const tree = canonical ? lock : readTreeLock(cwd);
   // EXISTS, not `tree !== lock`: readLock re-parses per call, so the fallback is equal-but-distinct.
-  const localRender = readLocalLock(cwd) !== null;
+  const localRender = !canonical && readLocalLock(cwd) !== null;
 
   const attribution = {};
   for (const src of tree.sources ?? []) {
@@ -120,7 +124,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   let configProblems = [];
   if (toolkitRoot) {
     try {
-      const project = loadProjectConfig(cwd);
+      const project = loadProjectConfig(cwd, [], { canonical });
       const toolkit = loadToolkitWithSources({
         builtinRoot: toolkitRoot,
         externalStacks: project.externalStacks ?? [],

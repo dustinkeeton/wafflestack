@@ -64,6 +64,7 @@
     ".claude/skills/waffle-init/SKILL.md": "9e9b9109ee4356bd876908cffec44d8b95373c13b27934669513576d77b822b3",
     ".claude/skills/waffle-install/SKILL.md": "bc12fe21656038b6a058f160bc166a6172c5f9a8a068249829ea04d2722af8b5",
     ".claude/skills/waffle-render/SKILL.md": "b4061aca4b03490071275abdda8f9ea59e0abce9278bc86878aaca67c54d741b",
+    ".claude/skills/waffle-report/SKILL.md": "c9b0dc5a1ee200c23b3648277a0d8e9f129467ed5486df7feccda8c5b97a2450",
     ".claude/skills/waffle-setup/SKILL.md": "e2224a8d5ebf372c9b2908cf1cc494a8ba9c8227a7b1b2e099c8ee65d3aa0e0e",
     ".claude/skills/waffle-upgrade/SKILL.md": "4404cc149c8cdcfa037db34a401cad4cd22e3d091744d632c40299fe2bb4cb7f",
     ".claude/skills/waffle-validate/SKILL.md": "f3efdd48bd9c87dc8ec370d0d9177c373a7e5698cd9bbdf22a24dc90968320f8",
@@ -86,8 +87,8 @@
     ".waffle/avatars/product-manager.svg": "dd3e1d2a1cb4b26292df2c7661e17059b930740553ccbff1f5e8892150100dd2",
     ".waffle/avatars/project-manager.svg": "336d96cedd1bb58ef98357e2c6a772a1a0e67ea114b6d870e72588541c585be8",
     ".waffle/avatars/task-planner.svg": "1bd6892e305bc5aa05dca39d1f7953928eee07212b6c3c3b0ef815607135edfd",
-    ".waffle/cheatsheet.html": "c6035f5cb5d17b6e1e6c28143a6ab7473d1003aaddb237080a10d9f4020083de",
-    ".waffle/CHEATSHEET.md": "dc5a14b402fc24fd8778780bfb03952294d7d95d87265f54456552c2287e3be6",
+    ".waffle/cheatsheet.html": "ebf2bfedcfe8bf87151447c337784cb8019532c8210a537e159025f80446f6d1",
+    ".waffle/CHEATSHEET.md": "1fb475c3f387f16f2e367793d4022a932ff98ff0f09645a9d493f73da69690ee",
     ".waffle/team.html": "843f121b170b2d17b82ed288166767787eb8fffa14b2483e70080985aa56e9ab",
     ".waffle/TEAM.md": "6dece27e3ea184ef039d2e16785e95a702796b8b8e19918515c9adea010982b3"
   }
