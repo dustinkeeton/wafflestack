@@ -96,8 +96,10 @@ auth, label, and setting checks are `recommend`, so `doctor` reports them but ne
 A stack can also name **external harness plugins** it pairs well with (a Claude Code plugin or
 marketplace entry) via `recommendedPlugins:` (#199). This is an **offer, never an install**:
 `wafflestack setup` lists each entry with its required one-line `why`, and the render, `doctor`,
-and lock are untouched — declaring one cannot change an output byte. No built-in stack declares
-one yet.
+and lock are untouched — declaring one cannot change an output byte. The first shipped entry is
+archify on `docs-system`, offered behind the `diagram` **proxy skill** — a capability-named skill
+that tries an ordered provider list at invocation and ends in a built-in Mermaid fallback, so the
+external provider is preferred without being depended on (#471).
 
 ### Picking what to install
 

@@ -2116,6 +2116,102 @@ describe('docs agents: the body-prose grant survives the CODEX render (#224)', (
 // A default docs-system install must carry the owner-voiced guardrail, and an override REPLACES
 // it — both promised by the key's `description` (#472). Rendered for real, not read off this
 // repo's `.claude/`, because this repo overrides the key.
+// A proxy skill is worth shipping only if it keeps its three promises when the optional provider is
+// absent: an ordered list with a built-in floor, no self-install, and the provider named in the result.
+describe('diagram proxy skill: archify offered, Mermaid floor, provider named (#471)', () => {
+  const docsSystem = () => loadToolkit(REPO_ROOT).stacks.get('docs-system');
+  const sourceSkill = fs.readFileSync(path.join(STACKS, 'docs-system', 'skills', 'diagram', 'SKILL.md'), 'utf8');
+
+  test('archify is the first shipped recommendedPlugins: entry, scoped to skills/diagram', () => {
+    const [archify, ...rest] = docsSystem().recommendedPlugins.filter((p) => p.name === 'archify');
+    assert.ok(archify, 'docs-system must offer archify');
+    assert.deepEqual(rest, [], 'archify must be declared once');
+    assert.equal(archify.source, 'tt-a1i/archify');
+    assert.deepEqual(archify.items, ['skills/diagram'], 'the offer is scoped to the proxy, not the stack');
+    assert.match(archify.why, /`diagram` skill/);
+    assert.match(archify.why, /falls back to Mermaid/);
+    assert.match(archify.why, /npx skills add tt-a1i\/archify -g/);
+  });
+
+  test('setup inventory lists archify under docs-system with the why, the scope, and the source', () => {
+    const inventory = toolkitInventory(loadToolkit(REPO_ROOT), '0.0.test');
+    const start = inventory.indexOf('## stack: docs-system');
+    assert.ok(start >= 0, 'the inventory must carry a docs-system section');
+    const end = inventory.indexOf('\n## stack: ', start + 1);
+    const stackSection = inventory.slice(start, end === -1 ? undefined : end);
+    assert.match(stackSection, /### recommended plugins \(external — offer, never auto-install\)/);
+    assert.match(stackSection, /- `archify` \[for: claude, codex, agents-dir\] \(suggested with skills\/diagram\) — Preferred provider for the `diagram` skill/);
+    assert.match(stackSection, /source: `tt-a1i\/archify`/);
+  });
+
+  test('providers are ordered, archify first, Mermaid last and needing nothing', () => {
+    const md = readSkill('diagram');
+    const archifyRow = md.indexOf('| 1 | **archify**');
+    const mermaidRow = md.indexOf('| 2 | **Mermaid**');
+    assert.ok(archifyRow > 0 && mermaidRow > archifyRow, 'the provider table lists archify before Mermaid');
+    assert.match(md, /\| 2 \| \*\*Mermaid\*\* \(built-in fallback, always present\) \| None — nothing to detect \|/);
+    assert.match(md, /use the first whose detection passes/);
+    assert.match(md, /must never require an install, a network call, or a credential/);
+    assert.match(md, /The Mermaid row stays last/);
+  });
+
+  test('the skill never installs a provider — that offer belongs to setup', () => {
+    const md = readSkill('diagram');
+    assert.match(md, /\*\*Never install a provider yourself\.\*\*/);
+    assert.match(md, /Not `npx skills add`, not a clone, not a package install/);
+    assert.match(md, /job of the toolkit's `setup` wizard/);
+  });
+
+  test('the result names the provider in a fixed grep-able line, for both outcomes', () => {
+    const md = readSkill('diagram');
+    assert.match(md, /`Diagram provider: archify`/);
+    assert.match(md, /`Diagram provider: Mermaid \(archify not detected — install with \\`npx skills add tt-a1i\/archify -g\\` to upgrade\)`/);
+    assert.match(md, /self-check failed/);
+  });
+
+  test('archify runs through its own workflow and the fallback is a fenced mermaid block', () => {
+    const md = readSkill('diagram');
+    assert.match(md, /Read the detected `SKILL\.md` and follow its workflow end to end/);
+    assert.match(md, /`archify\.mjs validate`/);
+    assert.match(md, /ARCHIFY_UPDATE_CHECK_DISABLED=1/);
+    assert.match(md, /fenced ` ```mermaid ` block/);
+    for (const form of ['flowchart LR', 'sequenceDiagram', 'stateDiagram-v2']) {
+      assert.match(md, new RegExp(`\`${form}\``), `the Mermaid table must map to ${form}`);
+    }
+  });
+
+  test('detection goes through the harness built-in — the source has no literal .claude/skills/ leak', () => {
+    assert.match(sourceSkill, /`\{\{harness\.skillsDir\}\}\/archify\/`/);
+    assert.match(sourceSkill, /`\.agents\/skills\/archify\/`/);
+    assert.deepEqual(claudePathLeaks(sourceSkill, 'stacks/docs-system/skills/diagram/SKILL.md'), []);
+    assert.match(readSkill('diagram'), /`\.claude\/skills\/archify\/`/, 'the claude render resolves the built-in');
+  });
+
+  test('docs-human is granted diagram in frontmatter AND body prose, and the ARCHITECTURE spec routes through it', () => {
+    const agent = fs.readFileSync(path.join(CLAUDE, 'agents', 'docs-human.md'), 'utf8');
+    const { data } = parseFrontmatter(agent);
+    assert.ok(data.skills.includes('diagram'), 'docs-human must be granted `diagram`');
+    assert.match(agent, /follow the `diagram` skill/);
+    assert.match(readSkill('docs-human'), /System diagram — produce it with the `diagram` skill/);
+  });
+
+  test('diagram stays user-invocable with an argument-hint — /diagram is an acceptance criterion', () => {
+    const { data } = parseFrontmatter(readSkill('diagram'));
+    assert.equal(data['user-invocable'], true);
+    assert.ok(typeof data['argument-hint'] === 'string' && data['argument-hint'].length > 0);
+  });
+
+  test('FORMAT.md documents the proxy-skill convention and ties it to recommendedPlugins items: scoping', () => {
+    const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
+    assert.match(formatMd, /^### Proxy skills/m);
+    assert.match(formatMd, /named\s*\n?for the \*\*capability\*\* \(`diagram`, not `archify`\)/);
+    assert.match(formatMd, /\*\*A built-in floor\.\*\*/);
+    assert.match(formatMd, /\*\*Provider named in the result\.\*\*/);
+    assert.match(formatMd, /\*\*No self-install\.\*\*/);
+    assert.match(formatMd, /scoped with `items:` to the proxy skill/);
+  });
+});
+
 describe('docs-human: docs.voiceGuardrailSection defaults to the owner-voiced doc list (#472)', () => {
   const DEFAULT_HEADING = /^## Owner-voiced docs — do not rewrite$/m;
   const OUTPUTS = [

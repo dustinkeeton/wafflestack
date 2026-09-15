@@ -46,7 +46,7 @@ Current project status:
 
 High-level architecture overview for humans:
 
-- System diagram (ASCII or Mermaid)
+- System diagram — produce it with the `diagram` skill (archify HTML when installed, a Mermaid block otherwise)
 - Feature descriptions in plain language
 - How features interact
 - Configuration overview

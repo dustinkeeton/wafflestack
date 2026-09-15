@@ -61,6 +61,11 @@ waffles:
     stack: docs-system
     path: stacks/docs-system/skills/accurate
     status: stable
+  - name: diagram
+    kind: skill
+    stack: docs-system
+    path: stacks/docs-system/skills/diagram
+    status: stable
 
   # ── github-workflow ─────────────────────────────────────────────────────────
   - name: git-workflow
