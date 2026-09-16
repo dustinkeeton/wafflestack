@@ -9,6 +9,68 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-16: Behavioral skill flags become three-mode config keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:` (#478, slices 1–2)
+
+**Context**: Skills that branch on a flag hardcode both the token and its default in prose:
+`--yes` skips the confirmation gate in `issue` / `pr-response` / `clean-up` / `waffle-report`,
+`--execute` flips `clean-up`'s script from dry-run to mutating, hygiene always arms auto-merge,
+and autopilot's `+automerge` / `+review` / `+qa` / `+audit` carry per-run consents whose keys
+say `default: false` while the skill says "no config setting turns this on — ask every run".
+The `config:` machinery guards *values* (`pattern:`, `entryPatterns:`) but has no vocabulary for
+*behavior*, so a consumer who wants `/issue` to skip the gate by default has no knob short of
+ejecting the skill — and that third state, "always prompt", exists only as a paragraph.
+
+**Decision**: A behavioral key declares a closed **`modes:`** list (scalars; the reserved string
+`prompt` means never assume, ask), optional **`flag: { on, off }`** invocation tokens, optional
+**`lockMode: <mode>`** pinning what *config* may say (the `default:` must equal it; a `waffle.yaml`
+or overlay value that differs fails `render` and bare `doctor` — the flag token remains the only
+per-run override), and **`nonInteractive:`** — required exactly when `prompt` is a mode — naming
+the mode a CI/agent caller gets or `fail`. Precedence is fixed and uniform: explicit token →
+`.waffle/waffle.local.yaml` → `.waffle/waffle.yaml` → stack `default:`. Membership is judged on
+rendered text (`true` and `"true"` are one mode), a list or map is never a mode, and `modes:` is
+exclusive with `pattern:` — a closed list needs no regex. The four autopilot consents ship
+`lockMode: false` now (a metadata-only, byte-identical render), which makes
+`autopilot.autoMerge: true` in config a hard failure today; #489 flips `default:` + `lockMode:`
+to `prompt` together when the prose migrates. The full inventory the follow-ups work from:
+
+| # | Skill (stack) | Token | Behavior it switches | Hardcoded default when absent | Proposed key + declaration | Follow-up |
+|---|---|---|---|---|---|---|
+| 1 | `issue` (github-workflow) | `--yes` — stripped only as an unquoted first/last token | Skip the plan/confirmation gate (create, enrich, batch-enrich) | Gate **on**; a *non-interactive* caller skips it anyway ("When called by agents") | `issue.confirmGate` — `default: true`, `modes: [true, false, prompt]`, `flag: { on: "--confirm", off: "--yes" }`, `nonInteractive: false` | #487 |
+| 2 | `pr-response` (github-workflow) | `--yes` | Skip the confirmation gate before applying fixes | Gate **on** | `prResponse.confirmGate` — same shape as #1, `flag: { off: "--yes" }` (no `--confirm` today; add one) | #487 |
+| 3 | `clean-up` (github-workflow) | `--yes` / bare `auto` alias | Skip the "Proceed?" gate on the preview-then-confirm sweep | Gate **on** | `cleanUp.confirmGate` — same shape; the `auto` alias is a second `off` spelling the migration must keep or retire | #487 |
+| 4 | `clean-up` → `scripts/clean_up.sh` | `--execute` | Dry-run plan → mutating (remove worktrees, delete branches, `fetch --prune`, ff default branch) | **Dry-run**; the skill passes `--execute` only after the gate | Not a skill-invocation token: it is the script's mutation switch behind gate #3. Keep it a script flag and document it as governed by `cleanUp.confirmGate`; no separate key unless #488 wants a `cleanUp.execute: [true, false, prompt]` default-dry-run knob | #488 |
+| 5 | `hygiene` (github-workflow) | *(none — `--auto` here is `gh pr merge --auto`)* | Arm auto-merge on the hygiene PR (step 6) | **Always arms** — prose only, no key, no token | `hygiene.autoMerge` — `default: true`, `modes: [true, false]` (a dispatched CI skill: no prompt mode, no flag) | #488 |
+| 6 | `delegate` (orchestration) | *(none — `--auto` is the `gh` flag)* | Arm auto-merge on each opened PR | `delegate.autoMerge` **already a key**, `default: false`; the orchestrator prompt carries the per-run switch, not a token | Add `modes: [true, false]` (no `flag:` — invocation is a scope, not a flag list) | #488 |
+| 7 | `delegate` | *(none)* | Approval gate before push | `delegate.approveBeforePush` key, `default: false` | Add `modes: [true, false]` | #488 |
+| 8 | `delegate` | *(none)* | Batch mode (explicit scope stands in for plan acceptance) | `delegate.batchMode` key, `default: false` | Add `modes: [true, false]` | #488 |
+| 9 | `autopilot` (orchestration) | `+automerge` | Per-run auto-merge consent | Key `autopilot.autoMerge` `default: false`, but prose says "no config setting … ask every run" = **prompt in all but name** | **This PR:** `modes: [true, false, prompt]`, `lockMode: false`, `nonInteractive: false`, `flag: { on: "+automerge" }` (render no-op). #489 flips `default:` + `lockMode:` to `prompt` when the prose migrates | #489 |
+| 10 | `autopilot` | `+review[:N]` | Review-loop consent; `:N` overrides `autopilot.maxReviewRounds` for the run | as #9 | as #9 with `flag: { on: "+review" }`; the `:N` cap suffix stays skill-parsed (it overrides a *value* key, not a mode) | #489 |
+| 11 | `autopilot` | `+qa[:N]` | QA-loop consent; `:N` overrides `autopilot.maxQaRounds` | as #9 | as #9 with `flag: { on: "+qa" }` | #489 |
+| 12 | `autopilot` | `+audit` | Audit-gate consent | as #9 | as #9 with `flag: { on: "+audit" }` | #489 |
+| 13 | `waffle-report` (wafflestack) | `--yes` | Skip the confirmation gate before filing upstream | Gate **on** ("Skipped by `--yes` only" — no non-interactive skip) | `waffle.reportConfirmGate` — `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` (it files in *another* repo; never silently) | #487 (found by the sweep; not in the epic list) |
+
+**Excluded by the sweep, on purpose:** `--run <path>` (clean-up: a value argument, not a switch); `--force` / `--gitignore` / `--allow-missing` / `--verify-render` / `--disable` / `--enable` (the `waffle-*` skills pass these through to the `wafflestack` CLI — the CLI owns their defaults); `--file` / `--phase` (delegate's `checkpoint.mjs` script args); `+review:0` / `+qa:deep` (malformed-token examples, not tokens); every `gh` / `git` / `npm` / `npx expo` flag.
+
+**Not yet declared anywhere (#5 hygiene) is the one behavior with no key *and* no token** — the only way to stop hygiene arming auto-merge today is to eject the skill.
+
+**Alternatives considered**: A boolean `locked: true` instead of `lockMode: <mode>` — rejected:
+naming the mode makes the manifest self-describing and lets `validate` catch a default edit that
+forgets the lock. Letting a `flag:` override a locked key be refused too — rejected: the lock is a
+statement about *stickiness* (config), not about the human's per-run say-so; refusing the token
+would make autopilot's consents unreachable. Requiring `nonInteractive:` on every behavioral key —
+rejected: a two-mode key has no unspecified state to fall back from. Enforcing the consumer value
+in `validate` — rejected: `validate` lints the toolkit and reads no project; the consumer side
+rides the existing `pattern:` enforcement points (`render`, `doctor`), which is where a bad
+`waffle.yaml` value is already caught.
+
+**Impact**: `template.mjs` (`modeProblems`, `PROMPT_MODE`), `render.mjs` (`compileGuards` /
+`configGuardProblems`), `validate.mjs` (`behavioralKeyProblems`), `schema/FORMAT.md` (§ Behavioral
+keys), `stacks/orchestration/stack.yaml` (four autopilot keys). Consumer-facing: any autopilot
+consent set in config now fails the render. Follow-ups: #486 threads the tokens through render,
+#487–#489 migrate the skills, #490 documents the contract in SETUP.md.
+
+---
+
 ## 2026-09-15: External providers sit behind a capability-named proxy skill, offered but never tracked (#471)
 
 **Context**: [Archify](https://github.com/tt-a1i/archify) (MIT) is the preferred renderer for the

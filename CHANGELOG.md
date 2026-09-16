@@ -92,6 +92,24 @@ is what you reach for across a breaking one.
   and the default `ARCHITECTURE.md` spec now asks for the system diagram through it. The pattern is
   documented as "Proxy skills" in `schema/FORMAT.md`. Consumer impact: additive — re-render picks
   up the new skill and the agent grant; nothing external is fetched or locked.
+- **Behavioral config keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:` (#478, sub-tasks
+  1–2).** A `config:` key that switches a *behavior* (a confirmation gate, auto-merge, a review
+  loop) can now declare a closed `modes:` list instead of a `pattern:` — including the reserved
+  `prompt` mode ("never assume, ask") — plus the invocation tokens that override it
+  (`flag: { on, off }`), a `lockMode:` that pins what config may say, and the `nonInteractive:`
+  fallback a CI/agent caller gets in `prompt` mode. Precedence is fixed: explicit token →
+  `waffle.local.yaml` → `waffle.yaml` → `default:`. `validate` lints the declaration (a `default:`
+  outside `modes:` fails, `lockMode:` must equal the default, `nonInteractive:` is required iff
+  `prompt` is a mode); `render` and bare `doctor` reject a consumer value outside `modes:` or
+  overriding a lock, at the same enforcement points as `pattern:`. The four autopilot consents
+  (`autopilot.autoMerge` / `reviewLoop` / `qaLoop` / `auditStep`) now declare
+  `modes: [true, false, prompt]`, `lockMode: false`, and their `+automerge` / `+review` / `+qa` /
+  `+audit` tokens — metadata only, the render is byte-identical. The inventory of every skill flag
+  and its hardcoded default lives in `DECISIONS.md`; threading the tokens through render (#486),
+  migrating each skill's prose (#487–#489), and the playbook docs (#490) follow.
+  *Consumer impact:* additive; the one tightening is that `autopilot.autoMerge: true` (or any
+  autopilot consent) in `waffle.yaml` / `waffle.local.yaml` now fails `render` and `doctor` —
+  the skill already refused to honor it, so remove the line.
 
 ### Changed
 - **Toggle internals: one unknown-name check, one frontmatter grammar, SKILL.md parsed once

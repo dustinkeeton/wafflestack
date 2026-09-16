@@ -649,6 +649,10 @@ config:
   autopilot.autoMerge:
     required: false
     default: false
+    modes: [true, false, prompt]
+    lockMode: false
+    nonInteractive: false
+    flag: { on: "+automerge" }
     description: >-
       Per-run auto-merge consent for the autopilot backlog runner — whether an autopilot
       run may arm `gh pr merge --auto --merge` on the PRs it opens. When true, autopilot
@@ -669,6 +673,10 @@ config:
   autopilot.reviewLoop:
     required: false
     default: false
+    modes: [true, false, prompt]
+    lockMode: false
+    nonInteractive: false
+    flag: { on: "+review" }
     description: >-
       Per-run consent for the autopilot adversarial-review → pr-response loop — whether an
       autopilot run reviews each PR after it goes green (and before it is armed or left for a
@@ -700,6 +708,10 @@ config:
   autopilot.qaLoop:
     required: false
     default: false
+    modes: [true, false, prompt]
+    lockMode: false
+    nonInteractive: false
+    flag: { on: "+qa" }
     description: >-
       Per-run consent for the autopilot qa → pr-response functional-QA loop — whether an autopilot
       run QAs each PR after it goes green (ahead of the review loop, the audit gate, and arming),
@@ -746,6 +758,10 @@ config:
   autopilot.auditStep:
     required: false
     default: false
+    modes: [true, false, prompt]
+    lockMode: false
+    nonInteractive: false
+    flag: { on: "+audit" }
     description: >-
       Per-run consent for the autopilot /audit gate — whether an autopilot run runs the /audit
       chain on each PR as the FINAL pre-merge quality gate, after the review loop and before the

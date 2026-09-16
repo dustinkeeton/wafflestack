@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, PROMPT_MODE, isModeScalar, modeMatches } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
@@ -608,6 +608,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
           }
         }
       }
+      for (const problem of behavioralKeyProblems(spec)) problems.push(`${ctx}: config key ${key} ${problem}`);
     }
 
     for (const skill of stack.skills) {
@@ -645,6 +646,85 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
  * Undeclared {{...}} text is usually third-party template syntax that must pass through, so only
  * dotted lowercase keys — the toolkit's config-key convention — are flagged.
  */
+const FLAG_KEYS = ['on', 'off'];
+
+/**
+ * Lint the behavioral-key fields of one `config:` spec (#478): `modes:`, `flag:`, `lockMode:`,
+ * `nonInteractive:`. The consumer-side counterpart (a `waffle.yaml` value outside `modes:` or
+ * overriding a locked key) is `modeProblems` in template.mjs, enforced at render and by doctor.
+ */
+export function behavioralKeyProblems(spec) {
+  const problems = [];
+  const has = (field) => spec?.[field] !== undefined;
+  const literalDefault = has('default') && !(typeof spec.default === 'string' && spec.default.includes('{{'));
+  let modes = null;
+  if (has('modes')) {
+    if (!Array.isArray(spec.modes) || spec.modes.length === 0 || !spec.modes.every(isModeScalar)) {
+      problems.push('`modes` must be a non-empty list of scalars (true, false, a string, or a number)');
+    } else {
+      modes = spec.modes;
+      const seen = new Set();
+      for (const m of modes) {
+        if (seen.has(String(m))) problems.push(`\`modes\` lists ${JSON.stringify(m)} more than once`);
+        seen.add(String(m));
+      }
+      if (literalDefault && !modes.some((m) => modeMatches(m, spec.default))) {
+        problems.push(`default ${JSON.stringify(spec.default)} is not one of its declared modes`);
+      }
+      if (has('pattern') || has('entryPatterns')) {
+        problems.push('declares both `modes` and a `pattern`/`entryPatterns` guard — a closed mode list needs no regex');
+      }
+    }
+  }
+  if (has('lockMode')) {
+    if (!isModeScalar(spec.lockMode)) {
+      problems.push('`lockMode` must be a scalar mode');
+    } else {
+      if (modes && !modes.some((m) => modeMatches(m, spec.lockMode))) {
+        problems.push(`\`lockMode\` ${JSON.stringify(spec.lockMode)} is not one of its declared modes`);
+      }
+      if (!literalDefault) {
+        problems.push('declares `lockMode` without a literal `default` — a locked key must default to the mode it is locked to');
+      } else if (!modeMatches(spec.lockMode, spec.default)) {
+        problems.push(`\`lockMode\` ${JSON.stringify(spec.lockMode)} does not equal its default ${JSON.stringify(spec.default)}`);
+      }
+    }
+  }
+  if (has('flag')) {
+    const flag = spec.flag;
+    if (!isPlainObject(flag)) {
+      problems.push('`flag` must be a map of { on, off } tokens');
+    } else {
+      const unknown = Object.keys(flag).filter((k) => !FLAG_KEYS.includes(k));
+      if (unknown.length) problems.push(`\`flag\` has unknown key(s) ${unknown.join(', ')} (allowed: on, off)`);
+      const present = FLAG_KEYS.filter((k) => flag[k] !== undefined);
+      if (!present.length) problems.push('`flag` must name at least one token (`on:` and/or `off:`)');
+      for (const k of present) {
+        if (typeof flag[k] !== 'string' || !flag[k].length || /\s/.test(flag[k])) {
+          problems.push(`\`flag.${k}\` must be a single non-empty token with no whitespace`);
+        }
+      }
+      if (present.length === 2 && flag.on === flag.off) problems.push('`flag.on` and `flag.off` must be different tokens');
+      if (!modes) {
+        problems.push('declares a `flag` but no `modes` — a flag token switches a key whose modes are declared');
+      } else if (!modes.every((m) => typeof m === 'boolean' || m === PROMPT_MODE)) {
+        problems.push('declares a `flag`, so its `modes` may only be true, false, and prompt — a flag token is a boolean switch');
+      }
+    }
+  }
+  const promptable = Boolean(modes?.some((m) => m === PROMPT_MODE));
+  if (has('nonInteractive')) {
+    if (!promptable) {
+      problems.push('declares `nonInteractive` but `prompt` is not one of its modes — the fallback would never apply');
+    } else if (spec.nonInteractive !== 'fail' && (spec.nonInteractive === PROMPT_MODE || !modes.some((m) => modeMatches(m, spec.nonInteractive)))) {
+      problems.push('`nonInteractive` must be `fail` or one of its non-prompt modes');
+    }
+  } else if (promptable) {
+    problems.push('lists `prompt` in its modes but declares no `nonInteractive` fallback (a mode value, or `fail`)');
+  }
+  return problems;
+}
+
 function looksLikeConfigKey(key) {
   return /^[a-z][\w-]*(\.[\w-]+)+$/.test(key);
 }
