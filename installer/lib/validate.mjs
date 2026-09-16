@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
 import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems } from './template.mjs';
-import { parseFrontmatter } from './util.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
@@ -612,8 +611,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     }
 
     for (const skill of stack.skills) {
-      const raw = fs.readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf8');
-      const { data } = parseFrontmatter(raw);
+      const { data } = skill;
       if (!data.name) problems.push(`${ctx}: skill ${skill.name} missing frontmatter name`);
       if (!data.description) problems.push(`${ctx}: skill ${skill.name} missing frontmatter description`);
       for (const rel of skill.files.filter((f) => f.endsWith('.md'))) {

@@ -2,7 +2,7 @@
 // Per-skill model-invocation override (#476): the consumer's `skills.modelInvocation` block and
 // the render-time frontmatter patch it drives. Pure — no fs, no imports beyond util.
 
-import { parseFrontmatter } from './util.mjs';
+import { FRONTMATTER_RE, parseFrontmatter } from './util.mjs';
 
 export const MODEL_INVOCATION_KEY = 'disable-model-invocation';
 export const CONFIG_PATH = ['skills', 'modelInvocation'];
@@ -113,16 +113,23 @@ export function overrideFor(override, name) {
 
 /**
  * Whether a SKILL.md's own frontmatter disables model invocation — the state the override is
- * measured against, and the one every non-`claude` target renders.
+ * measured against, and the one every non-`claude` target renders. Only a literal `true` counts.
  *
+ * @param {Record<string, any>} data parsed frontmatter (`SkillItem.data`)
+ * @returns {boolean}
+ */
+export function frontmatterDisablesModelInvocation(data) {
+  return data[MODEL_INVOCATION_KEY] === true;
+}
+
+/**
  * @param {string} source the SKILL.md text
  * @returns {boolean}
  */
 export function sourceDisablesModelInvocation(source) {
-  return parseFrontmatter(source).data[MODEL_INVOCATION_KEY] === true;
+  return frontmatterDisablesModelInvocation(parseFrontmatter(source).data);
 }
 
-const FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---\r?\n)/;
 // A quoted key is valid YAML that `parseFrontmatter` reads as the same key; miss it and the patch appends a duplicate.
 const KEY_LINE_RE = /^['"]?disable-model-invocation['"]?\s*:/;
 

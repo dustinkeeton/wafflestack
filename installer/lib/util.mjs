@@ -136,6 +136,13 @@ export function lookupPath(obj, dotted) {
 }
 
 /**
+ * THE frontmatter grammar: groups are (open, block, close). Shared by `parseFrontmatter` and the
+ * `disable-model-invocation` patcher so both agree on what counts as frontmatter (#485). An empty
+ * block (`---\n---\n`) does not match — both sides treat it as no frontmatter.
+ */
+export const FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---\r?\n)/;
+
+/**
  * Parse frontmatter off a markdown file. Returns { data, body }.
  *
  * @param {string} text
@@ -143,9 +150,9 @@ export function lookupPath(obj, dotted) {
  *   frontmatter block; it is parsed YAML, so its shape stays `any`-valued.
  */
 export function parseFrontmatter(text) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text);
+  const m = FRONTMATTER_RE.exec(text);
   if (!m) return { data: {}, body: text };
-  return { data: YAML.parse(m[1]) ?? {}, body: text.slice(m[0].length).replace(/^\r?\n+/, '') };
+  return { data: YAML.parse(m[2]) ?? {}, body: text.slice(m[0].length).replace(/^\r?\n+/, '') };
 }
 
 /**

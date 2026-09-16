@@ -5,9 +5,8 @@
  * by the render lifecycle, and all of it is assembled from item frontmatter substituted with the
  * same resolver render uses. Brand chrome per `assets/README.md`.
  */
-import fs from 'node:fs';
 import path from 'node:path';
-import { parseFrontmatter, lookupPath } from './util.mjs';
+import { lookupPath } from './util.mjs';
 import { substitute } from './template.mjs';
 import { makeResolver } from './project.mjs';
 import { resolveAgentSkill } from './refs.mjs';
@@ -156,7 +155,7 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [], t
   const commands = [];
   for (const { stack, kind, item } of selection.items) {
     if (kind !== 'skills') continue;
-    const { data } = parseFrontmatter(fs.readFileSync(path.join(item.dir, 'SKILL.md'), 'utf8'));
+    const { data } = item;
     if (!isUserInvocable(data)) continue;
     commands.push({
       // The key an agent's frontmatter `skills:` list resolves against, so the reverse map joins on it.

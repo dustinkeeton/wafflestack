@@ -446,10 +446,11 @@ function refuseUnrenderable(model) {
 // The one write `toggle` makes: persist to waffle.yaml, then re-render so the lock records it.
 function applyToggleAndRender(model, disable, enable, toolkitIdentity) {
   refuseUnrenderable(model);
-  const rendered = model.rows.map((r) => r.name);
-  const unknown = [...disable, ...enable].filter((n) => !rendered.includes(n));
-  if (unknown.length) fail(`toggle: ${unknown.join(', ')} is not a rendered skill — rendered: ${rendered.join(', ') || '(none)'}`);
   const result = applyToggle({ cwd, model, disable, enable });
+  if (result.unknown.length) {
+    const rendered = model.rows.map((r) => r.name);
+    fail(`toggle: ${result.unknown.join(', ')} is not a rendered skill — rendered: ${rendered.join(', ') || '(none)'}`);
+  }
   if (!result.changed) {
     console.log('no change — every named skill is already in that state; config untouched');
     return;

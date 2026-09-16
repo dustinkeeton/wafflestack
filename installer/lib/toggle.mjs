@@ -3,7 +3,6 @@
 // `.waffle/waffle.yaml` write. Rendered skills only — externals are never tracked (#471).
 
 import fs from 'node:fs';
-import path from 'node:path';
 import YAML from 'yaml';
 import { loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
@@ -11,7 +10,7 @@ import { computeSelection } from './refs.mjs';
 import { readTreeLock } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile, CONFIG_FILE } from './project.mjs';
 import { ANSI, keypressMultiSelect } from './list.mjs';
-import { CONFIG_PATH, overrideFor, sourceDisablesModelInvocation } from './model-invocation.mjs';
+import { CONFIG_PATH, overrideFor, frontmatterDisablesModelInvocation } from './model-invocation.mjs';
 
 /**
  * @typedef {object} ToggleRow one rendered skill
@@ -49,7 +48,7 @@ export function computeToggleModel({ toolkitRoot, cwd }) {
   for (const sel of selection.items) {
     if (sel.kind !== 'skills') continue;
     const skill = /** @type {import('./toolkit.mjs').SkillItem} */ (sel.item);
-    const sourceDisabled = sourceDisablesModelInvocation(fs.readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf8'));
+    const sourceDisabled = frontmatterDisablesModelInvocation(skill.data);
     const override = overrideFor(project.modelInvocation, skill.name);
     rows.push({ name: skill.name, stack: sel.stackName, sourceDisabled, disabled: override ?? sourceDisabled, override });
   }

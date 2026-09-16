@@ -28,6 +28,7 @@ import { loadRegistry } from './registry.mjs';
  * @property {string} name
  * @property {string} dir absolute path to `skills/<name>/`
  * @property {string[]} files skill-dir-relative paths, sorted; always includes `SKILL.md`
+ * @property {Record<string, any>} data parsed SKILL.md frontmatter, read once at load (#485)
  *
  * @typedef {object} FileItem
  * @property {'files'} kind
@@ -240,7 +241,8 @@ function loadStack(name, dir) {
     if (!files.includes('SKILL.md')) {
       throw new Error(`stack ${name}: skill ${skillName} has no SKILL.md`);
     }
-    return { kind: 'skill', name: skillName, dir: skillDir, files };
+    const { data } = parseFrontmatter(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8'));
+    return { kind: 'skill', name: skillName, dir: skillDir, files, data };
   });
 
   /** @type {FileItem[]} */
