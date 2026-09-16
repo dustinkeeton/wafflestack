@@ -267,6 +267,27 @@ describe('render + toggle against a fixture toolkit (#476)', () => {
     assert.equal(read(cwd, '.waffle/waffle.yaml'), before);
   });
 
+  test('applyToggle minimizes a redundant entry (override == source) even when nothing flips (#484 F4)', () => {
+    configure(['targets: [claude]', 'stacks: [alpha]', 'skills:', '  modelInvocation:', '    enabled: [sa]', '    disabled: [sb]']);
+    assert.equal(rowFor(model(), 'sa').override, false, 'the entry is live, just redundant');
+    const r = applyToggle({ cwd, model: model(), enable: ['sa'] });
+    assert.deepEqual(r, { changed: true, disabled: [], enabled: [], unknown: [] });
+    assert.doesNotMatch(read(cwd, '.waffle/waffle.yaml'), /modelInvocation/, 'both entries matched their source → block removed');
+  });
+
+  test('applyToggle tolerates a null `skills:` scalar in the config (#484 F2)', () => {
+    for (const nullish of ['skills:', 'skills: ~']) {
+      configure(['targets: [claude]', 'stacks: [alpha]', nullish, 'config: {}']);
+      assert.deepEqual(loadProjectConfig(cwd).modelInvocation, { disabled: [], enabled: [] });
+      const r = applyToggle({ cwd, model: model(), disable: ['sa'] });
+      assert.deepEqual(r, { changed: true, disabled: ['sa'], enabled: [], unknown: [] });
+      assert.match(read(cwd, '.waffle/waffle.yaml'), /skills:\n {2}modelInvocation:\n {4}disabled:\n {6}- sa\n/);
+      assert.deepEqual(loadProjectConfig(cwd).modelInvocation, { disabled: ['sa'], enabled: [] });
+    }
+    configure(['targets: [claude]', 'stacks: [alpha]', 'skills:']);
+    assert.equal(applyToggle({ cwd, model: model(), enable: ['sa'] }).changed, false, 'nothing to remove, nothing walked');
+  });
+
   test('applyToggle keeps carried (unmatched) names alongside a new entry', () => {
     configure(['targets: [claude]', 'stacks: [alpha]', 'skills:', '  modelInvocation:', '    disabled: [ghost]']);
     const r = applyToggle({ cwd, model: model(), disable: ['sa'] });

@@ -147,13 +147,18 @@ export function applyToggle({ cwd, model, disable = [], enable = [] }) {
   const enabled = [...model.carried.enabled];
   for (const row of model.rows) {
     const want = disable.includes(row.name) ? true : enable.includes(row.name) ? false : row.disabled;
-    if (want === row.sourceDisabled) continue;
-    (want ? disabled : enabled).push(row.name);
+    if (want !== row.sourceDisabled) (want ? disabled : enabled).push(row.name);
   }
 
-  const before = model.rows.map((r) => r.disabled);
-  const after = model.rows.map((r) => (disable.includes(r.name) ? true : enable.includes(r.name) ? false : r.disabled));
-  const changed = before.some((v, i) => v !== after[i]);
+  // `changed` compares the block to be written against the one in the file, not effective states:
+  // a redundant entry (override == source) is minimized away even when nothing flips.
+  const current = {
+    disabled: [...model.carried.disabled, ...model.rows.filter((r) => r.override === true).map((r) => r.name)],
+    enabled: [...model.carried.enabled, ...model.rows.filter((r) => r.override === false).map((r) => r.name)],
+  };
+  /** @type {(a: string[], b: string[]) => boolean} */
+  const same = (a, b) => a.length === b.length && a.every((n) => b.includes(n));
+  const changed = !same(current.disabled, disabled) || !same(current.enabled, enabled);
   if (changed) writeOverride(cwd, disabled, enabled);
   return { changed, disabled, enabled, unknown: [] };
 }
@@ -167,11 +172,16 @@ function writeOverride(cwd, disabled, enabled) {
   const { file } = resolveConfigFile(cwd);
   const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
   if (doc.errors?.length) throw new Error(`${CONFIG_FILE} did not parse cleanly — fix it before toggling`);
+  // A null `skills:` scalar is a valid (empty) block to the loader but not a collection `setIn`/
+  // `deleteIn` can walk — treat it as absent.
+  const skills = doc.get('skills', true);
+  const skillsMap = YAML.isMap(skills) ? skills : null;
   if (!disabled.length && !enabled.length) {
+    if (!skillsMap) return;
     doc.deleteIn(CONFIG_PATH);
-    const skills = doc.get('skills', true);
-    if (skills && typeof skills === 'object' && 'items' in skills && !(/** @type {any} */ (skills).items.length)) doc.delete('skills');
+    if (!skillsMap.items.length) doc.delete('skills');
   } else {
+    if (!skillsMap && doc.has('skills')) doc.delete('skills');
     /** @type {Record<string, string[]>} */
     const block = {};
     if (disabled.length) block.disabled = disabled;
