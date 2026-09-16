@@ -11,6 +11,8 @@ import { placeholderKeys } from '../lib/template.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
 import { toolkitInventory } from '../lib/setup.mjs';
 import { renderProject } from '../lib/render.mjs';
+import { VALID_TARGETS } from '../lib/project.mjs';
+import { HARNESS_TOOLS, DEAD_HARNESS_TOOLS, anyTargetTools, toolsForTarget, toolCalls, unknownToolCalls } from '../lib/harness-tools.mjs';
 
 // -----------------------------------------------------------------------------
 // Layer 1 evals — deterministic pins on the RENDERED prompts a consumer installs;
@@ -3304,6 +3306,166 @@ describe('the #360 guard can actually fail (regression fixtures)', () => {
       .map((m) => m[2]);
     assert.deepEqual(shutdowns, ['a1']);
     assert.deepEqual(stopped, ['a1']);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #445: the #360 denylist above forbids the tools we KNOW are dead; this allowlist admits only the
+// tools each target HAS. `installer/lib/harness-tools.mjs` is the single place a rename or removal
+// is recorded — a new `Tool(` call in any skill must be added there, on purpose, in the same PR.
+// -----------------------------------------------------------------------------
+
+const rosterViolations = (text, roster, label) =>
+  unknownToolCalls(text, roster).map((c) => `${label}:${c.line}: ${c.name}( is not a tool this target has`);
+const rosterViolationsInFile = (f, roster, label = who(f)) => rosterViolations(fs.readFileSync(f, 'utf8'), roster, label);
+
+const agentToolsFrontmatter = (f) => {
+  const { data } = parseFrontmatter(fs.readFileSync(f, 'utf8'));
+  const raw = data?.tools;
+  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
+  return list.map((t) => String(t).trim()).filter(Boolean);
+};
+
+describe('source + rendered content: every tool call is in the harness roster (#445)', () => {
+  const files = () => [...sourceSkillFiles(), ...sourceAgentFiles(), ...renderedSkillFiles(), ...renderedAgentFiles()];
+
+  test('the roster is well-formed: sorted, unique, and free of the #360 dead tools', () => {
+    for (const target of VALID_TARGETS) assert.ok(target in HARNESS_TOOLS, `HARNESS_TOOLS declares nothing for target ${target}`);
+    for (const [target, roster] of Object.entries(HARNESS_TOOLS)) {
+      if (roster === null) continue;
+      assert.deepEqual([...roster], [...new Set(roster)].sort(), `HARNESS_TOOLS.${target} must be sorted and unique`);
+      for (const dead of DEAD_HARNESS_TOOLS) assert.ok(!roster.includes(dead), `HARNESS_TOOLS.${target} lists ${dead}, which the harness removed (#360)`);
+    }
+    assert.ok(Array.isArray(HARNESS_TOOLS.claude), 'claude is the target with a real tool surface — its roster cannot be null');
+  });
+
+  // Reach guard: the extractor must actually SEE the calls the skills make, or every file passes vacuously.
+  test('the sweep reaches every source and rendered skill/agent and observes the real tool calls', () => {
+    const swept = files();
+    for (const f of [...sourceSkillFiles(), ...sourceAgentFiles()]) assert.ok(swept.includes(f), `${who(f)} is not swept by the #445 guard`);
+    const observed = new Set(swept.flatMap((f) => toolCalls(fs.readFileSync(f, 'utf8')).map((c) => c.name)));
+    for (const expected of ['Agent', 'SendMessage', 'TaskCreate', 'TaskUpdate', 'TaskStop', 'Bash']) {
+      assert.ok(observed.has(expected), `the extractor found no ${expected}( call anywhere — the orchestration skills make them, so the sweep is blind`);
+    }
+  });
+
+  test('no SOURCE skill or agent calls a tool that no target exposes', () => {
+    const roster = anyTargetTools();
+    const violations = [...sourceSkillFiles(), ...sourceAgentFiles()].flatMap((f) => rosterViolationsInFile(f, roster));
+    assert.deepEqual(violations, [], `calls a tool no harness has — add it to HARNESS_TOOLS (installer/lib/harness-tools.mjs) on purpose, or fix the call:\n${violations.join('\n')}`);
+  });
+
+  test("the committed claude render calls only claude's tools", () => {
+    const rendered = [...renderedSkillFiles(), ...renderedAgentFiles()];
+    assert.ok(rendered.length >= 20, `expected the committed .claude/ render, found ${rendered.length} files`);
+    const violations = rendered.flatMap((f) => rosterViolationsInFile(f, HARNESS_TOOLS.claude));
+    assert.deepEqual(violations, [], `rendered for claude, yet calls a tool claude lacks:\n${violations.join('\n')}`);
+  });
+
+  test("every agent's `tools:` frontmatter names only claude tools (source + render)", () => {
+    const roster = new Set(HARNESS_TOOLS.claude);
+    const bad = [...sourceAgentFiles(), ...renderedAgentFiles()].flatMap((f) =>
+      agentToolsFrontmatter(f).filter((t) => !roster.has(t)).map((t) => `${who(f)}: tools: names ${t}, which claude does not have`),
+    );
+    assert.deepEqual(bad, [], bad.join('\n'));
+  });
+
+  describe("per-target: a render of this repo's own stacks for every target", () => {
+    let cwd;
+    let rendered;
+
+    before(() => {
+      cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-445-'));
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      const own = fs.readFileSync(path.join(REPO_ROOT, '.waffle', 'waffle.yaml'), 'utf8');
+      const mirrored = own.replace(/^targets:.*$/m, `targets: [${VALID_TARGETS.join(', ')}]`);
+      assert.notEqual(mirrored, own, 'the repo waffle.yaml must carry a single-line targets: to mirror');
+      fs.writeFileSync(path.join(cwd, '.waffle', 'waffle.yaml'), mirrored);
+      const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+      assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+      const walk = (d) =>
+        fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+      rendered = walk(cwd)
+        .map((f) => path.relative(cwd, f))
+        .filter((f) => /(SKILL\.md|agents\/[^/]+\.(md|toml))$/.test(f));
+    });
+
+    after(() => {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    });
+
+    // `.claude/` is claude's alone; `.codex/` is codex's; the shared `.agents/` dir is read by every non-claude target.
+    const filesForTarget = (target) =>
+      rendered.filter((f) => (target === 'claude' ? f.startsWith('.claude/') : f.startsWith('.codex/') ? target === 'codex' : f.startsWith('.agents/')));
+
+    for (const target of VALID_TARGETS) {
+      test(`${target}: nothing rendered for it calls a tool it lacks`, (t) => {
+        const roster = toolsForTarget(target);
+        const swept = filesForTarget(target);
+        assert.ok(swept.length >= 10, `expected the ${target} render, found ${swept.length} files`);
+        if (roster === null) {
+          t.skip(`${target} declares no call-shaped tool roster (HARNESS_TOOLS.${JSON.stringify(target)} is null) — its ${swept.length} rendered files are unverified`);
+          return;
+        }
+        const violations = swept.flatMap((f) => rosterViolationsInFile(path.join(cwd, f), roster, f));
+        assert.deepEqual(violations, [], `rendered for ${target}, yet calls a tool ${target} lacks:\n${violations.join('\n')}`);
+      });
+    }
+
+    test('the per-target check is not vacuous: claude is verified, and an empty roster would bite', () => {
+      assert.ok(toolsForTarget('claude') !== null, 'claude must be a verified target');
+      const claudeFiles = filesForTarget('claude');
+      assert.ok(claudeFiles.length >= 10, `expected the claude render, found ${claudeFiles.length} files`);
+      const bitten = claudeFiles.flatMap((f) => rosterViolationsInFile(path.join(cwd, f), [], f));
+      assert.ok(bitten.some((v) => /Agent\(/.test(v)), 'a target whose roster is [] must flag the orchestration skills\' Agent( calls');
+    });
+  });
+});
+
+describe('the #445 guard can actually fail (regression fixtures)', () => {
+  test('a call to a tool outside the roster is flagged with its line and name', () => {
+    const text = 'Phase 1\nTeamCreate(name: "x")\nAgent(name: "y")\nFooBar( x: 1 )';
+    assert.deepEqual(rosterViolations(text, HARNESS_TOOLS.claude, 'fixture'), [
+      'fixture:2: TeamCreate( is not a tool this target has',
+      'fixture:4: FooBar( is not a tool this target has',
+    ]);
+  });
+
+  test('a typo in a real tool name is a violation, not a near-miss', () => {
+    assert.deepEqual(toolCalls('TaskUpate(taskId: "1", status: "completed")').map((c) => c.name), ['TaskUpate']);
+    assert.equal(rosterViolations('TaskUpate(taskId: "1")', HARNESS_TOOLS.claude, 'f').length, 1);
+  });
+
+  test('prose parentheticals and plurals are not calls', () => {
+    const prose = ['open the PR (draft) first', 'the ID (from step 2)', '| # | Issue | Module(s) | Group |', 'Off (default) / On (opt-in)'].join('\n');
+    assert.deepEqual(toolCalls(prose), []);
+  });
+
+  test('code-fence syntax that is not a tool call is excluded: constructors, declarations, member calls', () => {
+    const code = [
+      "new Notice('saved')",
+      'this.addSettingTab(new {{plugin.classPrefix}}SettingTab(this.app, this));',
+      'never pass strings to `new Function()`',
+      'export default function Example() {',
+      'Object.getPrototypeOf(x); foo.Bar(1)',
+    ].join('\n');
+    assert.deepEqual(toolCalls(code), []);
+  });
+
+  test('the stop-list is syntactic, so a tool call beside excluded syntax is still seen', () => {
+    assert.deepEqual(toolCalls('const a = new Foo(); Agent(name: "x")').map((c) => c.name), ['Agent']);
+    assert.deepEqual(toolCalls('Bash(gh api:*) — permission pattern').map((c) => c.name), ['Bash']);
+  });
+
+  test('unknownToolCalls honours the roster it is given', () => {
+    assert.deepEqual(unknownToolCalls('Agent(name: "x")', ['Agent']), []);
+    assert.deepEqual(unknownToolCalls('Agent(name: "x")', []).map((c) => c.name), ['Agent']);
+  });
+
+  test('the union roster is what a harness-neutral source is checked against', () => {
+    const union = anyTargetTools();
+    for (const name of HARNESS_TOOLS.claude) assert.ok(union.has(name));
+    for (const dead of DEAD_HARNESS_TOOLS) assert.ok(!union.has(dead));
   });
 });
 
