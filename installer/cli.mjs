@@ -245,6 +245,7 @@ try {
       const explicit = disable.length || enable.length;
       if (!explicit && process.stdin.isTTY && process.stdout.isTTY) {
         // Gated BEFORE the picker: a refusal must not arrive after the user has made their picks.
+        refuseUnrenderable(model);
         const toolkitIdentity = requireRelease('toggle');
         const result = await interactiveToggle(model);
         if (!result.applied) {
@@ -434,8 +435,17 @@ function reportGitignore(added) {
   );
 }
 
+// A selection that already fails must refuse BEFORE the config write: writing first would leave
+// waffle.yaml modified with nothing rendered and the lock stale, and the wrapper skill promises
+// every refusal means "nothing was written".
+function refuseUnrenderable(model) {
+  if (!model.errors.length) return;
+  fail(`toggle: the current selection does not render — fix ${CONFIG_FILE} first; nothing was written\n${model.errors.map((e) => `  ${e}`).join('\n')}`);
+}
+
 // The one write `toggle` makes: persist to waffle.yaml, then re-render so the lock records it.
 function applyToggleAndRender(model, disable, enable, toolkitIdentity) {
+  refuseUnrenderable(model);
   const rendered = model.rows.map((r) => r.name);
   const unknown = [...disable, ...enable].filter((n) => !rendered.includes(n));
   if (unknown.length) fail(`toggle: ${unknown.join(', ')} is not a rendered skill — rendered: ${rendered.join(', ') || '(none)'}`);

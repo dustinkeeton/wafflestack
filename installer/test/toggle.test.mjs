@@ -382,6 +382,21 @@ describe('CLI toggle (#476)', () => {
     assert.equal(read(cwd, '.waffle/waffle.yaml'), before);
   });
 
+  test('a selection that does not render refuses BEFORE the config write (#484 F1)', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [wafflestack]\ninclude: [skills/does-not-exist]\nconfig: {}\n');
+    const before = read(cwd, '.waffle/waffle.yaml');
+    const run = runCli(['toggle', '--disable', 'waffle-doctor', '--allow-unreleased'], cwd);
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(run.stderr, /does not render .* nothing was written/);
+    assert.match(run.stderr, /does-not-exist/);
+    assert.doesNotMatch(run.stdout, /modelInvocation/);
+    assert.equal(read(cwd, '.waffle/waffle.yaml'), before);
+    assert.equal(fs.existsSync(path.join(cwd, '.claude')), false, 'nothing rendered either');
+    const table = runCli(['toggle'], cwd);
+    assert.equal(table.status, 0, 'the read-only table still prints, with the problem as a note');
+    assert.match(table.stdout, /selection problem: .*does-not-exist/);
+  });
+
   test('help and usage list toggle and its flags', () => {
     const run = runCli(['help'], cwd);
     assert.equal(run.status, 0);

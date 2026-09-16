@@ -59,6 +59,8 @@ its source), then re-renders so the rendered `SKILL.md` and the lock move togeth
 - **`is not a rendered skill`** — the name is not in this repo's render. The rendered names are
   listed; externally installed skills (a harness plugin living outside the repo, say) are out of scope —
   the toolkit never tracks them.
+- **`does not render`** — the selection in `.waffle/waffle.yaml` already fails (an unresolvable
+  ref, say); the problems are listed. Fix those first, then retry. Nothing was written.
 - **A refusal naming a pinned command** — the toolkit that ran is not a release; run the exact
   pinned command it prints. Nothing was written.
 
