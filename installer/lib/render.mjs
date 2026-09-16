@@ -7,7 +7,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys, makeGuard } from './template.mjs';
+import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template.mjs';
 import { toolkitLockEntry } from './toolkit-ref.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
@@ -672,6 +672,7 @@ function collectSourceProvenance(groups, producedBy, lockFiles) {
 function compileGuards(toolkit, errors) {
   const patterns = new Map();
   const entryPatterns = new Map();
+  const modes = new Map();
   const add = (key, guard) => {
     const existing = patterns.get(key);
     if (existing) existing.push(guard);
@@ -713,9 +714,18 @@ function compileGuards(toolkit, errors) {
           errors.push(`stack "${stackName}" config key ${key} has an invalid entryPattern for ${leaf}: ${err.message}`);
         }
       }
+      // Behavioral keys (#478): a closed `modes:` list and/or a `lockMode:` travel with the key too.
+      const modeList = Array.isArray(spec?.modes) && spec.modes.every(isModeScalar) ? spec.modes : null;
+      const lockMode = isModeScalar(spec?.lockMode) ? spec.lockMode : undefined;
+      if (modeList || lockMode !== undefined) {
+        const guard = { modes: modeList, lockMode, source };
+        const existing = modes.get(key);
+        if (existing) existing.push(guard);
+        else modes.set(key, [guard]);
+      }
     }
   }
-  return { patterns, entryPatterns };
+  return { patterns, entryPatterns, modes };
 }
 
 /**
@@ -741,7 +751,7 @@ export function configGuardProblems({ toolkit, project, selection }) {
     const resolve = makeResolver(stack, project.values, target);
     for (const key of collectUsedKeys(items)) {
       if (reported.has(key)) continue;
-      if (!guards.patterns.has(key) && !guards.entryPatterns.has(key)) continue;
+      if (!guards.patterns.has(key) && !guards.entryPatterns.has(key) && !guards.modes.has(key)) continue;
       if (resolve(key) === undefined) continue; // see above — not this check's business
       const before = problems.length;
       substitute(`{{${key}}}`, resolve, stack.declared, problems, `stack "${stackName}"`, guards);

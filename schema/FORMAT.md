@@ -63,6 +63,13 @@ config:                              # template keys this stack may reference
     required: false
     default: npm run build
     description: Production build command run in preflight checks.
+  issue.confirmGate:                 # a BEHAVIORAL key: a closed set of modes, not a free value
+    required: false
+    default: true
+    modes: [true, false, prompt]     # every value the key may resolve to; `prompt` = ask the human
+    flag: { on: "--confirm", off: "--yes" }   # invocation tokens that override the resolved mode
+    nonInteractive: false            # what a CI/agent caller gets in `prompt` mode (a mode, or fail)
+    description: Whether /issue pauses at the plan gate before mutating.
 env:                                 # env vars the stack's content depends on
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 prerequisites:                       # optional: typed external prerequisites, checked by doctor
@@ -103,6 +110,51 @@ worked example). Each entry must be a map; each of its keys must be a declared l
 leaf fails the render, so a typo can't ride along unguarded); each leaf value must be a string
 fully matching its regex. Same enforcement points as `pattern:` — top-level and nested
 substitution — and the same toolkit-wide union: a leaf guarded by two stacks must satisfy both.
+
+### Behavioral keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:`
+
+A key whose value is a **behavior** rather than a string — whether a skill pauses at a
+confirmation gate, arms auto-merge, runs a review loop — declares a closed **`modes:`** list
+instead of a `pattern:`. Every mode is a YAML scalar (`true`, `false`, a string, a number);
+membership is decided on the rendered text, so `true` and `"true"` are one mode. Such a key
+resolves in one of three ways:
+
+| Mode | Meaning | Example |
+|------|---------|---------|
+| `default: <value>` | Silent default when the invocation says nothing. | `issue.confirmGate: true` |
+| `prompt` | Never assume; ask the human when unspecified. A non-interactive caller gets the key's `nonInteractive:` fallback, or a hard fail. | `autopilot.autoMerge: prompt` |
+| explicit override | The invocation states the value with the key's `flag:` token; beats both of the above. | `/issue --yes …` or `/issue --confirm …` |
+
+**Precedence** (highest first): explicit command token → `.waffle/waffle.local.yaml` →
+`.waffle/waffle.yaml` → the stack's `default:`. A consumer changes a skill's behavior by setting
+the key in config — never by editing the rendered skill, which the `doctor` drift gate reverts.
+
+The four fields, and what `validate` holds them to:
+
+- **`modes:`** — a non-empty list of distinct scalars. The literal `default:` must be a member. A
+  key declares `modes:` *or* a `pattern:`/`entryPatterns:` guard, never both — a closed list
+  needs no regex. The reserved mode `prompt` is a string like any other; declaring it is what
+  makes the key promptable.
+- **`flag:`** — a map `{ on: <token>, off: <token> }` naming the invocation tokens that override
+  the resolved mode (`on` sets `true`, `off` sets `false`); either side may be omitted. A token is
+  one whitespace-free word (`--yes`, `+automerge`), and `on` ≠ `off`. Because a flag is a boolean
+  switch, a key with a `flag:` may only list `true`, `false`, and `prompt` as modes.
+- **`lockMode: <mode>`** — pins what **config** may say: the `default:` must equal it, and a
+  `waffle.yaml` / `waffle.local.yaml` value that is anything else fails the render. The lock is
+  about the config layer only — the `flag:` token still overrides per invocation. Use it for
+  consents that must be captured fresh every run (autopilot's `+automerge` / `+review` / `+qa` /
+  `+audit`): the never-sticky rule becomes a declared property of the key, not a paragraph.
+- **`nonInteractive:`** — required exactly when `prompt` is a mode, forbidden otherwise: a mode
+  value the key resolves to when no human can answer (a CI job, a subagent), or the word `fail`.
+  This generalizes the `issue` skill's rule that *non-interactive* — not *agent* — is the test.
+
+Enforcement mirrors `pattern:`. `validate` lints the declaration (every rule above). The consumer
+side — a value outside `modes:`, a list or map where a scalar is expected, or a value overriding a
+`lockMode:` — is checked by `render` (top-level and nested substitution; a failed guard bails
+before the tree is touched) and by bare `doctor`, so a value edited after a clean render is still
+caught. Today the renderer substitutes only the resolved mode (`{{key}}`); rendering the `flag:`
+tokens into a skill's argument-parsing prose, and each skill's migration onto these keys, are
+tracked under #478.
 
 `requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
 skill telling the reader to "see the `github-project-management` skill"). Each key is an

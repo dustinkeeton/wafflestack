@@ -78,7 +78,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 |--------|---------|
 | `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317) |
 | `refs.mjs` | Ref grammar, resolution, dependency closure, render selection, target-scope gate (#364) |
-| `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:` guard machinery |
+| `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:`/`modes:` guard machinery |
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) |
 | `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers |
 | `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver, `resolveInside` containment guard |
@@ -111,7 +111,7 @@ export function renderProject({ toolkitRoot, cwd, sourceBaseDir = cwd, toolkitVe
 export function readLock(cwd)                  // → committed lock | null — the CANONICAL render (committed inputs only, #317)
 export function readLocalLock(cwd)             // → gitignored .waffle/waffle.local.lock.json | null — this machine's EFFECTIVE render
 export function readTreeLock(cwd)              // → readLocalLock(cwd) ?? readLock(cwd) — manifest of the files ON DISK (doctor drift, list status, render prune/clobber; --verify-render deliberately does NOT read it)
-export function configGuardProblems({ toolkit, project, selection }) // → string[] — the guard failures a render WOULD produce, without rendering (#218; runs the real substitute() per used guarded key, so bare doctor enforces pattern:/entryPatterns:)
+export function configGuardProblems({ toolkit, project, selection }) // → string[] — the guard failures a render WOULD produce, without rendering (#218; runs the real substitute() per used guarded key, so bare doctor enforces pattern:/entryPatterns:/modes:/lockMode:)
 export function collectUsedKeys(items)         // → Set<string> placeholder keys referenced by a selection's source content
 
 // refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs + the registry gate from registry.mjs)
@@ -132,7 +132,9 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) // 
 export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, stackName, companions, scopedTo }] (#74: opt-in syrup gated out while its companion skill IS selected; scopedTo non-null ⇒ target scope excludes this project, warning withholds the pour command but is still issued, #364)
 
 // template.mjs — {{placeholder}} substitution (PLACEHOLDER regex template.mjs:4; MAX_SUBSTITUTION_DEPTH = 4, template.mjs:7)
-export function substitute(text, resolve, declared, errors, context, guards) // → string; guards = { patterns: Map<key,guard[]>, entryPatterns: Map<key,Map<leaf,guard[]>> } built by render's compileGuards (render.mjs:624)
+export function substitute(text, resolve, declared, errors, context, guards) // → string; guards = { patterns: Map<key,guard[]>, entryPatterns: Map<key,Map<leaf,guard[]>>, modes: Map<key,{modes,lockMode,source}[]> } built by render's compileGuards (render.mjs:672)
+export function modeProblems(guards, key, raw, expanded) // → string|null — a behavioral key's raw value must be a scalar and its expanded text one of its modes: (and equal to lockMode: when locked); first problem, null when clean or unguarded (#478)
+export const PROMPT_MODE = 'prompt'      // the reserved never-assume mode; isModeScalar(v) / modeMatches(mode, value) are the shared membership rules
 export function makeGuard(pattern, source, hint = '')   // → { re, pattern, source, hint } compiled guard record
 export function entryPatternProblems(guards, key, value) // → string[] — map-valued key vs its declared entryPatterns: leaves; NEVER short-circuits, it reports EVERY malformed entry and leaf (#246, template.mjs:85); [] when clean or unguarded
 export function formatValue(v)                 // → string (string[] joins ", "; else YAML block)
@@ -225,7 +227,8 @@ export function init({ cwd })                  // → configFile path (starter .
 
 // validate.mjs — see the module table; targets: is NOT linted here (every malformation is a hard LOAD error in toolkit.mjs)
 export const RESERVED_AGENT_KEYS = ['name', 'description', 'skills', 'identity'] // validate.mjs:56
-export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, prerequisites fields, harness built-ins, waffle-registry reconcile
+export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, behavioral-key fields (modes:/flag:/lockMode:/nonInteractive:, #478), prerequisites fields, harness built-ins, waffle-registry reconcile
+export function behavioralKeyProblems(spec)    // → string[] — the #478 lint for one config: spec: modes non-empty/distinct scalars with default a member and no pattern:; lockMode = default and ∈ modes; flag { on, off } single tokens on boolean modes; nonInteractive required iff prompt ∈ modes
 export function validateRegistry(rootDir, toolkit) // → string[] — the registry ↔ filesystem ↔ stack.yaml three-way reconcile (#335): entry shape/unknown keys, duplicates, stack+path must be the loader's path and exist, stack.yaml must list it, tombstone must NOT still resolve and its replacedBy chain must end live, un-registered waffles on disk OR in a manifest, and an offered waffle requiring a `wip` one. [] when the toolkit ships no registry (fork/fixture) or the stack is external
 export function validateSourceBytes(rootDir)   // → string[] — raw control bytes in installer/ + stacks/ text sources
 export function validateHarnessBuiltins()      // → string[] — every HARNESS_PATTERNS guard compiles and its built-in default satisfies it
@@ -592,6 +595,13 @@ registry entry (a plugin has no path, no render, nothing to prune).
   leaves fail (#156). Guards are unioned toolkit-wide (a key guarded in two stacks must satisfy
   both, #244) and enforced in `substitute` at render and by `configGuardProblems` in bare
   `doctor`; linted by `validate`.
+- Behavioral keys (#478) — a key declares a closed `modes:` list (scalars; `prompt` = ask the
+  human) instead of a `pattern:`, optional `flag: { on, off }` invocation tokens, optional
+  `lockMode: <mode>` (config may not set anything else; `default:` must equal it), and
+  `nonInteractive:` (a mode or `fail`; required iff `prompt` ∈ modes). Precedence: explicit
+  token → `waffle.local.yaml` → `waffle.yaml` → `default:`. Membership is judged on rendered
+  text; enforced at the same points as `pattern:` (`modeProblems`, `template.mjs`). The four
+  `autopilot.*` consents ship `lockMode: false`. Schema: `schema/FORMAT.md` § Behavioral keys.
 - Project command values — `project.{lint,typecheck,test,build}Cmd` (13 declarations, one
   byte-identical `pattern:`, `stacks/code-quality/stack.yaml:66`; `project.installCmd` and
   `sec.auditCmd` sit outside it by design) render into a `Bash(<cmd>:*)` grant, so each must be ONE
@@ -655,7 +665,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1413 tests, 191 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1434 tests, 194 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |

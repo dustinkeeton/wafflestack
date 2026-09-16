@@ -33,8 +33,50 @@ export function substitute(text, resolve, declared, errors, context, guards) {
       errors.push(patternFailure(context, key, failing));
       return match;
     }
+    const modeProblem = modeProblems(guards, key, v, value);
+    if (modeProblem) {
+      errors.push(`${context}: config value for {{${key}}} ${modeProblem}`);
+      return match;
+    }
     return value;
   });
+}
+
+/** The reserved mode a behavioral key may resolve to: never assume, ask the human (#478). */
+export const PROMPT_MODE = 'prompt';
+
+/** A mode is a YAML scalar — the value space a behavioral key resolves over is a closed list of these. */
+export const isModeScalar = (v) => ['string', 'number', 'boolean'].includes(typeof v);
+
+/** Mode membership is decided on rendered text, so YAML `true` and the string `"true"` are one mode. */
+export const modeMatches = (mode, value) => String(mode) === String(value);
+
+const describeModeList = (modes) => `[${modes.map((m) => JSON.stringify(m)).join(', ')}]`;
+
+/**
+ * Check a resolved value against the key's declared `modes:` / `lockMode:` guards (#478). The raw
+ * value is type-checked (a list or map is never a mode); membership runs on the expanded text.
+ * Returns the first problem, or null when clean or unguarded.
+ */
+export function modeProblems(guards, key, raw, expanded) {
+  const gs = guards?.modes?.get(key);
+  if (!gs) return null;
+  if (!isModeScalar(raw)) {
+    const kind = Array.isArray(raw) ? 'a list' : raw !== null && typeof raw === 'object' ? 'a map' : `${raw}`;
+    return `must be a scalar, not ${kind} (the key declares modes:)`;
+  }
+  for (const g of gs) {
+    if (g.lockMode !== undefined && !modeMatches(g.lockMode, expanded)) {
+      return (
+        `is locked to ${JSON.stringify(g.lockMode)} by ${g.source} (lockMode) — ` +
+        `config may not set it; the skill's own flag token is the only per-run override`
+      );
+    }
+    if (g.modes && !g.modes.some((m) => modeMatches(m, expanded))) {
+      return `is not one of its declared modes ${describeModeList(g.modes)} (declared by ${g.source})`;
+    }
+  }
+  return null;
 }
 
 /** Compile a raw `pattern:` into the guard record render and validate share; throws on an invalid regex. */
@@ -132,6 +174,11 @@ function expandNested(text, resolve, depth, guards, errors, context) {
     const failing = failingGuards(guards, key, value);
     if (failing.length) {
       errors?.push(patternFailure(context, key, failing));
+      return match;
+    }
+    const modeProblem = modeProblems(guards, key, v, value);
+    if (modeProblem) {
+      errors?.push(`${context}: config value for {{${key}}} ${modeProblem}`);
       return match;
     }
     return value;
