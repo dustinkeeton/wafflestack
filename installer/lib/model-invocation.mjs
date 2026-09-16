@@ -123,7 +123,8 @@ export function sourceDisablesModelInvocation(source) {
 }
 
 const FRONTMATTER_RE = /^(---\r?\n)([\s\S]*?)(\r?\n---\r?\n)/;
-const KEY_LINE_RE = /^disable-model-invocation\s*:/;
+// A quoted key is valid YAML that `parseFrontmatter` reads as the same key; miss it and the patch appends a duplicate.
+const KEY_LINE_RE = /^['"]?disable-model-invocation['"]?\s*:/;
 
 /**
  * Patch a rendered SKILL.md's frontmatter to the override's verdict, touching only the

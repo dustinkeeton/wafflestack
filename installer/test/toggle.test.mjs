@@ -92,6 +92,15 @@ describe('applyModelInvocation: the frontmatter patch (#476)', () => {
     assert.equal(applyModelInvocation(crlf, true), `---\r\nname: sa\r\n${KEY}\r\n---\r\n\r\n# Body\r\n`);
   });
 
+  test('a quoted key is the same key: rewritten in place, stripped, never duplicated (#484 F3)', () => {
+    const quoted = '---\nname: sq\n"disable-model-invocation": true\ndescription: Q.\n---\n\n# Body\n';
+    assert.equal(applyModelInvocation(quoted, true), `---\nname: sq\n${KEY}\ndescription: Q.\n---\n\n# Body\n`);
+    assert.equal(applyModelInvocation(quoted, false), '---\nname: sq\ndescription: Q.\n---\n\n# Body\n');
+    const single = quoted.replace('"disable-model-invocation"', "'disable-model-invocation'");
+    assert.equal(applyModelInvocation(single, false), '---\nname: sq\ndescription: Q.\n---\n\n# Body\n');
+    assert.equal(sourceDisablesModelInvocation(quoted), true);
+  });
+
   test('sourceDisablesModelInvocation reads only a literal `true`', () => {
     assert.equal(sourceDisablesModelInvocation(off), true);
     assert.equal(sourceDisablesModelInvocation(plain), false);
