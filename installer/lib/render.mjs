@@ -24,6 +24,7 @@ import {
   unacknowledgedStacks,
 } from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
+import { applyModelInvocation, overrideFor } from './model-invocation.mjs';
 import {
   loadProjectConfig,
   makeResolver,
@@ -408,6 +409,8 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
     checkEnvPrerequisites({ stack, project, cwd, warnings });
   }
 
+  warnings.push(...modelInvocationWarnings(project, selection));
+
   if (!errors.length) {
     for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors, toolkitVersion })) {
       emit(rel, content, 'waffledocs');
@@ -415,6 +418,30 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   }
 
   return { outputs, producedBy, groups, selection };
+}
+
+/**
+ * A `skills.modelInvocation` entry that cannot take effect is a warning, never an error (#476):
+ * the key stays put while a stack is toggled off, and the non-`claude` targets have no such key.
+ *
+ * @param {import('./project.mjs').ProjectConfig} project
+ * @param {{ items: { kind: string, item: { name: string } }[] }} selection
+ * @returns {string[]}
+ */
+function modelInvocationWarnings(project, selection) {
+  const { disabled = [], enabled = [] } = project.modelInvocation ?? {};
+  const named = [...disabled, ...enabled];
+  if (!named.length) return [];
+  if (!project.targets.includes('claude')) {
+    return [
+      `skills.modelInvocation names ${named.join(', ')} but no \`claude\` target is enabled — the override is a no-op (codex/agents-dir have no disable-model-invocation key)`,
+    ];
+  }
+  const rendered = new Set(selection.items.filter((s) => s.kind === 'skills').map((s) => s.item.name));
+  const unmatched = named.filter((n) => !rendered.has(n));
+  return unmatched.length
+    ? [`skills.modelInvocation names ${unmatched.join(', ')}, which no selected stack renders — left in ${CONFIG_FILE}, ignored this render`]
+    : [];
 }
 
 /** Outputs in a stable order — the lock's bytes must not depend on the order stacks rendered in. */
@@ -522,6 +549,10 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guar
       const raw = fs.readFileSync(abs, 'utf8');
       for (const [dir, target] of skillDirs) {
         let content = substitute(raw, resolvers[target], stack.declared, errors, context, guards);
+        // The override is a Claude Code frontmatter key; the cross-tool dir renders the source verbatim (#476).
+        if (rel === 'SKILL.md' && target === 'claude') {
+          content = applyModelInvocation(content, overrideFor(project.modelInvocation, skill.name));
+        }
         if (rel === 'SKILL.md') content = appendExtension(content, cwd, extPath);
         emit(path.join(dir, rel), content, itemContext);
       }
