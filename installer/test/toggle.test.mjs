@@ -10,7 +10,9 @@ import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { installRefs } from '../lib/eject.mjs';
 import { loadProjectConfig } from '../lib/project.mjs';
-import { normalizeModelInvocation, applyModelInvocation, overrideFor, sourceDisablesModelInvocation } from '../lib/model-invocation.mjs';
+import { normalizeModelInvocation, applyModelInvocation, overrideFor, sourceDisablesModelInvocation, frontmatterDisablesModelInvocation } from '../lib/model-invocation.mjs';
+import { FRONTMATTER_RE, parseFrontmatter } from '../lib/util.mjs';
+import { loadToolkit } from '../lib/toolkit.mjs';
 import { computeToggleModel, formatToggleTable, toggleChoices, interactiveToggle, applyToggle } from '../lib/toggle.mjs';
 
 // Per-skill model-invocation override + `wafflestack toggle` (#476). Invariants: the override
@@ -105,6 +107,29 @@ describe('applyModelInvocation: the frontmatter patch (#476)', () => {
     assert.equal(sourceDisablesModelInvocation(off), true);
     assert.equal(sourceDisablesModelInvocation(plain), false);
     assert.equal(sourceDisablesModelInvocation('---\nname: x\ndisable-model-invocation: "true"\n---\n\nb\n'), false);
+    assert.equal(frontmatterDisablesModelInvocation({ 'disable-model-invocation': true }), true);
+    assert.equal(frontmatterDisablesModelInvocation({ 'disable-model-invocation': 'true' }), false);
+    assert.equal(frontmatterDisablesModelInvocation({}), false);
+  });
+
+  // One grammar (#485): the patcher and `parseFrontmatter` share util's FRONTMATTER_RE, so every
+  // edge the regex decides — empty block, BOM, leading blank line, `---` at EOF — lands the same way.
+  test('the patcher and parseFrontmatter agree on what is frontmatter (#485)', () => {
+    assert.equal(FRONTMATTER_RE.flags, '', 'no g/y flag: a shared regex must not carry lastIndex state');
+    const edges = {
+      empty: '---\n---\n\n# Body\n',
+      bom: '\ufeff---\nname: x\n---\n\n# Body\n',
+      leadingBlank: '\n---\nname: x\n---\n\n# Body\n',
+      closeAtEof: '---\nname: x\n---',
+      none: '# Body\n',
+    };
+    for (const [label, text] of Object.entries(edges)) {
+      assert.deepEqual(parseFrontmatter(text), { data: {}, body: text }, `${label}: parseFrontmatter sees no frontmatter`);
+      assert.equal(applyModelInvocation(text, true), text, `${label}: the patcher leaves it untouched`);
+      assert.equal(applyModelInvocation(text, false), text, `${label}: the patcher leaves it untouched`);
+    }
+    assert.deepEqual(parseFrontmatter(plain), { data: { name: 'sa', description: 'Skill A.' }, body: '# Body\n' });
+    assert.deepEqual(parseFrontmatter(applyModelInvocation(plain, true)).data, { name: 'sa', description: 'Skill A.', 'disable-model-invocation': true });
   });
 });
 
@@ -212,6 +237,15 @@ describe('render + toggle against a fixture toolkit (#476)', () => {
     assert.deepEqual(rowFor(m, 'sb'), { name: 'sb', stack: 'alpha', sourceDisabled: true, disabled: false, override: false });
     assert.deepEqual(m.carried, { disabled: ['ghost'], enabled: [] });
     assert.deepEqual(m.errors, []);
+  });
+
+  test('SkillItem carries the parsed SKILL.md frontmatter, so toggle never re-reads the file (#485)', () => {
+    const alpha = loadToolkit(toolkitRoot).stacks.get('alpha');
+    assert.deepEqual(alpha.skills.find((s) => s.name === 'sb').data, { name: 'sb', description: 'Skill B.', 'disable-model-invocation': true });
+    assert.deepEqual(alpha.skills.find((s) => s.name === 'sa').data, { name: 'sa', description: 'Skill A.', 'argument-hint': '<x>' });
+    configure(['targets: [claude]', 'stacks: [alpha]']);
+    const m = model();
+    for (const s of alpha.skills) assert.equal(rowFor(m, s.name).sourceDisabled, frontmatterDisablesModelInvocation(s.data), s.name);
   });
 
   test('computeToggleModel reads the COMMITTED config: an overlay never shows up as the override', () => {

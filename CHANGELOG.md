@@ -80,6 +80,15 @@ is what you reach for across a breaking one.
   up the new skill and the agent grant; nothing external is fetched or locked.
 
 ### Changed
+- **Toggle internals: one unknown-name check, one frontmatter grammar, SKILL.md parsed once
+  (#485).** Three cleanups deferred from the #484 review, none user-visible. `applyToggle` is now
+  the only unknown-name check (the CLI formats its `unknown` list with the rendered names; the
+  message is unchanged); `util.mjs` exports `FRONTMATTER_RE` and both `parseFrontmatter` and the
+  `disable-model-invocation` patcher use it, so they cannot disagree on what counts as frontmatter
+  (a test pins the empty-block, BOM, leading-blank-line and `---`-at-EOF edges); and `SkillItem`
+  carries its parsed SKILL.md frontmatter as `data`, read once in `loadStack`, so `toggle`,
+  `waffledocs` and `validate` stop re-reading and re-parsing every rendered skill.
+  **Consumer impact:** none — no render output changes.
 - **`docs.voiceGuardrailSection` now defaults to the docs the harness treats as owner-voiced
   (#472).** A `docs-system` install that never overrode the key rendered no guardrail at all, so
   a docs pass was free to rewrite the consumer's `README.md` or `CLAUDE.md` even though the `docs`

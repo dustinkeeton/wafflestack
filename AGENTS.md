@@ -153,7 +153,7 @@ export function isWaffleWip(registry, stackName, refKind, name) // → boolean �
 export function replacementFor(registry, refKind, name) // → { ref, name, via } | null — walks the replacedBy chain transitively; null on a cycle or >8 hops
 
 // toolkit.mjs — load toolkit.yaml + stack manifests
-export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
+export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .skills [{kind,name,dir,files,data}] (data = SKILL.md frontmatter parsed ONCE at load; toggle, waffledocs and validate read it, never the file, #485), .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
 export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125); carries the BUILT-IN registry unchanged — external waffles are unregistered here, hence never gated (#335); with no externalStacks NOTHING is fetched — it reduces exactly to loadToolkit(builtinRoot) (toolkit.mjs:127)
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) // → string[] (usedKeys Set scopes to referenced keys)
 
@@ -188,7 +188,8 @@ export function exists(file)                   // → boolean
 export function writeFileEnsuringDir(file, content) // mkdir -p + write
 export function deepMerge(a, b)                // → merged (b wins; arrays/scalars replace)
 export function lookupPath(obj, dotted)        // → value | undefined (nested keys only — a flat literal "a.b": key is inert)
-export function parseFrontmatter(text)         // → { data, body }
+export const FRONTMATTER_RE                    // /^(---\r?\n)([\s\S]*?)(\r?\n---\r?\n)/ — THE frontmatter grammar (groups: open, block, close); shared by parseFrontmatter and the model-invocation patcher (#485); an empty block matches neither
+export function parseFrontmatter(text)         // → { data, body } (FRONTMATTER_RE; no match → { data: {}, body: text })
 export function stringifyFrontmatter(data, body) // → string
 export function parseVersion(v)                // → [major, minor, patch] | null
 export function compareVersions(a, b)          // → -1 | 0 | 1 (unparseable sorts low)
@@ -282,7 +283,8 @@ export const ANSI                              // escape codes the tables and pi
 export const MODEL_INVOCATION_KEY = 'disable-model-invocation', CONFIG_PATH = ['skills', 'modelInvocation']
 export function normalizeModelInvocation(rawSkills, configFile) // → { disabled: string[], enabled: string[] } — validates the `skills:` block (map, allowed keys, string lists, no name on both sides; `skills/` prefix shed, deduped); THROWS on any shape error
 export function overrideFor(override, name)     // → true (disable) | false (enable) | null (source wins)
-export function sourceDisablesModelInvocation(source) // → boolean — the SKILL.md's own frontmatter literal `true`
+export function frontmatterDisablesModelInvocation(data) // → boolean — parsed frontmatter (`SkillItem.data`) has the literal `true`; what toggle reads (#485)
+export function sourceDisablesModelInvocation(source) // → boolean — the same verdict from SKILL.md text
 export function applyModelInvocation(content, disable) // → patched text: true sets the key (in place, else appended as the last frontmatter line), false strips it, null returns the input untouched; no frontmatter → untouched
 
 // toggle.mjs — `toggle` command (#476); rendered skills only, externals never listed (#471)
@@ -290,7 +292,7 @@ export function computeToggleModel({ toolkitRoot, cwd }) // → { hasClaude, row
 export function formatToggleTable(model, { color = false } = {}) // → plain table (agent-invocable | slash-only, (source) | (override)); color gates ANSI
 export function toggleChoices(model)           // → picker rows, checked = agent-invocable (pure)
 export function interactiveToggle(model, { input, output } = {}) // → Promise<{ applied, disable, enable, reason? }> — the FULL desired state; TTY-guarded by caller
-export function applyToggle({ cwd, model, disable = [], enable = [] }) // → { changed, disabled, enabled, unknown } — minimal block (only where a skill differs from its source) written comment-preservingly to waffle.yaml; empty block removed; unknown names write nothing
+export function applyToggle({ cwd, model, disable = [], enable = [] }) // → { changed, disabled, enabled, unknown } — minimal block (only where a skill differs from its source) written comment-preservingly to waffle.yaml; empty block removed; unknown names write nothing — this is THE unknown-name check; the CLI only formats `unknown` with the rendered list (#485)
 
 // prerequisites.mjs — typed external prerequisites (#47/#129)
 export const PREREQ_KINDS = ['tool','secret','scope','label','setting','service','env'], PREREQ_LEVELS = ['require','recommend']
