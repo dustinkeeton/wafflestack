@@ -32,6 +32,20 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Harness tool allowlist — every `Tool(` call a skill or agent makes is checked against a
+  per-target roster (#445).** The #360 guard was a denylist of the three tools already known to
+  be dead; it could not catch the next removal, a typo, or a tool one target lacks. The roster now
+  lives as data in `installer/lib/harness-tools.mjs` (`HARNESS_TOOLS`, one entry per render
+  target; `claude` is the only target with a declared call-shaped surface, `codex` /
+  `agents-dir` are `null` = unverified and their per-target check *skips visibly* rather than
+  passing vacuously). `content.test.mjs` extracts call-shaped names (`Name(` with the paren
+  attached; constructors, declarations, member calls and `(s)` plurals excluded syntactically) from
+  every `stacks/**` source, the committed `.claude/` render, a temp all-targets render, and each
+  agent's `tools:` frontmatter, and fails `npm test` with file, line and name on any call outside
+  the roster. The #360 denylist tests stay as regression fixtures; the roster is asserted to be
+  sorted, unique, and free of the dead names. Maintenance rule (`AGENTS.md`): adding a tool call
+  to any skill means adding the name to the roster, on purpose, in the same PR. Consumer impact:
+  none — a toolkit-developer test and data module; nothing renders differently.
 - **`wafflestack toggle` + `/waffle-toggle` — per-skill agent-invocation override (#476).**
   Claude Code's `disable-model-invocation: true` keeps a skill slash-only, but skills render
   byte-for-byte from the stack source, so whether an agent could fire `/audit` on its own was

@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-09-13
+last-updated: 2026-09-16
 ---
 
 # AGENTS.md — wafflestack
@@ -87,6 +87,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) |
 | `setup.mjs` | `setup` output: SETUP.md playbook + inventory (+ update-mode section) |
 | `model-invocation.mjs` | Per-skill model-invocation override (#476): `skills.modelInvocation` normalization (throws on shape errors, like invalid `targets:`) + the pure `disable-model-invocation` frontmatter patch render applies to the `claude` copy |
+| `harness-tools.mjs` | Per-target roster of call-shaped harness tools (#445): `HARNESS_TOOLS` data (`claude` declared; `codex` / `agents-dir` `null` = unverified) + the pure `toolCalls` / `unknownToolCalls` extractor `content.test.mjs` sweeps every source and render with. THE place a harness tool rename or removal is recorded |
 | `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); Markdown `<details>` and JSON renderers |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps |
@@ -287,6 +288,14 @@ export function frontmatterDisablesModelInvocation(data) // → boolean — pars
 export function sourceDisablesModelInvocation(source) // → boolean — the same verdict from SKILL.md text
 export function applyModelInvocation(content, disable) // → patched text: true sets the key (in place, else appended as the last frontmatter line), false strips it, null returns the input untouched; no frontmatter → untouched
 
+// harness-tools.mjs — per-target harness tool roster (#445); pure, no imports (Target is a JSDoc type import)
+export const HARNESS_TOOLS                     // Readonly<Record<Target, ReadonlyArray<string> | null>> — sorted, unique; null = no declared call-shaped surface (per-target check SKIPS visibly; [] would assert "calls nothing")
+export const DEAD_HARNESS_TOOLS                // ['TeamCreate','TeamDelete','TeamList'] (#360) — asserted absent from every roster
+export const toolsForTarget = (target)         // → ReadonlyArray<string> | null
+export const anyTargetTools = ()               // → Set<string> — the union every harness-neutral SOURCE is checked against
+export function toolCalls(text)                // → [{ name, line }] — `Name(` with the paren ATTACHED (`PR (draft)` is prose); skips `new X(` / `new {{k}}X(`, `function X(`, `a.X(`, and `X(s)` plurals
+export function unknownToolCalls(text, roster) // → the toolCalls whose name is outside `roster`
+
 // toggle.mjs — `toggle` command (#476); rendered skills only, externals never listed (#471)
 export function computeToggleModel({ toolkitRoot, cwd }) // → { hasClaude, rows: [{ name, stack, sourceDisabled, disabled, override }], carried: { disabled, enabled }, errors } — COMMITTED config (canonical), tree lock for the selection
 export function formatToggleTable(model, { color = false } = {}) // → plain table (agent-invocable | slash-only, (source) | (override)); color gates ANSI
@@ -365,6 +374,7 @@ setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registr
 list.mjs     → toolkit, render, refs, project, util
 toggle.mjs   → toolkit, sources, refs, render, project, list, model-invocation
 model-invocation.mjs → util
+harness-tools.mjs → (nothing; test-only consumer: content.test.mjs)
 waffledocs.mjs → template, project, refs, util
 avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
@@ -645,7 +655,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1298 tests, 174 suites) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1413 tests, 191 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
@@ -657,7 +667,7 @@ Test files (14): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
-can-fail fixture, `content.test.mjs:2571`), `plugins.test.mjs` (#199: `recommendedPlugins:`
+can-fail fixture, `content.test.mjs:2571`; and the #445 harness tool allowlist sweep — sources, committed render, temp all-targets render, agent `tools:` frontmatter — with its own can-fail fixtures), `plugins.test.mjs` (#199: `recommendedPlugins:`
 normalize/offer/lint over a one-stack fixture),
 `evals.test.mjs` (eval layer 2 harness with the mock model, free inside `npm test`),
 `checkpoint.test.mjs` / `memory.test.mjs` / `identity.test.mjs` (the delegate skill's shipped
@@ -671,6 +681,20 @@ required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename r
 `stacks/**` `.mjs` plus workflow YAML: comment-ratio ceiling 15% — 20% for `stacks/**/*.mjs`, ≤12
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the
 `GRANDFATHERED` ratchet map is EMPTY as of the sweep, so every in-scope file meets the ceilings).
+
+### Harness tool roster (#445)
+
+`installer/lib/harness-tools.mjs` is the single place a harness tool rename or removal is
+recorded. `content.test.mjs` ("every tool call is in the harness roster") extracts every
+call-shaped `Name(` from each `stacks/**` skill/agent source, the committed `.claude/` render, a
+temp all-targets render, and each agent's `tools:` frontmatter, and fails with file, line and
+name on any call outside the target's roster. Maintenance rule: adding a `Tool(` call to any
+skill or agent means adding the name to `HARNESS_TOOLS.<target>` on purpose, in the same PR — a
+missing roster entry is a bug in the PR that introduced the call, never grounds for a stop-list
+entry. The stop-list is syntactic only (constructors, declarations, member calls, `(s)` plurals),
+never a name. A target whose roster is `null` is unverified and its check skips visibly; declare
+`[]` to assert that nothing rendered there calls any tool. `TeamCreate` / `TeamDelete` /
+`TeamList` (#360) are asserted absent from every roster.
 
 ## Dogfood state
 

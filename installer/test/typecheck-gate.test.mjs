@@ -21,6 +21,7 @@ const MIGRATED = [
   'installer/lib/report.mjs',
   'installer/lib/model-invocation.mjs',
   'installer/lib/toggle.mjs',
+  'installer/lib/harness-tools.mjs',
 ];
 
 describe('typecheck gate (#177)', () => {
