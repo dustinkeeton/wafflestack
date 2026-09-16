@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
+import { normalizeModelInvocation } from './model-invocation.mjs';
 
 /** @import { Toolkit, Stack } from './toolkit.mjs' */
 
@@ -23,6 +24,7 @@ import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
  * @property {string[]} include item refs to install with their dependency closure
  * @property {Record<string, any>} values the `config:` block — parsed YAML, so `any`-valued
  * @property {string[]} eject item refs released to project ownership
+ * @property {import('./model-invocation.mjs').ModelInvocationOverride} modelInvocation the `skills.modelInvocation` block (#476)
  *
  * @typedef {object} ResolvedDotPath
  * @property {string} file absolute path to read (the CURRENT name when nothing exists)
@@ -435,6 +437,7 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
     include: cfg.include ?? [],
     values: cfg.config ?? {},
     eject: cfg.eject ?? [],
+    modelInvocation: normalizeModelInvocation(cfg.skills, CONFIG_FILE),
   };
 }
 

@@ -9819,7 +9819,7 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
   const SKILLS = [
     'waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render',
-    'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate', 'waffle-report',
+    'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate', 'waffle-report', 'waffle-toggle',
   ];
   let cwd;
 
@@ -9829,7 +9829,7 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
   const writeConfig = (yaml) => write(cwd, '.waffle/waffle.yaml', yaml);
   const render = () => renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
 
-  test('the stack loads with all nine wrapper skills, no agents, and one optional config key', () => {
+  test('the stack loads with all ten wrapper skills, no agents, and one optional config key', () => {
     const stack = loadToolkit(repoRoot).stacks.get('wafflestack');
     assert.ok(stack, 'wafflestack stack registered in toolkit.yaml');
     assert.deepEqual(stack.skills.map((s) => s.name).sort(), [...SKILLS].sort());
@@ -9868,7 +9868,7 @@ describe('wafflestack stack: /waffle-* CLI wrappers (#70)', () => {
     assert.doesNotMatch(doctorSkill, /\{\{\s*waffle\.toolkitRef\s*\}\}/);
   });
 
-  test('all nine wrappers are user-invocable and surface on the generated cheat sheet, with arg-hints', () => {
+  test('all ten wrappers are user-invocable and surface on the generated cheat sheet, with arg-hints', () => {
     writeConfig('targets: [claude]\nstacks: [wafflestack]\nconfig: {}\n');
     assert.equal(render().ok, true);
     const cheat = read(cwd, '.waffle/CHEATSHEET.md');

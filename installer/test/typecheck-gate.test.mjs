@@ -19,6 +19,8 @@ const MIGRATED = [
   'installer/lib/toolkit-ref.mjs',
   'installer/lib/plugins.mjs',
   'installer/lib/report.mjs',
+  'installer/lib/model-invocation.mjs',
+  'installer/lib/toggle.mjs',
 ];
 
 describe('typecheck gate (#177)', () => {

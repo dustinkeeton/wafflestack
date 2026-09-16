@@ -2,11 +2,13 @@ name: wafflestack
 description: >-
   Self-referential stack — one user-invocable `/waffle-*` skill per wafflestack
   CLI subcommand (init, setup, install, render, upgrade, doctor, eject,
-  validate, report). Each skill is a thin wrapper that shells out to
+  validate, report, toggle). Each skill is a thin wrapper that shells out to
   `npx <waffle.toolkitRef> <sub>` and interprets the output with agent judgment,
   so the lifecycle commands are one keystroke away inside any consuming repo.
   `/waffle-report` is the one that leaves the repo: it wraps `report` (redacted
   diagnostics) and files a toolkit bug UPSTREAM, in the toolkit's own tracker.
+  `/waffle-toggle` wraps `toggle`: per-skill agent invocation
+  (`disable-model-invocation`) as a project override, persisted and re-rendered.
   The toolkit dogfoods its own delivery mechanism.
 skills:
   - waffle-init
@@ -18,6 +20,7 @@ skills:
   - waffle-eject
   - waffle-validate
   - waffle-report
+  - waffle-toggle
 config:
   waffle.toolkitRef:
     required: false

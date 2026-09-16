@@ -64,7 +64,7 @@ unenforced (a fork), a corrupt one = hard error.
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development; mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in agent harness design. One optional config key (`project.longName`). This repo appends a project extension grounding it in the toolkit's own paradigms. |
-| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. One optional config key (`waffle.toolkitRef`, default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469). Enabled in this repo's own render. |
+| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). One optional config key (`waffle.toolkitRef`, default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469). Enabled in this repo's own render. |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The output-conflict guard
@@ -86,6 +86,8 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `eject.mjs` | `eject` / `installRefs` / `init` |
 | `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) |
 | `setup.mjs` | `setup` output: SETUP.md playbook + inventory (+ update-mode section) |
+| `model-invocation.mjs` | Per-skill model-invocation override (#476): `skills.modelInvocation` normalization (throws on shape errors, like invalid `targets:`) + the pure `disable-model-invocation` frontmatter patch render applies to the `claude` copy |
+| `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); Markdown `<details>` and JSON renderers |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) |
@@ -94,7 +96,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `waffledocs.mjs` | Generated `.waffle/` overview docs + avatars, via render's `emit()` |
 | `avatars-sync.mjs` | Owner-side Gravatar pipeline behind `avatars sync`/`status` (#285) |
 | `evals.mjs` | Layer 2 eval harness (#109; runner entry `installer/evals.mjs`) |
-| `list.mjs` | `list` command: per-item state model + table + interactive picker (#119) |
+| `list.mjs` | `list` command: per-item state model + table + interactive picker (#119); exports the keypress loop `toggle` reuses (#476) |
 | `prerequisites.mjs` | Typed external prerequisites: normalize, scope, probe, bucket (#47/#129) |
 | `plugins.mjs` | Recommended EXTERNAL harness plugins a stack offers via `setup` (#199); never installed |
 | `sources.mjs` | External `source:` resolution: local path or pinned-git cache (#88/#125) |
@@ -162,7 +164,7 @@ export const LEGACY_CONFIG_FILE, LEGACY_LOCAL_CONFIG_FILE, LEGACY_LOCK_FILE, LEG
 export const VALID_TARGETS = ['claude', 'codex', 'agents-dir'] // project.mjs:58
 export const HARNESS_BUILTINS                  // per-target { assistantName, attributionPath, skillsDir, agentsDir } + target-independent CI-dispatcher scalars { actionRef, actionVersion, apiKeySecret } (#131/#156; project.mjs:563); `harness.toolkitVersion` is NOT here — it is a runtime value the CLI hands `makeResolver` (#461)
 export const HARNESS_PATTERNS                  // injection-guard regexes for agentsDir, skillsDir, actionRef, actionVersion, apiKeySecret (reject `${{`, quotes, newlines; project.mjs:587); seeded into render's guards + checked by validate
-export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) // → { targets, stacks, externalStacks, include, values, eject }; merges the .local overlay UNLESS canonical (#317); splits bare vs {name,source,ref,acknowledgedChecks} stacks: entries; legacy bundles: read fallback
+export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) // → { targets, stacks, externalStacks, include, values, eject, modelInvocation: { disabled, enabled } }; merges the .local overlay UNLESS canonical (#317); splits bare vs {name,source,ref,acknowledgedChecks} stacks: entries; legacy bundles: read fallback
 export function classifyStackSource(source)    // → 'git' | 'path'
 export function normalizeStackEntries(raw)     // → { stacks, externalStacks } (#88; unique names, git-needs-ref / path-forbids-ref, unknown-key rejection; optional non-empty acknowledgedChecks, #458)
 export function renameLegacyStacksKey(doc)     // in-place comment-preserving bundles:→stacks: KEY rename; → true if renamed
@@ -273,6 +275,22 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) // → { 
 export function formatListTable(model, { color = false } = {}) // → aligned plain-text table; color gates ANSI
 export function selectableChoices(model)       // → actionable rows (not current, not scoped out; outdated pre-checked) (pure)
 export function interactiveSelect(model, { input, output } = {}) // → Promise<{ applied, refs, reason? }> (keypress multi-select; TTY-guarded by caller)
+export function keypressMultiSelect({ title, choices, label, input, output }) // → Promise<{ applied, checked }> — the shared ↑/↓/space/a/enter/esc loop behind `list --interactive` and `toggle` (#476); mutates choices[].checked; TTY-guarded by caller
+export const ANSI                              // escape codes the tables and pickers share
+
+// model-invocation.mjs — per-skill `disable-model-invocation` override (#476); pure, imports only util
+export const MODEL_INVOCATION_KEY = 'disable-model-invocation', CONFIG_PATH = ['skills', 'modelInvocation']
+export function normalizeModelInvocation(rawSkills, configFile) // → { disabled: string[], enabled: string[] } — validates the `skills:` block (map, allowed keys, string lists, no name on both sides; `skills/` prefix shed, deduped); THROWS on any shape error
+export function overrideFor(override, name)     // → true (disable) | false (enable) | null (source wins)
+export function sourceDisablesModelInvocation(source) // → boolean — the SKILL.md's own frontmatter literal `true`
+export function applyModelInvocation(content, disable) // → patched text: true sets the key (in place, else appended as the last frontmatter line), false strips it, null returns the input untouched; no frontmatter → untouched
+
+// toggle.mjs — `toggle` command (#476); rendered skills only, externals never listed (#471)
+export function computeToggleModel({ toolkitRoot, cwd }) // → { hasClaude, rows: [{ name, stack, sourceDisabled, disabled, override }], carried: { disabled, enabled }, errors } — COMMITTED config (canonical), tree lock for the selection
+export function formatToggleTable(model, { color = false } = {}) // → plain table (agent-invocable | slash-only, (source) | (override)); color gates ANSI
+export function toggleChoices(model)           // → picker rows, checked = agent-invocable (pure)
+export function interactiveToggle(model, { input, output } = {}) // → Promise<{ applied, disable, enable, reason? }> — the FULL desired state; TTY-guarded by caller
+export function applyToggle({ cwd, model, disable = [], enable = [] }) // → { changed, disabled, enabled, unknown } — minimal block (only where a skill differs from its source) written comment-preservingly to waffle.yaml; empty block removed; unknown names write nothing
 
 // prerequisites.mjs — typed external prerequisites (#47/#129)
 export const PREREQ_KINDS = ['tool','secret','scope','label','setting','service','env'], PREREQ_LEVELS = ['require','recommend']
@@ -333,8 +351,8 @@ Import graph (real `import` statements only; `util.mjs` and `template.mjs` depen
 
 ```
 cli.mjs      → render, doctor, eject, validate, setup, report, upgrade, uninstall, toolkit,
-               prerequisites, list, toolkit-ref, project, avatars-sync (dynamic)
-render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, project, util
+               prerequisites, list, toggle, toolkit-ref, project, avatars-sync (dynamic)
+render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, project, util
 doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, util
 report.mjs   → render, doctor, prerequisites, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
@@ -343,6 +361,8 @@ eject.mjs    → render, toolkit, refs, project, util
 validate.mjs → toolkit, template, refs, prerequisites, plugins, project, registry, util
 setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registry, util
 list.mjs     → toolkit, render, refs, project, util
+toggle.mjs   → toolkit, sources, refs, render, project, list, model-invocation
+model-invocation.mjs → util
 waffledocs.mjs → template, project, refs, util
 avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
@@ -360,15 +380,15 @@ project.mjs  → util
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Usage:
-`wafflestack <init|setup|list|install|render|bake|upgrade|doctor|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
-(`USAGE`, `cli.mjs:46`).
+`wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
+(`USAGE`, `cli.mjs:47`).
 
 Dispatch and exit contract: `help`/`--help`/`-h` print the full help to stdout, exit 0 —
 intercepted before the switch (`cli.mjs:50`), so `uninstall --help` explains rather than deletes;
 there is no per-command help page (#187, `helpText` `cli.mjs:312`). An unknown command, and bare
 `wafflestack`, print banner + usage to stderr, exit 1. Flags are spliced out by name
 (`extractFlag` `cli.mjs:395`, `extractCwd` `cli.mjs:386`), so an unrecognized flag survives as a
-positional: `render`/`bake`/`upgrade`/`list`/`report`/`uninstall`/`reinstall` reject it (takes-no-refs
+positional: `render`/`bake`/`upgrade`/`list`/`toggle`/`report`/`uninstall`/`reinstall` reject it (takes-no-refs
 guard), `install`/`eject` fail resolving it as a ref, `avatars` rejects a non-`sync`/`status`
 first arg, `init`/`setup`/`doctor`/`validate` silently ignore it.
 
@@ -387,14 +407,17 @@ first arg, `init`/`setup`/`doctor`/`validate` silently ignore it.
 | `--verify-render` | `doctor` | re-render committed inputs in a temp dir vs the committed lock |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
 | `--json` | `report` | print the diagnostics bundle as JSON on stdout instead of the Markdown `<details>` block |
-| `--no-color` | `list` | suppress ANSI; the `NO_COLOR` env var does the same (`cli.mjs:216`); neither is listed in `help`'s flag block (#359) |
+| `--disable SKILL` / `--enable SKILL` | `toggle` | #476: set / clear the per-skill model-invocation override without the picker; repeatable, comma-splittable (`extractValues` `cli.mjs:453`); either flag skips the TTY prompt; a name on both sides, a name no selected stack renders, or a flag with no value exits 1 before anything is written |
+| `--no-color` | `list`, `toggle` | suppress ANSI; the `NO_COLOR` env var does the same (`cli.mjs:216`); neither is listed in `help`'s flag block (#359) |
 | `--allow-unreleased` | every command (spliced globally) | #373: suppress the release gate's refusal (toolkit development only); env twin `WAFFLESTACK_ALLOW_UNRELEASED=1`. Suppresses the refusal, not the truth — identity still resolves, network lookup included, so a genuine release keeps its `ref` under the hatch (#383) |
 | `--offline` | every command (spliced globally) | #383: skip the network release lookup (`git ls-remote`); env twin `WAFFLESTACK_OFFLINE=1`. Fails open (identity degrades to `unverified`, `ref: null`); the ONLY switch that skips the lookup — orthogonal to `--allow-unreleased` ("don't refuse me" vs. "don't pay for the answer") |
 
 Release gate (#373; truth in `toolkit-ref.mjs`, gate in `cli.mjs`). Before writing files from
 toolkit content, the CLI resolves its own identity and refuses (exit 1, naming the exact pinned
 command) when provably not a release. Gated: `render`/`bake`, `install`, `upgrade`, `reinstall`,
-`doctor --verify-render`, `list --interactive` (once a selection is applied). Not gated: plain
+`doctor --verify-render`, `list --interactive` (once a selection is applied), `toggle` whenever it
+writes (`--disable`/`--enable`, and the TTY picker — gated BEFORE the prompt so a refusal never
+follows the user's picks). Not gated: plain `toggle` with no flags (read-only table ⇒ warning),
 `doctor` (pure hash-vs-lock; gets the offline identity), `list`/`setup` (read-only ⇒
 `formatProvenanceWarning` to stderr), `report` (read-only ⇒ warning, and OFFLINE identity so a
 diagnostics dump never stalls on a lookup), `init`, `eject`, `uninstall`, `validate`, `avatars`, `help`.
@@ -407,6 +430,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `init` | Write starter `.waffle/waffle.yaml`; errors if one exists at any generation. `--gitignore` appends the two pre-stack-knowable entries (local overlay + local lock). `eject.mjs:182` |
 | `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section. `setup.mjs:22` |
 | `list` | Per-stack per-item state table (`current`/`outdated`/`not-installed`/`not-installable`/`PENDING REMOVAL`); plain aligned table by default (ANSI only on a TTY); `--interactive` multi-select installs + renders. Takes no refs. `list.mjs`, `cli.mjs:194` |
+| `toggle` | Per-skill agent-invocation override (#476): one row per RENDERED skill (`agent-invocable` / `slash-only`, `(source)` / `(override)`), read from the COMMITTED config and the tree lock; externals (#471) never listed. No flags + real TTY on stdin AND stdout → keypress picker (checked = agent-invocable; `enter` writes the FULL desired state, `esc` writes nothing); no flags + non-TTY → the plain table, exit 0, readline never opened; `--disable`/`--enable` → write without a prompt. A write persists a MINIMAL `skills.modelInvocation` block (a skill lands in `disabled:`/`enabled:` only where it differs from its source; empty block removed) to `waffle.yaml` comment-preservingly, then runs a full render so the lock records the patched skill. `no change` when every named skill is already in that state. Takes no refs. `toggle.mjs`, `cli.mjs:236` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. Bare `install` = `render`. `eject.mjs:80` |
 | `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:178`). `render.mjs:41` |
 | `bake` | Pure alias for `render` — a fall-through case sharing its body and guards (#176). |
@@ -605,7 +629,7 @@ pre-0.6.0 `.wafflestack.*` names still read with a deprecation note, migrated in
 
 | File | Tracked | Role |
 |------|---------|------|
-| `.waffle/waffle.yaml` | committed | version, `targets`, `stacks`, `include`, `config`, `eject` (`loadProjectConfig`, `project.mjs:386`); `install`/`eject`/`upgrade` edit it comment-preservingly |
+| `.waffle/waffle.yaml` | committed | version, `targets`, `stacks`, `include`, `config`, `eject`, `skills.modelInvocation` (#476: `{ disabled: [..], enabled: [..] }` of skill names; shape-validated on load, throws like invalid `targets:`) (`loadProjectConfig`, `project.mjs:389`); `install`/`eject`/`upgrade`/`toggle` edit it comment-preservingly |
 | `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict. Private, never canonical (#317): shapes only this machine's bytes, excluded from the committed lock |
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated (committed) | rendered file → sha256 map + toolkitVersion + optional `toolkit` (#374) and `sources` (#125) provenance blocks. Hashes the CANONICAL render (committed inputs only, #317) — byte-identical on every machine; `doctor --verify-render` reproduces it |

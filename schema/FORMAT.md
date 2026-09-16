@@ -377,8 +377,10 @@ TOML files is the complete render, not missing coverage.
 
 Standard SKILL.md shape — frontmatter (`name`, `description`, optional harness keys like
 `user-invocable`) plus body. The file is rendered **byte-for-byte** except for template
-substitution and extension appending; supporting files in the skill directory are copied
-along (`.md` files get substitution, everything else verbatim).
+substitution, extension appending, and the consumer's per-skill model-invocation override
+(see *Per-skill model invocation* under the consuming project contract — it touches one
+frontmatter line of the `claude` copy only); supporting files in the skill directory are
+copied along (`.md` files get substitution, everything else verbatim).
 
 Renders to:
 - **claude** → `.claude/skills/<name>/`
@@ -547,7 +549,8 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
 - `.waffle/waffle.yaml` (committed) — version pin, `targets:` (`claude`, `codex`,
   `agents-dir`), `stacks:` (bare built-in names, or `{ name, source, ref }` mappings for
   external sources — see *External stack sources* below), optional `include:` (individual
-  items), `config:` values, optional `eject:` list.
+  items), `config:` values, optional `eject:` list, optional `skills.modelInvocation:`
+  override (see *Per-skill model invocation* below).
 - `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
 - `.waffle/extensions/agents/<name>.md`, `.waffle/extensions/skills/<name>.md`
@@ -581,6 +584,49 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   (generated) — overview docs describing the installed selection (see *Generated overview
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
   pruned by `render`. Commit them; never hand-edit them.
+
+### Per-skill model invocation
+
+Claude Code lets a skill opt out of automatic, model-driven invocation with
+`disable-model-invocation: true` in its `SKILL.md` frontmatter: the skill stays available as an
+explicit `/slash` command, but an agent will not fire it on its own judgment. The stack author
+sets the source default; a consuming project can override it per skill, without forking the
+skill or hand-editing the render:
+
+```yaml
+skills:
+  modelInvocation:
+    disabled: [audit, delegate]   # rendered with `disable-model-invocation: true`
+    enabled: [some-skill]         # rendered WITHOUT the key, even though the source sets it
+```
+
+Both lists hold bare skill names (a `skills/` prefix is tolerated and stripped). The block is
+shape-validated when the config loads — a non-list, an unknown key, or a name on both sides
+refuses the render, the same posture as an invalid `targets:` — so a typo never renders
+silently. A name that no selected stack renders is a **warning**, not an error: the entry is
+left in place so a stack toggled off and back on keeps its setting.
+
+At render time the override patches exactly one frontmatter line of the **`claude` copy**
+(`.claude/skills/<name>/SKILL.md`): `disabled` sets `disable-model-invocation: true` (rewriting
+an existing line in place, else appending it as the last frontmatter key); `enabled` removes the
+line. Everything else about the file is the byte-for-byte source render. The lock records the
+patched bytes, so `doctor` stays clean and `doctor --verify-render` reproduces it — the override
+lives in the committed config, so it is part of the canonical render (#317). The `codex` and
+`agents-dir` targets have no equivalent key: the cross-tool `.agents/skills/<name>/` copy renders
+the source unchanged, and a config that names skills with no `claude` target enabled gets a
+warning saying the override is a no-op. The skill stays user-invocable throughout (it is still
+listed on `CHEATSHEET.md`); only model invocation is toggled.
+
+`wafflestack toggle` is the knob: with no flags in a real terminal it opens a checkbox picker
+over every rendered skill (checked = an agent may fire it; `enter` writes the result and
+re-renders, `esc` leaves the config untouched); without a TTY it prints the same rows as a
+plain table and never opens a prompt; `--disable <skill>` / `--enable <skill>` (repeatable)
+write without a prompt, for agents and CI. It writes the committed `.waffle/waffle.yaml` —
+never the local overlay, since this is shared project policy — keeps the block minimal (a
+skill is listed only where it differs from its source; an empty block is removed), preserves
+comments, and then runs a full render. Only rendered skills are offered: skills installed
+outside the render (a harness plugin in `~/.claude/skills`, say) are not the toolkit's to
+track. The `wafflestack` stack ships `/waffle-toggle` as the in-agent wrapper.
 
 ## Release resolution — which toolkit ran?
 

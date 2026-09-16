@@ -32,6 +32,26 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`wafflestack toggle` + `/waffle-toggle` — per-skill agent-invocation override (#476).**
+  Claude Code's `disable-model-invocation: true` keeps a skill slash-only, but skills render
+  byte-for-byte from the stack source, so whether an agent could fire `/audit` on its own was
+  the toolkit author's call and the only way to change it was a hand-edit `doctor` flagged and
+  the next `render` undid. A new committed config block, `skills.modelInvocation: { disabled:
+  [..], enabled: [..] }`, flows through config → render → lock like every other input: the
+  `claude` copy of a listed skill gets the key set (or stripped, for `enabled:`), the lock
+  records the patched bytes, `doctor` and `--verify-render` stay clean, and the cross-tool
+  `.agents/skills` copy under `codex`/`agents-dir` renders the source unchanged (a config with
+  no `claude` target warns that the override is a no-op). The block is shape-validated on load
+  (a bad shape refuses the render, like invalid `targets:`); a name no selected stack renders is
+  a warning and stays put. The `toggle` subcommand is the knob: in a real TTY a checkbox picker
+  over every rendered skill (checked = agent-invocable; `enter` writes and re-renders, `esc`
+  writes nothing), on a pipe the same rows as a plain table with the prompt never opened, and
+  `--disable <skill>` / `--enable <skill>` (repeatable) for agents and CI. It writes a minimal
+  block to `.waffle/waffle.yaml` comment-preservingly (never the overlay), then renders; the
+  release gate fires before the picker. `list.mjs`'s keypress loop is now shared
+  (`keypressMultiSelect`). The tenth `/waffle-*` wrapper, `/waffle-toggle`, drives it by flags.
+  Consumer impact: additive — re-render picks up `/waffle-toggle`; nothing moves until a repo
+  sets the block or runs `toggle`.
 - **`wafflestack report` + `/waffle-report` — file a toolkit bug upstream, with redacted
   diagnostics (#473).** A consumer had no paved path for reporting a toolkit defect back to
   wafflestack: `/issue` files into the repo you are standing in, so #424 arrived as hand-pasted

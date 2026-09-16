@@ -73,6 +73,7 @@ npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness file
 | `init` | Write a starter `.waffle/waffle.yaml` (`--gitignore` also appends overlay/local-lock ignores). |
 | `setup` | Print the agent-driven install playbook + generated toolkit inventory. |
 | `list` | Show every waffle and syrup file per stack with its status; `--interactive` for a TTY multi-select. |
+| `toggle` | Pick which rendered skills an agent may invoke on its own (`disable-model-invocation`, per project): TTY picker, or `--disable`/`--enable <skill>`; writes `.waffle/waffle.yaml` and re-renders. |
 | `render` (alias `bake`) | Regenerate every managed file from source + config, prune stale ones, write the lock. |
 | `install [ref…]` | Add stacks/items to `.waffle/waffle.yaml`, pull dependencies, then render. Bare = `render`. |
 | `upgrade` | Move an install across toolkit versions: print CHANGELOG, run migrations, re-render, `doctor`. |

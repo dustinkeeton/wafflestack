@@ -14,6 +14,7 @@ import { uninstall, reinstall } from './lib/uninstall.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
 import { formatPrereq } from './lib/prerequisites.mjs';
 import { computeListModel, formatListTable, interactiveSelect } from './lib/list.mjs';
+import { computeToggleModel, formatToggleTable, interactiveToggle, applyToggle } from './lib/toggle.mjs';
 import { resolveToolkitIdentity, formatUnreleasedRefusal, formatProvenanceWarning } from './lib/toolkit-ref.mjs';
 import {
   loadProjectConfig,
@@ -44,7 +45,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <init|setup|list|install|render|bake|upgrade|doctor|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -232,6 +233,36 @@ try {
       process.stdout.write(formatListTable(model, { color }));
       break;
     }
+    case 'toggle': {
+      const disable = extractValues(args, '--disable');
+      const enable = extractValues(args, '--enable');
+      const noColor = extractFlag(args, '--no-color');
+      if (args.length) fail(`toggle takes no refs (got ${args.join(', ')}) — pass --disable <skill> / --enable <skill>, or run it in a TTY for the picker`);
+      const both = disable.filter((n) => enable.includes(n));
+      if (both.length) fail(`toggle: ${both.join(', ')} passed to both --disable and --enable — pick one`);
+      const model = computeToggleModel({ toolkitRoot, cwd });
+
+      const explicit = disable.length || enable.length;
+      if (!explicit && process.stdin.isTTY && process.stdout.isTTY) {
+        // Gated BEFORE the picker: a refusal must not arrive after the user has made their picks.
+        const toolkitIdentity = requireRelease('toggle');
+        const result = await interactiveToggle(model);
+        if (!result.applied) {
+          console.log(result.reason ?? 'cancelled — config untouched');
+          break;
+        }
+        applyToggleAndRender(model, result.disable, result.enable, toolkitIdentity);
+        break;
+      }
+      if (!explicit) {
+        warnProvenance(identity()); // read-only table: warn, never refuse (see `list`)
+        const color = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !noColor;
+        process.stdout.write(formatToggleTable(model, { color }));
+        break;
+      }
+      applyToggleAndRender(model, disable, enable, requireRelease('toggle'));
+      break;
+    }
     case 'avatars': {
       // Owner-side Gravatar pipeline: `sync` uploads/assigns agent avatars, `status` only reports (#285).
       const sub = args[0] ?? 'sync';
@@ -333,6 +364,7 @@ function helpText() {
     '  init        scaffold .waffle/waffle.yaml so you can pick stacks and config values',
     '  setup       print the install playbook to hand to your coding agent',
     '  list        show every stack and item in the toolkit, and what this repo has selected',
+    '  toggle      pick which rendered skills an agent may invoke on its own (TTY picker), then render',
     '  install     add stacks/items to the selection (persists them), then render',
     '  render      re-render the current selection into .claude/, .codex/, .agents/ and files/ paths',
     '  bake        alias for render — same command, better metaphor',
@@ -361,6 +393,8 @@ function helpText() {
     '  --verify-render   doctor: also check the config still renders what the lock records',
     '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
     '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
+    '  --disable SKILL   toggle: render SKILL slash-only (disable-model-invocation: true); repeatable',
+    '  --enable SKILL    toggle: let an agent invoke SKILL again; repeatable. Either flag skips the picker',
     '  --allow-unreleased  render/install/upgrade/reinstall/doctor --verify-render: write files from',
     '                    a toolkit that is not a release (a working tree, or an unpinned `npx',
     '                    github:…` fetch of the default branch). Toolkit development only — a',
@@ -398,6 +432,33 @@ function reportGitignore(added) {
       ? `.gitignore: added ${added.join(', ')}`
       : '.gitignore: already lists the recommended entries — left unchanged',
   );
+}
+
+// The one write `toggle` makes: persist to waffle.yaml, then re-render so the lock records it.
+function applyToggleAndRender(model, disable, enable, toolkitIdentity) {
+  const rendered = model.rows.map((r) => r.name);
+  const unknown = [...disable, ...enable].filter((n) => !rendered.includes(n));
+  if (unknown.length) fail(`toggle: ${unknown.join(', ')} is not a rendered skill — rendered: ${rendered.join(', ') || '(none)'}`);
+  const result = applyToggle({ cwd, model, disable, enable });
+  if (!result.changed) {
+    console.log('no change — every named skill is already in that state; config untouched');
+    return;
+  }
+  const state = (list, verb) => (list.length ? `${verb}: ${list.join(', ')}` : null);
+  console.log(`${CONFIG_FILE}: skills.modelInvocation → ${[state(result.disabled, 'disabled'), state(result.enabled, 'enabled')].filter(Boolean).join('; ') || 'removed (source defaults)'}`);
+  runRender(false, toolkitIdentity);
+}
+
+// `--name VALUE` pairs, repeatable, comma-splittable; spliced out like `extractFlag`.
+function extractValues(argv, name) {
+  const values = [];
+  for (let i = argv.indexOf(name); i !== -1; i = argv.indexOf(name)) {
+    const value = argv[i + 1];
+    if (!value || value.startsWith('--')) fail(`${name} requires a skill name`);
+    argv.splice(i, 2);
+    for (const v of value.split(',')) if (v.trim()) values.push(v.trim());
+  }
+  return values;
 }
 
 function extractCwd(argv) {

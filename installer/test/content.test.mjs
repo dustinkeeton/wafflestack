@@ -1673,8 +1673,8 @@ describe('doctor workflow: the npx spec is pinned to the rendering toolkit relea
 
 describe('/waffle-* skills: the npx spec is pinned to the rendering toolkit release (#469)', () => {
   const stackYaml = parseYaml(fs.readFileSync(path.join(STACKS, 'wafflestack', 'stack.yaml'), 'utf8'));
-  // Every wrapper shells out through the same key, so the pin has to reach all nine.
-  const SKILLS = ['waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render', 'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate', 'waffle-report'];
+  // Every wrapper shells out through the same key, so the pin has to reach all ten.
+  const SKILLS = ['waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render', 'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate', 'waffle-report', 'waffle-toggle'];
 
   test('every shipped wrapper invokes `{{waffle.toolkitRef}}`, whose default carries a version-tag ref', () => {
     for (const name of SKILLS) {

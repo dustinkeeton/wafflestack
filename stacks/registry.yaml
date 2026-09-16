@@ -307,3 +307,8 @@ waffles:
     stack: wafflestack
     path: stacks/wafflestack/skills/waffle-report
     status: stable
+  - name: waffle-toggle
+    kind: skill
+    stack: wafflestack
+    path: stacks/wafflestack/skills/waffle-toggle
+    status: stable

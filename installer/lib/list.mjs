@@ -106,7 +106,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
 
 // ── Plain table renderer ────────────────────────────────────────────────────────────────────
 
-const ANSI = {
+export const ANSI = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
   dim: '\x1b[2m',
@@ -236,25 +236,38 @@ export function selectableChoices(model) {
 /** Drive the keypress multi-select, resolving `{ applied, refs, reason? }`. TTY-guarded by the CALLER — never reached non-TTY. */
 export function interactiveSelect(model, { input = process.stdin, output = process.stdout } = {}) {
   const choices = selectableChoices(model);
-  return new Promise((resolve) => {
-    if (!choices.length) {
-      resolve({ applied: false, refs: [], reason: 'everything is installed & current — nothing to install or update' });
-      return;
-    }
+  if (!choices.length) {
+    return Promise.resolve({ applied: false, refs: [], reason: 'everything is installed & current — nothing to install or update' });
+  }
+  const label = (c) => {
+    const action = c.status === STATUS.OUTDATED ? `${ANSI.yellow}update${ANSI.reset}` : `${ANSI.dim}install${ANSI.reset}`;
+    const tag = c.optIn ? ` ${ANSI.cyan}(opt-in syrup)${ANSI.reset}` : '';
+    return `${c.stack} › ${c.ref}  [${action}]${tag}`;
+  };
+  return keypressMultiSelect({ title: 'Select waffles to install or update', choices, label, input, output }).then(
+    (result) => ({ applied: result.applied, refs: result.checked.map((c) => c.installRef) }),
+  );
+}
 
+/**
+ * The shared keypress loop behind `list --interactive` and `toggle` (#476): ↑/↓ (or k/j) move,
+ * space toggles `checked`, `a` flips all, enter resolves `{ applied: true, checked }`, esc/q/^C
+ * resolves `{ applied: false, checked: [] }`. `choices[].checked` is mutated in place. TTY-guarded
+ * by the CALLER — never reached non-TTY.
+ */
+export function keypressMultiSelect({ title, choices, label, input = process.stdin, output = process.stdout }) {
+  return new Promise((resolve) => {
     let cursor = 0;
     let drawn = 0;
 
     const draw = () => {
       const rows = [
-        `${ANSI.bold}Select waffles to install or update${ANSI.reset}  ${ANSI.dim}(↑/↓ move · space toggle · a all · enter apply · esc cancel)${ANSI.reset}`,
+        `${ANSI.bold}${title}${ANSI.reset}  ${ANSI.dim}(↑/↓ move · space toggle · a all · enter apply · esc cancel)${ANSI.reset}`,
       ];
       choices.forEach((c, i) => {
         const pointer = i === cursor ? '›' : ' ';
         const box = c.checked ? '◉' : '○';
-        const action = c.status === STATUS.OUTDATED ? `${ANSI.yellow}update${ANSI.reset}` : `${ANSI.dim}install${ANSI.reset}`;
-        const tag = c.optIn ? ` ${ANSI.cyan}(opt-in syrup)${ANSI.reset}` : '';
-        rows.push(`${pointer} ${box} ${c.stack} › ${c.ref}  [${action}]${tag}`);
+        rows.push(`${pointer} ${box} ${label(c)}`);
       });
       if (drawn) output.write(`\x1b[${drawn}A`); // move cursor back to the top of the previous draw
       output.write('\x1b[0J'); // clear from cursor to end of screen
@@ -284,10 +297,10 @@ export function interactiveSelect(model, { input = process.stdin, output = proce
         const allOn = choices.every((c) => c.checked);
         for (const c of choices) c.checked = !allOn;
       } else if (name === 'return' || name === 'enter') {
-        finish({ applied: true, refs: choices.filter((c) => c.checked).map((c) => c.installRef) });
+        finish({ applied: true, checked: choices.filter((c) => c.checked) });
         return;
       } else if (name === 'escape' || str === 'q' || (key?.ctrl && name === 'c')) {
-        finish({ applied: false, refs: [] });
+        finish({ applied: false, checked: [] });
         return;
       }
       draw();
