@@ -20,25 +20,14 @@ stacks:
   - harness-architect
   - wafflestack
 include:
-  # Paid Claude-dispatch hooks (hygiene, pr-green, pr-response) disarmed 2026-07-15 while the
-  # API key is deliberately unfunded — they are EJECTED (see the `eject:` block below), not just
-  # dropped from `include:`. #396 removed only the include lines, but the lock still tracked the
-  # rendered paths, so `trackedFiles` re-admission (refs.mjs) re-poured them on every render (#414).
-  # Ejecting drops the lock entries too, so `render` forgets the paths for good. Re-arm path (#343):
-  # remove the three `eject:` entries AND re-install/re-add the includes
-  # (`wafflestack install files/.github/workflows/waffle-pr-green-hook.yml`, etc.), then re-render
-  # and commit — a funded key must exist first.
   - files/.github/workflows/waffle-release-hook.yml
   - code-quality/skills/adversarial-review
-  # The qa skill (#228) — adversarial-review's functional sibling: post-green QA of a PR against
-  # its linked issue's intent + test coverage. Autopilot's opt-in QA gate (autopilot.qaLoop)
-  # composes it, so render it here (whole-stack installs don't pull requires closures).
   - code-quality/skills/qa
   - files/.github/workflows/waffle-post-merge-hook.yml
-  # The /audit chain as two staged Claude workflow scripts (#363): inert files until a session
-  # invokes them, no spend — dogfooded here so the render + lock exercise the opt-in path.
   - files/.claude/workflows/audit-stage-1.js
   - files/.claude/workflows/audit-stage-2.js
+  - files/.github/workflows/waffle-hygiene.yml
+  - files/.github/workflows/waffle-pr-response-hook.yml
 config:
   git:
     # #155: the managed Wafflebot identity, injected into the rendered `commit` examples via
@@ -72,7 +61,8 @@ config:
     # repo's committed config, not a toolkit default.
     ownerName: Dustin Keeton
     ownerEmail: dustin.keeton49@gmail.com
-    cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="{{git.botName}}" -c user.email={{git.botEmail}}
+    cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c
+      user.name="{{git.botName}}" -c user.email={{git.botEmail}}
     identitySection: |-
       This project commits agent work under the managed bot identity — the `commit` examples
       below inject it via `-c` flags (`git.cmd`), so the machine's ambient `user.name` /

@@ -23,7 +23,9 @@
     "code-quality/skills/qa",
     "files/.github/workflows/waffle-post-merge-hook.yml",
     "files/.claude/workflows/audit-stage-1.js",
-    "files/.claude/workflows/audit-stage-2.js"
+    "files/.claude/workflows/audit-stage-2.js",
+    "files/.github/workflows/waffle-hygiene.yml",
+    "files/.github/workflows/waffle-pr-response-hook.yml"
   ],
   "files": {
     ".claude/agents/docs-agent.md": "91b2b393e431891275b9b1be68261eebe0f2175a1b0e21084c3265d4459c7e51",
