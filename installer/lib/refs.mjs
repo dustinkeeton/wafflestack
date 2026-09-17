@@ -47,6 +47,8 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
  *   items whose declared `targets:` are all disabled here, so nothing renders (#364)
  * @property {{ from: string, to: string, via: string[] }[]} forwarded `include:` refs the registry
  *   forwarded to a renamed waffle's successor (#335) — the render proceeds, but the pin is stale
+ * @property {EjectOverlap[]} ejectOverlaps `include:` entries that also sit in `eject:` (#497) — each
+ *   is already an entry in `errors`
  * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
  *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
  *   filtered out, eject-filtered on both ends. `optIn` = the dependency is opt-in syrup in its own
@@ -413,6 +415,45 @@ export function includeRefMatches(includeRef, kind, name) {
 }
 
 /**
+ * An `include:` entry that names an item `eject:` also names (#497).
+ * @typedef {{ include: string, eject: string }} EjectOverlap
+ */
+
+/**
+ * `include:` ∩ `eject:` — the lists are mutually exclusive (#497). Pure over the config, so `doctor`
+ * can report it without a toolkit. Only an unqualified `eject:` entry counts: that is all the
+ * selection honors.
+ *
+ * @param {{ include?: string[], eject?: string[] }} project
+ * @returns {EjectOverlap[]}
+ */
+export function includeEjectOverlaps(project) {
+  /** @type {EjectOverlap[]} */
+  const overlaps = [];
+  for (const ejectRef of project.eject ?? []) {
+    const parsed = parseRef(ejectRef);
+    if (parsed.form !== 'item') continue;
+    for (const includeRef of project.include ?? []) {
+      if (includeRefMatches(includeRef, parsed.kind, parsed.name)) overlaps.push({ include: includeRef, eject: ejectRef });
+    }
+  }
+  return overlaps;
+}
+
+/**
+ * @param {EjectOverlap} overlap
+ * @returns {string} the render error / doctor note for one overlap, remedy included
+ */
+export function formatEjectOverlap({ include, eject }) {
+  return (
+    `\`include:\` names ${include} and \`eject:\` names ${eject} — the two lists are mutually exclusive. ` +
+    `\`eject:\` wins, so the item is NOT rendered and the include is dead weight. Run ` +
+    `\`wafflestack install ${include}\` to un-eject it (wafflestack manages it again), or delete the ` +
+    `\`include:\` entry to keep it project-owned.`
+  );
+}
+
+/**
  * The full set of items to render:
  *   union(items of enabled `stacks:`) ∪ closure(each `include:` item) − `eject:`
  * `trackedFiles` is the set of repo-relative paths the previous lock managed; it lets an **opt-in**
@@ -464,6 +505,9 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
     }
     addStack(stackName);
   }
+
+  const ejectOverlaps = includeEjectOverlaps(project);
+  for (const overlap of ejectOverlaps) errors.push(formatEjectOverlap(overlap));
 
   /** @type {{ rootRef: string, deps: string[] }[]} */
   const closures = [];
@@ -544,7 +588,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   }
 
   // `targets` rides along so every downstream scope judgment reads the set this was filtered by.
-  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded };
+  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps };
 }
 
 /**

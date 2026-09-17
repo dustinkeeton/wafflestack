@@ -194,7 +194,7 @@ export function renderProject({
           (rel) =>
             `refusing to overwrite ${rel}: a pre-existing file not tracked by ${LOCK_FILE} — back it up or remove it and re-render, or pass \`--force\` to overwrite it`,
         );
-      return { ok: false, errors: errs, warnings };
+      return { ok: false, errors: errs, warnings, collisions };
     }
   }
 

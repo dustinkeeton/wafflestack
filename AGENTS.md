@@ -107,7 +107,7 @@ Exports with signatures:
 
 ```js
 // render.mjs — see the module table; dual render on overlay (#317): effective → disk, canonical → committed lock, divergent hashes → gitignored local lock
-export function renderProject({ toolkitRoot, cwd, sourceBaseDir = cwd, toolkitVersion, toolkitIdentity = null, force = false, log, sourceCacheDir, refreshSources = false }) // → { ok, errors, warnings, written, removed, sources, toolkit, identity } (force overrides the unmanaged-file overwrite guard; absent toolkitIdentity ⇒ lock's toolkit block omitted)
+export function renderProject({ toolkitRoot, cwd, sourceBaseDir = cwd, toolkitVersion, toolkitIdentity = null, force = false, log, sourceCacheDir, refreshSources = false }) // → { ok, errors, warnings, written, removed, sources, toolkit, identity } (force overrides the unmanaged-file overwrite guard — that refusal alone also carries `collisions: string[]`, the refused paths, #497; absent toolkitIdentity ⇒ lock's toolkit block omitted)
 export function readLock(cwd)                  // → committed lock | null — the CANONICAL render (committed inputs only, #317)
 export function readLocalLock(cwd)             // → gitignored .waffle/waffle.local.lock.json | null — this machine's EFFECTIVE render
 export function readTreeLock(cwd)              // → readLocalLock(cwd) ?? readLock(cwd) — manifest of the files ON DISK (doctor drift, list status, render prune/clobber; --verify-render deliberately does NOT read it)
@@ -127,8 +127,10 @@ export function isWipWaffle(toolkit, stackName, kind, name) // → boolean — t
 export function closureFor(toolkit, root)      // → [{ kind,name,stack,item }] BFS closure, root first, deduped
 export function closureDeps(toolkit, root)     // → ["kind/name"…] non-root deps
 export function includeRefMatches(includeRef, kind, name) // → boolean
+export function includeEjectOverlaps(project)  // → [{ include, eject }] — include: ∩ eject: (#497); pure over the config; only an unqualified eject: entry counts (all the selection honors)
+export function formatEjectOverlap(overlap)    // → string — the render error / doctor note, remedy included
 export function fileMatchesTargets(item, targets) // → boolean (#364: no targets: ⇒ renders unconditionally; scoped ⇒ ≥1 declared target enabled; non-files items always match)
-export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set, both eject-filtered; forwarded = include: refs the registry carried across a rename (#335), warned by render, rewritten by upgrade; stack expansion skips `wip` waffles
+export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set, both eject-filtered; forwarded = include: refs the registry carried across a rename (#335), warned by render, rewritten by upgrade; stack expansion skips `wip` waffles
 export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, stackName, companions, scopedTo }] (#74: opt-in syrup gated out while its companion skill IS selected; scopedTo non-null ⇒ target scope excludes this project, warning withholds the pour command but is still issued, #364)
 
 // template.mjs — {{placeholder}} substitution (PLACEHOLDER regex template.mjs:4; MAX_SUBSTITUTION_DEPTH = 4, template.mjs:7)
@@ -199,7 +201,7 @@ export function compareVersions(a, b)          // → -1 | 0 | 1 (unparseable so
 export function resolveInside(cwd, rel)        // → abs path | null — null when `rel` escapes cwd (lexical `../`, or a symlinked parent realpathing outside); shared by uninstall and render's stale-prune (#182, #459)
 
 // doctor.mjs — drift check against the lock that describes the tree (readTreeLock, #317)
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) // → { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, toolkitProvenance } — unmet `require` prerequisite fails ok; attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir() }) // → { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance } — unmet `require` prerequisite fails ok, as does a non-empty ejectOverlaps (#497); attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok
 export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { evaluated, ok, checked, stale, absent, unexpected, errors } — re-renders the COMMITTED inputs (no overlay) into a temp dir and diffs against the canonical lock; the working tree is never touched (#314/#317). Disagreement kinds (doctor.mjs:204): stale = same path, different hash; absent = the lock tracks a path the config no longer produces; unexpected = the config produces a path the lock does not track
 
 // migrations.mjs — AUTHOR CONTRACT (migrations.mjs:11): key a step by the version that SHIPS the change; run(cwd) must be IDEMPOTENT — no applied-bookkeeping is persisted, so every upgrade whose (from, to] window covers a step re-invokes it
@@ -221,8 +223,9 @@ export function uninstall({ cwd, toolkitRoot, force = false, allowMissing = fals
 export function reinstall({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity = null, clean = false, force = false, log }) // → { ok, uninstall, render, initialized, restored, errors } — refresh: snapshot doomed bytes → uninstall(keepConfig+keepLock, force:true) → renderProject, snapshot restored if either leg fails; clean: uninstall-everything(keepLockOnSkip:false) → init, no render
 
 // eject.mjs
-export function eject({ cwd, item, log })      // → { ref, released } (drops the item's files from the lock, strips a matching include: entry; files stay in place, project-owned)
-export function installRefs({ toolkitRoot, cwd, refs, log }) // → { added, closures } (persist refs to config; caller renders after)
+export function eject({ cwd, item, toolkitRoot = null, log }) // → { ref, released, orphaned } (drops the item's files from the lock, strips a matching include: entry; files stay in place, project-owned; NEVER renders — orphaned = closure-only deps the next render prunes, [] without toolkitRoot, #497)
+export function installRefs({ toolkitRoot, cwd, refs, log }) // → { added, closures, unejected: [{ ref, kind, name }], rollback() } (persist refs to config; an ejected item ref is un-ejected, #497; rollback() restores the config text as found; caller renders after)
+export function unejectCollisions(unejected, collisions = []) // → string[] — the refused render collisions that are an un-ejected item's project-owned files (#497); non-empty ⇒ the CLI rolls the install back
 export function init({ cwd })                  // → configFile path (starter .waffle/waffle.yaml)
 
 // validate.mjs — see the module table; targets: is NOT linted here (every malformation is a hard LOAD error in toolkit.mjs)
@@ -371,7 +374,7 @@ doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sou
 report.mjs   → render, doctor, prerequisites, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
-eject.mjs    → render, toolkit, refs, project, util
+eject.mjs    → render, toolkit, sources, refs, project, util
 validate.mjs → toolkit, template, refs, prerequisites, plugins, project, registry, util
 setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registry, util
 list.mjs     → toolkit, render, refs, project, util
@@ -442,17 +445,17 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.waffle/waffle.yaml`; errors if one exists at any generation. `--gitignore` appends the two pre-stack-knowable entries (local overlay + local lock). `eject.mjs:182` |
+| `init` | Write starter `.waffle/waffle.yaml`; errors if one exists at any generation. `--gitignore` appends the two pre-stack-knowable entries (local overlay + local lock). `eject.mjs:243` |
 | `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section. `setup.mjs:22` |
 | `list` | Per-stack per-item state table (`current`/`outdated`/`not-installed`/`not-installable`/`PENDING REMOVAL`); plain aligned table by default (ANSI only on a TTY); `--interactive` multi-select installs + renders. Takes no refs. `list.mjs`, `cli.mjs:194` |
 | `toggle` | Per-skill agent-invocation override (#476): one row per RENDERED skill (`agent-invocable` / `slash-only`, `(source)` / `(override)`), read from the COMMITTED config and the tree lock; externals (#471) never listed. No flags + real TTY on stdin AND stdout → keypress picker (checked = agent-invocable; `enter` writes the FULL desired state, `esc` writes nothing); no flags + non-TTY → the plain table, exit 0, readline never opened; `--disable`/`--enable` → write without a prompt. A write persists a MINIMAL `skills.modelInvocation` block (a skill lands in `disabled:`/`enabled:` only where it differs from its source; empty block removed) to `waffle.yaml` comment-preservingly, then runs a full render so the lock records the patched skill. `no change` when every named skill is already in that state. Takes no refs. `toggle.mjs`, `cli.mjs:236` |
-| `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. Bare `install` = `render`. `eject.mjs:80` |
+| `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. An EJECTED item ref is un-ejected, loudly (#497); if the render then refuses to overwrite its project-owned copy (no `--force`), the config is rolled back and the item stays ejected. Bare `install` = `render`. `eject.mjs:109` |
 | `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:178`). `render.mjs:41` |
 | `bake` | Pure alias for `render` — a fall-through case sharing its body and guards (#176). |
 | `upgrade` | Lock-vs-CLI version diff, CHANGELOG delta, migrations in `(from, to]`, pin reconcile (#372), render (`refreshSources: true`, reporting source + built-in toolkit commit moves, #374) + doctor. Missing lock degrades to render + doctor; a lock recording no `toolkitVersion` skips migrations and the changelog delta (`upgrade.mjs:51`). Exit follows doctor. `upgrade.mjs:28` |
-| `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only); run selected stacks' `prerequisites:` checks. Exit 1 on drift OR unmet `require` prerequisite. `--allow-missing`: only modified files count. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:33` |
+| `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:33` |
 | `report` | Print a REDACTED diagnostics bundle for an upstream toolkit bug report (#473): committed lock summary (version, `toolkit` block, targets, stacks, include, tracked-file COUNT, external source names), committed config (targets, stacks, external names/refs, eject, config KEY paths — never values), environment (CLI version/status, node, platform, overlay PRESENCE), and a `doctor({ canonical: true })` summary. Never opens `waffle.local.yaml` or `waffle.local.lock.json`; scrubs cwd/home/emails/remotes. Markdown `<details>` by default, `--json` for machines. Takes no refs; never contacts GitHub; exit 0 even on a red doctor. `report.mjs`, `cli.mjs:118` |
-| `eject <kind/NAME>` | Add to `eject:`, strip matching `include:`, drop the item's files from the lock; files stay in place, project-owned. `eject.mjs:22` |
+| `eject <kind/NAME>` | Add to `eject:`, strip matching `include:`, drop the item's files from the lock; files stay in place, project-owned. Never renders (offline, ungated): prints a run-`render` hint naming closure-only deps the dropped include orphaned (#497). `eject.mjs:25` |
 | `uninstall` | Remove the whole install, driven entirely off the lock: `remove` only when the sha256 still matches the render; `drifted` skipped unless `--force`; refuses the whole run on an absent lock or a path resolving outside `cwd` (incl. symlink escapes). Also removes `.waffle/` meta (unless `--keep-config`), prunes genuinely-emptied dirs, strips wafflestack's `.gitignore` lines. Dry run until `--yes`. Skips exit 0; errors exit 1 (#359). Read `lockRetained` off the result, not the plan. `uninstall.mjs` (#182) |
 | `reinstall` | Refresh in place: snapshot → uninstall(keepConfig+keepLock, force) → re-render, rollback on failure; keeping the lock is load-bearing (the `trackedFiles` re-admission keeps poured opt-in syrup selected). `--clean` = wipe to empty + `init` (requires `--yes`, no render). Both shapes need a lock (#359). `uninstall.mjs` (#182) |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285): `sync` rasters + uploads/assigns each verified agent email's avatar; `status` reports drift only. Token from `WAFFLE_GRAVATAR_TOKEN`; unverified addresses are a manual remainder. `status` exits 1 on drift; any `failed` exits 1. `avatars-sync.mjs`, `cli.mjs:220` |
@@ -473,14 +476,14 @@ Kinds: `agents`, `skills`, `files` (a payload byte/text-copied to its repo-relat
 
 `canonicalRef` is the minimal re-resolvable form — what `install` writes to `include:`.
 
-Render selection (`computeSelection`, `refs.mjs:426`):
+Render selection (`computeSelection`, `refs.mjs:467`):
 
 ```
 rendered = union(items of enabled stacks:) ∪ closure(each include: item) − eject:
 ```
 
 - Opt-in syrup gate — a stack's `optIn:` `files/` items are excluded from default expansion
-  unless already lock-tracked (`trackedFiles`) or explicitly `include:`-ed (`refs.mjs:455`):
+  unless already lock-tracked (`trackedFiles`) or explicitly `include:`-ed (`refs.mjs:496`):
   an existing install keeps updating, a fresh stack enable never silently arms a sensitive
   workflow. When a gated file's `requires:` companion IS selected, `render`/`install` warns
   with the exact pour command (`skippedSyrupCompanions`, #74). Warn-only; the CLI stays
@@ -501,7 +504,16 @@ rendered = union(items of enabled stacks:) ∪ closure(each include: item) − e
   every render, never persisted.
 - Grouping — config/env checks run per stack over selected items only; required-config is
   scoped to placeholder keys the selected items reference (`missingRequiredKeys` `usedKeys`).
-- `eject:` wins over both `stacks:` and `include:`; `eject` self-cleans a matching `include:`.
+- `eject:` wins over `stacks:` and over a dependency closure. `include:` ∩ `eject:` is a hard
+  error (#497): `includeEjectOverlaps` (pure over the config; a qualified `include:` matches its
+  unqualified `eject:` twin) feeds `computeSelection().errors` + `.ejectOverlaps`, so `render`,
+  `list` and `toggle` refuse, and `doctor` notes it and exits 1 (`ejectOverlaps`). The commands
+  keep the lists apart: `eject` strips a matching `include:`; `installRefs` UN-EJECTS a requested
+  item. The un-ejected file is untracked, so the #25 collision guard protects it — identical is
+  adopted, differing refuses without `--force`, and the CLI then calls `rollback()`
+  (`unejectCollisions` against the render's `collisions`), leaving `waffle.yaml` as found.
+  `eject` is render-free by decision: it returns `orphaned` (closure-only deps of a dropped
+  include, best-effort selection diff) and the CLI prints a run-`render` hint.
 
 ## External stack sources
 
