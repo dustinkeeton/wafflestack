@@ -130,9 +130,14 @@ The final rendered set is:
 union(items of stacks:)  ∪  closure(each include: item)  −  eject:
 ```
 
-`eject:` wins over both lists, and required config is scoped to only the
-placeholders your selected items actually use — so a one-item install doesn't
-demand config that its unselected siblings need.
+`eject:` wins over `stacks:` and over a dependency closure — that is how you drop one
+item from a stack. It never overlaps `include:`: the two lists are **mutually exclusive**
+(#497). An item named in both is a hard `render` error that also fails `doctor`, with the
+fix in the message. The commands keep the lists apart for you, and `upgrade` removes an
+overlap from a committed `waffle.yaml` automatically (migration `0.16.0`, #501).
+
+Required config is scoped to only the placeholders your selected items actually use — so
+a one-item install doesn't demand config that its unselected siblings need.
 
 **Opt-in syrup — a gate for sensitive syrup.** The generic `files/` payload is called
 **syrup**; a stack can mark certain payloads as **opt-in syrup** via the `optIn:` manifest key
@@ -306,12 +311,12 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
 | `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
 | `toggle` | Choose, per skill, whether an agent may invoke it on its own or only you can via `/slash` (#476). A checkbox picker in a terminal, a plain table on a pipe, `--disable` / `--enable` flags for agents and CI. Writes `waffle.yaml`, then renders. See [below](#two-consumer-side-knobs-toggle-and-report). |
-| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
+| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Installing an **ejected** item un-ejects it (#497); if the render then refuses to overwrite your differing project-owned copy, `waffle.yaml` is rolled back and nothing changes. `--force` overrides the overwrite guard. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
-| `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
+| `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations (an unreleased toolkit also runs the steps keyed past its own version, #501), move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
 | `report` | Print a **redacted** diagnostics bundle for a toolkit bug report (#473) — Markdown by default, `--json` for machines. Read-only, never contacts GitHub, exit 0 even when `doctor` is red. |
-| `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
+| `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. Also drops a matching `include:` entry. Never renders: it prints which dependencies only that entry was selecting, for the next `render` to prune (#497). |
 | `uninstall` | Remove the whole install — the only destructive command. Deletes only what the lock tracks *and* whose content still matches; **a dry run until `--yes`**. See [Taking it back out](#taking-it-back-out-uninstall--reinstall). |
 | `reinstall` | Refresh in place: remove the rendered files, re-render the same selection. Keeps your config, overlay and extensions, so it needs no `--yes`. `--clean --yes` wipes the config too and re-scaffolds it. |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline: register each agent's deterministic avatar for its verified commit email (`sync`), or report roster drift without writing (`status`, exit 1 on drift). Owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`. |
@@ -407,7 +412,8 @@ A render is a straight-line flow:
 2. **Load** your project config (`.waffle/waffle.yaml`, plus the gitignored
    `.waffle/waffle.local.yaml` merged on top).
 3. **Select** what to render: every item in your `stacks:`, plus each `include:`
-   item and its dependency closure, minus anything in `eject:`.
+   item and its dependency closure, minus anything in `eject:`. An item listed in both
+   `include:` and `eject:` fails the render before anything is written (#497).
 4. For every selected item and every target, **substitute** placeholders and
    **append** any project extension.
 5. **Write** the harness-native files, then record hashes in the lock. The committed
@@ -469,8 +475,9 @@ The three hooks that dispatch the **paid** Claude harness are in two different s
 
 All three were disarmed on 2026-07-15 (#396) and ejected the next day so the lock forgot their
 rendered paths (#414, PR #417) — an ejected hook cannot be re-armed by a stray `git add -A`.
-Re-arming one means removing its `eject:` entry, re-installing the ref and its `include:` line,
-then re-rendering and committing. See
+Re-arming one is a single command since #497: `wafflestack install <files/ref>` un-ejects it, adds
+the `include:` entry, and renders — refusing without `--force` if your project-owned copy differs
+from the render. Then commit. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)

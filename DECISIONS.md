@@ -69,6 +69,11 @@ removed (CHANGELOG Consumer impact). Ejecting a stack item, or a dependency of a
 not an overlap. An un-eject whose render fails for a reason *other* than the collision (a missing
 required key, say) stays persisted, like any other install.
 
+**Superseded in part 2026-09-16 — `upgrade` no longer fails on a committed overlap (#501, the entry
+above).** `upgrade` runs its migrations before it renders, and migration `0.16.0` drops the
+overlapping `include:` entry from the committed `waffle.yaml`. What still fails: a plain `render` or
+`doctor`, and any overlap that involves `waffle.local.yaml`, which `upgrade` never edits (#500).
+
 ---
 
 ## 2026-09-16: Behavioral skill flags become three-mode config keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:` (#478, slices 1–2)
