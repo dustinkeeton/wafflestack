@@ -50,10 +50,9 @@ A **stack** is a themed group of agents and skills you enable together (for
 example `github-workflow` or `docs-system`). `toolkit.yaml` lists every stack;
 each stack's `stack.yaml` manifest declares its agents, skills, config keys, and
 any environment or service prerequisites. There are **9 stacks** today — one of
-them, `wafflestack`, is self-referential: eight `/waffle-*` skills, one per CLI
-command, each a thin wrapper that runs `npx wafflestack <command>` and interprets
-the output — so the toolkit ships its own lifecycle the same way it ships
-everything else.
+them, `wafflestack`, is self-referential: ten `/waffle-*` skills, each a thin wrapper
+that runs one CLI command (`npx wafflestack <command>`) and interprets the output — so
+the toolkit ships its own lifecycle the same way it ships everything else.
 
 **A stack can also come from outside this toolkit.** A `stacks:` entry is usually a
 built-in name, but it can instead be a `{ name, source, ref }` mapping that points at a
@@ -166,7 +165,15 @@ doesn't render for.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 37 skills** in total.
+one source can render everywhere. There are **14 agents and 40 skills** in total.
+
+**Tool calls are checked, not trusted (#445).** A skill is prose, so nothing compiles it — a
+call to a tool the harness has since removed looks fine in review and fails at runtime. A
+per-target roster of real harness tools lives in `installer/lib/harness-tools.mjs`, and
+`npm test` fails on any `Tool(` call in a source or rendered skill or agent that is not on it.
+Only `claude` has a declared roster today; the `codex` and `agents-dir` checks skip visibly
+rather than pass on nothing. Adding a tool call means adding the name to the roster in the same
+PR. See [DECISIONS.md](DECISIONS.md#2026-09-16-harness-tool-calls-are-checked-against-a-per-target-allowlist-not-a-denylist-445).
 
 A skill's **supporting files** copy into your repo alongside its `SKILL.md`, and
 they can do real work. The orchestration stack's `/delegate` skill is the
@@ -277,6 +284,17 @@ the installer substitutes the values you set in config. Two rules keep this safe
   `delegate.memoryFile` defaults to `{{delegate.checkpointDir}}/memory.md`, which
   itself defaults to `{{git.worktreesDir}}/.delegate`.
 
+**Some keys switch a behavior instead of filling in text (#478 — partly landed).** A confirmation
+gate or an auto-merge consent is a *behavioral* key: it declares a closed `modes:` list (the
+reserved mode `prompt` means "never assume, ask"), optional `flag:` tokens that override it for
+one run, an optional `lockMode:` pinning what config may say, and a `nonInteractive:` fallback
+for CI and agent callers. Precedence is fixed: run token → `waffle.local.yaml` → `waffle.yaml` →
+the stack default. A value outside `modes:`, or one that overrides a lock, fails `render` and
+bare `doctor`. **Only the schema, the `validate` lint and the flag inventory have shipped** (PR
+#493) — the four autopilot consents declare the new fields as metadata, and no skill's prose has
+migrated yet (#486–#490, open). See
+[DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12).
+
 ### The installer (render pipeline)
 
 The `wafflestack` CLI lives in `installer/` (plain Node.js ES modules, one
@@ -287,10 +305,12 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `init` | Write a starter `.waffle/waffle.yaml`. |
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
 | `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
+| `toggle` | Choose, per skill, whether an agent may invoke it on its own or only you can via `/slash` (#476). A checkbox picker in a terminal, a plain table on a pipe, `--disable` / `--enable` flags for agents and CI. Writes `waffle.yaml`, then renders. See [below](#two-consumer-side-knobs-toggle-and-report). |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. `--force` overrides the overwrite guard. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations, move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
+| `report` | Print a **redacted** diagnostics bundle for a toolkit bug report (#473) — Markdown by default, `--json` for machines. Read-only, never contacts GitHub, exit 0 even when `doctor` is red. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. |
 | `uninstall` | Remove the whole install — the only destructive command. Deletes only what the lock tracks *and* whose content still matches; **a dry run until `--yes`**. See [Taking it back out](#taking-it-back-out-uninstall--reinstall). |
 | `reinstall` | Refresh in place: remove the rendered files, re-render the same selection. Keeps your config, overlay and extensions, so it needs no `--yes`. `--clean --yes` wipes the config too and re-scaffolds it. |
@@ -298,10 +318,32 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 22 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 26 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
 the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
 own identity, etc.). The full function-level registry is in the root `AGENTS.md`.
+
+### Two consumer-side knobs: `toggle` and `report`
+
+**`toggle` decides who may fire a skill.** Claude Code's `disable-model-invocation: true` keeps
+a skill slash-only, but skills render byte-for-byte from source, so that used to be the toolkit
+author's call. Now a committed `skills.modelInvocation: { disabled: [..], enabled: [..] }` block
+in `waffle.yaml` is a render input like any other: `render` patches that one frontmatter line in
+the `claude` copy, the lock records the patched bytes, and `doctor` stays clean. Other targets
+have no such key, so their copy renders unchanged. `toggle` writes only the committed config —
+never the private overlay — and lists rendered skills only, never externally installed ones.
+
+**`report` gets a toolkit bug back upstream without leaking your repo.** The command gathers
+what a maintainer needs — toolkit version and provenance, targets, stacks, a `doctor` summary —
+and its redaction is **structural**: it never opens `waffle.local.yaml` or the local lock, and
+it emits config *key paths*, never values. A scrub pass then replaces your repo path, home
+directory, emails and git remotes with placeholders. The `/waffle-report` skill does the filing:
+it resolves the target repo from `waffle.toolkitRef` (a fork's consumer reports to the fork),
+shows you the post-redaction text, and files only on your yes.
+
+Why each is shaped this way:
+[`toggle`](DECISIONS.md#2026-09-16-toggle-makes-agent-invocation-a-per-project-config-input-not-a-hand-edit-476) ·
+[`report`](DECISIONS.md#2026-09-15-report-is-a-cli-command-behind-a-thin-skill-wrapper-and-its-redaction-is-structural-473).
 
 ### Which toolkit am I running? (the release gate, since v0.13.0)
 
@@ -310,8 +352,9 @@ latest release, while reporting the released version number. Since v0.13.0 (#373
 resolves its own identity before writing anything:
 
 - **Write commands refuse when provably unreleased.** `render`, `install`, `upgrade`,
-  `reinstall`, and `doctor --verify-render` stop with an error naming the exact pinned
-  command to run. An *unanswerable* lookup (offline, GitHub unreachable) warns and
+  `reinstall`, `doctor --verify-render`, and `toggle` whenever it writes stop with an error
+  naming the exact pinned command to run. (`toggle` checks *before* opening its picker, so a
+  refusal never follows your picks; `report` and a flagless `toggle` are read-only and only warn.) An *unanswerable* lookup (offline, GitHub unreachable) warns and
   proceeds — fail open on ignorance, closed only on a confirmed "not a release".
 - **The lock records the answer.** A `toolkit` block names the ref and commit SHA that
   produced the render — recorded only for a real release, because only a release names
@@ -392,7 +435,7 @@ Everything a consuming project owns:
 
 | File | Tracked in git? | Purpose |
 |------|-----------------|---------|
-| `.waffle/waffle.yaml` | ✅ committed | Version pin, targets, enabled stacks, individual items (`include`), config values, `eject` list |
+| `.waffle/waffle.yaml` | ✅ committed | Version pin, targets, enabled stacks, individual items (`include`), config values, `eject` list, and the optional `skills.modelInvocation` block `toggle` writes (#476) |
 | `.waffle/waffle.local.yaml` | 🚫 gitignored | Account-specific values (bot identity, board IDs); merged over the committed config and wins. Private by design (#317): it shapes the bytes on *your* disk but never reaches the committed lock |
 | `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments — committed, therefore canonical, therefore it *does* propagate (the deliberate contrast with the overlay) |
 | `.waffle/waffle.lock.json` | ✅ committed (generated) | The **canonical** render's hashes — what the committed inputs alone produce, overlay excluded — so it is byte-identical on every machine. Also carries the `toolkit` block: **which toolkit produced the render** (ref + commit SHA), recorded only when it names immutable content — a release. An untagged checkout records explicit nulls, so the block does not churn as `main` moves. `doctor --verify-render` reproduces it (comparing **files only**); `render` rewrites it |
@@ -407,21 +450,27 @@ overwrite them. Change source, config, or an extension instead.
 wafflestack **dogfoods** its own stacks: `.waffle/waffle.yaml` here renders **five**
 stacks — `github-workflow`, `docs-system`, `orchestration`, `harness-architect`, and
 the self-referential `wafflestack` — into this repo, so the toolkit's own agents and
-skills are available while developing it. `include:` arms the two deterministic opt-in
-syrup workflows — the release and post-merge hooks — two code-quality skills the PR gates
-run (`adversarial-review` and `qa`), and the two `/audit` workflow scripts
+skills are available while developing it. `include:` arms three opt-in syrup workflows — the
+deterministic release and post-merge hooks, plus the scheduled hygiene hook — two code-quality
+skills the PR gates run (`adversarial-review` and `qa`), and the two `/audit` workflow scripts
 (`audit-stage-1.js`, `audit-stage-2.js` — inert until a session invokes them, poured so the
 render and lock exercise the opt-in `targets:` path). (While developing the toolkit you still
 drive it with `node installer/cli.mjs` directly rather than the rendered `/waffle-*`
 wrappers.)
 
-The three **paid** Claude-dispatch hooks — hygiene, pr-green, and pr-response — are
-**disarmed** while the repo deliberately carries no `ANTHROPIC_API_KEY` secret: removed
-from `include:` and from git tracking (#396, 2026-07-15), then **ejected** so the lock
-forgets their rendered paths (#414, PR #417, 2026-07-16) — `render` no longer produces
-them, so nothing sits untracked and `git add -A` cannot re-arm anything. Re-arming means
-removing the three `eject:` entries in `waffle.yaml`, re-installing the refs and
-`include:` lines, and re-rendering — with a funded key in place first. See
+The three hooks that dispatch the **paid** Claude harness are in two different states as of
+2026-09-16:
+
+| Hook | State here | How |
+|------|------------|-----|
+| hygiene (`waffle-hygiene.yml`) | **Armed** — a daily cron plus manual dispatch | In `include:`, lock-managed, and the rendered workflow is tracked in git (PRs #495, #496) |
+| pr-green (`waffle-pr-green-hook.yml`) | **Ejected** | In `eject:` — `render` does not produce it and the lock does not track it |
+| pr-response (`waffle-pr-response-hook.yml`) | **Ejected** | Same; briefly re-included by #495, re-ejected by #496 the same day |
+
+All three were disarmed on 2026-07-15 (#396) and ejected the next day so the lock forgot their
+rendered paths (#414, PR #417) — an ejected hook cannot be re-armed by a stray `git add -A`.
+Re-arming one means removing its `eject:` entry, re-installing the ref and its `include:` line,
+then re-rendering and committing. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)

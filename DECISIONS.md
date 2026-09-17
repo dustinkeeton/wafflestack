@@ -71,6 +71,123 @@ consent set in config now fails the render. Follow-ups: #486 threads the tokens 
 
 ---
 
+## 2026-09-16: Harness tool calls are checked against a per-target allowlist, not a denylist (#445)
+
+**Context**: #360 showed how prose orchestration rots: nothing checked a `SKILL.md` against the
+harness's real tool list, so a skill calling a tool the harness no longer has (`TeamCreate`,
+`TeamDelete`) looked fine in review and failed at runtime. The guard #360 landed was a
+**denylist** of the three names already known dead. It could not catch the next removal, a typo,
+or a tool one target lacks — and #363 made the prose orchestrators the permanent portable
+fallback, so this is the only mechanical check they will ever get.
+
+**Decision**: Flip the guard to an **allowlist**. `installer/lib/harness-tools.mjs` holds one
+roster per render target (`HARNESS_TOOLS`), and `content.test.mjs` extracts every call-shaped
+`Name(` from each `stacks/**` source, the committed `.claude/` render, a temp all-targets render,
+and each agent's `tools:` frontmatter. Any call outside the roster fails `npm test` with file,
+line and name. Three rules shape it:
+
+- **Only `claude` has a declared roster.** `codex` and `agents-dir` are `null` — *unverified* —
+  and their per-target check **skips visibly** (2 skipped tests) rather than passing vacuously.
+- **The stop-list is syntactic, never a name** — constructors, declarations, member calls and
+  `(s)` plurals. A missing roster entry is a bug in the PR that added the call, never grounds for
+  an exemption.
+- **Maintenance rule:** adding a `Tool(` call to any skill or agent means adding the name to the
+  roster, on purpose, in the same PR. The roster is the one place a rename or removal is recorded.
+
+**Alternatives considered**: The issue's looser `Name\s*\(` pattern — rejected: it matched about
+60 prose parentheticals in this tree (`PR (draft)`), and tool calls are never written `Agent (`.
+Declaring `codex: []` — rejected: it asserts "nothing rendered there calls any tool", which fails
+today because the prose orchestrators render verbatim into `.agents/skills/`; `null` is the honest
+value until someone declares those surfaces. Deleting the #360 denylist tests — rejected: they
+stay as regression fixtures proving the mechanism bites.
+
+**Impact**: A toolkit-developer test plus a data module — nothing renders differently, so
+consumers see no change. The sweep found no drift: the tree calls exactly `Agent`, `Bash`,
+`SendMessage`, `TaskCreate`, `TaskStop` and `TaskUpdate`, all in the roster, with no
+grandfathered exceptions (PR #492).
+
+---
+
+## 2026-09-16: `toggle` makes agent invocation a per-project config input, not a hand-edit (#476)
+
+**Context**: Claude Code's `disable-model-invocation: true` keeps a skill slash-only — an agent
+cannot fire it on its own judgment. That is a per-project preference: one repo wants `/audit`
+never auto-invoked, another wants the opposite. But skills render byte-for-byte from the stack
+source, so the choice belonged to the toolkit author, and the only way to change it was a
+hand-edit that `doctor` flagged as drift and the next `render` undid.
+
+**Decision**: A committed config block, `skills.modelInvocation: { disabled: [..], enabled: [..] }`,
+flows through config → render → lock like every other input.
+
+- **Render patches one frontmatter line of the `claude` copy** — sets the key for `disabled:`,
+  strips it for `enabled:`. The lock records the patched bytes, so `doctor` and `--verify-render`
+  stay clean and the override is part of the canonical render (#317). The skill stays
+  user-invocable and stays on `CHEATSHEET.md`.
+- **Other targets render the source unchanged** — `codex` / `agents-dir` have no equivalent key.
+  A config with no `claude` target warns that the override is a no-op.
+- **A bad shape refuses the render**, the same posture as invalid `targets:`. A name no selected
+  stack renders is only a warning, and stays put.
+- **`wafflestack toggle` is the knob**: a checkbox picker in a real TTY, the same rows as a plain
+  table on a pipe (the prompt never opens), and `--disable` / `--enable` flags for agents and CI.
+  It writes a *minimal* block — a skill is listed only where it differs from its source — to the
+  committed `waffle.yaml`, comment-preservingly and never to the overlay, then re-renders.
+- **Rendered skills only.** Externally installed skills (#471) are never listed, consistent with
+  the toolkit never tracking externals.
+
+**Alternatives considered**: Gating the release check *after* the picker, as `list --interactive`
+does — rejected: a refusal would land after the user had already made their picks, so the gate
+fires first and the bare read-only table only warns. The issue also floated `list --toggle` as the
+command name; the shipped command is `toggle`, with its own `/waffle-toggle` wrapper (the tenth),
+which always drives the CLI by flags because the picker needs a TTY.
+
+**Impact**: `installer/lib/model-invocation.mjs` and `toggle.mjs` (new), `list.mjs` (its keypress
+loop is now the shared `keypressMultiSelect`), the render hook, project-config loading, and a
+`schema/FORMAT.md` section. Additive for consumers — nothing moves until a repo sets the block or
+runs `toggle` (PR #484). #485 (PR #491) then tidied the internals: one unknown-name check, one
+frontmatter grammar, `SKILL.md` parsed once.
+
+---
+
+## 2026-09-15: `report` is a CLI command behind a thin skill wrapper, and its redaction is structural (#473)
+
+**Context**: A consumer had no paved path for reporting a toolkit defect back to wafflestack.
+`/issue` files into the repo you are standing in, so #424 — three real rough edges from a
+0.8.0 → 0.13.0 upgrade — arrived as hand-pasted prose. Nothing collected the facts a maintainer
+needs (toolkit version, stacks, targets, what `doctor` said), and nothing stopped the paste from
+carrying private details into a public tracker.
+
+**Decision**: Two halves, decided on the issue on 2026-09-14 — **the CLI grows the command, the
+skill stays a thin wrapper**.
+
+- **`wafflestack report` collects; `/waffle-report` files.** The command is read-only, takes no
+  refs, never contacts GitHub, and prints a collapsed `<details>` environment block (or `--json`).
+  The "one `/waffle-*` skill per subcommand" rule survives, and — the reason that matters — the
+  diagnostics are collectable by CI, a non-Claude harness, or a consumer with no agent at all.
+- **Redaction is structural, not a filter pass.** The config loads `canonical` and `doctor` gains
+  a `canonical: true` option, so `.waffle/waffle.local.yaml` and `waffle.local.lock.json` are
+  **never opened**. The bundle carries config **key paths** but never values, tracked files as a
+  **count**, and external stacks without URLs. A scrub pass then rewrites `cwd` → `<repo>`,
+  home → `~`, and emails and git remotes → placeholders.
+- **It describes a broken repo; it does not gate on one.** Exit 0 even when `doctor` is red, and
+  not release-gated: it warns and resolves its identity offline, so a diagnostics dump never
+  stalls on a network lookup.
+- **The skill files upstream, behind a gate.** The target repo resolves from `waffle.toolkitRef`
+  (a fork's consumer reports to the fork). The report routes onto the upstream `bug.yml` /
+  `feature.yml` / `rough-idea.yml` forms with only the form's own label — never `priority: *`,
+  never the board. The gate shows the **post-redaction** payload, so you approve the bytes that
+  get published.
+
+**Alternatives considered**: Widening the one-skill-per-subcommand rule for a skill-only
+implementation — rejected on the issue in favour of growing the CLI. Prefilling the no-`gh`-auth
+fallback URL with `body=`, as the issue first specified — changed: GitHub issue *forms* ignore
+`body=`, so the URL prefills the form's own field ids instead.
+
+**Impact**: `installer/lib/report.mjs` (new), `doctor`'s additive `canonical` option, `cli.mjs`,
+and the ninth `/waffle-*` wrapper with two Layer-2 eval cases. Additive for consumers — a
+re-render picks up `/waffle-report`; nothing else moves (PR #481).
+
+---
+
 ## 2026-09-15: External providers sit behind a capability-named proxy skill, offered but never tracked (#471)
 
 **Context**: [Archify](https://github.com/tt-a1i/archify) (MIT) is the preferred renderer for the
@@ -518,6 +635,14 @@ added an `eject:` block to `waffle.yaml` and dropped exactly the three rendered-
 so `render` forgets them for good. The stale `.gitignore` / `waffle.yaml` comments now describe
 the eject-based re-arm mechanism: remove the `eject:` entries, re-install the refs + `include:`
 lines, re-render and commit — a funded key first (#343).
+
+**Updated 2026-09-16 — hygiene is re-armed; the other two stay ejected (PRs #495, #496).** The
+owner re-armed the scheduled hygiene hook to dogfood it ("dogfooding some workflows for testing"):
+`files/.github/workflows/waffle-hygiene.yml` is back in `include:`, out of `eject:`, and the
+rendered workflow is tracked in git again. #495 also re-included the pr-response hook; #496
+re-ejected it the same day ("too soon"). `waffle-pr-green-hook.yml` and
+`waffle-pr-response-hook.yml` remain ejected. A repo secret named `ANTHROPIC_API_KEY` exists today
+(`gh secret list`); whether it is funded is not recorded anywhere this entry can cite.
 
 **Impact**: `.waffle/waffle.yaml` and this repo's git tracking only — no `stacks/**` change, so
 consumers are unaffected; the hooks remain shipped opt-in syrup.
