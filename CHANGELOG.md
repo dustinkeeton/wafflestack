@@ -167,6 +167,27 @@ is what you reach for across a breaking one.
   render + lock; a repo that had pinned by hand keeps its pin; set `waffle.toolkitRef` only to
   target a fork or a local checkout.
 
+### Fixed
+- **`include:` and `eject:` are mutually exclusive (#497).** An item could sit in both lists at
+  once; `eject:` silently won, so `wafflestack install <ref>` logged `installing <ref>`, rendered
+  nothing, and exited 0. `install` on an ejected item now **un-ejects** it (`un-ejecting <ref>`),
+  mirroring what `eject` already did to `include:`. The file it re-takes is project-owned, so the
+  existing unmanaged-file guard applies: an identical copy is adopted, an edited one is refused
+  without `--force` — and the refusal restores `waffle.yaml`, so the item stays ejected and nothing
+  was written. A hand-edited overlap (a stack-qualified `include:` matches its unqualified `eject:`
+  twin) is a `render` error and fails `doctor`, with the fix in the message. `eject` stays
+  render-free — offline and usable from an unreleased toolkit — and instead names the dependencies
+  its dropped `include:` was the only thing selecting, with a run-`render` hint. **Consumer
+  impact:** migrated automatically by `wafflestack upgrade` (migration `0.16.0`, #501) — an
+  overlapping `include:` entry is dropped from the committed `waffle.yaml` and `eject:` is kept,
+  which is the side that was already in effect, so the render is byte-identical; each dropped ref
+  is logged. Run `wafflestack install <ref>` afterwards to have the item managed again instead.
+  Only a plain `render` across the release still fails on an overlap, with the fix in the message.
+  `.waffle/waffle.local.yaml` is never edited: its lists replace the committed ones wholesale, so
+  an overlap that involves the overlay is reported for a hand fix (#500). An unreleased toolkit
+  runs the steps keyed past its own version too, so `upgrade --allow-unreleased` is not stranded.
+  Re-rendering refreshes the `waffle-install` and `waffle-eject` skills.
+
 ## [0.15.0] - 2026-09-13
 
 ### Added
@@ -302,20 +323,6 @@ is what you reach for across a breaking one.
   the new `requires:` edge. No config change.
 
 ### Fixed
-- **`include:` and `eject:` are mutually exclusive (#497).** An item could sit in both lists at
-  once; `eject:` silently won, so `wafflestack install <ref>` logged `installing <ref>`, rendered
-  nothing, and exited 0. `install` on an ejected item now **un-ejects** it (`un-ejecting <ref>`),
-  mirroring what `eject` already did to `include:`. The file it re-takes is project-owned, so the
-  existing unmanaged-file guard applies: an identical copy is adopted, an edited one is refused
-  without `--force` — and the refusal restores `waffle.yaml`, so the item stays ejected and nothing
-  was written. A hand-edited overlap (a stack-qualified `include:` matches its unqualified `eject:`
-  twin) is a `render` error and fails `doctor`, with the fix in the message. `eject` stays
-  render-free — offline and usable from an unreleased toolkit — and instead names the dependencies
-  its dropped `include:` was the only thing selecting, with a run-`render` hint. **Consumer
-  impact:** a config that lists one item in both `include:` and `eject:` rendered before and now
-  fails; delete the `include:` entry to keep today's behavior (the item stays project-owned), or
-  run `wafflestack install <ref>` to have it managed again. Re-rendering refreshes the
-  `waffle-install` and `waffle-eject` skills.
 - **External stacks' `prerequisites[].check` commands are not run until acknowledged (#458).**
   Every stack's check string is handed to the shell verbatim — `render` runs the `tool`/`env`
   kinds, `doctor` runs all of them, locally and in the shipped `waffle-doctor` workflow — and an

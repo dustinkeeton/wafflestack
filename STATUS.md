@@ -5,8 +5,8 @@
 
 - **Version**: v0.15.0 (tagged 2026-09-13; pre-1.0 — the file contract can still change
   between minor releases). `main` carries unreleased work on top — see below.
-- **Last updated**: 2026-09-16
-- **Health**: 🟢 tests 1434 in 194 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` (`b5a6d01`)
+- **Last updated**: 2026-09-17
+- **Health**: 🟢 tests 1469 in 203 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `5d082e1` (PR #499's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -33,7 +33,7 @@ All 15 commands work (plus `bake`, a pure alias for `render`), over 26 pipeline 
 
 ## Current focus — unreleased on `main`
 
-Merged 2026-09-15 and 09-16, after the v0.15.0 tag (CHANGELOG `[Unreleased]`):
+Merged 2026-09-15 through 09-17, after the v0.15.0 tag (CHANGELOG `[Unreleased]`):
 
 | Feature | What it gives you | State |
 |---------|-------------------|-------|
@@ -41,6 +41,8 @@ Merged 2026-09-15 and 09-16, after the v0.15.0 tag (CHANGELOG `[Unreleased]`):
 | `wafflestack toggle` + `/waffle-toggle` (#476) | Per skill: may an agent invoke it on its own, or only you via `/slash`? A committed `skills.modelInvocation` block; Claude target only. [Why](DECISIONS.md#2026-09-16-toggle-makes-agent-invocation-a-per-project-config-input-not-a-hand-edit-476) | ✅ Shipped |
 | Harness tool allowlist (#445) | `npm test` fails on any `Tool(` call a skill or agent makes outside the per-target roster. No consumer impact. [Why](DECISIONS.md#2026-09-16-harness-tool-calls-are-checked-against-a-per-target-allowlist-not-a-denylist-445) | ✅ Shipped — `codex` / `agents-dir` rosters undeclared, so those 2 checks skip |
 | Three-mode config keys (#478) | Behavioral keys declare `modes:` / `flag:` / `lockMode:` / `nonInteractive:`. **Tightening:** an autopilot consent set in config now fails `render` and `doctor` — remove the line. [Why](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12) | 🟡 Partial — schema, validator and flag inventory only (PR #493); slices #486–#490 open |
+| `include:` / `eject:` are mutually exclusive (#497) | **Tightening:** an item in both lists now fails `render` and `doctor`. `install` on an ejected item un-ejects it — and refuses, restoring `waffle.yaml`, if your project-owned copy differs (`--force` overrides). [Why](DECISIONS.md#2026-09-16-include-and-eject-are-mutually-exclusive-install-un-ejects-eject-never-renders-497) | ✅ Shipped (PR #499) |
+| Overlap migration `0.16.0` (#501) | `upgrade` drops an overlapping `include:` entry from the committed `waffle.yaml` for you. A test fails a release bump numbered below the migration's version, and an unreleased toolkit runs pending steps too. [Why](DECISIONS.md#2026-09-16-a-migration-may-be-keyed-to-the-next-release-the-key-is-guarded-and-unreleased-toolkits-run-it-501) | ✅ Lands with PR #503 — overlay overlaps are not migrated (#500) |
 
 Also unreleased: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSection` default
 (#472), and `WebFetch` + `WebSearch` granted as a pair across the shipped agents (#474).
@@ -58,11 +60,13 @@ Also unreleased: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSecti
 
 ## Known issues & things to watch
 
-- **`uninstall`/`reinstall` rough edges (#359, open):** a skipped hand-edit still loses config +
-  `.gitignore` block; an incomplete `--yes` exits 0; `reinstall` hard-fails on config-but-no-lock;
-  `--no-color` missing from `help`.
+- **`uninstall`/`reinstall` gaps (#359, open):** a skipped hand-edit still loses config + `.gitignore`
+  block; incomplete `--yes` exits 0; `reinstall` fails on config-but-no-lock; `help` omits `--no-color`.
 - **Hidden deletion gap (#371, open):** a poured syrup file whose whole *stack* was deselected is
   pruned while `list` says `not-installed`.
+- **Include/eject follow-ups (open):** #500 — `upgrade` never edits `waffle.local.yaml`, so an
+  overlap involving that overlay is logged "NOT migrated" for a hand fix. #502 — `render` still warns
+  an ejected opt-in hook "was not installed", and the `install` it advises would un-eject it.
 - **Dogfood hooks:** hygiene is **armed** — daily cron, workflow tracked in git (PRs #495, #496).
   pr-green and pr-response stay **ejected**; #343 (pluggable CI engine) and #355 (pr-response
   never dispatches) are both open.
@@ -87,7 +91,7 @@ Also unreleased: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSecti
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1434 tests, 194 suites)
+npm test                          # installer test suite (1469 tests, 203 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate
