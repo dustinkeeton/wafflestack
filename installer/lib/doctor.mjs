@@ -15,7 +15,7 @@ import {
 } from './project.mjs';
 import { describeToolkitProvenance } from './toolkit-ref.mjs';
 import { loadToolkitWithSources } from './toolkit.mjs';
-import { computeSelection } from './refs.mjs';
+import { computeSelection, includeEjectOverlaps, formatEjectOverlap } from './refs.mjs';
 import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, formatCheckGate, unacknowledgedStacks } from './prerequisites.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 
@@ -119,6 +119,13 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     notes.push(`the lock does not match what ${CONFIG_FILE} (+ ${EXTENSIONS_DIR}/) would render — re-render and commit the result`);
   }
 
+  // Pure over the config, so it needs no toolkit (#497).
+  let ejectOverlaps = [];
+  try {
+    ejectOverlaps = includeEjectOverlaps(loadProjectConfig(cwd, [], { canonical }));
+  } catch { /* an unloadable config is the prerequisite gate's note, below */ }
+  for (const overlap of ejectOverlaps) notes.push(`include/eject overlap: ${formatEjectOverlap(overlap)}`);
+
   // Prerequisite and config-guard gates, best-effort: a load failure becomes a note and skips both.
   let prerequisites = noPrereqs();
   let configProblems = [];
@@ -156,8 +163,8 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   const driftOk = allowMissing
     ? modified.length === 0 && (!nothingPresent || verified)
     : modified.length === 0 && missing.length === 0;
-  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0;
-  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, toolkitProvenance };
+  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
+  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */

@@ -10,11 +10,11 @@ import { substitute, formatValue, placeholderKeys } from '../lib/template.mjs';
 import { parseFrontmatter, stringifyFrontmatter, deepMerge, lookupPath, sha256, parseVersion, compareVersions } from '../lib/util.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
-import { eject, installRefs, init } from '../lib/eject.mjs';
+import { eject, installRefs, init, unejectCollisions } from '../lib/eject.mjs';
 import { validateToolkit, validateExternalStacks, validateSourceBytes } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
-import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, itemOutputMatcher } from '../lib/refs.mjs';
+import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
 import { computeListModel, formatListTable, selectableChoices, STATUS } from '../lib/list.mjs';
 import { normalizePrerequisites, applicablePrerequisites, checksDigest, formatCheckGate, looksLikeBranchRef } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
@@ -7586,14 +7586,237 @@ describe('render selection: include, closure, scoping, eject', () => {
     assert.ok(result.errors.some((e) => /ambiguous/.test(e)), JSON.stringify(result.errors));
   });
 
-  test('eject wins over include (item filtered from the selection)', () => {
-    writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
+  test('eject wins over a stack item and over an included item\'s dependency', () => {
+    writeConfig(['targets: [claude]', 'stacks: [orch]', 'include: [skills/git]', 'eject: [skills/deleg, skills/gpm]', 'config:', '  orch: {who: X, roster: R}']);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.ok(!has('.claude/skills/git/SKILL.md'));
-    assert.deepEqual(computeSelection(loadToolkit(root), {
-      targets: ['claude'], stacks: [], include: ['skills/git'], eject: ['skills/git'], values: {},
-    }).items, []);
+    assert.ok(has('.claude/agents/pm.md'));
+    assert.ok(!has('.claude/skills/deleg/SKILL.md'));
+    assert.ok(!has('.claude/skills/gpm/SKILL.md'));
+  });
+});
+
+describe('include: and eject: are mutually exclusive (#497)', () => {
+  let root;
+  let cwd;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-excl-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-excl-'));
+    makeRefFixture(root);
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const CONFIG = '.waffle/waffle.yaml';
+  const writeConfig = (lines) => write(cwd, CONFIG, `${lines.join('\n')}\n`);
+  const config = () => YAML.parse(read(cwd, CONFIG));
+  const render = (force = false) => renderProject({ toolkitRoot: root, cwd, toolkitVersion: '0.0.test', force });
+  const install = (refs, logs = []) => installRefs({ toolkitRoot: root, cwd, refs, log: (m) => logs.push(m) });
+  const has = (rel) => fs.existsSync(path.join(cwd, rel));
+  const GIT = '.claude/skills/git/SKILL.md';
+  const DUPE = '.claude/skills/dupe/SKILL.md';
+
+  describe('render', () => {
+    test('an overlap is a render error that names both entries and the fix, and writes nothing', () => {
+      writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
+      const result = render();
+      assert.equal(result.ok, false);
+      assert.equal(result.errors.length, 1, JSON.stringify(result.errors));
+      assert.match(result.errors[0], /`include:` names skills\/git and `eject:` names skills\/git/);
+      assert.match(result.errors[0], /mutually exclusive/);
+      assert.match(result.errors[0], /wafflestack install skills\/git/);
+      assert.ok(!has(GIT));
+      assert.ok(!has('.waffle/waffle.lock.json'));
+    });
+
+    test('a stack-qualified include matches an unqualified eject', () => {
+      writeConfig(['targets: [claude]', 'stacks: []', 'include: [alt2/skills/dupe]', 'eject: [skills/dupe]', 'config: {}']);
+      const result = render();
+      assert.equal(result.ok, false);
+      assert.match(result.errors[0], /`include:` names alt2\/skills\/dupe and `eject:` names skills\/dupe/);
+    });
+
+    test('the overlap is an error whether or not a stack also selects the item', () => {
+      // Only reachable via the include — pure dead weight — and ALSO stack-selected: same error.
+      for (const stacks of ['[]', '[base]']) {
+        writeConfig(['targets: [claude]', `stacks: ${stacks}`, 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
+        const result = render();
+        assert.equal(result.ok, false, stacks);
+        assert.ok(result.errors.some((e) => /mutually exclusive/.test(e)), JSON.stringify(result.errors));
+      }
+    });
+
+    test('computeSelection carries the overlaps; alias ref forms match', () => {
+      const selection = computeSelection(loadToolkit(root), {
+        targets: ['claude'], stacks: [], include: ['skill:git'], eject: ['skills/git'], values: {},
+      });
+      assert.deepEqual(selection.ejectOverlaps, [{ include: 'skill:git', eject: 'skills/git' }]);
+      assert.deepEqual(selection.items, []);
+      assert.equal(selection.errors.length, 1);
+    });
+
+    test('includeEjectOverlaps: disjoint lists, and the entries the selection never honors, are not overlaps', () => {
+      assert.deepEqual(includeEjectOverlaps({ include: ['agents/pm'], eject: ['skills/git'] }), []);
+      assert.deepEqual(includeEjectOverlaps({ include: ['orch'], eject: ['orch'] }), []);
+      assert.deepEqual(includeEjectOverlaps({ include: ['alt/skills/dupe'], eject: ['alt/skills/dupe'] }), []);
+      assert.deepEqual(includeEjectOverlaps({}), []);
+    });
+  });
+
+  describe('install un-ejects', () => {
+    test('an unqualified ref: the eject entry goes, the include lands, and the log says so', () => {
+      writeConfig(['# keep me', 'targets: [claude]', 'stacks: []', 'eject: [skills/git, skills/gpm]', 'config: {}']);
+      const logs = [];
+      const result = install(['skills/git'], logs);
+      assert.deepEqual(result.unejected, [{ ref: 'skills/git', kind: 'skills', name: 'git' }]);
+      assert.deepEqual(config().include, ['skills/git']);
+      assert.deepEqual(config().eject, ['skills/gpm']);
+      assert.match(read(cwd, CONFIG), /# keep me/);
+      assert.ok(logs.some((l) => /un-ejecting skills\/git — dropping it from `eject:`/.test(l)), logs.join('\n'));
+      const rendered = render();
+      assert.equal(rendered.ok, true, JSON.stringify(rendered.errors));
+      assert.ok(has(GIT));
+    });
+
+    test('a stack-qualified ref un-ejects the unqualified eject entry, and an emptied eject: key is dropped', () => {
+      writeConfig(['targets: [claude]', 'stacks: []', 'eject: [skills/dupe]', 'config: {}']);
+      const logs = [];
+      const result = install(['alt/skills/dupe'], logs);
+      assert.deepEqual(result.unejected, [{ ref: 'alt/skills/dupe', kind: 'skills', name: 'dupe' }]);
+      assert.deepEqual(config().include, ['alt/skills/dupe']);
+      assert.equal('eject' in config(), false);
+      assert.ok(logs.some((l) => /un-ejecting alt\/skills\/dupe/.test(l)), logs.join('\n'));
+      assert.equal(render().ok, true);
+      assert.match(read(cwd, DUPE), /variant alt/);
+    });
+
+    test('an already-overlapping config is repaired: the include stays, the eject entry goes', () => {
+      writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/git]', 'eject: [skills/git]', 'config: {}']);
+      assert.equal(render().ok, false);
+      const result = install(['skill:git']);
+      assert.deepEqual(result.added, []);
+      assert.deepEqual(config().include, ['skills/git']);
+      assert.equal('eject' in config(), false);
+      assert.equal(render().ok, true);
+    });
+
+    test('a stack install, and a dependency closure, leave their ejected items ejected — and say so', () => {
+      writeConfig(['targets: [claude]', 'stacks: []', 'eject: [skills/gpm]', 'config: {}']);
+      const logs = [];
+      const result = install(['base', 'agents/pm'], logs);
+      assert.deepEqual(result.unejected, []);
+      assert.deepEqual(config().eject, ['skills/gpm']);
+      assert.equal(logs.filter((l) => /note: skills\/gpm stays ejected/.test(l)).length, 2, logs.join('\n'));
+    });
+
+    // The project-owned copy is untracked, so the #25 collision guard is what protects it.
+    const ejectThenEdit = (edit) => {
+      writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/git]', 'config: {}']);
+      assert.equal(render().ok, true);
+      eject({ cwd, item: 'skills/git' });
+      if (edit) fs.appendFileSync(path.join(cwd, GIT), edit);
+    };
+
+    test('an unedited project-owned copy is adopted silently', () => {
+      ejectThenEdit(null);
+      install(['skills/git']);
+      const result = render();
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      assert.ok(GIT in JSON.parse(read(cwd, '.waffle/waffle.lock.json')).files);
+    });
+
+    test('an edited project-owned copy is refused without --force, and rollback() restores the config', () => {
+      ejectThenEdit('\nproject edit\n');
+      const before = read(cwd, CONFIG);
+      const installed = install(['skills/git']);
+      assert.notEqual(read(cwd, CONFIG), before);
+      const result = render();
+      assert.equal(result.ok, false);
+      assert.match(result.errors[0], /refusing to overwrite \.claude\/skills\/git\/SKILL\.md/);
+      assert.deepEqual(unejectCollisions(installed.unejected, result.collisions), [GIT]);
+      assert.match(read(cwd, GIT), /project edit/);
+      installed.rollback();
+      assert.equal(read(cwd, CONFIG), before);
+    });
+
+    test('unejectCollisions ignores a collision that is not an un-ejected item\'s file', () => {
+      const unejected = [{ ref: 'skills/git', kind: 'skills', name: 'git' }];
+      assert.deepEqual(unejectCollisions(unejected, ['.claude/skills/gpm/SKILL.md', '.claude/agents/git.md']), []);
+      assert.deepEqual(unejectCollisions(unejected, undefined), []);
+      assert.deepEqual(unejectCollisions([], [GIT]), []);
+    });
+
+    test('--force re-takes ownership and overwrites the edit', () => {
+      ejectThenEdit('\nproject edit\n');
+      install(['skills/git']);
+      const result = render(true);
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      assert.doesNotMatch(read(cwd, GIT), /project edit/);
+    });
+
+    test('CLI: a refused un-eject leaves waffle.yaml and the file exactly as found; --force completes it', () => {
+      // The CLI renders from the REAL toolkit, so this case uses a real skill.
+      const SKILL = '.claude/skills/clean-up/SKILL.md';
+      writeConfig(['targets: [claude]', 'stacks: []', 'include: [skills/clean-up]', 'config: {}']);
+      assert.equal(runCli(['install'], cwd).status, 0);
+      assert.equal(runCli(['eject', 'skills/clean-up'], cwd).status, 0);
+      fs.appendFileSync(path.join(cwd, SKILL), '\nproject edit\n');
+      const before = read(cwd, CONFIG);
+
+      const refused = runCli(['install', 'skills/clean-up'], cwd);
+      assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+      assert.match(refused.stdout, /un-ejecting skills\/clean-up/);
+      assert.match(refused.stderr, /refusing to overwrite \.claude\/skills\/clean-up\/SKILL\.md/);
+      assert.match(refused.stderr, /install refused — skills\/clean-up stays ejected/);
+      assert.equal(read(cwd, CONFIG), before);
+      assert.match(read(cwd, SKILL), /project edit/);
+
+      const forced = runCli(['install', 'skills/clean-up', '--force'], cwd);
+      assert.equal(forced.status, 0, forced.stdout + forced.stderr);
+      assert.equal('eject' in config(), false);
+      assert.deepEqual(config().include, ['skills/clean-up']);
+      assert.doesNotMatch(read(cwd, SKILL), /project edit/);
+    });
+  });
+
+  describe('doctor', () => {
+    test('reports the overlap in an already-rendered repo and fails', () => {
+      writeConfig(['targets: [claude]', 'stacks: [base]', 'config:', '  base: {botEmail: b@x.io}']);
+      assert.equal(render().ok, true);
+      assert.equal(doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: root }).ok, true);
+
+      writeConfig(['targets: [claude]', 'stacks: [base]', 'include: [base/skills/git]', 'eject: [skills/git]', 'config:', '  base: {botEmail: b@x.io}']);
+      for (const toolkitRoot of [root, null]) {
+        const result = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot });
+        assert.equal(result.ok, false);
+        assert.deepEqual(result.ejectOverlaps, [{ include: 'base/skills/git', eject: 'skills/git' }]);
+        assert.ok(result.notes.some((n) => /^include\/eject overlap: .*mutually exclusive/.test(n)), result.notes.join('\n'));
+      }
+    });
+  });
+
+  describe('eject stays render-free', () => {
+    test('it names the closure-only dependencies the next render will prune', () => {
+      writeConfig(['targets: [claude]', 'stacks: [base]', 'include: [agents/pm]', 'config:', '  base: {botEmail: b@x.io}', '  orch: {who: X, roster: R}']);
+      assert.equal(render().ok, true);
+      const { orphaned } = eject({ cwd, item: 'agents/pm', toolkitRoot: root });
+      // git and gpm survive through the `base` stack; deleg was reachable only via the include.
+      assert.deepEqual(orphaned, ['skills/deleg']);
+      assert.ok(has('.claude/skills/deleg/SKILL.md'), 'eject itself prunes nothing');
+      const result = render();
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      assert.deepEqual(result.removed.filter((f) => f.startsWith('.claude')), ['.claude/skills/deleg/SKILL.md']);
+      assert.ok(has('.claude/agents/pm.md'), 'the ejected file stays, project-owned');
+    });
+
+    test('nothing is orphaned by ejecting a stack item, nor computed without a toolkit', () => {
+      writeConfig(['targets: [claude]', 'stacks: [orch]', 'include: [agents/pm]', 'config:', '  orch: {who: X, roster: R}']);
+      assert.equal(render().ok, true);
+      assert.deepEqual(eject({ cwd, item: 'skills/deleg', toolkitRoot: root }).orphaned, []);
+      assert.deepEqual(eject({ cwd, item: 'agents/pm' }).orphaned, []);
+    });
   });
 });
 

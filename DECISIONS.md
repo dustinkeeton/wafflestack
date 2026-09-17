@@ -9,6 +9,36 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-16: `include:` and `eject:` are mutually exclusive; `install` un-ejects, `eject` never renders (#497)
+
+**Context**: Selection is `(stacks ∪ closure(include)) − eject`, so an item named in both lists is
+silently not rendered. `eject` already stripped a matching `include:` entry; `install` — its
+documented mirror — never looked at `eject:`. PR #495 re-installed two ejected workflow refs:
+`install` logged `installing <ref>`, rendered nothing, exited 0, and it took a hand edit (#496) to
+arm the hook. Nothing in `render` or `doctor` flagged the state.
+
+**Decision**: The lists are exclusive by construction and by check. `install <ref>` on an ejected
+item **un-ejects** it, loudly. The file it re-takes is project-owned and untracked, so the existing
+unmanaged-file guard (#25) is the protection — identical adopts, edited refuses without `--force` —
+and the CLI rolls `waffle.yaml` back on that refusal, so a refused install changes nothing. A
+hand-edited overlap is a **render error** and fails `doctor`, remedy in the message. `eject` stays
+**render-free**: it reports the dependencies its dropped `include:` was the only thing selecting and
+says to run `render`.
+
+**Alternatives**: *Refuse `install` on an ejected ref* — safe, but makes the user hand-edit the very
+list the CLI owns, and breaks the mirror with `eject`. *Warn on overlap instead of erroring* — a
+warning is what a no-op already was: easy to miss in a render's output. *Have `eject` render* — it
+would prune closure-only outputs immediately, but `render` is release-gated (#373) and needs the
+toolkit and network identity, while `eject` today works offline from any checkout; pruning is
+already the next render's job under the frozen-image contract.
+
+**Consequences**: A consumer config carrying an overlap fails `render`/`upgrade` until one entry is
+removed (CHANGELOG Consumer impact). Ejecting a stack item, or a dependency of an included item, is
+not an overlap. An un-eject whose render fails for a reason *other* than the collision (a missing
+required key, say) stays persisted, like any other install.
+
+---
+
 ## 2026-09-16: Behavioral skill flags become three-mode config keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:` (#478, slices 1–2)
 
 **Context**: Skills that branch on a flag hardcode both the token and its default in prose:

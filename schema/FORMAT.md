@@ -1002,7 +1002,15 @@ The rendered set is `union(items of stacks:) ∪ include: − eject:`.
   the placeholders the selected items actually use, so a partial install never demands
   config that only unselected siblings need. Stack `env:` prerequisites still warn when
   any item from that stack renders.
-- `eject:` — items to stop managing; wins over both `stacks:` and `include:`.
+- `eject:` — items to stop managing; wins over `stacks:` and over a dependency closure. An entry
+  is always an unqualified item ref (`skills/<name>`, `agents/<name>`, `files/<path>`).
+
+**`include:` and `eject:` are mutually exclusive.** An item named by both (a stack-qualified
+`include:` matches its unqualified `eject:` twin) is a **render error**, and `doctor` fails on it
+too — `eject:` would win, so the include would be dead weight and `install` a silent no-op. The
+two commands keep the lists apart for you; the check exists for a hand-edited config. Ejecting a
+*stack's* item, or a *dependency* of an included item, is not an overlap — that is what `eject:`
+is for.
 
 Every one of those resolutions is gated on the **waffle registry** (see above): a `wip` waffle is
 never expanded from its stack and is refused as an explicit ref, and a ref naming a `replaced`
@@ -1014,8 +1022,21 @@ unknown or ambiguous names, listing the qualified candidates), appends stack ref
 ambiguous), then runs a full render. Persisting the choice is required, not cosmetic — the
 frozen-image contract deletes any locked file the next render doesn't reproduce, so an
 un-persisted ad-hoc install would be silently removed. Dependency closure is recomputed
-each render (not persisted), so it tracks upstream changes. `wafflestack eject skills/<name>`
-also drops any matching `include:` entry so it isn't left orphaned.
+each render (not persisted), so it tracks upstream changes.
+
+The two commands are mirrors, and each keeps the lists exclusive:
+
+- `wafflestack eject <ref>` drops any matching `include:` entry. It **never renders** — it stays
+  offline and works from an unreleased toolkit — so the dependencies only that include pulled in
+  remain rendered and lock-tracked until the next `render` prunes them; `eject` names them and
+  says so.
+- `wafflestack install <ref>` on an **ejected** item **un-ejects** it: the `eject:` entry is
+  removed (logged as `un-ejecting <ref>`) and wafflestack manages the item again. The file on
+  disk is project-owned at that point, so the render treats it like any unmanaged file: a
+  byte-identical copy is adopted silently, and one that differs is **refused without `--force`**
+  — the refusal rolls the config back, so the item stays ejected and nothing was written.
+  Installing a *stack*, or an item whose *dependency* is ejected, leaves those entries ejected
+  and notes each one.
 
 ## External stack sources
 

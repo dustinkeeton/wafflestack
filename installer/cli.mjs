@@ -5,7 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
-import { eject, init, installRefs } from './lib/eject.mjs';
+import { eject, init, installRefs, unejectCollisions } from './lib/eject.mjs';
 import { validateToolkit } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { collectReport, formatReportMarkdown } from './lib/report.mjs';
@@ -73,8 +73,8 @@ try {
       const gitignore = extractFlag(args, '--gitignore');
       // Gate BEFORE installRefs persists anything: a refused install must leave waffle.yaml as it found it.
       const toolkitIdentity = requireRelease('install');
-      if (args.length) installRefs({ toolkitRoot, cwd, refs: args, log: console.log });
-      runRender(force, toolkitIdentity);
+      const installed = args.length ? installRefs({ toolkitRoot, cwd, refs: args, log: console.log }) : null;
+      runRender(force, toolkitIdentity, installed);
       if (gitignore) offerGitignore();
       break;
     }
@@ -146,10 +146,14 @@ try {
     }
     case 'eject': {
       if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH>');
-      const { ref, released } = eject({ cwd, item: args[0], log: console.log });
+      const { ref, released, orphaned } = eject({ cwd, item: args[0], toolkitRoot, log: console.log });
       console.log(`ejected ${ref}; ${released.length} files released from management:`);
       for (const f of released) console.log(`  ${f}`);
       console.log('the files remain in place and are now project-owned');
+      // `eject` never renders (#497) — it stays offline and ungated — so it says what a render would prune.
+      if (orphaned.length) {
+        console.log(`note: ${ref} was the only thing selecting ${orphaned.join(', ')} — still rendered and lock-tracked; run \`wafflestack render\` to prune`);
+      }
       break;
     }
     // The toolkit's only destructive command: a DRY RUN until `--yes`, and every delete is gated
@@ -221,8 +225,8 @@ try {
         if (result.applied && result.refs.length) {
           // The one branch of `list` that writes — hence the gate here, not on the command.
           const toolkitIdentity = requireRelease('list --interactive');
-          installRefs({ toolkitRoot, cwd, refs: result.refs, log: console.log });
-          runRender(false, toolkitIdentity);
+          const installed = installRefs({ toolkitRoot, cwd, refs: result.refs, log: console.log });
+          runRender(false, toolkitIdentity, installed);
         } else {
           console.log(result.reason ?? 'no changes selected');
         }
@@ -409,11 +413,18 @@ function helpText() {
 
 // `toolkitIdentity` is what `requireRelease()` already resolved; every caller here is a gated
 // command, so it is never null, and the lock records WHICH toolkit rendered (#374).
-function runRender(force = false, toolkitIdentity = null) {
+// `installed` is what `installRefs` just persisted: an un-eject whose project-owned file the render
+// refused to overwrite is rolled back, so a refused install leaves waffle.yaml as it found it (#497).
+function runRender(force = false, toolkitIdentity = null, installed = null) {
   const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, log: console.log });
   for (const w of result.warnings) console.warn(`warning: ${w}`);
   if (!result.ok) {
     for (const e of result.errors) console.error(`error: ${e}`);
+    const blocked = installed ? unejectCollisions(installed.unejected, result.collisions) : [];
+    if (blocked.length) {
+      installed.rollback();
+      console.error(`error: install refused — ${installed.unejected.map((u) => u.ref).join(', ')} stay${installed.unejected.length === 1 ? 's' : ''} ejected and ${CONFIG_FILE} was restored; nothing was written. The project-owned ${blocked.length === 1 ? 'copy differs' : 'copies differ'} from the render: re-run with \`--force\` to overwrite, or move your edits into ${CONFIG_FILE} config / .waffle/extensions/ first`);
+    }
     process.exit(1);
   }
   console.log(`rendered ${result.written.length} files into ${cwd}`);

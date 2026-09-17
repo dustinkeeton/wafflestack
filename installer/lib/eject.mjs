@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { exists, writeFileEnsuringDir } from './util.mjs';
-import { readLock, readLocalLock } from './render.mjs';
-import { loadToolkit } from './toolkit.mjs';
-import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches, itemOutputMatcher } from './refs.mjs';
+import { readLock, readLocalLock, readTreeLock } from './render.mjs';
+import { loadToolkit, loadToolkitWithSources } from './toolkit.mjs';
+import { defaultSourceCacheDir } from './sources.mjs';
+import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches, itemOutputMatcher, computeSelection } from './refs.mjs';
 import {
   CONFIG_FILE,
   LEGACY_ROOT_CONFIG_FILE,
@@ -13,13 +14,15 @@ import {
   LOCAL_LOCK_FILE,
   resolveConfigFile,
   renameLegacyStacksKey,
+  loadProjectConfig,
 } from './project.mjs';
 
 /**
  * Stop managing an item: add it to the config's `eject:` list and drop its rendered files
  * from the lock so they become project-owned. The files themselves are left in place.
+ * Deliberately render-free (#497): `orphaned` names what the next `render` will prune instead.
  */
-export function eject({ cwd, item, log = () => {} }) {
+export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
   const ref = normalizeItemRef(item);
   if (!/^(agents|skills|files)\//.test(ref)) {
     throw new Error(`eject target must look like skills/<name>, agents/<name>, or files/<path>, got "${item}"`);
@@ -36,7 +39,8 @@ export function eject({ cwd, item, log = () => {} }) {
     doc.set('eject', [...list, ref]);
     dirty = true;
   }
-  // Drop any matching include entry (qualified or not) so it is not left orphaned.
+  // Drop any matching include entry (qualified or not): the two lists are mutually exclusive (#497).
+  let droppedInclude = false;
   const includeNode = doc.get('include');
   if (includeNode) {
     const includeList = includeNode.toJSON();
@@ -45,9 +49,14 @@ export function eject({ cwd, item, log = () => {} }) {
       if (kept.length) doc.set('include', kept);
       else doc.delete('include');
       dirty = true;
+      droppedInclude = true;
     }
   }
+  // Only a dropped include can orphan anything: a stack expansion never walks a closure.
+  const before = toolkitRoot && droppedInclude ? selectedRefs(toolkitRoot, cwd) : null;
   if (dirty) fs.writeFileSync(configFile, doc.toString());
+  const after = before ? selectedRefs(toolkitRoot, cwd) : null;
+  const orphaned = after ? [...before].filter((r) => r !== ref && !after.has(r)).sort((a, b) => a.localeCompare(b)) : [];
 
   // Release the paths from BOTH locks (#317): the committed one stops the project managing the
   // file, and a local lock still listing the path makes the next render's stale-prune delete it.
@@ -69,13 +78,33 @@ export function eject({ cwd, item, log = () => {} }) {
     writeFileEnsuringDir(path.join(cwd, file), `${JSON.stringify(lock, null, 2)}\n`);
   }
 
-  return { ref, released: [...released].sort((a, b) => a.localeCompare(b)) };
+  return { ref, released: [...released].sort((a, b) => a.localeCompare(b)), orphaned };
+}
+
+/** The `kind/name` refs the config on disk selects right now; `null` when that cannot be computed (best-effort). */
+function selectedRefs(toolkitRoot, cwd) {
+  try {
+    const project = loadProjectConfig(cwd);
+    const toolkit = loadToolkitWithSources({
+      builtinRoot: toolkitRoot,
+      externalStacks: project.externalStacks ?? [],
+      cwd,
+      cacheDir: defaultSourceCacheDir(),
+      refreshSources: false,
+    });
+    const stacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
+    const tracked = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
+    return new Set(computeSelection(toolkit, { ...project, stacks }, tracked).items.map((i) => `${i.kind}/${i.item.name}`));
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Additive per-item/stack install — the mirror of `eject`. Persistence is required, not
  * cosmetic: the frozen-image contract would otherwise delete an ad-hoc install on the next
  * render. Dependency closure is NOT persisted; it is recomputed each render.
+ * An ejected item ref is UN-EJECTED (#497); `rollback()` restores the config as it was found.
  */
 export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const { file: configFile, legacy, note } = resolveConfigFile(cwd);
@@ -97,14 +126,18 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   }
   if (errors.length) throw new Error(errors.join('\n'));
 
-  const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
+  const original = fs.readFileSync(configFile, 'utf8');
+  const doc = YAML.parseDocument(original);
   // Carry a legacy `bundles:` key forward in place (comment-preserving) before touching the
   // selection, so we never append to a deprecated key or split state across both names.
   const renamedKey = renameLegacyStacksKey(doc);
   const stacks = doc.get('stacks') ? doc.get('stacks').toJSON() : [];
   const include = doc.get('include') ? doc.get('include').toJSON() : [];
+  let ejected = doc.get('eject') ? doc.get('eject').toJSON() : [];
+  const isEjected = (ref) => ejected.some((e) => normalizeItemRef(e) === ref);
   const added = [];
   const closures = [];
+  const unejected = [];
   let touchedStacks = false;
   let touchedInclude = false;
 
@@ -116,9 +149,19 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
         touchedStacks = true;
       }
       log(`installing ${target.name} (stack)`);
+      const stack = toolkit.stacks.get(target.name);
+      for (const kind of /** @type {const} */ (['agents', 'skills', 'files'])) {
+        for (const { name } of stack[kind]) if (isEjected(`${kind}/${name}`)) log(stillEjected(`${kind}/${name}`));
+      }
       continue;
     }
     const canonical = target.canonicalRef;
+    const plain = `${target.kind}/${target.name}`;
+    if (isEjected(plain)) {
+      ejected = ejected.filter((e) => normalizeItemRef(e) !== plain);
+      unejected.push({ ref: canonical, kind: target.kind, name: target.name });
+      log(`un-ejecting ${canonical} — dropping it from \`eject:\` so wafflestack manages it again (a project-owned copy that differs from the render is refused without \`--force\`)`);
+    }
     if (!include.includes(canonical)) {
       include.push(canonical);
       added.push(canonical);
@@ -127,13 +170,31 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     const deps = closureDeps(toolkit, target);
     closures.push({ ref: canonical, deps });
     log(`installing ${canonical}${deps.length ? ` (+${deps.length} dep${deps.length === 1 ? '' : 's'}: ${deps.join(', ')})` : ''}`);
+    for (const dep of deps) if (isEjected(dep)) log(stillEjected(dep));
   }
 
   if (touchedStacks) doc.set('stacks', stacks);
   if (touchedInclude) doc.set('include', include);
-  if (renamedKey || touchedStacks || touchedInclude) fs.writeFileSync(configFile, doc.toString());
+  if (unejected.length) {
+    if (ejected.length) doc.set('eject', ejected);
+    else doc.delete('eject');
+  }
+  const wrote = renamedKey || touchedStacks || touchedInclude || unejected.length > 0;
+  if (wrote) fs.writeFileSync(configFile, doc.toString());
 
-  return { added, closures };
+  return { added, closures, unejected, rollback: () => { if (wrote) fs.writeFileSync(configFile, original); } };
+}
+
+const stillEjected = (ref) =>
+  `note: ${ref} stays ejected (project-owned, not rendered) — \`wafflestack install ${ref}\` un-ejects it`;
+
+/**
+ * The refused render collisions that are an un-ejected item's project-owned files (#497) — the
+ * signal that an install must roll its un-eject back rather than leave the config half-applied.
+ */
+export function unejectCollisions(unejected, collisions = []) {
+  const matchers = unejected.map(({ kind, name }) => itemOutputMatcher(kind, name));
+  return collisions.filter((rel) => matchers.some((m) => m(rel)));
 }
 
 const STARTER_CONFIG = `# wafflestack project config — see the toolkit repo's schema/FORMAT.md
