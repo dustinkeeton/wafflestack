@@ -27,7 +27,6 @@ include:
   - files/.claude/workflows/audit-stage-1.js
   - files/.claude/workflows/audit-stage-2.js
   - files/.github/workflows/waffle-hygiene.yml
-  - files/.github/workflows/waffle-pr-response-hook.yml
 config:
   git:
     # #155: the managed Wafflebot identity, injected into the rendered `commit` examples via
@@ -279,6 +278,5 @@ config:
 # Project-owned now means: nothing re-creates these files, and a `git add -A` cannot silently
 # re-arm pr-green's paid dispatch. See the `include:` re-arm note above.
 eject:
-  - files/.github/workflows/waffle-hygiene.yml
   - files/.github/workflows/waffle-pr-green-hook.yml
   - files/.github/workflows/waffle-pr-response-hook.yml

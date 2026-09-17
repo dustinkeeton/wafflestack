@@ -24,8 +24,7 @@
     "files/.github/workflows/waffle-post-merge-hook.yml",
     "files/.claude/workflows/audit-stage-1.js",
     "files/.claude/workflows/audit-stage-2.js",
-    "files/.github/workflows/waffle-hygiene.yml",
-    "files/.github/workflows/waffle-pr-response-hook.yml"
+    "files/.github/workflows/waffle-hygiene.yml"
   ],
   "files": {
     ".claude/agents/docs-agent.md": "91b2b393e431891275b9b1be68261eebe0f2175a1b0e21084c3265d4459c7e51",
@@ -80,6 +79,7 @@
     ".github/PULL_REQUEST_TEMPLATE.md": "4459b1a2264bc1520b0c2ee6f5f7dd87f663ec5426c98c4d779a1d32807844d5",
     ".github/REVIEW_TEMPLATE.md": "d3008ffc574e80e903c506220f1cb28c623a04cdb5ab7952eff95b0e3cdd1b80",
     ".github/workflows/waffle-doctor.yml": "9ca66d8db273ac13496911823f02c94cacc2fd4091daccd02db013389c13fbc5",
+    ".github/workflows/waffle-hygiene.yml": "e054ba9174326655ea9468bc3fc7b3de99a9c5b9e5c853b32ac0bd966f4fed7b",
     ".github/workflows/waffle-label-hook.yml": "af03b136c1dc6051240d71f51e451bc7720c8216d655e6efc717b3f616309786",
     ".github/workflows/waffle-post-merge-hook.yml": "71b3ce5d65063d354071a2c839e929747ee67cd1f415c3a5fb02bed1e8fd10e6",
     ".github/workflows/waffle-release-hook.yml": "68ee1e147893f3651d174b6dc0071dfd830bb380c8211cc3a00fd2e32d568a8c",
