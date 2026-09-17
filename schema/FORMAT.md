@@ -152,9 +152,18 @@ Enforcement mirrors `pattern:`. `validate` lints the declaration (every rule abo
 side — a value outside `modes:`, a list or map where a scalar is expected, or a value overriding a
 `lockMode:` — is checked by `render` (top-level and nested substitution; a failed guard bails
 before the tree is touched) and by bare `doctor`, so a value edited after a clean render is still
-caught. Today the renderer substitutes only the resolved mode (`{{key}}`); rendering the `flag:`
-tokens into a skill's argument-parsing prose, and each skill's migration onto these keys, are
-tracked under #478.
+caught.
+
+A skill reads the resolved mode as `{{key}}` and the token names as **`{{key.flag.on}}`** /
+**`{{key.flag.off}}`** — so its argument-parsing prose can say "pass `{{issue.confirmGate.flag.off}}`
+to skip the gate" and render the real token. The resolved mode follows the precedence above through
+config (a `waffle.local.yaml` value changes the on-disk render and the gitignored local lock only;
+the committed lock keeps the committed-inputs render, #317). The tokens are stack-authored: they come
+from the key's `flag:` map and no config value can rewrite them. A token placeholder resolves only
+for a side the key actually names — `{{key.flag.off}}` on a key declaring `flag: { on: … }`, or on a
+key with no `flag:` at all, fails `validate` and the render rather than rendering empty. Declaring a
+token does not oblige the skill to reference it. Each skill's migration onto these keys is tracked
+under #478.
 
 `requires:` formalizes cross-item dependencies that would otherwise be prose-only (a
 skill telling the reader to "see the `github-project-management` skill"). Each key is an

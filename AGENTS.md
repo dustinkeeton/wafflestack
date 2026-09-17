@@ -137,6 +137,10 @@ export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, st
 export function substitute(text, resolve, declared, errors, context, guards) // → string; guards = { patterns: Map<key,guard[]>, entryPatterns: Map<key,Map<leaf,guard[]>>, modes: Map<key,{modes,lockMode,source}[]> } built by render's compileGuards (render.mjs:672)
 export function modeProblems(guards, key, raw, expanded) // → string|null — a behavioral key's raw value must be a scalar and its expanded text one of its modes: (and equal to lockMode: when locked); first problem, null when clean or unguarded (#478)
 export const PROMPT_MODE = 'prompt'      // the reserved never-assume mode; isModeScalar(v) / modeMatches(mode, value) are the shared membership rules
+export const FLAG_SIDES = ['on', 'off']  // the two sides of a `flag:` map = the trailing segments of `{{key.flag.<side>}}` (#486)
+export function parseFlagPlaceholder(name) // → { key, side } | null — splits `<key>.flag.<on|off>`
+export function flagPlaceholders(config)   // → Set<string> of `<key>.flag.<side>` names a config block makes referenceable (one per token a key's flag: names); loadStack unions it into stack.declared
+export function undeclaredFlagProblem(declared, name) // → string|null — a `{{key.flag.<side>}}` whose key is declared but names no such token; pushed by substitute (render) and validate, never a silent pass-through
 export function makeGuard(pattern, source, hint = '')   // → { re, pattern, source, hint } compiled guard record
 export function entryPatternProblems(guards, key, value) // → string[] — map-valued key vs its declared entryPatterns: leaves; NEVER short-circuits, it reports EVERY malformed entry and leaf (#246, template.mjs:127); [] when clean or unguarded
 export function formatValue(v)                 // → string (string[] joins ", "; else YAML block)
@@ -184,7 +188,7 @@ export const GITIGNORE_MARKER = '# wafflestack'
 export function ensureGitignoreEntries(cwd, entries)  // consent-gated idempotent append (exact-line dedupe); → entries added
 export function removeGitignoreEntries(cwd, entries)  // exact-line inverse (#182); strips the marker only once it labels nothing
 export function recommendedGitignoreEntries(toolkit, project) // → [local overlay, local lock, + resolved git.worktreesDir when an enabled stack declares it]
-export function makeResolver(stack, values, target, runtime = {})   // → (key) => value | undefined (harness.* override → built-in → `runtime[sub]` fallback, the CLI-supplied `toolkitVersion` (#461); else config value → stack default)
+export function makeResolver(stack, values, target, runtime = {})   // → (key) => value | undefined (harness.* override → built-in → `runtime[sub]` fallback, the CLI-supplied `toolkitVersion` (#461); `<key>.flag.<side>` → the stack's flag: token, no project value consulted (#486); else config value → stack default)
 
 // util.mjs — shared helpers
 export function sha256(content)                // → hex string
@@ -395,14 +399,14 @@ waffledocs.mjs → template, project, refs, util
 avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
 migrations.mjs → project, refs, util
-toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID_TARGETS only), util
+toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID_TARGETS only), template (flagPlaceholders only), util
 prerequisites.mjs → refs
 plugins.mjs  → refs
 refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle)
 registry.mjs → util
 sources.mjs  → util
 toolkit-ref.mjs → util
-project.mjs  → util, model-invocation (model-invocation.mjs imports only util.mjs — no cycle)
+project.mjs  → util, model-invocation, template (parseFlagPlaceholder only; both import nothing from lib — no cycle)
 ```
 
 ## CLI command registry
@@ -624,8 +628,12 @@ registry entry (a plugin has no path, no render, nothing to prune).
   `lockMode: <mode>` (config may not set anything else; `default:` must equal it), and
   `nonInteractive:` (a mode or `fail`; required iff `prompt` ∈ modes). Precedence: explicit
   token → `waffle.local.yaml` → `waffle.yaml` → `default:`. Membership is judged on rendered
-  text; enforced at the same points as `pattern:` (`modeProblems`, `template.mjs`). The four
-  `autopilot.*` consents ship `lockMode: false`. Schema: `schema/FORMAT.md` § Behavioral keys.
+  text; enforced at the same points as `pattern:` (`modeProblems`, `template.mjs`). A skill reads
+  the resolved mode as `{{key}}` and the tokens as `{{key.flag.on}}` / `{{key.flag.off}}` (#486):
+  `loadStack` adds each declared side to `stack.declared` (`flagPlaceholders`), `makeResolver`
+  answers it from the stack's `flag:` map before any project value, and a side the key does not
+  name fails `validate` and the render (`undeclaredFlagProblem`). A token is optional to reference.
+  The four `autopilot.*` consents ship `lockMode: false`. Schema: `schema/FORMAT.md` § Behavioral keys.
 - Project command values — `project.{lint,typecheck,test,build}Cmd` (13 declarations, one
   byte-identical `pattern:`, `stacks/code-quality/stack.yaml:66`; `project.installCmd` and
   `sec.auditCmd` sit outside it by design) render into a `Bash(<cmd>:*)` grant, so each must be ONE
@@ -689,7 +697,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1469 tests, 203 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1493 tests, 206 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |

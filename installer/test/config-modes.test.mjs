@@ -8,7 +8,9 @@ import { validateToolkit, behavioralKeyProblems } from '../lib/validate.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
-import { modeProblems, PROMPT_MODE } from '../lib/template.mjs';
+import { modeProblems, PROMPT_MODE, parseFlagPlaceholder, flagPlaceholders, undeclaredFlagProblem } from '../lib/template.mjs';
+import { makeResolver } from '../lib/project.mjs';
+import { sha256 } from '../lib/util.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
@@ -20,8 +22,10 @@ function write(root, rel, content) {
   fs.writeFileSync(abs, content);
 }
 
-/** A one-stack fixture toolkit whose single skill references `{{demo.gate}}`, so the key is "used". */
-function fixtureToolkit(specLines) {
+const GATE_LINE = 'The gate for this run is **{{demo.gate}}**.';
+
+/** A one-stack fixture toolkit whose single skill references `{{demo.gate}}` (or `skillLines`), so the key is "used". */
+function fixtureToolkit(specLines, skillLines = [GATE_LINE]) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-478-'));
   write(root, 'toolkit.yaml', 'name: fixture\ndescription: x\nstacks: [demo]\n');
   write(root, 'stacks/demo/stack.yaml', [
@@ -36,7 +40,7 @@ function fixtureToolkit(specLines) {
   ].join('\n'));
   write(root, 'stacks/demo/skills/gated/SKILL.md', [
     '---', 'name: gated', 'description: A gated skill.', '---', '',
-    'The gate for this run is **{{demo.gate}}**.', '',
+    ...skillLines, '',
   ].join('\n'));
   return root;
 }
@@ -283,5 +287,131 @@ describe('autopilot consents are locked in config (#478 acceptance)', () => {
     const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot });
     assert.equal(dr.ok, false);
     assert.ok(dr.configProblems.some((p) => /\{\{autopilot\.autoMerge\}\} is locked to false/.test(p)), JSON.stringify(dr.configProblems));
+  });
+});
+
+describe('flag tokens and the resolved value thread through render (#486)', () => {
+  const FLAG_LINES = [GATE_LINE, 'Pass `{{demo.gate.flag.on}}` to force the gate, `{{demo.gate.flag.off}}` to skip it.'];
+  const SKILL = '.claude/skills/gated/SKILL.md';
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-486-'));
+  });
+  afterEach(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    if (toolkitRoot) fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    toolkitRoot = undefined;
+  });
+
+  const validateFixture = (specLines, skillLines) => {
+    toolkitRoot = fixtureToolkit(specLines, skillLines);
+    return validateToolkit(toolkitRoot).filter((p) => p.includes('demo'));
+  };
+  const projectConfig = (file, value) => {
+    const cfg = value === undefined ? 'config: {}\n' : `config:\n  demo:\n    gate: ${value}\n`;
+    write(cwd, `.waffle/${file}`, `${file === 'waffle.yaml' ? 'targets: [claude]\nstacks: [demo]\n' : ''}${cfg}`);
+  };
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const rendered = () => fs.readFileSync(path.join(cwd, SKILL), 'utf8');
+  const lockHash = (file) => JSON.parse(fs.readFileSync(path.join(cwd, `.waffle/${file}`), 'utf8')).files[SKILL];
+
+  test('the placeholder helpers: shape, discovery, and the undeclared-side problem', () => {
+    assert.deepEqual(parseFlagPlaceholder('demo.gate.flag.on'), { key: 'demo.gate', side: 'on' });
+    assert.deepEqual(parseFlagPlaceholder('a.b.c.flag.off'), { key: 'a.b.c', side: 'off' });
+    assert.equal(parseFlagPlaceholder('demo.gate'), null);
+    assert.equal(parseFlagPlaceholder('demo.gate.flag.maybe'), null);
+    const config = { 'demo.gate': { flag: { on: '--confirm' } }, 'demo.plain': { default: 'x' }, 'demo.bad': { flag: 'oops' } };
+    assert.deepEqual([...flagPlaceholders(config)], ['demo.gate.flag.on']);
+    const declared = new Set(['demo.gate', 'demo.gate.flag.on', 'demo.plain']);
+    assert.equal(undeclaredFlagProblem(declared, 'demo.gate.flag.on'), null);
+    assert.match(undeclaredFlagProblem(declared, 'demo.gate.flag.off'), /config key demo\.gate does not declare \(flag\.off\)/);
+    assert.match(undeclaredFlagProblem(declared, 'demo.plain.flag.on'), /config key demo\.plain does not declare \(flag\.on\)/);
+    assert.equal(undeclaredFlagProblem(declared, 'demo.other.flag.on'), null, 'an undeclared base key is the generic undeclared-placeholder case');
+  });
+
+  test('validate accepts both token placeholders on a key with a full flag map', () => {
+    assert.deepEqual(validateFixture(WELL_FORMED, FLAG_LINES), []);
+  });
+
+  test('validate does not demand that a declared token be referenced (the shipped consents reference none yet)', () => {
+    assert.deepEqual(validateFixture(WELL_FORMED), []);
+  });
+
+  test('validate rejects a token placeholder for a side the key does not declare, naming the side', () => {
+    const problems = validateFixture(['default: true', 'modes: [true, false]', 'flag: { on: "--confirm" }'], FLAG_LINES);
+    assert.ok(problems.some((p) => /placeholder \{\{demo\.gate\.flag\.off\}\} names a flag token that config key demo\.gate does not declare \(flag\.off\)/.test(p)), JSON.stringify(problems));
+    assert.ok(!problems.some((p) => /demo\.gate\.flag\.on/.test(p)), 'the declared side is fine');
+  });
+
+  test('validate rejects a token placeholder on a key with no flag at all', () => {
+    const problems = validateFixture(['default: true', 'modes: [true, false]'], FLAG_LINES);
+    assert.ok(problems.some((p) => /\{\{demo\.gate\.flag\.on\}\} names a flag token that config key demo\.gate does not declare/.test(p)), JSON.stringify(problems));
+  });
+
+  test('makeResolver answers a token from the stack spec and ignores any project value for it', () => {
+    toolkitRoot = fixtureToolkit(WELL_FORMED, FLAG_LINES);
+    const stack = loadToolkit(toolkitRoot).stacks.get('demo');
+    assert.ok(stack.declared.has('demo.gate.flag.on') && stack.declared.has('demo.gate.flag.off'));
+    const resolve = makeResolver(stack, { demo: { gate: { flag: { on: '--smuggled' } } } }, 'claude');
+    assert.equal(resolve('demo.gate.flag.on'), '--confirm');
+    assert.equal(resolve('demo.gate.flag.off'), '--yes');
+    assert.equal(resolve('demo.other.flag.on'), undefined);
+  });
+
+  test('a skill renders its resolved default and both tokens', () => {
+    toolkitRoot = fixtureToolkit(WELL_FORMED, FLAG_LINES);
+    projectConfig('waffle.yaml');
+    const r = render();
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.match(rendered(), /The gate for this run is \*\*true\*\*/);
+    assert.match(rendered(), /Pass `--confirm` to force the gate, `--yes` to skip it\./);
+  });
+
+  test('a committed waffle.yaml value replaces the default; the tokens are unchanged', () => {
+    toolkitRoot = fixtureToolkit(WELL_FORMED, FLAG_LINES);
+    projectConfig('waffle.yaml', 'false');
+    assert.equal(render().ok, true);
+    assert.match(rendered(), /is \*\*false\*\*/);
+    assert.match(rendered(), /`--confirm` .* `--yes`/);
+  });
+
+  test('render refuses a token placeholder for an undeclared side rather than passing it through', () => {
+    toolkitRoot = fixtureToolkit(['default: true', 'modes: [true, false]', 'flag: { on: "--confirm" }'], FLAG_LINES);
+    projectConfig('waffle.yaml');
+    const r = render();
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some((e) => /\{\{demo\.gate\.flag\.off\}\} names a flag token that config key demo\.gate does not declare \(flag\.off\)/.test(e)), JSON.stringify(r.errors));
+    assert.equal(fs.existsSync(path.join(cwd, SKILL)), false);
+  });
+
+  test('a waffle.local.yaml override changes the on-disk render and the local lock, never the committed lock', () => {
+    toolkitRoot = fixtureToolkit(WELL_FORMED, FLAG_LINES);
+    projectConfig('waffle.yaml');
+    assert.equal(render().ok, true);
+    const canonicalContent = rendered();
+    const canonicalHash = lockHash('waffle.lock.json');
+    assert.equal(canonicalHash, sha256(canonicalContent));
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.local.lock.json')), false);
+
+    projectConfig('waffle.local.yaml', 'prompt');
+    const r = render();
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.match(rendered(), /is \*\*prompt\*\*/, 'the overlay wins on disk');
+    assert.match(rendered(), /`--confirm` .* `--yes`/, 'the tokens still come from the stack');
+    assert.equal(lockHash('waffle.lock.json'), canonicalHash, 'the committed lock still describes the committed-inputs render');
+    assert.equal(lockHash('waffle.local.lock.json'), sha256(rendered()), 'the local lock describes this machine');
+    assert.notEqual(lockHash('waffle.local.lock.json'), canonicalHash);
+  });
+
+  test('the shipped orchestration consents expose their + tokens as placeholders', () => {
+    const stack = loadToolkit(repoRoot).stacks.get('orchestration');
+    const resolve = makeResolver(stack, {}, 'claude');
+    for (const [key, token] of [['autopilot.autoMerge', '+automerge'], ['autopilot.reviewLoop', '+review'], ['autopilot.qaLoop', '+qa'], ['autopilot.auditStep', '+audit']]) {
+      assert.ok(stack.declared.has(`${key}.flag.on`), key);
+      assert.ok(!stack.declared.has(`${key}.flag.off`), `${key} declares no off token`);
+      assert.equal(resolve(`${key}.flag.on`), token);
+    }
   });
 });

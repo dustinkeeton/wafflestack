@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, PROMPT_MODE, isModeScalar, modeMatches } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
@@ -632,21 +632,17 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     for (const key of usedKeys) {
       // `harness.*` is a reserved namespace resolved per target, never declared in stack config.
       if (!stack.declared.has(key) && !key.startsWith('harness.') && looksLikeConfigKey(key)) {
-        problems.push(`${ctx}: placeholder {{${key}}} is not declared in stack.yaml config`);
+        const flagProblem = undeclaredFlagProblem(stack.declared, key);
+        problems.push(`${ctx}: ${flagProblem ?? `placeholder {{${key}}} is not declared in stack.yaml config`}`);
       }
     }
-    for (const key of stack.declared) {
+    // Only the config keys themselves must be referenced; a `flag:` token placeholder is optional.
+    for (const key of Object.keys(stack.config)) {
       if (!usedKeys.has(key)) problems.push(`${ctx}: declared config key ${key} is never referenced`);
     }
   }
   return problems;
 }
-
-/**
- * Undeclared {{...}} text is usually third-party template syntax that must pass through, so only
- * dotted lowercase keys — the toolkit's config-key convention — are flagged.
- */
-const FLAG_KEYS = ['on', 'off'];
 
 /**
  * Lint the behavioral-key fields of one `config:` spec (#478): `modes:`, `flag:`, `lockMode:`,
@@ -695,9 +691,9 @@ export function behavioralKeyProblems(spec) {
     if (!isPlainObject(flag)) {
       problems.push('`flag` must be a map of { on, off } tokens');
     } else {
-      const unknown = Object.keys(flag).filter((k) => !FLAG_KEYS.includes(k));
+      const unknown = Object.keys(flag).filter((k) => !FLAG_SIDES.includes(k));
       if (unknown.length) problems.push(`\`flag\` has unknown key(s) ${unknown.join(', ')} (allowed: on, off)`);
-      const present = FLAG_KEYS.filter((k) => flag[k] !== undefined);
+      const present = FLAG_SIDES.filter((k) => flag[k] !== undefined);
       if (!present.length) problems.push('`flag` must name at least one token (`on:` and/or `off:`)');
       for (const k of present) {
         if (typeof flag[k] !== 'string' || !flag[k].length || /\s/.test(flag[k])) {
@@ -725,6 +721,10 @@ export function behavioralKeyProblems(spec) {
   return problems;
 }
 
+/**
+ * Undeclared {{...}} text is usually third-party template syntax that must pass through, so only
+ * dotted lowercase keys — the toolkit's config-key convention — are flagged.
+ */
 function looksLikeConfigKey(key) {
   return /^[a-z][\w-]*(\.[\w-]+)+$/.test(key);
 }

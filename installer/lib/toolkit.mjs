@@ -8,6 +8,7 @@ import { resolveSource } from './sources.mjs';
 import { normalizePrerequisites } from './prerequisites.mjs';
 import { normalizeRecommendedPlugins } from './plugins.mjs';
 import { loadRegistry } from './registry.mjs';
+import { flagPlaceholders } from './template.mjs';
 
 /** @import { ExternalStackEntry } from './project.mjs' */
 /** @import { Registry } from './registry.mjs' */
@@ -60,7 +61,8 @@ import { loadRegistry } from './registry.mjs';
  * @property {FileItem[]} files
  * @property {Set<string>} optIn normalized `files/<path>` refs gated out of a default render
  * @property {Record<string, any>} config the declared `config:` block (key → spec)
- * @property {Set<string>} declared the keys of `config`
+ * @property {Set<string>} declared the placeholder names content may reference: the keys of `config`
+ *   plus each `<key>.flag.<side>` a key's `flag:` map names (#486)
  * @property {Record<string, string>} env legacy harness `env:` map
  * @property {any[]} prerequisites normalized typed prerequisites
  * @property {Record<string, string[]>} requires item ref → dependency refs
@@ -200,7 +202,7 @@ function loadStack(name, dir) {
   /** @type {StackManifest} */
   const manifest = readYaml(path.join(dir, 'stack.yaml'));
   const config = manifest.config ?? {};
-  const declared = new Set(Object.keys(config));
+  const declared = new Set([...Object.keys(config), ...flagPlaceholders(config)]);
 
   // Reject separators and dot segments BEFORE the first path.join, so a traversal entry like
   // `../../secret` is never dereferenced outside the toolkit root (#247). Slug shape is
