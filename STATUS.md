@@ -4,14 +4,14 @@
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - **Version**: v0.15.0 (tagged 2026-09-13; pre-1.0 — the file contract can still change
-  between minor releases).
-- **Last updated**: 2026-09-13
-- **Health**: 🟢 tests 1298/1298 (174 suites) · `validate` clean · CI green on `main` (`880a13e`)
+  between minor releases). `main` carries unreleased work on top — see below.
+- **Last updated**: 2026-09-16
+- **Health**: 🟢 tests 1434 in 194 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` (`b5a6d01`)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
 
-All 9 stacks are shipped and stable — **14 agents and 37 skills** in total. Pick what a project needs.
+All 9 stacks are shipped and stable — **14 agents and 40 skills** in total. Pick what a project needs.
 
 | Stack | What you get |
 |--------|--------------|
@@ -23,40 +23,38 @@ All 9 stacks are shipped and stable — **14 agents and 37 skills** in total. Pi
 | `obsidian-dev` | Obsidian plugin development (+ electron-security-audit) |
 | `expo-dev` | Expo / React Native app development |
 | `harness-architect` | Single domain agent — expert in building agent harnesses |
-| `wafflestack` | Self-referential: eight `/waffle-*` skills, one per CLI command; dogfooded here |
+| `wafflestack` | Self-referential: ten `/waffle-*` skills, each wrapping one CLI command; dogfooded here |
 
 ## Installer & CLI
 
-All 13 commands work (plus `bake`, a pure alias for `render`), over 22 pipeline modules in
-`installer/lib/`: `init` · `setup` · `list` · `install` · `render` · `upgrade` · `doctor` ·
-`eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
+All 15 commands work (plus `bake`, a pure alias for `render`), over 26 pipeline modules in
+`installer/lib/`: `init` · `setup` · `list` · `toggle` · `install` · `render` · `upgrade` ·
+`doctor` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
-## Current focus — shipped in v0.15.0
+## Current focus — unreleased on `main`
 
-Everything below merged on 2026-09-12 and ships in v0.15.0 (CHANGELOG `[0.15.0]`):
+Merged 2026-09-15 and 09-16, after the v0.15.0 tag (CHANGELOG `[Unreleased]`):
 
-- **`/clean-up` sweeps a `/delegate` run's leaked agents (#172, closes epic #380).** It reads
-  the run checkpoint and judges each agent by its *work* — the PR is merged or closed — never by
-  the task status the interruption corrupted. [Why](DECISIONS.md#2026-09-12-clean-up-judges-a-delegate-runs-agents-by-pr-state-from-a-hardcoded-checkpoint-glob-172)
-- **`/audit` ships as two staged Claude workflow scripts (#363, closes epic #184).** Opt-in,
-  Claude-only syrup; your sign-off happens between the two runs. `/audit` now invokes `/docs`
-  instead of copying it (#361), and the spawn-and-collect scaffold has one home in `audit` (#365).
-  [Why](DECISIONS.md#2026-09-12-audit-ships-as-two-staged-claude-workflow-scripts--opt-in-claude-scoped-syrup-363-epic-184)
-- **Codex coverage has a definition of done (#190).** A content test fails on any literal
-  `.claude/…` path in harness-neutral source; the four Claude-dispatch hook workflows are now
-  `targets: [claude]`. [Why](DECISIONS.md#2026-09-12-the-codex-toml-carries-no-skill-grant-and-a-sparse-codex-is-the-whole-render-190)
-- **Labels: `waffle:<label>` everywhere, one bootstrap table (#451, #452). Breaking default.**
-  `waffle-auto-merged` → `waffle:auto-merged`, `waffle-manual-review` → `waffle:manual-review`,
-  `Needs Inference` → `waffle:needs-inference`. Rename with `gh label edit` or pin the old names
-  via config. Bootstrap block: `schema/SETUP.md` step 4, "Required labels".
-  [Why](DECISIONS.md#2026-09-12-harness-labels-live-in-the-waffle-namespace-with-one-bootstrap-list-in-setupmd-451-452)
-- **Auto-merge needs three things, and the third is now preflighted (#205).** The required check
-  needs branch protection or a ruleset — on GitHub Free, public repos only. New `recommend`-level
-  `required-status-check` prerequisite on `orchestration`. [Why](DECISIONS.md#2026-09-12-auto-merge-has-three-prerequisites-and-the-third-is-preflighted-205)
-- **Stacks can recommend external plugins (#199).** `recommendedPlugins:` is an offer `setup`
-  makes, never an install. First shipped use: `docs-system` offers archify behind the `diagram`
-  proxy skill, which falls back to Mermaid when it is absent (#471).
-  [Why](DECISIONS.md#2026-09-12-a-stack-may-recommend-external-plugins-that-setup-offers-but-never-installs-199)
+| Feature | What it gives you | State |
+|---------|-------------------|-------|
+| `wafflestack report` + `/waffle-report` (#473) | A redacted diagnostics bundle, and a skill that files a toolkit bug **upstream** behind a confirmation gate. Never opens your private overlay. [Why](DECISIONS.md#2026-09-15-report-is-a-cli-command-behind-a-thin-skill-wrapper-and-its-redaction-is-structural-473) | ✅ Shipped |
+| `wafflestack toggle` + `/waffle-toggle` (#476) | Per skill: may an agent invoke it on its own, or only you via `/slash`? A committed `skills.modelInvocation` block; Claude target only. [Why](DECISIONS.md#2026-09-16-toggle-makes-agent-invocation-a-per-project-config-input-not-a-hand-edit-476) | ✅ Shipped |
+| Harness tool allowlist (#445) | `npm test` fails on any `Tool(` call a skill or agent makes outside the per-target roster. No consumer impact. [Why](DECISIONS.md#2026-09-16-harness-tool-calls-are-checked-against-a-per-target-allowlist-not-a-denylist-445) | ✅ Shipped — `codex` / `agents-dir` rosters undeclared, so those 2 checks skip |
+| Three-mode config keys (#478) | Behavioral keys declare `modes:` / `flag:` / `lockMode:` / `nonInteractive:`. **Tightening:** an autopilot consent set in config now fails `render` and `doctor` — remove the line. [Why](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12) | 🟡 Partial — schema, validator and flag inventory only (PR #493); slices #486–#490 open |
+
+Also unreleased: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSection` default
+(#472), and `WebFetch` + `WebSearch` granted as a pair across the shipped agents (#474).
+
+## Shipped in v0.15.0
+
+| Change | Why |
+|--------|-----|
+| `/clean-up` sweeps a `/delegate` run's leaked agents, judged by PR state, not task status (#172) | [Why](DECISIONS.md#2026-09-12-clean-up-judges-a-delegate-runs-agents-by-pr-state-from-a-hardcoded-checkpoint-glob-172) |
+| `/audit` ships as two staged Claude workflow scripts — opt-in, sign-off between the runs (#363); it invokes `/docs` rather than copying it (#361) | [Why](DECISIONS.md#2026-09-12-audit-ships-as-two-staged-claude-workflow-scripts--opt-in-claude-scoped-syrup-363-epic-184) |
+| Codex coverage has a definition of done: no literal `.claude/…` path in harness-neutral source (#190) | [Why](DECISIONS.md#2026-09-12-the-codex-toml-carries-no-skill-grant-and-a-sparse-codex-is-the-whole-render-190) |
+| **Breaking default:** labels are `waffle:<label>` everywhere, one bootstrap table in `schema/SETUP.md` step 4 (#451, #452). Rename with `gh label edit`, or pin the old names in config | [Why](DECISIONS.md#2026-09-12-harness-labels-live-in-the-waffle-namespace-with-one-bootstrap-list-in-setupmd-451-452) |
+| Auto-merge's third prerequisite — a required status check — is preflighted (#205) | [Why](DECISIONS.md#2026-09-12-auto-merge-has-three-prerequisites-and-the-third-is-preflighted-205) |
+| Stacks can recommend external plugins: `setup` offers, never installs (#199) | [Why](DECISIONS.md#2026-09-12-a-stack-may-recommend-external-plugins-that-setup-offers-but-never-installs-199) |
 
 ## Known issues & things to watch
 
@@ -65,17 +63,16 @@ Everything below merged on 2026-09-12 and ships in v0.15.0 (CHANGELOG `[0.15.0]`
   `--no-color` missing from `help`.
 - **Hidden deletion gap (#371, open):** a poured syrup file whose whole *stack* was deselected is
   pruned while `list` says `not-installed`.
-- **Paid hooks stay disarmed** (no `ANTHROPIC_API_KEY` secret by design). Re-arming waits on
-  #343 (pluggable CI engine) and #355 (pr-response hook never dispatches). Both open.
-- **Comment burn-down follow-ups (open):** #440 bash essays inside workflow `run:` blocks
-  (~420 lines), #441 DECISIONS triage, #442 `AGENTS.md` prose over its 300-line cap.
+- **Dogfood hooks:** hygiene is **armed** — daily cron, workflow tracked in git (PRs #495, #496).
+  pr-green and pr-response stay **ejected**; #343 (pluggable CI engine) and #355 (pr-response
+  never dispatches) are both open.
+- **Comment burn-down follow-ups (open):** #440 bash essays in workflow `run:` blocks, #441
+  DECISIONS triage, #442 `AGENTS.md` prose over its 300-line cap.
 - **The self-render is committed.** After editing `stacks/**`, re-run
   `node installer/cli.mjs render --allow-unreleased` (flag required, #373) and commit files +
-  lock. Two required checks guard it: the `waffle-doctor` drift gate and the `tests` workflow's
-  `doctor --allow-missing --verify-render` step.
+  lock. Two required checks guard it: `waffle-doctor` and the `tests` workflow's render gate.
 - **Deliberately gitignored here** (tolerated by `doctor --allow-missing`): `.claude/worktrees/`,
-  `.codex/`/`.agents/` (non-targets), `waffle-label-hook.yml`, and the generated `.waffle/`
-  overview docs (`CHEATSHEET.md`, `TEAM.md`, both `.html`, `AVATARS.md`, `avatars/`).
+  `.codex/`/`.agents/`, `waffle-label-hook.yml`, and the generated `.waffle/` overview docs.
 
 ## Dependencies
 
@@ -84,15 +81,15 @@ Everything below merged on 2026-09-12 and ships in v0.15.0 (CHANGELOG `[0.15.0]`
 | Node.js | ≥ 18 | Running the CLI (also a `require` prerequisite of `orchestration`) |
 | `yaml` | ^2.4.5 | The only runtime dependency (parsing manifests/config) |
 | `git` | any | All git operations (also a `require` prerequisite of `orchestration`) |
-| `gh` (GitHub CLI) | authenticated | `github-workflow`, and `orchestration`'s delegate / autopilot / audit skills |
+| `gh` (GitHub CLI) | authenticated | `github-workflow`, `orchestration`'s delegate / autopilot / audit skills, and `/waffle-report` filing |
 | SVG rasterizer + `WAFFLE_GRAVATAR_TOKEN` | optional | Owner-side only, for `avatars sync` |
 
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1298 tests, 174 suites)
+npm test                          # installer test suite (1434 tests, 194 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate
-npm run evals -- --dry-run        # Layer-2 evals (16 cases), mock model, free
+npm run evals -- --dry-run        # Layer-2 evals (18 cases), mock model, free
 ```

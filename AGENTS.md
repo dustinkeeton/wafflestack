@@ -671,7 +671,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
 | render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — flag REQUIRED (#373: a working tree is never at a release tag). Commit the updated render + lock (the doctor drift gate is a required check) |
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
-| evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 16 cases: `code-quality` (2) + `github-workflow` (11) + `orchestration` (3). NOT in `npm test` |
+| evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 18 cases: `code-quality` (2) + `github-workflow` (11) + `orchestration` (3) + `wafflestack` (2). NOT in `npm test` |
 
 Test files (14): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
@@ -714,14 +714,14 @@ This repo renders 5 stacks into itself — `github-workflow`, `docs-system`, `or
 `code-quality/skills/adversarial-review` (run by pr-green when armed), `code-quality/skills/qa`
 (autopilot's opt-in QA gate), and the two orchestration syrup scripts
 `files/.claude/workflows/audit-stage-{1,2}.js` (#363: inert until a session invokes them, no spend —
-poured so the render + lock exercise the opt-in `targets:` path; tracked in git). The paid Claude-dispatch hooks (hygiene, pr-green, pr-response) are
-DISARMED while the repo deliberately carries no `ANTHROPIC_API_KEY` secret: #396 (2026-07-15)
-removed them from `include:` and from git tracking, and #414 (PR #417, 2026-07-16) finished the
-disarm by `eject:`-ing the three `files/` refs via the CLI — the lock no longer tracks their
-rendered paths, so `render` produces nothing under `.github/workflows/waffle-{hygiene,pr-green-hook,pr-response-hook}.yml`.
-Re-arm (#343): remove the three `eject:` entries, re-install the refs + `include:` lines, re-render
-and commit — a funded key must exist first. (Their SOURCES under `stacks/github-workflow/files/`
-stay toolkit content, tracked by the lock as sources.)
+poured so the render + lock exercise the opt-in `targets:` path; tracked in git), and
+`files/.github/workflows/waffle-hygiene.yml` (`waffle.yaml:22-29`). Paid Claude-dispatch hooks: hygiene is
+ARMED — PR #495 re-added its `include:` line, PR #496 dropped its `eject:` entry and re-rendered, so
+`.github/workflows/waffle-hygiene.yml` is lock-managed (`waffle.lock.json:82`) and tracked in git (cron
+`0 13 * * *` + `workflow_dispatch`, reads `secrets.ANTHROPIC_API_KEY`; `waffle-hygiene.yml:9-10,37`).
+pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waffle.yaml:280-282`; #414),
+neither is in `include:`, the lock tracks neither rendered path, and neither file exists under
+`.github/workflows/`. Re-arm one (#343): remove its `eject:` entry, re-install the ref, re-render, commit.
 
 The render (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`) and the lock are
 COMMITTED, like a consuming project — the doctor drift gate (required check on main) needs render
