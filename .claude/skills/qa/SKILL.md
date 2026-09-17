@@ -248,7 +248,8 @@ changed behavior exercised or credibly covered, the suite green — **say so pla
 not invent findings to justify the run. Same rule as step 5: the body goes in a **file**,
 never inline after `--body`. `Write` the summary to the **per-PR, per-head** path
 `${TMPDIR:-/tmp}/waffle-qa-summary-$N-$HEAD_SHA.md` (same namespacing rule and same literal-path caveat
-as step 5), marker on its own line, including the criteria walked and what you ran:
+as step 5), the marker **leading** the body exactly as in step 5 — first line, offset 0, not merely
+somewhere on a line of its own — including the criteria walked and what you ran:
 
 ```markdown
 <!-- waffle-qa -->

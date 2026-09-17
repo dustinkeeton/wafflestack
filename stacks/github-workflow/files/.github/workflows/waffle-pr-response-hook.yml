@@ -209,10 +209,10 @@ jobs:
           # Memoized + LAZY: queried at most once, and only when a caller actually needs the answer.
           # FAIL-CLOSED at every step — a failed API call, malformed JSON, or a non-numeric count all
           # leave delivered=0 (⇒ the run reds). An error must never be read as proof of delivery. Note
-          # the direction is the OPPOSITE of the gate's loop bound above, and deliberately so: the
-          # bound BOUNDS work (an unverifiable answer must not authorize a paid loop), this ADMITS
-          # EVIDENCE (an unverifiable answer must not excuse a blocked delivery). A false negative
-          # here merely reds a run that did deliver: loud, visible, and safe.
+          # the direction is the OPPOSITE of the gate's loop bound above, and deliberately so. The
+          # discriminator is the COST of a false negative, not admit-vs-bound (#339): the bound's
+          # re-arms a paid, COMMITTING cycle, because this is the one job that pushes commits. This
+          # one merely reds a run that did deliver — loud, visible, and safe.
           delivered=""
           check_delivered() {
             if [ -n "$delivered" ]; then return 0; fi

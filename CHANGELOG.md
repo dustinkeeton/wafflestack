@@ -203,6 +203,18 @@ is what you reach for across a breaking one.
   sentence that *forbids* the claim still passes — rather than the exact strings that shipped, which
   is how the `DECISIONS.md` line slipped past the old pins. **Consumer impact:** re-render to pick up
   the corrected skills, review template, and hook prompts; no config or behaviour change.
+- **The two hook guards no longer teach the discriminator that #332 got backwards, and `qa` states the
+  same marker placement in both of its steps (#339).** Re-triage of the post-cap review pass on PR #332:
+  five of its seven findings were dissolved outright by #354 — both hooks now key delivery, dedup and
+  the loop bound on `waffle/*` commit statuses and a label, so no predicate reads a body at all, and the
+  `pull_request_review` trigger that let any GitHub user raise the event is gone. What survived was
+  prose: the guards still explained their opposite fail directions as "a predicate that ADMITS work"
+  versus "one that BOUNDS work" — a rule that, applied faithfully, would relax pr-green's idempotency
+  gate. They now name the real discriminator, the **cost of a false negative**: only the loop bound's
+  false negative re-arms a cycle, because only that job pushes commits. `qa`'s step 6 said the marker
+  goes "on its own line", the weaker placement its step 5 forbids; it now says *leading* the body at
+  offset 0, pinned by a test. **Consumer impact:** re-render to pick up the `qa` skill; comment-only
+  change in the two hook workflows, no behaviour change.
 
 ## [0.15.0] - 2026-09-13
 
