@@ -1025,14 +1025,16 @@ describe('gate skills: documented as resumable across rounds (#295)', () => {
     assert.match(md, /read-only history|Read them; do not touch them\./);
   });
 
-  test('pr-response: the reply template is MARKER-LED — the hook\'s delivery check uses startswith() (#332)', () => {
+  // The hook stopped reading bodies in #338; the marker still LEADS because the skills and
+  // autopilot recover their own post history by it, and offset 0 is what they look at (#339).
+  test('pr-response: the reply template is MARKER-LED — history recovery reads offset 0 (#332/#339)', () => {
     const md = readSkill('pr-response');
     const MARKER = '<!-- waffle-pr-response -->';
     const template = /```markdown\n([\s\S]*?)```/.exec(md);
     assert.ok(template, 'the skill ships a reply-format template block');
     assert.ok(
       template[1].startsWith(`${MARKER}\n`),
-      `the reply template must BEGIN with the marker (jq startswith), not merely carry it:\n${template[1].slice(0, 120)}`,
+      `the reply template must BEGIN with the marker, not merely carry it:\n${template[1].slice(0, 120)}`,
     );
     assert.match(md, /first line|FIRST line|first-line/, 'the skill states the first-line rule');
   });
@@ -1283,6 +1285,14 @@ describe('qa skill: posting mechanics and marker distinctness (#228)', () => {
     assert.match(md, /statuses\/\$HEAD_SHA/, 'the status is keyed to the reviewed head SHA');
     assert.doesNotMatch(md, /HEAD_SHA=\$\(gh pr view/, 'step 7 must not re-resolve HEAD_SHA — a late re-derivation reads after the first use and stamps a post-time head (#412)');
     assert.match(md, /commit_id/, 'the read-back must surface commit_id — head-scoping is load-bearing');
+  });
+
+  test('#339: the no-concerns body is marker-LED too, never merely "on its own line"', () => {
+    const block = [...md.matchAll(/```markdown\n([\s\S]*?)```/g)].map((m) => m[1]).find((b) => b.includes('<!-- waffle-qa -->'));
+    assert.ok(block, 'the skill ships a no-concerns body template');
+    assert.ok(block.startsWith('<!-- waffle-qa -->\n'), `the no-concerns body must BEGIN with the marker:\n${block.slice(0, 120)}`);
+    // "on its own line" admits offset 1084 — the PR #207 shape. Offset 0 is the whole rule.
+    assert.doesNotMatch(md, /marker on its own line/i, 'step 6 states a weaker placement rule than step 5');
   });
 
   test('the adversarial-review marker literal NEVER appears in this skill', () => {
