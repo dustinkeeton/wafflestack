@@ -325,6 +325,29 @@ export function renameLegacyStacksKey(doc) {
 }
 
 /**
+ * Drop `include:` entries from a parsed YAML Document IN PLACE, so the surviving items keep their
+ * comments; an emptied `include:` key is deleted. Idempotent (`[]` when nothing matched).
+ *
+ * @param {any} doc a parsed YAML Document (from `YAML.parseDocument`)
+ * @param {(ref: string) => boolean} shouldDrop
+ * @returns {string[]} the dropped refs, in file order
+ */
+export function dropIncludeEntries(doc, shouldDrop) {
+  const seq = doc.get('include', true);
+  if (!seq || !Array.isArray(seq.items)) return [];
+  /** @type {string[]} */
+  const dropped = [];
+  seq.items = seq.items.filter((/** @type {any} */ node) => {
+    const ref = node && typeof node === 'object' && 'value' in node ? node.value : node;
+    if (typeof ref !== 'string' || !shouldDrop(ref)) return true;
+    dropped.push(ref);
+    return false;
+  });
+  if (dropped.length && !seq.items.length) doc.delete('include');
+  return dropped;
+}
+
+/**
  * BYTE-VERBATIM update of an EXISTING scalar at `keyPath` in a YAML file's raw TEXT — the value-side
  * twin of `renameLegacyStacksKey`, and the only sanctioned write to `.waffle/waffle.yaml`. It never
  * CREATES anything and splices only the scalar's own bytes, because `doc.setIn` would reflow the whole

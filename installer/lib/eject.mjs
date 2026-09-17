@@ -14,6 +14,7 @@ import {
   LOCAL_LOCK_FILE,
   resolveConfigFile,
   renameLegacyStacksKey,
+  dropIncludeEntries,
   loadProjectConfig,
 } from './project.mjs';
 
@@ -40,18 +41,8 @@ export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
     dirty = true;
   }
   // Drop any matching include entry (qualified or not): the two lists are mutually exclusive (#497).
-  let droppedInclude = false;
-  const includeNode = doc.get('include');
-  if (includeNode) {
-    const includeList = includeNode.toJSON();
-    const kept = includeList.filter((r) => !includeRefMatches(r, kind, name));
-    if (kept.length !== includeList.length) {
-      if (kept.length) doc.set('include', kept);
-      else doc.delete('include');
-      dirty = true;
-      droppedInclude = true;
-    }
-  }
+  const droppedInclude = dropIncludeEntries(doc, (r) => includeRefMatches(r, kind, name)).length > 0;
+  if (droppedInclude) dirty = true;
   // Only a dropped include can orphan anything: a stack expansion never walks a closure.
   const before = toolkitRoot && droppedInclude ? selectedRefs(toolkitRoot, cwd) : null;
   if (dirty) fs.writeFileSync(configFile, doc.toString());

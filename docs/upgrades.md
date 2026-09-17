@@ -95,12 +95,19 @@ It only ever moves a pin you already chose:
 
 ## Migration history
 
-Two migrations exist so far, both relocating consumer dotfiles:
+Four migrations exist so far. The first two relocate consumer dotfiles:
 
 - **0.6.0** — shortened the names: `.wafflestack.yaml` → `.waffle.yaml`, along with the local
   overlay, the lock, and `.wafflestack/extensions/` → `.waffle/extensions/`.
 - **0.8.0** — consolidated everything into one `.waffle/` directory: `.waffle/waffle.yaml`,
   `.waffle/waffle.local.yaml`, and `.waffle/waffle.lock.json`.
+
+The other two edit `.waffle/waffle.yaml` in place, keeping your comments:
+
+- **0.10.0** — renamed the `bundles:` key to `stacks:` (in the local overlay too).
+- **0.16.0** — drops each `include:` entry that `eject:` also names. The two lists became mutually
+  exclusive; `eject:` was already winning, so nothing renders differently. The local overlay is
+  never edited — an overlap that involves it is reported for you to fix by hand.
 
 You never rename by hand. Any `render` or `upgrade` moves the legacy files in place — chaining a
 pre-0.6.0 repo all the way forward in a single pass — and reminds you to update the matching

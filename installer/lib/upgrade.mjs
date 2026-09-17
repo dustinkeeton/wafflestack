@@ -4,7 +4,7 @@ import YAML from 'yaml';
 import { exists, compareVersions, parseVersion } from './util.mjs';
 import { readLock, renderProject } from './render.mjs';
 import { doctor } from './doctor.mjs';
-import { MIGRATIONS, runMigrations } from './migrations.mjs';
+import { MIGRATIONS, migrationCeiling, runMigrations } from './migrations.mjs';
 import { CONFIG_FILE, LOCK_FILE, resolveConfigFile, setScalarIn } from './project.mjs';
 import { classifyToolkitRefValue, toolkitPinFromIdentity, parseRepoSlug } from './toolkit-ref.mjs';
 import { loadRegistry, replacementFor } from './registry.mjs';
@@ -95,9 +95,15 @@ export function upgrade({
     log('');
   }
 
+  // An unreleased toolkit already carries the changes its PENDING steps (keyed past its own version)
+  // migrate away from, so it runs them too — `current` included; every step is idempotent (#501).
+  const ceiling = toolkitIdentity?.status === 'unreleased' ? migrationCeiling(toVersion, migrations) : toVersion;
+  const pending = ceiling !== toVersion && (migrate || status === 'current');
+  if (pending) log(`this toolkit is unreleased — also running the migrations keyed past ${toVersion}, up to ${ceiling}`);
+
   let migrationsRun = [];
-  if (migrate) {
-    migrationsRun = runMigrations({ cwd, fromVersion, toVersion, migrations, log }).map((m) => ({
+  if (migrate || pending) {
+    migrationsRun = runMigrations({ cwd, fromVersion, toVersion: ceiling, migrations, log }).map((m) => ({
       version: m.version,
       description: m.description,
     }));

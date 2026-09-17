@@ -1012,6 +1012,13 @@ two commands keep the lists apart for you; the check exists for a hand-edited co
 *stack's* item, or a *dependency* of an included item, is not an overlap — that is what `eject:`
 is for.
 
+The overlap was legal (and silent) through 0.15.0, so `wafflestack upgrade` carries an older
+config across: its `0.16.0` migration drops each overlapping `include:` entry from the committed
+`waffle.yaml` and keeps `eject:` — the side that was already in effect, so the render does not
+change. It never edits `.waffle/waffle.local.yaml`: an overlay list replaces the committed one
+wholesale, so no overlay edit is behavior-preserving, and an overlap that involves the overlay is
+reported for a hand fix instead.
+
 Every one of those resolutions is gated on the **waffle registry** (see above): a `wip` waffle is
 never expanded from its stack and is refused as an explicit ref, and a ref naming a `replaced`
 waffle is forwarded to its successor with a warning naming the stale pin.

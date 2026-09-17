@@ -9,6 +9,38 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-16: A migration may be keyed to the *next* release; the key is guarded, and unreleased toolkits run it (#501)
+
+**Context**: #497 made an `include:` ∩ `eject:` overlap a render error, but shipped no migration:
+`MIGRATIONS` steps are keyed by the release that ships the change, and an `[Unreleased]` change has
+no version yet. The window is `(from, to]`, so a step keyed `0.16.0` is skipped outright if the
+release is cut as `0.15.1` — and never runs for a checkout still reporting `0.15.0`.
+
+**Decision**: Key the step to the release the `[Unreleased]` section already forces — `0.16.0`
+(it holds additive features, so a patch bump is wrong regardless; any later version still covers
+the key). A step keyed past `package.json`'s version is **pending**, and a test requires it to be
+announced under CHANGELOG `[Unreleased]` as "migration `X.Y.Z`": stamping the CHANGELOG to a
+version below the key empties `[Unreleased]` while the step is still pending, so CI fails on the
+bump PR itself. An **unreleased** toolkit lifts its migration ceiling to the newest registered
+step, so `upgrade --allow-unreleased` runs pending steps (idempotent, so the real release re-runs
+them harmlessly). The step edits the committed `waffle.yaml` only: overlay lists replace the
+committed ones wholesale, so no overlay edit is behavior-preserving — overlay overlaps are logged
+for a hand fix (#500).
+
+**Alternatives**: *Ship the migration with the bump PR* — puts feature work in a release chore and
+leaves `main` broken for overlap configs until then. *A `next` sentinel resolved at release* — one
+more thing the bump must rewrite, with no failure if it forgets. *A release-skill prose rule* —
+the skill is generic consumer content, and prose is what a hurried bump skips. *Edit the overlay
+too* (the 0.10.0 precedent) — a key rename is shape-preserving; dropping a list entry is not, and
+an emptied overlay `include:` would un-shadow the whole committed list.
+
+**Consequences**: The guard found #497's CHANGELOG entry filed under the already-released
+`[0.15.0]` — where `upgrade`'s delta would never show it — and this change moves it to
+`[Unreleased]`. A plain `render` across the release still fails on an overlap (remedy in the
+message); only `upgrade` migrates.
+
+---
+
 ## 2026-09-16: `include:` and `eject:` are mutually exclusive; `install` un-ejects, `eject` never renders (#497)
 
 **Context**: Selection is `(stacks ∪ closure(include)) − eject`, so an item named in both lists is
