@@ -1,17 +1,9 @@
-# wafflestack dogfoods itself: github-workflow, docs-system, and orchestration are
-# rendered into this repo so /issue, /git-workflow, /clean-up, /delegate, /audit,
-# /docs and the docs/PM/planner agents are available when developing the toolkit.
-#
-# The rendered .claude/ output, the lock, and the doctor CI workflow are COMMITTED
-# (like a consuming project) — agents in fresh worktrees and CI read the committed
-# skills, and the doctor drift gate (required check on main) is what protects the
-# generated files from hand-edits. Deliberately still gitignored: the label-hook
-# workflow (committing it would arm a live label→harness dispatch) and the generated
-# .waffle/ overview docs — hence doctor runs with --allow-missing. After changing a
-# stack, re-render from the working tree and commit the updated render + lock:
+# wafflestack dogfoods itself. The rendered .claude/ output and the lock are COMMITTED, and the
+# doctor drift gate (required check on main) protects them from hand-edits. Still gitignored:
+# the label-hook workflow (committing it would arm a live dispatch) and the .waffle/ overview
+# docs — hence doctor's --allow-missing. After a stack edit, re-render and commit render + lock:
 #   node installer/cli.mjs render --allow-unreleased
-# The flag is required (#373): `render` refuses from a toolkit that is not at a
-# release tag, and a working tree never is. It suppresses the refusal, not the truth.
+# (#373: `render` refuses from a non-release toolkit, and a working tree never is one.)
 targets: [ claude ]
 stacks:
   - github-workflow
@@ -29,37 +21,15 @@ include:
   - files/.github/workflows/waffle-hygiene.yml
 config:
   git:
-    # #155: the managed Wafflebot identity, injected into the rendered `commit` examples via
-    # `-c` flags. BOTH values are committed here rather than split into the gitignored
-    # .waffle/waffle.local.yaml (the usual layering for botEmail): this repo commits its
-    # render and re-renders it in CI (the audit compliancePrompt runs `render && doctor`)
-    # and in fresh delegate worktrees — neither of which has the gitignored overlay, so an
-    # overlay-held botEmail would render the placeholder there and red the doctor drift gate.
-    # bot@wafflenet.io is already public in this repo's history; nothing is leaked.
-    # `user.name` is quoted because git.botName admits interior spaces.
-    # `commit.gpgsign=false` is setup-note **recipe A** (#158, tag posture pinned by #252):
-    # the recipe owns the signing posture. git.cmd overrides the identity and nothing else, so
-    # an ambient `commit.gpgsign = true` would sign a Wafflebot-authored commit with the
-    # developer's own key — and a prompting signer (1Password's SSH agent) hangs the
-    # non-interactive commit. `tag.gpgSign=false` closes the same class for annotated tags.
-    # This repo's posture is therefore: agent commits are deliberately unsigned (no GitHub
-    # badge, which is intentional and cleaner than an "Unverified" one). Wafflebot holds no
-    # signingKey; adopting recipe B/C would require a bot account with a registered key and a
-    # non-prompting signer, and would forfeit the per-agent avatars (#157).
+    # Bot and owner identities are committed rather than held in the gitignored overlay (#155,
+    # #284): CI and fresh worktrees re-render without the overlay, and a placeholder there would
+    # red the doctor gate. Both emails are already public in history.
     botName: Wafflebot
     botEmail: bot@wafflenet.io
-    # #284: the git.coAuthorTrailer default now credits the repo OWNER via git.ownerName /
-    # git.ownerEmail (was an interim hardcoded coAuthorTrailer override). Agent commits that
-    # reach main count toward the owner's contribution graph — GitHub credits verified co-author
-    # emails on default-branch commits, and this repo merges with merge commits, so branch commits
-    # land on main intact. Both keys are COMMITTED here rather than split into the gitignored
-    # overlay (same rationale as botEmail above): this repo re-renders in CI and fresh delegate
-    # worktrees with no overlay present, so an overlay-held ownerEmail would render the placeholder
-    # there and red the doctor drift gate. dustin.keeton49@gmail.com is already public in history
-    # and verified on the owner's GitHub account. Naming a real person here is fine — this is THIS
-    # repo's committed config, not a toolkit default.
     ownerName: Dustin Keeton
     ownerEmail: dustin.keeton49@gmail.com
+    # Signing is pinned off (#158, #252): an ambient commit.gpgsign=true would sign bot commits
+    # with the developer's key, and a prompting signer hangs a non-interactive commit.
     cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c
       user.name="{{git.botName}}" -c user.email={{git.botEmail}}
     identitySection: |-
@@ -90,67 +60,25 @@ config:
     # lockfile) on a bump. STATUS.md carries a "**Version**: vX.Y.Z" header.
     versionFiles: [ STATUS.md ]
   doctor:
-    # The CI drift gate (required check on main) tolerates the deliberately-untracked
-    # renders (label-hook workflow, .waffle/ overview docs): only modified files fail;
-    # a missing lock still fails.
-    #
-    # #316 asked for `--verify-render` here as well. It is deliberately NOT here — it runs from
-    # .github/workflows/tests.yml instead, as `node installer/cli.mjs doctor --allow-missing
-    # --verify-render`. The reason is that --verify-render re-renders the committed config with
-    # whatever toolkit it is handed, and the workflow THIS key feeds (waffle-doctor.yml) gets its
-    # toolkit from `npx --yes <doctor.toolkitRef>` — by default (#461) the release that rendered. For a
-    # consuming repo that is exactly right: their toolkit really is external. For the toolkit's own
-    # repo it is the wrong toolkit, and adding the flag here would fail in BOTH directions:
-    #   - a PR that edits stacks/** and correctly re-renders would false-RED (its lock is built
-    #     from its own stacks; CI would render with main's), and
-    #   - a PR that edits stacks/** and FORGETS to re-render would false-GREEN (main's unchanged
-    #     stacks still reproduce the stale lock byte for byte) — a clean pass on the exact bug the
-    #     flag exists to catch.
-    # Both were reproduced before choosing this shape; see the #316 PR. Pointing toolkitRef at the
-    # checkout does not rescue it: `npx --yes .` links the package in place rather than installing
-    # it, and this workflow deliberately never runs `npm ci` (a consumer need not be a Node project
-    # at all), so the run dies on `Cannot find package 'yaml'`.
-    #
-    # tests.yml has none of that coupling: it runs `npm ci` first and invokes the CHECKOUT's own
-    # CLI, so the render under test is built from the PR's own stacks/**. `test` is already a
-    # required check on main, so the gate is armed with no branch-protection change.
-    #
-    # NB the soundness of --verify-render has nothing to do with this repo committing
-    # git.botEmail / git.ownerEmail, which is what #316 supposed. Since #317 the lock records the
-    # CANONICAL render — committed inputs only, the gitignored .waffle/waffle.local.yaml overlay
-    # excluded by construction — and --verify-render reads those same committed inputs, so the flag
-    # is sound for any repo, overlay or not (docs/gitignore.md: "Nobody is ever red-gated into
-    # committing a personal value"). What committing those two keys actually buys is the property
-    # one level up: it is why this repo can commit its RENDER at all, since a render-affecting
-    # overlay would bake a personal value into a committed .claude/ file.
+    # Tolerates the deliberately-untracked renders; a modified file or a missing lock still fails.
+    # --verify-render runs from tests.yml instead (#316): waffle-doctor.yml fetches its toolkit
+    # via npx, which in the toolkit's own repo is the wrong tree — false-RED on a correct
+    # re-render, false-GREEN on a forgotten one.
     flags: --allow-missing
-    # #461 pinned the stack default to `#v{{harness.toolkitVersion}}` — the release that rendered
-    # the lock. The toolkit's own repo is the one consumer where that is wrong: its default branch
-    # IS the tree under test (no third-party exposure), and a version pin would name a tag that
-    # does not exist yet on every release-bump PR, wedging the required check. Explicitly
-    # unpinned; `upgrade` leaves an unpinned value alone (#372).
+    # Unpinned (#461): a version pin names a tag that does not exist yet on a release-bump PR,
+    # wedging the required check. `upgrade` leaves an unpinned value alone (#372).
     toolkitRef: github:dustinkeeton/wafflestack
   waffle:
-    # Same call as doctor.toolkitRef above, for the same reason. #469 pinned the stack default to
-    # `#v{{harness.toolkitVersion}}`, so a consumer's /waffle-* skills run the release that rendered
-    # them. Here that would (a) name a tag that does not exist yet on every release-bump PR and
-    # (b) make this repo's COMMITTED render churn on every version bump. Toolkit development runs
-    # `node installer/cli.mjs <cmd> --allow-unreleased` against the working tree anyway, so the
-    # #373 refusal these skills hit when unpinned is the correct answer here, not a regression.
+    # Unpinned for the same reason as doctor.toolkitRef (#469); a pin would also churn the
+    # committed render on every version bump.
     toolkitRef: github:dustinkeeton/wafflestack
   hygiene:
-    # #82: this repo dogfoods the scheduled hygiene hook, and its own skill prompts steer the
-    # dispatched harness to run the toolkit CLI DIRECTLY — `node installer/cli.mjs doctor
-    # --allow-missing` is the docs.auditChecklist drift item the docs skill runs in its audit
-    # pass (and audit/delegate run `render`/`validate` the same way). The baked allowlist covers
-    # the npm-run pre-flight wrappers but not those direct calls, so extend it through the
-    # documented claudeArgs consumer-extras hook: the Claude CLI unions repeated --allowedTools,
-    # so this ADDS `Bash(node installer/cli.mjs:*)` to the default rather than replacing it.
-    # (Single quotes only — the claudeArgs pattern rejects double quotes, backslashes, and ${{ }}.)
+    # The docs skill's audit pass runs the toolkit CLI directly, which the baked allowlist does
+    # not cover (#82). Repeated --allowedTools union, so this adds rather than replaces. Single
+    # quotes only — the claudeArgs pattern rejects double quotes.
     claudeArgs: "--allowedTools 'Bash(node installer/cli.mjs:*)'"
   pm:
-    # product-manager (orchestration stack, #38 round 2) — product evolution for
-    # the toolkit itself: stack shapes, config-key surface, consumer ergonomics.
+    # Product evolution for the toolkit itself: stack shapes, config keys, consumer ergonomics.
     brief: >-
       You are the senior product manager for wafflestack, an agent/skill toolkit
       that renders canonical definitions into harness-native files for consuming
@@ -215,12 +143,8 @@ config:
         `.gitignore` still covers the deliberately-untracked renders (label-hook
         workflow, worktrees, `.waffle/` overview docs)
   roster:
-    # harness-architect is this repo's specialist for all toolkit work — installer/CLI,
-    # stacks, skills, agent defs, and config keys (the harness-architect stack is enabled,
-    # waffle.yaml:18). docs-agent/docs-human own the machine/human docs. architectAgent runs
-    # the audit-pass-1 / docs-first-pass architecture review, which here IS the installer/stack/
-    # harness architecture, so it routes to harness-architect. securityAgent stays general-purpose:
-    # harness-architect is not a security auditor and no security-engineer is installed.
+    # Architecture here IS the installer/stack/harness design, so architectAgent routes to
+    # harness-architect. No security-engineer is installed; securityAgent stays general-purpose.
     architectAgent: harness-architect
     securityAgent: general-purpose
     specialistTable: |-
@@ -273,10 +197,8 @@ config:
       4. Spot-check changed stacks: every placeholder used in content is declared in that `stack.yaml`; `setup:` notes contain no placeholders
 
       Fix what your role permits (source side only, then re-render); otherwise report each failure with the command output quoted.
-# The three paid Claude-dispatch hooks, released to project ownership so `render` no longer pours
-# them (#414 finishes the #396 disarm — de-selecting alone left them lock-tracked and re-poured).
-# Project-owned now means: nothing re-creates these files, and a `git add -A` cannot silently
-# re-arm pr-green's paid dispatch. See the `include:` re-arm note above.
+# Paid Claude-dispatch hooks this repo leaves off. Ejected rather than de-selected so the lock
+# forgets them and `render` never re-pours them (#414).
 eject:
   - files/.github/workflows/waffle-pr-green-hook.yml
   - files/.github/workflows/waffle-pr-response-hook.yml
