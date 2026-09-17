@@ -232,6 +232,24 @@ is what you reach for across a breaking one.
   the *behavior* — deferral, ordering, orphan-acknowledgment, reuse — and each was mutation-checked:
   deleting any one clause fails the suite. **Consumer impact:** re-render to pick up the `autopilot`
   skill; no config or behaviour change beyond the removed duplicate review.
+- **A cap-reached `autopilot` gate now reports what it shed, instead of filing a quiet issue (#348).**
+  Ten backlog issues were produced by one mechanism: a QA or review loop hit its round cap, the cold
+  post-cap pass found what the capped rounds had not, and the overflow became a hold-labeled issue that
+  nothing in the run pointed at. The diagnosis (`DECISIONS.md`, 2026-09-17) says the cap is not the
+  binding constraint — the caps have defaulted to `2` since they shipped and **eight of the ten** runs
+  were dialed *down* to `1` per-run, the run that spent the most rounds shed the most findings, and
+  #339's round-3 in-loop review came back **clean** while the cold pass over that same head still
+  returned seven findings. So this ships the visibility, not the redesign: both cap hatches now state
+  that PR's **shed count** in the run report — rounds spent out of the effective cap, the fresh pass's
+  findings by severity, how many the follow-up carries, and its issue number — on **every** path
+  through the hatch, including the ones that file nothing (a clean pass sheds `0` and says so, a filing
+  handed to the review loop reports the counts with the shed marked as Step 6's, the errored-twice
+  fallback flags its brief as possibly stale), and the run report totals the shed across the run. Each
+  hatch names the dial (`+qa:N` / `+review:N`) that answers it. Five content tests pin the behavior,
+  mutation-checked: deleting the reporting clause fails the suite. The deferred pieces are sub-issues of
+  #348 — a de-anchored convergence criterion (#510) and the manual-review queue's service level (#511).
+  **Consumer impact:** re-render to pick up the `autopilot` skill; no config change and no change to
+  what the loops do — only to what the run report says.
 
 ## [0.15.0] - 2026-09-13
 

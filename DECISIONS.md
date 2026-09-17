@@ -9,6 +9,47 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-09-17: Autopilot's round cap is not what leaks findings — the anchored rounds are (#348)
+
+**Context**: Ten backlog issues (#257 #259 #263 #267 #269 #271 #275 #290 #292 #339) exist because an
+autopilot QA or review loop hit its round cap and the cold post-cap pass then found things the capped
+rounds had not. Two opposite fixes were on the table: raise the cap, or change what each round sees.
+
+**Decision**: The evidence points at anchoring, not the cap. Four readings. (1) `maxQaRounds` and
+`maxReviewRounds` have defaulted to `2` since they shipped and were never lowered in the render — eight
+of the ten runs were dialed *down* to an effective cap of `1` per-run, so the operator already held the
+knob and chose low. (2) Rounds and residue correlate the wrong way: #339 spent the most rounds (3) and
+shed the most findings (4 should-fix + 3 nits). (3) #339 is the control case — its round-3 in-loop review
+came back **clean**, so the loop already satisfied "run until a round returns zero new findings", and the
+cold pass over that same head still returned seven findings. A zero-findings stop rule evaluated by an
+anchored context stops exactly where the fixed cap does. (4) What leaks is a *class*, not a truncated
+tail: residual sites a round matched sentence-by-sentence (#269 — the same false claim in its third
+phrasing) and prose/tests still echoing the model the round had just replaced (#271) — things a context
+that authored the diff cannot see. Autopilot already proves the remedy works: the hatch's evidence pass
+is spawned deliberately cold, and it is what finds these. It is simply applied once, *after* the loop.
+
+So the cheap slice ships first and the redesign is deferred. When a cap hatch files a follow-up — or
+skips filing on a clean pass — the run report now states that PR's **shed count**: rounds spent out of
+the effective cap, the fresh pass's findings by severity, how many the follow-up carries, and its issue
+number; the run totals it. The cap is already per-run tunable (`+qa:N`, `+review:N`); what was missing
+was any signal that the setting was wrong, because the overflow landed as a quiet hold-labeled issue.
+The deferred pieces are sub-issues of #348: the de-anchored convergence criterion (#510) and the
+manual-review queue's service level (#511).
+
+**Alternatives**: *Raise the default cap* — the leaking runs were already **below** the default, and
+#339 shows more rounds did not converge the search. *A pure zero-new-findings convergence criterion* —
+falsified by #339's clean round 3; it is only meaningful combined with de-anchoring, which is why #510
+carries both together. *Redesign the loop now* — the mechanism has never shed a blocker (0 across all
+ten; six shed nits only), so it costs backlog sediment and quality residue, not shipped breakage, which
+does not justify a redesign ahead of the measurement the shed count provides.
+
+**Consequences**: No loop behavior changes — caps, hatches, and the last-enabled-gate filing model are
+untouched. An under-provisioned cap is now visible in the run that hit it instead of as sediment weeks
+later, and the shed count is the before/after measurement #510 will be judged on. The skill's cap-hatch
+prose is the whole change, pinned by a content test.
+
+---
+
 ## 2026-09-16: A migration may be keyed to the *next* release; the key is guarded, and unreleased toolkits run it (#501)
 
 **Context**: #497 made an `include:` ∩ `eject:` overlap a render error, but shipped no migration:
