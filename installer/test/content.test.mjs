@@ -978,6 +978,56 @@ describe('autopilot skill: the last enabled fix loop files; earlier gates defer 
   });
 });
 
+describe('autopilot skill: a cap-reached gate reports what it shed (#348)', () => {
+  let qaHatch;
+  let reviewHatch;
+  let report;
+  // Local copies of #271's helpers: this block asks a different question of the same prose.
+  const sentences = (text) =>
+    text
+      .replace(/[*_`]/g, '')
+      .split(/(?<=[.!?;])\s+|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const says = (text, ...res) => sentences(text).find((s) => res.every((re) => re.test(s)));
+
+  before(() => {
+    const md = readSkill('autopilot');
+    const qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    const reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    qaHatch = qaStep.slice(qaStep.indexOf('#### QA cap reached'));
+    reviewHatch = reviewStep.slice(reviewStep.indexOf('#### Cap reached'));
+    report = md.slice(md.indexOf('## End-of-run housekeeping'), md.indexOf('## Guardrails'));
+    assert.ok(qaHatch.length > 0 && reviewHatch.length > 0 && report.length > 0, 'both hatches and the run report exist');
+  });
+
+  for (const [name, hatch, dial] of [
+    ['QA', () => qaHatch, /\+qa:N/],
+    ['review', () => reviewHatch, /\+review:N/],
+  ]) {
+    test(`the ${name} hatch reports the shed count with rounds, severities, and the issue it filed`, () => {
+      const h = hatch();
+      assert.ok(says(h, /shed count/i, /run report/i), `the ${name} hatch files a follow-up without putting the shed count in the run report — the overflow stays invisible (#348)`);
+      assert.ok(says(h, /shed count/i, /rounds/i, /cap/i), `the ${name} hatch reports a shed count without rounds-spent-out-of-cap — a reader cannot tell whether the cap was the binding constraint`);
+      assert.ok(says(h, /shed count/i, /severity|severities/i), `the ${name} hatch reports a bare total — without severities a shed nit reads the same as a shed should-fix`);
+      assert.ok(says(h, /shed count/i, /issue number/i), `the ${name} hatch reports a shed count with no follow-up issue number — the findings are unreachable from the report`);
+      assert.ok(says(h, dial), `the ${name} hatch never names the per-run dial — the report says the cap was low but not what to turn`);
+    });
+
+    test(`the ${name} hatch reports a shed count even when it files nothing`, () => {
+      assert.ok(
+        says(hatch(), /clean pass/i, /shed/i, /\b0\b|zero/i),
+        `the ${name} hatch's clean path reports no shed count at all — a silent skip is indistinguishable from a gate that never ran`,
+      );
+    });
+  }
+
+  test('the run report totals the shed across every cap-reached gate', () => {
+    assert.ok(says(report, /shed/i, /cap/i, /rounds/i), 'the run report carries no per-PR shed count — the hatches report into nothing');
+    assert.ok(says(report, /shed/i, /total/i), 'the run report never totals the shed — a run that sheds across several PRs shows no aggregate');
+  });
+});
+
 describe('autopilot skill: persistent gate agents across subloop rounds (#295)', () => {
   let md;
   let qaStep;
