@@ -215,6 +215,23 @@ is what you reach for across a breaking one.
   goes "on its own line", the weaker placement its step 5 forbids; it now says *leading* the body at
   offset 0, pinned by a test. **Consumer impact:** re-render to pick up the `qa` skill; comment-only
   change in the two hook workflows, no behaviour change.
+- **`autopilot`'s cap hatches now describe one filing model everywhere, and a test holds them to it
+  (#271).** PR #270 moved filing to the **last enabled fix loop** — pass, then file, then arm — but four
+  sites still taught the old one. Step 5's hook-armed note promised the QA hatch's fresh-pass findings
+  would "carry review findings too"; they never could (the hatch's pass is a cold `qa` pass and no
+  `pr-response` follows it), so the note now says what actually happens to a hook review on the final
+  head: with the review loop on it rides into Step 6's triage, with the review loop off it is
+  **orphaned** and the follow-up must say so. Both cap descriptions in `stacks/orchestration/stack.yaml`
+  enumerated arm → fresh pass → file and now read pass → file → arm; the `holdLabel` description's
+  "only when the fresh pass still finds issues" was false for the errors-twice fallback (which files
+  from the last round's findings) and for the QA-gate hand-off (which defers to the review loop), and
+  now covers both. Step 6's hatch also stopped buying a second review of a head an armed
+  `waffle-pr-green-hook` just reviewed: it reads the `waffle/adversarial-review` commit status on the
+  final head and briefs from that review when one is there (a hook dispatch is cold by construction),
+  spawning its own pass when the status is absent **or the query errors**. Seven new content tests pin
+  the *behavior* — deferral, ordering, orphan-acknowledgment, reuse — and each was mutation-checked:
+  deleting any one clause fails the suite. **Consumer impact:** re-render to pick up the `autopilot`
+  skill; no config or behaviour change beyond the removed duplicate review.
 
 ## [0.15.0] - 2026-09-13
 
