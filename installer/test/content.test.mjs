@@ -886,6 +886,98 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
   });
 });
 
+describe('autopilot skill: the last enabled fix loop files; earlier gates defer (#271)', () => {
+  let md;
+  let qaStep;
+  let qaHatch;
+  let reviewHatch;
+  let failures;
+  // Match the CLAUSE, not the phrasing that shipped: strip emphasis, then ask each sentence
+  // whether it still carries the behavior (deferral, ordering, reuse).
+  const sentences = (text) =>
+    text
+      .replace(/[*_`]/g, '')
+      .split(/(?<=[.!?;])\s+|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const says = (text, ...res) => sentences(text).find((s) => res.every((re) => re.test(s)));
+
+  before(() => {
+    md = readSkill('autopilot');
+    qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    const reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    qaHatch = qaStep.slice(qaStep.indexOf('#### QA cap reached'));
+    reviewHatch = reviewStep.slice(reviewStep.indexOf('#### Cap reached'));
+    failures = md.slice(md.indexOf('## Failure handling'));
+    assert.ok(qaHatch.length > 0 && reviewHatch.length > 0 && failures.length > 0, 'each gate loop carries a cap hatch');
+  });
+
+  test('the QA hatch withholds the filing when a later fix loop is enabled', () => {
+    assert.ok(
+      says(qaHatch, /review loop/i, /\bis on\b/i, /(do not|does not|never) file/i),
+      'Step 5’s hatch no longer tells the gate to withhold the filing while the review loop is on — it files a follow-up the same run then fixes (#234, one gate later)',
+    );
+  });
+
+  test('the withheld filing is handed downstream, not dropped', () => {
+    assert.ok(
+      says(qaHatch, /(review loop|Step 6)/i, /\bfiling\b/i, /(hand|defer)/i),
+      'Step 5’s hatch withholds the filing without handing it to the review loop — the findings leave no owner',
+    );
+  });
+
+  test('the errored-twice fallback filing defers too — deferral is not scoped to the clean path', () => {
+    assert.ok(
+      says(failures, /fallback/i, /(Step 6|review loop)/i, /(defer|hand)/i),
+      'the evidence-pass-errored fallback files from Step 5 even with the review loop on — the deferral must cover every filing path',
+    );
+  });
+
+  test('the review hatch is the last enabled fix loop: it files, and defers to no one', () => {
+    assert.ok(says(reviewHatch, /last enabled fix loop/i), 'Step 6’s hatch must state that the filing stops with it');
+    assert.equal(
+      says(reviewHatch, /(do not|does not|never) file/i, /(audit|Step 7|later gate)/i),
+      undefined,
+      'Step 6’s hatch defers its filing to the audit gate — the audit gate runs no review and would never file these findings',
+    );
+    assert.match(reviewHatch, /invoke the `issue` skill/, 'Step 6’s hatch must still file the follow-up itself');
+  });
+
+  test('each hatch runs the pass, then files, then arms — never arm-first', () => {
+    for (const [name, hatch] of [['QA', qaHatch], ['review', reviewHatch]]) {
+      const pass = hatch.indexOf('fresh evidence pass');
+      const file = hatch.indexOf('File the follow-up');
+      const arm = hatch.indexOf('Arm, defer, or leave');
+      assert.ok(pass >= 0 && file >= 0 && arm >= 0, `the ${name} hatch must keep all three steps`);
+      assert.ok(pass < file, `the ${name} hatch files before its fresh evidence pass — a stale brief (#234)`);
+      assert.ok(file < arm, `the ${name} hatch arms before it files — the follow-up must exist before the PR can merge`);
+    }
+  });
+
+  test('the hook’s review on the final head is orphaned, never carried into the QA brief', () => {
+    assert.doesNotMatch(
+      qaStep,
+      /hatch's \*\*fresh-pass findings\*\* to carry review findings too/,
+      'the hook-armed note still promises the cap hatch carries review findings — the old mixed-triage model',
+    );
+    assert.ok(
+      says(qaStep, /orphan/i, /hook/i),
+      'the hook-armed note must say what becomes of a hook review on the final head: no pr-response follows the hatch, so nothing triages it',
+    );
+  });
+
+  test('the review hatch reuses an existing review of the final head instead of buying a second', () => {
+    assert.ok(
+      says(reviewHatch, /waffle\/adversarial-review/, /(reuse|skip the spawn|instead)/i, /cold/i),
+      'Step 6’s hatch spawns a fresh adversarial-review over a head an armed pr-green hook just reviewed — double spend, and the reuse only holds because a hook dispatch is cold',
+    );
+    assert.ok(
+      says(reviewHatch, /error/i, /spawn/i),
+      'the reuse check must spend the review when the status query fails — an unreadable status must never cost the hatch its evidence',
+    );
+  });
+});
+
 describe('autopilot skill: persistent gate agents across subloop rounds (#295)', () => {
   let md;
   let qaStep;
