@@ -2578,11 +2578,44 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(templates.review, /do not paste the automation markers/i);
   });
 
-  test('#338: no skill claims that quoting a marker is harmless', () => {
-    for (const name of ['qa', 'adversarial-review', 'pr-response', 'autopilot']) {
-      const md = readSkill(name);
-      assert.doesNotMatch(md, /quoting it anywhere[^.]*is harmless/i, `${name} tells a model that quoting a marker is harmless — the skills and autopilot still read markers`);
-      assert.doesNotMatch(md, /quote the literal freely/i, `${name} instructs a model to quote a raw marker literal`);
+  // #356: pin the CLAIM, not the phrasing that shipped, and read the root docs too — DECISIONS.md
+  // asserted "quoting one is now harmless" and the old, string-pinned guard passed it.
+  // Emphasis is stripped first, and a clause that DENIES the claim ("no gate keys on a marker")
+  // does not trip the two gate regexes.
+  const GAP = '(?:(?!\\b(?:never|not|no|instead|rather)\\b)[^.\\n])';
+  const NEGATED = /\b(?:no|not|never|nothing|instead|rather)\b/i;
+  const claim = (text, re, denialAware) => {
+    for (const hit of text.matchAll(new RegExp(re.source, 'gi'))) {
+      const clause = text.slice(Math.max(0, hit.index - 70), hit.index).split(/[.\n]/).pop();
+      if (!denialAware || !NEGATED.test(clause)) return hit[0];
+    }
+    return null;
+  };
+  const MARKER_LIES = [
+    [/\bquot\w+\b(?:(?!\b(?:never|not)\b)[^.\n]){0,100}\bharmless\b/i, 'claims quoting a marker is harmless'],
+    [/\bpasting a marker\b[^.\n]{0,60}\b(?:hygiene|harmless)\b/i, 'demotes the do-not-paste rule to hygiene'],
+    [new RegExp(`\\b(?:keys?|keyed|keying|gates?|gated|gating|dedup\\w*)\\b${GAP}{0,70}\\bon\\b${GAP}{0,50}\\bmarker\\b`, 'i'), 'claims something keys on a marker', true],
+    [new RegExp(`\\b(?:keys?|keyed|keying|gates?|gated|gating|triaged?|dedup\\w*)\\b${GAP}{0,40}\\bon (?:an?|the|any|its|that|this) marked (?:reply|comment|review|body)\\b`, 'i'), 'claims a gate keys on a marked body', true],
+    [/quote the literal freely/i, 'instructs a model to quote a raw marker literal'],
+  ];
+
+  test('#338/#356: no skill and no root doc claims a marker is inert, or that a gate reads one', () => {
+    const sources = new Map(
+      ['qa', 'adversarial-review', 'pr-response', 'autopilot'].map((n) => [`${n}/SKILL.md`, readSkill(n)]),
+    );
+    sources.set('.github/REVIEW_TEMPLATE.md', templates.review);
+    for (const doc of ['DECISIONS.md', 'README.md', 'ARCHITECTURE.md', 'STATUS.md', 'AGENTS.md']) {
+      const file = path.join(REPO_ROOT, doc);
+      if (fs.existsSync(file)) sources.set(doc, fs.readFileSync(file, 'utf8'));
+    }
+    assert.ok(sources.has('DECISIONS.md'), 'the decision log must be in the swept set');
+
+    for (const [name, raw] of sources) {
+      const text = raw.replace(/[*_`]/g, '');
+      for (const [re, why, denialAware] of MARKER_LIES) {
+        const hit = claim(text, re, denialAware);
+        assert.equal(hit, null, `${name} ${why}: "${hit}"`);
+      }
     }
   });
 

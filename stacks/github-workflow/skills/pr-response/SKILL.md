@@ -242,9 +242,10 @@ marker is how this skill (and any automation wrapping it) recognizes its own rep
 rounds](#when-called-by-agents)).
 
 > [!IMPORTANT]
-> **No *workflow* keys on this marker (#338) — but the *skills and autopilot still do*. Never paste
-> the raw literal into a body.** The distinction is the whole rule, and getting it backwards is how a
-> PR merges with findings nobody triaged.
+> **No *gate* keys on this marker (#338) — but the *skills and autopilot still read it, to recover
+> history*. Never paste the raw literal into a body.** The distinction is the whole rule: a gate that
+> read a body is how a PR merges with findings nobody triaged, and a record that reads a stranger's
+> body is how a round gets wasted.
 >
 > What no longer reads a body: **CI**. `waffle-pr-response-hook` keys its **delivery check** on a
 > `waffle/pr-response` **commit status** and its **loop bound** on a **label the workflow applies**
@@ -252,16 +253,18 @@ rounds](#when-called-by-agents)).
 > `waffle/adversarial-review` status. All take repo push access to write, so no body text can forge
 > them.
 >
-> What still reads a body — **the path that merges code**:
-> - **`autopilot` gates triage on it.** It spawns the responder for findings no marked reply has
->   disposed of, and converges → **arms auto-merge** when nothing is left to triage.
-> - **This skill's cold-start recovery reads it** to recover verdict history and F-numbering.
-> - **`adversarial-review` and `qa` recognize their own prior posts by theirs.**
+> Nor does **`autopilot`'s triage gate** — the one that **arms auto-merge**. It reads the
+> `waffle/pr-response` commit status on the review's head SHA (below), never a marked reply.
 >
-> So a comment that merely *quotes* a marker can still read as *already triaged* — and this skill
-> writes verdict tables **about** markers, on exactly the PRs where that is most likely. **Name the
-> marker, or break the literal; never paste it.** Your own reply's *leading* marker is exempt: it is
-> the reply.
+> What still reads a body — **history recovery, and only that**:
+> - **This skill's cold-start recovery reads it** to recover verdict history and F-numbering.
+> - **`adversarial-review` and `qa` recognize their own prior posts by theirs**, and `autopilot`
+>   points a replacement agent at those marked posts to seed it.
+>
+> So a comment that merely *quotes* a marker can still read as *one of this skill's replies* — a
+> bogus verdict history, a renumbered finding, a redundant round — and this skill writes verdict
+> tables **about** markers, on exactly the PRs where that is most likely. **Name the marker, or break
+> the literal; never paste it.** Your own reply's *leading* marker is exempt: it is the reply.
 >
 > The failure directions differ, and that is why the rule is asymmetric rather than absolute. A
 > body-read for **history recovery** can only cost a redundant round or a renumber — cheap, visible,

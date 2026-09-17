@@ -292,16 +292,16 @@ setup: |-
   ladder) already lives in the `adversarial-review` skill and the canonical verdict shape (the
   five-dimension rubric, the composite thresholds, the override rules) in `pr-response`, and those
   ARE load-bearing: the pr-green / pr-response hooks key their dedup and delivery guards on the
-  markers those skills emit. Duplicating the rubric into `.github/` would create a copy that drifts
-  out from under the guards. So the skills stay the enforcement point, and `REVIEW_TEMPLATE.md` is a
-  thin human-facing companion: it carries the round's *skeleton* (the finding block, the verdict
-  table, the append-only rule) and the stable vocabulary (blocker / should-fix / nit,
-  Implement / Defer / Decline), and it POINTS at the skills for the scoring anchors and thresholds
-  rather than restating them. It also tells a human reviewer the one thing they cannot learn from
-  GitHub: **do not paste the automation markers into a review body** — a hand-pasted
-  `waffle-adversarial-review` marker convinces the pr-green hook this commit is already reviewed
-  (suppressing the bot's own review) and can dispatch a paid pr-response run. A human review needs no
-  marker; answer one by running `/pr-response` by hand.
+  commit statuses those skills write (#338). Duplicating the rubric into `.github/` would create a
+  copy that drifts out from under the guards. So the skills stay the enforcement point, and
+  `REVIEW_TEMPLATE.md` is a thin human-facing companion: it carries the round's *skeleton* (the
+  finding block, the verdict table, the append-only rule) and the stable vocabulary
+  (blocker / should-fix / nit, Implement / Defer / Decline), and it POINTS at the skills for the
+  scoring anchors and thresholds rather than restating them. It also tells a human reviewer the one
+  thing they cannot learn from GitHub: **do not paste the automation markers into a review body** — no gate reads a marker any
+  more (#338), but the skills and `autopilot` still read marked bodies to recover review history, so
+  a pasted literal reads as one of the bot's own posts and muddles that record. A human review needs
+  no marker; answer one by running `/pr-response` by hand.
   To opt out of any template, `eject: [files/.github/PULL_REQUEST_TEMPLATE.md]` (which releases the
   file as project-owned rather than deleting it) or drop it from your selection. These files need no
   `workflow` credential scope — they are not under `.github/workflows/`.
@@ -739,8 +739,9 @@ setup: |-
   harness may authenticate with a PAT (`WAFFLE_HYGIENE_TOKEN`); a status needs only push access and
   is otherwise identical — keyed to the SHA, structured, visible in the PR's checks list. It is always
   written `state=success`, so it never reddens the rollup. The markers themselves **stay** in the
-  bodies: they are how a human recognizes a bot post and how the skills dedup their own. They are
-  simply no longer workflow predicates, so quoting one is now harmless.
+  bodies: they are how a human recognizes a bot post and how the skills recognize their own. They are
+  simply no longer workflow predicates. The do-not-paste rule **stays**: the skills still read marked
+  bodies to recover review history, so no body may paste a raw marker literal.
   **What the harness may do (baked-in allowlist).** The workflow's `claude_args` ships a default
   `--allowedTools 'Write,Bash(gh pr:*),Bash(gh api:*),Bash(gh repo:*),Bash(git log:*),Bash(git
   diff:*),Bash(git show:*),Bash(git status:*)'` — enough for the skill to read the PR (`gh pr

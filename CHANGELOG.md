@@ -187,6 +187,22 @@ is what you reach for across a breaking one.
   an overlap that involves the overlay is reported for a hand fix (#500). An unreleased toolkit
   runs the steps keyed past its own version too, so `upgrade --allow-unreleased` is not stranded.
   Re-rendering refreshes the `waffle-install` and `waffle-eject` skills.
+- **The docs now say what PR #354 actually shipped about review markers (#356).** Several sites still
+  asserted the abandoned rule: `DECISIONS.md` said quoting a marker was "now harmless" and that
+  pasting one was "hygiene, not a safety hazard"; `pr-response` said `autopilot` gates triage on a
+  marked reply; `adversarial-review` said the pr-green dedup guard keys on its review marker; and the
+  `github-workflow` setup note, both hook dispatch prompts, and `REVIEW_TEMPLATE.md` repeated one or
+  the other. All of them now state the shipped rule — **no gate reads a marker** (CI keys on the
+  `waffle/adversarial-review` / `waffle/pr-response` commit statuses and a label, `autopilot`'s triage
+  gate on the `waffle/pr-response` status), the skills read marked bodies only to **recover history**,
+  and the do-not-paste rule stands because that record is what it protects. `qa` and
+  `adversarial-review` also gained the best-effort/fail-safe sentence their cold-start sections
+  lacked, which `pr-response` and `autopilot` already carried. The guard test now sweeps the **root
+  docs** and the review template alongside the four skills, and matches the **claim** — a regex family
+  for "quoting … is harmless", "keyed on … marker", "gates … on a marked reply", denial-aware so a
+  sentence that *forbids* the claim still passes — rather than the exact strings that shipped, which
+  is how the `DECISIONS.md` line slipped past the old pins. **Consumer impact:** re-render to pick up
+  the corrected skills, review template, and hook prompts; no config or behaviour change.
 
 ## [0.15.0] - 2026-09-13
 

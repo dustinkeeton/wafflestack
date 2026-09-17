@@ -1330,7 +1330,9 @@ write, and no hook predicate reads a body:
   commit status; and the **loop bound** becomes a per-PR **label** that the *workflow* applies **before**
   the paid dispatch.
 The markers **stay** in the bodies — they are how a human recognizes a bot post and how the skills
-dedup their own — but nothing in CI reads them, so quoting one is now harmless.
+recognize their own — but nothing load-bearing reads them: no CI predicate, and (since PR #354) no
+skill or `autopilot` gate either. The do-not-paste rule **stays** too: the skills still read marked
+bodies to recover review history, so no body may paste a raw marker literal.
 
 **Alternatives considered**: A **check run** (#338's own proposal) — rejected on a hard blocker:
 creating one is GitHub-App-only ("OAuth apps and authenticated users are not able to create a check
@@ -1351,7 +1353,8 @@ timed-out, or tool-denied run is still bounded. The bound is therefore **strictl
 marked-comment bound it replaces, which a crashed harness simply failed to set.
 
 **Impact**: Both hook workflows, `adversarial-review` / `pr-response` SKILL.md (the coupling prose is
-gone), `REVIEW_TEMPLATE.md` (pasting a marker is now hygiene, not a safety hazard). New config key
+gone), `REVIEW_TEMPLATE.md` (a pasted marker no longer suppresses a job; the do-not-paste rule
+stays, guarding the skills' review record rather than a gate). New config key
 `prResponse.responseLabel` (default `waffle:pr-response`) and a matching `prerequisites:` entry — the
 label **must pre-exist**; the bound is fail-closed, so without it the job reds rather than dispatching
 an unbounded run. pr-response's job also takes `statuses: write` (still **no** `issues: write`).
@@ -1744,7 +1747,8 @@ and carried a few project-specific assumptions. Two gaps: nothing pressure-teste
   working diff before commit; this one gates a *committed, green* PR just before merge.
 - **PR-green auto-trigger (#180)** — the `github-workflow` stack ships a companion opt-in syrup
   workflow (`waffle-pr-green-hook.yml`) that dispatches the harness to run `adversarial-review` the
-  moment a PR's required checks go green (once per green transition, deduped by a review marker).
+  moment a PR's required checks go green (once per green transition, deduped by a
+  `waffle/adversarial-review` commit status — a review marker as first shipped, until #338).
   The skill it runs lives in `code-quality`, so a consumer can render **just that one skill** (a
   qualified `code-quality/skills/adversarial-review` ref) alongside the workflow without enabling
   the whole stack. This repo now dogfoods both.
