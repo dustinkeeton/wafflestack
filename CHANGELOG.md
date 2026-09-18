@@ -241,6 +241,25 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **`list` reports `PENDING REMOVAL` on every deselection path, and a `requires:` edge onto
+  un-poured opt-in syrup is no longer silent (#371).** Before, the status #364 added fired only
+  for a target-scope filter: a file poured by a stack you then disabled (or an item whose
+  `include:` you dropped) read `not-installed` while it sat on disk, in the lock, and one
+  `render` away from deletion. `list` now asks `render`'s own prune question selection-wide —
+  *is this live lock path produced by any selected item?* — so a deselected row is `PENDING
+  REMOVAL` only when the next render really deletes its file, and a path another enabled stack
+  still produces is never announced. The row carries a new `removalReason` (`scope` |
+  `deselected`, `null` otherwise), exported as `REMOVAL_REASON`: a `deselected` row stays in the
+  `--interactive` picker (re-installing it is the remedy, labelled `keep`), a `scope` row does
+  not, exactly as before. The status is withheld while a selection error would make `render`
+  refuse. Target fan-out stays under-reported by design (a selected agent's disabled-target
+  path is not announced), never over-reported. Separately, a selected item whose `requires:`
+  lands on opt-in syrup that was never poured now warns at `render`/`install` with the exact
+  `wafflestack install <ref>` command (`unpouredRequiredSyrup` — the forward direction of the
+  #74 edge); an ejected dependency stays silent (#502) and a scoped-out one is still
+  `targetBrokenRequires`' warning, not a second one. Consumer impact: `list` output only — no
+  render, lock, or config change; no shipped stack has a `requires:` edge onto opt-in syrup, so
+  the new warning fires in no real project today.
 - **The opt-in syrup pairing warning no longer fires for an ejected syrup (#502).** `render`
   warned "opt-in syrup files/… pairs with selected … but was not installed — run
   `wafflestack install …`" on every render even when the file sat in `eject:`, and since #497 that

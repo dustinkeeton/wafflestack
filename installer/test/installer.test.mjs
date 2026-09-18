@@ -14,8 +14,8 @@ import { eject, installRefs, init, unejectCollisions } from '../lib/eject.mjs';
 import { validateToolkit, validateExternalStacks, validateSourceBytes } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
-import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
-import { computeListModel, formatListTable, selectableChoices, STATUS } from '../lib/list.mjs';
+import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
+import { computeListModel, formatListTable, selectableChoices, STATUS, REMOVAL_REASON } from '../lib/list.mjs';
 import { normalizePrerequisites, applicablePrerequisites, checksDigest, formatCheckGate, looksLikeBranchRef } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
@@ -5585,6 +5585,7 @@ describe('syrup target scoping (#364)', () => {
     const rowFor = (ref) => model.stacks.flatMap((s) => s.rows).find((r) => r.ref === ref);
 
     assert.equal(rowFor(`files/${SCOPED}`).status, STATUS.PENDING_REMOVAL);
+    assert.equal(rowFor(`files/${SCOPED}`).removalReason, REMOVAL_REASON.SCOPE, 'the reason rides on the row (#371)');
     assert.ok(has(SCOPED), 'reality check: the file really is still on disk');
     assert.ok(SCOPED in lockFiles(), 'and still in the lock');
 
@@ -5854,6 +5855,97 @@ describe('list command (#119)', () => {
     assert.equal(byRef['files/secret.yml'].optIn, true);
   });
 
+  // #371: the scope case's rule — a user must not learn about a deletion only after it happens — on the path every project uses.
+  // Disabling a stack deselects its poured items, and the next render prunes them; `list` said `not-installed`.
+  test("a disabled stack's poured items are PENDING REMOVAL (deselected), still offered by the picker, and the render agrees (#371)", () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    configure('targets: [claude]\nstacks: []\nconfig: {}\n'); // disabled — and NOT re-rendered yet
+    const m = model();
+    for (const ref of ['agents/aa', 'skills/sa', 'files/plain.txt']) {
+      assert.equal(rowFor(m, ref).status, STATUS.PENDING_REMOVAL, ref);
+      assert.equal(rowFor(m, ref).removalReason, REMOVAL_REASON.DESELECTED, ref);
+    }
+    assert.equal(rowFor(m, 'files/secret.yml').status, STATUS.NOT_INSTALLED, 'never poured — there is nothing to delete');
+    assert.equal(rowFor(m, 'files/secret.yml').removalReason, null);
+    assert.equal(m.counts[STATUS.PENDING_REMOVAL], 3);
+
+    const out = formatListTable(m, { color: false });
+    assert.match(out, /PENDING REMOVAL\s+files\/plain\.txt\s+— installed here but no longer selected; the next `render` DELETES it \(install it to keep it\)/);
+    assert.doesNotMatch(out, /scoped to targets/, 'scope is not the reason, so no scope is named');
+    assert.match(out, /3 PENDING REMOVAL on the next render/);
+
+    // Offered: re-installing a deselected item RENDERS it, which is the remedy — the opposite of the scope case.
+    const byRef = Object.fromEntries(selectableChoices(m).map((c) => [c.ref, c]));
+    assert.equal(byRef['files/plain.txt'].status, STATUS.PENDING_REMOVAL);
+    assert.equal(byRef['files/plain.txt'].checked, false, 'never pre-checked: the disable was deliberate');
+    assert.equal(byRef['files/plain.txt'].installRef, 'alpha/files/plain.txt');
+
+    // Ground truth: the render deletes exactly what the rows announced.
+    const after = render();
+    assert.equal(after.ok, true, JSON.stringify(after.errors));
+    for (const rel of ['.claude/agents/aa.md', '.claude/skills/sa/SKILL.md', 'plain.txt']) {
+      assert.ok(after.removed.includes(rel), `${rel} pruned: ${JSON.stringify(after.removed)}`);
+    }
+    assert.equal(rowFor(model(), 'files/plain.txt').status, STATUS.NOT_INSTALLED, 'gone now — merely not installed');
+  });
+
+  // The naive rule ("in the lock + on disk + this row deselected") invents a deletion here: the lock matches by PATH and is
+  // stack-blind, and two stacks may legally declare the same file. The row must ask whether ANY selected item produces it.
+  test('list does NOT announce PENDING REMOVAL for a deselected item whose path an enabled stack still produces (#371)', () => {
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: list fixture\nstacks: [alpha, beta, gamma]\n');
+    write(toolkitRoot, 'stacks/gamma/stack.yaml', ['name: gamma', 'description: Gamma stack.', 'files:', '  - plain.txt', ''].join('\n'));
+    write(toolkitRoot, 'stacks/gamma/files/plain.txt', 'plain payload\n');
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    assert.ok(fs.existsSync(path.join(cwd, 'plain.txt')), 'precondition: alpha poured it');
+
+    const m = model();
+    const gammaRow = stackFor(m, 'gamma').rows.find((r) => r.ref === 'files/plain.txt');
+    assert.equal(gammaRow.status, STATUS.NOT_INSTALLED, 'alpha keeps the path alive — nothing is being deleted');
+    assert.equal(gammaRow.removalReason, null);
+    assert.equal(stackFor(m, 'alpha').rows.find((r) => r.ref === 'files/plain.txt').status, STATUS.CURRENT);
+    assert.equal(m.counts[STATUS.PENDING_REMOVAL], 0, 'no invented deletion in the summary either');
+    assert.doesNotMatch(formatListTable(m, { color: false }), /PENDING REMOVAL/);
+
+    const after = render();
+    assert.deepEqual(after.removed, [], 'the render deletes NOTHING — the row would have lied');
+    assert.ok(fs.existsSync(path.join(cwd, 'plain.txt')));
+  });
+
+  // The other side of the predicate: a dropped `include:` does NOT deselect tracked opt-in syrup (the lock re-admits it), so it is
+  // not doomed — the status follows the render, not the config diff.
+  test('dropping an opt-in include leaves the tracked syrup selected — current, not pending removal', () => {
+    configure('targets: [claude]\nstacks: [alpha]\ninclude: [files/secret.yml]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(rowFor(model(), 'files/secret.yml').status, STATUS.CURRENT);
+    assert.deepEqual(render().removed, []);
+  });
+
+  // A render with a selection error refuses BEFORE its prune, so "the next render DELETES it" would be false.
+  test('a selection error withholds PENDING REMOVAL — that render refuses before it prunes', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    configure('targets: [claude]\nstacks: [alpah]\nconfig: {}\n'); // a typo deselects everything alpha poured, but…
+    const m = model();
+    assert.equal(m.errors.length, 1, 'the selection problem is reported');
+    assert.equal(rowFor(m, 'files/plain.txt').status, STATUS.NOT_INSTALLED);
+    assert.equal(m.counts[STATUS.PENDING_REMOVAL], 0);
+    assert.equal(render().ok, false, '…the render refuses, so nothing is about to be deleted');
+    assert.ok(fs.existsSync(path.join(cwd, 'plain.txt')));
+  });
+
+  test('a lock without a config is not a pending deletion — nothing can render', () => {
+    configure('targets: [claude]\nstacks: [alpha]\nconfig: {}\n');
+    assert.equal(render().ok, true);
+    fs.rmSync(path.join(cwd, '.waffle/waffle.yaml'));
+    const m = model();
+    assert.equal(m.hasConfig, false);
+    assert.equal(rowFor(m, 'files/plain.txt').status, STATUS.NOT_INSTALLED);
+    assert.equal(m.counts[STATUS.PENDING_REMOVAL], 0);
+  });
+
   test('CLI list is non-TTY-safe: prints the table and exits 0', () => {
     // Drive the REAL cli against an empty selection (same trick as the render CLI test) so we
     // exercise real dispatch + non-TTY guarding without needing the fixture toolkit.
@@ -5978,6 +6070,90 @@ describe('skipped syrup companions (#74)', () => {
     assert.ok(!result.warnings.some((w) => /files\/danger\.yml/.test(w)), JSON.stringify(result.warnings));
     // the companion skill still renders; the ejected syrup stays the project's (absent here — nothing poured it)
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/companion/SKILL.md')));
+    assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false);
+  });
+
+  // #371: the FORWARD direction of the same edge. `skippedSyrupCompanions` walks file → companion, so a selected agent whose own
+  // `requires:` lands on un-poured opt-in syrup rendered without it, silently — a stack-expanded item never enters a closure.
+  const forwardFixture = ({ scoped = false } = {}) => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Syrup companion fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - safe.txt',
+      ...(scoped ? ['  - path: danger.yml', '    targets: [claude]'] : ['  - danger.yml']),
+      'optIn:',
+      '  - files/danger.yml',
+      'requires:',
+      '  agents/alpha:',
+      '    - files/danger.yml',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nNeeds the danger syrup.\n');
+  };
+  const forwardWarn = (w) =>
+    /selected agents\/alpha requires opt-in syrup files\/danger\.yml \(sb\), which was not installed .*NOT rendered.*wafflestack install files\/danger\.yml/.test(w);
+
+  test('unpouredRequiredSyrup surfaces a selected item whose requires: lands on un-poured opt-in syrup (#371)', () => {
+    forwardFixture();
+    assert.deepEqual(validateToolkit(toolkitRoot), [], 'the fixture validates clean');
+    const toolkit = loadToolkit(toolkitRoot);
+    const sel = (project, tracked) => computeSelection(toolkit, { include: [], values: {}, ...project }, tracked);
+    assert.deepEqual(unpouredRequiredSyrup(toolkit, sel({ stacks: ['sb'] })), [
+      { ref: 'files/danger.yml', requiredBy: 'agents/alpha', stackName: 'sb' },
+    ]);
+    // poured — by include, or already tracked in the lock → nothing to say
+    assert.deepEqual(unpouredRequiredSyrup(toolkit, sel({ stacks: ['sb'], include: ['files/danger.yml'] })), []);
+    assert.deepEqual(unpouredRequiredSyrup(toolkit, sel({ stacks: ['sb'] }, new Set(['danger.yml']))), []);
+    // the dependent itself is not selected → the edge is not in play
+    assert.deepEqual(unpouredRequiredSyrup(toolkit, sel({ stacks: ['sb'], eject: ['agents/alpha'] })), []);
+    // the reverse walk (#74) sees nothing here — this edge is exactly the one it cannot
+    assert.deepEqual(skippedSyrupCompanions(toolkit, sel({ stacks: ['sb'] })), []);
+  });
+
+  test('an EJECTED required syrup is silent, while a merely-uninstalled one is surfaced (#371, #502)', () => {
+    forwardFixture();
+    const toolkit = loadToolkit(toolkitRoot);
+    const unpoured = (eject) =>
+      unpouredRequiredSyrup(toolkit, computeSelection(toolkit, { stacks: ['sb'], include: [], eject, values: {} }));
+    assert.equal(unpoured([]).length, 1, 'the contrast: uninstalled-but-not-ejected is surfaced');
+    assert.deepEqual(unpoured(['files/danger.yml']), []);
+    assert.deepEqual(unpoured(['file:danger.yml']), [], 'matched the way the selection matches (normalizeItemRef)');
+  });
+
+  test("a SCOPED-OUT required syrup is targetBrokenRequires' entry, never a second warning (#364)", () => {
+    forwardFixture({ scoped: true });
+    const toolkit = loadToolkit(toolkitRoot);
+    const sel = computeSelection(toolkit, { stacks: ['sb'], include: [], values: {}, targets: ['codex'] });
+    assert.deepEqual(unpouredRequiredSyrup(toolkit, sel), []);
+    assert.equal(sel.targetBrokenRequires.length, 1, 'the scope gate owns that case, naming both steps');
+    assert.equal(sel.targetBrokenRequires[0].optIn, true);
+  });
+
+  test('render warns about un-poured required syrup with the exact pour command, and the pour silences it (#371)', () => {
+    forwardFixture();
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
+    let result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(result.warnings.some(forwardWarn), JSON.stringify(result.warnings));
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/agents/alpha.md')), 'the dependent still renders');
+    assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false, '…without its declared syrup');
+
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
+    result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some(forwardWarn), `the remedy works: ${JSON.stringify(result.warnings)}`);
+    assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')));
+  });
+
+  test('render does not warn about an ejected required syrup, and never suggests the pour that would un-eject it (#371, #502)', () => {
+    forwardFixture();
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\neject: [files/danger.yml]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some((w) => /files\/danger\.yml/.test(w)), JSON.stringify(result.warnings));
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/agents/alpha.md')));
     assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false);
   });
 
