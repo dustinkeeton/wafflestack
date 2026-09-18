@@ -777,6 +777,27 @@ describe('token spend telemetry (#227)', () => {
     assert.match(program, /\(last \/\/ empty\)/);
     assert.doesNotMatch(program, /\bfirst\b/);
   });
+
+  test('every token-count writer step accepts the marker only from the harness bot, newest first (#468)', () => {
+    const WRITERS = ['waffle-hygiene.yml', 'waffle-label-hook.yml', 'waffle-pr-green-hook.yml', 'waffle-pr-response-hook.yml'];
+    const sites = WRITERS.flatMap((name) =>
+      [...wfSource(name).matchAll(/^\s*(existing="\$\(printf '%s' "\$comments" \| jq (-\S+) '([^']*)'.*)$/gm)].map((m) => ({ name, line: m[1], flags: m[2], program: m[3] })),
+    );
+    // hygiene, label-hook ×2 (implement + review), pr-green, pr-response — a sixth site cannot appear unpinned.
+    assert.equal(sites.length, 5, `writer selector sites: ${JSON.stringify(sites.map((s) => s.name))}`);
+    assert.equal(new Set(sites.map((s) => s.line)).size, 1, 'the five writer sites must stay byte-identical');
+    for (const { name, line, flags, program } of sites) {
+      assert.match(flags, /s/, name); // slurp the per-page arrays so `last` spans every page
+      assert.match(flags, /c/, name); // the writer needs the whole comment object (id + body)
+      assert.doesNotMatch(line, /head -n1/, name); // slurp yields one object, nothing to collapse
+      assert.match(program, /\(add \/\/ \[\]\)/, name);
+      assert.match(program, /\.user\.login == "github-actions\[bot\]"/, name);
+      assert.match(program, /\.user\.type == "Bot"/, name);
+      assert.match(program, /contains\("<!-- waffle-token-count -->"\)/, name);
+      assert.match(program, /\(last \/\/ empty\)/, name);
+      assert.doesNotMatch(program, /\bfirst\b/, name);
+    }
+  });
 });
 
 describe('autopilot skill: instantiation contract, handoff, and guardrails', () => {

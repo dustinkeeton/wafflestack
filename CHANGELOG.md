@@ -44,6 +44,17 @@ is what you reach for across a breaking one.
   PR and the loss (prior totals and the per-PR dedup map) before seeding; a missing file still
   seeds silently and the update stays best-effort. Consumer impact: re-render picks up the
   workflow; no config or behavior change beyond the added annotation.
+- **The token-count writer steps edit only the harness's own marker comment, newest first
+  (#468).** The five Record-token-spend steps (`waffle-hygiene`, `waffle-label-hook` ×2,
+  `waffle-pr-green-hook`, `waffle-pr-response-hook`) previously adopted the first
+  `<!-- waffle-token-count -->` comment from any author and PATCHed it in place, so a marker
+  posted by a stranger before the harness's first run swallowed every later run row under a
+  foreign author — and the #462 counter, which rightly ignores non-bot markers, never rolled
+  that PR's spend into the global badge. Each writer now selects the newest
+  `github-actions[bot]`-authored marker (slurped across `--paginate` pages, the same shape as
+  the counter) and POSTs a fresh comment when none exists. Consumer impact: re-render picks up
+  the workflows; a consumer that has **ejected** `waffle-pr-green-hook.yml` or
+  `waffle-pr-response-hook.yml` must re-apply the guard to those copies by hand.
 
 ## [0.16.0] - 2026-09-18
 

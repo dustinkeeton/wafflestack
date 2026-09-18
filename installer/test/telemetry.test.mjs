@@ -176,6 +176,11 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
   const RUN_A = { in: 41230, out: 9812, cacheRead: 1204551, cost: 0.834, turns: 24 };
   const RUN_B = { in: 100, out: 50, cacheRead: 2000, cost: 0.1, turns: 3 };
 
+  // The Record-token-spend steps post with the job token, so this is the only author the writers (#468)
+  // and the counter (#462) accept.
+  const BOT = { login: 'github-actions[bot]', type: 'Bot' };
+  const HUMAN = { login: 'mallory', type: 'User' };
+
   test('a first run POSTs the marker comment: correct row, comma grouping, USD rendering', () => {
     const state = mkState();
     const res = record(state, { runKey: '100.1', log: writeLog(state, RUN_A), comments: [] });
@@ -204,7 +209,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     const res = record(state, {
       runKey: '200.1',
       log: writeLog(state, RUN_B),
-      comments: [{ id: 7, body: first }],
+      comments: [{ id: 7, user: BOT, body: first }],
     });
     assert.equal(res.status, 0, res.stderr);
     assert.ok(fs.existsSync(path.join(state, 'patch-body.json')), 'expected a PATCH');
@@ -220,13 +225,13 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     const state = mkState();
     record(state, { runKey: '100.1', log: writeLog(state, RUN_A), comments: [] });
     const first = readBody(state, 'post-body.json');
-    record(state, { runKey: '200.1', log: writeLog(state, RUN_B), comments: [{ id: 7, body: first }] });
+    record(state, { runKey: '200.1', log: writeLog(state, RUN_B), comments: [{ id: 7, user: BOT, body: first }] });
     const second = readBody(state, 'patch-body.json');
     // A step retry of run 200 reports different numbers; its row must be REPLACED.
     const res = record(state, {
       runKey: '200.1',
       log: writeLog(state, { in: 200, out: 100, cacheRead: 4000, cost: 0.2, turns: 4 }),
-      comments: [{ id: 7, body: second }],
+      comments: [{ id: 7, user: BOT, body: second }],
     });
     assert.equal(res.status, 0, res.stderr);
     const data = parseDataLine(readBody(state, 'patch-body.json'));
@@ -255,22 +260,43 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     }
   });
 
-  test('cross-page duplicate marker comments: the update targets the one OLDEST comment', () => {
-    // jq runs once per --paginate page, so head -n1 must collapse the per-page `first` stream to the oldest comment.
+  test('cross-page duplicate marker comments: the update targets the one NEWEST bot comment (#468)', () => {
+    // -s folds the per-page arrays, so `last` is the newest accepted comment across pages — same shape as the #462 counter.
     const state = mkState();
     record(state, { runKey: '100.1', log: writeLog(state, RUN_A), comments: [] });
     const older = readBody(state, 'post-body.json');
     fs.rmSync(path.join(state, 'post-body.json'));
     record(state, { runKey: '150.1', log: writeLog(state, RUN_B), comments: [] });
     const newer = readBody(state, 'post-body.json');
-    const twoPages = `${JSON.stringify([{ id: 7, body: older }])}\n${JSON.stringify([{ id: 9, body: newer }])}`;
+    const twoPages = `${JSON.stringify([{ id: 7, user: BOT, body: older }])}\n${JSON.stringify([{ id: 9, user: BOT, body: newer }])}`;
     const res = record(state, { runKey: '200.1', log: writeLog(state, RUN_B), comments: twoPages });
     assert.equal(res.status, 0, res.stderr);
     assert.ok(fs.existsSync(path.join(state, 'patch-body.json')), 'expected a PATCH');
     const patchUrl = fs.readFileSync(path.join(state, 'patch-url.txt'), 'utf8').trim();
-    assert.match(patchUrl, /issues\/comments\/7$/); // one clean id — the oldest, no newline
+    assert.match(patchUrl, /issues\/comments\/9$/); // one clean id — the newest, no newline
     const data = parseDataLine(readBody(state, 'patch-body.json'));
-    assert.deepEqual(Object.keys(data.runs).sort(), ['100.1', '200.1']);
+    assert.deepEqual(Object.keys(data.runs).sort(), ['150.1', '200.1']);
+  });
+
+  test('a marker comment from anyone but the harness bot is never edited — the writer POSTs its own (#468)', () => {
+    const scratch = mkState();
+    record(scratch, { runKey: '100.1', log: writeLog(scratch, RUN_A), comments: [] });
+    const forged = readBody(scratch, 'post-body.json');
+    // A stranger's marker (oldest) and a same-login impostor of type User: neither is the harness's comment.
+    const state = mkState();
+    const res = record(state, {
+      runKey: '200.1',
+      log: writeLog(state, RUN_B),
+      comments: [
+        { id: 5, user: HUMAN, body: forged },
+        { id: 6, user: { login: 'github-actions[bot]', type: 'User' }, body: forged },
+      ],
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(!fs.existsSync(path.join(state, 'patch-url.txt')), 'must not PATCH a foreign comment');
+    assert.ok(fs.existsSync(path.join(state, 'post-body.json')), 'expected a fresh POST');
+    assert.match(fs.readFileSync(path.join(state, 'post-url.txt'), 'utf8'), /issues\/42\/comments/);
+    assert.deepEqual(Object.keys(parseDataLine(readBody(state, 'post-body.json')).runs), ['200.1']); // the stranger's rows are not merged
   });
 
   // ---- target resolution: the hygiene / implement variants --------------------
@@ -366,10 +392,6 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
 
   // ---- the post-merge counter ------------------------------------------------
 
-  // The Record-token-spend steps post with the job token, so this is the only author the counter accepts (#462).
-  const BOT = { login: 'github-actions[bot]', type: 'Bot' };
-  const HUMAN = { login: 'mallory', type: 'User' };
-
   const SEED = {
     schemaVersion: 1,
     label: 'claude tokens',
@@ -396,7 +418,7 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     // Produce a real accumulated comment body by driving the record step twice.
     record(state, { runKey: '100.1', log: writeLog(state, RUN_A), comments: [] });
     const first = readBody(state, 'post-body.json');
-    record(state, { runKey: '200.1', log: writeLog(state, RUN_B), comments: [{ id: 7, body: first }] });
+    record(state, { runKey: '200.1', log: writeLog(state, RUN_B), comments: [{ id: 7, user: BOT, body: first }] });
     return readBody(state, 'patch-body.json');
   };
 
