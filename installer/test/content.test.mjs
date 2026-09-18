@@ -1693,6 +1693,103 @@ describe('confirmation gates read their *.confirmGate keys — no hardcoded --ye
   });
 });
 
+describe('auto-merge and delegate switches are flag-less behavioral keys — hygiene.autoMerge minted, delegate.* gain modes (#488, part of #478)', () => {
+  // key → [stack, default]  (#494 rows 5–8: modes [true, false], no flag, no prompt, no nonInteractive)
+  const KEYS = {
+    'hygiene.autoMerge': ['github-workflow', true],
+    'delegate.autoMerge': ['orchestration', false],
+    'delegate.approveBeforePush': ['orchestration', false],
+    'delegate.batchMode': ['orchestration', false],
+  };
+  const source = (stack, skill) => fs.readFileSync(path.join(STACKS, stack, 'skills', skill, 'SKILL.md'), 'utf8');
+  let stacks;
+  before(() => {
+    stacks = loadToolkit(REPO_ROOT).stacks;
+  });
+
+  test('each key is declared exactly as the #494 inventory states (rows 5–8)', () => {
+    for (const [key, [stack, dflt]] of Object.entries(KEYS)) {
+      const spec = stacks.get(stack).config[key];
+      assert.ok(spec, `${key} is declared in ${stack}`);
+      assert.equal(spec.default, dflt, `${key} default`);
+      assert.deepEqual(spec.modes, [true, false], `${key} modes`);
+      assert.equal(spec.flag, undefined, `${key} takes no invocation token`);
+      assert.equal(spec.nonInteractive, undefined, `${key} has no prompt mode, so no nonInteractive`);
+      assert.equal(spec.lockMode, undefined, `${key} is consumer-settable, not locked`);
+      assert.equal(spec.pattern, undefined, `${key} is a closed list, not a regex`);
+    }
+  });
+
+  test('no cleanUp.execute key is minted: --execute stays the script flag behind cleanUp.confirmGate (row 4)', () => {
+    assert.equal(stacks.get('github-workflow').config['cleanUp.execute'], undefined);
+    assert.equal(stacks.get('github-workflow').config['clean-up.execute'], undefined);
+    const md = source('github-workflow', 'clean-up');
+    assert.match(md, /`--execute` is the\s*\n?\s*\*\*script's\*\* mutation switch, not an invocation token of this skill, and it has no config key\s*\n?\s*of its own/);
+    assert.match(md, /the one thing that decides whether it is passed is\s*\n?\s*\[the gate\]\(#the-gate\) — `cleanUp\.confirmGate`/);
+    assert.match(md, /`\{\{cleanUp\.confirmGate\.flag\.off\}\}` \/\s*\n?\s*`\{\{cleanUp\.confirmGate\.flag\.on\}\}` tokens/);
+    assert.doesNotMatch(md, /\{\{cleanUp\.execute/);
+    const rendered = readSkill('clean-up');
+    assert.match(rendered, /`--yes` \/\s*\n?\s*`--confirm` tokens/, 'the ruling renders the real tokens');
+    assert.match(rendered, /--execute  # remove worktrees, delete branches, prune/, 'the script invocation is unchanged');
+  });
+
+  test('hygiene step 6 reads the rendered hygiene.autoMerge and branches on it', () => {
+    const md = source('github-workflow', 'hygiene');
+    assert.ok(md.includes('{{hygiene.autoMerge}}'), 'hygiene renders the resolved mode');
+    assert.doesNotMatch(md, /\{\{hygiene\.autoMerge\.flag/, 'no flag side exists to reference');
+    assert.match(md, /6\. \*\*Arm auto-merge — governed by `hygiene\.autoMerge`\.\*\*/);
+    assert.match(md, /`\.waffle\/waffle\.local\.yaml` → `\.waffle\/waffle\.yaml` → the stack default \(`true`\)/);
+    assert.match(md, /\| `hygiene\.autoMerge` \| What this step does \|/);
+    assert.match(md, /\| `true` \| Arm: run the command below; on a successful arm, label the PR\. \|/);
+    assert.match(md, /\| `false` \| Skip this step entirely: leave the PR open for a human to merge, apply no label, and report `auto-merge: not requested \(hygiene\.autoMerge: false\)`\. \|/);
+    assert.match(md, /When the rendered value is `true`, arm so the PR merges itself/);
+    assert.match(md, /gh pr merge --auto --merge/, 'the arm command itself is unchanged');
+    assert.match(md, /do \*\*not\*\* fall back to an immediate or `--admin` merge/, 'the never-admin guardrail survives');
+    assert.doesNotMatch(md, /`nonInteractive: /, 'no prompt mode, so the skill states no non-interactive fallback');
+  });
+
+  test('the committed render resolves hygiene.autoMerge to the stack default, so behavior at defaults is the pre-#488 always-arm', () => {
+    const md = readSkill('hygiene');
+    assert.doesNotMatch(md, /\{\{[a-zA-Z.]*autoMerge/i, 'an unresolved auto-merge placeholder survived the render');
+    assert.match(md, /Rendered value for this repo: `true`/);
+    assert.match(md, /gh pr edit <PR#> --add-label "waffle:auto-merged"/);
+    assert.match(md, /`not requested` because `hygiene\.autoMerge` is `false`/, 'the report distinguishes not-requested from could-not-arm');
+  });
+
+  test('delegate already read its three keys as {{key}}; adding modes: is a declaration-only change', () => {
+    const md = source('orchestration', 'delegate');
+    for (const key of ['delegate.autoMerge', 'delegate.approveBeforePush', 'delegate.batchMode']) {
+      assert.ok(md.includes(`{{${key}}}`), `delegate renders ${key}`);
+      assert.doesNotMatch(md, new RegExp(`\\{\\{${key.replace('.', '\\.')}\\.flag`), `${key} has no flag side to reference`);
+    }
+    const rendered = readSkill('delegate');
+    assert.match(rendered, /Auto-merge is ON when `delegate\.autoMerge` is `true`; for this run it is \*\*`false`\*\*/);
+    assert.match(rendered, /The gate is ON when `delegate\.approveBeforePush` is `true`; for this run it is \*\*`false`\*\*/);
+    assert.match(rendered, /Batch mode is ON when `delegate\.batchMode` is `true`; for this run it is \*\*false\*\*/);
+  });
+
+  test('setting hygiene.autoMerge: false in config flips the rendered step without ejecting the skill', () => {
+    const cfg = (mode) => `targets: [claude]\ninclude: [github-workflow/skills/hygiene]\nconfig:\n  project:\n    name: t\n  hygiene:\n    autoMerge: ${mode}\n`;
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-488-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'));
+      fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg('false'));
+      const ok = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+      assert.ok(ok.ok, `render failed: ${JSON.stringify(ok.errors)}`);
+      const md = fs.readFileSync(path.join(cwd, '.claude/skills/hygiene/SKILL.md'), 'utf8');
+      assert.match(md, /Rendered value for this repo: `false`/);
+      assert.doesNotMatch(md, /\{\{hygiene\.autoMerge\}\}/);
+
+      fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg('prompt'));
+      const bad = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+      assert.equal(bad.ok, false, 'prompt is not a declared mode of hygiene.autoMerge');
+      assert.match(JSON.stringify(bad.errors), /hygiene\.autoMerge/);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('issue skill: its three in-scope interactive callers can actually run the protocol (#303)', () => {
   const readAgent = (name) => fs.readFileSync(path.join(CLAUDE, 'agents', `${name}.md`), 'utf8');
   const CALLERS = ['product-manager', 'task-planner', 'project-manager'];

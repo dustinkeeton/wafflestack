@@ -579,6 +579,7 @@ config:
   delegate.approveBeforePush:
     required: false
     default: false
+    modes: [true, false]
     description: >-
       Opt-in human approval gate immediately before push. When true, each delegated
       agent runs its pre-flight, commits locally, and STOPS before `git push` /
@@ -588,9 +589,13 @@ config:
       worktree/branch local and intact and is recorded in the run report (execution
       `approval`/`approvedBy`, status `skipped`). Default false — agents push
       autonomously, behavior unchanged.
+      Declared `modes: [true, false]` (#488, part of #478): no `prompt` mode and no `flag:` —
+      delegate's invocation is a scope, not a flag list; the orchestrator prompt carries the
+      per-run switch.
   delegate.autoMerge:
     required: false
     default: false
+    modes: [true, false]
     description: >-
       Opt-in post-green auto-merge arming for delegate-spawned PRs. When true, after
       an agent (or the orchestrator) runs `gh pr create` it arms the PR with
@@ -600,6 +605,9 @@ config:
       If arming fails, never an immediate or `--admin` merge. Merge commits, not squash (squash is disabled on this repo). The Report
       phase records per-PR whether auto-merge armed. Default false — PRs wait for a
       human to merge, behavior unchanged.
+      Declared `modes: [true, false]` (#488, part of #478): no `prompt` mode and no `flag:` —
+      delegate's invocation is a scope, not a flag list; the orchestrator prompt carries the
+      per-run switch.
   autoMerge.label:
     required: false
     default: "waffle:auto-merged"
@@ -612,6 +620,7 @@ config:
   delegate.batchMode:
     required: false
     default: false
+    modes: [true, false]
     description: >-
       Opt-in non-interactive batch mode for unattended runs (the autopilot backlog
       runner). When true AND the invoker supplied explicit scope (an issue list, a
@@ -626,6 +635,9 @@ config:
       gate is on it still stops each agent before push. If batchMode is true but scope was
       not explicit, delegate falls back to interactive confirmation. Default false —
       the interactive confirmation gate behaves exactly as before.
+      Declared `modes: [true, false]` (#488, part of #478): no `prompt` mode and no `flag:` —
+      delegate's invocation is a scope, not a flag list; the orchestrator prompt carries the
+      per-run switch.
   delegate.memoryFile:
     required: false
     default: "{{delegate.checkpointDir}}/memory.md"

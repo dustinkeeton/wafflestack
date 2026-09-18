@@ -106,7 +106,12 @@ execute path is identical every time. **Always go through the script — don't h
 > **nothing** and miss merged branches. The script instead asks GitHub for merged PR state via
 > `gh`, which is the authoritative signal regardless of how the PR was merged.
 
-Run it dry-run to get the plan, then with `--execute` once confirmed:
+Run it dry-run to get the plan, then with `--execute` once confirmed. `--execute` is the
+**script's** mutation switch, not an invocation token of this skill, and it has no config key
+of its own (#488 ruling, #494 row 4): the one thing that decides whether it is passed is
+[the gate](#the-gate) — `cleanUp.confirmGate`, or its `--yes` /
+`--confirm` tokens. Never pass it before the gate has been passed, and never
+pass it on the `--run <checkpoint>` sweep, which does not touch git.
 
 ```bash
 bash .claude/skills/clean-up/scripts/clean_up.sh            # dry run → the plan
