@@ -276,6 +276,18 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **The last unconditional "git rejects an empty `user.signingkey`" claims are gone (#269).** Git
+  rejects the empty key only when the command actually signs (`commit.gpgsign=true` or `-S`);
+  under a non-signing recipe `-c user.signingkey=` rides along inert. Four residual sites still
+  said git fails on it unconditionally — the [0.12.0] declared-keys entry, the github-workflow
+  `entryPatterns` comment (its orchestration lockstep twin carries no such claim), the delegate
+  identity gate's `EMPTY user.signingkey` error string, and an installer-test comment — and each
+  now states the conditional truth. The `content.test.mjs` pin is widened from one sentence to
+  the paraphrases seen across #252, #268 and this sweep, applied to the text following every
+  signingkey mention in the CHANGELOG, `schema/FORMAT.md`, both stacks' manifests, the delegate
+  skill sources, and the installer tests; a new identity-gate test pins the corrected error.
+  Consumer impact: the re-rendered `delegate/identity.mjs` changes one error message's wording
+  (the check itself is unchanged — an empty key is dead config under any recipe).
 - **`waffle-post-merge-hook` no longer reports an unverifiable branch as "already gone" (#212).**
   The delete step told outcome 2 (GitHub's native auto-delete beat us) from outcome 3 (branch
   still there → `::warning`) only by the exit code of a confirmation GET, so a transient DELETE
@@ -1723,8 +1735,9 @@ is what you reach for across a breaking one.
   resolves to the placeholder default (`wafflebot@users.noreply.github.com`) instead of passing the
   `{{git.botEmail}}` text through verbatim. Watch `git.signingKey` in particular: its default is the
   **empty string**, so an undefined-but-referenced `{{git.signingKey}}` now renders
-  `git -c user.signingkey= …` — a silent, run-time-only failure, where before it left the obviously
-  broken literal `{{git.signingKey}}` in the output. Define them if you reference them.
+  `git -c user.signingkey= …` — a silent failure that git surfaces only when the command signs,
+  never under a non-signing recipe — where before it left the obviously broken literal
+  `{{git.signingKey}}` in the output. Define them if you reference them.
 - **`todo-column` board scope for `delegate.defaultScope` (#206, `orchestration`).** A third
   default-scope value alongside `current-milestone` and `all-open`: delegate **exactly the open
   issues in the project board's Status = "Todo" column**, resolved via the

@@ -2356,7 +2356,7 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'non-destructive');
   });
 
-  // `signingKey` takes `+`, not the scalar sibling's `*`: an empty leaf is *present*, so rule 3 appends `-c user.signingkey=`, which git rejects.
+  // `signingKey` takes `+`, not the scalar sibling's `*`: an empty leaf is *present*, so rule 3 appends `-c user.signingkey=` — inert under a non-signing recipe, rejected only when the command signs.
   test('I7a an empty signingKey override fails the render rather than rendering `-c user.signingkey=`', () => {
     write(
       cwd,
