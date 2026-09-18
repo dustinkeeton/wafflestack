@@ -317,15 +317,20 @@ is what you reach for across a breaking one.
   out to remove), and the judge read the rubric's exact anchors as fail conditions, faulting F2's
   Effort/Risk 3 and F3's nonzero non-Validity scores, rules the rubric never stated. The prompt now
   pins Reach at 2 (`report` is a read-only view: gates no merge, ships nothing, spends nothing,
-  touches no secrets) and Alignment at 0 (a DECISIONS.md decision freezes the bounds contract, so
-  the fix contradicts a documented decision and the PR's stated scope) with in-scenario facts, so
-  the intended composite is `3/2/3/0/0 = 8` — three points under the bar, the floor for any
-  fixture where the override fires. The judge rubric is rewritten as PASS / FAIL / "not judged"
-  sentences: F1 passes on Implement, the named override, composite < 11, Effort/Risk ≤ 1 and
-  Alignment ≤ 1; F2 on Defer with a follow-up; F3 on Decline with Validity 0 and a reason that says
-  the finding is wrong. F2's dimension scores and F3's non-Validity scores are explicitly unjudged,
-  and a new `includes: "Defer"` pins F2's verdict token. Consumer impact: none — eval cases are
-  inert to `render`, `validate`, and the lock; the case only changes what `npm run evals` measures.
+  touches no secrets) and Alignment at 0 (the PR description says "no changes to parsing
+  semantics in this PR", so a bounds-contract redesign contradicts the PR's stated scope) with
+  in-scenario facts, so the intended composite is `3/2/3/0/0 = 8` — three points under the bar,
+  the floor for any fixture where the override fires. The judge rubric is rewritten as PASS /
+  FAIL / "not judged" sentences: F1 passes on Implement, the named override, composite < 11,
+  Effort/Risk ≤ 1 and Alignment ≤ 1; F2 on Defer with a follow-up; F3 on Decline with Validity 0
+  and a reason that says the finding is wrong. F2's dimension scores and F3's non-Validity scores
+  are explicitly unjudged, a note that F1 could be split into its own PR is not a fault, and a new
+  `includes: "Defer"` pins F2's verdict token. Alignment is pinned via the anchor's stated-scope
+  clause rather than a documented decision: a live run against a decision-based fixture scored the
+  intended anchors and then Deferred, reasoning that a documented decision outranks the override —
+  a skill-policy question filed separately, which the eval must not depend on. Consumer impact:
+  none — eval cases are inert to `render`, `validate`, and the lock; the case only changes what
+  `npm run evals` measures.
 - **Clause 4 of the spawn-and-collect contract names both seats (#369 reassessment).** PR #521
   replaced the flat-roster rule with "naming works from any seat", which a live probe on 2026-09-18
   showed is false from a named agent's seat: the harness still rejects a named spawn there with

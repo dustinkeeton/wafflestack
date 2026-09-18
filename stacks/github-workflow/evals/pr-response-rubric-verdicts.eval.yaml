@@ -29,10 +29,10 @@ prompt: |
       invocation, with or without `--json`. `report` is a read-only view — it gates no merge,
       ships no code, spends no money, and touches no secrets. The bug predates this PR and has
       nothing to do with the `--json` flag; the PR only touched `parseRange` to satisfy a lint
-      rule. Fixing it means redesigning the bounds contract, which three other load-bearing
-      callers with thin tests depend on — and the repo's DECISIONS.md records an accepted
-      decision that freezes that contract as-is until the scheduled parser rewrite, so a fix in
-      this PR contradicts that documented decision.
+      rule. The PR description explicitly says "no changes to parsing semantics in this PR —
+      `parseRange` is touched only for the lint rule". Fixing it means redesigning the bounds
+      contract, which three other load-bearing callers with thin tests depend on — a change the
+      PR's own stated scope excludes.
   F2. [nit] `tmp2` is a meaningless variable name in `load.ts` — one-line rename, fully covered
       by existing tests.
   F3. [blocker] `flush()` never closes the file handle, leaking a descriptor on every call.
@@ -82,7 +82,8 @@ assert:
       arithmetic rather than by the override. Guidance only, never a fail condition: F1 is
       expected around Severity 3, Reach 2, Validity 3, Effort/Risk 0, Alignment 0 (composite
       about 8); a Reach of 3 is acceptable. No F1 score value beyond the bounds in (c), (d) and
-      (e) is judged.
+      (e) is judged. A note in F1's reason that the fix could be split into its own PR is not a
+      fault, as long as the verdict is Implement.
       F2 — PASS requires that the verdict is Defer and the reason mentions a follow-up issue.
       FAIL if the verdict is Implement or Decline. F2's five dimension scores and its composite
       are not judged; in particular an Effort/Risk of 3 is not a fault.
@@ -107,12 +108,12 @@ dryRunResponse: |
     and every downstream slice is empty, on the parse path every `report` run executes. Reach 2,
     not 3: `report` is a read-only view that gates no merge, ships nothing, spends nothing and
     touches no secrets. The arithmetic says Defer: Effort/Risk 0 (redesigning a bounds contract
-    three load-bearing callers with thin tests depend on) and Alignment 0 (the fix contradicts
-    the DECISIONS.md freeze on that contract and sits outside the PR's stated `--json` scope). The
-    confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2) lifts it to Implement
-    regardless. Landing the bounds fix with a regression test on the empty-input case, plus tests
-    pinning the three callers before the rework, and flagging the DECISIONS.md conflict in the
-    PR for the owner.
+    three load-bearing callers with thin tests depend on) and Alignment 0 (a bounds-contract
+    redesign contradicts the PR's stated scope — its description says "no changes to parsing
+    semantics in this PR"). The confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2)
+    lifts it to Implement regardless. Landing the bounds fix with a regression test on the
+    empty-input case, plus tests pinning the three callers before the rework; the PR description
+    gets a line widening its scope.
   - **F2 — Defer (10).** Valid and trivial, but cosmetic: no run behaves differently, so Severity 1
     and Reach 1 keep it under the ≥11 bar. Filed into the naming-pass follow-up issue.
   - **F3 — Decline (9).** False positive (Validity 0 → auto-decline, overriding the composite):
