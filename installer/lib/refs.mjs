@@ -49,6 +49,9 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
  *   forwarded to a renamed waffle's successor (#335) — the render proceeds, but the pin is stale
  * @property {EjectOverlap[]} ejectOverlaps `include:` entries that also sit in `eject:` (#497) — each
  *   is already an entry in `errors`
+ * @property {Set<string>} ejected the project's `eject:` list as normalized `kind/name` refs — the
+ *   exact set `items` was filtered by, carried so a downstream consumer judges "left out on
+ *   purpose" against the same set the selection did (#502)
  * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
  *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
  *   filtered out, eject-filtered on both ends. `optIn` = the dependency is opt-in syrup in its own
@@ -588,7 +591,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
   }
 
   // `targets` rides along so every downstream scope judgment reads the set this was filtered by.
-  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps };
+  return { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps, ejected };
 }
 
 /**
@@ -599,16 +602,18 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
  * actually contribute selected items.
  *
  * @param {Toolkit} toolkit loaded toolkit
- * @param {Selection} selection a `computeSelection` result — its `targets` are read straight off it,
- *   so the two can never disagree (#364)
+ * @param {Selection} selection a `computeSelection` result — its `targets` and `ejected` are read
+ *   straight off it, so the two can never disagree (#364, #502)
  * @returns {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]}
  *   one entry per skipped syrup file, `companions` naming the selected waffles that pull it into
  *   relevance. `scopedTo` null ⇒ pourable, and `fileRef` is a ready `wafflestack install` argument;
- *   non-null ⇒ the file's `targets:` scope, and the pairing cannot be completed here. Deterministic
- *   order (stack, then manifest).
+ *   non-null ⇒ the file's `targets:` scope, and the pairing cannot be completed here. An EJECTED
+ *   syrup is never an entry, scoped or not: `eject:` is the recorded "left out on purpose", and the
+ *   pour it would suggest now un-ejects (#497, #502). Deterministic order (stack, then manifest).
  */
 export function skippedSyrupCompanions(toolkit, selection) {
   const targets = selection.targets;
+  const ejected = selection.ejected ?? new Set();
   const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
   const stacksInSelection = new Set(selection.items.map((i) => i.stackName));
   /** @type {{ fileRef: string, stackName: string, companions: string[], scopedTo: string[]|null }[]} */
@@ -620,6 +625,7 @@ export function skippedSyrupCompanions(toolkit, selection) {
       const fileRef = `files/${f.name}`;
       if (!stack.optIn.has(fileRef)) continue; // only opt-in syrup is silently gated
       if (selectedRefs.has(fileRef)) continue; // already poured (explicitly included or tracked)
+      if (ejected.has(fileRef)) continue; // project-owned by decision — nothing to pour (#502)
       // `scopedTo` non-null means the pairing is real AND uncompletable here (#364), so the caller
       // states it without a pour command rather than suppressing the notification.
       const scopedTo = fileMatchesTargets(f, targets) ? null : (f.targets ?? []);

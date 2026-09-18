@@ -5477,6 +5477,48 @@ describe('syrup target scoping (#364)', () => {
     assert.doesNotMatch(pairing, /wafflestack install/, 'and never offers a pour command that would render nothing');
   });
 
+  // (#502) The scoped restatement above is ALSO withheld once the file is ejected: scope says "cannot be
+  // poured here", eject says "left out on purpose" — and the second is the stronger, recorded signal.
+  test('an ejected scoped-out opt-in file gets neither the pairing restatement nor the plain warning (#502)', () => {
+    const stack = (scopedLines) => [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      ...scopedLines,
+      'optIn:',
+      `  - files/${SCOPED}`,
+      'requires:',
+      `  files/${SCOPED}: [agents/alpha]`,
+      '',
+    ].join('\n');
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+    const eject = `eject:\n  - files/${SCOPED}\n`;
+    const pairing = (warnings) => warnings.find((w) => /pairs with selected agents\/alpha/.test(w));
+
+    // scoped + ejected → silent
+    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - path: ${SCOPED}`, '    targets: [claude]']));
+    config('codex', eject);
+    const scoped = render();
+    assert.equal(scoped.ok, true, JSON.stringify(scoped.errors));
+    assert.equal(pairing(scoped.warnings), undefined, `ejected + scoped must not warn: ${JSON.stringify(scoped.warnings)}`);
+
+    // unscoped + ejected → silent too (the plain variant, on the same fixture)
+    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
+    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - ${SCOPED}`]));
+    config('codex', eject);
+    const unscoped = render();
+    assert.equal(unscoped.ok, true, JSON.stringify(unscoped.errors));
+    assert.equal(pairing(unscoped.warnings), undefined, `ejected + unscoped must not warn: ${JSON.stringify(unscoped.warnings)}`);
+
+    // the contrast, pinned on the same fixture: drop the eject and the scoped restatement is back
+    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
+    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - path: ${SCOPED}`, '    targets: [claude]']));
+    config('codex');
+    assert.ok(pairing(render().warnings), 'merely scoped-out (not ejected) still restates the pairing');
+  });
+
   // (F5, setup) The playbook's scope note outranks its pairing note, so the pairing has to ride along with it.
   test('the setup playbook states the pairing on a scoped-out opt-in file too', () => {
     write(toolkitRoot, 'stacks/sb/stack.yaml', [
@@ -5500,6 +5542,36 @@ describe('syrup target scoping (#364)', () => {
     const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
     assert.match(guide, /not installable here — scoped to targets \[claude\]/);
     assert.match(guide, /pairs with selected agents\/alpha/, 'the pairing is stated, not swallowed by the scope note');
+  });
+
+  // (#502, setup) An ejected file is the project's by recorded decision; the playbook must say so and
+  // must NOT hand the agent an `install` that would un-eject it (#497). Outranks the scope note.
+  test('the setup playbook marks an ejected opt-in file project-owned and offers no pour (#502)', () => {
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Scope fixture.',
+      'agents: [alpha]',
+      'files:',
+      '  - shared.txt',
+      `  - path: ${SCOPED}`,
+      '    targets: [claude]',
+      'optIn:',
+      `  - files/${SCOPED}`,
+      'requires:',
+      `  files/${SCOPED}: [agents/alpha]`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+    write(toolkitRoot, 'schema/SETUP.md', '# Setup\n');
+    config('codex', `eject:\n  - files/${SCOPED}\n`);
+
+    const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
+    const line = guide.split('\n').find((l) => l.includes(`\`files/${SCOPED}\``) && l.startsWith('- '));
+    assert.ok(line, `the opt-in line is still listed: ${guide}`);
+    assert.match(line, /ejected — project-owned/);
+    assert.doesNotMatch(line, /pairs with selected/, 'no pairing nag on an ejected file');
+    assert.doesNotMatch(line, /install /, 'and no pour suggestion — that would un-eject it');
+    assert.doesNotMatch(line, /not installable here/, 'the eject note outranks the scope note');
   });
 
   // (F7) `list` is the surface consulted BEFORE re-rendering: a file poured under the old scope is on disk and in the lock now, and the next render DELETES it.
@@ -5881,6 +5953,32 @@ describe('skipped syrup companions (#74)', () => {
     // eject the companion → the danger syrup no longer pairs with anything selected
     const sel = computeSelection(toolkit, { stacks: ['sb'], include: [], eject: ['skills/companion'], values: {} });
     assert.deepEqual(skippedSyrupCompanions(toolkit, sel), []);
+  });
+
+  // #502: `eject:` is the recorded "left out on purpose", and since #497 the pour the warning suggests
+  // would UN-eject the file — so an ejected syrup is not a skipped companion, merely-uninstalled still is.
+  test('an EJECTED syrup is not a skipped companion, while a merely-uninstalled one still is (#502)', () => {
+    const toolkit = loadToolkit(toolkitRoot);
+    const skipped = (eject) => skippedSyrupCompanions(toolkit, computeSelection(toolkit, { stacks: ['sb'], include: [], eject, values: {} }));
+    // merely uninstalled → surfaced, exactly as before
+    assert.equal(skipped([]).length, 1, 'the contrast: uninstalled-but-not-ejected still pairs');
+    // ejected → silent
+    assert.deepEqual(skipped(['files/danger.yml']), []);
+    // matched the way selection matches: an unqualified `eject:` entry goes through normalizeItemRef
+    assert.deepEqual(skipped(['file:danger.yml']), []);
+    // the eject set rides on the selection itself, so a consumer cannot judge against a different one
+    assert.deepEqual([...computeSelection(toolkit, { stacks: ['sb'], include: [], eject: ['file:danger.yml'], values: {} }).ejected], ['files/danger.yml']);
+  });
+
+  test('render does not warn about an ejected syrup, and never suggests the pour that would un-eject it (#502)', () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\neject: [files/danger.yml]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some(companionWarn), `an ejected syrup must not be nagged about: ${JSON.stringify(result.warnings)}`);
+    assert.ok(!result.warnings.some((w) => /files\/danger\.yml/.test(w)), JSON.stringify(result.warnings));
+    // the companion skill still renders; the ejected syrup stays the project's (absent here — nothing poured it)
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/companion/SKILL.md')));
+    assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false);
   });
 
   test('render warns about the skipped companion with the exact pour command', () => {
