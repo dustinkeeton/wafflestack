@@ -660,20 +660,20 @@ config:
       tight entries).
   autopilot.autoMerge:
     required: false
-    default: false
+    default: prompt
     modes: [true, false, prompt]
-    lockMode: false
+    lockMode: prompt
     nonInteractive: false
     flag: { on: "+automerge" }
     description: >-
       Per-run auto-merge consent for the autopilot backlog runner — whether an autopilot
       run may arm `gh pr merge --auto --merge` on the PRs it opens. When true, autopilot
       sets delegate.autoMerge for the run so each PR arms itself once the base branch's
-      required checks pass; when false (the default) every PR is opened and left for human
-      review. Consent is captured fresh every invocation and is NEVER sticky — there is no
-      carry-over from a prior run, and autopilot never reads a previous run's consent from
-      any checkpoint or memory. Same guardrails as delegate.autoMerge. `--auto` only arms when all three hold: (1) the repo has "Allow auto-merge" enabled; (2) a required status check is configured on the base branch; (3) that check needs branch protection or a ruleset, which on GitHub Free exists only for public repos — a private repo needs GitHub Pro / Team / Enterprise. Otherwise `--auto` has nothing to wait on and the PR is left open-but-not-armed.
-      If arming fails, never an immediate or `--admin` merge. Default false — PRs wait for a human, behavior off.
+      required checks pass; when false every PR is opened and left for human review. Locked to
+      prompt: config may not pre-answer it (render and doctor reject any other value), the
+      invocation's flag token turns it on, an unattended run without the token resolves to off
+      (nonInteractive: false). Same guardrails as delegate.autoMerge. `--auto` only arms when all three hold: (1) the repo has "Allow auto-merge" enabled; (2) a required status check is configured on the base branch; (3) that check needs branch protection or a ruleset, which on GitHub Free exists only for public repos — a private repo needs GitHub Pro / Team / Enterprise. Otherwise `--auto` has nothing to wait on and the PR is left open-but-not-armed.
+      If arming fails, never an immediate or `--admin` merge.
   autopilot.planDir:
     required: false
     default: "{{git.worktreesDir}}/.autopilot"
@@ -684,9 +684,9 @@ config:
       the same gitignore — these are throwaway run artifacts, not committed.
   autopilot.reviewLoop:
     required: false
-    default: false
+    default: prompt
     modes: [true, false, prompt]
-    lockMode: false
+    lockMode: prompt
     nonInteractive: false
     flag: { on: "+review" }
     description: >-
@@ -698,9 +698,8 @@ config:
       the delegate run, waits for each PR to go green, then loops up to autopilot.maxReviewRounds
       rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging when a round
       implements 0 findings, and arms auto-merge itself afterward if that was also consented.
-      Consent is captured fresh every invocation and is NEVER sticky — no carry-over from a prior
-      run, never read from a checkpoint or memory. Default false — no review loop, behavior
-      unchanged.
+      Locked to prompt like autopilot.autoMerge: the flag token is the only on-switch, and an
+      unattended run without it resolves to off.
   autopilot.maxReviewRounds:
     required: false
     default: 2
@@ -721,9 +720,9 @@ config:
       value governs every run that doesn't say otherwise).
   autopilot.qaLoop:
     required: false
-    default: false
+    default: prompt
     modes: [true, false, prompt]
-    lockMode: false
+    lockMode: prompt
     nonInteractive: false
     flag: { on: "+qa" }
     description: >-
@@ -736,9 +735,8 @@ config:
       up to autopilot.maxQaRounds rounds of `qa <PR#>` → `pr-response <PR#> --yes`, converging when
       a round implements 0 findings; it arms auto-merge itself afterward only if that was also
       consented AND the review loop and audit gate are both off — otherwise the last enabled gate
-      arms. Consent is captured fresh every invocation and is NEVER sticky — no carry-over from a
-      prior run, never read from a checkpoint or memory. Default false — no QA gate, behavior
-      unchanged.
+      arms. Locked to prompt like autopilot.autoMerge: the flag token is the only on-switch, and
+      an unattended run without it resolves to off.
   autopilot.maxQaRounds:
     required: false
     default: 2
@@ -774,9 +772,9 @@ config:
       Default waffle:manual-review.
   autopilot.auditStep:
     required: false
-    default: false
+    default: prompt
     modes: [true, false, prompt]
-    lockMode: false
+    lockMode: prompt
     nonInteractive: false
     flag: { on: "+audit" }
     description: >-
@@ -792,9 +790,9 @@ config:
       branch and re-waits for green, then HARD-GATES on unresolved Critical/High findings: such a
       finding blocks the merge (the PR is left for a human with an autopilot.holdLabel follow-up
       issue) EVEN IF auto-merge was consented — autopilot never merges past an unresolved security
-      gate. Auto-merge is armed, if consented, only once the gate passes green. Consent is captured
-      fresh every invocation and is NEVER sticky — no carry-over from a prior run, never read from a
-      checkpoint or memory. Default false — no audit gate, behavior unchanged.
+      gate. Auto-merge is armed, if consented, only once the gate passes green. Locked to prompt like
+      autopilot.autoMerge: the flag token is the only on-switch, and an unattended run without it
+      resolves to off.
   docs.auditChecklist:
     required: false
     description: >-

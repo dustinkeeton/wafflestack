@@ -645,11 +645,11 @@ describe('autopilot skill: instantiation contract, handoff, and guardrails', () 
     assert.match(md, /an unscoped run cannot activate batch mode/);
   });
 
-  test('auto-merge consent is per-run, explicit, default OFF, and never sticky', () => {
-    assert.match(md, /Auto-merge consent — per-run, explicit, default OFF/);
-    assert.match(md, /The default for the run is \*\*false\*\*/);
-    assert.match(md, /Consent is per-run and never sticky/);
-    assert.match(md, /Consent is per-run only — never sticky/);
+  test('auto-merge consent is per-run, explicit, and locked to prompt by declaration', () => {
+    assert.match(md, /Auto-merge consent — per-run, explicit, locked to `prompt`/);
+    assert.match(md, /Rendered gate for this repo: `prompt`/);
+    assert.match(md, /Consent is per-run by declaration/);
+    assert.doesNotMatch(md, /never sticky/);
   });
 
   test('plan→implement handoff: a written plan-file artifact, a brief not a contract', () => {
@@ -697,12 +697,12 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.ok(reviewStep.length > 0, 'Step 6 is the review → respond loop');
   });
 
-  test('review-loop consent is a separate per-run opt-in, default OFF, +review flag', () => {
+  test('review-loop consent is a separate per-run opt-in, locked to prompt, +review flag', () => {
     assert.match(md, /Review-loop consent/);
-    assert.match(md, /separate from auto-merge, default OFF/);
+    assert.match(md, /separate from auto-merge, locked to `prompt`/);
     assert.match(md, /\+review/);
     assert.match(md, /Independent of auto-merge consent/);
-    assert.match(md, /consents — auto-merge, the QA gate, the review loop, and the audit step — are off unless explicitly opted in/);
+    assert.match(md, /\*All four\* consent keys are `lockMode: prompt`: config cannot pre-answer them/);
   });
 
   test('auto-merge arming is deferred out of the delegate run when the loop is on', () => {
@@ -748,12 +748,12 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     md = readSkill('autopilot');
   });
 
-  test('audit-step consent is a separate per-run opt-in, default OFF, +audit flag, any combination', () => {
+  test('audit-step consent is a separate per-run opt-in, locked to prompt, +audit flag, any combination', () => {
     assert.match(md, /Audit-step consent/);
-    assert.match(md, /separate from auto-merge and the review loop, default OFF/);
+    assert.match(md, /separate from auto-merge and the review loop, locked to `prompt`/);
     assert.match(md, /\+audit/);
     assert.match(md, /any combination may be on/);
-    assert.match(md, /consents — auto-merge, the QA gate, the review loop, and the audit step — are off unless explicitly opted in/);
+    assert.match(md, /\*All four\* consent keys are `lockMode: prompt`: config cannot pre-answer them/);
   });
 
   test('auto-merge arming is deferred past the audit gate — armed only once it passes green', () => {
@@ -798,12 +798,12 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     assert.ok(qaStep.length > 0, 'Step 5 is the QA → respond loop');
   });
 
-  test('QA-gate consent is a FIFTH per-run opt-in, default OFF, +qa flag, any combination', () => {
+  test('QA-gate consent is a FIFTH per-run opt-in, locked to prompt, +qa flag, any combination', () => {
     assert.match(md, /QA-gate consent/);
-    assert.match(md, /separate from the other consents, default OFF/);
+    assert.match(md, /separate from the other consents, locked to `prompt`/);
     assert.match(md, /\+qa/);
     assert.match(md, /QA gate \(Step 5\) → review loop \(Step 6\) → audit gate \(Step 7\)/);
-    assert.match(md, /consents — auto-merge, the QA gate, the review loop, and the audit step — are off unless explicitly opted in/);
+    assert.match(md, /\*All four\* consent keys are `lockMode: prompt`: config cannot pre-answer them/);
   });
 
   test('auto-merge arming is deferred out of the delegate run when the QA gate is on', () => {
@@ -862,7 +862,7 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     assert.match(md, /never start a zero-round loop and never guess a cap/);
   });
 
-  test('bare flags keep the rendered defaults; the caps are per-run and never sticky', () => {
+  test('bare flags keep the rendered defaults; the caps are per-run, never read back', () => {
     assert.match(md, /Bare `\+review` keeps the rendered default/);
     assert.match(md, /Bare `\+qa` keeps the rendered default/);
     assert.match(md, /applies to this invocation only/);
@@ -1784,6 +1784,124 @@ describe('auto-merge and delegate switches are flag-less behavioral keys — hyg
       const bad = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
       assert.equal(bad.ok, false, 'prompt is not a declared mode of hygiene.autoMerge');
       assert.match(JSON.stringify(bad.errors), /hygiene\.autoMerge/);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('autopilot consents are prompt-locked keys — config cannot pre-answer them, the + token is the only on-switch (#489, part of #478)', () => {
+  // key → [token, section heading]  (#494 rows 9–12)
+  const CONSENTS = {
+    'autopilot.autoMerge': ['+automerge', 'Auto-merge consent — per-run, explicit'],
+    'autopilot.reviewLoop': ['+review', 'Review-loop consent — per-run, separate from auto-merge'],
+    'autopilot.qaLoop': ['+qa', 'QA-gate consent — per-run, separate from the other consents'],
+    'autopilot.auditStep': ['+audit', 'Audit-step consent — per-run, separate from auto-merge and the review loop'],
+  };
+  const SOURCE = path.join(STACKS, 'orchestration', 'skills', 'autopilot', 'SKILL.md');
+  let config;
+  let src;
+  before(() => {
+    config = loadToolkit(REPO_ROOT).stacks.get('orchestration').config;
+    src = fs.readFileSync(SOURCE, 'utf8');
+  });
+
+  test('each key defaults to prompt AND is locked to prompt; nonInteractive and the on token are as PR #493 left them', () => {
+    for (const [key, [token]] of Object.entries(CONSENTS)) {
+      const spec = config[key];
+      assert.equal(spec.default, 'prompt', `${key} default`);
+      assert.equal(spec.lockMode, 'prompt', `${key} lockMode`);
+      assert.equal(spec.default, spec.lockMode, `${key}: default must equal lockMode`);
+      assert.deepEqual(spec.modes, [true, false, 'prompt'], `${key} modes`);
+      assert.equal(spec.nonInteractive, false, `${key}: an unattended run without the token is off`);
+      assert.deepEqual(spec.flag, { on: token }, `${key}: bare on token only, no off token`);
+      assert.doesNotMatch(spec.description, /sticky/i, `${key}: the never-sticky rule is the lock, not description prose`);
+    }
+  });
+
+  test('the never-sticky prose is gone from source and render; the lock is stated where each consent is read', () => {
+    const md = readSkill('autopilot');
+    for (const text of [src, md]) {
+      assert.doesNotMatch(text, /never sticky|never-sticky|NEVER sticky/);
+      assert.doesNotMatch(text, /default OFF/);
+      assert.doesNotMatch(text, /There is no config setting/);
+    }
+    assert.match(md, /a `true` or `false` in either config file fails `render` and bare `doctor`/);
+    assert.match(md, /Consent is per-run by declaration\.\*\* \*All four\* consent keys are `lockMode: prompt`/);
+    assert.match(md, /never read a prior run's answer back/);
+    for (const [key, [token, heading]] of Object.entries(CONSENTS)) {
+      assert.match(md, new RegExp(`### \\d\\. ${heading}, locked to \`prompt\``), `${key} heading names the lock`);
+      assert.match(md, new RegExp(`Rendered gate for this repo: \`prompt\`\\*\\* — (the value after|same \`lockMode: prompt\` declaration)`), `${key} renders the resolved mode`);
+      assert.ok(md.includes(`\`${token}\` in the arguments`), `${key}: ${token} is named as the per-run on-switch`);
+    }
+    assert.match(md, /\| No token \| Ask with `AskUserQuestion` — never assume\. \| Off — the key's `nonInteractive: false` fallback/);
+  });
+
+  test('the source reads the mode and the token as placeholders; no literal + token survives', () => {
+    for (const [key, [token]] of Object.entries(CONSENTS)) {
+      assert.ok(src.includes(`{{${key}}}`), `autopilot renders ${key}`);
+      assert.ok(src.includes(`{{${key}.flag.on}}`), `autopilot renders ${key}.flag.on`);
+      assert.doesNotMatch(src, new RegExp(`\\{\\{${key.replace('.', '\\.')}\\.flag\\.off`), `${key} declares no off token to reference`);
+      assert.ok(!src.includes(token), `${key}: literal ${token} still hardcoded in the source`);
+    }
+    assert.doesNotMatch(readSkill('autopilot'), /\{\{autopilot\.[a-zA-Z.]+\}\}/, 'an unresolved autopilot placeholder survived the render');
+  });
+
+  test('the :N cap suffix stays skill-parsed: it overrides the value keys, and is not part of the flag declaration', () => {
+    const md = readSkill('autopilot');
+    assert.match(md, /\+qa\[:N\]\] \[\+review\[:N\]\]/, 'the argument hint still advertises the colon forms');
+    assert.match(md, /The `:N` suffix is parsed here, by this skill: it overrides the \*value\* key `autopilot\.maxReviewRounds` for the run and is no part of the consent key's `flag:` declaration/);
+    assert.match(md, /the suffix is likewise skill-parsed, overriding the value key `autopilot\.maxQaRounds` for the run/);
+    assert.match(md, /`\+review:3` consents to the loop AND caps it at 3 rounds/);
+    assert.match(md, /Bare `\+review` keeps the rendered default — `autopilot\.maxReviewRounds`, currently `2`/);
+    assert.match(md, /Bare `\+qa` keeps the rendered default — `autopilot\.maxQaRounds`, currently `2`/);
+    for (const key of ['autopilot.maxReviewRounds', 'autopilot.maxQaRounds']) {
+      assert.equal(config[key].default, 2, key);
+      assert.equal(config[key].modes, undefined, `${key} is a value key, not a mode key`);
+      assert.equal(config[key].flag, undefined, `${key} carries no token — the :N form is prose-parsed`);
+    }
+  });
+
+  test('a consumer setting any consent to a non-prompt value fails render with an error naming the key; prompt itself is admitted', () => {
+    const cfg = (key, mode) => [
+      'targets: [claude]',
+      'include: [orchestration/skills/autopilot]',
+      'config:',
+      '  project:',
+      '    name: t',
+      '  roster:',
+      '    classificationTable: "| Signal | Agent |"',
+      '    labelFallback: "| Label | Agent |"',
+      '    rootFiles: package.json',
+      '    sharedModule: lib/',
+      '    moduleDependencies: none',
+      '  audit:',
+      '    complianceLabel: Integrity',
+      '    complianceFrontmatterLabel: integrity',
+      '    complianceTaskLabel: Integrity check',
+      '    complianceAgentName: integrity',
+      '    complianceDescription: Validates the thing.',
+      '    compliancePrompt: Run the checks.',
+      '  autopilot:',
+      `    ${key.split('.')[1]}: ${mode}`,
+      '',
+    ].join('\n');
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-489-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'));
+      for (const key of Object.keys(CONSENTS)) {
+        for (const mode of ['true', 'false']) {
+          fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg(key, mode));
+          const bad = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+          assert.equal(bad.ok, false, `${key}: ${mode} must not render`);
+          assert.ok(bad.errors.some((e) => e.includes(`{{${key}}} is locked to "prompt"`)), `${key}: ${JSON.stringify(bad.errors)}`);
+        }
+        fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg(key, 'prompt'));
+        const ok = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+        assert.ok(ok.ok, `${key}: prompt is the lock value — ${JSON.stringify(ok.errors)}`);
+      }
+      const md = fs.readFileSync(path.join(cwd, '.claude/skills/autopilot/SKILL.md'), 'utf8');
+      assert.match(md, /Rendered gate for this repo: `prompt`/);
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
