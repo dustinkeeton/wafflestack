@@ -4285,3 +4285,54 @@ describe('external check commands are gated on acknowledgement in the docs (#458
     assert.match(md, /\*\*committed\*\* `\.waffle\/waffle\.yaml`/);
   });
 });
+
+describe('SETUP.md documents the three-mode behavioral config contract for the setup agent (#490, part of #478)', () => {
+  const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+  const sectionStart = setupMd.indexOf('### Behavioral keys — the three modes, precedence, `lockMode`');
+  const section = setupMd.slice(sectionStart, setupMd.indexOf('## 4. External prerequisites', sectionStart));
+  // Prose re-wraps; the pins below hold on the words, not the line breaks.
+  const flat = section.replace(/\s+/g, ' ');
+  let stacks;
+  before(() => {
+    stacks = loadToolkit(REPO_ROOT).stacks;
+  });
+
+  test('the subsection lives under step 3 and states the precedence order as makeResolver implements it', () => {
+    assert.ok(sectionStart > setupMd.indexOf('## 3. Fill config values'), 'subsection is under step 3');
+    assert.ok(section.length > 0, 'subsection ends before step 4');
+    assert.match(flat, /explicit invocation token → `\.waffle\/waffle\.local\.yaml` → `\.waffle\/waffle\.yaml` → the stack's `default:`/);
+    assert.match(flat, /config value for \{\{autopilot\.autoMerge\}\} is locked to "prompt" by stack "orchestration" \(lockMode\) — config may not set it; the skill's own flag token is the only per-run override/);
+    assert.match(flat, /is not one of its declared modes/);
+    assert.match(flat, /`validate` reads no project config/);
+  });
+
+  test('every built-in key that declares modes: has a table row matching its declaration, and no row lacks a declaration', () => {
+    const rows = new Map();
+    for (const m of section.matchAll(/^\| `([\w.]+)` \| ([\w-]+) \| `(\w+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/gm)) {
+      rows.set(m[1], { stack: m[2], def: m[3], modes: m[4].trim(), tokens: m[5].trim(), nonInteractive: m[6].trim(), locked: m[7].trim() });
+    }
+    const declared = new Map();
+    for (const [stackName, stack] of stacks) {
+      for (const [key, spec] of Object.entries(stack.config ?? {})) if (spec?.modes) declared.set(key, { stackName, spec });
+    }
+    assert.ok(declared.size > 0, 'shipped stacks declare behavioral keys');
+    assert.deepEqual([...rows.keys()].sort(), [...declared.keys()].sort(), 'table rows == keys declaring modes:');
+    const cell = (v) => (v === undefined ? '—' : `\`${v}\``);
+    for (const [key, { stackName, spec }] of declared) {
+      const row = rows.get(key);
+      assert.equal(row.stack, stackName, `${key} stack`);
+      assert.equal(row.def, String(spec.default), `${key} default`);
+      assert.equal(row.modes, spec.modes.map((m) => `\`${m}\``).join(', '), `${key} modes`);
+      assert.equal(row.tokens, spec.flag ? `${cell(spec.flag.on)} / ${cell(spec.flag.off)}` : '—', `${key} tokens`);
+      assert.equal(row.nonInteractive, cell(spec.nonInteractive), `${key} nonInteractive`);
+      assert.equal(row.locked, cell(spec.lockMode), `${key} lockMode`);
+    }
+  });
+
+  test('the waffle-setup skill tells the agent to name behavioral keys and where to set one', () => {
+    const md = fs.readFileSync(path.join(STACKS, 'wafflestack', 'skills', 'waffle-setup', 'SKILL.md'), 'utf8');
+    assert.match(md, /\*\*Name the behavioral keys\.\*\*/);
+    assert.match(md, /`\.waffle\/waffle\.yaml`\n\s+\(shared\) or `\.waffle\/waffle\.local\.yaml` \(this machine\)/);
+    assert.match(md, /\*\*"Behavioral keys — the three modes, precedence, `lockMode`"\*\*/);
+  });
+});
