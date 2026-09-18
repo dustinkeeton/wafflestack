@@ -202,6 +202,12 @@ prerequisites:
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:needs-inference'"
     items: [skills/issue]
     description: Lifecycle label the issue skill toggles (default issue.inferenceLabel); the type/priority taxonomy must also exist.
+  - kind: label
+    name: "waffle:reassess"
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:reassess'"
+    items: [skills/issue, skills/label-hook]
+    description: Human-applied hold label (default issue.reassessLabel) — the label-hook implement path declines a reassess-labeled issue, and the issue skill never adds or removes it. Must pre-exist.
   - kind: setting
     name: actions-can-approve-prs
     level: recommend
@@ -906,6 +912,13 @@ setup: |-
     gh label create "priority: medium"   --color FBCA04 --description "New feature, improvement, moderate bug"
     gh label create "priority: low"      --color 0E8A16 --description "Cosmetic, nice-to-have, minor, tech debt"
     gh label create "waffle:needs-inference" --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
+
+  **Reassess hold label.** `issue.reassessLabel` (default `waffle:reassess`) is a hold a HUMAN
+  applies when an issue needs re-evaluation/reconfirmation before further action: the label-hook
+  implement path declines a reassess-labeled issue with a comment, the issue skill never adds or
+  removes it, and the orchestration stack's delegate/autopilot exclude it from automatic scope.
+  Removing the label is the reconfirmed signal. It must pre-exist —
+    gh label create "waffle:reassess" --color AC3AC7 --description "Needs re-evaluation/reconfirmation before further action"
 
   **Projects v2.** The issue and github-project-management skills look up a Projects v2
   board whose title matches `project.name` (case-insensitively) and skip board steps with a
@@ -1687,6 +1700,18 @@ config:
       carrying it, and no workflow dispatches on it — which is precisely why the rough-idea issue
       form may auto-apply it (a form must never auto-apply labelHook.enrichLabel /
       labelHook.implementLabel, which DO dispatch a paid run; see the setup note).
+  issue.reassessLabel:
+    required: false
+    default: "waffle:reassess"
+    # Same allowlist as issue.inferenceLabel — see its comment for why.
+    pattern: '^[A-Za-z0-9][A-Za-z0-9:._/+#()-]*(?: [A-Za-z0-9:._/+#()-]+)*$'
+    description: >-
+      Human-applied HOLD label: an issue carrying it needs re-evaluation/reconfirmation before
+      any automation acts on it. The orchestration stack's delegate and autopilot skills (which
+      re-declare this key, as both stacks do autoMerge.label) exclude reassess-labeled issues
+      from every automatic scope form, and the label-hook implement path declines one with a
+      comment; an explicit `#N` remains actionable. Nothing in the toolkit applies or removes
+      it — a human removing it is the "reconfirmed" signal. Must pre-exist in the repo.
   issue.bugLabel:
     required: false
     default: bug
