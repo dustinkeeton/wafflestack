@@ -518,7 +518,10 @@ describe('CI workflow identity (#160)', () => {
       implement,
       /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/,
     );
-    assert.doesNotMatch(enrich, /github_token:/);
+    // Enrich passes the plain workflow token (#541): an omitted github_token is not a
+    // github.token default but the OIDC + Claude App exchange, which the job cannot satisfy.
+    assert.doesNotMatch(enrich, /WAFFLE_HYGIENE_TOKEN/);
+    assert.match(enrich, /github_token: \$\{\{ github\.token \}\}/);
     const tokens = wf.match(/secrets\.WAFFLE_HYGIENE_TOKEN/g) || [];
     assert.equal(tokens.length, 1, `expected the PAT fallback on implement only, got ${tokens.length}`);
   });
@@ -2217,7 +2220,8 @@ describe('label-hook workflow (rendered in-test): dispatch gates', () => {
       implement,
       /github_token: \$\{\{ secrets\.WAFFLE_HYGIENE_TOKEN \|\| github\.token \}\}/,
     );
-    assert.doesNotMatch(enrich, /github_token:/);
+    assert.doesNotMatch(enrich, /WAFFLE_HYGIENE_TOKEN/);
+    assert.match(enrich, /github_token: \$\{\{ github\.token \}\}/);
   });
 
   test('renders no TOOLKIT bot identity into a project that never opted in (#160)', () => {

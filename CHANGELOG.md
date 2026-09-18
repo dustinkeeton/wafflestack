@@ -55,6 +55,15 @@ is what you reach for across a breaking one.
   the counter) and POSTs a fresh comment when none exists. Consumer impact: re-render picks up
   the workflows; a consumer that has **ejected** `waffle-pr-green-hook.yml` or
   `waffle-pr-response-hook.yml` must re-apply the guard to those copies by hand.
+- **The label-hook enrich dispatch passes `github_token` (#541).** The enrich job was the only
+  harness dispatch in the stack that omitted the `github_token` input, and the pinned dispatcher
+  gives it no default: an omitted input means the OIDC + Claude App token exchange, which needs
+  `id-token: write` and the Claude App and never falls back to `github.token`. Every enrich run
+  since #160 therefore died at `Unable to get ACTIONS_ID_TOKEN_REQUEST_URL` before Claude
+  started, a paid-for no-op reporting failure. The dispatch now passes
+  `github_token: ${{ github.token }}` — scoped by the job's own `issues: write`; the PAT stays
+  off enrich — and the setup note's CI-identity table no longer claims the dispatcher defaults
+  to `github.token`. Consumer impact: re-render only, no config change.
 
 ## [0.16.0] - 2026-09-18
 
