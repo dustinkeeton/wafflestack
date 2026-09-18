@@ -257,6 +257,13 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **Clause 4 of the spawn-and-collect contract names both seats (#369 reassessment).** PR #521
+  replaced the flat-roster rule with "naming works from any seat", which a live probe on 2026-09-18
+  showed is false from a named agent's seat: the harness still rejects a named spawn there with
+  `the team roster is flat`, so the `agentId` fallback is back. The teardown half stands —
+  `shutdown_request` and `TaskStop` are main-session acts from every spawned seat. The unverified
+  "latest wins" duplicate-name claim is gone. Consumer impact: the re-rendered `audit` and `delegate`
+  skills only.
 - **The four PR #368 cold-pass review findings are closed (#369).** The orchestration `audit` /
   `delegate` flat-roster note asserted a rule the harness does not have (a spawned agent *can* name its
   own spawns) and was silent about the one it does: `shutdown_request` messages and `TaskStop` are acts
