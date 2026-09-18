@@ -3,14 +3,16 @@
 #
 # Pins pr-response scoring under rubric v3 (#385): per-finding recorded scores and verdicts, the
 # blocker and false-positive overrides, and that a valid-but-cosmetic nit defers rather than
-# auto-implementing on valid + cheap alone.
+# auto-implementing on valid + cheap alone. The blocker's honest composite sits BELOW the
+# Implement bar, so the override is load-bearing, not decorative (#210).
 
 name: pr-response-scores-findings-and-emits-verdicts
 description: >-
-  Given a mix of review findings (a confirmed blocker with a costly fix, a cheap valid nit, and a
-  false positive), the pr-response skill scores each on the v3 rubric and returns per-finding
-  Implement / Defer / Decline verdicts with reasons — the blocker and false-positive overrides
-  fire, and the cosmetic nit defers instead of auto-implementing.
+  Given a mix of review findings (a confirmed blocker whose honest composite lands below the
+  Implement bar, a cheap valid nit, and a false positive), the pr-response skill scores each on the
+  v3 rubric and returns per-finding Implement / Defer / Decline verdicts with reasons — the
+  confirmed-blocker override is what lifts the blocker to Implement, the false-positive override
+  fires, and the cosmetic nit defers instead of auto-implementing.
 
 target:
   kind: skill
@@ -19,11 +21,14 @@ target:
 prompt: |
   /pr-response 42
 
-  PR #42 has three review findings:
+  PR #42's stated purpose is adding a `--json` flag to the `report` command. It has three review
+  findings:
 
   F1. [blocker] `parseRange("")` returns `[0, -1]`, so every downstream slice is silently empty.
-      Fixing it means reworking the bounds logic that three other callers depend on — a day's
-      work, and the callers have thin tests.
+      You traced it: the parse path runs on every `report` invocation, with or without `--json`.
+      The bug predates this PR and has nothing to do with the `--json` flag — the PR only touched
+      `parseRange` to satisfy a lint rule. Fixing it means redesigning the bounds contract that
+      three other load-bearing callers depend on, and those callers have thin tests.
   F2. [nit] `tmp2` is a meaningless variable name in `load.ts` — one-line rename, fully covered
       by existing tests.
   F3. [blocker] `flush()` never closes the file handle, leaking a descriptor on every call.
@@ -42,6 +47,8 @@ assert:
   - type: includes
     value: "Validity"
   - type: includes
+    value: "Effort/Risk"
+  - type: includes
     value: "Alignment"
   # The verdict vocabulary must be exactly these three tokens.
   - type: includes
@@ -54,17 +61,24 @@ assert:
       The response scores EACH of the three findings separately on the rubric's five dimensions
       (Severity, Reach, Validity, Effort/Risk, Alignment) with a numeric composite, and assigns
       each a verdict from {Implement, Defer, Decline} with a one-line reason. It must apply both
-      override rules: F1 is a CONFIRMED blocker on a live path so it is Implement even though
-      Effort/Risk scores low and the raw composite may fall below the ≥11 threshold (the override
-      should be named); F3 is a FALSE POSITIVE (Validity 0) so it is Decline despite being labeled
-      a blocker, and the reason must state the finding is wrong (the `with` block already closes
-      the handle), not merely that the fix is costly. F2 (a cheap, valid, cosmetic nit) must NOT
-      be Implement: its honest anchors are Severity 1 (cosmetic, no behavior change) and Reach 1
-      (a bad name is hit by maintainers reading the code, not by runs), and nothing documents a
-      naming convention here, so Alignment tops out at 2 — the composite lands at or below 10,
-      which is a Defer under v3's ≥11 bar. An Implement verdict on F2 means the anchors were
-      inflated to reach it, and fails. A pass requires per-finding scores AND correct verdicts on
-      F1 (Implement), F2 (Defer, with a follow-up), and F3 (Decline) with reasons.
+      override rules. F1 is a CONFIRMED blocker on a live path whose honest anchors are Severity 3
+      (correctness bug), Reach 2 (live — every `report` run), Validity 3 (traced), Effort/Risk 0
+      (a redesign of a bounds contract that load-bearing callers with thin tests depend on), and
+      Alignment 1 (tangential — a pre-existing bug unrelated to the `--json` flag this PR adds):
+      composite 9, which the arithmetic alone would Defer. The verdict must still be Implement,
+      and the reason must NAME the confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2)
+      as what lifts it above the ≥11 bar. An F1 Implement reached by arithmetic — Effort/Risk ≥ 2,
+      Alignment ≥ 2, or any composite ≥11 — means the anchors were inflated to avoid the override,
+      and fails; an F1 Defer means the override was not applied, and fails. F3 is a FALSE POSITIVE
+      (Validity 0) so it is Decline despite being labeled a blocker, and the reason must state the
+      finding is wrong (the `with` block already closes the handle), not merely that the fix is
+      costly. F2 (a cheap, valid, cosmetic nit) must NOT be Implement: its honest anchors are
+      Severity 1 (cosmetic, no behavior change) and Reach 1 (a bad name is hit by maintainers
+      reading the code, not by runs), and nothing documents a naming convention here, so Alignment
+      tops out at 2 — the composite lands at or below 10, which is a Defer under v3's ≥11 bar. An
+      Implement verdict on F2 means the anchors were inflated to reach it, and fails. A pass
+      requires per-finding scores AND correct verdicts on F1 (Implement, by the named override),
+      F2 (Defer, with a follow-up), and F3 (Decline) with reasons.
 
 dryRunResponse: |
   <!-- waffle-pr-response -->
@@ -72,15 +86,17 @@ dryRunResponse: |
 
   | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
   |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
-  | F1 | `parseRange("")` returns `[0, -1]` | 3 | 3 | 3 | 1 | 3 | 13 | **Implement** |
+  | F1 | `parseRange("")` returns `[0, -1]` | 3 | 2 | 3 | 0 | 1 | 9 | **Implement** (override) |
   | F2 | `tmp2` is a meaningless name in `load.ts` | 1 | 1 | 3 | 3 | 2 | 10 | **Defer** |
   | F3 | `flush()` leaks the file handle | 3 | 2 | 0 | 3 | 1 | 9 | **Decline** |
 
-  - **F1 — Implement (13).** Confirmed: empty input yields `[0, -1]` and every downstream slice is
-    empty, on a live parse path. Effort/Risk scores 1 (three callers with thin tests) — and the
-    confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2) applies regardless. Landing
-    the bounds fix with a regression test on the empty-input case, plus tests pinning the three
-    callers before the rework.
+  - **F1 — Implement (9, confirmed-blocker override).** Confirmed: empty input yields `[0, -1]`
+    and every downstream slice is empty, on the parse path every `report` run executes. The
+    arithmetic says Defer: Effort/Risk 0 (redesigning a bounds contract three load-bearing callers
+    depend on, with thin tests) and Alignment 1 (a pre-existing bug, tangential to the `--json`
+    flag this PR adds). The confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2) lifts
+    it to Implement regardless. Landing the bounds fix with a regression test on the empty-input
+    case, plus tests pinning the three callers before the rework.
   - **F2 — Defer (10).** Valid and trivial, but cosmetic: no run behaves differently, so Severity 1
     and Reach 1 keep it under the ≥11 bar. Filed into the naming-pass follow-up issue.
   - **F3 — Decline (9).** False positive (Validity 0 → auto-decline, overriding the composite):
