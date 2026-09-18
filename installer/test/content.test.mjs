@@ -748,6 +748,21 @@ describe('token spend telemetry (#227)', () => {
     assert.doesNotMatch(stripYamlComments(wf), /git commit/);
   });
 
+  test('the post-merge delete step treats only a confirmed 404 as an already-deleted branch (#212)', () => {
+    const wf = wfSource('waffle-post-merge-hook.yml');
+    const at = wf.indexOf('- name: Delete the merged head branch');
+    const end = wf.indexOf('- name: Update global token counter');
+    assert.ok(at !== -1 && end > at, 'Delete the merged head branch step not found');
+    const step = wf.slice(at, end);
+    const probe = step.match(/^\s*elif (.*git\/ref\/heads\/\$\{BRANCH\}.*); then$/m);
+    assert.ok(probe, 'confirmation probe not found');
+    assert.doesNotMatch(probe[1], /^! gh api/); // any non-zero exit used to read as "gone"
+    assert.match(probe[1], /2>&1 >\/dev\/null \|\| true; \} \| grep -q '\(HTTP 404\)'/); // pipefail-safe status-text match
+    assert.match(step, /was already gone/);
+    assert.match(step, /::warning title=waffle-post-merge-hook::Could not delete remote branch/);
+    assert.match(step, /transient API error \(5xx \/ rate-limit \/ network\)/);
+  });
+
   test('the post-merge counter accepts the token-count marker only from the harness bot, newest first (#462)', () => {
     const wf = wfSource('waffle-post-merge-hook.yml');
     const step = wf.slice(wf.indexOf('- name: Update global token counter'));
