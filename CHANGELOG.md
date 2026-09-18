@@ -183,6 +183,14 @@ is what you reach for across a breaking one.
   the skill already refused to honor it, so remove the line.
 
 ### Changed
+- **An explicit `#N` on a `waffle:reassess` issue now triggers a reassessment, never an
+  implementation (#504 follow-up).** PR #522 let naming the issue by number bypass the hold, which
+  is the opposite of what the label asks for. `delegate` now runs a reassessment gate for such an
+  issue — re-verify each premise against `main`, post the verdicts as an issue comment, hold the
+  issue as `skipped`, and ask the human whether to implement, narrow, or close; batch mode and
+  `autopilot` post the comment and hold. Only a human removing the label releases it. Consumer
+  impact: re-rendered `delegate` / `autopilot` skills and the two stack descriptions; no config
+  key changes.
 - **Autopilot's four consents are locked to `prompt` (#489, part of #478).** Closes rows 9–12
   of the #494 inventory. `autopilot.autoMerge` / `reviewLoop` / `qaLoop` / `auditStep`
   (orchestration) flip `default:` **and** `lockMode:` from `false` to `prompt` together;

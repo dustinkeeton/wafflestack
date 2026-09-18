@@ -1710,8 +1710,10 @@ config:
       any automation acts on it. The orchestration stack's delegate and autopilot skills (which
       re-declare this key, as both stacks do autoMerge.label) exclude reassess-labeled issues
       from every automatic scope form, and the label-hook implement path declines one with a
-      comment; an explicit `#N` remains actionable. Nothing in the toolkit applies or removes
-      it — a human removing it is the "reconfirmed" signal. Must pre-exist in the repo.
+      comment; an explicit `#N` runs delegate's reassessment gate (re-verify the premises
+      against main, comment, pause) rather than an implementation. Nothing in the toolkit
+      applies or removes it — a human removing it is the "reconfirmed" signal. Must pre-exist
+      in the repo.
   issue.bugLabel:
     required: false
     default: bug
