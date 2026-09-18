@@ -2,7 +2,7 @@
 name: pr-response
 description: Triage the review findings on a pull request — read every review and review comment (from the adversarial-review bot or a human), score each finding on a five-dimension rubric (severity, reach, validity, effort/risk, alignment), decide Implement / Defer / Decline with a recorded score and one-line reason, apply the accepted fixes, and post one reply per round summarizing the verdicts. Use when a PR has review feedback to answer, when the user says "respond to the review", "address the findings", or "triage the PR comments". Invokable by users and agents.
 user-invocable: true
-argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [--yes]"
+argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [--yes | --confirm]"
 ---
 
 # PR Response
@@ -37,7 +37,8 @@ Inspect `$ARGUMENTS`:
 |--------------|------------|
 | `#N`, a bare number, or a PR URL | Respond to that PR. Reduce it to the PR number `N`. |
 | empty / omitted | Respond to the **current branch's** open PR: `gh pr view --json number,url` (fails if the branch has no PR — report that and stop). |
-| `--yes` (with or without a PR ref) | Skip the confirmation gate before applying fixes — see [The `--yes` convention](#the---yes-convention). |
+| `--yes` (with or without a PR ref) | Skip the confirmation gate before applying fixes — see [The gate convention](#the-gate-convention). |
+| `--confirm` (with or without a PR ref) | Force the confirmation gate for this run, even when the rendered gate is off. Both tokens at once is a contradiction — say so and stop. |
 
 Resolve the repo coordinates and the PR's state up front:
 
@@ -190,14 +191,30 @@ replace.
 ## 4. Confirm the plan
 
 Present the verdict table (the [reply format](#5-post-one-reply)) **before** touching code, and
-gate on a yes — unless `--yes` was passed.
+gate on a yes — unless the gate resolves off (below).
 
-### The `--yes` convention
+### The gate convention
 
-`--yes` skips the confirmation gate. It exists for an **agent calling this skill** — a delegate
-answering the review on the PR it just opened, or the CI harness responding to an
-`adversarial-review` post. Same convention as the `clean-up` skill's `git --yes`. In interactive
-use, do not pass it unless the user says "no need to confirm".
+The gate is the `prResponse.confirmGate` config key. Its tokens are the key's declared `flag:`
+map, rendered from the stack: `--yes` skips the gate for one run, `--confirm` forces it for one
+run, and either token beats the config value.
+
+**Rendered gate for this repo: `true`** — the value after `.waffle/waffle.local.yaml` →
+`.waffle/waffle.yaml` → the stack default (`true`). With no token:
+
+| `prResponse.confirmGate` | Human-attended run | Non-interactive caller (the pr-response hook, an orchestrator's responder agent) |
+|---|---|---|
+| `true` | Gate: present the verdict table, wait for a yes. | Skip — the key's `nonInteractive: false` fallback; the posted reply is the audit trail. |
+| `false` | No gate: proceed as if `--yes` were passed. | Skip. |
+| `prompt` | Assume nothing: ask, which for a gate means gating exactly as `true` does. | Skip — the same `nonInteractive: false` fallback. |
+
+`--yes` exists for an **agent calling this skill** — a delegate answering the review on the PR
+it just opened, an autopilot responder agent, or the CI harness responding to an
+`adversarial-review` post. Same convention as the `issue`, `clean-up`, and `waffle-report`
+skills' `*.confirmGate` keys. In interactive use, do not pass it unless the user says "no need to
+confirm". `--confirm` is for a repo whose config turned the gate off and a caller who wants this one
+round reviewed anyway. A consumer changes the default in config, never by editing this rendered
+file.
 
 The gate covers **applying fixes**, not reading or scoring. Steps 1–3 are read-only and always
 safe to run.
@@ -569,7 +586,7 @@ and not because anyone disliked the verdict, which v1 and v2 in fact agree on.
 An agent may invoke this skill (via its frontmatter `skills:` grant) to close the loop on a PR it
 authored — most usefully right after `adversarial-review` posts its findings. The agent passes the
 PR number (or lets it default to the current branch's PR) and `--yes` to skip the confirmation
-gate, the fixes land on the PR's branch, the marked reply posts once, and the structured summary
+gate — the non-interactive fallback would skip it anyway; the token makes the intent explicit — the fixes land on the PR's branch, the marked reply posts once, and the structured summary
 (step 7) is the agent's return value.
 
 The honesty constraints bind agents harder, not softer. An agent responding to a review of its own

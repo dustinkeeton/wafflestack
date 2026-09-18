@@ -1534,9 +1534,9 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
   });
 
   test('mode detection strips --yes before choosing a mode', () => {
-    assert.match(md, /Strip `--yes` from `\$ARGUMENTS` first/);
+    assert.match(md, /Strip `--yes` \/ `--confirm` from `\$ARGUMENTS` first/);
     assert.match(md, /`--yes` is a\s*\n?\s*flag, not a mode/);
-    const stripAt = md.indexOf('Strip `--yes` from `$ARGUMENTS` first');
+    const stripAt = md.indexOf('Strip `--yes` / `--confirm` from `$ARGUMENTS` first');
     const catchAllAt = md.indexOf('| any other text | **Create new** |');
     assert.ok(stripAt !== -1 && catchAllAt !== -1, 'strip rule / catch-all row not found');
     assert.ok(stripAt < catchAllAt, 'the strip rule must precede the catch-all mode row');
@@ -1556,8 +1556,8 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
   });
 
   test('--yes skips the gate and is advertised in the argument hint', () => {
-    assert.match(md, /argument-hint:.*\[--yes\]/);
-    assert.match(md, /#### The `--yes` convention/);
+    assert.match(md, /argument-hint:.*\[--yes \| --confirm\]/);
+    assert.match(md, /#### The gate convention/);
     assert.match(md, /`--yes` skips the confirmation gate/);
   });
 
@@ -1611,6 +1611,85 @@ describe('issue skill: plan-first confirmation gate (#288)', () => {
     assert.match(md, /it \*\*hands it up\*\*/);
     assert.match(md, /Create nothing\./);
     assert.match(md, /is \*\*not\*\* approval of\s*\n?\s*the issue drafted from it/);
+  });
+});
+
+describe('confirmation gates read their *.confirmGate keys — no hardcoded --yes default (#487, part of #478)', () => {
+  // key → [stack, skill, off token, on token | null, nonInteractive]
+  const GATES = {
+    'issue.confirmGate': ['github-workflow', 'issue', '--yes', '--confirm', false],
+    'prResponse.confirmGate': ['github-workflow', 'pr-response', '--yes', '--confirm', false],
+    'cleanUp.confirmGate': ['github-workflow', 'clean-up', '--yes', '--confirm', false],
+    'waffle.reportConfirmGate': ['wafflestack', 'waffle-report', '--yes', null, 'fail'],
+  };
+  const source = (stack, skill) => fs.readFileSync(path.join(STACKS, stack, 'skills', skill, 'SKILL.md'), 'utf8');
+  let stacks;
+  before(() => {
+    stacks = loadToolkit(REPO_ROOT).stacks;
+  });
+
+  test('each key is declared exactly as the #494 inventory states (rows 1–3, 13)', () => {
+    for (const [key, [stack, , off, on, nonInteractive]] of Object.entries(GATES)) {
+      const spec = stacks.get(stack).config[key];
+      assert.ok(spec, `${key} is declared in ${stack}`);
+      assert.equal(spec.default, true, key);
+      assert.deepEqual(spec.modes, [true, false, 'prompt'], key);
+      assert.deepEqual(spec.flag, on ? { on, off } : { off }, key);
+      assert.equal(spec.nonInteractive, nonInteractive, key);
+      assert.equal(spec.lockMode, undefined, `${key} is consumer-settable, not locked`);
+    }
+  });
+
+  test('the source skill reads the mode and the tokens as placeholders, never a literal --yes', () => {
+    for (const [key, [stack, skill, , on]] of Object.entries(GATES)) {
+      const md = source(stack, skill);
+      assert.ok(md.includes(`{{${key}}}`), `${skill} renders the resolved mode`);
+      assert.ok(md.includes(`{{${key}.flag.off}}`), `${skill} renders the off token`);
+      assert.equal(md.includes(`{{${key}.flag.on}}`), Boolean(on), `${skill} references the on token iff the key declares one`);
+      const literal = md.split('\n').filter((l) => l.includes('--yes') && !l.includes('npx --yes'));
+      assert.deepEqual(literal, [], `${skill} source still hardcodes --yes`);
+      assert.doesNotMatch(md, /--confirm/, `${skill} source still hardcodes --confirm`);
+      assert.match(md, /`nonInteractive: (false|fail)`/, `${skill} states its non-interactive fallback`);
+    }
+  });
+
+  test('the committed render resolves the mode to the stack default and the tokens to the real words', () => {
+    for (const [key, [, skill, off, on]] of Object.entries(GATES)) {
+      const md = readSkill(skill);
+      assert.doesNotMatch(md, /\{\{[a-zA-Z.]*confirmGate/i, `${skill}: an unresolved gate placeholder survived the render`);
+      assert.match(md, /Rendered gate for this repo: `true`|rendered for this repo as `true`/, `${skill} renders the resolved mode`);
+      assert.match(md, new RegExp(`argument-hint:.*\\[${off}${on ? ` \\| ${on}` : ''}\\]`), `${skill} advertises its token(s) in the argument hint`);
+      assert.match(md, new RegExp(`\`${key}\` \\| Human-attended run \\| Non-interactive caller`), `${skill} carries the mode table`);
+    }
+  });
+
+  test('pr-response and clean-up gained --confirm as their on token; both tokens at once is refused', () => {
+    for (const skill of ['pr-response', 'clean-up', 'issue']) {
+      const md = readSkill(skill);
+      assert.match(md, /`--confirm`.*(Force the confirmation|Gate force|forces it)/, `${skill}: --confirm forces the gate`);
+      assert.match(md, /contradiction — say so and stop/, `${skill}: passing both tokens is refused, not resolved silently`);
+    }
+  });
+
+  test('clean-up retired the bare `auto` alias — it never silently skips the gate', () => {
+    const md = readSkill('clean-up');
+    assert.doesNotMatch(md, /`--yes` \/ `auto`/);
+    assert.match(md, /A bare `auto` is \*\*not\*\* a flag any more/);
+    assert.match(md, /never guess a skip from it/);
+    assert.match(md, /`--run` does not combine with `--yes`: stopping agents\s*\n?\s*is always confirm-first, whatever the rendered gate says/);
+  });
+
+  test('waffle-report is the one gate with no non-interactive skip: nonInteractive: fail, no on token', () => {
+    const md = readSkill('waffle-report');
+    assert.match(md, /\*\*Fail\*\* — the key's `nonInteractive: fail`/);
+    assert.match(md, /never by being non-interactive/);
+    assert.match(md, /There is no on-token/);
+    assert.doesNotMatch(md, /Skipped by `--yes` only/);
+  });
+
+  test('git-workflow points the merging agent at the same rendered token', () => {
+    assert.match(source('github-workflow', 'git-workflow'), /clean-up git \{\{cleanUp\.confirmGate\.flag\.off\}\}/);
+    assert.match(readSkill('git-workflow'), /clean-up git --yes/);
   });
 });
 

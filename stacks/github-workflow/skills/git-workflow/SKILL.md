@@ -225,11 +225,12 @@ stays scoped to remote-only branch hygiene; see the stack setup note):
    delete the merged local branch and its worktree and prune stale remote-tracking refs:
 
    ```
-   clean-up git --yes
+   clean-up git {{cleanUp.confirmGate.flag.off}}
    ```
 
-   `--yes` exists for exactly this — an agent calling it right after it merges a PR (it skips
-   the confirmation prompt; see the `clean-up` skill). The **remote** head branch is removed by
+   `{{cleanUp.confirmGate.flag.off}}` — the `cleanUp.confirmGate` key's off token — exists for exactly this: an agent
+   calling it right after it merges a PR (it skips the confirmation prompt; see the `clean-up`
+   skill). The **remote** head branch is removed by
    GitHub's auto-delete setting or the optional `waffle-post-merge-hook` workflow, but the
    **local** branch and worktree are always the merging agent's job — nothing remote can delete
    them.

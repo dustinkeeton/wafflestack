@@ -31,9 +31,26 @@ position; a `--yes` mid-prose or in backticks is description text, reaches the d
 still fires. What remains is the description. An empty description is not an error: ask one
 question ("what went wrong?") and continue with the answer.
 
-Same convention as `/issue`, `/pr-response`, and `/clean-up`: `--yes` skips the confirmation gate
-and is for an agent calling this skill or a user who has said "no need to confirm". In interactive
-use, do not pass it unless asked.
+Same convention as `/issue`, `/pr-response`, and `/clean-up`: the gate is a `*.confirmGate`
+config key — here `waffle.reportConfirmGate` — and `--yes` is its declared `flag:` token,
+rendered from the stack. It skips the confirmation gate for one run, beats the config value, and is
+for an agent calling this skill or a user who has said "no need to confirm". In interactive use, do
+not pass it unless asked. There is no on-token: nothing here needs to force a gate that is on by
+default.
+
+**Rendered gate for this repo: `true`** — the value after `.waffle/waffle.local.yaml` →
+`.waffle/waffle.yaml` → the stack default (`true`). With no token:
+
+| `waffle.reportConfirmGate` | Human-attended run | Non-interactive caller (CI, a subagent with no human on its turn) |
+|---|---|---|
+| `true` | Gate: show the redacted payload, wait for a yes. | **Fail** — the key's `nonInteractive: fail`: say that nothing was filed and hand back the draft. |
+| `false` | No gate: proceed as if `--yes` were passed. | File. |
+| `prompt` | Assume nothing: ask, which for a gate means gating exactly as `true` does. | **Fail** — the same `nonInteractive: fail`. |
+
+This is the one `*.confirmGate` gate in the toolkit with **no** non-interactive skip: the report
+lands in a public repo you do not own, so it is never filed silently. A caller with nobody to ask
+either passes `--yes` (an explicit consent) or gets nothing filed. A consumer changes the default
+in config, never by editing this rendered file.
 
 ## Plan first, then act
 
@@ -129,7 +146,7 @@ Present, and gate on an explicit yes:
 - **Title**
 - **The full body, post-redaction** — the exact bytes, not a summary or a promise about them
 
-On a decline, stop. Skipped by `--yes` only.
+On a decline, stop. Skipped by `--yes` or a rendered gate of `false` — never by being non-interactive.
 
 ### 6. File it
 

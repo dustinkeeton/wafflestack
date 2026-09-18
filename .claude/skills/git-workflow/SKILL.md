@@ -240,8 +240,9 @@ stays scoped to remote-only branch hygiene; see the stack setup note):
    clean-up git --yes
    ```
 
-   `--yes` exists for exactly this — an agent calling it right after it merges a PR (it skips
-   the confirmation prompt; see the `clean-up` skill). The **remote** head branch is removed by
+   `--yes` — the `cleanUp.confirmGate` key's off token — exists for exactly this: an agent
+   calling it right after it merges a PR (it skips the confirmation prompt; see the `clean-up`
+   skill). The **remote** head branch is removed by
    GitHub's auto-delete setting or the optional `waffle-post-merge-hook` workflow, but the
    **local** branch and worktree are always the merging agent's job — nothing remote can delete
    them.

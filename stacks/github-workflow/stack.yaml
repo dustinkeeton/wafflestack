@@ -1761,6 +1761,19 @@ config:
     description: >-
       Verbatim markdown block (table + default rule) mapping issue signals to the
       repo's priority labels. Override to match the repo's taxonomy (e.g. priority/p0..p2).
+  issue.confirmGate:
+    required: false
+    default: true
+    modes: [true, false, prompt]
+    flag: { on: "--confirm", off: "--yes" }
+    nonInteractive: false
+    description: >-
+      Whether `/issue` pauses at the plan gate before mutating GitHub — create, enrich, and
+      batch-enrich alike (#487, part of #478). `true` gates every human-attended run; `false`
+      never asks; `prompt` assumes nothing and asks. The invocation tokens beat config: `--confirm`
+      forces the gate, `--yes` skips it. A non-interactive caller — CI, a subagent with no human on
+      its turn — skips the gate (`nonInteractive: false`): that is the skill's standing "When called
+      by agents" rule, now a declared property of the key.
   doctor.toolkitRef:
     required: false
     default: github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
@@ -1993,6 +2006,34 @@ config:
       into a YAML `env:` scalar and compared with jq, so it is restricted to a label charset (letters,
       digits, spaces, and `: . _ -`) and must be non-empty — the pattern rejects quotes, `${{`, and
       newlines so no value can break out of the scalar, and a bad value fails the render loudly.
+  prResponse.confirmGate:
+    required: false
+    default: true
+    modes: [true, false, prompt]
+    flag: { on: "--confirm", off: "--yes" }
+    nonInteractive: false
+    description: >-
+      Whether `/pr-response` pauses on the verdict table before applying the accepted fixes
+      (#487, part of #478). `true` gates every human-attended run; `false` never asks; `prompt`
+      assumes nothing and asks. The invocation tokens beat config: `--confirm` forces the gate,
+      `--yes` skips it — the token the autopilot and delegate loops pass. A non-interactive caller
+      (the pr-response hook, an orchestrator's responder agent) skips the gate
+      (`nonInteractive: false`), as it always has.
+  cleanUp.confirmGate:
+    required: false
+    default: true
+    modes: [true, false, prompt]
+    flag: { on: "--confirm", off: "--yes" }
+    nonInteractive: false
+    description: >-
+      Whether `/clean-up` shows its plan and waits for "Proceed?" before deleting branches and
+      worktrees or stopping agents (#487, part of #478). `true` gates every human-attended run;
+      `false` never asks; `prompt` assumes nothing and asks. The invocation tokens beat config:
+      `--confirm` forces the gate, `--yes` skips it — `clean-up git --yes` is the merging agent's
+      post-merge path. A non-interactive caller skips the gate (`nonInteractive: false`). Two
+      things no mode changes: the `--run <checkpoint>` agent sweep is always confirm-first, and the
+      script's `--execute` switch stays behind whatever this gate decides. The pre-#487 bare `auto`
+      alias is retired; only the declared token skips.
   evals.cron:
     required: false
     default: "0 8 * * *"

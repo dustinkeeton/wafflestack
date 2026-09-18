@@ -1,8 +1,8 @@
 ---
 name: issue
-description: Create a well-structured GitHub issue from a brief description, or enrich an existing issue in place. Fleshes out title, body, labels, and optional sub-issues. Plans read-only first and confirms before mutating; `--yes` or a non-interactive agent/CI invocation skips the gate. Invokable by users and agents.
+description: Create a well-structured GitHub issue from a brief description, or enrich an existing issue in place. Fleshes out title, body, labels, and optional sub-issues. Plans read-only first and confirms before mutating; `{{issue.confirmGate.flag.off}}` or a non-interactive agent/CI invocation skips the gate, `{{issue.confirmGate.flag.on}}` forces it. Invokable by users and agents.
 user-invocable: true
-argument-hint: "<description for a new issue> | <#N, number, or issue URL to enrich> | (omit to enrich all open '{{issue.inferenceLabel}}' issues)  [--yes]"
+argument-hint: "<description for a new issue> | <#N, number, or issue URL to enrich> | (omit to enrich all open '{{issue.inferenceLabel}}' issues)  [{{issue.confirmGate.flag.off}} | {{issue.confirmGate.flag.on}}]"
 ---
 
 # GitHub Issue Creation
@@ -11,34 +11,54 @@ When this skill is invoked, you either **create a new GitHub issue** from a brie
 
 ## Mode detection
 
-**Strip `--yes` from `$ARGUMENTS` first, then apply the mode rules to what remains.** `--yes` is a
-flag, not a mode: as a flag it never contributes to the description text. So bare `/issue --yes` is a
-straight-through **batch enrich** — *not* a new issue titled `--yes` — and `/issue --yes fix the
-login bug` drafts from `fix the login bug`, with the flag never bleeding into the drafted title or
-body.
+The confirmation gate is the `issue.confirmGate` config key, and its two invocation tokens are the
+key's `flag:` map — `{{issue.confirmGate.flag.off}}` (off) and `{{issue.confirmGate.flag.on}}` (on). Both render from the stack; no
+config value renames them.
 
-**Strip it only as a flag token** — an unquoted `--yes` in the **first or last** position of
-`$ARGUMENTS`. A `--yes` sitting mid-prose or inside backticks is **description text**: it is not
-stripped, it reaches the drafted title and body, and **the gate still fires**. So `/issue --yes fix
-the login bug` and `/issue fix the login bug --yes` skip the gate, but `/issue the --yes flag in
-pr-response is ignored` files an issue *about* `--yes` and gates normally. Eating a *mentioned*
-`--yes` would mangle the description **and** skip a gate nobody asked to skip — in a toolkit where
-three skills carry that flag, filing an issue about one is an ordinary thing to want.
+**Strip `{{issue.confirmGate.flag.off}}` / `{{issue.confirmGate.flag.on}}` from `$ARGUMENTS` first, then apply the mode rules to what remains.** `{{issue.confirmGate.flag.off}}` is a
+flag, not a mode: as a flag it never contributes to the description text. So bare `/issue {{issue.confirmGate.flag.off}}` is a
+straight-through **batch enrich** — *not* a new issue titled `{{issue.confirmGate.flag.off}}` — and `/issue {{issue.confirmGate.flag.off}} fix the
+login bug` drafts from `fix the login bug`, with the flag never bleeding into the drafted title or
+body. The same stripping rule applies to `{{issue.confirmGate.flag.on}}`.
+
+**Strip it only as a flag token** — an unquoted `{{issue.confirmGate.flag.off}}` in the **first or last** position of
+`$ARGUMENTS`. A `{{issue.confirmGate.flag.off}}` sitting mid-prose or inside backticks is **description text**: it is not
+stripped, it reaches the drafted title and body, and **the gate still fires**. So `/issue {{issue.confirmGate.flag.off}} fix
+the login bug` and `/issue fix the login bug {{issue.confirmGate.flag.off}}` skip the gate, but `/issue the {{issue.confirmGate.flag.off}} flag in
+pr-response is ignored` files an issue *about* `{{issue.confirmGate.flag.off}}` and gates normally. Eating a *mentioned*
+`{{issue.confirmGate.flag.off}}` would mangle the description **and** skip a gate nobody asked to skip — in a toolkit where
+four skills carry that flag, filing an issue about one is an ordinary thing to want.
 
 With the flag removed, inspect what is left to choose a mode (same detection approach as the
 `delegate` skill):
 
-| `$ARGUMENTS` (after stripping `--yes`) | Mode | What to do |
+| `$ARGUMENTS` (after stripping `{{issue.confirmGate.flag.off}}` / `{{issue.confirmGate.flag.on}}`) | Mode | What to do |
 |--------------|------|------------|
 | `#N`, a bare number, or a GitHub issue URL | **Enrich-in-place** | Flesh out that existing issue and update it — see **Enriching an existing issue ({{issue.inferenceLabel}})** below. |
 | empty / omitted | **Batch enrich** | Enrich **every** open issue labeled `{{issue.inferenceLabel}}` — see the batch note in that section. |
 | any other text | **Create new** | Treat the text as the description for a brand-new issue and follow the **Workflow** below. |
 
-The flag itself is orthogonal to the mode it modifies:
+The flag itself is orthogonal to the mode it modifies, and it beats the config value:
 
 | Flag | Effect | What to do |
 |------|--------|------------|
-| `--yes` (with or without any mode above) | **Gate skip** | Combines with any mode: skip the confirmation gate and go straight through — see [The `--yes` convention](#the---yes-convention). |
+| `{{issue.confirmGate.flag.off}}` (with or without any mode above) | **Gate skip** | Combines with any mode: skip the confirmation gate and go straight through — see [The gate convention](#the-gate-convention). |
+| `{{issue.confirmGate.flag.on}}` (with or without any mode above) | **Gate force** | Combines with any mode: present the plan and wait for a yes even when the rendered gate is off. Passing both is a contradiction — say so and stop. |
+
+### Resolving the gate
+
+**Rendered gate for this repo: `{{issue.confirmGate}}`** — the `issue.confirmGate` value after
+`.waffle/waffle.local.yaml` → `.waffle/waffle.yaml` → the stack default (`true`). An explicit
+token beats it. With no token, read the value:
+
+| `issue.confirmGate` | Human-attended run | Non-interactive caller (CI, a subagent with no human on its turn) |
+|---|---|---|
+| `true` | Gate: present the plan, wait for a yes. | Skip — the key's `nonInteractive: false` fallback; log the plan instead (see [When called by agents](#when-called-by-agents)). |
+| `false` | No gate: proceed as if `{{issue.confirmGate.flag.off}}` were passed. | Skip. |
+| `prompt` | Assume nothing: ask, which for a gate means gating exactly as `true` does. | Skip — the same `nonInteractive: false` fallback. |
+
+A consumer changes the default by setting `issue.confirmGate` in config, never by editing this
+rendered file (the `doctor` drift gate reverts it).
 
 `{{issue.inferenceLabel}}` is the lifecycle label: it marks an issue as awaiting AI fleshing-out, and is **removed** once the issue has been enriched.
 
@@ -53,7 +73,7 @@ The gate covers **mutating**, not reading — the plan-phase steps are always sa
 
 Declining the gate leaves GitHub state untouched: nothing was created, edited, labeled, or moved, so there is nothing to roll back.
 
-Two callers skip the gate: an explicit `--yes` (see [The `--yes` convention](#the---yes-convention)), and a **non-interactive** agent or CI invocation (see [When called by agents](#when-called-by-agents)).
+Three things skip the gate: an explicit `{{issue.confirmGate.flag.off}}` (see [The gate convention](#the-gate-convention)), a rendered `issue.confirmGate` of `false` with no `{{issue.confirmGate.flag.on}}` token, and a **non-interactive** agent or CI invocation (see [When called by agents](#when-called-by-agents)).
 
 ## Workflow
 
@@ -118,11 +138,13 @@ Present the drafted plan **before** anything mutates, and gate on an explicit ye
 
 Proceed only on an explicit yes. On a decline, **stop**: nothing has been created, edited, or labeled. If the user asks for changes, revise the draft and re-present it — revising is still plan phase.
 
-Skip this gate when `--yes` was passed, or when the caller is a **non-interactive** agent or CI job — no human in the loop to protect (see [When called by agents](#when-called-by-agents)). An agent working a live user's turn is **not** that caller: it gates like anyone else.
+Skip this gate when `{{issue.confirmGate.flag.off}}` was passed, when the [resolved gate](#resolving-the-gate) is `false` and no `{{issue.confirmGate.flag.on}}` was passed, or when the caller is a **non-interactive** agent or CI job — no human in the loop to protect (see [When called by agents](#when-called-by-agents)). An agent working a live user's turn is **not** that caller: it gates like anyone else.
 
-#### The `--yes` convention
+#### The gate convention
 
-`--yes` skips the confirmation gate. It exists for an **agent calling this skill** — a hook enriching a freshly filed issue, an orchestrator filing a follow-up — and for interactive use when the user has said "no need to confirm". Same convention as the `pr-response` and `clean-up` skills' `--yes`. In interactive use, do not pass it unless the user asks for it.
+`{{issue.confirmGate.flag.off}}` skips the confirmation gate for one run; `{{issue.confirmGate.flag.on}}` forces it for one run. Both are the
+`issue.confirmGate` key's declared `flag:` tokens, and an explicit token always beats the rendered
+value. `{{issue.confirmGate.flag.off}}` exists for an **agent calling this skill** — a hook enriching a freshly filed issue, an orchestrator filing a follow-up — and for interactive use when the user has said "no need to confirm". Same convention as the `pr-response`, `clean-up`, and `waffle-report` skills' `*.confirmGate` keys. In interactive use, do not pass it unless the user asks for it. `{{issue.confirmGate.flag.on}}` is for a repo whose config turned the gate off and a caller who wants this one run reviewed anyway.
 
 The gate covers **mutating**, not reading. Steps 1–3 are read-only and always safe to run.
 
@@ -308,7 +330,7 @@ Use this when `$ARGUMENTS` is an issue reference (`#N`, a bare number, or an iss
    - the **label changes** — type + priority added, `{{issue.inferenceLabel}}` removed;
    - the intended **board placement + milestone**.
 
-   On a decline, **stop** — the issue is untouched. Skipped by `--yes` and by non-interactive agent/CI callers, exactly as in the create-mode gate ([The `--yes` convention](#the---yes-convention), [When called by agents](#when-called-by-agents)).
+   On a decline, **stop** — the issue is untouched. Skipped by `{{issue.confirmGate.flag.off}}`, by a rendered gate of `false`, and by non-interactive agent/CI callers, exactly as in the create-mode gate ([The gate convention](#the-gate-convention), [When called by agents](#when-called-by-agents)).
 
 5. **Update the issue in place** (use `--body-file` to avoid shell-escaping problems with backticks/`$`/`&`):
    ```bash
@@ -345,7 +367,7 @@ Batch mode plans the **whole queue** before it touches any of it — a bad infer
 3. **Apply only what was approved.** The user may approve the batch, or a **subset** ("all but #41", "just 39 and 40") — enrich exactly the approved issues and leave the rest untouched, still labeled `{{issue.inferenceLabel}}` for a later pass. A decline enriches nothing.
 4. **Then act** — run **enrich steps 5–8** (update in place, labels, board + milestone, report) for each approved issue, and print a summary of every issue enriched (number, new title, labels, milestone). Enrich steps, not Workflow steps: Workflow step 5 *creates* an issue, enrich step 5 rewrites one in place.
 
-`--yes` and non-interactive agent/CI callers skip the combined review and enrich the whole queue straight through.
+`{{issue.confirmGate.flag.off}}`, a rendered gate of `false`, and non-interactive agent/CI callers skip the combined review and enrich the whole queue straight through.
 
 ## Examples
 
@@ -363,9 +385,9 @@ Drafts "Add CSV import support" with the enhancement-type label, a body explaini
 
 ### Skip the gate
 ```
-/issue --yes data export fails silently when the API key is expired
+/issue {{issue.confirmGate.flag.off}} data export fails silently when the API key is expired
 ```
-Same as the first example with no pause — drafts and creates straight through. Use when the user has said "no need to confirm".
+Same as the first example with no pause — drafts and creates straight through. Use when the user has said "no need to confirm". A repo that set `issue.confirmGate: false` gets this behavior from bare `/issue`; `/issue {{issue.confirmGate.flag.on}} …` brings the pause back for one run.
 
 ### Enrich an existing issue
 ```
@@ -390,7 +412,7 @@ GitHub Actions job; autopilot and delegate-spawned workers filing issues mid-run
 its Defer follow-ups. The agent's prompt serves as the brief description; such a caller may equally
 pass an issue reference (`#N`/number/URL) to enrich an existing issue in place.
 
-**Do not pause at the confirmation gate.** For these callers, the **agent invocation is itself the explicit signal that stands in for the confirmation** — the same precedent as the `delegate` skill's batch mode, where explicit scope stands in for the human accepting the plan (`confirmedVia: "batch-scope"`). Proceed as if `--yes` were passed. Two reasons this is not a shortcut:
+**Do not pause at the confirmation gate.** For these callers, the **agent invocation is itself the explicit signal that stands in for the confirmation** — the same precedent as the `delegate` skill's batch mode, where explicit scope stands in for the human accepting the plan (`confirmedVia: "batch-scope"`). Proceed as if `{{issue.confirmGate.flag.off}}` were passed — the key's `nonInteractive: false` fallback, whatever the rendered gate says. Two reasons this is not a shortcut:
 
 - **A CI caller can never answer a prompt.** The label-hook workflow runs headless; pausing for a yes
   would hang the run until it times out. The gate protects a human from an unreviewed mutation — there
@@ -419,12 +441,12 @@ A subagent cannot prompt the user itself, so it does not *hold* the gate — it 
 1. Run the plan phase as normal, and **stop before the first mutation**.
 2. Return the drafted plan — title, body, labels, board placement, any sub-issues — as your **final
    message** to the caller, which is what actually reaches the human. Create nothing.
-3. The caller confirms with the user and re-invokes with `--yes` to file it straight through. A caller
-   that already carries the user's explicit yes may pass `--yes` on the first invocation and skip
+3. The caller confirms with the user and re-invokes with `{{issue.confirmGate.flag.off}}` to file it straight through. A caller
+   that already carries the user's explicit yes may pass `{{issue.confirmGate.flag.off}}` on the first invocation and skip
    step 1's pause entirely.
 
 The user's approval of an upstream artifact — a product doc, a task breakdown — is **not** approval of
-the issue drafted from it. Only `--yes` or a human yes on *this* draft opens the act phase.
+the issue drafted from it. Only `{{issue.confirmGate.flag.off}}` (or a rendered gate of `false`) or a human yes on *this* draft opens the act phase.
 
 Everything else is unchanged: the plan phase always runs (context, classification, drafting), and for a
 gate-skipping caller the post-creation steps (priority label, project board placement, milestone
