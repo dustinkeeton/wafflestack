@@ -23,7 +23,7 @@ export function emailHash(email) {
 }
 
 /**
- * The pure sync engine: `agents` is `[{ name, email, svg, ... }]` (from `collectAgentAvatars`),
+ * The pure sync engine: `agents` is `[{ name, email, svg, authored, ... }]` (from `collectAgentAvatars`),
  * `http` and `rasterize` are injected. Throws a `NO_TOKEN`-coded error when `token` is falsy.
  */
 export async function syncAvatars({ agents, token, http, rasterize, log = () => {}, mode = 'sync' }) {
@@ -39,10 +39,17 @@ export async function syncAvatars({ agents, token, http, rasterize, log = () => 
   const pending = [];
   const skipped = [];
   const failed = [];
+  const authored = [];
   for (const agent of agents) {
     // No opted-in bot identity: nothing to register.
     if (!agent.email) {
       skipped.push(agent);
+      continue;
+    }
+    // An authored `identity.avatar` is a reference the owner registers by hand — never the generated SVG.
+    if (agent.authored) {
+      authored.push(agent);
+      log(`  ○ ${agent.name} → ${agent.email}: authored identity.avatar — not synced (register it on Gravatar manually)`);
       continue;
     }
     try {
@@ -91,7 +98,7 @@ export async function syncAvatars({ agents, token, http, rasterize, log = () => 
     );
     for (const f of failed) log(`  • ${f.agent.name} → ${f.agent.email}: ${f.error}`);
   }
-  return { synced, pending, skipped, failed, mode };
+  return { synced, pending, skipped, failed, authored, mode };
 }
 
 /**
@@ -234,7 +241,7 @@ export async function runAvatarsSync({
       'no bot identity is configured (`git.cmd` sets no committer email), so there are no per-agent ' +
         'addresses to register. See .waffle/AVATARS.md.',
     );
-    return { synced: [], pending: [], skipped: rows, mode };
+    return { synced: [], pending: [], skipped: rows, failed: [], authored: [], mode };
   }
   // status mode needs no rasterizer, but still needs a token: the associated-email probe is authenticated.
   const client = http ?? makeGravatarHttp();

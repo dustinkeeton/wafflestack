@@ -109,6 +109,35 @@ describe('avatars-sync: syncAvatars engine', () => {
     assert.equal(http.calls.length, 0);
   });
 
+  test('an authored identity.avatar row is reported, never probed or uploaded; the generated row still syncs (#290)', async () => {
+    const http = mockHttp({ associated: () => true });
+    const rasterized = [];
+    const logs = [];
+    const result = await syncAvatars({
+      agents: [
+        { name: 'captain', email: 'bot+captain@wafflenet.io', svg: '<svg>captain</svg>', authored: false },
+        { name: 'scout', email: 'bot+scout@wafflenet.io', svg: '<svg>scout</svg>', authored: true },
+      ],
+      token: 'tok',
+      http,
+      rasterize: async (svg) => {
+        rasterized.push(svg);
+        return Buffer.from(`PNG:${svg}`);
+      },
+      log: (m) => logs.push(m),
+    });
+
+    assert.deepEqual(result.authored.map((a) => a.name), ['scout'], 'authored rows surface distinctly');
+    assert.deepEqual(result.synced.map((a) => a.name), ['captain'], 'the generated row still syncs');
+    assert.equal(result.pending.length, 0);
+    assert.equal(result.skipped.length, 0, 'authored is not conflated with the no-email skip');
+    assert.deepEqual(rasterized, ['<svg>captain</svg>'], 'the authored SVG is never rasterized');
+    const scoutHash = emailHash('bot+scout@wafflenet.io');
+    assert.ok(!http.calls.some(([, a]) => a.hash === scoutHash), 'zero Gravatar calls carry the authored hash');
+    assert.equal(http.calls.filter(([m]) => m === 'uploadAvatar').length, 1, 'exactly one upload: captain');
+    assert.match(logs.join('\n'), /○ scout → bot\+scout@wafflenet\.io: authored identity\.avatar — not synced/);
+  });
+
   test('status mode probes and reports but never rasterizes or uploads', async () => {
     const http = mockHttp({ associated: (hash) => hash === emailHash('bot+captain@wafflenet.io') });
     let rasterized = false;

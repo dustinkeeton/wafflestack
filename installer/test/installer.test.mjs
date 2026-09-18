@@ -10019,6 +10019,9 @@ describe('.waffle overview docs (cheat sheet + team)', () => {
     assert.match(md, /wafflestack avatars status/);
     assert.match(md, /WAFFLE_GRAVATAR_TOKEN/);
     assert.match(md, /gravatar\.com/);
+    // #290: the sync claim is scoped to generated avatars, and repeat runs are honest about leftovers.
+    assert.match(md, /authored\n`identity\.avatar` \(† above\) is listed but \*\*not uploaded\*\*/);
+    assert.match(md, /older uploads\nremain on the Gravatar account/);
     assert.match(md, /rsvg-convert -w 512 -h 512/);
     assert.match(md, /## Smoke test/);
     assert.match(md, /GitHub caches the email→avatar association/);
