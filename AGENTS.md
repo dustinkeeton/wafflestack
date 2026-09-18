@@ -130,8 +130,8 @@ export function includeRefMatches(includeRef, kind, name) // → boolean
 export function includeEjectOverlaps(project)  // → [{ include, eject }] — include: ∩ eject: (#497); pure over the config; only an unqualified eject: entry counts (all the selection honors)
 export function formatEjectOverlap(overlap)    // → string — the render error / doctor note, remedy included
 export function fileMatchesTargets(item, targets) // → boolean (#364: no targets: ⇒ renders unconditionally; scoped ⇒ ≥1 declared target enabled; non-files items always match)
-export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set; targetBrokenRequires is eject-filtered (refs.mjs:579), targetSkipped is not (an ejected include: is an ejectOverlaps error, #497); forwarded = include: refs the registry carried across a rename (#335), warned by render, rewritten by upgrade; stack expansion skips `wip` waffles
-export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, stackName, companions, scopedTo }] (#74: opt-in syrup gated out while its companion skill IS selected; scopedTo non-null ⇒ target scope excludes this project, warning withholds the pour command but is still issued, #364; NOT eject-aware — an ejected syrup file still lands here, #502)
+export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps, ejected } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set; targetBrokenRequires is eject-filtered (refs.mjs:579), targetSkipped is not (an ejected include: is an ejectOverlaps error, #497); forwarded = include: refs the registry carried across a rename (#335), warned by render, rewritten by upgrade; ejected = the normalized eject: set items was filtered by, carried for downstream eject-awareness (#502); stack expansion skips `wip` waffles
+export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, stackName, companions, scopedTo }] (#74: opt-in syrup gated out while its companion skill IS selected; scopedTo non-null ⇒ target scope excludes this project, warning withholds the pour command but is still issued, #364; eject-aware via selection.ejected — an ejected syrup file never lands here, plain or scoped, #502)
 
 // template.mjs — {{placeholder}} substitution (PLACEHOLDER regex template.mjs:4; MAX_SUBSTITUTION_DEPTH = 4, template.mjs:7)
 export function substitute(text, resolve, declared, errors, context, guards) // → string; guards = { patterns: Map<key,guard[]>, entryPatterns: Map<key,Map<leaf,guard[]>>, modes: Map<key,{modes,lockMode,source}[]> } built by render's compileGuards (render.mjs:672)
@@ -512,9 +512,10 @@ rendered = union(items of enabled stacks:) ∪ closure(each include: item) − e
   error in `toolkit.mjs` (an unknown name like `[claud]` is `targets: []` spelled differently).
   Invariants: an unscoped file can never be pruned; an ejected file is never pruned, and
   `targetBrokenRequires` skips it. Known gap (#371): a poured file whose STACK was deselected is
-  pruned while `list` says `not-installed` — a hidden deletion, predates #364. Known gap (#502,
-  open): the #74 companion warning still fires for an EJECTED syrup file, and the `install` it
-  advises un-ejects the item (#497).
+  pruned while `list` says `not-installed` — a hidden deletion, predates #364. The #74
+  companion warning is eject-aware (#502): `skippedSyrupCompanions` reads `selection.ejected`
+  and never advises the `install` that would un-eject the item (#497); the setup playbook
+  marks such a file `ejected — project-owned` instead.
 - Dependency closure — installing an item pulls transitive cross-stack deps (BFS, deduped).
   Direct deps = agent frontmatter `skills:` (lenient) + stack `requires:` (strict). Recomputed
   every render, never persisted.

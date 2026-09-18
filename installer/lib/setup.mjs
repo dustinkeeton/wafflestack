@@ -200,6 +200,10 @@ function currentConfigSection(toolkit, cwd, toolkitVersion) {
       let note;
       if (installedFiles.has(f.name)) {
         note = 'installed — renders on this selection (explicitly included or already tracked)';
+      } else if (selection.ejected.has(fileRef)) {
+        // Outranks the scope and pairing notes: an ejected file is the project's by recorded
+        // decision, and `install` would un-eject it (#497), so no pour is ever suggested (#502).
+        note = 'ejected — project-owned (listed in `eject:`); leave it alone unless the user asks to un-eject it';
       } else if (!fileMatchesTargets(f, project.targets)) {
         // This branch outranks the pairing branch below, so it must restate a pairing itself (#74)
         // or a real half-installed flow goes unreported.

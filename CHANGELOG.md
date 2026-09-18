@@ -241,6 +241,16 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **The opt-in syrup pairing warning no longer fires for an ejected syrup (#502).** `render`
+  warned "opt-in syrup files/… pairs with selected … but was not installed — run
+  `wafflestack install …`" on every render even when the file sat in `eject:`, and since #497 that
+  suggested `install` would un-eject it — steering the user toward undoing a decision recorded in
+  config. `computeSelection` now carries the normalized `eject:` set on its result (`ejected`, next
+  to `targets`), and `skippedSyrupCompanions` skips any ejected ref, so neither the plain nor the
+  target-scoped (#364) variant of the warning fires for it; a merely-uninstalled syrup still warns
+  exactly as before. The setup playbook's opt-in section marks such a file "ejected — project-owned"
+  instead of offering a pour. Consumer impact: none beyond quieter output — no config or render
+  change.
 - **`include:` and `eject:` are mutually exclusive (#497).** An item could sit in both lists at
   once; `eject:` silently won, so `wafflestack install <ref>` logged `installing <ref>`, rendered
   nothing, and exited 0. `install` on an ejected item now **un-ejects** it (`un-ejecting <ref>`),
