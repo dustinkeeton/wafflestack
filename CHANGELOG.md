@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-18
+
 ### Fixed
 - **String config values are NFC-normalized before their `pattern:` guard runs (#292).** An
   NFD-encoded `git.ownerName` (`José` typed as `e` + U+0301, as macOS paths and some paste flows
