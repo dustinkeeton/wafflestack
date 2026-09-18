@@ -411,6 +411,30 @@ describe('github-workflow setup note: the signing recipes and verification matri
     assert.match(stack, /git rejects an empty signingkey\s+\*\*only when it signs\*\*/);
   });
 
+  // Git rejects an empty user.signingkey only when the command signs; a non-signing recipe carries
+  // it inert. Every paraphrase that drops the condition (#252 F2, #268, #269) is pinned here, checked
+  // in the text that follows each signingkey mention so unrelated keys' claims are not swept in.
+  test('no source states unconditionally that git rejects an empty signingkey (#269)', () => {
+    const unconditional =
+      /which git rejects at run[\s#]+time|run[-\s#]*time-only[\s#]+failure|rejects[\s#]+(?:it[\s#]+)?(?:only[\s#]+)?at[\s#]+(?:the agent's[\s#]+)?first[\s#]+commit|which git[\s#]+rejects\.|rejects it only[\s#]+at[\s#]+commit[\s#]+time/i;
+    const subjects = [
+      'CHANGELOG.md',
+      'schema/FORMAT.md',
+      'stacks/github-workflow/stack.yaml',
+      'stacks/orchestration/stack.yaml',
+      'stacks/orchestration/skills/delegate/identity.mjs',
+      'stacks/orchestration/skills/delegate/SKILL.md',
+      'installer/test/installer.test.mjs',
+    ];
+    for (const relPath of subjects) {
+      const text = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+      for (const m of text.matchAll(/signing ?key/gi)) {
+        const window = text.slice(m.index, m.index + 200);
+        assert.doesNotMatch(window, unconditional, `${relPath} @${m.index}: ${JSON.stringify(window)}`);
+      }
+    }
+  });
+
   test('the verification matrix distinguishes "no badge" from "Unverified" and names the avatars trade-off', () => {
     assert.match(stack, /unsigned commit gets no badge at all/);
     assert.match(stack, /Per-agent avatars XOR verified sub-agent commits/);

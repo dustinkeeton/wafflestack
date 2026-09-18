@@ -240,6 +240,14 @@ describe('identity preflight: WARN class — surfaced, run proceeds', () => {
     assert.match(r.out, /WARN: .*INERT WITHOUT THE OPT-IN/);
   });
 
+  test('the empty-signingkey error states the conditional truth, not an unconditional rejection (#269)', () => {
+    const r = run({ gitCmd: 'git -c commit.gpgsign=false -c user.name="B" -c user.email=b@x.io -c user.signingkey=' });
+    assert.equal(r.code, 1, r.all);
+    assert.match(r.err, /EMPTY user\.signingkey — dead config: git rejects it only when the command signs \(commit\.gpgsign=true or -S\)/);
+    assert.match(r.err, /under a non-signing recipe it rides along inert/);
+    assert.doesNotMatch(r.err, /rejects it only at commit time/);
+  });
+
   test('a per-agent signingKey under a commit.gpgsign=false base is deliberately inert', () => {
     const r = run({ gitCmd: RECIPE_A, identities: 'lead-engineer:\n  signingKey: ABCDEF1234567890\n' });
     assert.equal(r.code, 0, r.all);
