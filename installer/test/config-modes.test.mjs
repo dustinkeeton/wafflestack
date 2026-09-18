@@ -237,7 +237,7 @@ describe('autopilot consents are locked in config (#478 acceptance)', () => {
     for (const key of KEYS) {
       const spec = config[key];
       assert.deepEqual(spec.modes, [true, false, 'prompt'], key);
-      assert.equal(spec.lockMode, false, key);
+      assert.equal(spec.lockMode, 'prompt', key);
       assert.equal(spec.nonInteractive, false, key);
       assert.deepEqual(spec.flag, { on: tokens[key] }, key);
       assert.equal(spec.default, spec.lockMode, `${key}: a locked key defaults to its lock`);
@@ -271,13 +271,20 @@ describe('autopilot consents are locked in config (#478 acceptance)', () => {
     return renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
   };
 
-  test('autopilot.autoMerge: true in waffle.yaml is refused by render, naming the lock', () => {
-    const r = renderAutopilot('true');
-    assert.equal(r.ok, false, 'consent must never be config-sticky');
-    assert.ok(
-      r.errors.some((e) => /\{\{autopilot\.autoMerge\}\} is locked to false by stack "orchestration" \(lockMode\)/.test(e)),
-      JSON.stringify(r.errors),
-    );
+  test('autopilot.autoMerge: true (or false) in waffle.yaml is refused by render, naming the lock', () => {
+    for (const value of ['true', 'false']) {
+      const r = renderAutopilot(value);
+      assert.equal(r.ok, false, `consent must never be config-sticky (${value})`);
+      assert.ok(
+        r.errors.some((e) => /\{\{autopilot\.autoMerge\}\} is locked to "prompt" by stack "orchestration" \(lockMode\)/.test(e)),
+        JSON.stringify(r.errors),
+      );
+    }
+  });
+
+  test('autopilot.autoMerge: prompt in waffle.yaml is the one config value the lock admits', () => {
+    const r = renderAutopilot('prompt');
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
   });
 
   test('leaving the key unset renders (the lock value is the default), and bare doctor then catches a later true', () => {
@@ -286,7 +293,7 @@ describe('autopilot consents are locked in config (#478 acceptance)', () => {
     renderAutopilot('true');
     const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot: repoRoot });
     assert.equal(dr.ok, false);
-    assert.ok(dr.configProblems.some((p) => /\{\{autopilot\.autoMerge\}\} is locked to false/.test(p)), JSON.stringify(dr.configProblems));
+    assert.ok(dr.configProblems.some((p) => /\{\{autopilot\.autoMerge\}\} is locked to "prompt"/.test(p)), JSON.stringify(dr.configProblems));
   });
 });
 

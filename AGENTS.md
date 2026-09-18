@@ -633,7 +633,8 @@ registry entry (a plugin has no path, no render, nothing to prune).
   `loadStack` adds each declared side to `stack.declared` (`flagPlaceholders`), `makeResolver`
   answers it from the stack's `flag:` map before any project value, and a side the key does not
   name fails `validate` and the render (`undeclaredFlagProblem`). A token is optional to reference.
-  The four `autopilot.*` consents ship `lockMode: false`. Schema: `schema/FORMAT.md` § Behavioral keys.
+  The four `autopilot.*` consents are `default: prompt` + `lockMode: prompt` (#489): config may
+  only say `prompt`, the `+token` is the per-run on-switch, `nonInteractive: false`. Schema: `schema/FORMAT.md` § Behavioral keys.
 - Project command values — `project.{lint,typecheck,test,build}Cmd` (13 declarations, one
   byte-identical `pattern:`, `stacks/code-quality/stack.yaml:66`; `project.installCmd` and
   `sec.auditCmd` sit outside it by design) render into a `Bash(<cmd>:*)` grant, so each must be ONE
@@ -697,7 +698,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1506 tests, 208 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1512 tests, 209 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |

@@ -156,6 +156,24 @@ is what you reach for across a breaking one.
   the skill already refused to honor it, so remove the line.
 
 ### Changed
+- **Autopilot's four consents are locked to `prompt` (#489, part of #478).** Closes rows 9–12
+  of the #494 inventory. `autopilot.autoMerge` / `reviewLoop` / `qaLoop` / `auditStep`
+  (orchestration) flip `default:` **and** `lockMode:` from `false` to `prompt` together;
+  `modes: [true, false, prompt]`, `nonInteractive: false`, and the `flag: { on: … }` tokens
+  (`+automerge` / `+review` / `+qa` / `+audit`) from PR #493 are unchanged. The never-sticky
+  rule is now a property of the declaration, not a paragraph: the "Consent is per-run and never
+  sticky" bullets and the "no config setting" prose are gone from the autopilot skill, replaced by a
+  `Rendered gate for this repo: \`prompt\`` line and a two-row resolution table under §2 (token
+  present → on; no token → ask a human, or off for a non-interactive caller) that §3–§5 point at.
+  The literal tokens in the skill are read as `{{key.flag.on}}`. The `:N` cap suffix on
+  `+review` / `+qa` stays skill-parsed — it overrides the *value* keys
+  `autopilot.maxReviewRounds` / `maxQaRounds` for the run and is no part of the `flag:`
+  declaration; that prose is kept and now says so. The rendered autopilot skill changes (headings,
+  §2–§5, the guardrail summary); `render` and bare `doctor` already enforce the lock.
+  **Consumer impact:** a `.waffle/waffle.yaml` / `waffle.local.yaml` that sets any of the four
+  keys to `true` or `false` now fails `render` and `doctor` (`{{autopilot.<key>}} is locked to
+  "prompt"`) — delete the line; only `prompt` is admitted. Consents are captured per run by the
+  `+token` or an `AskUserQuestion` answer, exactly as the skill already required. Re-render.
 - **Toggle internals: one unknown-name check, one frontmatter grammar, SKILL.md parsed once
   (#485).** Three cleanups deferred from the #484 review, none user-visible. `applyToggle` is now
   the only unknown-name check (the CLI formats its `unknown` list with the rendered names; the
