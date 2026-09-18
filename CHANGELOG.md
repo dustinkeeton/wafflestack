@@ -32,6 +32,14 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Flag tokens render into skills — `{{key.flag.on}}` / `{{key.flag.off}}` (#486, part of #478).**
+  A behavioral key's `flag:` tokens are now placeholders alongside its resolved mode `{{key}}`:
+  `loadStack` adds each declared side to the stack's referenceable names, `makeResolver` answers
+  it from the stack's `flag:` map (stack-authored — no config value can rewrite a token), and a
+  side the key does not name fails `validate` and the render instead of rendering empty. The
+  resolved mode keeps the `waffle.local.yaml` → `waffle.yaml` → `default:` precedence, and a local
+  override changes the on-disk render and local lock only (#317) — now pinned by tests.
+  Consumer impact: none until a skill references a token (#487–#489); nothing re-renders.
 - **Harness tool allowlist — every `Tool(` call a skill or agent makes is checked against a
   per-target roster (#445).** The #360 guard was a denylist of the three tools already known to
   be dead; it could not catch the next removal, a typo, or a tool one target lacks. The roster now

@@ -4,6 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 import { normalizeModelInvocation } from './model-invocation.mjs';
+import { parseFlagPlaceholder } from './template.mjs';
 
 /** @import { Toolkit, Stack } from './toolkit.mjs' */
 
@@ -636,6 +637,8 @@ export const HARNESS_PATTERNS = {
  * Resolver for a stack rendering to `target`:
  * - `harness.<sub>` — project override (scalar for all targets, or per-target map),
  *   falling back to the built-in for `target`, then to a `runtime` value (#461).
+ * - `<key>.flag.<on|off>` — the token the stack's `flag:` map names; stack-authored, so no
+ *   project value is consulted (#486).
  * - anything else — project config value, else the stack-declared default.
  *
  * @param {Stack} stack
@@ -663,6 +666,8 @@ export function makeResolver(stack, values, target, runtime = {}) {
       if (v === undefined) v = runtime[sub];
       return v;
     }
+    const flag = stack.config[key] === undefined ? parseFlagPlaceholder(key) : null;
+    if (flag) return stack.config[flag.key]?.flag?.[flag.side];
     const v = lookupPath(values, key);
     if (v !== undefined) return v;
     return stack.config[key]?.default;

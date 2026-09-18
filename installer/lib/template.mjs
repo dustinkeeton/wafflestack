@@ -9,7 +9,11 @@ const MAX_SUBSTITUTION_DEPTH = 4;
 /** Substitute {{dotted.key}} placeholders in `text`: `declared` keys and `harness.*` resolve, everything else passes through. */
 export function substitute(text, resolve, declared, errors, context, guards) {
   return text.replace(PLACEHOLDER, (match, key) => {
-    if (!declared.has(key) && !key.startsWith('harness.')) return match;
+    if (!declared.has(key) && !key.startsWith('harness.')) {
+      const problem = undeclaredFlagProblem(declared, key);
+      if (problem) errors.push(`${context}: ${problem}`);
+      return match;
+    }
     const v = resolve(key);
     if (v === undefined) {
       errors.push(`${context}: missing config value for {{${key}}}`);
@@ -44,6 +48,35 @@ export function substitute(text, resolve, declared, errors, context, guards) {
 
 /** The reserved mode a behavioral key may resolve to: never assume, ask the human (#478). */
 export const PROMPT_MODE = 'prompt';
+
+/** The two sides of a `flag:` map, and the trailing segments of their placeholders (#486). */
+export const FLAG_SIDES = ['on', 'off'];
+
+const FLAG_PLACEHOLDER = /^(.+)\.flag\.(on|off)$/;
+
+/** Split `<key>.flag.<side>` into `{ key, side }`, or null for any other placeholder name. */
+export function parseFlagPlaceholder(name) {
+  const m = FLAG_PLACEHOLDER.exec(name);
+  return m ? { key: m[1], side: m[2] } : null;
+}
+
+/** The `<key>.flag.<side>` placeholder names a `config:` block makes referenceable — one per token a key's `flag:` names. */
+export function flagPlaceholders(config) {
+  const names = new Set();
+  for (const [key, spec] of Object.entries(config ?? {})) {
+    const flag = spec?.flag;
+    if (!flag || typeof flag !== 'object' || Array.isArray(flag)) continue;
+    for (const side of FLAG_SIDES) if (flag[side] !== undefined) names.add(`${key}.flag.${side}`);
+  }
+  return names;
+}
+
+/** A `{{key.flag.<side>}}` on a declared key that names no such token is an authoring error, never a silent pass-through. */
+export function undeclaredFlagProblem(declared, name) {
+  const flag = parseFlagPlaceholder(name);
+  if (!flag || !declared.has(flag.key) || declared.has(name)) return null;
+  return `placeholder {{${name}}} names a flag token that config key ${flag.key} does not declare (flag.${flag.side})`;
+}
 
 /** A mode is a YAML scalar — the value space a behavioral key resolves over is a closed list of these. */
 export const isModeScalar = (v) => ['string', 'number', 'boolean'].includes(typeof v);
