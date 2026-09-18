@@ -1078,7 +1078,8 @@ setup: |-
     the email — the field GitHub keys credit on — is the untouched placeholder. The render succeeds
     silently; nothing warns. If you set the name, set the email in the same commit. (ownerName is a
     display name and accepts an apostrophe and common accented Latin letters — `O'Brien`, `José`,
-    `Müller`, `Nguyễn`; scripts outside that range, e.g. CJK, are rejected by the render guard, so
+    `Müller`, `Nguyễn`; values are NFC-normalized at render, so NFD input from a macOS path or a
+    paste is accepted too. Scripts outside that range, e.g. CJK, are rejected by the render guard, so
     fall back to a Latin transliteration for the display name — the email drives the actual credit.)
   - Credit accrues **only for commits that reach the default branch.** Merge-commit and rebase flows
     preserve the branch commits intact; a squash-merge relies on GitHub carrying the branch commits'
@@ -1225,7 +1226,9 @@ config:
     # WOULD break a landing site or the renderer: backtick (closes the code span), `$`/`\`/`;`,
     # newlines, and (via the `(?!.*\$\{\{)` guard) a surviving ${{ }} expression. The renderer
     # compiles these patterns WITHOUT the `u` flag (see compilePattern), so the ranges match on
-    # UTF-16 code units: only accented Latin in the allowlisted BMP ranges is admitted, and every
+    # UTF-16 code units. String values are NFC-normalized before the match (formatValue, #292), so a
+    # combining sequence (e + U+0301) never reaches the pattern — do NOT widen it to U+0300–U+036F.
+    # Only accented Latin in the allowlisted BMP ranges is admitted, and every
     # other script is rejected by one of two mechanisms — other BMP scripts (CJK U+4E00–, Cyrillic,
     # Greek) because they fall outside the allowlisted ranges, and astral-plane characters (surrogate
     # pairs, e.g. emoji or CJK Extension B) because a BMP range cannot match them at all. An owner on

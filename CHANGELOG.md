@@ -32,6 +32,12 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Fixed
+- **String config values are NFC-normalized before their `pattern:` guard runs (#292).** An
+  NFD-encoded `git.ownerName` (`José` typed as `e` + U+0301, as macOS paths and some paste flows
+  produce) previously failed the owner-name allowlist even though the setup note advertises it;
+  `formatValue` now normalizes string scalars to NFC, so the guard sees — and the render emits —
+  the precomposed form. The allowlist patterns are unchanged. Consumer impact: re-render; an
+  already-NFC value renders byte-identically, and a previously red NFD value now renders.
 - **The post-merge token counter warns before its self-heal resets an unparseable
   `tokens.json` (#275).** When the file exists on `waffle-telemetry` (non-empty `sha`) but
   fails the `.waffle` parse check, `waffle-post-merge-hook` now emits a `::warning` naming the
