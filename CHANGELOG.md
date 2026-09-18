@@ -276,6 +276,17 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **`waffle-post-merge-hook` no longer reports an unverifiable branch as "already gone" (#212).**
+  The delete step told outcome 2 (GitHub's native auto-delete beat us) from outcome 3 (branch
+  still there → `::warning`) only by the exit code of a confirmation GET, so a transient DELETE
+  failure followed by a transient GET failure (5xx / rate-limit / network) printed "already gone"
+  and exited 0, silently dropping the hygiene miss. The probe now matches `gh`'s `(HTTP 404)`
+  error text: a confirmed 404 is the only "gone"; every other probe outcome — 5xx, rate-limit,
+  network, a still-present ref, or an unparseable status — lands in the existing warn path. The
+  hook stays fail-open (exit 0 in every branch). Pinned in `content.test.mjs` (source regex) and
+  executed against a stubbed `gh` in the new `post-merge-delete.test.mjs`. The issue's nit (a
+  stale branch-name-charset comment) was already superseded by PR #438. Consumer impact:
+  re-render `waffle-post-merge-hook.yml`; no config or permission change.
 - **The pr-response rubric eval's confirmed-blocker override is load-bearing (#210).** The
   `pr-response-rubric-verdicts` case (github-workflow) scored its blocker F1 at `3/3/3/1/3 = 13`,
   so pure arithmetic already cleared the ≥11 Implement bar and a response that never applied the

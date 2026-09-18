@@ -36,11 +36,13 @@ jobs:
           set -euo pipefail
           # Delete the head ref via the REST API (no checkout needed). Three outcomes:
           #   1. DELETE succeeds        -> branch removed, note the prune signal.
-          #   2. DELETE fails + ref gone -> GitHub's native auto-delete already removed it (fine).
-          #   3. DELETE fails + ref left -> protected, missing perms, or transient API error: warn, don't fail.
+          #   2. DELETE fails + confirmed 404 -> GitHub's native auto-delete already removed it (fine).
+          #   3. DELETE fails + anything else  -> protected, missing perms, or transient API error: warn, don't fail.
+          # Outcome 2 matches gh's "(HTTP 404)" text, not the GET's exit code: a probe that itself
+          # fails (5xx / rate-limit / network) cannot vouch that the branch is gone, so it warns (#212).
           if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" >/dev/null 2>&1; then
             echo "🧇 waffle-post-merge-hook: deleted remote branch \`${BRANCH}\` (PR #${PR_NUMBER}). Run \`git fetch --prune\` locally — or the clean-up skill's \`git --yes\` — to drop the stale origin/${BRANCH} tracking ref." | tee -a "$GITHUB_STEP_SUMMARY"
-          elif ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" >/dev/null 2>&1; then
+          elif { gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" 2>&1 >/dev/null || true; } | grep -q '(HTTP 404)'; then
             echo "🧇 waffle-post-merge-hook: remote branch \`${BRANCH}\` was already gone (GitHub native auto-delete beat us to it) — nothing to delete. Prune locally to drop any stale origin/${BRANCH} ref." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo "::warning title=waffle-post-merge-hook::Could not delete remote branch '${BRANCH}' (PR #${PR_NUMBER}) though it still exists — it may be protected, missing perms (Actions lacking contents: write), or a transient API error (5xx / rate-limit / network). Delete it by hand if you want it gone; this hygiene hook does not fail the run over a lingering branch."
