@@ -14,7 +14,7 @@ import { eject, installRefs, init, unejectCollisions } from '../lib/eject.mjs';
 import { validateToolkit, validateExternalStacks, validateSourceBytes } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
-import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
+import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, isWipWaffle, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
 import { computeListModel, formatListTable, selectableChoices, STATUS, REMOVAL_REASON } from '../lib/list.mjs';
 import { normalizePrerequisites, applicablePrerequisites, checksDigest, formatCheckGate, looksLikeBranchRef } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
@@ -6309,6 +6309,23 @@ describe('cross-stack requires: onto a disabled stack (#520)', () => {
     assert.deepEqual(disabledStackRequires(toolkit, s), expected, 'the two gated files are not repeated here');
     assert.deepEqual(unpouredRequiredSyrup(toolkit, s), [{ ref: 'files/danger.yml', requiredBy: 'agents/alpha', stackName: 'sb' }]);
     assert.deepEqual(s.targetBrokenRequires.map((e) => e.ref), ['files/scoped.yml']);
+  });
+
+  // A `wip` waffle is absent from every consumer surface (#335), so the edge onto it is neither warned about nor offered
+  // as an `install` target: its remedy is "wait for stable", not "enable the stack". Pinned so the skip cannot be deleted silently.
+  test('a wip dependency in the disabled stack is skipped, not warned about (#335)', () => {
+    fixture();
+    write(toolkitRoot, 'stacks/registry.yaml', YAML.stringify({
+      waffles: [{ name: 'beta', kind: 'agent', stack: 'sb', path: 'stacks/sb/agents/beta.md', status: 'wip' }],
+    }));
+    const toolkit = loadToolkit(toolkitRoot);
+    assert.equal(isWipWaffle(toolkit, 'sb', 'agents', 'beta'), true);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'] })), [expected[1], expected[2]]);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sa]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some((w) => /requires agents\/beta/.test(w)), `no warning names the wip dep: ${JSON.stringify(result.warnings)}`);
+    assert.ok(result.warnings.some((w) => /selected skills\/sigma requires skills\/tau/.test(w)), 'the stable edges still warn');
   });
 
   test('installRef is stack-qualified only when the bare name is ambiguous toolkit-wide', () => {
