@@ -276,6 +276,14 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **`avatars sync` honors an authored `identity.avatar` (#290).** The engine no longer uploads the
+  generated SVG for an agent whose definition authors its own avatar: such rows are skipped with a
+  `○ … authored identity.avatar — not synced` notice and surfaced on a new `authored` list in the
+  result (exit codes unchanged). The generated `.waffle/AVATARS.md` pipeline section now scopes the
+  upload claim to generated avatars and states that each run uploads a fresh image, leaving older
+  uploads on the Gravatar account (no already-assigned probe was added — the end state is correct).
+  Consumer impact: `.waffle/AVATARS.md` prose changes on re-render; no shipped agent authors an
+  avatar, so no upload behaviour changes for the stock roster.
 - **The last unconditional "git rejects an empty `user.signingkey`" claims are gone (#269).** Git
   rejects the empty key only when the command actually signs (`commit.gpgsign=true` or `-S`);
   under a non-signing recipe `-c user.signingkey=` rides along inert. Four residual sites still
