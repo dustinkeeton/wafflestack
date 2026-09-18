@@ -32,6 +32,17 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **The three-mode behavioral config contract is documented for consumers (#490, part of #478 —
+  the epic's last sub-issue).** `schema/SETUP.md` step 3 gains a **"Behavioral keys — the three
+  modes, precedence, `lockMode`"** subsection: the three resolutions (literal mode / `prompt` /
+  explicit token), the precedence order (invocation token → `.waffle/waffle.local.yaml` →
+  `.waffle/waffle.yaml` → stack `default:`), how to set a key under `config:`, what config cannot
+  set (the stack-authored `flag:` tokens, the `nonInteractive:` fallback, a `lockMode:` key), the
+  exact `render`/`doctor` error text, and a table of every built-in key declaring `modes:` — pinned
+  by a `content.test.mjs` test that compares each row to the shipped `stack.yaml` declaration. The
+  `waffle-setup` playbook skill now tells the setup agent to name the behavioral keys a selection
+  pulls in and how to set one. Consumer impact: docs only — no config or render change beyond the
+  re-rendered `waffle-setup` skill.
 - **`hygiene.autoMerge` is minted; `delegate.autoMerge` / `approveBeforePush` / `batchMode`
   declare `modes:`; `clean-up --execute` stays a script flag (#488, part of #478).** Closes rows
   4–8 of the #494 inventory. `hygiene.autoMerge` (github-workflow) is `default: true`,

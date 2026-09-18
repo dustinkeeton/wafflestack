@@ -199,6 +199,87 @@ Walk the config schema of every enabled stack (from the inventory):
     advise committing a personal value to silence a gate.
 - Only keys declared in a stack's config schema are substituted — do not invent keys.
 
+### Behavioral keys — the three modes, precedence, `lockMode`
+
+Some keys govern a **behavior** rather than fill in a string: whether a skill pauses at a
+confirmation gate, arms auto-merge, runs a review loop. A stack declares such a key with a closed
+`modes:` list (plus optional `flag:`, `lockMode:`, `nonInteractive:`) — the authoring side is
+[`FORMAT.md` § Behavioral keys](FORMAT.md#behavioral-keys--modes-flag-lockmode-noninteractive);
+this is the consumer side. In the inventory a behavioral key looks like any other defaulted key
+(`optional; default: true`); its description names the modes it accepts, and the table at the end of
+this section lists every one the built-in stacks ship.
+
+A behavioral key resolves in one of three ways when its skill runs:
+
+| Resolution | Meaning |
+|---|---|
+| a literal mode (`true` / `false`) | The skill behaves that way silently when the invocation says nothing. |
+| `prompt` | The skill assumes nothing and asks the human. A **non-interactive caller** — CI, a hook, a subagent with no human on its turn — gets the key's declared `nonInteractive:` fallback instead: a mode, or `fail` (stop rather than guess). |
+| an explicit invocation token | `--yes`, `--confirm`, `+automerge`, … in the skill's arguments state the value for that one run and beat everything below. |
+
+**Precedence** (highest first): explicit invocation token → `.waffle/waffle.local.yaml` →
+`.waffle/waffle.yaml` → the stack's `default:`. Only the two config layers are yours to set — under
+`config:`, the same as any other key:
+
+```yaml
+# .waffle/waffle.yaml (shared) — or .waffle/waffle.local.yaml (this machine only)
+config:
+  issue.confirmGate: false   # /issue never pauses at its plan gate in this repo
+  hygiene.autoMerge: false   # hygiene PRs wait for a human to merge
+```
+
+The value must be a scalar (a list or map is rejected) and one of the key's `modes:` — membership
+is judged on the rendered text, so `true` and `"true"` are the same mode. Then `render`: each skill
+carries its resolved mode in its rendered text (a **`Rendered gate for this repo:`** / **`Rendered
+value for this repo:`** line followed by a mode table), so a config change takes effect on the next
+render — never by editing the rendered skill, which the `doctor` drift gate reverts. A
+`waffle.local.yaml` value follows the layering rule above: it changes this machine's render and
+local lock only, so a behavior that must hold for teammates and CI belongs in the committed file.
+
+What config **cannot** set:
+
+- **The tokens.** `flag:` tokens are stack-authored; no config value renames them, and a skill
+  references only the sides its key declares — `waffle.reportConfirmGate` has `--yes` and no
+  `--confirm`; the autopilot consents have an on-token (`+automerge`, …) and no off-token.
+- **The non-interactive fallback.** `nonInteractive:` is declared by the stack and stated in the
+  skill's mode table (its "Non-interactive caller" column); it is not a config key. The test is *no
+  human on the turn*, not *an agent is running*.
+- **A locked key.** `lockMode: <mode>` pins what config may say. The four autopilot consents are
+  `lockMode: prompt`, so `autopilot.autoMerge: true` in either config file fails `render` — nothing is
+  written — with `config value for {{autopilot.autoMerge}} is locked to "prompt" by stack
+  "orchestration" (lockMode) — config may not set it; the skill's own flag token is the only per-run
+  override`; the same value edited after a clean render fails bare `doctor` as an
+  `invalid config value:` note. The per-run `+automerge` token still works: the lock is about the
+  config layer, which is what makes the consent fresh every run.
+
+A value outside the list fails the same two commands with `config value for {{<key>}} is not one of
+its declared modes [...]`. Both checks cover the keys the selected items actually reference, and
+`validate` reads no project config — so neither is ever a `validate` failure. When the user wants a
+behavior a key does not offer (a `prompt` mode on `hygiene.autoMerge`, an always-on autopilot
+consent), the answer is a toolkit change, not a config value.
+
+Built-in behavioral keys — every key that declares `modes:`; the inventory is authoritative for the
+version you installed:
+
+| Key | Stack | Default | Modes | Tokens (on / off) | Non-interactive | Locked |
+|---|---|---|---|---|---|---|
+| `issue.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
+| `prResponse.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
+| `cleanUp.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
+| `hygiene.autoMerge` | github-workflow | `true` | `true`, `false` | — | — | — |
+| `delegate.approveBeforePush` | orchestration | `false` | `true`, `false` | — | — | — |
+| `delegate.autoMerge` | orchestration | `false` | `true`, `false` | — | — | — |
+| `delegate.batchMode` | orchestration | `false` | `true`, `false` | — | — | — |
+| `autopilot.autoMerge` | orchestration | `prompt` | `true`, `false`, `prompt` | `+automerge` / — | `false` | `prompt` |
+| `autopilot.reviewLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+review` / — | `false` | `prompt` |
+| `autopilot.qaLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+qa` / — | `false` | `prompt` |
+| `autopilot.auditStep` | orchestration | `prompt` | `true`, `false`, `prompt` | `+audit` / — | `false` | `prompt` |
+| `waffle.reportConfirmGate` | wafflestack | `true` | `true`, `false`, `prompt` | — / `--yes` | `fail` | — |
+
+A row with no tokens and no `prompt` (`hygiene.autoMerge`, the three `delegate.*` keys) is
+config-only: `hygiene` is dispatched by CI with no argument list to parse, and `delegate`'s
+invocation is a scope, not a flag list — so the config value is the whole switch.
+
 ## 4. External prerequisites — walk the block (required)
 
 Every stack in the inventory carries a **`### prerequisites`** block: the external things it leans
