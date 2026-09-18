@@ -16,6 +16,17 @@ export const STATUS = {
   PENDING_REMOVAL: 'pending-removal',
 };
 
+/**
+ * WHY a `pending-removal` row is doomed (#371) — it decides whether the picker may offer it.
+ * `scope`: its `targets:` are all disabled, so installing it persists an `include:` that renders
+ * nothing (never offered). `deselected`: its stack was disabled or its include dropped — installing
+ * it renders, so it is the remedy (offered).
+ */
+export const REMOVAL_REASON = {
+  SCOPE: 'scope',
+  DESELECTED: 'deselected',
+};
+
 export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
   const toolkit = loadToolkit(toolkitRoot);
 
@@ -43,28 +54,38 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
   const selectedKeys = new Set(selection.items.map((i) => `${i.stackName}::${i.kind}/${i.item.name}`));
   const enabledStacks = new Set(project?.stacks ?? []);
 
+  // `render`'s own prune question, asked selection-WIDE: is a live lock path produced by ANY selected
+  // item? `owned` below matches stack-blind, so "this row is deselected" alone would announce the
+  // deletion of a path another enabled stack keeps (#371). Target-blind on purpose: a selected agent
+  // still "owns" a disabled target's path, so a fan-out prune is UNDER-reported, never invented.
+  const producedBySelection = (rel) =>
+    selection.items.some((sel) => itemOutputMatcher(sel.kind, sel.item.name)(rel));
+  // A render with a selection error refuses before it prunes, so nothing is doomed until it is fixed.
+  const canPrune = Boolean(project) && !selection.errors.length;
+  const doomed = (owned) =>
+    canPrune && owned.some((rel) => exists(path.join(cwd, rel)) && !producedBySelection(rel));
+
   const classify = (stackName, kind, name, item) => {
-    const matcher = itemOutputMatcher(kind, name);
-    const owned = Object.keys(lockFiles).filter(matcher);
+    const owned = Object.keys(lockFiles).filter(itemOutputMatcher(kind, name));
 
     // Checked BEFORE the selection lookup: a scoped-out file is absent from the selection, so the
     // NOT_INSTALLED branch below would otherwise swallow it (#364).
     if (project && item && !fileMatchesTargets(item, project.targets)) {
-      const live = owned.filter((rel) => exists(path.join(cwd, rel)));
-      // `owned` matches lock paths stack-BLIND, so existence alone would announce a deletion of a file
-      // another stack keeps. Ask `render`'s prune question: a live path NO selected item produces.
-      const pruned = live.some(
-        (rel) => !selection.items.some((sel) => itemOutputMatcher(sel.kind, sel.item.name)(rel)),
-      );
-      return pruned ? STATUS.PENDING_REMOVAL : STATUS.NOT_INSTALLABLE;
+      return doomed(owned)
+        ? { status: STATUS.PENDING_REMOVAL, removalReason: REMOVAL_REASON.SCOPE }
+        : { status: STATUS.NOT_INSTALLABLE, removalReason: null };
     }
-    if (!selectedKeys.has(`${stackName}::${kind}/${name}`)) return STATUS.NOT_INSTALLED;
-    if (!owned.length) return STATUS.OUTDATED; // selected but never rendered (no lock entry yet)
+    if (!selectedKeys.has(`${stackName}::${kind}/${name}`)) {
+      return doomed(owned)
+        ? { status: STATUS.PENDING_REMOVAL, removalReason: REMOVAL_REASON.DESELECTED }
+        : { status: STATUS.NOT_INSTALLED, removalReason: null };
+    }
+    if (!owned.length) return { status: STATUS.OUTDATED, removalReason: null }; // selected but never rendered
     for (const rel of owned) {
       const abs = path.join(cwd, rel);
-      if (!exists(abs) || sha256(fs.readFileSync(abs)) !== lockFiles[rel]) return STATUS.OUTDATED;
+      if (!exists(abs) || sha256(fs.readFileSync(abs)) !== lockFiles[rel]) return { status: STATUS.OUTDATED, removalReason: null };
     }
-    return versionSkew ? STATUS.OUTDATED : STATUS.CURRENT;
+    return { status: versionSkew ? STATUS.OUTDATED : STATUS.CURRENT, removalReason: null };
   };
 
   const counts = {
@@ -75,9 +96,9 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     [STATUS.PENDING_REMOVAL]: 0,
   };
   const addRow = (rows, stackName, kind, name, optIn = false, item = null) => {
-    const status = classify(stackName, kind, name, item);
+    const { status, removalReason } = classify(stackName, kind, name, item);
     counts[status] += 1;
-    rows.push({ kind, name, ref: `${kind}/${name}`, status, optIn, targets: item?.targets ?? null });
+    rows.push({ kind, name, ref: `${kind}/${name}`, status, removalReason, optIn, targets: item?.targets ?? null });
   };
 
   const stacks = [];
@@ -167,14 +188,20 @@ export function formatListTable(model, { color = false } = {}) {
       const label = STATUS_LABEL[row.status].padEnd(STATUS_WIDTH);
       const status = paint(label, STATUS_COLOR[row.status]);
       const tag = row.optIn ? `  ${paint('(opt-in syrup)', ANSI.cyan)}` : '';
-      const scopedOut = row.status === STATUS.NOT_INSTALLABLE || row.status === STATUS.PENDING_REMOVAL;
+      // The scope is named only when it is the REASON — a deselected file may carry an enabled scope.
+      const scopedOut = row.status === STATUS.NOT_INSTALLABLE || row.removalReason === REMOVAL_REASON.SCOPE;
       const scope =
         scopedOut && row.targets
           ? `  ${paint(`(scoped to targets [${row.targets.join(', ')}])`, ANSI.cyan)}`
           : '';
       const doomed =
         row.status === STATUS.PENDING_REMOVAL
-          ? `  ${paint('— installed here; the next `render` DELETES it', ANSI.yellow)}`
+          ? `  ${paint(
+              row.removalReason === REMOVAL_REASON.DESELECTED
+                ? '— installed here but no longer selected; the next `render` DELETES it (install it to keep it)'
+                : '— installed here; the next `render` DELETES it',
+              ANSI.yellow,
+            )}`
           : '';
       lines.push(`  ${status}  ${row.ref}${tag}${scope}${doomed}`);
     }
@@ -212,14 +239,18 @@ function lockLine(model, paint) {
 
 // ── Interactive multi-select ────────────────────────────────────────────────────────────────
 
-/** The rows the picker can act on: everything not already `current` and not scoped out — nothing it does changes those. */
+/**
+ * The rows the picker can act on: everything not already `current` and not scoped out — nothing it
+ * does changes those. A `pending-removal` row is offered iff it is merely deselected (#371):
+ * re-installing it renders, whereas installing a scoped-out one persists a dead `include:`.
+ */
 export function selectableChoices(model) {
   const choices = [];
   for (const stack of model.stacks) {
     for (const row of stack.rows) {
       if (row.status === STATUS.CURRENT) continue;
       if (row.status === STATUS.NOT_INSTALLABLE) continue;
-      if (row.status === STATUS.PENDING_REMOVAL) continue;
+      if (row.status === STATUS.PENDING_REMOVAL && row.removalReason !== REMOVAL_REASON.DESELECTED) continue;
       choices.push({
         stack: stack.name,
         ref: row.ref,
@@ -240,7 +271,12 @@ export function interactiveSelect(model, { input = process.stdin, output = proce
     return Promise.resolve({ applied: false, refs: [], reason: 'everything is installed & current — nothing to install or update' });
   }
   const label = (c) => {
-    const action = c.status === STATUS.OUTDATED ? `${ANSI.yellow}update${ANSI.reset}` : `${ANSI.dim}install${ANSI.reset}`;
+    const action =
+      c.status === STATUS.OUTDATED
+        ? `${ANSI.yellow}update${ANSI.reset}`
+        : c.status === STATUS.PENDING_REMOVAL
+          ? `${ANSI.yellow}keep${ANSI.reset}`
+          : `${ANSI.dim}install${ANSI.reset}`;
     const tag = c.optIn ? ` ${ANSI.cyan}(opt-in syrup)${ANSI.reset}` : '';
     return `${c.stack} › ${c.ref}  [${action}]${tag}`;
   };

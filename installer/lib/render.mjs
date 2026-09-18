@@ -11,7 +11,7 @@ import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template
 import { toolkitLockEntry } from './toolkit-ref.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { computeSelection, skippedSyrupCompanions } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import {
   applicablePrerequisites,
@@ -303,13 +303,18 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
   errors.push(...selection.errors);
 
+  // The pour the warnings below suggest crosses a trust boundary when the syrup is external.
+  const externalNote = (stackName) => {
+    const prov = toolkit.stacks.get(stackName)?.provenance;
+    return prov
+      ? ` — this is EXTERNAL syrup from source "${stackName}" (${describeProvenance(prov)}), so pouring it ` +
+          `additionally requires an explicit trust-boundary acknowledgement beyond the normal opt-in`
+      : '';
+  };
+
   // The render walks `requires:` forward only, so reverse the edge to catch a gated pairing (#74).
   for (const { fileRef, stackName, companions, scopedTo } of skippedSyrupCompanions(toolkit, selection)) {
-    const prov = toolkit.stacks.get(stackName)?.provenance;
-    const external = prov
-      ? ` — this is EXTERNAL syrup from source "${stackName}" (${describeProvenance(prov)}), so pouring it ` +
-        `additionally requires an explicit trust-boundary acknowledgement beyond the normal opt-in`
-      : '';
+    const external = externalNote(stackName);
     // The pairing is real but UNCOMPLETABLE here (#364), so it is stated without a pour command.
     if (scopedTo) {
       warnings.push(
@@ -323,6 +328,16 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
     warnings.push(
       `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')} but was not ` +
         `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose${external}`,
+    );
+  }
+
+  // The same edge walked FORWARD (#371): a selected item's `requires:` onto opt-in syrup nobody
+  // poured renders without it — a stack-expanded dependent never enters a closure.
+  for (const { ref, requiredBy, stackName } of unpouredRequiredSyrup(toolkit, selection)) {
+    warnings.push(
+      `selected ${requiredBy} requires opt-in syrup ${ref} (${stackName}), which was not installed — the ` +
+        `dependency is NOT rendered, so the flow is incomplete. Run \`wafflestack install ${ref}\` to pour ` +
+        `it, or expect ${requiredBy} to run without it${externalNote(stackName)}`,
     );
   }
 

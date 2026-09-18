@@ -649,6 +649,52 @@ export function skippedSyrupCompanions(toolkit, selection) {
 }
 
 /**
+ * Opt-in syrup a SELECTED item's `requires:` edge lands on that nobody poured (#371) — the forward
+ * direction of the #74 edge. `skippedSyrupCompanions` walks file → companion, so an
+ * `agents/x: [files/y]` edge is invisible to it, and the render only walks a closure for an
+ * `include:`d root, so a stack-expanded dependent renders without its declared syrup and nothing
+ * says so. A scoped-out dependency is `targetBrokenRequires`' entry (both steps named there); an
+ * ejected one is the project's (#502). Neither is repeated here.
+ *
+ * @param {Toolkit} toolkit
+ * @param {Selection} selection a `computeSelection` result — `targets` and `ejected` read off it
+ * @returns {{ ref: string, requiredBy: string, stackName: string }[]} one entry per edge; `ref` is a
+ *   ready `wafflestack install` argument and `stackName` is the syrup's OWN stack (its provenance
+ *   decides the trust note). Deterministic order (selection, then `requires:` order).
+ */
+export function unpouredRequiredSyrup(toolkit, selection) {
+  const targets = selection.targets;
+  const ejected = selection.ejected ?? new Set();
+  const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
+  /** @type {{ ref: string, requiredBy: string, stackName: string }[]} */
+  const results = [];
+  const seenEdges = new Set();
+  for (const { stackName, stack, kind, item } of selection.items) {
+    const requiredBy = `${kind}/${item.name}`;
+    for (const depRef of stack?.requires?.[requiredBy] ?? []) {
+      /** @type {DepNode} */
+      let dep;
+      try {
+        dep = resolveDepStrict(toolkit, depRef, stackName);
+      } catch {
+        continue; // a dangling requires: is a toolkit bug `validate` reports
+      }
+      if (dep.item.kind !== 'files') continue;
+      const ref = `files/${dep.name}`;
+      if (!toolkit.stacks.get(dep.stack)?.optIn.has(ref)) continue; // only opt-in syrup is silently gated
+      if (selectedRefs.has(ref)) continue; // poured (included, tracked, or produced by another stack)
+      if (ejected.has(ref)) continue; // project-owned by decision (#502)
+      if (!fileMatchesTargets(dep.item, targets)) continue; // targetBrokenRequires' entry, not this one
+      const edge = `${requiredBy}→${ref}`;
+      if (seenEdges.has(edge)) continue;
+      seenEdges.add(edge);
+      results.push({ ref, requiredBy, stackName: dep.stack });
+    }
+  }
+  return results;
+}
+
+/**
  * @param {ItemKind} kind
  * @returns {string} the kind, singular, for an error message
  */
