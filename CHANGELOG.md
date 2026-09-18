@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-18
+
 ### Added
 - **A cross-stack `requires:` edge onto a disabled stack warns instead of rendering silently
   (#520).** `disabledStackRequires` (`refs.mjs`) surfaces a selected item whose `requires:`
