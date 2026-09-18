@@ -82,6 +82,12 @@ prerequisites:
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:manual-review'"
     items: [skills/autopilot]
     description: Hold label autopilot applies to the follow-up issue it files when the QA gate or the review loop can't converge or the /audit gate hard-blocks a PR on unresolved Critical/High findings (default autopilot.holdLabel); it excludes hold-labeled issues from automatic scope, so this must pre-exist.
+  - kind: label
+    name: "waffle:reassess"
+    level: recommend
+    check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:reassess'"
+    items: [skills/delegate, skills/autopilot]
+    description: Human-applied reassess hold (default issue.reassessLabel, shared with the github-workflow stack); delegate and autopilot exclude reassess-labeled issues from automatic scope, so this must pre-exist.
   - kind: setting
     name: allow-auto-merge
     level: recommend
@@ -112,6 +118,15 @@ setup: |-
   thereafter excludes hold-labeled issues from automatic scope (all-open / a label / a
   milestone) so a human triages them by number; it must pre-exist —
     gh label create "waffle:manual-review" --color D93F0B --description "Held for human triage — autopilot skips this issue until it is actioned by number"
+
+  **Reassess hold label.** An issue a human labels `issue.reassessLabel` (default
+  `waffle:reassess`) needs re-evaluation/reconfirmation before further action: delegate and
+  autopilot exclude it from every automatic scope form (all-open / a label / a milestone / the
+  Todo column) until it is named explicitly by number. Removing the label is the reconfirmed
+  signal — nothing in the toolkit applies or removes it. The key is declared by the
+  github-workflow stack too (same default), the way both stacks share `autoMerge.label`; it
+  must pre-exist —
+    gh label create "waffle:reassess" --color AC3AC7 --description "Needs re-evaluation/reconfirmation before further action"
 config:
   project.name:
     required: true
@@ -617,6 +632,19 @@ config:
       queued the merge (filter with `is:pr label:<value>`). Applied only on a successful
       arm (means "armed," not "attempted"). Must pre-exist in the repo — `gh pr edit
       --add-label` will not create it.
+  issue.reassessLabel:
+    required: false
+    default: "waffle:reassess"
+    # Same allowlist as the github-workflow declaration of this key — see its comment for why.
+    pattern: '^[A-Za-z0-9][A-Za-z0-9:._/+#()-]*(?: [A-Za-z0-9:._/+#()-]+)*$'
+    description: >-
+      Human-applied HOLD label: an issue carrying it needs re-evaluation/reconfirmation before
+      any automation acts on it. delegate and autopilot exclude reassess-labeled issues from every
+      automatic scope form (all-open, a label, a milestone, the Todo column); only naming the
+      issue explicitly by #N actions it. Nothing in the toolkit applies or removes it — a human
+      removing it is the "reconfirmed" signal. Owned by the github-workflow stack
+      (issue.reassessLabel) and re-declared here with the same default, exactly as both stacks
+      declare autoMerge.label. Must pre-exist in the repo.
   delegate.batchMode:
     required: false
     default: false

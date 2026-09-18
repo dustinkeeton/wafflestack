@@ -327,6 +327,7 @@ the `recommend` level, and the setup inventory's `### prerequisites` block surfa
 | `waffle:auto-merged` | `autoMerge.label` | github-workflow · `waffle-hygiene.yml` (opt-in); orchestration · `delegate`, `autopilot` | harness-owned |
 | `waffle:manual-review` | `autopilot.holdLabel` | orchestration · `autopilot` | harness-owned |
 | `waffle:needs-inference` | `issue.inferenceLabel` | github-workflow · `issue` | harness-owned |
+| `waffle:reassess` | `issue.reassessLabel` | github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot` | harness-owned (human-applied hold) |
 | `priority: critical` / `priority: high` / `priority: medium` / `priority: low` | `issue.priorityLabels` | github-workflow · `issue` | taxonomy |
 | `bug` | `issue.bugLabel` (also `issue.typeLabels`) | github-workflow · `issue` | taxonomy |
 | `enhancement` | `issue.featureLabel` (also `issue.typeLabels`) | github-workflow · `issue` | taxonomy |
@@ -342,6 +343,7 @@ gh label create "waffle:pr-response"     --force --color 0052CC --description "T
 gh label create "waffle:auto-merged"     --force --color 0E8A16 --description "Auto-merge was armed on this PR by the harness"
 gh label create "waffle:manual-review"   --force --color D93F0B --description "Held for human triage — autopilot skips this issue until it is actioned by number"
 gh label create "waffle:needs-inference" --force --color 8250DF --description "Awaiting AI enrichment — /issue fleshes this out"
+gh label create "waffle:reassess"        --force --color AC3AC7 --description "Needs re-evaluation/reconfirmation before further action"
 gh label create "priority: critical"     --force --color B60205 --description "Crash, data loss, security, blocks all users"
 gh label create "priority: high"         --force --color D93F0B --description "Broken workflow, regression, significant UX issue"
 gh label create "priority: medium"       --force --color FBCA04 --description "New feature, improvement, moderate bug"

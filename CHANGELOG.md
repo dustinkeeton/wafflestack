@@ -32,6 +32,22 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`waffle:reassess` ships as an installable hold label (#504).** New config key
+  `issue.reassessLabel` (default `waffle:reassess`), owned by `github-workflow` next to
+  `issue.inferenceLabel` and re-declared by `orchestration` with the same default — the same
+  cross-stack mechanism both stacks already use for `autoMerge.label`. Both stacks declare a
+  `kind: label`, `level: recommend` prerequisite for it (scoped to `issue` + `label-hook`, and
+  `delegate` + `autopilot`), and `schema/SETUP.md`'s **Required labels** table and bootstrap
+  block gain the row and the `gh label create … --color AC3AC7` line. Semantics: a hold on
+  automatic scope, parallel to `autopilot.holdLabel` — `delegate`'s Phase 1 list paths and
+  `autopilot`'s scope resolution drop reassess-labeled issues (the Phase 3 plan / run report say
+  how many were held out), the `label-hook` implement path declines one with a comment, and an
+  explicit `#N` stays actionable. Nothing in the toolkit applies or removes the label; a human
+  removing it is the reconfirmed signal. Pinned in `content.test.mjs`: both declarations, the
+  SETUP.md row + bootstrap line, the skill-prose exclusions, and that no template, workflow, or
+  skill auto-applies or removes the label. Consumer impact: additive — create the label
+  (`doctor` reports it at the `recommend` level) and re-render; override the name via
+  `issue.reassessLabel` if the repo's taxonomy differs.
 - **The three-mode behavioral config contract is documented for consumers (#490, part of #478 —
   the epic's last sub-issue).** `schema/SETUP.md` step 3 gains a **"Behavioral keys — the three
   modes, precedence, `lockMode`"** subsection: the three resolutions (literal mode / `prompt` /

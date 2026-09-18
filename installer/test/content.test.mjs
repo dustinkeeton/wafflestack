@@ -550,6 +550,107 @@ describe('CI workflow identity (#160)', () => {
   });
 });
 
+describe('waffle:reassess is an installable hold label (#504)', () => {
+  const LABEL = 'waffle:reassess';
+  const KEY = 'issue.reassessLabel';
+  const stackYaml = (name) => fs.readFileSync(path.join(STACKS, name, 'stack.yaml'), 'utf8');
+  const PREREQ =
+    /- kind: label\n\s+name: "waffle:reassess"\n\s+level: recommend\n\s+check: "gh label list --limit 500 2>\/dev\/null \| grep -q 'waffle:reassess'"\n\s+items: \[([^\]]+)\]/;
+  const itemsOf = (m) => m[1].split(',').map((x) => x.trim()).sort();
+
+  test('github-workflow owns the key and orchestration re-declares it — the autoMerge.label mechanism', () => {
+    const toolkit = loadToolkit(REPO_ROOT);
+    const gw = toolkit.stacks.get('github-workflow').config;
+    const orch = toolkit.stacks.get('orchestration').config;
+    for (const [name, cfg] of [['github-workflow', gw], ['orchestration', orch]]) {
+      assert.ok(cfg[KEY], `${name} must declare ${KEY}`);
+      assert.equal(cfg[KEY].default, LABEL, `${name}: default must be ${LABEL}`);
+      assert.equal(cfg[KEY].required, false);
+      assert.equal(cfg[KEY].pattern, gw['issue.inferenceLabel'].pattern, `${name}: same label allowlist as issue.inferenceLabel`);
+    }
+    // The precedent this copies: one key, declared by both stacks with one default.
+    assert.equal(gw['autoMerge.label'].default, orch['autoMerge.label'].default);
+    assert.equal(gw[KEY].default, orch[KEY].default);
+  });
+
+  test('both stacks declare the kind: label prerequisite, scoped to the skills that honor it', () => {
+    const gw = stackYaml('github-workflow').match(PREREQ);
+    assert.ok(gw, 'github-workflow lacks the waffle:reassess label prerequisite');
+    assert.deepEqual(itemsOf(gw), ['skills/issue', 'skills/label-hook']);
+    const orch = stackYaml('orchestration').match(PREREQ);
+    assert.ok(orch, 'orchestration lacks the waffle:reassess label prerequisite');
+    assert.deepEqual(itemsOf(orch), ['skills/autopilot', 'skills/delegate']);
+    for (const name of ['github-workflow', 'orchestration']) {
+      assert.match(stackYaml(name), /gh label create "waffle:reassess" --color AC3AC7 --description "Needs re-evaluation\/reconfirmation before further action"/, `${name} setup: note lacks the bootstrap line`);
+    }
+  });
+
+  test('SETUP.md carries the Required-labels row and the bootstrap line', () => {
+    const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+    assert.match(
+      setupMd,
+      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot` \| harness-owned/m,
+    );
+    assert.match(
+      setupMd,
+      /^gh label create "waffle:reassess"\s+--force --color AC3AC7 --description "Needs re-evaluation\/reconfirmation before further action"$/m,
+    );
+  });
+
+  test('delegate and autopilot hold reassess-labeled issues out of automatic scope; #N stays actionable', () => {
+    const delegate = readSkill('delegate');
+    const phase1 = delegate.slice(delegate.indexOf('## Phase 1: Fetch Issues'), delegate.indexOf('## Phase 2'));
+    assert.match(phase1, /\*\*Reassess-held issues are out of automatic scope\.\*\*/);
+    for (const form of ['`current-milestone`', '`all-open`', '`todo-column`', '`milestone:<…>`', 'a label', 'a keyword']) {
+      assert.ok(phase1.includes(form), `delegate Phase 1 exclusion must name the ${form} path`);
+    }
+    assert.match(phase1, /drops any issue carrying `waffle:reassess`/);
+    assert.match(phase1, /\*\*before\*\* applying the zero-matching-issues rule/);
+    assert.match(phase1, /An explicit `#N` is taken as-is/);
+    const phase3 = delegate.slice(delegate.indexOf('## Phase 3: Plan & Confirm'), delegate.indexOf('## Phase 4'));
+    assert.match(phase3, /Held out: K issues labeled waffle:reassess/, 'the Phase 3 plan must state how many issues were held out');
+
+    const autopilot = readSkill('autopilot');
+    assert.match(autopilot, /\*\*Reassess-held issues are out of automatic scope too\.\*\*/);
+    assert.match(autopilot, /Drop any issue carrying it from an `all-open` \/ label \/ milestone scope alongside the `waffle:manual-review` exclusion/);
+    assert.match(autopilot, /- \*\*Reassess-held issues stay out of automatic scope\.\*\*/);
+    assert.match(autopilot, /autopilot never adds or removes that label/);
+  });
+
+  test('the label-hook implement path declines a reassess-labeled issue with a comment; issue leaves the label alone', () => {
+    const labelHook = readSkill('label-hook');
+    const implement = labelHook.slice(labelHook.indexOf('## implement'), labelHook.indexOf('## Untrusted input'));
+    assert.match(implement, /If the issue carries `waffle:reassess`, it is held for human re-evaluation/);
+    assert.match(implement, /comment that the implement run declined[\s\S]{0,200}then \*\*stop\*\* — leave the label in place/);
+    assert.match(labelHook, /- Never add or remove 'waffle:reassess'/);
+    const issue = readSkill('issue');
+    assert.match(issue, /`waffle:reassess` is a \*\*human-owned hold\*\*/);
+    assert.match(issue, /\*\*never add or remove\*\* the label yourself/);
+  });
+
+  test('nothing in the toolkit applies or removes the label — removing it is the human\'s reconfirmed signal', () => {
+    const walk = (dir, out = []) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, out);
+        else if (/\.(md|ya?ml|mjs|js|sh)$/.test(entry.name)) out.push(full);
+      }
+      return out;
+    };
+    const mutators = [
+      /--add-label\s+["']?(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)/,
+      /--remove-label\s+["']?(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)/,
+      /label\.name == '(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)'/,
+    ];
+    for (const file of [...walk(STACKS), ...walk(path.join(CLAUDE, 'skills'))]) {
+      const body = fs.readFileSync(file, 'utf8');
+      for (const re of mutators) {
+        assert.ok(!re.test(body), `${path.relative(REPO_ROOT, file)} applies, removes, or dispatches on the reassess label (${re})`);
+      }
+    }
+  });
+});
+
 describe('token spend telemetry (#227)', () => {
   const wfSource = (name) => fs.readFileSync(path.join(WAFFLE_WORKFLOW_DIR, name), 'utf8');
   const DISPATCHING = [
@@ -2844,6 +2945,7 @@ describe('issue / PR / review templates (#337)', () => {
     bug: 'type/bug',
     feature: 'type/feature',
     inference: 'Awaiting Inference',
+    reassess: 'Needs Reassess',
     enrich: 'ci:enrich',
     implement: 'ci:implement',
     release: 'ci:release',
@@ -2864,6 +2966,7 @@ describe('issue / PR / review templates (#337)', () => {
         `    bugLabel: ${CFG.bug}`,
         `    featureLabel: ${CFG.feature}`,
         `    inferenceLabel: ${CFG.inference}`,
+        `    reassessLabel: ${CFG.reassess}`,
         '  labelHook:',
         `    enrichLabel: ${CFG.enrich}`,
         `    implementLabel: ${CFG.implement}`,
@@ -2949,7 +3052,7 @@ describe('issue / PR / review templates (#337)', () => {
     );
   });
 
-  test('NO issue template auto-applies a label that dispatches a paid harness run', () => {
+  test('NO issue template auto-applies a label that dispatches a paid harness run, nor the reassess hold (#504)', () => {
     const triggers = new Set([CFG.enrich, CFG.implement, CFG.release]);
     for (const name of ['bug', 'feature', 'roughIdea']) {
       for (const label of parseYaml(templates[name]).labels || []) {
@@ -2957,6 +3060,7 @@ describe('issue / PR / review templates (#337)', () => {
           !triggers.has(label),
           `${name} auto-applies the dispatch trigger "${label}" — any issue author could then bill this repo`,
         );
+        assert.notEqual(label, CFG.reassess, `${name} auto-applies the reassess hold — only a human applies it`);
       }
     }
     const workflowDir = path.join(cwd, '.github', 'workflows');
@@ -2965,6 +3069,10 @@ describe('issue / PR / review templates (#337)', () => {
       assert.ok(
         !new RegExp(`label\\.name == '${CFG.inference}'`).test(wf),
         `${file} dispatches on the inference label, which an issue FORM auto-applies`,
+      );
+      assert.ok(
+        !wf.includes(CFG.reassess),
+        `${file} mentions the reassess hold — no workflow may gate on, apply, or remove it`,
       );
     }
   });

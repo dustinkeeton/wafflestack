@@ -90,7 +90,9 @@ The **read** policy lives in Phases 2–4 (Classify and Plan load the doc; each 
 - A known label (`bug`, `enhancement`, `documentation`, `question`) → filter: `gh issue list --state open --label "$ARGUMENTS" --json number,title,labels,body,milestone`
 - Any other text → fetch all open issues and filter client-side by keyword match against title and body: `gh issue list --state open --json number,title,labels,body,milestone --limit 50`
 
-**Zero matching issues** (any path) → report that there is nothing to delegate and stop.
+**Reassess-held issues are out of automatic scope.** Every list-producing path above — `current-milestone`, `all-open`, `todo-column`, `milestone:<…>`, a label, a keyword — drops any issue carrying `{{issue.reassessLabel}}`: a human marked it as needing re-evaluation/reconfirmation before further action, and removing the label is the reconfirmed signal (nothing in the toolkit removes it). Filter client-side on the fetched `labels` **before** applying the zero-matching-issues rule, and keep a count of what you held out so the Phase 3 plan can state it. An explicit `#N` is taken as-is — naming the issue *is* the human action that releases it.
+
+**Zero matching issues** (any path, after the reassess filter) → report that there is nothing to delegate and stop.
 
 ### Determining the current milestone (no-args path)
 
@@ -265,7 +267,7 @@ Worktree isolation makes it safe for two agents of the **same type** to run at o
 - Security issues serialize **last**
 - Documentation issues serialize **last** (need final code state)
 
-Present the plan to the user. On the no-args path, **lead with the resolved scope** — the milestone (title, number, open-issue count), `all open issues (N)`, `board Todo column (N issues)`, or the todo-column fallback line (`Board or Todo column not found → falling back to all-open (N issues)`) — so the user confirms exactly what is being delegated:
+Present the plan to the user. On the no-args path, **lead with the resolved scope** — the milestone (title, number, open-issue count), `all open issues (N)`, `board Todo column (N issues)`, or the todo-column fallback line (`Board or Todo column not found → falling back to all-open (N issues)`) — so the user confirms exactly what is being delegated. On every list path, follow the scope line with how many issues Phase 1 held out as reassess-labeled (`Held out: K issues labeled {{issue.reassessLabel}}`, or `Held out: none`), so a held issue is visibly absent rather than silently missing:
 
 ```
 ## Delegation Plan
