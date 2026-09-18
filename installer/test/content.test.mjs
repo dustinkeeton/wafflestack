@@ -3327,12 +3327,19 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
   test('task tools use their real parameter keys — taskId / task_id, and TaskList takes none', () => {
     for (const f of files()) {
       const md = fs.readFileSync(f, 'utf8');
-      assert.doesNotMatch(md, /TaskUpdate\(\s*id:/, `${who(f)}: TaskUpdate's key is taskId, not id`);
-      assert.doesNotMatch(md, /TaskStop\(\s*taskId:/, `${who(f)}: TaskStop's key is task_id, not taskId`);
+      // Through callBodies(): argument order must not hide a dead key (#369).
+      for (const body of callBodies(md, 'TaskUpdate')) {
+        assert.doesNotMatch(body, /\bid:/, `${who(f)}: TaskUpdate's key is taskId, not id`);
+      }
+      for (const body of callBodies(md, 'TaskStop')) {
+        assert.doesNotMatch(body, /\btaskId:/, `${who(f)}: TaskStop's key is task_id, not taskId`);
+      }
       assert.doesNotMatch(md, /TaskList\(\s*[^)\s]/, `${who(f)}: TaskList takes no parameters`);
       // Read the REAL call body: a `)` inside a description string must not end the scan.
       for (const body of callBodies(md, 'TaskCreate')) {
         assert.doesNotMatch(body, /addBlockedBy/, `${who(f)}: addBlockedBy is a TaskUpdate parameter, not a TaskCreate one`);
+        assert.match(body, /\bsubject:/, `${who(f)}: TaskCreate requires subject — it is not optional`);
+        assert.match(body, /\bdescription:/, `${who(f)}: TaskCreate requires description`);
       }
     }
   });
@@ -3522,23 +3529,24 @@ describe('source + rendered content: the abolished team concept does not survive
     return t.match(/.{0,50}\bteams?\b.{0,30}/gi) ?? [];
   };
 
-  const skillAssetFiles = () =>
-    stackDirs()
-      .flatMap((d) => {
-        const skills = path.join(d, 'skills');
-        return fs.existsSync(skills)
-          ? fs
-              .readdirSync(skills, { withFileTypes: true })
-              .filter((e) => e.isDirectory())
-              .flatMap((e) => {
-                const dir = path.join(skills, e.name);
-                return fs
-                  .readdirSync(dir)
-                  .filter((f) => f.endsWith('.json'))
-                  .map((f) => path.join(dir, f));
-              })
-          : [];
-      });
+  // Both surfaces (#369): the source stacks AND this repo's render, tolerating a missing render dir.
+  const jsonAssetsUnder = (skills) =>
+    fs.existsSync(skills)
+      ? fs
+          .readdirSync(skills, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .flatMap((e) => {
+            const dir = path.join(skills, e.name);
+            return fs
+              .readdirSync(dir)
+              .filter((f) => f.endsWith('.json'))
+              .map((f) => path.join(dir, f));
+          })
+      : [];
+  const skillAssetFiles = () => [
+    ...stackDirs().flatMap((d) => jsonAssetsUnder(path.join(d, 'skills'))),
+    ...jsonAssetsUnder(path.join(CLAUDE, 'skills')),
+  ];
 
   test('no skill, agent, or skill asset uses the word "team" outside an allowlisted, legitimate sense', () => {
     const swept = [...sourceSkillFiles(), ...sourceAgentFiles(), ...skillAssetFiles(), ...renderedSkillFiles(), ...renderedAgentFiles()];
@@ -4230,10 +4238,12 @@ describe('spawn-and-collect contract has one home (#365)', () => {
       assert.match(section, /\*\*Named spawn, name as address\.\*\*/, `${who(f)}: clause 1`);
       assert.match(section, /\*\*Collection\.\*\*/, `${who(f)}: clause 2`);
       assert.match(section, /\*\*Teardown is shutdown-then-stop\.\*\*/, `${who(f)}: clause 3`);
-      assert.match(section, /\*\*Flat-roster fallback\.\*\*/, `${who(f)}: clause 4`);
+      assert.match(section, /\*\*Seat constraint\.\*\*/, `${who(f)}: clause 4`);
       assert.match(section, TEARDOWN_RATIONALE, `${who(f)}: the teardown rationale must live in the contract`);
       assert.match(section, /never waits on a message or a task update from a silent specialist/, `${who(f)}: clause 2 lost the silent-specialist rule`);
-      assert.match(section, /omit `name:` and address the agent by the `agentId` the spawn returns/, `${who(f)}: clause 4 lost the agentId fallback`);
+      assert.match(section, /hands its agent names back to the session that spawned it/, `${who(f)}: clause 4 lost the spawned-seat handback`);
+      assert.match(section, /`shutdown_request` messages and `TaskStop` are acts of the main session/, `${who(f)}: clause 4 lost the real constraint`);
+      assert.doesNotMatch(section, /cannot name its own spawns/, `${who(f)}: clause 4 re-asserts the false flat-roster rule (#369)`);
       assert.match(section, /An invoked skill's spawns belong to that skill/, `${who(f)}: the contract must say an invoked skill's spawns are not the invoker's`);
       assert.equal(callBodies(section, 'Agent').length, 0, `${who(f)}: the contract must not add Agent( calls — that would move the audit roster pin`);
       assert.equal(callBodies(section, 'TaskStop').filter((b) => /task_id:\s*['"]/.test(b)).length, 0, `${who(f)}: the contract must not add TaskStop calls`);

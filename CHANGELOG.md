@@ -241,6 +241,16 @@ is what you reach for across a breaking one.
   target a fork or a local checkout.
 
 ### Fixed
+- **The four PR #368 cold-pass review findings are closed (#369).** The orchestration `audit` /
+  `delegate` flat-roster note asserted a rule the harness does not have (a spawned agent *can* name its
+  own spawns) and was silent about the one it does: `shutdown_request` messages and `TaskStop` are acts
+  of the main session, so an orchestrator on a spawned seat hands its agent names back to the session
+  that spawned it instead of promising a teardown it cannot perform (clause 4 is now **Seat
+  constraint**). Three `content.test.mjs` guards were tightened by the same inject-and-watch-red
+  method that found them: `TaskCreate` must carry `subject` **and** `description`; the dead
+  `TaskUpdate(id:)` / `TaskStop(taskId:)` keys are caught in any argument position via
+  `callBodies()`; the prose-team asset walk sweeps the rendered `.claude/skills/*/*.json` too.
+  Consumer impact: the re-rendered `audit` and `delegate` skills only — no config or CLI change.
 - **`list` reports `PENDING REMOVAL` on every deselection path, and a `requires:` edge onto
   un-poured opt-in syrup is no longer silent (#371).** Before, the status #364 added fired only
   for a target-scope filter: a file poured by a stack you then disabled (or an item whose

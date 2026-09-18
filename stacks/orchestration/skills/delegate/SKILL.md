@@ -390,7 +390,7 @@ When delegating **2 or more issues**, create a task per issue so agents can repo
 
 There is **no team to create**: the session has a single implicit team, and the `Agent` tool's `team_name` parameter is deprecated and ignored. Coordination comes from **named agents** — an agent's `name:` is its address for `SendMessage(to:)` and `TaskStop(task_id:)`.
 
-> **If a spawn is rejected because the roster is flat** (an agent cannot name its own spawns — only the main conversation loop can), omit `name:` and address the agent by the `agentId` the spawn returns. `SendMessage` and `TaskStop` both accept it in place of a name.
+> **Seat constraint.** Naming works from any seat — a spawned agent can name its own spawns, and `SendMessage(to: <name>)` reaches them. What a spawned seat cannot do is tear down: `shutdown_request` messages and `TaskStop` are acts of the main session and are rejected from a background subagent. An orchestrator running from a spawned seat therefore hands its agent names back to the session that spawned it — that session performs the teardown — rather than reporting a teardown it cannot perform. An agent that has no name, or whose name a newer spawn took (latest wins), is addressed by the `agentId` the spawn returns; `SendMessage` and `TaskStop` both accept it in place of a name.
 
 `TaskCreate` takes `subject` **and** `description` (both required) — no `team_name`, and no `addBlockedBy` at create time:
 
