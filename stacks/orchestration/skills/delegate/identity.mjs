@@ -277,7 +277,7 @@ function main() {
     errors.push('git.cmd sets a valueless -c user.email — git reads a -c with no "=" as the literal value "true", so every bot commit would be authored as "<true>"');
   }
   if (config.has('user.signingkey') && signingKey === '') {
-    errors.push('git.cmd sets an EMPTY user.signingkey — git rejects it only at commit time, so this fails silently until an agent tries to commit');
+    errors.push('git.cmd sets an EMPTY user.signingkey — dead config: git rejects it only when the command signs (commit.gpgsign=true or -S), and under a non-signing recipe it rides along inert, so nothing surfaces it until a signing commit');
   }
   if (config.has('commit.gpgsign') && !isBoolean(gpgsign)) {
     errors.push(
