@@ -2242,6 +2242,20 @@ describe('github-workflow: identity config schema (#154)', () => {
     assert.doesNotMatch(skill, /\{\{git\.owner/, 'no owner placeholder survives the render');
   });
 
+  // The allowlist admits precomposed Latin (NFC) but not combining marks (U+0300–U+036F). macOS paths and some paste
+  // flows yield NFD, so the renderer NFC-normalizes string config values before the guard runs and emits the NFC form (#292).
+  test('I1f #292: an NFD owner name (e + U+0301) passes the guard and renders in NFC', () => {
+    const nfd = 'José';
+    assert.notEqual(nfd, 'José', 'fixture is genuinely NFD');
+    write(cwd, '.waffle/waffle.yaml', `${base}  git:\n    ownerName: ${nfd}\n    ownerEmail: 123+jose@users.noreply.github.com\n`);
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+
+    const skill = read(cwd, SKILL);
+    assert.match(skill, /Co-authored-by: José <123\+jose@users\.noreply\.github\.com>/, 'the trailer carries the NFC form');
+    assert.doesNotMatch(skill, /é/, 'no combining sequence reaches the rendered output');
+  });
+
   // The two owner keys carry independent defaults, so a HALF-configured repo renders a real display name beside a placeholder email —
   // a trailer that looks configured but credits nobody. Setup-note guidance ("set both or neither") is the only guard.
   test('I1e #291: a half-configured owner (name set, email unset) renders name + placeholder email', () => {
@@ -2309,6 +2323,8 @@ describe('github-workflow: identity config schema (#154)', () => {
     // span in the rendered co-author trailer), so the same negative cases must fail their render.
     ['ownerName', 'Bad\nName', 'newline'],
     ['ownerName', 'Owner`Name', 'backtick breaks the markdown code span it renders into'],
+    ['ownerName', 'Owner$Name', 'a bare $ is outside the name allowlist'],
+    ['ownerName', '田中太郎', 'CJK is outside the Latin allowlist — NFC normalization (#292) does not widen it'],
     ['ownerName', '${{ secrets.LEAK }}', 'a ${{ }} expression survives the renderer verbatim'],
     ['ownerEmail', '$(id)@x.com', 'command substitution needs no space, @ or quote'],
     ['ownerEmail', 'a@b', 'no TLD'],

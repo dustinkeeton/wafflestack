@@ -218,8 +218,9 @@ function expandNested(text, resolve, depth, guards, errors, context) {
   });
 }
 
+/** String scalars are NFC-normalized here, upstream of every guard, so NFD input (macOS paths, some paste flows) meets the same allowlist and renders the same bytes (#292). */
 export function formatValue(v) {
-  if (typeof v === 'string') return v;
+  if (typeof v === 'string') return v.normalize('NFC');
   if (Array.isArray(v) && v.every((x) => typeof x === 'string')) return v.join(', ');
   return YAML.stringify(v, { lineWidth: 0 }).trimEnd();
 }
