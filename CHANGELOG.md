@@ -32,6 +32,13 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **A cross-stack `requires:` edge onto a disabled stack warns instead of rendering silently
+  (#520).** `disabledStackRequires` (`refs.mjs`) surfaces a selected item whose `requires:`
+  lands on an agent, skill, or non-opt-in file in a stack the project does not enable; `render`
+  names the dependent, the dependency, and the supplying stack, with both remedies (add the
+  stack to `stacks:`, or `wafflestack install <ref>` for just that item). Expansion still never
+  pulls a disabled stack's items in; a scoped-out or opt-in dependency stays #364's / #371's
+  single warning. Consumer impact: `render`/`list` warnings only — no rendered output changes.
 - **`waffle:reassess` ships as an installable hold label (#504).** New config key
   `issue.reassessLabel` (default `waffle:reassess`), owned by `github-workflow` next to
   `issue.inferenceLabel` and re-declared by `orchestration` with the same default — the same
