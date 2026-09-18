@@ -1930,6 +1930,20 @@ config:
       backslashes, newlines, or `${{` (enforced at render by the pattern above; single quotes
       are allowed). Security-sensitive: an unvalidated passthrough to the harness CLI — flags
       here can widen the harness's authority, so set only what you understand and trust.
+  hygiene.autoMerge:
+    required: false
+    default: true
+    modes: [true, false]
+    description: >-
+      Whether the hygiene skill arms `gh pr merge --auto --merge` on each PR it opens — step 6 of
+      "Landing a task's result" (#488, part of #478). `true` (the default — the pre-#488 always-arm
+      behavior) arms and, on a successful arm, applies `autoMerge.label`; `false` leaves every
+      hygiene PR open for a human to merge and applies no label. No `prompt` mode and no `flag:`:
+      the skill is dispatched by the waffle-hygiene workflow with no human on its turn and no
+      argument list to parse, so config is the only switch — before this key the only way to stop
+      the arming was ejecting the skill. Same arming preconditions as delegate.autoMerge
+      (allow-auto-merge on, a required check on the base branch, branch protection or a ruleset
+      to hold it); a failed arm is reported open-but-not-armed, never `--admin`-merged.
   prGreen.watchWorkflows:
     required: false
     default: "waffle-doctor"

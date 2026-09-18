@@ -32,6 +32,23 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`hygiene.autoMerge` is minted; `delegate.autoMerge` / `approveBeforePush` / `batchMode`
+  declare `modes:`; `clean-up --execute` stays a script flag (#488, part of #478).** Closes rows
+  4–8 of the #494 inventory. `hygiene.autoMerge` (github-workflow) is `default: true`,
+  `modes: [true, false]` — no `prompt` mode and no `flag:`, because the `hygiene` skill is
+  dispatched by CI with no human on its turn and no argument list to parse; step 6 of the skill now
+  reads the rendered value and branches on it (`true`: arm `gh pr merge --auto --merge` and label
+  on success, exactly as before; `false`: skip the step, leave the PR for a human, no label, and
+  report `not requested`). Before this key the only way to stop hygiene arming auto-merge was
+  ejecting the skill. The three delegate keys (orchestration) gain `modes: [true, false]` only —
+  no `flag:` (delegate's invocation is a scope, not a flag list; the orchestrator prompt carries
+  the per-run switch), no `prompt`, defaults unchanged, and the delegate render is byte-identical.
+  **Ruling on `--execute`:** it is `scripts/clean_up.sh`'s mutation switch, not a skill token, so
+  no `cleanUp.execute` key is minted; the skill documents it as governed solely by
+  `cleanUp.confirmGate` and its rendered tokens. Consumer impact: additive — at defaults every
+  rendered behavior is unchanged; set `hygiene.autoMerge: false` in `.waffle/waffle.yaml` or the
+  local overlay to stop hygiene arming auto-merge, and a value outside `[true, false]` now fails
+  the render for all four keys.
 - **`issue`, `pr-response`, `clean-up`, and `waffle-report` read their confirmation gate from
   `*.confirmGate` keys (#487, part of #478).** The first skill migration onto the three-mode
   mechanism: `issue.confirmGate`, `prResponse.confirmGate`, `cleanUp.confirmGate`
