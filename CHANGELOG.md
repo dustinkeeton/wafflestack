@@ -38,7 +38,11 @@ is what you reach for across a breaking one.
   names the dependent, the dependency, and the supplying stack, with both remedies (add the
   stack to `stacks:`, or `wafflestack install <ref>` for just that item). Expansion still never
   pulls a disabled stack's items in; a scoped-out or opt-in dependency stays #364's / #371's
-  single warning. Consumer impact: `render`/`list` warnings only — no rendered output changes.
+  single warning. Consumer impact: `render`/`install`/`upgrade`/`reinstall` warnings only — `list`
+  does not surface them — and no rendered output changes. The shipped toolkit has twelve such
+  edges, all from `orchestration` (`delegate`, `autopilot`, `docs` requiring `github-workflow`,
+  `code-quality`, `docs-system` skills), so a project enabling `orchestration` without those
+  three suppliers now sees twelve warnings per render.
 - **`waffle:reassess` ships as an installable hold label (#504).** New config key
   `issue.reassessLabel` (default `waffle:reassess`), owned by `github-workflow` next to
   `issue.inferenceLabel` and re-declared by `orchestration` with the same default — the same
