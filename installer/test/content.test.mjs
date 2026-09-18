@@ -597,7 +597,7 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     );
   });
 
-  test('delegate and autopilot hold reassess-labeled issues out of automatic scope; #N stays actionable', () => {
+  test('delegate and autopilot hold reassess-labeled issues out of automatic scope; #N triggers a reassessment, never an implementation', () => {
     const delegate = readSkill('delegate');
     const phase1 = delegate.slice(delegate.indexOf('## Phase 1: Fetch Issues'), delegate.indexOf('## Phase 2'));
     assert.match(phase1, /\*\*Reassess-held issues are out of automatic scope\.\*\*/);
@@ -606,7 +606,12 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     }
     assert.match(phase1, /drops any issue carrying `waffle:reassess`/);
     assert.match(phase1, /\*\*before\*\* applying the zero-matching-issues rule/);
-    assert.match(phase1, /An explicit `#N` is taken as-is/);
+    assert.match(phase1, /An explicit `#N` does \*\*not\*\* release it either/);
+    assert.match(phase1, /\*\*Reassessment gate \(`waffle:reassess` named by `#N`\)\.\*\*/);
+    assert.match(phase1, /re-verify its premises against current `main`/);
+    assert.match(phase1, /Post the result as a comment on the issue/);
+    assert.match(phase1, /Never spawn an implementer for it in this run/);
+    assert.match(phase1, /In batch mode there is no one to ask — post the comment, hold the issue, and never implement it/);
     const phase3 = delegate.slice(delegate.indexOf('## Phase 3: Plan & Confirm'), delegate.indexOf('## Phase 4'));
     assert.match(phase3, /Held out: K issues labeled waffle:reassess/, 'the Phase 3 plan must state how many issues were held out');
 
@@ -614,7 +619,8 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(autopilot, /\*\*Reassess-held issues are out of automatic scope too\.\*\*/);
     assert.match(autopilot, /Drop any issue carrying it from an `all-open` \/ label \/ milestone scope alongside the `waffle:manual-review` exclusion/);
     assert.match(autopilot, /- \*\*Reassess-held issues stay out of automatic scope\.\*\*/);
-    assert.match(autopilot, /autopilot never adds or removes that label/);
+    assert.match(autopilot, /an explicit `#N` gets a reassessment comment, never an implementation/);
+    assert.match(autopilot, /Autopilot never adds or removes that label/);
   });
 
   test('the label-hook implement path declines a reassess-labeled issue with a comment; issue leaves the label alone', () => {
