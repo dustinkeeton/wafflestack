@@ -287,6 +287,17 @@ is what you reach for across a breaking one.
   executed against a stubbed `gh` in the new `post-merge-delete.test.mjs`. The issue's nit (a
   stale branch-name-charset comment) was already superseded by PR #438. Consumer impact:
   re-render `waffle-post-merge-hook.yml`; no config or permission change.
+- **The pr-response rubric eval's confirmed-blocker override is load-bearing (#210).** The
+  `pr-response-rubric-verdicts` case (github-workflow) scored its blocker F1 at `3/3/3/1/3 = 13`,
+  so pure arithmetic already cleared the ≥11 Implement bar and a response that never applied the
+  override passed anyway — the should-fix the PR #203 adversarial review left open. F1 is now a
+  confirmed, live, pre-existing bug whose fix is a risky redesign tangential to the PR's stated
+  purpose: honest v3 anchors `3/2/3/0/1 = 9`, a Defer by arithmetic, so only the named
+  confirmed-blocker override (Severity 3 · Validity 3 · Reach ≥ 2) lifts it to Implement. The
+  judge rubric says so and fails an F1 Implement reached by inflated Effort/Risk or Alignment, and
+  the `includes` block now asserts `Effort/Risk` alongside the other four dimensions. Consumer
+  impact: none — eval cases are inert to `render`, `validate`, and the lock; the case only changes
+  what `npm run evals` measures.
 - **Clause 4 of the spawn-and-collect contract names both seats (#369 reassessment).** PR #521
   replaced the flat-roster rule with "naming works from any seat", which a live probe on 2026-09-18
   showed is false from a named agent's seat: the harness still rejects a named spawn there with
