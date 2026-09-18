@@ -310,6 +310,22 @@ is what you reach for across a breaking one.
   the `includes` block now asserts `Effort/Risk` alongside the other four dimensions. Consumer
   impact: none — eval cases are inert to `render`, `validate`, and the lock; the case only changes
   what `npm run evals` measures.
+- **The pr-response rubric eval's F1 fixture has threshold margin and a conditions-only judge
+  (#532).** Follow-up to #210 (PR #529): the reworked case passed its dry-run but failed both live
+  runs, for different reasons — F1 sat one honest point of variance on two dimensions from the
+  ≥11 bar (one run landed `3/3/3/1/1 = 11`, Implement by arithmetic, the false assurance #210 set
+  out to remove), and the judge read the rubric's exact anchors as fail conditions, faulting F2's
+  Effort/Risk 3 and F3's nonzero non-Validity scores, rules the rubric never stated. The prompt now
+  pins Reach at 2 (`report` is a read-only view: gates no merge, ships nothing, spends nothing,
+  touches no secrets) and Alignment at 0 (a DECISIONS.md decision freezes the bounds contract, so
+  the fix contradicts a documented decision and the PR's stated scope) with in-scenario facts, so
+  the intended composite is `3/2/3/0/0 = 8` — three points under the bar, the floor for any
+  fixture where the override fires. The judge rubric is rewritten as PASS / FAIL / "not judged"
+  sentences: F1 passes on Implement, the named override, composite < 11, Effort/Risk ≤ 1 and
+  Alignment ≤ 1; F2 on Defer with a follow-up; F3 on Decline with Validity 0 and a reason that says
+  the finding is wrong. F2's dimension scores and F3's non-Validity scores are explicitly unjudged,
+  and a new `includes: "Defer"` pins F2's verdict token. Consumer impact: none — eval cases are
+  inert to `render`, `validate`, and the lock; the case only changes what `npm run evals` measures.
 - **Clause 4 of the spawn-and-collect contract names both seats (#369 reassessment).** PR #521
   replaced the flat-roster rule with "naming works from any seat", which a live probe on 2026-09-18
   showed is false from a named agent's seat: the harness still rejects a named spawn there with
