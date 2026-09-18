@@ -695,6 +695,61 @@ export function unpouredRequiredSyrup(toolkit, selection) {
 }
 
 /**
+ * A SELECTED item's `requires:` edge landing on an agent/skill/file that lives in a stack this
+ * project does not enable (#520). Stack expansion never walks `requires:` — only an `include:` root
+ * earns a closure — so the dependent renders without the dependency and nothing says so.
+ *
+ * Satisfied means SELECTED in this render, matched by `kind/name` the way every other gate matches:
+ * an enabled stack, an `include:`, a lock-tracked opt-in path, or a same-named item another stack
+ * produces all count. What is left after the other gates take theirs is exactly "the supplying stack
+ * is not enabled": a scoped-out file is `targetBrokenRequires`' entry, un-poured opt-in syrup is
+ * `unpouredRequiredSyrup`'s, an ejected dependency is the project's (#502), and a `wip` waffle is
+ * the same absence `resolveAgentSkill` treats it as (#335). An external stack is only ever loaded
+ * when enabled, so an edge onto one is either satisfied or dangling (`validate`'s business).
+ *
+ * @param {Toolkit} toolkit
+ * @param {Selection} selection a `computeSelection` result — `targets` and `ejected` read off it
+ * @returns {{ ref: string, requiredBy: string, stackName: string, installRef: string }[]} one entry
+ *   per edge; `stackName` is the dependency's OWN stack (the one enabling would supply it) and
+ *   `installRef` a ready `wafflestack install` argument, stack-qualified only when the bare name is
+ *   ambiguous toolkit-wide. Deterministic order (selection, then `requires:` order).
+ */
+export function disabledStackRequires(toolkit, selection) {
+  const targets = selection.targets;
+  const ejected = selection.ejected ?? new Set();
+  const selectedRefs = new Set(selection.items.map((i) => `${i.kind}/${i.item.name}`));
+  /** @type {{ ref: string, requiredBy: string, stackName: string, installRef: string }[]} */
+  const results = [];
+  const seenEdges = new Set();
+  for (const { stackName, stack, kind, item } of selection.items) {
+    const requiredBy = `${kind}/${item.name}`;
+    for (const depRef of stack?.requires?.[requiredBy] ?? []) {
+      /** @type {DepNode} */
+      let dep;
+      try {
+        dep = resolveDepStrict(toolkit, depRef, stackName);
+      } catch {
+        continue; // a dangling requires: is a toolkit bug `validate` reports
+      }
+      const ref = `${dep.kind}/${dep.name}`;
+      if (selectedRefs.has(ref)) continue;
+      if (ejected.has(ref)) continue;
+      if (isWipWaffle(toolkit, dep.stack, dep.kind, dep.name)) continue;
+      if (dep.item.kind === 'files') {
+        if (!fileMatchesTargets(dep.item, targets)) continue; // targetBrokenRequires' entry
+        if (toolkit.stacks.get(dep.stack)?.optIn.has(ref)) continue; // unpouredRequiredSyrup's entry
+      }
+      const edge = `${requiredBy}→${ref}`;
+      if (seenEdges.has(edge)) continue;
+      seenEdges.add(edge);
+      const ambiguous = findItems(toolkit, dep.kind, dep.name).length > 1;
+      results.push({ ref, requiredBy, stackName: dep.stack, installRef: ambiguous ? `${dep.stack}/${ref}` : ref });
+    }
+  }
+  return results;
+}
+
+/**
  * @param {ItemKind} kind
  * @returns {string} the kind, singular, for an error message
  */

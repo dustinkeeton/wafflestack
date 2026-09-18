@@ -11,7 +11,7 @@ import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template
 import { toolkitLockEntry } from './toolkit-ref.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import {
   applicablePrerequisites,
@@ -338,6 +338,17 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
       `selected ${requiredBy} requires opt-in syrup ${ref} (${stackName}), which was not installed — the ` +
         `dependency is NOT rendered, so the flow is incomplete. Run \`wafflestack install ${ref}\` to pour ` +
         `it, or expect ${requiredBy} to run without it${externalNote(stackName)}`,
+    );
+  }
+
+  // A cross-stack `requires:` edge onto a stack this project does not enable (#520): expansion
+  // never pulls another stack's items in, so it warns instead — never silently enables.
+  for (const { ref, requiredBy, stackName, installRef } of disabledStackRequires(toolkit, selection)) {
+    warnings.push(
+      `selected ${requiredBy} requires ${ref}, which is provided by stack "${stackName}" — that stack is not ` +
+        `enabled here, so the dependency is NOT rendered and the flow is incomplete. Add "${stackName}" to ` +
+        `\`stacks:\` in ${CONFIG_FILE}, run \`wafflestack install ${installRef}\` to pull just that item ` +
+        `(with its own dependencies), or expect ${requiredBy} to run without it.`,
     );
   }
 

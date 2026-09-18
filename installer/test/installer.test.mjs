@@ -14,7 +14,7 @@ import { eject, installRefs, init, unejectCollisions } from '../lib/eject.mjs';
 import { validateToolkit, validateExternalStacks, validateSourceBytes } from '../lib/validate.mjs';
 import { setupGuide, toolkitInventory } from '../lib/setup.mjs';
 import { loadToolkit, loadToolkitWithSources } from '../lib/toolkit.mjs';
-import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
+import { resolveRef, closureDeps, computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, isWipWaffle, itemOutputMatcher, includeEjectOverlaps } from '../lib/refs.mjs';
 import { computeListModel, formatListTable, selectableChoices, STATUS, REMOVAL_REASON } from '../lib/list.mjs';
 import { normalizePrerequisites, applicablePrerequisites, checksDigest, formatCheckGate, looksLikeBranchRef } from '../lib/prerequisites.mjs';
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
@@ -6185,6 +6185,172 @@ describe('skipped syrup companions (#74)', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.ok(!result.warnings.some(companionWarn), JSON.stringify(result.warnings));
     assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')), 'tracked syrup survives');
+  });
+});
+
+// #520: stack expansion never walks `requires:`, so an enabled stack's item whose edge lands in a stack the project does NOT enable
+// renders without it. The rule is warn, never silently enable — for all three kinds — and never twice with #364 / #371.
+describe('cross-stack requires: onto a disabled stack (#520)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  // `sa` is the enabled stack; every edge lands in `sb`, which the project leaves disabled.
+  const fixture = ({ extraAlphaRequires = [], ambiguous = false } = {}) => {
+    write(toolkitRoot, 'toolkit.yaml', `name: fixture\ndescription: cross-stack requires\nstacks: [sa, sb${ambiguous ? ', sc' : ''}]\n`);
+    write(toolkitRoot, 'stacks/sa/stack.yaml', [
+      'name: sa',
+      'description: Dependent stack.',
+      'agents: [alpha]',
+      'skills: [sigma]',
+      'files: [owner.txt]',
+      'requires:',
+      '  agents/alpha:',
+      `    - ${ambiguous ? 'sb/agents/beta' : 'agents/beta'}`,
+      ...extraAlphaRequires.map((r) => `    - ${r}`),
+      '  skills/sigma:',
+      '    - skills/tau',
+      '  files/owner.txt:',
+      '    - files/plain.txt',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sa/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nNeeds beta.\n');
+    write(toolkitRoot, 'stacks/sa/skills/sigma/SKILL.md', '---\nname: sigma\ndescription: Skill sigma.\n---\n\nNeeds tau.\n');
+    write(toolkitRoot, 'stacks/sa/files/owner.txt', 'needs plain\n');
+    write(toolkitRoot, 'stacks/sb/stack.yaml', [
+      'name: sb',
+      'description: Supplying stack.',
+      'agents: [beta]',
+      'skills: [tau]',
+      'files:',
+      '  - plain.txt',
+      '  - danger.yml',
+      '  - path: scoped.yml',
+      '    targets: [codex]',
+      'optIn:',
+      '  - files/danger.yml',
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/sb/agents/beta.md', '---\nname: beta\ndescription: Agent B.\n---\n\nSupplied.\n');
+    write(toolkitRoot, 'stacks/sb/skills/tau/SKILL.md', '---\nname: tau\ndescription: Skill tau.\n---\n\nSupplied.\n');
+    write(toolkitRoot, 'stacks/sb/files/plain.txt', 'plain\n');
+    write(toolkitRoot, 'stacks/sb/files/danger.yml', 'sensitive: true\n');
+    write(toolkitRoot, 'stacks/sb/files/scoped.yml', 'codex: only\n');
+    if (ambiguous) {
+      write(toolkitRoot, 'stacks/sc/stack.yaml', 'name: sc\ndescription: Also has a beta.\nagents: [beta]\n');
+      write(toolkitRoot, 'stacks/sc/agents/beta.md', '---\nname: beta\ndescription: The other beta.\n---\n\nUnrelated.\n');
+    }
+  };
+  const expected = [
+    { ref: 'agents/beta', requiredBy: 'agents/alpha', stackName: 'sb', installRef: 'agents/beta' },
+    { ref: 'skills/tau', requiredBy: 'skills/sigma', stackName: 'sb', installRef: 'skills/tau' },
+    { ref: 'files/plain.txt', requiredBy: 'files/owner.txt', stackName: 'sb', installRef: 'files/plain.txt' },
+  ];
+  const disabledWarn = (w) =>
+    /selected agents\/alpha requires agents\/beta, which is provided by stack "sb" — that stack is not enabled here.*NOT rendered.*Add "sb" to `stacks:`.*wafflestack install agents\/beta/.test(w);
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-xstack520-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-xstack520-'));
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = (opts = {}) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', ...opts });
+  const sel = (toolkit, project, tracked) => computeSelection(toolkit, { include: [], values: {}, ...project }, tracked);
+
+  test('the fixture validates clean: a cross-stack requires: is legal toolkit-side', () => {
+    fixture();
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('an enabled-stack item whose requires: lands in a disabled stack is surfaced, for each of agents / skills / files', () => {
+    fixture();
+    const toolkit = loadToolkit(toolkitRoot);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'] })), expected);
+    // the selection itself is unchanged: expansion never pulls a disabled stack's items in
+    const refs = sel(toolkit, { stacks: ['sa'] }).items.map((i) => `${i.stackName}::${i.kind}/${i.item.name}`).sort();
+    assert.deepEqual(refs, ['sa::agents/alpha', 'sa::files/owner.txt', 'sa::skills/sigma']);
+  });
+
+  test('satisfied = selected in this render: enabling the stack or include:-ing the item silences it', () => {
+    fixture();
+    const toolkit = loadToolkit(toolkitRoot);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa', 'sb'] })), []);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'], include: ['agents/beta', 'skills/tau', 'files/plain.txt'] })), []);
+    // an include: of one item satisfies exactly that edge
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'], include: ['skills/tau'] })), [expected[0], expected[2]]);
+  });
+
+  test('an ejected dependency or dependent takes the edge out of play (#502)', () => {
+    fixture();
+    const toolkit = loadToolkit(toolkitRoot);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'], eject: ['agents/beta'] })), [expected[1], expected[2]]);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'], eject: ['agent:beta'] })), [expected[1], expected[2]], 'matched via normalizeItemRef');
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'], eject: ['skills/sigma'] })), [expected[0], expected[2]]);
+  });
+
+  // The `trackedFiles` re-admission lives in `addStack`, so it only ever re-admits an ENABLED stack's opt-in syrup. A lock-tracked
+  // path from a disabled stack is not re-admitted (the render prunes it), so it is NOT satisfied — pinned, not invented.
+  test('a lock-tracked path in a DISABLED stack does not count as satisfied', () => {
+    fixture();
+    const toolkit = loadToolkit(toolkitRoot);
+    const s = sel(toolkit, { stacks: ['sa'] }, new Set(['plain.txt']));
+    assert.ok(!s.items.some((i) => i.item.name === 'plain.txt'), 'nothing re-admits it: sb never expands');
+    assert.deepEqual(disabledStackRequires(toolkit, s), expected);
+  });
+
+  test("never a second warning: an opt-in dep is unpouredRequiredSyrup's, a scoped-out dep is targetBrokenRequires' (#364, #371)", () => {
+    fixture({ extraAlphaRequires: ['files/danger.yml', 'files/scoped.yml'] });
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+    const toolkit = loadToolkit(toolkitRoot);
+    const s = sel(toolkit, { stacks: ['sa'], targets: ['claude'] });
+    assert.deepEqual(disabledStackRequires(toolkit, s), expected, 'the two gated files are not repeated here');
+    assert.deepEqual(unpouredRequiredSyrup(toolkit, s), [{ ref: 'files/danger.yml', requiredBy: 'agents/alpha', stackName: 'sb' }]);
+    assert.deepEqual(s.targetBrokenRequires.map((e) => e.ref), ['files/scoped.yml']);
+  });
+
+  // A `wip` waffle is absent from every consumer surface (#335), so the edge onto it is neither warned about nor offered
+  // as an `install` target: its remedy is "wait for stable", not "enable the stack". Pinned so the skip cannot be deleted silently.
+  test('a wip dependency in the disabled stack is skipped, not warned about (#335)', () => {
+    fixture();
+    write(toolkitRoot, 'stacks/registry.yaml', YAML.stringify({
+      waffles: [{ name: 'beta', kind: 'agent', stack: 'sb', path: 'stacks/sb/agents/beta.md', status: 'wip' }],
+    }));
+    const toolkit = loadToolkit(toolkitRoot);
+    assert.equal(isWipWaffle(toolkit, 'sb', 'agents', 'beta'), true);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'] })), [expected[1], expected[2]]);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sa]\nconfig: {}\n');
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some((w) => /requires agents\/beta/.test(w)), `no warning names the wip dep: ${JSON.stringify(result.warnings)}`);
+    assert.ok(result.warnings.some((w) => /selected skills\/sigma requires skills\/tau/.test(w)), 'the stable edges still warn');
+  });
+
+  test('installRef is stack-qualified only when the bare name is ambiguous toolkit-wide', () => {
+    fixture({ ambiguous: true });
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+    const toolkit = loadToolkit(toolkitRoot);
+    assert.deepEqual(disabledStackRequires(toolkit, sel(toolkit, { stacks: ['sa'] }))[0], { ...expected[0], installRef: 'sb/agents/beta' });
+  });
+
+  test('render warns with both remedies and still renders the dependent; enabling the stack silences it', () => {
+    fixture();
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sa]\nconfig: {}\n');
+    let result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(result.warnings.some(disabledWarn), JSON.stringify(result.warnings));
+    assert.ok(result.warnings.some((w) => /selected skills\/sigma requires skills\/tau, which is provided by stack "sb"/.test(w)));
+    assert.ok(result.warnings.some((w) => /selected files\/owner\.txt requires files\/plain\.txt, which is provided by stack "sb"/.test(w)));
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/agents/alpha.md')), 'the dependent still renders');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude/agents/beta.md')), false, '…without the disabled stack being pulled in');
+
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sa, sb]\nconfig: {}\n');
+    result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok(!result.warnings.some((w) => /which is provided by stack "sb"/.test(w)), `the remedy works: ${JSON.stringify(result.warnings)}`);
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/agents/beta.md')));
   });
 });
 
