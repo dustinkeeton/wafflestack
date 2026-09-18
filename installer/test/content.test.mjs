@@ -3627,6 +3627,7 @@ describe('source + rendered content: the abolished team concept does not survive
     { pattern: /engineering-team/gi, why: 'a stack name that merely contains the word' },
     { pattern: /Team Standup/gi, why: 'the standup skill\'s title' },
     { pattern: /GitHub Pro \/ Team \/ Enterprise/g, why: 'GitHub\'s paid plan tiers, named in the auto-merge prerequisite (#205)' },
+    { pattern: /Teammates cannot spawn other teammates — the team roster is flat/g, why: 'the harness\'s verbatim rejection of a named spawn from a named seat, quoted in contract clause 4 (#369)' },
   ];
 
   // Emphasis and line wrapping must not smuggle a phrase past the allowlist.
@@ -4352,6 +4353,10 @@ describe('spawn-and-collect contract has one home (#365)', () => {
       assert.match(section, /hands its agent names back to the session that spawned it/, `${who(f)}: clause 4 lost the spawned-seat handback`);
       assert.match(section, /`shutdown_request` messages and `TaskStop` are acts of the main session/, `${who(f)}: clause 4 lost the real constraint`);
       assert.doesNotMatch(section, /cannot name its own spawns/, `${who(f)}: clause 4 re-asserts the false flat-roster rule (#369)`);
+      assert.match(section, /the team roster is flat/, `${who(f)}: clause 4 lost the named-seat rejection (#369 reassessment)`);
+      assert.match(section, /address the agent by the `agentId` the spawn returns/, `${who(f)}: clause 4 lost the agentId fallback`);
+      assert.doesNotMatch(section, /Naming works from any seat/, `${who(f)}: clause 4 over-generalizes naming to every seat (#369 reassessment)`);
+      assert.doesNotMatch(section, /latest wins/, `${who(f)}: clause 4 asserts an unverified duplicate-name rule`);
       assert.match(section, /An invoked skill's spawns belong to that skill/, `${who(f)}: the contract must say an invoked skill's spawns are not the invoker's`);
       assert.equal(callBodies(section, 'Agent').length, 0, `${who(f)}: the contract must not add Agent( calls — that would move the audit roster pin`);
       assert.equal(callBodies(section, 'TaskStop').filter((b) => /task_id:\s*['"]/.test(b)).length, 0, `${who(f)}: the contract must not add TaskStop calls`);
