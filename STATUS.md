@@ -3,7 +3,7 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.15.0 (tagged 2026-09-13; pre-1.0 — the file contract can still change
+- **Version**: v0.16.0 (tagged 2026-09-18; pre-1.0 — the file contract can still change
   between minor releases). `main` carries unreleased work on top — see below.
 - **Last updated**: 2026-09-17
 - **Health**: 🟢 tests 1469 in 203 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `5d082e1` (PR #499's merge)
@@ -31,9 +31,9 @@ All 15 commands work (plus `bake`, a pure alias for `render`), over 26 pipeline 
 `installer/lib/`: `init` · `setup` · `list` · `toggle` · `install` · `render` · `upgrade` ·
 `doctor` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
-## Current focus — unreleased on `main`
+## Current focus — shipped in v0.16.0
 
-Merged 2026-09-15 through 09-17, after the v0.15.0 tag (CHANGELOG `[Unreleased]`):
+Merged 2026-09-15 through 09-18 and ships in v0.16.0 (CHANGELOG `[0.16.0]`):
 
 | Feature | What it gives you | State |
 |---------|-------------------|-------|
@@ -44,7 +44,7 @@ Merged 2026-09-15 through 09-17, after the v0.15.0 tag (CHANGELOG `[Unreleased]`
 | `include:` / `eject:` are mutually exclusive (#497) | **Tightening:** an item in both lists now fails `render` and `doctor`. `install` on an ejected item un-ejects it — and refuses, restoring `waffle.yaml`, if your project-owned copy differs (`--force` overrides). [Why](DECISIONS.md#2026-09-16-include-and-eject-are-mutually-exclusive-install-un-ejects-eject-never-renders-497) | ✅ Shipped (PR #499) |
 | Overlap migration `0.16.0` (#501) | `upgrade` drops an overlapping `include:` entry from the committed `waffle.yaml` for you. A test fails a release bump numbered below the migration's version, and an unreleased toolkit runs pending steps too. [Why](DECISIONS.md#2026-09-16-a-migration-may-be-keyed-to-the-next-release-the-key-is-guarded-and-unreleased-toolkits-run-it-501) | ✅ Lands with PR #503 — overlay overlaps are not migrated (#500) |
 
-Also unreleased: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSection` default
+Also in v0.16.0: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSection` default
 (#472), and `WebFetch` + `WebSearch` granted as a pair across the shipped agents (#474).
 
 ## Shipped in v0.15.0
