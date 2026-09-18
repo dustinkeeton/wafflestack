@@ -56,3 +56,17 @@ config:
       case where unreleased content is the point. The toolkit's OWN repo is also the one place an
       unpinned value is right: its default branch IS the tree under test, and a version-tag pin
       would name a tag that does not exist yet on every release-bump PR.
+  waffle.reportConfirmGate:
+    required: false
+    default: true
+    modes: [true, false, prompt]
+    flag: { off: "--yes" }
+    nonInteractive: fail
+    description: >-
+      Whether `/waffle-report` shows the redacted payload and waits for a yes before filing it
+      UPSTREAM in the toolkit's tracker (#487, part of #478). `true` gates every human-attended
+      run; `false` never asks; `prompt` assumes nothing and asks. `--yes` skips the gate for one
+      run; there is no `--confirm` token — nothing this skill does needs forcing a gate that is on
+      by default. A non-interactive caller with no `--yes` FAILS rather than filing
+      (`nonInteractive: fail`): the report lands in a public repo you do not own, so it is never
+      filed silently — the one `--yes` skill in the toolkit with no non-interactive skip.

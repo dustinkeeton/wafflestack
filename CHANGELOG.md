@@ -32,6 +32,25 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`issue`, `pr-response`, `clean-up`, and `waffle-report` read their confirmation gate from
+  `*.confirmGate` keys (#487, part of #478).** The first skill migration onto the three-mode
+  mechanism: `issue.confirmGate`, `prResponse.confirmGate`, `cleanUp.confirmGate`
+  (github-workflow) and `waffle.reportConfirmGate` (wafflestack) are declared `default: true`,
+  `modes: [true, false, prompt]`, with `flag: { on: "--confirm", off: "--yes" }` on the first three
+  (`pr-response` and `clean-up` gain `--confirm` as a force-the-gate token) and `flag: { off:
+  "--yes" }` on the fourth. Each skill's mode-detection prose now reads the resolved mode as
+  `{{key}}` and the tokens as `{{key.flag.on}}` / `{{key.flag.off}}` — no rendered skill hardcodes
+  a `--yes` default any more — and carries a mode table stating what a non-interactive caller
+  gets: the three repo-local gates skip (`nonInteractive: false`, the standing "When called by
+  agents" rule), while `waffle-report` **fails** (`nonInteractive: fail`) because it files in a
+  repo you do not own. `git-workflow`'s post-merge step points at the same rendered token. Passing
+  both tokens is refused, not resolved silently. Consumer impact: additive for the keys — the
+  committed render is byte-equivalent in behavior (`true` renders the gate exactly as before;
+  set `issue.confirmGate: false` etc. in `.waffle/waffle.yaml` or the local overlay to change it
+  without touching the render). **One retirement:** `clean-up`'s bare `auto` alias for `--yes`
+  is gone — a declared `flag.off` holds one token, and a second prose-only spelling is exactly the
+  hardcoding #478 removes; a bare `auto` now gets a "retired, use `--yes`" note and the normal
+  gate, never a silent skip. Nothing in the toolkit passed `auto`.
 - **Flag tokens render into skills — `{{key.flag.on}}` / `{{key.flag.off}}` (#486, part of #478).**
   A behavioral key's `flag:` tokens are now placeholders alongside its resolved mode `{{key}}`:
   `loadStack` adds each declared side to the stack's referenceable names, `makeResolver` answers
