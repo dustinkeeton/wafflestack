@@ -81,7 +81,7 @@
     ".github/workflows/waffle-doctor.yml": "9ca66d8db273ac13496911823f02c94cacc2fd4091daccd02db013389c13fbc5",
     ".github/workflows/waffle-hygiene.yml": "e054ba9174326655ea9468bc3fc7b3de99a9c5b9e5c853b32ac0bd966f4fed7b",
     ".github/workflows/waffle-label-hook.yml": "af03b136c1dc6051240d71f51e451bc7720c8216d655e6efc717b3f616309786",
-    ".github/workflows/waffle-post-merge-hook.yml": "dbdd247a8351198930ab94d2d6b9ebb9651724e3b64f6b64d50a85bc2eda841a",
+    ".github/workflows/waffle-post-merge-hook.yml": "8a2fa84f61141c9b8f0c21f12af53065a1b68876078c1fe235dc475ccc9fd0d2",
     ".github/workflows/waffle-release-hook.yml": "68ee1e147893f3651d174b6dc0071dfd830bb380c8211cc3a00fd2e32d568a8c",
     ".waffle/AVATARS.md": "705b01e0a24f8e8f405d9303752f77303cb3164d6b94a47df5f5a5170c8b9010",
     ".waffle/avatars/docs-agent.svg": "f3a3bb44916d1176d061e66141cccea6a82f3d570f162fc9ea01c8ef9e56826e",

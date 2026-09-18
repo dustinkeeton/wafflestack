@@ -522,5 +522,26 @@ describe('token spend telemetry: the embedded programs execute correctly (#227)'
     const updated = JSON.parse(Buffer.from(put.content, 'base64').toString('utf8'));
     assert.equal(updated.waffle.totalTokens, 51192); // rebuilt from the seed + this PR
     assert.deepEqual(updated.waffle.prs['42'], { tokens: 51192, costUsd: 0.93 });
+    // A missing file is the expected first-use shape — it seeds silently (#275).
+    assert.doesNotMatch(res.stdout, /not parseable counter JSON/);
+  });
+
+  test('warns before self-heal resets an existing but unparseable tokens.json (#275)', () => {
+    const scratch = mkState();
+    const body = prComment(scratch);
+    const state = counterState({ comments: [{ id: 7, user: BOT, body }], tokens: null });
+    // Valid sha, garbage content: the accumulated totals and the dedup map are about to be lost.
+    fs.writeFileSync(
+      path.join(state, 'contents-response.json'),
+      JSON.stringify({ sha: 's1', content: Buffer.from('{"totalTokens":999999,"prs":{"7":{}}} not json').toString('base64') }),
+    );
+    const res = runStep(counterScript, state, { PR_NUMBER: '42' });
+    assert.equal(res.status, 0, res.stderr); // still best-effort — never reds the merge
+    assert.match(res.stdout, /::warning title=waffle-post-merge-hook::\.waffle\/telemetry\/tokens\.json exists on waffle-telemetry but is not parseable counter JSON .* PR #42/);
+    const put = JSON.parse(fs.readFileSync(path.join(state, 'put-body.json'), 'utf8'));
+    assert.equal(put.sha, 's1'); // the reset still goes through the sha-conditional update
+    const updated = JSON.parse(Buffer.from(put.content, 'base64').toString('utf8'));
+    assert.equal(updated.waffle.totalTokens, 51192); // rebuilt from the seed + this PR
+    assert.deepEqual(updated.waffle.prs, { 42: { tokens: 51192, costUsd: 0.93 } });
   });
 });

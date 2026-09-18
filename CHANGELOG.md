@@ -31,6 +31,14 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Fixed
+- **The post-merge token counter warns before its self-heal resets an unparseable
+  `tokens.json` (#275).** When the file exists on `waffle-telemetry` (non-empty `sha`) but
+  fails the `.waffle` parse check, `waffle-post-merge-hook` now emits a `::warning` naming the
+  PR and the loss (prior totals and the per-PR dedup map) before seeding; a missing file still
+  seeds silently and the update stays best-effort. Consumer impact: re-render picks up the
+  workflow; no config or behavior change beyond the added annotation.
+
 ## [0.16.0] - 2026-09-18
 
 ### Added

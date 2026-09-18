@@ -122,7 +122,10 @@ jobs:
             sha="$(printf '%s' "$resp" | jq -r '.sha // empty' 2>/dev/null || true)"
             current="$(printf '%s' "$resp" | jq -r '.content // "" | gsub("\\s"; "") | @base64d' 2>/dev/null || true)"
             if [ -z "$sha" ]; then current=""; fi
-            printf '%s' "$current" | jq -e '.waffle' >/dev/null 2>&1 || current="$seed"
+            if ! printf '%s' "$current" | jq -e '.waffle' >/dev/null 2>&1; then
+              if [ -n "$sha" ]; then echo "::warning title=waffle-post-merge-hook::${TPATH} exists on ${TBRANCH} but is not parseable counter JSON (no .waffle object) — resetting it to the seed for PR #${PR_NUMBER}, which discards the previously accumulated totals and the per-PR dedup map (non-fatal; the counter restarts from this PR's spend)."; fi
+              current="$seed"
+            fi
             if [ "$(printf '%s' "$current" | jq --arg pr "$PR_NUMBER" '.waffle.prs | has($pr)' 2>/dev/null || echo error)" = "true" ]; then
               echo "🧇 waffle-post-merge-hook: PR #${PR_NUMBER} is already in the global token counter — nothing to add (idempotent re-run)." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
