@@ -8276,6 +8276,103 @@ describe('include: and eject: are mutually exclusive (#497)', () => {
   });
 });
 
+// #497 restored waffle.yaml only when the refusal was an un-eject collision; a `needs config values`
+// refusal left the freshly saved `include:` behind with nothing rendered, so every later render was
+// red until the list was removed by hand (#548). Now ANY refused render rolls the install back.
+describe('install / list --interactive: a refused render restores waffle.yaml byte-for-byte (#548)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const CONFIG = '.waffle/waffle.yaml';
+  const LOCK = '.waffle/waffle.lock.json';
+  // Real-toolkit refs: clean-up needs no config; codebase-architecture needs the required `arch.*` keys.
+  const REF = 'skills/codebase-architecture';
+  const PICK = `code-quality/${REF}`;
+  const RENDERED = '.claude/skills/codebase-architecture/SKILL.md';
+  let cwd;
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-548-'));
+    write(cwd, CONFIG, ['# keep this comment', 'targets: [claude]', 'stacks: []', 'include: [skills/clean-up]', 'config: {}', ''].join('\n'));
+    const ok = runCli(['install'], cwd);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const snapshot = () => ({ config: read(cwd, CONFIG), lock: read(cwd, LOCK) });
+  const assertRestored = (before, out) => {
+    assert.match(out, /needs config values: [^\n]*config\.arch\.settingsType/);
+    assert.match(out, /install refused — \.waffle\/waffle\.yaml was restored/);
+    assert.equal(read(cwd, CONFIG), before.config, 'waffle.yaml is byte-identical (no include, no reflow)');
+    assert.equal(read(cwd, LOCK), before.lock, 'the lock is untouched');
+    assert.ok(!fs.existsSync(path.join(cwd, RENDERED)), 'nothing was rendered');
+  };
+
+  test('`install <ref>`: the save is undone, and the same install succeeds once the values exist', () => {
+    const before = snapshot();
+    const refused = runCli(['install', REF], cwd);
+    assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+    assert.match(refused.stdout, /installing skills\/codebase-architecture/, 'the install leg ran before the refusal');
+    assertRestored(before, refused.stderr);
+    const again = runCli(['render'], cwd);
+    assert.equal(again.status, 0, `a plain re-render stays green: ${again.stdout}${again.stderr}`);
+
+    write(cwd, CONFIG, [
+      '# keep this comment', 'targets: [claude]', 'stacks: []', 'include: [skills/clean-up]',
+      'config:', '  project: {longName: the Acme CLI}', '  arch: {settingsType: AppSettings, depExceptions: none}', '',
+    ].join('\n'));
+    const fixed = runCli(['install', REF], cwd);
+    assert.equal(fixed.status, 0, fixed.stdout + fixed.stderr);
+    assert.deepEqual(YAML.parse(read(cwd, CONFIG)).include, ['skills/clean-up', REF]);
+    assert.ok(fs.existsSync(path.join(cwd, RENDERED)));
+  });
+
+  test('a ref that is already included writes nothing — so the refusal claims no restore', () => {
+    write(cwd, CONFIG, ['targets: [claude]', 'stacks: []', `include: [skills/clean-up, ${REF}]`, 'config: {}', ''].join('\n'));
+    const before = read(cwd, CONFIG);
+    const refused = runCli(['install', REF], cwd);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /needs config values/);
+    assert.doesNotMatch(refused.stderr, /was restored/);
+    assert.equal(read(cwd, CONFIG), before);
+  });
+
+  // `list --interactive` is TTY-gated and spawnSync pipes are not a TTY: `script` lends a pty and
+  // forwards its stdin into it. BSD (macOS) and util-linux (CI) spell the invocation differently, and
+  // BSD refuses a SOCKET on stdin (what spawnSync's pipes are on darwin), so the keys arrive by file.
+  const scriptArgs = (cmd) =>
+    process.platform === 'darwin'
+      ? ['-q', '/dev/null', ...cmd]
+      : ['-q', '-e', '-c', cmd.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' '), '/dev/null'];
+  const inPty = (cmd, input) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'keys-548-'));
+    const keys = path.join(dir, 'keys');
+    fs.writeFileSync(keys, input);
+    const fd = fs.openSync(keys, 'r');
+    try {
+      return spawnSync('script', scriptArgs(cmd), { encoding: 'utf8', stdio: [fd, 'pipe', 'pipe'], timeout: 60000 });
+    } finally {
+      fs.closeSync(fd);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const hasPty = () => {
+    const probe = inPty([process.execPath, '-e', 'console.log(process.stdin.isTTY && process.stdout.isTTY ? "pty-ok" : "no-pty")'], '');
+    return !probe.error && /pty-ok/.test(probe.stdout ?? '');
+  };
+
+  test('`list --interactive` apply: the picker\'s selection is rolled back the same way', (t) => {
+    if (!hasPty()) { t.skip('no `script` pty available on this host'); return; }
+    const { version } = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const choices = selectableChoices(computeListModel({ toolkitRoot: repoRoot, cwd, toolkitVersion: version }));
+    const idx = choices.findIndex((c) => c.installRef === PICK);
+    assert.ok(idx >= 0, `${PICK} is offered by the picker: ${choices.map((c) => c.installRef).join(', ')}`);
+    const before = snapshot();
+    // ↓ to the row, space to check it, enter to apply — the pty transcript carries stdout AND stderr.
+    const refused = inPty([process.execPath, CLI, 'list', '--interactive', '--cwd', cwd], `${'j'.repeat(idx)} \r`);
+    assert.equal(refused.status, 1, refused.stdout + (refused.stderr ?? ''));
+    assert.match(refused.stdout, /installing skills\/codebase-architecture/, 'the picker applied and the install leg ran');
+    assertRestored(before, refused.stdout);
+  });
+});
+
 describe('install: persistence and eject include-cleanup', () => {
   let root;
   let cwd;
