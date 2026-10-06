@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadToolkit } from './toolkit.mjs';
+import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
 import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
-import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
+import { spawnSync } from 'node:child_process';
+import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
 import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
 import {
@@ -68,6 +69,62 @@ export function validateToolkit(rootDir) {
   problems.push(...validateRegistry(rootDir, toolkit));
   for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
   return problems;
+}
+
+/** Default runner for `validateModPlugins`: `claude plugin validate <dir>`, output captured. */
+function runPluginValidate(cli, dir, timeoutMs) {
+  try {
+    const res = spawnSync(cli, ['plugin', 'validate', dir], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (res.error) return { ok: false, output: res.error.message };
+    const output = `${res.stdout ?? ''}${res.stderr ?? ''}`.trim();
+    return { ok: res.status === 0, output: res.signal ? `${output}\nkilled by ${res.signal} (timeout ${timeoutMs}ms)`.trim() : output };
+  } catch (err) {
+    return { ok: false, output: err.message };
+  }
+}
+
+/**
+ * Run Claude Code's own lint, `claude plugin validate`, over every mod SOURCE dir (#564). The CLI
+ * is probed with `locate` (default: PATH) so CI runners without it get a visible **skipped**
+ * result, never a pass; `run` is the per-mod runner (default: spawn). Returns
+ * `{ cli, mods: [{ stack, mod, dir }], checks: [{ stack, mod, dir, ok, output }], problems }`
+ * — `cli === null` ⇒ skipped, `checks` empty.
+ */
+export function validateModPlugins(rootDir, { locate = claudeCli, run = runPluginValidate, timeoutMs = 60000 } = {}) {
+  let toolkit;
+  try {
+    toolkit = loadToolkit(rootDir);
+  } catch {
+    return { cli: null, mods: [], checks: [], problems: [] };
+  }
+  const mods = [];
+  for (const stack of toolkit.stacks.values()) {
+    for (const mod of stack.mods) mods.push({ stack: stack.name, mod: mod.name, dir: mod.dir });
+  }
+  const result = { cli: null, mods, checks: [], problems: [] };
+  if (!mods.length) return result;
+  result.cli = locate() ?? null;
+  if (!result.cli) return result;
+  for (const m of mods) {
+    const { ok, output } = run(result.cli.path, m.dir, timeoutMs);
+    result.checks.push({ ...m, ok, output });
+    if (!ok) {
+      const tail = output.split('\n').filter(Boolean).slice(-8).map((l) => `    ${l}`).join('\n');
+      result.problems.push(`stack ${m.stack}: mod ${m.mod} fails \`claude plugin validate\`:\n${tail}`);
+    }
+  }
+  return result;
+}
+
+/** Human lines for a `validateModPlugins` result; a skipped run is named as skipped, not passed. */
+export function formatModPluginChecks(result) {
+  if (!result.mods.length) return [];
+  const ref = (m) => `${m.stack}/mods/${m.mod}`;
+  if (!result.cli) {
+    return [`skipped: claude plugin validate — \`claude\` is not on PATH; ${result.mods.length} mod(s) unchecked: ${result.mods.map(ref).join(', ')}`];
+  }
+  const who = result.cli.version ? `claude ${result.cli.version}` : 'claude';
+  return result.checks.map((c) => `${c.ok ? 'ok' : 'FAIL'}: claude plugin validate ${ref(c)} (${who})`);
 }
 
 /**
@@ -204,7 +261,7 @@ export function validateRegistry(rootDir, toolkit) {
   // Walked over both the manifest and the disk: they catch different escapes, and disk-only is the
   // residue a half-finished move leaves behind.
   for (const [stackName, stack] of toolkit.stacks) {
-    for (const [refKind, items] of [['agents', stack.agents], ['skills', stack.skills]]) {
+    for (const [refKind, items] of [['agents', stack.agents], ['skills', stack.skills], ['mods', stack.mods]]) {
       for (const item of /** @type {any[]} */ (items)) {
         if (!registry.live.has(`${stackName}::${refKind}/${item.name}`)) {
           problems.push(
@@ -277,7 +334,7 @@ function followsToLive(registry, start) {
 }
 
 /**
- * Every agent/skill directory entry physically present under a stack dir, one level deep. It must
+ * Every agent/skill/mod directory entry physically present under a stack dir, one level deep. It must
  * stay independent of `stack.yaml` — this is the on-disk half of the three-way reconcile.
  *
  * @param {string} stackDir
@@ -296,6 +353,12 @@ function wafflesOnDisk(stackDir) {
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
       if (entry.isDirectory()) found.push({ kind: 'skill', name: entry.name });
+    }
+  }
+  const modsDir = path.join(stackDir, 'mods');
+  if (fs.existsSync(modsDir)) {
+    for (const entry of fs.readdirSync(modsDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) found.push({ kind: 'mod', name: entry.name });
     }
   }
   return found;
@@ -471,7 +534,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     for (const [itemRef, deps] of Object.entries(stack.requires ?? {})) {
       const parsed = parseRef(itemRef);
       if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-        problems.push(`${ctx}: requires key "${itemRef}" does not match a skill/agent in this stack`);
+        problems.push(`${ctx}: requires key "${itemRef}" does not match a skill/agent/file/mod in this stack`);
         continue;
       }
       for (const dep of deps ?? []) {
@@ -486,7 +549,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     for (const ref of stack.optIn) {
       const parsed = parseRef(ref);
       if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-        problems.push(`${ctx}: optIn entry "${ref}" does not match a file/skill/agent in this stack`);
+        problems.push(`${ctx}: optIn entry "${ref}" does not match a file/skill/agent/mod in this stack`);
       }
     }
     // Typed external prerequisites (#129), with the same anti-typo rule for any `items:` ref.
@@ -504,7 +567,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       for (const ref of p.items ?? []) {
         const parsed = parseRef(ref);
         if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
+          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent/mod in this stack`);
         }
       }
     }
@@ -545,7 +608,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       for (const ref of p.items ?? []) {
         const parsed = parseRef(ref);
         if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
+          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent/mod in this stack`);
         }
       }
       if (p.targets === null && p.raw.targets !== undefined) {
@@ -622,6 +685,15 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
 
     // A files entry's `targets:` (#364) is deliberately NOT linted here: every malformation of it
     // is a hard load error in `loadToolkit`, which is a gate a forked toolkit cannot skip.
+
+    // A mod (#560) is copied verbatim, so it contributes no placeholders; its manifest must parse.
+    for (const mod of stack.mods) {
+      try {
+        JSON.parse(fs.readFileSync(path.join(mod.dir, MOD_MANIFEST), 'utf8'));
+      } catch (err) {
+        problems.push(`${ctx}: mod ${mod.name} ${MOD_MANIFEST} is not valid JSON: ${err.message}`);
+      }
+    }
 
     // Text `files/` payloads are templated just like skills; binaries are byte-copied, so skip them.
     for (const file of stack.files) {

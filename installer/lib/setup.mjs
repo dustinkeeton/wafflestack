@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadToolkit, missingRequiredKeys } from './toolkit.mjs';
-import { exists, lookupPath } from './util.mjs';
+import { loadToolkit, missingRequiredKeys, MOD_MANIFEST, MOD_ENGINE_LAID } from './toolkit.mjs';
+import { exists, lookupPath, compareVersions } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
-import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle, modOutputDir } from './refs.mjs';
 import { waffleStatus } from './registry.mjs';
 import { readTreeLock, collectUsedKeys } from './render.mjs';
 import {
@@ -11,6 +11,7 @@ import {
   evaluatePrerequisites,
   formatPrereq,
   PREREQ_KINDS,
+  claudeCli,
 } from './prerequisites.mjs';
 import { offerablePlugins } from './plugins.mjs';
 
@@ -19,13 +20,13 @@ import { offerablePlugins } from './plugins.mjs';
  * "Current configuration" section when the project at `cwd` is already configured, then an
  * inventory generated from the installed toolkit.
  */
-export function setupGuide(toolkitRoot, toolkitVersion, cwd) {
+export function setupGuide(toolkitRoot, toolkitVersion, cwd, { locateClaude = claudeCli } = {}) {
   const playbook = fs
     .readFileSync(path.join(toolkitRoot, 'schema', 'SETUP.md'), 'utf8')
     .trimEnd();
   const toolkit = loadToolkit(toolkitRoot);
   const sections = [playbook];
-  const current = cwd ? currentConfigSection(toolkit, cwd, toolkitVersion) : null;
+  const current = cwd ? currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude }) : null;
   if (current) sections.push(current);
   sections.push(toolkitInventory(toolkit, toolkitVersion));
   return sections.join('\n\n---\n\n');
@@ -35,7 +36,7 @@ export function setupGuide(toolkitRoot, toolkitVersion, cwd) {
  * The "Current configuration" section, read with the same loaders the renderer uses.
  * Returns null for an unconfigured repo.
  */
-function currentConfigSection(toolkit, cwd, toolkitVersion) {
+function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {}) {
   if (!exists(resolveConfigFile(cwd).file)) return null;
 
   const header = '# Current configuration — update mode';
@@ -226,6 +227,9 @@ function currentConfigSection(toolkit, cwd, toolkitVersion) {
     lines.push('## Opt-in syrup (sensitive files — opt-in)', '', ...optInLines, '');
   }
 
+  const mods = selection.items.filter((i) => i.kind === 'mods');
+  if (mods.length) lines.push(...modsSection(mods, locateClaude));
+
   const { unmetRequired: unmetReqPrereqs, unmetRecommended: unmetRecPrereqs } = evaluatePrerequisites(
     applicablePrerequisites(toolkit, selection),
     cwd,
@@ -253,6 +257,61 @@ function currentConfigSection(toolkit, cwd, toolkitVersion) {
   }
 
   return lines.join('\n').trimEnd();
+}
+
+/** `claude plugin test` landed in this Claude Code release; older builds have `validate` only. */
+const PLUGIN_TEST_MIN = '2.1.291';
+
+/**
+ * The "## Mods" block of the update view (#564): a rendered mod is inert until Claude Code loads
+ * it, so each selected mod gets its post-render check and the three load paths, plus a note on
+ * the files a `--plugin-dir` load lays into the dir. `locateClaude` is the CLI probe (stubbable).
+ */
+function modsSection(mods, locateClaude = claudeCli) {
+  const cli = locateClaude() ?? null;
+  const canTest = Boolean(cli?.version) && compareVersions(cli.version, PLUGIN_TEST_MIN) >= 0;
+  const cliNote = !cli
+    ? '`claude` is not on PATH here — the commands below are for the user\'s machine; do not run them from this one.'
+    : canTest
+      ? `\`claude\` ${cli.version} is on PATH (${cli.path}).`
+      : `\`claude\` ${cli.version ?? '(version unknown)'} is on PATH; \`claude plugin test\` needs ≥ ${PLUGIN_TEST_MIN}, so skip the test line.`;
+  const lines = [
+    '## Mods (Claude Code plugins) — load them after `render`',
+    '',
+    '`render` writes a mod\'s files; nothing loads them. For each mod below, after `render` and',
+    '`doctor`: run the check, then ask the user which load path they want — per-session flag,',
+    `every-session env, or a permanent marketplace install. ${cliNote}`,
+    '',
+  ];
+  for (const { stackName, item } of mods) {
+    const out = modOutputDir(item.name).split(path.sep).join('/');
+    let description = '';
+    try {
+      description = JSON.parse(fs.readFileSync(path.join(item.dir, MOD_MANIFEST), 'utf8')).description ?? '';
+    } catch { /* validate reports a bad manifest; the load lines still apply */ }
+    lines.push(`### \`mods/${item.name}\` (${stackName}) → \`${out}/\``, '');
+    if (description) lines.push(description, '');
+    lines.push(
+      `- check (post-render): \`claude plugin validate ${out}\``,
+      `- load, this session only: \`claude --plugin-dir "$PWD/${out}"\` (repeat the flag for several mods)`,
+      '- load, every session, no flag: add the ABSOLUTE path to `CLAUDE_CODE_PLUGIN_DIRS` (path-list separated) in the',
+      '  process env or the `env` block of `~/.claude/settings.json` — never a project\'s settings file',
+      `- install permanently: a marketplace — a \`.claude-plugin/marketplace.json\` listing the mod (\`"source": "./${out}"\`),`,
+      `  then \`/plugin install ${item.name} --marketplace <owner>/<repo>\` (or \`claude plugin marketplace add <folder>\` locally)`,
+      canTest
+        ? `- test: \`claude plugin test ${out}\` — runs the mod's own \`*.test.ts\` against the engine`
+        : `- test: \`claude plugin test ${out}\` needs \`claude\` ≥ ${PLUGIN_TEST_MIN} — skip until then`,
+      '',
+    );
+  }
+  lines.push(
+    `> A \`--plugin-dir\` load lays ${MOD_ENGINE_LAID.map((e) => `\`${e}\``).join(' and ')} INTO the dir it loads — per-machine files,`,
+    '> not lock-managed (`doctor` ignores them). Offer the matching `.gitignore` lines',
+    `> (${MOD_ENGINE_LAID.map((e) => `\`.claude/mods/*/${e}\``).join(', ')}) alongside the baseline in step 6, and always load the`,
+    '> RENDERED copy, never a stack\'s `mods/` source dir.',
+    '',
+  );
+  return lines;
 }
 
 /** One `- \`key\` … ` bullet describing a config key's effective value in the update view. */
@@ -346,6 +405,8 @@ export function toolkitInventory(toolkit, version) {
         `- files (opt-in syrup — sensitive, do NOT install by default): ${optInFiles.map((f) => `files/${f.name}`).join(', ')}`,
       );
     }
+    const mods = offered(stack.mods, 'mods');
+    if (mods.length) lines.push(`- mods (Claude Code plugins — render for the \`claude\` target only): ${mods.join(', ')}`);
     const env = Object.entries(stack.env);
     if (env.length) {
       lines.push(`- env prerequisites: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`);

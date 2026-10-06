@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { eject, init, installRefs, unejectCollisions } from './lib/eject.mjs';
-import { validateToolkit } from './lib/validate.mjs';
+import { validateToolkit, validateModPlugins, formatModPluginChecks } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { collectReport, formatReportMarkdown } from './lib/report.mjs';
+import { collectState, formatStateText } from './lib/state.mjs';
 import { upgrade } from './lib/upgrade.mjs';
 import { uninstall, reinstall } from './lib/uninstall.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
@@ -44,7 +45,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -117,6 +118,16 @@ try {
       process.exit(result.ok ? 0 : 1);
       break;
     }
+    case 'state': {
+      const json = extractFlag(args, '--json');
+      if (args.length) fail(`state takes no refs (got ${args.join(', ')}) — it prints this repo's resolved behavioral keys, run files and lock status`);
+      // Read-only and offline (#561): the tree is read through the tree lock, drift is the
+      // subject rather than the exit code, and nothing is written.
+      const toolkitIdentity = warnProvenance(offlineIdentity());
+      const state = collectState({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity });
+      process.stdout.write(json ? `${JSON.stringify(state, null, 2)}\n` : formatStateText(state));
+      break;
+    }
     case 'report': {
       const json = extractFlag(args, '--json');
       if (args.length) fail(`report takes no refs (got ${args.join(', ')}) — it prints this repo's wafflestack diagnostics for an upstream bug report`);
@@ -146,7 +157,7 @@ try {
       break;
     }
     case 'eject': {
-      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH>');
+      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH | mods/NAME>');
       const { ref, released, orphaned } = eject({ cwd, item: args[0], toolkitRoot, log: console.log });
       console.log(`ejected ${ref}; ${released.length} files released from management:`);
       for (const f of released) console.log(`  ${f}`);
@@ -280,6 +291,10 @@ try {
     }
     case 'validate': {
       const problems = validateToolkit(toolkitRoot);
+      // Claude Code's own lint over each mod source dir (#564) — "skipped" when the CLI is absent.
+      const mods = validateModPlugins(toolkitRoot);
+      for (const line of formatModPluginChecks(mods)) console.log(line);
+      problems.push(...mods.problems);
       for (const p of problems) console.error(p);
       console.log(problems.length ? `${problems.length} problems` : 'toolkit is valid');
       process.exit(problems.length ? 1 : 0);
@@ -372,10 +387,11 @@ function helpText() {
     '  list        show every stack and item in the toolkit, and what this repo has selected',
     '  toggle      pick which rendered skills an agent may invoke on its own (TTY picker), then render',
     '  install     add stacks/items to the selection (persists them), then render',
-    '  render      re-render the current selection into .claude/, .codex/, .agents/ and files/ paths',
+    '  render      re-render the current selection into .claude/ (agents, skills, mods), .codex/, .agents/ and files/ paths',
     '  bake        alias for render — same command, better metaphor',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',
+    '  state       print the resolved behavioral keys (value, layer, tokens), run files, locks and drift',
     '  report      print redacted diagnostics (lock, config keys, doctor) for an upstream bug report',
     '  eject       release one item to project ownership; the files stay, the lock forgets them',
     '  uninstall   remove every wafflestack-managed file this repo has (dry run without --yes)',
@@ -398,6 +414,7 @@ function helpText() {
     '  --allow-missing   doctor/uninstall: tolerate managed files that are absent from disk',
     '  --verify-render   doctor: also check the config still renders what the lock records',
     '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
+    '                    state: print the state document as JSON (the shape AGENTS.md documents)',
     '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
     '  --disable SKILL   toggle: render SKILL slash-only (disable-model-invocation: true); repeatable',
     '  --enable SKILL    toggle: let an agent invoke SKILL again; repeatable. Either flag skips the picker',

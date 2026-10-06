@@ -25,10 +25,10 @@ import {
  */
 export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
   const ref = normalizeItemRef(item);
-  if (!/^(agents|skills|files)\//.test(ref)) {
-    throw new Error(`eject target must look like skills/<name>, agents/<name>, or files/<path>, got "${item}"`);
+  if (!/^(agents|skills|files|mods)\//.test(ref)) {
+    throw new Error(`eject target must look like skills/<name>, agents/<name>, files/<path>, or mods/<name>, got "${item}"`);
   }
-  const [, kind, name] = /^(agents|skills|files)\/(.+)$/.exec(ref);
+  const [, kind, name] = /^(agents|skills|files|mods)\/(.+)$/.exec(ref);
 
   const { file: configFile, legacy, note } = resolveConfigFile(cwd);
   if (legacy) log(note);
@@ -142,7 +142,7 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
       }
       log(`installing ${target.name} (stack)`);
       const stack = toolkit.stacks.get(target.name);
-      for (const kind of /** @type {const} */ (['agents', 'skills', 'files'])) {
+      for (const kind of /** @type {const} */ (['agents', 'skills', 'files', 'mods'])) {
         for (const { name } of stack[kind]) if (isEjected(`${kind}/${name}`)) log(stillEjected(`${kind}/${name}`));
       }
       continue;

@@ -39,7 +39,14 @@ import { flagPlaceholders } from './template.mjs';
  * @property {string[] | null} targets declared harness scope (#364): null renders unconditionally,
  *   a list renders only when the consumer has enabled at least one listed target
  *
- * @typedef {AgentItem | SkillItem | FileItem} Item
+ * @typedef {object} ModItem a Claude Code mod (#560): a plugin dir copied verbatim, claude target only
+ * @property {'mod'} kind
+ * @property {string} name
+ * @property {string} dir absolute path to `mods/<name>/`
+ * @property {string[]} files mod-dir-relative paths, sorted; always includes MOD_MANIFEST
+ * @property {string[]} targets always `['claude']` — the one harness with a mod surface
+ *
+ * @typedef {AgentItem | SkillItem | FileItem | ModItem} Item
  *
  * @typedef {object} Provenance
  * @property {string} name
@@ -59,7 +66,8 @@ import { flagPlaceholders } from './template.mjs';
  * @property {AgentItem[]} agents
  * @property {SkillItem[]} skills
  * @property {FileItem[]} files
- * @property {Set<string>} optIn normalized `files/<path>` refs gated out of a default render
+ * @property {ModItem[]} mods
+ * @property {Set<string>} optIn normalized `files/<path>` / `mods/<name>` refs gated out of a default render
  * @property {Record<string, any>} config the declared `config:` block (key → spec)
  * @property {Set<string>} declared the placeholder names content may reference: the keys of `config`
  *   plus each `<key>.flag.<side>` a key's `flag:` map names (#486)
@@ -88,6 +96,7 @@ import { flagPlaceholders } from './template.mjs';
  * @property {string[]} [agents] bare agent names
  * @property {string[]} [skills] bare skill names
  * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths
+ * @property {string[]} [mods] bare mod names (directories under `mods/`)
  * @property {string[]} [optIn] item refs gated out of a default render
  * @property {Record<string, any>} [config] declared template keys (key → spec)
  * @property {Record<string, string>} [env] legacy harness env map
@@ -98,6 +107,29 @@ import { flagPlaceholders } from './template.mjs';
  */
 
 const FILE_ENTRY_KEYS = new Set(['path', 'targets']);
+
+/** The one file every mod dir must carry — Claude Code's plugin manifest (#560). */
+export const MOD_MANIFEST = '.claude-plugin/plugin.json';
+
+/** The harness targets a mod renders for: Claude Code is the only one with a mod surface (#560). */
+export const MOD_TARGETS = Object.freeze(['claude']);
+
+/**
+ * Mod-dir-relative paths the Claude Code engine lays into a mod it loads from disk
+ * (`claude --plugin-dir <mod>`): a per-machine tsconfig and this build's API declarations. Never
+ * part of the mod, so `loadStack` skips them — a load of the SOURCE dir must not ship them (#564).
+ * A trailing `/` marks a directory prefix.
+ */
+export const MOD_ENGINE_LAID = Object.freeze(['tsconfig.json', '.claude-plugin/types/']);
+
+/**
+ * True for a mod-dir-relative path (either separator) that `MOD_ENGINE_LAID` covers.
+ * @param {string} rel
+ */
+export function isEngineLaid(rel) {
+  const posix = rel.split(path.sep).join('/');
+  return MOD_ENGINE_LAID.some((entry) => (entry.endsWith('/') ? posix.startsWith(entry) : posix === entry));
+}
 
 /**
  * Load the toolkit registry and every stack it lists.
@@ -299,6 +331,30 @@ function loadStack(name, dir) {
     return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)), targets };
   });
 
+  // Every malformation is a LOAD error, like `targets:` above: a mod the render cannot reproduce
+  // is a poured copy the next render prunes from the consumer's tree.
+  if (manifest.mods !== undefined && !Array.isArray(manifest.mods)) {
+    throw new Error(`stack ${name}: \`mods:\` must be a list of bare mod names (directories under mods/)`);
+  }
+  /** @type {ModItem[]} */
+  const mods = (manifest.mods ?? []).map((entry) => {
+    const modName = bareName('mods', entry);
+    const modDir = path.join(dir, 'mods', modName);
+    if (!exists(modDir) || !fs.statSync(modDir).isDirectory()) {
+      throw new Error(`stack ${name}: mods entry "${modName}" has no directory under mods/`);
+    }
+    const files = fs
+      .readdirSync(modDir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => path.relative(modDir, path.join(e.parentPath ?? e.path, e.name)))
+      .filter((rel) => !isEngineLaid(rel))
+      .sort();
+    if (!files.includes(MOD_MANIFEST)) {
+      throw new Error(`stack ${name}: mod ${modName} has no ${MOD_MANIFEST} — every mod is a Claude Code plugin dir`);
+    }
+    return { kind: 'mod', name: modName, dir: modDir, files, targets: [...MOD_TARGETS] };
+  });
+
   if (manifest.syrup !== undefined) {
     throw new Error(`stack ${name}: manifest key \`syrup:\` was renamed to \`optIn:\` in 0.10.0 — rename it in stack.yaml`);
   }
@@ -316,6 +372,7 @@ function loadStack(name, dir) {
     agents,
     skills,
     files,
+    mods,
     optIn,
     config,
     declared,

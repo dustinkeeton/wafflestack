@@ -1,0 +1,7 @@
+{
+  "name": "waffle-view",
+  "version": "0.2.1",
+  "author": { "name": "Dustin Keeton", "url": "https://github.com/dustinkeeton/wafflestack" },
+  "description": "A pane showing this repo's resolved wafflestack state — behavioral keys, run files, locks, drift, sliced to what the last `/skill` cares about — read through `wafflestack state --json`.",
+  "types": "./types/index.d.ts"
+}

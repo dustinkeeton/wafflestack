@@ -61,7 +61,7 @@ force-install.
 
 You do not have to adopt a whole stack. When a project wants just one skill or agent,
 select it individually — the inventory lists items in installable ref form
-(`skills/<name>`, `agents/<name>`). Two ways to record the choice:
+(`skills/<name>`, `agents/<name>`, `mods/<name>`). Two ways to record the choice:
 
 - Run `wafflestack install <ref…>` — it resolves each ref, appends stack refs to
   `stacks:` and item refs to a top-level `include:` list, then renders. It reports the
@@ -69,7 +69,8 @@ select it individually — the inventory lists items in installable ref form
 - Or edit `.waffle/waffle.yaml` directly: stack names under `stacks:`, item refs under
   `include:`, then run `render`.
 
-Refs: a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` when a
+Refs: a stack name, `skills/<name>`, `agents/<name>`, `mods/<name>` (a Claude Code plugin dir —
+renders only when `claude` is a target), or `<stack>/skills/<name>` when a
 name appears in more than one stack (an unqualified ambiguous ref fails with the
 candidates listed). Installing an item automatically pulls its dependency closure — an
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across
@@ -427,6 +428,12 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - Run `wafflestack doctor` — it must report that all managed files match the lock.
 - Harnesses load skills and agents at session start: the user may need to restart
   their agent session before new slash commands appear.
+- A rendered **mod** (`.claude/mods/<name>/`, a Claude Code plugin dir) is inert until Claude
+  Code loads it. Re-run `wafflestack setup` once the repo is configured: its update-mode
+  section prints, per mod, the check (`claude plugin validate .claude/mods/<name>`) and the
+  load paths — per-session `claude --plugin-dir "$PWD/.claude/mods/<name>"`,
+  `CLAUDE_CODE_PLUGIN_DIRS`, or a marketplace install. Offer the user one of them; never load
+  a stack's source dir (a load lays per-machine files into the dir it loads).
 - Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
   skipped (with reasons); the both/one/neither call for each opt-in syrup pairing
