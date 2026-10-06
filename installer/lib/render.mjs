@@ -11,7 +11,7 @@ import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template
 import { toolkitLockEntry } from './toolkit-ref.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, modOutputDir } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import {
   applicablePrerequisites,
@@ -430,6 +430,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
     for (const { kind, item } of items) {
       if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, guards });
       else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, guards });
+      else if (kind === 'mods') renderMod({ mod: item, stack, project, emit });
       else renderFiles({ file: item, stack, resolve: resolverFor(item), emit, errors, guards });
     }
     checkEnvPrerequisites({ stack, project, cwd, warnings });
@@ -601,6 +602,18 @@ function renderFiles({ file, stack, resolve, emit, errors, guards }) {
   }
   const raw = fs.readFileSync(file.path, 'utf8');
   emit(file.name, substitute(raw, resolve, stack.declared, errors, context, guards), context);
+}
+
+/**
+ * Emit a mod (#560) verbatim to `.claude/mods/<name>/`: a plugin dir is code, so no `{{…}}`
+ * substitution and no extension append. Selection already scoped it to `claude`; the guard is
+ * defense in depth against a caller that bypassed `computeSelection`.
+ */
+function renderMod({ mod, stack, project, emit }) {
+  if (!project.targets.includes('claude')) return;
+  const context = `${stack.name}/mods/${mod.name}`;
+  const outDir = modOutputDir(mod.name);
+  for (const rel of mod.files) emit(path.join(outDir, rel), fs.readFileSync(path.join(mod.dir, rel)), context);
 }
 
 function appendExtension(body, cwd, relPath) {
@@ -799,7 +812,7 @@ export function collectUsedKeys(items) {
         if (!rel.endsWith('.md')) continue;
         for (const k of placeholderKeys(fs.readFileSync(path.join(item.dir, rel), 'utf8'))) keys.add(k);
       }
-    } else if (!item.binary) {
+    } else if (kind === 'files' && !item.binary) {
       for (const k of placeholderKeys(fs.readFileSync(item.path, 'utf8'))) keys.add(k);
     }
   }

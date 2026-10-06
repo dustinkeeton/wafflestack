@@ -22,7 +22,8 @@ harnesses and keeps it current; it doesn't produce that content (that's a proces
 
 ## Vocabulary
 
-- **waffle** — an individual installable item: an agent or a skill.
+- **waffle** — an individual installable item: an agent, a skill, or a mod (a Claude Code
+  plugin dir, rendered verbatim for the `claude` target only).
 - **stack** — a named group of waffles.
 - **syrup** — the generic `files/` payload a stack can also carry (CI workflows, scripts, config),
   rendered verbatim to any repo-relative path with the same `{{key}}` substitution, lock tracking,

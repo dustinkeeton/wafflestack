@@ -31,6 +31,17 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **The `mods/` render kind (#560, part of #552).** A stack may carry `mods/<name>/` — a Claude
+  Code plugin dir (`.claude-plugin/plugin.json` + hooks) listed under `mods:` in `stack.yaml` —
+  and the toolkit renders it **verbatim** (no `{{…}}` substitution: a `.tsx` hook is code) to
+  `.claude/mods/<name>/` for the `claude` target only, like a map-form `files:` entry scoped
+  `targets: [claude]`. Mods are registered waffles (`kind: mod` in `stacks/registry.yaml`),
+  addressable as `mods/<name>` in `include:`/`optIn:`/`requires:`/`eject:`, lock-managed,
+  doctor-covered, pruned when `claude` is disabled, and released by `wafflestack eject mods/<name>`.
+  Every `mods:` malformation is a hard load error. No built-in stack ships a mod yet.
+  **Consumer impact:** none — additive; a re-render changes nothing until a stack ships a mod.
+
 ### Changed
 - **`--gitignore` recommends `.waffle/avatars/`, and `doctor` treats the generated `.waffle/`
   docs as presence-optional (#528).** The per-agent avatar SVGs are regenerated on every render

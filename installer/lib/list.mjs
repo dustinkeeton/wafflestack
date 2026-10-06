@@ -107,6 +107,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     for (const a of stack.agents) addRow(rows, stack.name, 'agents', a.name);
     for (const s of stack.skills) addRow(rows, stack.name, 'skills', s.name);
     for (const f of stack.files) addRow(rows, stack.name, 'files', f.name, stack.optIn.has(`files/${f.name}`), f);
+    for (const m of stack.mods) addRow(rows, stack.name, 'mods', m.name, stack.optIn.has(`mods/${m.name}`), m);
     stacks.push({ name: stack.name, description: stack.description, enabled: enabledStacks.has(stack.name), rows });
   }
 

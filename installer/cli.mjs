@@ -146,7 +146,7 @@ try {
       break;
     }
     case 'eject': {
-      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH>');
+      if (!args[0]) fail('usage: wafflestack eject <skills/NAME | agents/NAME | files/PATH | mods/NAME>');
       const { ref, released, orphaned } = eject({ cwd, item: args[0], toolkitRoot, log: console.log });
       console.log(`ejected ${ref}; ${released.length} files released from management:`);
       for (const f of released) console.log(`  ${f}`);
@@ -372,7 +372,7 @@ function helpText() {
     '  list        show every stack and item in the toolkit, and what this repo has selected',
     '  toggle      pick which rendered skills an agent may invoke on its own (TTY picker), then render',
     '  install     add stacks/items to the selection (persists them), then render',
-    '  render      re-render the current selection into .claude/, .codex/, .agents/ and files/ paths',
+    '  render      re-render the current selection into .claude/ (agents, skills, mods), .codex/, .agents/ and files/ paths',
     '  bake        alias for render — same command, better metaphor',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',

@@ -12,7 +12,7 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
 
 /**
  * A REF kind — always PLURAL, distinct from an item's intrinsic singular `kind`.
- * @typedef {'agents' | 'skills' | 'files'} ItemKind
+ * @typedef {'agents' | 'skills' | 'files' | 'mods'} ItemKind
  *
  * @typedef {{ form: 'qualified', stack: string, kind: ItemKind, name: string }
  *         | { form: 'item', kind: ItemKind, name: string }
@@ -43,8 +43,8 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
  * @property {string[]} errors resolution errors (unknown stack, unknown/ambiguous ref)
  * @property {string[]} targets the enabled targets this selection was filtered by — carried on the
  *   result so a downstream consumer cannot judge scope against a DIFFERENT target set (#364)
- * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/`
- *   items whose declared `targets:` are all disabled here, so nothing renders (#364)
+ * @property {{ ref: string, targets: string[] }[]} targetSkipped explicitly `include:`d `files/` or
+ *   `mods/` items whose declared `targets:` are all disabled here, so nothing renders (#364, #560)
  * @property {{ from: string, to: string, via: string[] }[]} forwarded `include:` refs the registry
  *   forwarded to a renamed waffle's successor (#335) — the render proceeds, but the pin is stale
  * @property {EjectOverlap[]} ejectOverlaps `include:` entries that also sit in `eject:` (#497) — each
@@ -53,7 +53,7 @@ import { isWaffleWip, replacementFor } from './registry.mjs';
  *   exact set `items` was filtered by, carried so a downstream consumer judges "left out on
  *   purpose" against the same set the selection did (#502)
  * @property {{ ref: string, requiredBy: string, stackName: string, targets: string[], optIn: boolean }[]}
- *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` item the scope
+ *   targetBrokenRequires a SELECTED item's `requires:` edge landing on a `files/` or `mods/` item the scope
  *   filtered out, eject-filtered on both ends. `optIn` = the dependency is opt-in syrup in its own
  *   stack, so enabling one of its targets is necessary but NOT sufficient to render it
  */
@@ -76,22 +76,36 @@ export function itemOutputMatcher(kind, name) {
           path.join('.codex', 'agents', `${name}.toml`),
           path.join('.agents', 'agents', `${name}.md`),
         ]
-      : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
+      : kind === 'mods'
+        ? [modOutputDir(name) + path.sep]
+        : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
   return (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
 }
 
 /**
- * Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… → `files/`.
+ * The repo-relative directory a mod renders into (#560) — its only output root, since Claude Code
+ * is the one harness with a mod surface.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+export function modOutputDir(name) {
+  return path.join('.claude', 'mods', name);
+}
+
+/**
+ * Normalize an item ref's prefix: skill/skill:/skills → `skills/`, agent… → `agents/`, file… →
+ * `files/`, mod… → `mods/`.
  *
  * @param {string} ref
  * @returns {string}
  */
 export function normalizeItemRef(ref) {
-  return ref.replace(/^(agent|skill|file)s?[:/]/, (_m, kind) => `${kind}s/`);
+  return ref.replace(/^(agent|skill|file|mod)s?[:/]/, (_m, kind) => `${kind}s/`);
 }
 
 /**
- * The agents, skills, or files array of a stack, selected by kind.
+ * The agents, skills, files, or mods array of a stack, selected by kind.
  *
  * @param {Stack} stack
  * @param {ItemKind} kind
@@ -100,6 +114,7 @@ export function normalizeItemRef(ref) {
 export function itemsOfKind(stack, kind) {
   if (kind === 'agents') return stack.agents;
   if (kind === 'files') return stack.files;
+  if (kind === 'mods') return stack.mods;
   return stack.skills;
 }
 
@@ -123,11 +138,11 @@ export function findItems(toolkit, kind, name) {
 
 /**
  * Parse a raw ref into one of:
- *   { form: 'qualified', stack, kind, name }   — `<stack>/(agents|skills|files)/<name>`
- *   { form: 'item', kind, name }               — `(agents|skills|files)[:/]<name>`
+ *   { form: 'qualified', stack, kind, name }   — `<stack>/(agents|skills|files|mods)/<name>`
+ *   { form: 'item', kind, name }               — `(agents|skills|files|mods)[:/]<name>`
  *   { form: 'stack', name }                    — anything else (a stack name)
  *
- * The `kind` casts are safe by construction: each regex alternates over exactly the three ItemKind
+ * The `kind` casts are safe by construction: each regex alternates over exactly the four ItemKind
  * literals, which tsc cannot see through a capture group.
  *
  * @param {string} raw
@@ -135,9 +150,9 @@ export function findItems(toolkit, kind, name) {
  */
 export function parseRef(raw) {
   const ref = String(raw).trim();
-  const qualified = /^([^/]+)\/(agents|skills|files)\/(.+)$/.exec(ref);
+  const qualified = /^([^/]+)\/(agents|skills|files|mods)\/(.+)$/.exec(ref);
   if (qualified) return { form: 'qualified', stack: qualified[1], kind: /** @type {ItemKind} */ (qualified[2]), name: qualified[3] };
-  const item = /^(agents|skills|files)\/(.+)$/.exec(normalizeItemRef(ref));
+  const item = /^(agents|skills|files|mods)\/(.+)$/.exec(normalizeItemRef(ref));
   if (item) return { form: 'item', kind: /** @type {ItemKind} */ (item[1]), name: item[2] };
   return { form: 'stack', name: ref };
 }
@@ -168,6 +183,7 @@ function availableItemRefs(toolkit) {
     for (const a of stack.agents) if (!isWipWaffle(toolkit, stackName, 'agents', a.name)) refs.add(`agents/${a.name}`);
     for (const s of stack.skills) if (!isWipWaffle(toolkit, stackName, 'skills', s.name)) refs.add(`skills/${s.name}`);
     for (const f of stack.files) refs.add(`files/${f.name}`);
+    for (const m of stack.mods) if (!isWipWaffle(toolkit, stackName, 'mods', m.name)) refs.add(`mods/${m.name}`);
   }
   return [...refs].sort();
 }
@@ -391,17 +407,28 @@ export function closureDeps(toolkit, root) {
 }
 
 /**
- * Does a `files:` item render for a consumer whose enabled harness targets are `targets`? (#364)
- * An unscoped item renders unconditionally; a scoped one renders iff it declares an enabled target.
- * Agents and skills are never filtered — they FAN OUT across the enabled targets instead.
+ * Does a `files:` or `mods:` item render for a consumer whose enabled harness targets are
+ * `targets`? (#364) An unscoped item renders unconditionally; a scoped one renders iff it declares
+ * an enabled target — and a mod is always scoped to `claude` (#560). Agents and skills are never
+ * filtered — they FAN OUT across the enabled targets instead.
  *
  * @param {Item} item
  * @param {string[]} targets the consumer's enabled targets (`project.targets`)
  * @returns {boolean}
  */
 export function fileMatchesTargets(item, targets) {
-  if (item.kind !== 'files' || !item.targets) return true;
+  if (!isTargetScoped(item) || !item.targets) return true;
   return item.targets.some((t) => targets.includes(t));
+}
+
+/**
+ * The two kinds whose render is decided by `targets:` rather than fanned out across them.
+ *
+ * @param {Item} item
+ * @returns {item is import('./toolkit.mjs').FileItem | import('./toolkit.mjs').ModItem}
+ */
+export function isTargetScoped(item) {
+  return item.kind === 'files' || item.kind === 'mod';
 }
 
 /**
@@ -499,6 +526,12 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       if (stack.optIn.has(`files/${f.name}`) && !trackedFiles.has(f.name)) continue;
       addItem(stackName, 'files', f);
     }
+    for (const m of stack.mods) {
+      if (isWipWaffle(toolkit, stackName, 'mods', m.name)) continue;
+      const tracked = itemOutputMatcher('mods', m.name);
+      if (stack.optIn.has(`mods/${m.name}`) && ![...trackedFiles].some(tracked)) continue;
+      addItem(stackName, 'mods', m);
+    }
   };
 
   for (const stackName of project.stacks) {
@@ -536,7 +569,7 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       forwarded.push({ from: resolved.forwardedFrom, to: resolved.canonicalRef, via: chain?.via ?? [] });
     }
     // Recorded so the caller can SAY so; a stack-expansion skip stays silent (#364).
-    if (resolved.item.kind === 'files' && !fileMatchesTargets(resolved.item, targets)) {
+    if (isTargetScoped(resolved.item) && !fileMatchesTargets(resolved.item, targets)) {
       targetSkipped.push({ ref: resolved.canonicalRef, targets: resolved.item.targets ?? [] });
       continue; // do not walk its closure — nothing of it renders
     }
@@ -577,8 +610,8 @@ export function computeSelection(toolkit, project, trackedFiles = new Set()) {
       }
       // Narrowed on the ITEM's intrinsic kind: the plural `dep.kind` does not discriminate the
       // `Item` union, so it cannot reach `targets`. The two always agree at runtime.
-      if (dep.item.kind !== 'files' || fileMatchesTargets(dep.item, targets)) continue;
-      const ref = `files/${dep.name}`;
+      if (!isTargetScoped(dep.item) || fileMatchesTargets(dep.item, targets)) continue;
+      const ref = `${dep.kind}/${dep.name}`;
       if (ejected.has(ref)) continue;
       const edge = `${requiredBy}→${ref}`;
       if (seenEdges.has(edge)) continue;
@@ -735,7 +768,7 @@ export function disabledStackRequires(toolkit, selection) {
       if (selectedRefs.has(ref)) continue;
       if (ejected.has(ref)) continue;
       if (isWipWaffle(toolkit, dep.stack, dep.kind, dep.name)) continue;
-      if (dep.item.kind === 'files') {
+      if (isTargetScoped(dep.item)) {
         if (!fileMatchesTargets(dep.item, targets)) continue; // targetBrokenRequires' entry
         if (toolkit.stacks.get(dep.stack)?.optIn.has(ref)) continue; // unpouredRequiredSyrup's entry
       }
@@ -756,5 +789,6 @@ export function disabledStackRequires(toolkit, selection) {
 function singular(kind) {
   if (kind === 'agents') return 'agent';
   if (kind === 'files') return 'file';
+  if (kind === 'mods') return 'mod';
   return 'skill';
 }

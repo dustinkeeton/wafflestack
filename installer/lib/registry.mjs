@@ -9,7 +9,7 @@ import { readYaml, exists } from './util.mjs';
 export const REGISTRY_FILE = path.join('stacks', 'registry.yaml');
 
 /** The registered waffle kinds, in the SINGULAR item vocabulary (`item.kind` in toolkit.mjs). */
-export const WAFFLE_KINDS = Object.freeze(['agent', 'skill']);
+export const WAFFLE_KINDS = Object.freeze(['agent', 'skill', 'mod']);
 
 /**
  * The waffle lifecycle. NEVER mark an already-shipped waffle `wip` — the render's prune would
@@ -30,8 +30,8 @@ const MAX_REPLACEMENT_HOPS = 8;
  * @typedef {object} RegistryEntry a registry entry, normalized but NOT yet validated
  * @property {number} index position in the file, for error messages
  * @property {string | null} name the canonical waffle name
- * @property {string | null} kind singular (`agent` | `skill`), or null when unusable
- * @property {'agents' | 'skills' | null} refKind the same kind in the plural REF vocabulary
+ * @property {string | null} kind singular (`agent` | `skill` | `mod`), or null when unusable
+ * @property {'agents' | 'skills' | 'mods' | null} refKind the same kind in the plural REF vocabulary
  * @property {string | null} stack owning stack (live statuses only)
  * @property {string | null} path toolkit-root-relative path (live statuses only)
  * @property {string | null} status one of WAFFLE_STATUSES, or null when unusable
@@ -52,11 +52,12 @@ const MAX_REPLACEMENT_HOPS = 8;
  * The plural REF kind for a singular item kind (see the two-vocabularies note in toolkit.mjs).
  *
  * @param {unknown} kind
- * @returns {'agents' | 'skills' | null}
+ * @returns {'agents' | 'skills' | 'mods' | null}
  */
 export function refKindOf(kind) {
   if (kind === 'agent') return 'agents';
   if (kind === 'skill') return 'skills';
+  if (kind === 'mod') return 'mods';
   return null;
 }
 
@@ -64,11 +65,12 @@ export function refKindOf(kind) {
  * The singular item kind for a plural REF kind; `files` answers null — syrup is out of scope.
  *
  * @param {unknown} kind
- * @returns {'agent' | 'skill' | null}
+ * @returns {'agent' | 'skill' | 'mod' | null}
  */
 export function waffleKindOf(kind) {
   if (kind === 'agents') return 'agent';
   if (kind === 'skills') return 'skill';
+  if (kind === 'mods') return 'mod';
   return null;
 }
 
@@ -83,6 +85,7 @@ export function waffleKindOf(kind) {
 export function canonicalWafflePath(stack, kind, name) {
   if (kind === 'agent') return `stacks/${stack}/agents/${name}.md`;
   if (kind === 'skill') return `stacks/${stack}/skills/${name}`;
+  if (kind === 'mod') return `stacks/${stack}/mods/${name}`;
   return null;
 }
 
@@ -176,7 +179,7 @@ function liveKey(stack, refKind, name) {
  *
  * @param {Registry | null | undefined} registry
  * @param {string} stackName
- * @param {string} refKind the PLURAL ref kind (`agents` | `skills` | `files`)
+ * @param {string} refKind the PLURAL ref kind (`agents` | `skills` | `mods` | `files`)
  * @param {string} name
  * @returns {string | null}
  */

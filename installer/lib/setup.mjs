@@ -346,6 +346,8 @@ export function toolkitInventory(toolkit, version) {
         `- files (opt-in syrup — sensitive, do NOT install by default): ${optInFiles.map((f) => `files/${f.name}`).join(', ')}`,
       );
     }
+    const mods = offered(stack.mods, 'mods');
+    if (mods.length) lines.push(`- mods (Claude Code plugins — render for the \`claude\` target only): ${mods.join(', ')}`);
     const env = Object.entries(stack.env);
     if (env.length) {
       lines.push(`- env prerequisites: ${env.map(([k, v]) => `${k}=${v}`).join(', ')}`);

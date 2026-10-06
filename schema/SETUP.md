@@ -61,7 +61,7 @@ force-install.
 
 You do not have to adopt a whole stack. When a project wants just one skill or agent,
 select it individually — the inventory lists items in installable ref form
-(`skills/<name>`, `agents/<name>`). Two ways to record the choice:
+(`skills/<name>`, `agents/<name>`, `mods/<name>`). Two ways to record the choice:
 
 - Run `wafflestack install <ref…>` — it resolves each ref, appends stack refs to
   `stacks:` and item refs to a top-level `include:` list, then renders. It reports the
@@ -69,7 +69,8 @@ select it individually — the inventory lists items in installable ref form
 - Or edit `.waffle/waffle.yaml` directly: stack names under `stacks:`, item refs under
   `include:`, then run `render`.
 
-Refs: a stack name, `skills/<name>`, `agents/<name>`, or `<stack>/skills/<name>` when a
+Refs: a stack name, `skills/<name>`, `agents/<name>`, `mods/<name>` (a Claude Code plugin dir —
+renders only when `claude` is a target), or `<stack>/skills/<name>` when a
 name appears in more than one stack (an unqualified ambiguous ref fails with the
 candidates listed). Installing an item automatically pulls its dependency closure — an
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across

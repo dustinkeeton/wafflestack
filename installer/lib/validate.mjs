@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadToolkit } from './toolkit.mjs';
+import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
 import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
@@ -204,7 +204,7 @@ export function validateRegistry(rootDir, toolkit) {
   // Walked over both the manifest and the disk: they catch different escapes, and disk-only is the
   // residue a half-finished move leaves behind.
   for (const [stackName, stack] of toolkit.stacks) {
-    for (const [refKind, items] of [['agents', stack.agents], ['skills', stack.skills]]) {
+    for (const [refKind, items] of [['agents', stack.agents], ['skills', stack.skills], ['mods', stack.mods]]) {
       for (const item of /** @type {any[]} */ (items)) {
         if (!registry.live.has(`${stackName}::${refKind}/${item.name}`)) {
           problems.push(
@@ -277,7 +277,7 @@ function followsToLive(registry, start) {
 }
 
 /**
- * Every agent/skill directory entry physically present under a stack dir, one level deep. It must
+ * Every agent/skill/mod directory entry physically present under a stack dir, one level deep. It must
  * stay independent of `stack.yaml` — this is the on-disk half of the three-way reconcile.
  *
  * @param {string} stackDir
@@ -296,6 +296,12 @@ function wafflesOnDisk(stackDir) {
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
       if (entry.isDirectory()) found.push({ kind: 'skill', name: entry.name });
+    }
+  }
+  const modsDir = path.join(stackDir, 'mods');
+  if (fs.existsSync(modsDir)) {
+    for (const entry of fs.readdirSync(modsDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) found.push({ kind: 'mod', name: entry.name });
     }
   }
   return found;
@@ -471,7 +477,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     for (const [itemRef, deps] of Object.entries(stack.requires ?? {})) {
       const parsed = parseRef(itemRef);
       if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-        problems.push(`${ctx}: requires key "${itemRef}" does not match a skill/agent in this stack`);
+        problems.push(`${ctx}: requires key "${itemRef}" does not match a skill/agent/file/mod in this stack`);
         continue;
       }
       for (const dep of deps ?? []) {
@@ -486,7 +492,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     for (const ref of stack.optIn) {
       const parsed = parseRef(ref);
       if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-        problems.push(`${ctx}: optIn entry "${ref}" does not match a file/skill/agent in this stack`);
+        problems.push(`${ctx}: optIn entry "${ref}" does not match a file/skill/agent/mod in this stack`);
       }
     }
     // Typed external prerequisites (#129), with the same anti-typo rule for any `items:` ref.
@@ -504,7 +510,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       for (const ref of p.items ?? []) {
         const parsed = parseRef(ref);
         if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
+          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent/mod in this stack`);
         }
       }
     }
@@ -545,7 +551,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       for (const ref of p.items ?? []) {
         const parsed = parseRef(ref);
         if (parsed.form === 'stack' || !itemsOfKind(stack, parsed.kind).some((i) => i.name === parsed.name)) {
-          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent in this stack`);
+          problems.push(`${ctx}: ${label} \`items:\` entry "${ref}" does not match a file/skill/agent/mod in this stack`);
         }
       }
       if (p.targets === null && p.raw.targets !== undefined) {
@@ -622,6 +628,15 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
 
     // A files entry's `targets:` (#364) is deliberately NOT linted here: every malformation of it
     // is a hard load error in `loadToolkit`, which is a gate a forked toolkit cannot skip.
+
+    // A mod (#560) is copied verbatim, so it contributes no placeholders; its manifest must parse.
+    for (const mod of stack.mods) {
+      try {
+        JSON.parse(fs.readFileSync(path.join(mod.dir, MOD_MANIFEST), 'utf8'));
+      } catch (err) {
+        problems.push(`${ctx}: mod ${mod.name} ${MOD_MANIFEST} is not valid JSON: ${err.message}`);
+      }
+    }
 
     // Text `files/` payloads are templated just like skills; binaries are byte-copied, so skip them.
     for (const file of stack.files) {

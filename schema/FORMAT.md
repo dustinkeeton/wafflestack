@@ -20,15 +20,17 @@ stacks/<stack>/
   agents/<name>.md           neutral agent definitions
   skills/<name>/SKILL.md     neutral skill definitions (+ supporting files)
   files/<repo-rel-path>      generic project files (CI workflows, scripts, config)
+  mods/<name>/               Claude Code mods (plugin dirs), rendered verbatim for `claude` only
   evals/<name>.eval.yaml     Layer 2 behavioral eval cases (metered; see below)
 installer/                   the render CLI (`wafflestack`) + the eval runner
 schema/                      this document
 ```
 
-Three payload types share the same render machinery — **agents** and **skills** target
-harness dirs (`.claude/`, `.codex/`, `.agents/`), while **files** render to an arbitrary
-repo-relative path. All three get `{{key}}` substitution, lock tracking, `doctor` drift
-detection, and `eject`.
+Four payload types share the same render machinery — **agents** and **skills** target
+harness dirs (`.claude/`, `.codex/`, `.agents/`), **files** render to an arbitrary
+repo-relative path, and **mods** render to `.claude/mods/` for the `claude` target only. All
+four get lock tracking, `doctor` drift detection, and `eject`; the first three also get
+`{{key}}` substitution (a mod is code and is copied verbatim).
 
 ## stack.yaml
 
@@ -43,6 +45,7 @@ files:                               # generic files under files/, by repo-relat
   - scripts/check-format.mjs
   - path: .claude/workflows/audit.js # optional map form: scope a harness-specific payload
     targets: [claude]                #   to the harnesses it is actually for
+mods: [waffle-view]                  # directories under mods/ (Claude Code plugin dirs)
 optIn:                               # optional: sensitive syrup that is opt-in, not default
   - files/.github/workflows/release.yml
 requires:                            # optional per-item dependency declarations
@@ -283,13 +286,13 @@ so no stack must migrate at once.
 ## Waffle registry (`stacks/registry.yaml`)
 
 `toolkit.yaml` lists the **stacks**. `stacks/registry.yaml` lists the **waffles** — and it is the
-single source of truth for each one's identity, location, and availability. Every agent and skill
-in every built-in stack has exactly one entry:
+single source of truth for each one's identity, location, and availability. Every agent, skill,
+and mod in every built-in stack has exactly one entry:
 
 ```yaml
 waffles:
   - name: issue
-    kind: skill                    # agent | skill
+    kind: skill                    # agent | skill | mod
     stack: github-workflow         # the owning stack, as listed in toolkit.yaml
     path: stacks/github-workflow/skills/issue
     status: stable                 # stable | wip | deprecated | replaced
@@ -519,6 +522,49 @@ not policed by `validate`; use a plain `{{key}}` where you want the toolkit to s
 Note also that files under `.github/workflows/` cannot be written by GitHub Actions' default
 `GITHUB_TOKEN` (that needs the `workflow` scope) — a non-issue for the local `render` flow,
 but relevant if you ever render from CI.
+
+## Mod definition (`mods/<name>/`)
+
+A **mod** is a Claude Code plugin a stack ships: a directory of function hooks —
+`.claude-plugin/plugin.json` (required), typically `hooks/hooks.json` and `hooks/register.tsx`,
+optionally `types/index.d.ts`, and whatever else the plugin needs. Each name in the manifest's
+`mods:` list is a directory under the stack's `mods/`; it renders **verbatim** — every file,
+byte-for-byte — to `.claude/mods/<name>/` in the consuming project.
+
+```
+stacks/<stack>/mods/waffle-view/
+  .claude-plugin/plugin.json       required — the loader refuses a mod dir without it
+  hooks/hooks.json
+  hooks/register.tsx
+  types/index.d.ts
+```
+
+- **Claude target only.** Codex and the cross-tool `.agents/` dir have no mod surface, so a mod is
+  implicitly `targets: [claude]` — exactly the map-form `files:` scope. It renders when the consumer
+  enables `claude`, and nowhere else; disable `claude` after a pour and the next `render` **prunes**
+  it, the same frozen-image contract as dropping a stack. An explicit `include: [mods/<name>]` in a
+  repo without `claude` is reported as scoped-out, not silently dropped.
+- **No substitution.** A `.tsx` hook file is code, not a template: nothing under a mod dir gets
+  `{{key}}` substitution, so a `{{…}}`-looking run inside it is left exactly as authored, and
+  `validate` collects no placeholders from it. Project extensions do not apply either. A mod that
+  must read project configuration reads it at runtime from the rendered harness, never from the
+  toolkit's template values.
+- **Registered.** A mod is a waffle: it has an entry in `stacks/registry.yaml` (`kind: mod`,
+  `path: stacks/<stack>/mods/<name>`), is reconciled by `validate` like an agent or skill, and
+  honours the same `status:` lifecycle — a `wip` mod is skipped by stack expansion and refused as a
+  ref. Its ref is `mods/<name>` (`<stack>/mods/<name>` when the name is ambiguous), usable in
+  `include:`, `optIn:`, `requires:`, and `eject:`.
+- **Malformation is a load error.** A `mods:` value that is not a list, a name with a path
+  separator, a name with no directory, or a directory with no `.claude-plugin/plugin.json` makes
+  `loadToolkit` throw — the same posture as a `files:` `targets:` typo, and for the same reason:
+  a mod the render cannot reproduce is a poured copy the prune would delete. `validate` additionally
+  reds a `plugin.json` that is not JSON.
+
+Same frozen-image contract as everything else: every file under `.claude/mods/<name>/` is tracked
+in `.waffle/waffle.lock.json`, restored verbatim by `render`, drift-flagged by `doctor`, and
+released with `wafflestack eject mods/<name>` (the directory stays and becomes project-owned). Two
+enabled stacks that ship a mod of the **same name** is a hard render error — the same cross-stack
+conflict rule as same-named skills.
 
 ## Layer 2 eval cases (`stacks/<stack>/evals/`)
 
@@ -1003,7 +1049,7 @@ The rendered set is `union(items of stacks:) ∪ include: − eject:`.
 - `include:` — individual items you want without adopting their whole stack. Each entry
   is a **ref**:
   - a stack name — `github-workflow` (equivalent to listing it in `stacks:`);
-  - an item — `skills/<name>`, `agents/<name>`, or `files/<repo-relative-path>`;
+  - an item — `skills/<name>`, `agents/<name>`, `files/<repo-relative-path>`, or `mods/<name>`;
   - a stack-qualified item — `<stack>/skills/<name>`, needed only when the same item
     name is defined in more than one stack (e.g. `security-audit`).
   Installing an item pulls its **dependency closure** — an agent's frontmatter `skills:`
@@ -1012,7 +1058,7 @@ The rendered set is `union(items of stacks:) ∪ include: − eject:`.
   config that only unselected siblings need. Stack `env:` prerequisites still warn when
   any item from that stack renders.
 - `eject:` — items to stop managing; wins over `stacks:` and over a dependency closure. An entry
-  is always an unqualified item ref (`skills/<name>`, `agents/<name>`, `files/<path>`).
+  is always an unqualified item ref (`skills/<name>`, `agents/<name>`, `files/<path>`, `mods/<name>`).
 
 **`include:` and `eject:` are mutually exclusive.** An item named by both (a stack-qualified
 `include:` matches its unqualified `eject:` twin) is a **render error**, and `doctor` fails on it

@@ -19,12 +19,13 @@ Entry points: `installer/cli.mjs` (bin `wafflestack`) · `toolkit.yaml` (stack r
 
 ```
 toolkit.yaml               registry: name + ordered stack list
-stacks/registry.yaml       WAFFLE registry (#335): one entry per agent/skill — name, kind, stack, path, status (stable|wip|deprecated|replaced), replacedBy
+stacks/registry.yaml       WAFFLE registry (#335): one entry per agent/skill/mod — name, kind, stack, path, status (stable|wip|deprecated|replaced), replacedBy
 stacks/<name>/
-  stack.yaml               manifest: recommended, recommendedPlugins, agents, skills, files, optIn, requires, prerequisites, config, env, setup
+  stack.yaml               manifest: recommended, recommendedPlugins, agents, skills, files, mods, optIn, requires, prerequisites, config, env, setup
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
   files/<repo-rel-path>    neutral syrup payload (CI workflow/script/config), rendered verbatim to that path
+  mods/<name>/             Claude Code mod (plugin dir: .claude-plugin/plugin.json + hooks), copied verbatim to .claude/mods/<name>/ for the claude target only (#560)
   evals/<name>.eval.yaml   Layer 2 behavioral eval case (metered; inert to render/validate/lock)
 installer/cli.mjs          bin entry: dispatches commands, global --cwd flag
 installer/evals.mjs        eval runner entry (`npm run evals`, metered — NOT in npm test)
@@ -43,8 +44,9 @@ assets/                    brand assets + brand guide (assets/README.md)
 prerequisites, requires edges, and setup notes live in each `stack.yaml` (authoritative —
 this table summarizes).
 
-`stacks/registry.yaml` is the WAFFLE registry (#335): one entry per agent/skill —
-`{ name, kind: agent|skill, stack, path, status: stable|wip|deprecated|replaced, replacedBy?, note? }`.
+`stacks/registry.yaml` is the WAFFLE registry (#335): one entry per agent/skill/mod —
+`{ name, kind: agent|skill|mod, stack, path, status: stable|wip|deprecated|replaced, replacedBy?, note? }`
+(the `mod` kind landed in #560 with no live entries yet).
 All 54 are currently `stable`. It is ENFORCED, not advisory: `validateRegistry` reconciles it
 against the filesystem AND every `stack.yaml`, so a rename/move/add cannot land without it (a
 rename is a three-part edit: files, `stack.yaml`, tombstone + new entry). `wip` waffles are gated
@@ -115,9 +117,10 @@ export function configGuardProblems({ toolkit, project, selection }) // → stri
 export function collectUsedKeys(items)         // → Set<string> placeholder keys referenced by a selection's source content
 
 // refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs + the registry gate from registry.mjs)
-export function itemOutputMatcher(kind, name)  // → (rel) => boolean — item → lock-path predicate (eject + list; stack-BLIND, matches by path)
-export function normalizeItemRef(ref)          // → "agents/NAME" | "skills/NAME"
-export function itemsOfKind(stack, kind)       // → stack.agents | stack.skills
+export function itemOutputMatcher(kind, name)  // → (rel) => boolean — item → lock-path predicate (eject + list; stack-BLIND, matches by path; 'mods' ⇒ modOutputDir(name)/ prefix, #560)
+export function modOutputDir(name)             // → '.claude/mods/<name>' — a mod's ONLY output root (#560); render and the matcher both read it
+export function normalizeItemRef(ref)          // → "agents/NAME" | "skills/NAME" | "files/PATH" | "mods/NAME"
+export function itemsOfKind(stack, kind)       // → stack.agents | stack.skills | stack.files | stack.mods
 export function findItems(toolkit, kind, name) // → [{ stackName, item }] across the toolkit
 export function parseRef(raw)                  // → { form: 'qualified'|'item'|'stack', … }
 export function resolveRef(toolkit, raw)       // → { type:'stack',name } | { type:'item',kind,name,stack,item,canonicalRef,forwardedFrom? }; throws — registry-gated (#335): a `wip` ref is REFUSED (its own message, not "unknown"; wip matches are filtered before the unknown/ambiguous count decides), a `replaced` ref is FORWARDED to its successor with forwardedFrom set
@@ -129,7 +132,8 @@ export function closureDeps(toolkit, root)     // → ["kind/name"…] non-root 
 export function includeRefMatches(includeRef, kind, name) // → boolean
 export function includeEjectOverlaps(project)  // → [{ include, eject }] — include: ∩ eject: (#497); pure over the config; only an unqualified eject: entry counts (all the selection honors)
 export function formatEjectOverlap(overlap)    // → string — the render error / doctor note, remedy included
-export function fileMatchesTargets(item, targets) // → boolean (#364: no targets: ⇒ renders unconditionally; scoped ⇒ ≥1 declared target enabled; non-files items always match)
+export function fileMatchesTargets(item, targets) // → boolean (#364: no targets: ⇒ renders unconditionally; scoped ⇒ ≥1 declared target enabled; agents/skills always match; a mod is always scoped to claude, #560)
+export function isTargetScoped(item)           // → item is FileItem | ModItem — the two kinds whose render `targets:` decides rather than fans out (#560)
 export function computeSelection(toolkit, project, trackedFiles = new Set()) // → { items, closures, errors, targets, targetSkipped, targetBrokenRequires, forwarded, ejectOverlaps, ejected } — trackedFiles (prior lock paths) re-admits poured opt-in syrup; targets carried on the result (#364); targetSkipped = include:d files item with every target disabled; targetBrokenRequires = selected item whose requires: edge lands on a scoped-out files item (.optIn = the dep is opt-in in ITS OWN stack). Both always set; targetBrokenRequires is eject-filtered (refs.mjs:579), targetSkipped is not (an ejected include: is an ejectOverlaps error, #497); forwarded = include: refs the registry carried across a rename (#335), warned by render, rewritten by upgrade; ejected = the normalized eject: set items was filtered by, carried for downstream eject-awareness (#502); stack expansion skips `wip` waffles
 export function skippedSyrupCompanions(toolkit, selection) // → [{ fileRef, stackName, companions, scopedTo }] (#74: opt-in syrup gated out while its companion skill IS selected; scopedTo non-null ⇒ target scope excludes this project, warning withholds the pour command but is still issued, #364; eject-aware via selection.ejected — an ejected syrup file never lands here, plain or scoped, #502)
 export function disabledStackRequires(toolkit, selection) // → [{ ref, requiredBy, stackName, installRef }] (#520: a SELECTED item's `requires:` onto an agent/skill/file in a stack the project does NOT enable — stack expansion never walks `requires:`, so it warns rather than silently enabling; satisfied = selected by kind/name in this render (enabled stack, include:, or a same-named item another stack produces; a lock-tracked path in a DISABLED stack is not re-admitted and does not count); stackName is the dep's OWN stack, installRef stack-qualified only when the bare name is ambiguous; never repeats a scoped-out dep (targetBrokenRequires), un-poured opt-in syrup (unpouredRequiredSyrup), an ejected dep (#502), or a `wip` waffle (#335); an external stack is only loaded when enabled, so an edge onto one is satisfied or dangling, never here)
@@ -151,12 +155,12 @@ export function compilePattern(pattern)        // → RegExp (full-match ^(?:…
 
 // registry.mjs — the WAFFLE registry (#335): stacks/registry.yaml → identity, location, availability
 export const REGISTRY_FILE = 'stacks/registry.yaml'
-export const WAFFLE_KINDS = ['agent', 'skill']        // SINGULAR item vocabulary; syrup is out of scope
+export const WAFFLE_KINDS = ['agent', 'skill', 'mod'] // SINGULAR item vocabulary; syrup is out of scope (mod: #560)
 export const WAFFLE_STATUSES = ['stable', 'wip', 'deprecated', 'replaced']
 export const LIVE_STATUSES = ['stable', 'wip', 'deprecated']   // statuses that still exist on disk
 export const REGISTRY_ENTRY_KEYS = ['name','kind','stack','path','status','replacedBy','note']
-export function refKindOf(kind)                // 'agent'|'skill' → 'agents'|'skills' | null
-export function waffleKindOf(kind)             // 'agents'|'skills' → 'agent'|'skill' | null ('files' ⇒ null, out of scope)
+export function refKindOf(kind)                // 'agent'|'skill'|'mod' → 'agents'|'skills'|'mods' | null
+export function waffleKindOf(kind)             // 'agents'|'skills'|'mods' → 'agent'|'skill'|'mod' | null ('files' ⇒ null, out of scope)
 export function canonicalWafflePath(stack, kind, name) // → the ONLY path loadStack could load it from | null
 export function loadRegistry(rootDir)          // → { present, file, entries, live: Map<"stack::kind/name">, replaced: Map<"kind/name"> } — absent file ⇒ { present:false } (silent no-op); present-but-unreadable ⇒ THROWS; per-entry shape defers to validate
 export function waffleStatus(registry, stackName, refKind, name) // → status | null (null = unregistered = available; keyed on the OWNING stack, since a name is not toolkit-unique)
@@ -164,7 +168,9 @@ export function isWaffleWip(registry, stackName, refKind, name) // → boolean �
 export function replacementFor(registry, refKind, name) // → { ref, name, via } | null — walks the replacedBy chain transitively; null on a cycle or >8 hops
 
 // toolkit.mjs — load toolkit.yaml + stack manifests
-export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .skills [{kind,name,dir,files,data}] (data = SKILL.md frontmatter parsed ONCE at load; toggle, waffledocs and validate read it, never the file, #485), .files [{name,path,binary,targets}] (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
+export const MOD_MANIFEST = '.claude-plugin/plugin.json' // the one file every mod dir must carry (#560)
+export const MOD_TARGETS = ['claude']          // the only harness with a mod surface; ModItem.targets is a copy of it
+export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .skills [{kind,name,dir,files,data}] (data = SKILL.md frontmatter parsed ONCE at load; toggle, waffledocs and validate read it, never the file, #485), .files [{name,path,binary,targets}], .mods [{kind:'mod',name,dir,files,targets:['claude']}] (#560: `mods:` = bare dir names under mods/; not-a-list, path separator, missing dir, or missing MOD_MANIFEST is a hard LOAD error; files sorted, mod-dir-relative) (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
 export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125); carries the BUILT-IN registry unchanged — external waffles are unregistered here, hence never gated (#335); with no externalStacks NOTHING is fetched — it reduces exactly to loadToolkit(builtinRoot) (toolkit.mjs:133)
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) // → string[] (usedKeys Set scopes to referenced keys)
 
@@ -487,12 +493,13 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 
 A ref (used by `install`, `include:`, `eject`, `requires:`) names something installable.
 Grammar + resolution in `refs.mjs` (`parseRef` `refs.mjs:133`, `resolveRef` `refs.mjs:201`).
-Kinds: `agents`, `skills`, `files` (a payload byte/text-copied to its repo-relative path).
+Kinds: `agents`, `skills`, `files` (a payload byte/text-copied to its repo-relative path), `mods`
+(a Claude Code plugin dir copied verbatim to `.claude/mods/<name>/`, claude target only — #560).
 
 | Form | Example | Meaning |
 |------|---------|---------|
 | stack | `github-workflow` | a whole stack |
-| item | `skills/issue`, `files/.github/workflows/waffle-hygiene.yml` | unqualified; must be unique toolkit-wide |
+| item | `skills/issue`, `files/.github/workflows/waffle-hygiene.yml`, `mods/waffle-view` | unqualified; must be unique toolkit-wide |
 | qualified | `engineering-team/skills/webapp-security-audit` | disambiguates cross-stack collisions |
 
 `canonicalRef` is the minimal re-resolvable form — what `install` writes to `include:`.
@@ -736,6 +743,9 @@ against fixtures), `avatars-sync.test.mjs` (#285: injected HTTP + rasterizer),
 lock toolkit block, pin reconcile — hermetic, strips the env var per spawn),
 `preflight-ci-parity.test.mjs` (#375: the four `project.*Cmd` config slots mirror `tests.yml`'s
 required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation),
+`mods.test.mjs` (#560: the `mods/` kind on a fixture stack — load shape, ref grammar, verbatim
+claude-only render → lock → doctor hand-edit → eject → prune on target change, include-skip warning,
+opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory),
 `comment-gate.test.mjs` (#388 doctrine enforced mechanically over git-TRACKED `installer/**` and
 `stacks/**` `.mjs` plus workflow YAML: comment-ratio ceiling 15% — 20% for `stacks/**/*.mjs`, ≤12
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the
