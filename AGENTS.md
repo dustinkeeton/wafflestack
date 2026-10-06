@@ -25,7 +25,7 @@ stacks/<name>/
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
   files/<repo-rel-path>    neutral syrup payload (CI workflow/script/config), rendered verbatim to that path
-  mods/<name>/             Claude Code mod (plugin dir: .claude-plugin/plugin.json + hooks), copied verbatim to .claude/mods/<name>/ for the claude target only (#560)
+  mods/<name>/             Claude Code mod (plugin dir: .claude-plugin/plugin.json + hooks), copied verbatim to .claude/mods/<name>/ for the claude target only (#560); engine-laid `tsconfig.json` + `.claude-plugin/types/` are skipped at load (#564)
   evals/<name>.eval.yaml   Layer 2 behavioral eval case (metered; inert to render/validate/lock)
 installer/cli.mjs          bin entry: dispatches commands, global --cwd flag
 installer/evals.mjs        eval runner entry (`npm run evals`, metered — NOT in npm test)
@@ -46,7 +46,7 @@ this table summarizes).
 
 `stacks/registry.yaml` is the WAFFLE registry (#335): one entry per agent/skill/mod —
 `{ name, kind: agent|skill|mod, stack, path, status: stable|wip|deprecated|replaced, replacedBy?, note? }`
-(the `mod` kind landed in #560 with no live entries yet).
+(the `mod` kind landed in #560; its first live entry is `waffle-view`, #562).
 All 54 are currently `stable`. It is ENFORCED, not advisory: `validateRegistry` reconciles it
 against the filesystem AND every `stack.yaml`, so a rename/move/add cannot land without it (a
 rename is a three-part edit: files, `stack.yaml`, tombstone + new entry). `wip` waffles are gated
@@ -66,7 +66,7 @@ unenforced (a fork), a corrupt one = hard error.
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development; mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in agent harness design. One optional config key (`project.longName`). This repo appends a project extension grounding it in the toolkit's own paradigms. |
-| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). Two optional config keys: `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469) and `waffle.reportConfirmGate` (#487: `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` — the one gate with no non-interactive skip). Enabled in this repo's own render. |
+| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle; mod: waffle-view | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). Two optional config keys: `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469) and `waffle.reportConfirmGate` (#487: `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` — the one gate with no non-interactive skip). Ships the first built-in mod, `mods/waffle-view` (#562, part of #552): a Claude Code plugin dir (`.claude-plugin/plugin.json`, `hooks/hooks.json` → `hooks/register.tsx`, `hooks/state.ts`, `types/index.d.ts`, `hooks/waffle-view.test.ts`) that registers `/waffle-view` on `session.start`, opens a `Pane` (`$.ui.open`), and draws the `state --json` document — project, keys (value/source/tokens, `value !== canonical` marked), delegate run files, locks, drift — reading ONLY through `$.process.run` of `wafflestack state --json --offline` (`installer/cli.mjs` at the cwd → `node_modules/.bin/wafflestack` → `npx --yes github:dustinkeeton/wafflestack`; `resolveArgv` in `state.ts`). Refreshes after `/waffle-view`, every other `command.run`, `prompt.submit` and the main loop's `turn.complete` while the pane is open; `$.state` atoms `doc`/`error`/`isRefreshing`. Context slicing (#563): a `skill` atom holds the name the person's last prompt invoked (`prompt.submit` text `/name …`, or `command.run`'s `command`; peer/task/scheduled origins never move it; `/waffle-view` itself leaves it alone), and `selectSlice(doc, { skill })` in `state.ts` narrows the pane to `doc.skills[skill]` — its behavioral keys, the other config it reads (from `doc.config`, values line-capped), the run files it writes (delegate facts when among them) — hiding project/locks/drift; a plain prompt, or a name `doc.skills` does not know, restores the full view. Rendered verbatim to `.claude/mods/waffle-view/` here (claude target); `claude plugin validate` runs over its source dir in `npm run validate` when the CLI is present (#564), `claude plugin test` is the mod's own gate. Loading (#564): `setup` prints the load block; `claude --plugin-dir "$PWD/.claude/mods/waffle-view"` per session — always the RENDERED copy, since a load lays `MOD_ENGINE_LAID` files into the dir. Caveats: the pane follows the person's last typed `/name` (prompt text or `command.run`), not a Skill-tool call the model makes mid-turn; a `/name` that is not a toolkit skill (`/clear`, a project-local skill) reads as the full view; `config` values in `state --json` include the gitignored local overlay. Enabled in this repo's own render. |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The output-conflict guard
@@ -92,6 +92,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `harness-tools.mjs` | Per-target roster of call-shaped harness tools (#445): `HARNESS_TOOLS` data (`claude` declared; `codex` / `agents-dir` `null` = unverified) + the pure `toolCalls` / `unknownToolCalls` extractor `content.test.mjs` sweeps every source and render with. THE place a harness tool rename or removal is recorded |
 | `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); `formatReportMarkdown` renders the `<details>` block (`--json` is `JSON.stringify` of the bundle in `cli.mjs:127`, no renderer export); `health` does not surface doctor's `absentDocs` (#528) — only `notes` carries them |
+| `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `skills: {}` is reserved for #563 |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) |
 | `upgrade.mjs` | Version diff, changelog delta, migrations, pin reconcile (#372), render + doctor |
@@ -170,7 +171,9 @@ export function replacementFor(registry, refKind, name) // → { ref, name, via 
 // toolkit.mjs — load toolkit.yaml + stack manifests
 export const MOD_MANIFEST = '.claude-plugin/plugin.json' // the one file every mod dir must carry (#560)
 export const MOD_TARGETS = ['claude']          // the only harness with a mod surface; ModItem.targets is a copy of it
-export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .skills [{kind,name,dir,files,data}] (data = SKILL.md frontmatter parsed ONCE at load; toggle, waffledocs and validate read it, never the file, #485), .files [{name,path,binary,targets}], .mods [{kind:'mod',name,dir,files,targets:['claude']}] (#560: `mods:` = bare dir names under mods/; not-a-list, path separator, missing dir, or missing MOD_MANIFEST is a hard LOAD error; files sorted, mod-dir-relative) (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
+export const MOD_ENGINE_LAID = ['tsconfig.json', '.claude-plugin/types/'] // mod-dir-relative paths a `claude --plugin-dir` load lays INTO the dir; loadStack skips them so a loaded SOURCE dir never ships them (#564; trailing `/` = dir prefix)
+export function isEngineLaid(rel)              // → boolean — mod-dir-relative path (either separator) covered by MOD_ENGINE_LAID
+export function loadToolkit(rootDir)           // → { name, description, stacks: Map, registry } (registry = loadRegistry(rootDir), #335) — stack gains .skills [{kind,name,dir,files,data}] (data = SKILL.md frontmatter parsed ONCE at load; toggle, waffledocs and validate read it, never the file, #485), .files [{name,path,binary,targets}], .mods [{kind:'mod',name,dir,files,targets:['claude']}] (#560: `mods:` = bare dir names under mods/; not-a-list, path separator, missing dir, or missing MOD_MANIFEST is a hard LOAD error; files sorted, mod-dir-relative, MOD_ENGINE_LAID paths skipped #564) (targets = string[] | null; every targets: malformation — unknown map key, non-list, empty [], unknown target NAME — is a hard LOAD error, #364, because the prune DELETES a poured copy), .optIn Set<"files/…">, .requires, .prerequisites, .recommended (bool, manifest `recommended: true` → setup wizard pre-selects the stack, advisory only, #201), .recommendedPlugins [{name,source,why,items,targets,…}] (external harness plugins `setup` OFFERS; never installed/rendered/locked — plugins.mjs, #199); stale manifest `syrup:` key throws (0.10.0, #59)
 export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) // → merged toolkit; external stacks carry .provenance; cross-source name collision throws (#88/#125); carries the BUILT-IN registry unchanged — external waffles are unregistered here, hence never gated (#335); with no externalStacks NOTHING is fetched — it reduces exactly to loadToolkit(builtinRoot) (toolkit.mjs:133)
 export function missingRequiredKeys(stack, values, lookup, usedKeys = null) // → string[] (usedKeys Set scopes to referenced keys)
 
@@ -246,7 +249,9 @@ export function init({ cwd })                  // → configFile path (starter .
 
 // validate.mjs — see the module table; targets: is NOT linted here (every malformation is a hard LOAD error in toolkit.mjs)
 export const RESERVED_AGENT_KEYS = ['name', 'description', 'skills', 'identity'] // validate.mjs:55
-export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, behavioral-key fields (modes:/flag:/lockMode:/nonInteractive:, #478), prerequisites fields, harness built-ins, waffle-registry reconcile
+export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, behavioral-key fields (modes:/flag:/lockMode:/nonInteractive:, #478), prerequisites fields, harness built-ins, waffle-registry reconcile, mod plugin.json parses — pure, no subprocess
+export function validateModPlugins(rootDir, { locate = claudeCli, run, timeoutMs = 60000 } = {}) // → { cli: {path,version}|null, mods: [{stack,mod,dir}], checks: [{…,ok,output}], problems } — `claude plugin validate <stacks/*/mods/<name>>` per mod SOURCE dir (#564); cli null ⇒ SKIPPED (checks empty, problems empty), never a pass; `locate`/`run` are the stubs tests inject; the CLI `validate` case appends .problems
+export function formatModPluginChecks(result)  // → string[] — `ok: claude plugin validate <stack>/mods/<name> (claude X.Y.Z)` | `FAIL: …` | one `skipped: … \`claude\` is not on PATH; N mod(s) unchecked: …` line; [] when the toolkit has no mods
 export function behavioralKeyProblems(spec)    // → string[] — the #478 lint for one config: spec: modes non-empty/distinct scalars with default a member and no pattern:; lockMode = default and ∈ modes; flag { on, off } single tokens on boolean modes; nonInteractive required iff prompt ∈ modes
 export function validateRegistry(rootDir, toolkit) // → string[] — the registry ↔ filesystem ↔ stack.yaml three-way reconcile (#335): entry shape/unknown keys, duplicates, stack+path must be the loader's path and exist, stack.yaml must list it, tombstone must NOT still resolve and its replacedBy chain must end live, un-registered waffles on disk OR in a manifest, and an offered waffle requiring a `wip` one. [] when the toolkit ships no registry (fork/fixture) or the stack is external
 export function validateSourceBytes(rootDir)   // → string[] — raw control bytes in installer/ + stacks/ text sources
@@ -255,7 +260,7 @@ export function validateExternalStacks(toolkit) // → string[] — lint only so
 export function validateStack(toolkit, stack, ctx) // → string[] (one stack; reused for external lint)
 
 // setup.mjs
-export function setupGuide(toolkitRoot, toolkitVersion, cwd) // → string — schema/SETUP.md playbook + inventory; on an already-configured cwd injects a "Current configuration — update mode" section
+export function setupGuide(toolkitRoot, toolkitVersion, cwd, { locateClaude = claudeCli } = {}) // → string — schema/SETUP.md playbook + inventory; on an already-configured cwd injects a "Current configuration — update mode" section, whose `## Mods (Claude Code plugins)` block (#564, only when the selection renders a mod) prints per mod the post-render `claude plugin validate .claude/mods/<name>`, the per-session `claude --plugin-dir "$PWD/.claude/mods/<name>"`, the `CLAUDE_CODE_PLUGIN_DIRS` route, the marketplace install line, and `claude plugin test` (gated on claude ≥ 2.1.291 via `locateClaude`; absent CLI ⇒ a note, lines still printed for the user) plus the engine-laid-files/.gitignore caveat
 export function toolkitInventory(toolkit, version) // → string
 
 // waffledocs.mjs — generated .waffle/ overview docs, emitted via render's emit() (lock-tracked + pruned)
@@ -336,11 +341,22 @@ export function scrub(text, { cwd, home } = {}) // → string — cwd → `<repo
 export function redact(value, scope)           // → value with scrub applied to every string in the tree, object keys included
 export function formatReportMarkdown(b)        // → string — the collapsed Markdown `<details>` block; the only renderer export
 
+// state.mjs — `state` document (#561); read-only, offline; the overlay is opened ONLY to attribute a layer
+export const STATE_SHAPE_VERSION = 1, LAYERS = ['local-overlay', 'waffle.yaml', 'stack-default'], CHECKPOINT_PHASES // [phase, requiredSections][] in order — mirrors checkpoint.schema.json `x-phaseSections`
+export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { version, cli, project, keys, runFiles: { delegate }, locks, drift, config, skills } — the "`state --json` shape" below; throws when waffle.yaml is absent
+export function resolveConfig(stacks, { project, canonical, overlayValues, target })   // → Record<key, { value, source, stacks }>: every declared key across the selected stacks, nested {{…}} expanded (#563)
+export function resolveSkills(items, { project, target, delegate })                  // → Record<skill, { keys, files }>: keys from collectUsedKeys over the skill's own files (flag placeholders folded), files from SKILL_RUN_FILE_KEYS (#563)
+export const SKILL_RUN_FILE_KEYS // { delegate: [delegate.checkpointDir, delegate.memoryFile], autopilot: [autopilot.planDir] } — the run files a skill WRITES, by the config keys naming them; no manifest declares this
+export function resolveBehavioralKeys(stacks, { project, canonical, overlayValues, target }) // → BehavioralKey[] sorted by key, one entry per key across the selected stacks (`stacks` lists every declarer); pure over loaded stacks
+export function formatStateText(state)         // → string — the human default; ends in a newline
+
 // prerequisites.mjs — typed external prerequisites (#47/#129)
 export const PREREQ_KINDS = ['tool','secret','scope','label','setting','service','env'], PREREQ_LEVELS = ['require','recommend']
 export const RENDER_PROBE_KINDS                // Set{'tool','env'} — the cheap kinds render probes (doctor probes all)
 export function normalizePrerequisites(raw)    // → [{ kind, name, description, check, level, items }] (tolerant; linted by validate)
 export function runCheck(check, cwd, { timeoutMs = 15000 } = {}) // → { ran, ok } (shell check, exit 0 = ok, stdio ignored)
+export function findOnPath(name, env = process.env) // → absolute path of the first executable `name` on env.PATH (win32: also .cmd/.exe) | null
+export function claudeCli({ env, timeoutMs = 10000 } = {}) // → { path, version: 'X.Y.Z'|null } | null — the Claude Code CLI probe `setup` (mods block) and `validateModPlugins` share (#564); null ⇒ both degrade to a visible skipped/note
 export function applicablePrerequisites(toolkit, selection) // → flat [{ …prereq, stackName }] scoped to the selection
 export function evaluatePrerequisites(prereqs, cwd, { kinds = null, timeoutMs, skipStacks = new Set() } = {}) // → { unmetRequired, unmetRecommended, met, notRun } — a prereq whose stackName is in skipStacks is bucketed notRun, never spawned (#458)
 export function describeProvenance(prov)       // → `source@ref` | `source`
@@ -394,11 +410,12 @@ export function formatProvenanceWarning(identity) // → stderr warning for non-
 Import graph (real `import` statements only; `util.mjs` and `template.mjs` depend only on `yaml`):
 
 ```
-cli.mjs      → render, doctor, eject, validate, setup, report, upgrade, uninstall, toolkit,
+cli.mjs      → render, doctor, eject, validate, setup, report, state, upgrade, uninstall, toolkit,
                prerequisites, list, toggle, toolkit-ref, project, avatars-sync (dynamic)
 render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, project, util
 doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, util
 report.mjs   → render, doctor, prerequisites, project, util
+state.mjs    → toolkit, sources, refs, render, doctor, template, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
 eject.mjs    → render, toolkit, sources, refs, project, util
@@ -473,7 +490,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | Command | Behavior |
 |---------|----------|
 | `init` | Write starter `.waffle/waffle.yaml`; errors if one exists at any generation. `--gitignore` appends `BASELINE_GITIGNORE_ENTRIES` — the three pre-stack-knowable entries (local overlay, local lock, `.waffle/avatars/`; #528, `cli.mjs:206`). `eject.mjs:235` |
-| `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section. `setup.mjs:22` |
+| `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section — including, when the selection renders a mod, a `## Mods` block with each mod's check/load/install/test lines (#564). `setup.mjs:22` |
 | `list` | Per-stack per-item state table (`current`/`outdated`/`not-installed`/`not-installable`/`PENDING REMOVAL` — the last on every deselection path, scope or stack/include, #371); plain aligned table by default (ANSI only on a TTY); `--interactive` multi-select installs + renders. Takes no refs. `list.mjs`, `cli.mjs:215` |
 | `toggle` | Per-skill agent-invocation override (#476): one row per RENDERED skill (`agent-invocable` / `slash-only`, `(source)` / `(override)`), read from the COMMITTED config and the tree lock; externals (#471) never listed. No flags + real TTY on stdin AND stdout → keypress picker (checked = agent-invocable; `enter` writes the FULL desired state, `esc` writes nothing); no flags + non-TTY → the plain table, exit 0, readline never opened; `--disable`/`--enable` → write without a prompt. A write persists a MINIMAL `skills.modelInvocation` block (a skill lands in `disabled:`/`enabled:` only where it differs from its source; empty block removed) to `waffle.yaml` comment-preservingly, then runs a full render so the lock records the patched skill. `no change` when every named skill is already in that state. Takes no refs. `toggle.mjs`, `cli.mjs:241` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. An EJECTED item ref is un-ejected, loudly (#497). ANY refused render rolls the config back to the text as found (#548, `cli.mjs:425`); when the refusal is an un-ejected item's differing project-owned copy the error names `--force` and the item stays ejected. Bare `install` = `render`. `eject.mjs:101` |
@@ -482,12 +499,84 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `upgrade` | Lock-vs-CLI version diff, CHANGELOG delta, migrations in `(from, to]` (an unreleased toolkit also runs the steps keyed past its version, #501), pin reconcile (#372), render (`refreshSources: true`, reporting source + built-in toolkit commit moves, #374) + doctor. Missing lock degrades to render + doctor; a lock recording no `toolkitVersion` skips migrations and the changelog delta (`upgrade.mjs:51`). Exit follows doctor. `upgrade.mjs:28` |
 | `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. An absent generated `.waffle/` doc (`isGeneratedDoc`) is a note in every mode, never drift (#528); the all-absent guard (#311) stays flag-independent. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:38` |
 | `report` | Print a REDACTED diagnostics bundle for an upstream toolkit bug report (#473): committed lock summary (version, `toolkit` block, targets, stacks, include, tracked-file COUNT, external source names), committed config (targets, stacks, external names/refs, eject, config KEY paths — never values), environment (CLI version/status, node, platform, overlay PRESENCE), and a `doctor({ canonical: true })` summary. Never opens `waffle.local.yaml` or `waffle.local.lock.json`; scrubs cwd/home/emails/remotes. Markdown `<details>` by default, `--json` for machines. Takes no refs; never contacts GitHub; exit 0 even on a red doctor. `report.mjs`, `cli.mjs:120` |
+| `state` | Print the resolved state (#561): every `modes:`/`flag:` key with its effective value, the layer it came from and its invocation tokens; `delegate.checkpointDir` (newest `<runId>.json`, the last phase whose sections are all PRESENT — shape only; the delegate skill's `checkpoint.mjs` is the validator) and `delegate.memoryFile` (bytes vs `delegate.memoryMaxBytes`); committed vs local lock (presence, toolkit version/status/ref, per-file divergence); plain-`doctor` drift against `readTreeLock` (#317). Human text by default, `--json` for the document below. Takes no refs; read-only, offline, no prerequisite probes, writes nothing; exit 0 even on red drift. `state.mjs`, `cli.mjs:121` |
 | `eject <kind/NAME>` | Add to `eject:`, strip matching `include:`, drop the item's files from the lock; files stay in place, project-owned. Never renders (offline, ungated): prints a run-`render` hint naming closure-only deps the dropped include orphaned (#497). `eject.mjs:26` |
 | `uninstall` | Remove the whole install, driven entirely off the lock: `remove` only when the sha256 still matches the render; `drifted` skipped unless `--force`; refuses the whole run on an absent lock or a path resolving outside `cwd` (incl. symlink escapes). Also removes `.waffle/` meta (unless `--keep-config`), prunes genuinely-emptied dirs, strips wafflestack's `.gitignore` lines. Dry run until `--yes`. Skips exit 0; errors exit 1 (#359). Read `lockRetained` off the result, not the plan. `uninstall.mjs` (#182) |
 | `reinstall` | Refresh in place: snapshot → uninstall(keepConfig+keepLock, force) → re-render, rollback on failure; keeping the lock is load-bearing (the `trackedFiles` re-admission keeps poured opt-in syrup selected). `--clean` = wipe to empty + `init` (requires `--yes`, no render). Both shapes need a lock (#359). `uninstall.mjs` (#182) |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285): `sync` rasters + uploads/assigns each verified agent email's avatar; `status` reports drift only. Token from `WAFFLE_GRAVATAR_TOKEN`; unverified addresses are a manual remainder. `status` exits 1 on drift; any `failed` exits 1. `avatars-sync.mjs`, `cli.mjs:272` |
-| `validate` | Toolkit-developer lint (see `validate.mjs` above). Exit 1 on problems. `validate.mjs:58` |
+| `validate` | Toolkit-developer lint (see `validate.mjs` above), then `claude plugin validate` over every `stacks/*/mods/<name>/` when `claude` is on PATH — prints `ok:`/`FAIL:` per mod, or one `skipped:` line (not a pass) when the CLI is absent, so CI without it stays honest (#564). Exit 1 on problems. `validate.mjs:58` |
 | `help` | Banner + usage + one line per command/flag to stdout, exit 0. `helpText` `cli.mjs:364` (#187) |
+
+### `state --json` shape (#561)
+
+One document, `version: 1`. Additive fields keep the version; a renamed or removed field bumps it.
+`keys[].value` is the effective mode (overlay included — what this machine renders); `keys[].canonical`
+is the committed-inputs mode (what the shared lock renders, #317); `source` is one of `LAYERS`; `flag`
+is null when the key declares no `flag:` (an unnamed side is null); `modes` is `[]` for a flag-only
+key; `description` is the first sentence. `runFiles.delegate` is null unless a selected stack declares
+`delegate.checkpointDir`; `latest.lastPhase` walks fetch → classify → plan → execute → report and stops
+at the first phase whose sections are missing. `locks.tree` names the lock describing the disk;
+`inSync` (same toolkit version + commit) and `divergence` are null without a local lock. `drift` is
+plain `doctor()` with no toolkit root. `config` (#563) is EVERY declared key across the selected stacks
+resolved through the same layers (`value` with nested `{{…}}` expanded, `source`, `stacks`) — `keys` is
+its behavioral subset with the mode machinery. `skills` (#563) maps each selected skill to the declared
+keys its own files reference (`collectUsedKeys` over the skill, `<key>.flag.<side>` folded onto `<key>`,
+sorted) and the run files it writes: `SKILL_RUN_FILE_KEYS` expanded (`delegate` → checkpoint dir, its
+newest checkpoint when one exists, memory file; `autopilot` → plan dir), `[]` for every other skill. A
+skill selected from two stacks merges. The waffle-view mod slices by `skills[<last /name>]`.
+
+```json
+{
+  "version": 1,
+  "cli": { "version": "0.16.1", "status": "release", "commit": "<40-char sha or null>" },
+  "project": { "targets": ["claude"], "stacks": ["github-workflow", "orchestration"], "include": [], "eject": [], "localOverlay": false, "errors": [] },
+  "keys": [
+    {
+      "key": "issue.confirmGate", "stacks": ["github-workflow"],
+      "value": true, "source": "stack-default", "canonical": true, "default": true,
+      "modes": [true, false, "prompt"], "prompt": false, "nonInteractive": false, "lockMode": null,
+      "flag": { "on": "--confirm", "off": "--yes" },
+      "description": "Whether `/issue` pauses at the plan gate before mutating GitHub — create, enrich, and label."
+    },
+    {
+      "key": "autopilot.autoMerge", "stacks": ["orchestration"],
+      "value": "prompt", "source": "stack-default", "canonical": "prompt", "default": "prompt",
+      "modes": [true, false, "prompt"], "prompt": true, "nonInteractive": false, "lockMode": "prompt",
+      "flag": { "on": "+automerge", "off": null },
+      "description": "Per-run auto-merge consent for the autopilot backlog runner — whether an autopilot run may arm `gh pr merge --auto --merge` on the PRs it opens."
+    }
+  ],
+  "runFiles": {
+    "delegate": {
+      "checkpoints": {
+        "path": ".claude/worktrees/.delegate", "exists": true, "runs": 1,
+        "latest": { "file": ".claude/worktrees/.delegate/delegate-1700000000.json", "runId": "delegate-1700000000", "mtime": "2026-10-06T12:00:00.000Z", "lastPhase": "plan", "sections": ["scope", "issues", "classification", "plan"], "parseError": null }
+      },
+      "memory": { "path": ".claude/worktrees/.delegate/memory.md", "exists": true, "bytes": 812, "maxBytes": 4096, "overCap": false }
+    }
+  },
+  "locks": {
+    "committed": { "path": ".waffle/waffle.lock.json", "present": true, "toolkitVersion": "0.16.1", "toolkitStatus": "release", "toolkitRef": "v0.16.1", "files": 67 },
+    "local": { "path": ".waffle/waffle.local.lock.json", "present": false, "toolkitVersion": null, "toolkitStatus": null, "toolkitRef": null, "files": 0 },
+    "tree": "committed", "inSync": null, "divergence": null
+  },
+  "drift": { "ok": true, "modified": [], "missing": [], "absentDocs": [], "notes": ["rendered by toolkit 0.16.1; installed CLI is 0.16.1"] },
+  "config": {
+    "delegate.checkpointDir": { "value": ".claude/worktrees/.delegate", "source": "stack-default", "stacks": ["orchestration"] },
+    "issue.confirmGate": { "value": true, "source": "stack-default", "stacks": ["github-workflow"] },
+    "issue.priorityLabels": { "value": "| Signal in issue content | Label |\n|---|---|\n…", "source": "stack-default", "stacks": ["github-workflow"] },
+    "project.name": { "value": "wafflestack", "source": "waffle.yaml", "stacks": ["github-workflow", "orchestration"] }
+  },
+  "skills": {
+    "delegate": {
+      "keys": ["autoMerge.label", "delegate.approveBeforePush", "delegate.autoMerge", "delegate.batchMode", "delegate.checkpointDir", "delegate.memoryFile", "…"],
+      "files": [".claude/worktrees/.delegate", ".claude/worktrees/.delegate/delegate-1700000000.json", ".claude/worktrees/.delegate/memory.md"]
+    },
+    "git-workflow": { "keys": ["git.cmd", "git.coAuthorTrailer", "…"], "files": [] },
+    "issue": { "keys": ["issue.confirmGate", "issue.inferenceLabel", "issue.priorityLabels", "issue.reassessLabel", "issue.typeLabels", "project.name"], "files": [] }
+  }
+}
+```
 
 ## Item refs and render selection
 
@@ -745,7 +834,7 @@ lock toolkit block, pin reconcile — hermetic, strips the env var per spawn),
 required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation),
 `mods.test.mjs` (#560: the `mods/` kind on a fixture stack — load shape, ref grammar, verbatim
 claude-only render → lock → doctor hand-edit → eject → prune on target change, include-skip warning,
-opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory),
+opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory; #562: the built-in `wafflestack/mods/waffle-view` loads with its six files, its manifest/hooks.json point at shipped files, it reads only via `state --json --offline`, and it renders byte-identical into a claude consumer's lock; #563: `config` resolves every declared key with its layer, `skills` lists a skill's referenced keys (flag placeholders folded) and its `SKILL_RUN_FILE_KEYS` files incl. delegate's newest checkpoint; #564: `MOD_ENGINE_LAID` files laid into a fixture mod are skipped at load and absent from the render, `validateModPlugins` with stubbed `locate`/`run` covers the present/ok, present/FAIL and absent/skipped paths plus no-mods silence, and `setupGuide` prints the mods load block with the probe's three states and omits it without the claude target),
 `comment-gate.test.mjs` (#388 doctrine enforced mechanically over git-TRACKED `installer/**` and
 `stacks/**` `.mjs` plus workflow YAML: comment-ratio ceiling 15% — 20% for `stacks/**/*.mjs`, ≤12
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the
@@ -788,7 +877,7 @@ pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waff
 neither is in `include:`, the lock tracks neither rendered path, and neither file exists under
 `.github/workflows/`. Re-arm one (#343): `install <files/ref>` — un-ejects it, adds the `include:` entry and renders (`eject.mjs:152-156`, `cli.mjs:76-77`; a differing project-owned copy refuses and rolls back without `--force`) — then commit.
 
-The render (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`) and the lock are
+The render (`.claude/agents/`, `.claude/skills/`, `.claude/mods/waffle-view/` — the first mod, #562 — `.claude/settings.json`) and the lock are
 COMMITTED, like a consuming project — the doctor drift gate (required check on main) needs render
 + lock in git. Re-render AND commit after editing `stacks/**`. Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),

@@ -428,6 +428,12 @@ content is already byte-identical to the render is adopted silently, no flag nee
 - Run `wafflestack doctor` — it must report that all managed files match the lock.
 - Harnesses load skills and agents at session start: the user may need to restart
   their agent session before new slash commands appear.
+- A rendered **mod** (`.claude/mods/<name>/`, a Claude Code plugin dir) is inert until Claude
+  Code loads it. Re-run `wafflestack setup` once the repo is configured: its update-mode
+  section prints, per mod, the check (`claude plugin validate .claude/mods/<name>`) and the
+  load paths — per-session `claude --plugin-dir "$PWD/.claude/mods/<name>"`,
+  `CLAUDE_CODE_PLUGIN_DIRS`, or a marketplace install. Offer the user one of them; never load
+  a stack's source dir (a load lays per-machine files into the dir it loads).
 - Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
   skipped (with reasons); the both/one/neither call for each opt-in syrup pairing

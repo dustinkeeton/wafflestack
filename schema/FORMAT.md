@@ -131,6 +131,8 @@ resolves in one of three ways:
 **Precedence** (highest first): explicit command token → `.waffle/waffle.local.yaml` →
 `.waffle/waffle.yaml` → the stack's `default:`. A consumer changes a skill's behavior by setting
 the key in config — never by editing the rendered skill, which the `doctor` drift gate reverts.
+`wafflestack state --json` reports every such key with its effective value, the layer it resolved
+from, and its tokens (the document shape is in `AGENTS.md`).
 
 The four fields, and what `validate` holds them to:
 
@@ -559,6 +561,15 @@ stacks/<stack>/mods/waffle-view/
   `loadToolkit` throw — the same posture as a `files:` `targets:` typo, and for the same reason:
   a mod the render cannot reproduce is a poured copy the prune would delete. `validate` additionally
   reds a `plugin.json` that is not JSON.
+- **Engine-laid files are skipped.** Loading a mod from disk (`claude --plugin-dir <dir>`) lays
+  `tsconfig.json` and `.claude-plugin/types/**` into that dir — per-machine files for the build's
+  API declarations. The loader skips exactly these (`MOD_ENGINE_LAID` in `toolkit.mjs`), so a source
+  dir someone once loaded still renders clean; they are gitignored under `stacks/*/mods/*/` too.
+  Load the **rendered** copy when you try a mod, never the stack's source dir.
+- **`validate` runs Claude Code's own lint.** `npm run validate` runs
+  `claude plugin validate stacks/<stack>/mods/<name>` for every mod when the `claude` CLI is on
+  PATH (`ok:`/`FAIL:` per mod, its output surfaced on failure) and prints one `skipped:` line — not
+  a pass — when it is absent, so a CI runner without the CLI stays honest.
 
 Same frozen-image contract as everything else: every file under `.claude/mods/<name>/` is tracked
 in `.waffle/waffle.lock.json`, restored verbatim by `render`, drift-flagged by `doctor`, and

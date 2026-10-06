@@ -115,6 +115,23 @@ export const MOD_MANIFEST = '.claude-plugin/plugin.json';
 export const MOD_TARGETS = Object.freeze(['claude']);
 
 /**
+ * Mod-dir-relative paths the Claude Code engine lays into a mod it loads from disk
+ * (`claude --plugin-dir <mod>`): a per-machine tsconfig and this build's API declarations. Never
+ * part of the mod, so `loadStack` skips them — a load of the SOURCE dir must not ship them (#564).
+ * A trailing `/` marks a directory prefix.
+ */
+export const MOD_ENGINE_LAID = Object.freeze(['tsconfig.json', '.claude-plugin/types/']);
+
+/**
+ * True for a mod-dir-relative path (either separator) that `MOD_ENGINE_LAID` covers.
+ * @param {string} rel
+ */
+export function isEngineLaid(rel) {
+  const posix = rel.split(path.sep).join('/');
+  return MOD_ENGINE_LAID.some((entry) => (entry.endsWith('/') ? posix.startsWith(entry) : posix === entry));
+}
+
+/**
  * Load the toolkit registry and every stack it lists.
  *
  * @param {string} rootDir
@@ -330,6 +347,7 @@ function loadStack(name, dir) {
       .readdirSync(modDir, { recursive: true, withFileTypes: true })
       .filter((e) => e.isFile())
       .map((e) => path.relative(modDir, path.join(e.parentPath ?? e.path, e.name)))
+      .filter((rel) => !isEngineLaid(rel))
       .sort();
     if (!files.includes(MOD_MANIFEST)) {
       throw new Error(`stack ${name}: mod ${modName} has no ${MOD_MANIFEST} — every mod is a Claude Code plugin dir`);

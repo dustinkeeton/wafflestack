@@ -21,6 +21,8 @@ skills:
   - waffle-validate
   - waffle-report
   - waffle-toggle
+mods:
+  - waffle-view
 config:
   waffle.toolkitRef:
     required: false

@@ -3,7 +3,8 @@ import path from 'node:path';
 import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
 import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
-import { PREREQ_KINDS, PREREQ_LEVELS } from './prerequisites.mjs';
+import { spawnSync } from 'node:child_process';
+import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
 import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
 import {
@@ -68,6 +69,62 @@ export function validateToolkit(rootDir) {
   problems.push(...validateRegistry(rootDir, toolkit));
   for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
   return problems;
+}
+
+/** Default runner for `validateModPlugins`: `claude plugin validate <dir>`, output captured. */
+function runPluginValidate(cli, dir, timeoutMs) {
+  try {
+    const res = spawnSync(cli, ['plugin', 'validate', dir], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (res.error) return { ok: false, output: res.error.message };
+    const output = `${res.stdout ?? ''}${res.stderr ?? ''}`.trim();
+    return { ok: res.status === 0, output: res.signal ? `${output}\nkilled by ${res.signal} (timeout ${timeoutMs}ms)`.trim() : output };
+  } catch (err) {
+    return { ok: false, output: err.message };
+  }
+}
+
+/**
+ * Run Claude Code's own lint, `claude plugin validate`, over every mod SOURCE dir (#564). The CLI
+ * is probed with `locate` (default: PATH) so CI runners without it get a visible **skipped**
+ * result, never a pass; `run` is the per-mod runner (default: spawn). Returns
+ * `{ cli, mods: [{ stack, mod, dir }], checks: [{ stack, mod, dir, ok, output }], problems }`
+ * — `cli === null` ⇒ skipped, `checks` empty.
+ */
+export function validateModPlugins(rootDir, { locate = claudeCli, run = runPluginValidate, timeoutMs = 60000 } = {}) {
+  let toolkit;
+  try {
+    toolkit = loadToolkit(rootDir);
+  } catch {
+    return { cli: null, mods: [], checks: [], problems: [] };
+  }
+  const mods = [];
+  for (const stack of toolkit.stacks.values()) {
+    for (const mod of stack.mods) mods.push({ stack: stack.name, mod: mod.name, dir: mod.dir });
+  }
+  const result = { cli: null, mods, checks: [], problems: [] };
+  if (!mods.length) return result;
+  result.cli = locate() ?? null;
+  if (!result.cli) return result;
+  for (const m of mods) {
+    const { ok, output } = run(result.cli.path, m.dir, timeoutMs);
+    result.checks.push({ ...m, ok, output });
+    if (!ok) {
+      const tail = output.split('\n').filter(Boolean).slice(-8).map((l) => `    ${l}`).join('\n');
+      result.problems.push(`stack ${m.stack}: mod ${m.mod} fails \`claude plugin validate\`:\n${tail}`);
+    }
+  }
+  return result;
+}
+
+/** Human lines for a `validateModPlugins` result; a skipped run is named as skipped, not passed. */
+export function formatModPluginChecks(result) {
+  if (!result.mods.length) return [];
+  const ref = (m) => `${m.stack}/mods/${m.mod}`;
+  if (!result.cli) {
+    return [`skipped: claude plugin validate — \`claude\` is not on PATH; ${result.mods.length} mod(s) unchecked: ${result.mods.map(ref).join(', ')}`];
+  }
+  const who = result.cli.version ? `claude ${result.cli.version}` : 'claude';
+  return result.checks.map((c) => `${c.ok ? 'ok' : 'FAIL'}: claude plugin validate ${ref(c)} (${who})`);
 }
 
 /**
