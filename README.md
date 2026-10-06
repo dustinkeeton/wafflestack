@@ -115,7 +115,7 @@ new-issue URL instead.
 **mod**, `waffle-view`: once rendered (`.claude/mods/waffle-view/`), check it with
 `claude plugin validate .claude/mods/waffle-view`, load it with
 `claude --plugin-dir "$PWD/.claude/mods/waffle-view"` (or list the absolute path in
-`CLAUDE_CODE_PLUGIN_DIRS` for every session), and type `/waffle-view` for a pane showing every
+`CLAUDE_CODE_PLUGIN_DIRS` for every session), and type `/waffle-view` to toggle a pane showing every
 behavioral key's effective value and source layer, the delegate run files, lock status, and doctor
 drift — all read through `wafflestack state --json`, refreshed as you work. `wafflestack setup`
 prints the full load block for every mod a repo renders. The pane narrows to the last `/skill` *you*

@@ -54,13 +54,19 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: PANE,
-      description: "Open the waffle view: this repo's resolved wafflestack state.",
+      description: "Toggle the waffle view: this repo's resolved wafflestack state.",
     })
 
     return next(e)
   })
 
+  // `/waffle-view` toggles: a second invocation closes the pane instead of re-opening it.
   on('command.run', { command: PANE }, async $ => {
+    if (await isOpen($)) {
+      await $.ui.close({ id: PANE })
+
+      return { text: 'Waffle view pane closed.' }
+    }
     await $.ui.open({ id: PANE, title: TITLE })
     await refresh($)
 
