@@ -31,5 +31,13 @@ node_modules/
 .waffle/AVATARS.md
 .waffle/avatars/
 
+# Files the Claude Code engine lays beside a mod it loads from disk (`claude --plugin-dir <mod>`):
+# this build's API declarations + a tsconfig for `tsc -p <mod>`. Generated per machine, never
+# part of the rendered (lock-managed) mod or its stack source (#562).
+.claude/mods/*/tsconfig.json
+.claude/mods/*/.claude-plugin/types/
+stacks/*/mods/*/tsconfig.json
+stacks/*/mods/*/.claude-plugin/types/
+
 # Obsidian
 .obsidian/

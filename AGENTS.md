@@ -46,7 +46,7 @@ this table summarizes).
 
 `stacks/registry.yaml` is the WAFFLE registry (#335): one entry per agent/skill/mod —
 `{ name, kind: agent|skill|mod, stack, path, status: stable|wip|deprecated|replaced, replacedBy?, note? }`
-(the `mod` kind landed in #560 with no live entries yet).
+(the `mod` kind landed in #560; its first live entry is `waffle-view`, #562).
 All 54 are currently `stable`. It is ENFORCED, not advisory: `validateRegistry` reconciles it
 against the filesystem AND every `stack.yaml`, so a rename/move/add cannot land without it (a
 rename is a three-part edit: files, `stack.yaml`, tombstone + new entry). `wip` waffles are gated
@@ -66,7 +66,7 @@ unenforced (a fork), a corrupt one = hard error.
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development; mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in agent harness design. One optional config key (`project.longName`). This repo appends a project extension grounding it in the toolkit's own paradigms. |
-| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). Two optional config keys: `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469) and `waffle.reportConfirmGate` (#487: `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` — the one gate with no non-interactive skip). Enabled in this repo's own render. |
+| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle; mod: waffle-view | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). Two optional config keys: `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469) and `waffle.reportConfirmGate` (#487: `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` — the one gate with no non-interactive skip). Ships the first built-in mod, `mods/waffle-view` (#562, part of #552): a Claude Code plugin dir (`.claude-plugin/plugin.json`, `hooks/hooks.json` → `hooks/register.tsx`, `hooks/state.ts`, `types/index.d.ts`, `hooks/waffle-view.test.ts`) that registers `/waffle-view` on `session.start`, opens a `Pane` (`$.ui.open`), and draws the `state --json` document — project, keys (value/source/tokens, `value !== canonical` marked), delegate run files, locks, drift — reading ONLY through `$.process.run` of `wafflestack state --json --offline` (`installer/cli.mjs` at the cwd → `node_modules/.bin/wafflestack` → `npx --yes github:dustinkeeton/wafflestack`; `resolveArgv` in `state.ts`). Refreshes after `/waffle-view`, every other `command.run`, `prompt.submit` and the main loop's `turn.complete` while the pane is open; `$.state` atoms `doc`/`error`/`isRefreshing`. `selectKeys(doc, context)` in `state.ts` is the #563 seam (returns every key today). Rendered verbatim to `.claude/mods/waffle-view/` here (claude target); `claude plugin validate|test` are the mod's own gates. Enabled in this repo's own render. |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The output-conflict guard
@@ -807,7 +807,7 @@ lock toolkit block, pin reconcile — hermetic, strips the env var per spawn),
 required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation),
 `mods.test.mjs` (#560: the `mods/` kind on a fixture stack — load shape, ref grammar, verbatim
 claude-only render → lock → doctor hand-edit → eject → prune on target change, include-skip warning,
-opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory),
+opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory; #562: the built-in `wafflestack/mods/waffle-view` loads with its six files, its manifest/hooks.json point at shipped files, it reads only via `state --json --offline`, and it renders byte-identical into a claude consumer's lock),
 `comment-gate.test.mjs` (#388 doctrine enforced mechanically over git-TRACKED `installer/**` and
 `stacks/**` `.mjs` plus workflow YAML: comment-ratio ceiling 15% — 20% for `stacks/**/*.mjs`, ≤12
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the
@@ -850,7 +850,7 @@ pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waff
 neither is in `include:`, the lock tracks neither rendered path, and neither file exists under
 `.github/workflows/`. Re-arm one (#343): `install <files/ref>` — un-ejects it, adds the `include:` entry and renders (`eject.mjs:152-156`, `cli.mjs:76-77`; a differing project-owned copy refuses and rolls back without `--force`) — then commit.
 
-The render (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`) and the lock are
+The render (`.claude/agents/`, `.claude/skills/`, `.claude/mods/waffle-view/` — the first mod, #562 — `.claude/settings.json`) and the lock are
 COMMITTED, like a consuming project — the doctor drift gate (required check on main) needs render
 + lock in git. Re-render AND commit after editing `stacks/**`. Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),

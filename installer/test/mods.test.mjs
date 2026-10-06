@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject } from '../lib/eject.mjs';
@@ -234,5 +235,61 @@ describe('mods/ render kind (#560)', () => {
 
   test('setup inventory offers the mod as a claude-only plugin', () => {
     assert.match(toolkitInventory(loadToolkit(toolkitRoot), '0.0.test'), /- mods \(Claude Code plugins[^)]*\): mods\/viewer/);
+  });
+});
+
+// The first built-in mod (#562): the toolkit's own `wafflestack` stack ships `mods/waffle-view`.
+describe('built-in mod: wafflestack/mods/waffle-view (#562)', () => {
+  const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const MOD_DIR = path.join(REPO_ROOT, 'stacks', 'wafflestack', 'mods', 'waffle-view');
+  const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(MOD_DIR, rel), 'utf8'));
+
+  test('loads from the wafflestack stack with the plugin-authoring file set', () => {
+    const stack = loadToolkit(REPO_ROOT).stacks.get('wafflestack');
+    assert.deepEqual(stack.mods.map((m) => m.name), ['waffle-view']);
+    const [mod] = stack.mods;
+    assert.equal(mod.kind, 'mod');
+    assert.deepEqual(mod.targets, ['claude']);
+    for (const rel of [MOD_MANIFEST, 'hooks/hooks.json', 'hooks/register.tsx', 'hooks/state.ts', 'hooks/waffle-view.test.ts', 'types/index.d.ts']) {
+      assert.ok(mod.files.includes(rel), `${rel} is part of the mod`);
+    }
+    assert.deepEqual(validateToolkit(REPO_ROOT), []);
+  });
+
+  test('the manifest and hooks.json point at files the mod ships', () => {
+    const manifest = readJson(MOD_MANIFEST);
+    assert.equal(manifest.name, 'waffle-view');
+    assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+    assert.ok(fs.existsSync(path.join(MOD_DIR, manifest.types)), `types ${manifest.types} exists`);
+    const hooks = readJson('hooks/hooks.json');
+    assert.deepEqual(hooks.modules, ['./register.tsx']);
+    for (const mod of hooks.modules) assert.ok(fs.existsSync(path.join(MOD_DIR, 'hooks', mod)));
+  });
+
+  test('the hooks module reads only through `wafflestack state --json --offline`', () => {
+    const register = fs.readFileSync(path.join(MOD_DIR, 'hooks', 'register.tsx'), 'utf8');
+    const state = fs.readFileSync(path.join(MOD_DIR, 'hooks', 'state.ts'), 'utf8');
+    assert.match(state, /'state', '--json', '--offline'/);
+    assert.match(register, /\$\.process\.run\(/);
+    assert.doesNotMatch(register, /\$\.fs\.read\(/, 'no direct file parsing: the state CLI is the one read path');
+    assert.match(state, /export function selectKeys\(/, 'the #563 context seam is one named function');
+  });
+
+  test('renders verbatim into a claude consumer and lands in its lock', () => {
+    const consumer = fs.mkdtempSync(path.join(os.tmpdir(), 'project-waffle-view-'));
+    try {
+      write(consumer, '.waffle/waffle.yaml', project(['targets: [claude]', 'stacks: [wafflestack]']));
+      const result = renderProject({ toolkitRoot: REPO_ROOT, cwd: consumer, toolkitVersion: '0.0.test' });
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      const lock = JSON.parse(read(consumer, '.waffle/waffle.lock.json'));
+      const out = path.join('.claude', 'mods', 'waffle-view');
+      for (const rel of ['hooks/register.tsx', 'hooks/waffle-view.test.ts', MOD_MANIFEST]) {
+        assert.ok(lock.files[path.join(out, rel)], `${rel} is lock-managed`);
+        assert.equal(read(consumer, path.join(out, rel)), fs.readFileSync(path.join(MOD_DIR, rel), 'utf8'), `${rel} is byte-identical`);
+      }
+      assert.equal(doctor({ cwd: consumer, toolkitVersion: '0.0.test' }).ok, true);
+    } finally {
+      fs.rmSync(consumer, { recursive: true, force: true });
+    }
   });
 });

@@ -32,6 +32,16 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **The `waffle-view` mod (#562, part of #552).** The first built-in mod, shipped by the
+  `wafflestack` stack as `mods/waffle-view`: `/waffle-view` opens a pane that draws the repo's
+  resolved state — behavioral keys (effective value, source layer, invocation tokens; a value the
+  local overlay changed is marked against the lock's), delegate run files, committed vs local lock,
+  doctor drift, and the project's targets/stacks/include — read only through
+  `wafflestack state --json --offline` via the plugin host's process API, refreshed on each prompt,
+  command and completed turn while open. `selectKeys` is the one-function seam #563 fills with
+  per-skill context. **Consumer impact:** additive — a `claude`-target consumer of the `wafflestack`
+  stack gains `.claude/mods/waffle-view/` (lock-managed) on its next render; load it with
+  `claude --plugin-dir .claude/mods/waffle-view`. Codex/agents-dir targets are untouched.
 - **`wafflestack state [--json]` (#561, part of #552).** One read-only document of the repo's
   resolved state: every `modes:`/`flag:` key with its effective value, the layer it came from
   (`local-overlay` → `waffle.yaml` → `stack-default`) and its invocation tokens; the delegate run
