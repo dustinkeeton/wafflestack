@@ -213,6 +213,7 @@ describe('the pane', () => {
       return { value: exited(0, JSON.stringify(DOC)) }
     })
     on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
     on('command.register', (_$, e) => ({ value: { command: e.name } }))
     on('session.start', (_$, e) => ({ cwd: e.cwd }))
 
@@ -238,10 +239,33 @@ describe('the pane', () => {
     }
   })
 
+  test('/waffle-view closes the pane when it is already open, without a read', async ($, on) => {
+    const closed: string[] = []
+    let reads = 0
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => {
+      reads += 1
+      return { value: exited(0, JSON.stringify(DOC)) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [{ id: PANE, title: 'Waffle view', isShown: true, isFocused: false, isPlaced: true }] }))
+    on('ui.close', (_$, e) => {
+      closed.push(e.id)
+      return { value: undefined }
+    })
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    const ran = await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    expect(ran.text).toBe('Waffle view pane closed.')
+    expect(closed).toEqual([PANE])
+    expect(reads).toBe(0)
+  })
+
   test('a narrow pane folds each key onto one line', async ($, on) => {
     on('fs.exists', () => ({ value: false }))
     on('process.run', () => ({ value: exited(0, JSON.stringify(DOC)) }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
     on('command.register', (_$, e) => ({ value: { command: e.name } }))
 
     await $.command.run({ command: PANE, args: '', ...COMPOSER })
@@ -263,6 +287,7 @@ describe('the pane', () => {
       value: healthy ? exited(0, JSON.stringify(DOC)) : exited(1, '', 'error: no .waffle/waffle.yaml in /repo\n'),
     }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
     on('command.register', (_$, e) => ({ value: { command: e.name } }))
 
     await $.command.run({ command: PANE, args: '', ...COMPOSER })

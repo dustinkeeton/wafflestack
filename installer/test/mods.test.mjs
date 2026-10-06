@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject } from '../lib/eject.mjs';
-import { validateToolkit } from '../lib/validate.mjs';
-import { toolkitInventory } from '../lib/setup.mjs';
-import { loadToolkit, MOD_MANIFEST, MOD_TARGETS } from '../lib/toolkit.mjs';
+import { validateToolkit, validateModPlugins, formatModPluginChecks } from '../lib/validate.mjs';
+import { toolkitInventory, setupGuide } from '../lib/setup.mjs';
+import { loadToolkit, MOD_MANIFEST, MOD_TARGETS, MOD_ENGINE_LAID, isEngineLaid } from '../lib/toolkit.mjs';
 import { resolveRef, parseRef, normalizeItemRef, itemOutputMatcher, modOutputDir, computeSelection } from '../lib/refs.mjs';
 import { computeListModel, STATUS } from '../lib/list.mjs';
 import { WAFFLE_KINDS, refKindOf, waffleKindOf, canonicalWafflePath } from '../lib/registry.mjs';
@@ -235,6 +235,90 @@ describe('mods/ render kind (#560)', () => {
 
   test('setup inventory offers the mod as a claude-only plugin', () => {
     assert.match(toolkitInventory(loadToolkit(toolkitRoot), '0.0.test'), /- mods \(Claude Code plugins[^)]*\): mods\/viewer/);
+  });
+
+  // #564: a `--plugin-dir` load of the SOURCE dir lays per-machine files into it; they never ship.
+  test('loadStack skips engine-laid files, so a loaded source dir renders without them', () => {
+    assert.deepEqual([...MOD_ENGINE_LAID], ['tsconfig.json', '.claude-plugin/types/']);
+    assert.equal(isEngineLaid('tsconfig.json'), true);
+    assert.equal(isEngineLaid(path.join('.claude-plugin', 'types', 'dep', 'index.d.ts')), true);
+    assert.equal(isEngineLaid(MOD_MANIFEST), false, 'the manifest sits beside types/ and must survive');
+    assert.equal(isEngineLaid('hooks/tsconfig.json'), false, 'the file skip is exact, not a basename match');
+
+    write(toolkitRoot, 'stacks/mb/mods/viewer/tsconfig.json', '{"compilerOptions": {}}\n');
+    write(toolkitRoot, 'stacks/mb/mods/viewer/.claude-plugin/types/claude-code/index.d.ts', 'export {};\n');
+    const [mod] = loadToolkit(toolkitRoot).stacks.get('mb').mods;
+    assert.deepEqual(mod.files, Object.keys(MOD_FILES).sort());
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.deepEqual(modPaths(), OUT);
+    assert.equal(fs.existsSync(path.join(cwd, '.claude', 'mods', 'viewer', 'tsconfig.json')), false);
+    assert.equal(fs.existsSync(path.join(cwd, '.claude', 'mods', 'viewer', '.claude-plugin', 'types')), false);
+  });
+
+  test('validateModPlugins runs `claude plugin validate` per mod source dir when the CLI is present', () => {
+    const calls = [];
+    const run = (cli, dir, timeoutMs) => {
+      calls.push({ cli, dir, timeoutMs });
+      return { ok: true, output: '✔ Validation passed' };
+    };
+    const locate = () => ({ path: '/stub/bin/claude', version: '2.1.292' });
+    const result = validateModPlugins(toolkitRoot, { locate, run, timeoutMs: 1234 });
+    assert.deepEqual(calls, [{ cli: '/stub/bin/claude', dir: path.join(toolkitRoot, 'stacks/mb/mods/viewer'), timeoutMs: 1234 }]);
+    assert.deepEqual(result.problems, []);
+    assert.deepEqual(formatModPluginChecks(result), ['ok: claude plugin validate mb/mods/viewer (claude 2.1.292)']);
+
+    const failing = validateModPlugins(toolkitRoot, {
+      locate,
+      run: () => ({ ok: false, output: 'Validating plugin manifest\n  ✖ hooks/hooks.json: modules[0] ./missing.tsx not found\n' }),
+    });
+    assert.equal(failing.problems.length, 1);
+    assert.match(failing.problems[0], /stack mb: mod viewer fails `claude plugin validate`:\n\s+Validating plugin manifest\n\s+✖ hooks\/hooks\.json/);
+    assert.deepEqual(formatModPluginChecks(failing), ['FAIL: claude plugin validate mb/mods/viewer (claude 2.1.292)']);
+  });
+
+  test('validateModPlugins reports a skipped check — not a pass — when the CLI is absent', () => {
+    const result = validateModPlugins(toolkitRoot, { locate: () => null, run: () => assert.fail('must not spawn') });
+    assert.equal(result.cli, null);
+    assert.deepEqual(result.checks, []);
+    assert.deepEqual(result.problems, []);
+    assert.deepEqual(formatModPluginChecks(result), [
+      'skipped: claude plugin validate — `claude` is not on PATH; 1 mod(s) unchecked: mb/mods/viewer',
+    ]);
+
+    // A toolkit without mods has nothing to say — no false "skipped" either.
+    write(toolkitRoot, 'stacks/mb/stack.yaml', 'name: mb\ndescription: x.\n');
+    const none = validateModPlugins(toolkitRoot, { locate: () => assert.fail('no mods, no probe') });
+    assert.deepEqual(none.mods, []);
+    assert.deepEqual(formatModPluginChecks(none), []);
+  });
+
+  test('setup prints how each rendered mod loads, with the CLI probe degrading to a note', () => {
+    write(toolkitRoot, 'schema/SETUP.md', '# Setup\n');
+    const guide = (locateClaude) => setupGuide(toolkitRoot, '0.0.test', cwd, { locateClaude });
+
+    const current = guide(() => ({ path: '/stub/bin/claude', version: '2.1.292' }));
+    assert.match(current, /## Mods \(Claude Code plugins\)/);
+    assert.match(current, /### `mods\/viewer` \(mb\) → `\.claude\/mods\/viewer\/`/);
+    assert.match(current, /claude plugin validate \.claude\/mods\/viewer/);
+    assert.match(current, /claude --plugin-dir "\$PWD\/\.claude\/mods\/viewer"/);
+    assert.match(current, /CLAUDE_CODE_PLUGIN_DIRS/);
+    assert.match(current, /\/plugin install viewer --marketplace <owner>\/<repo>/);
+    assert.match(current, /- test: `claude plugin test \.claude\/mods\/viewer` — runs/);
+    assert.match(current, /`\.claude\/mods\/\*\/tsconfig\.json`, `\.claude\/mods\/\*\/\.claude-plugin\/types\/`/);
+
+    const old = guide(() => ({ path: '/stub/bin/claude', version: '2.1.200' }));
+    assert.match(old, /`claude plugin test` needs ≥ 2\.1\.291, so skip the test line/);
+    assert.match(old, /- test: `claude plugin test \.claude\/mods\/viewer` needs `claude` ≥ 2\.1\.291/);
+
+    const absent = guide(() => null);
+    assert.match(absent, /`claude` is not on PATH here/);
+    assert.match(absent, /claude --plugin-dir "\$PWD\/\.claude\/mods\/viewer"/, 'the load lines are for the user even when the agent lacks the CLI');
+
+    write(cwd, '.waffle/waffle.yaml', project(['targets: [codex]', 'stacks: [mb]']));
+    assert.doesNotMatch(guide(() => null), /## Mods \(Claude Code plugins\)/, 'no claude target ⇒ no mod renders ⇒ no load block');
   });
 });
 
