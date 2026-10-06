@@ -307,14 +307,14 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 
 | Command | What it does |
 |---------|--------------|
-| `init` | Write a starter `.waffle/waffle.yaml`. |
+| `init` | Write a starter `.waffle/waffle.yaml`. `--gitignore` also adds the baseline ignore entries: the local overlay, the local lock, and `.waffle/avatars/` (#528). |
 | `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
 | `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
 | `toggle` | Choose, per skill, whether an agent may invoke it on its own or only you can via `/slash` (#476). A checkbox picker in a terminal, a plain table on a pipe, `--disable` / `--enable` flags for agents and CI. Writes `waffle.yaml`, then renders. See [below](#two-consumer-side-knobs-toggle-and-report). |
-| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Installing an **ejected** item un-ejects it (#497); if the render then refuses to overwrite your differing project-owned copy, `waffle.yaml` is rolled back and nothing changes. `--force` overrides the overwrite guard. Bare `install` just renders. |
+| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Installing an **ejected** item un-ejects it (#497). If the render is refused for any reason — missing config values, a collision, a guard — `waffle.yaml` is restored byte-for-byte and nothing changes (#548); when the refusal is your differing project-owned copy of that un-ejected item, the error names `--force`. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations (an unreleased toolkit also runs the steps keyed past its own version, #501), move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
-| `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
+| `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. The generated `.waffle/` overview docs are presence-optional (#528): an absent one is a note, an edited one still fails; `--allow-missing` tolerates every *other* absent file. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
 | `report` | Print a **redacted** diagnostics bundle for a toolkit bug report (#473) — Markdown by default, `--json` for machines. Read-only, never contacts GitHub, exit 0 even when `doctor` is red. |
 | `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. Also drops a matching `include:` entry. Never renders: it prints which dependencies only that entry was selecting, for the next `render` to prune (#497). |
 | `uninstall` | Remove the whole install — the only destructive command. Deletes only what the lock tracks *and* whose content still matches; **a dry run until `--yes`**. See [Taking it back out](#taking-it-back-out-uninstall--reinstall). |
@@ -446,7 +446,7 @@ Everything a consuming project owns:
 | `.waffle/extensions/{agents,skills}/<name>.md` | ✅ committed | Your own text, appended to a rendered item inside marker comments — committed, therefore canonical, therefore it *does* propagate (the deliberate contrast with the overlay) |
 | `.waffle/waffle.lock.json` | ✅ committed (generated) | The **canonical** render's hashes — what the committed inputs alone produce, overlay excluded — so it is byte-identical on every machine. Also carries the `toolkit` block: **which toolkit produced the render** (ref + commit SHA), recorded only when it names immutable content — a release. An untagged checkout records explicit nulls, so the block does not churn as `main` moves. `doctor --verify-render` reproduces it (comparing **files only**); `render` rewrites it |
 | `.waffle/waffle.local.lock.json` | 🚫 gitignored (generated) | The render *this machine* actually wrote, overlay values included. Exists only while the overlay changes an output byte; `doctor`, `list`, and `render`'s prune/overwrite checks read it in preference to the committed lock, so a hand-edit is still caught locally |
-| `.waffle/CHEATSHEET.md`, `TEAM.md` + `cheatsheet.html`, `team.html` | generated (usually committed) | Overview docs of your installed selection — a cheat sheet of user-invocable skills and a team intro of agents, in Markdown plus a branded, self-contained HTML page each. Managed like any rendered file (lock-tracked, doctor-checked, pruned) |
+| `.waffle/CHEATSHEET.md`, `TEAM.md` + `cheatsheet.html`, `team.html` | generated (usually committed) | Overview docs of your installed selection — a cheat sheet of user-invocable skills and a team intro of agents, in Markdown plus a branded, self-contained HTML page each. Managed like any rendered file (lock-tracked, pruned), except that `doctor` tolerates their absence (#528) — gitignore them if you prefer; a present copy is still hash-checked. `AVATARS.md` and `avatars/` are the same class, and `--gitignore` offers `avatars/` |
 
 **Rule of thumb:** never edit files under `.claude/` (etc.) — a re-render will
 overwrite them. Change source, config, or an extension instead.
@@ -510,12 +510,13 @@ checkout's CLI (not the shipped
 `doctor.flags` route) because the shipped workflow fetches the toolkit from `main` — the
 wrong toolkit for the toolkit's own PRs.
 
-A few things stay deliberately untracked (and `doctor` runs with `--allow-missing`
-to tolerate them): `.claude/worktrees/` (throwaway working state), `.codex/` and
-`.agents/` (non-targets — this repo only renders `claude`), the
-`waffle-label-hook.yml` workflow (committing it would arm a live label→harness
-dispatch), and the generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`,
-both `.html` pages, `AVATARS.md`, and `avatars/`).
+A few things stay deliberately untracked. `.claude/worktrees/` (throwaway working
+state), `.codex/` and `.agents/` (non-targets — this repo only renders `claude`), and the
+`waffle-label-hook.yml` workflow (committing it would arm a live label→harness dispatch)
+are why `doctor` runs with `--allow-missing`. The generated `.waffle/` overview docs
+(`CHEATSHEET.md`, `TEAM.md`, both `.html` pages, `AVATARS.md`, and `avatars/`) are
+gitignored too, but `doctor` treats that class as presence-optional on its own since
+#528, so they need no flag.
 
 ## Getting started (new contributors)
 

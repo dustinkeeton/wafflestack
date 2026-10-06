@@ -9,6 +9,106 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-06: The generated `.waffle/` docs are presence-optional in `doctor`; gitignoring them no longer needs `--allow-missing` (#528)
+
+**Context**: `docs/gitignore.md` already told consumers to ignore the per-agent avatar SVGs —
+they are regenerated on every render and are reading material, not agent behavior — but
+`init|install|render --gitignore` only ever offered the local overlay and the local lock. Worse,
+every generated `.waffle/` doc is lock-tracked, so a consumer who did gitignore them turned plain
+`doctor` red and had to set `doctor.flags: --allow-missing` — a flag that tolerates *every* absent
+managed file, a deleted skill included. This repo ran that way too.
+
+**Decision**: Two pieces, both in the CLI rather than in prose.
+
+- **`.waffle/avatars/` joins the gitignore baseline.** `BASELINE_GITIGNORE_ENTRIES`
+  (`installer/lib/project.mjs:52`) is now the one source for the stack-independent set — local
+  overlay, local lock, `.waffle/avatars/` — that `init --gitignore` seeds, that heads
+  `recommendedGitignoreEntries` for `install`/`render`, and that `uninstall` strips.
+- **The generated-docs class is presence-optional in every `doctor` mode.** `GENERATED_DOCS` /
+  `isGeneratedDoc` (`installer/lib/waffledocs.mjs:24-34`) name six members: `CHEATSHEET.md`,
+  `cheatsheet.html`, `TEAM.md`, `team.html`, `AVATARS.md`, and anything under `avatars/`. An absent
+  member lands in a new `absentDocs` result field plus a note, never in `missing`; a present one is
+  still hash-checked, so an edited copy fails plain and `--allow-missing` alike. The all-absent guard
+  (#311) counts `absentDocs` too, so a docs-only lock with nothing on disk still refuses to "verify"
+  nothing — flag-independent. `--allow-missing` keeps its meaning for everything else.
+
+**Alternatives**: *Leave `--allow-missing` as the remedy* — it is the status quo, and it blankets the
+`.claude/` render with the same tolerance, which is exactly the file class the flag should not
+silently excuse. *Make the class optional only under a flag* — rejected; the whole point is that a
+consumer who follows the documented gitignore advice gets a green `doctor` with no config change.
+
+**Consequences**: A consumer who set `doctor.flags: --allow-missing` only to ignore the overview docs
+can drop it; re-render to pick up the updated `/waffle-init` and `/waffle-doctor` skill text. This
+repo keeps the flag for one reason now — the gitignored `waffle-label-hook.yml` — and says so in
+`.waffle/waffle.yaml`. Known gap: `report`'s health line still prints only modified / missing /
+stale-render (`installer/lib/report.mjs:254`); `absentDocs` reaches it only through `notes`.
+
+---
+
+## 2026-10-06: An enrich run proves delivery with the issue URL, and a read-only `gh` denial is a warning (#544)
+
+**Context**: The label-hook workflow's enrich job and implement job share a `Check harness result`
+step that reds a run when the harness was denied a tool on its delivery path — unless the run can
+show it delivered anyway. The only accepted evidence was a PR URL in the final text, which an enrich
+run never produces (it rewrites an issue). And every denied `gh` call counted as a delivery denial.
+So two `gh label list` reads and two scratch-file `Write`s failed a run that had already rewritten
+the issue.
+
+**Decision**: Three changes in `waffle-label-hook.yml`, scoped deliberately.
+
+- **Enrich accepts the dispatched issue's URL as delivery evidence** (`:91`): the `ISSUE` number is
+  re-validated as numeric and fails closed to "no evidence"; any *other* issue's URL does not count;
+  a PR URL still counts as in the siblings. **Implement stays PR-URL-only** — its deliverable is a PR.
+- **Read-only `gh` is a soft denial in both jobs** (`:111-112`, `:313-314`): `gh <noun> list|view`,
+  and `gh api` with no mutating `--method`/`-X` and no `-f`/`-F`/`--field`/`--input` body, warn
+  only. Every other `gh` verb stays on the delivery tier; sandbox escapes and the shared destructive
+  list stay red, never downgraded.
+- **`Bash(gh label list:*)` joins the enrich allowlist** (`:49`): the issue skill lists labels before
+  applying them, so that read is granted rather than denied-then-excused.
+
+**Alternatives**: *Grant `Write` on `$RUNNER_TEMP` for the scratch files* — not taken: with the
+evidence fix those two Writes already downgrade to a warning on a delivered run, and the
+`Write(<path>)` allowlist syntax was not verified against the action. *Port the read-only tier to
+the hygiene and pr-response guards* — out of scope; they keep their `gh|git|…` hard list, the #331
+one-list test pins that, and the port is noted for #342/#408.
+
+**Consequences**: An enrich run that delivered but tripped read-only denials goes green with
+warnings instead of red. The fail-closed posture of the four-tier classifier (#82/#208/#331) is
+unchanged: an unclassifiable denial still reds the run. Consumers re-render to pick up the workflow;
+no config change.
+
+---
+
+## 2026-10-06: A refused `install` restores `waffle.yaml` byte-for-byte, whatever the refusal (#548)
+
+**Context**: `installRefs` saves the new selection to `.waffle/waffle.yaml` *before* `runRender` runs
+the render's own gates — `needs config values`, collisions, guard failures, external-stack lint.
+#497's rollback fired only when the refusal was an un-eject collision. So `install <ref>` for an item
+whose required config was missing, and the `list --interactive` apply, left the freshly saved
+`include:` entry (and a re-serialized file) behind with nothing rendered, and every later `render` or
+`upgrade` failed the same way.
+
+**Decision**: **Byte-restore via the existing snapshot, on any refused render.** `runRender`
+(`installer/cli.mjs:425`) calls `installed.rollback()` whenever the render is refused, and
+`rollback()` (`installer/lib/eject.mjs:177`) writes back the config text exactly as it was found and
+returns whether it had anything to restore — so a no-op install never claims "restored".
+`unejectCollisions` now only picks the message: a collision on an un-ejected item's project-owned
+copy names `--force`; any other refusal says the file was restored and the selection is exactly as it
+was. Both entry points already route through `runRender`, so one change covers `install` and
+`list --interactive`.
+
+**Alternatives**: *A pre-save re-check* — re-derive the selection and `missingRequiredKeys` per
+group before persisting. Rejected: it would be a second copy of the render's gates that can drift
+from them, and it would still miss the non-config refusal reasons (collisions, guards, lint). The
+restore is a one-liner that reuses the #497 snapshot and cannot disagree with the render.
+
+**Consequences**: Supersedes part of #497's consequences below — an un-eject whose render fails for
+a reason other than the collision no longer stays persisted. CLI behavior only; no re-render or
+config change. The tests drive the real CLI for both entry points (`list --interactive` through a
+`script` pty) and assert `waffle.yaml` is byte-identical after the refusal.
+
+---
+
 ## 2026-09-17: Autopilot's round cap is not what leaks findings — the anchored rounds are (#348)
 
 **Context**: Ten backlog issues (#257 #259 #263 #267 #269 #271 #275 #290 #292 #339) exist because an
@@ -108,7 +208,8 @@ already the next render's job under the frozen-image contract.
 **Consequences**: A consumer config carrying an overlap fails `render`/`upgrade` until one entry is
 removed (CHANGELOG Consumer impact). Ejecting a stack item, or a dependency of an included item, is
 not an overlap. An un-eject whose render fails for a reason *other* than the collision (a missing
-required key, say) stays persisted, like any other install.
+required key, say) stays persisted, like any other install — **superseded 2026-10-06 (#548, above):
+every refused render now restores `waffle.yaml`, so nothing stays persisted.**
 
 **Superseded in part 2026-09-16 — `upgrade` no longer fails on a committed overlap (#501, the entry
 above).** `upgrade` runs its migrations before it renders, and migration `0.16.0` drops the
