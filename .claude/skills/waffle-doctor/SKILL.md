@@ -57,6 +57,11 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
 - **`missing: <path>`** — a locked file isn't on disk. Either it was deleted (re-render to
   restore) or the repo intentionally gitignores that render (then `--allow-missing` is the
   right posture, matching the CI workflow's `doctor.flags`).
+- **`absent (generated doc, optional): <path>`** — a generated `.waffle/` overview doc
+  (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/*.svg`) isn't on disk.
+  Informational only: that class is presence-optional, so a repo that gitignores it passes
+  plain `doctor` with no flag. A *present* copy is still hash-checked, so a hand-edit to one
+  reads as `modified:` above.
 - **`every managed file (N/N) is absent`** — nothing was present to check, so the run verified
   nothing and fails even under `--allow-missing`. Usually the render is simply missing: run
   **`/waffle-render`**. If instead the repo *deliberately* commits only the lock and gitignores

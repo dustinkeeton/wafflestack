@@ -15,6 +15,7 @@ import {
 } from './project.mjs';
 import { describeToolkitProvenance } from './toolkit-ref.mjs';
 import { loadToolkitWithSources } from './toolkit.mjs';
+import { isGeneratedDoc } from './waffledocs.mjs';
 import { computeSelection, includeEjectOverlaps, formatEjectOverlap } from './refs.mjs';
 import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, formatCheckGate, unacknowledgedStacks } from './prerequisites.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
@@ -39,7 +40,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
     const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
-    return { ok: false, modified: [], missing: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify() };
+    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify() };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
   const tree = canonical ? lock : readTreeLock(cwd);
@@ -54,18 +55,22 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
 
   const modified = [];
   const missing = [];
+  // Presence-optional by default (#528): an absent generated doc is a note, never a failure —
+  // consumers gitignore them. A present one is hash-checked like anything else.
+  const absentDocs = [];
   for (const [rel, hash] of Object.entries(tree.files)) {
     const abs = path.join(cwd, rel);
     if (!exists(abs)) {
-      missing.push(rel);
+      (isGeneratedDoc(rel) ? absentDocs : missing).push(rel);
     } else if (sha256(fs.readFileSync(abs)) !== hash) {
       modified.push(rel);
     }
   }
 
-  // The all-absent guard (#311). `total > 0` excludes an empty lock (nothing to have failed).
+  // The all-absent guard (#311): flag-independent, so a docs-only lock with nothing on disk never
+  // passes having checked nothing. `total > 0` excludes an empty lock (nothing to have failed).
   const total = Object.keys(tree.files).length;
-  const nothingPresent = allowMissing && total > 0 && missing.length === total;
+  const nothingPresent = total > 0 && missing.length + absentDocs.length === total;
 
   const notes = [];
   // A repo still on the legacy lock name reads fine (readLock falls back) but should migrate.
@@ -115,6 +120,9 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   } else if (allowMissing && missing.length) {
     notes.push(`${missing.length} managed file(s) absent but tolerated (--allow-missing) — expected when a repo gitignores some renders (partial/CI checkout)`);
   }
+  if (!nothingPresent && absentDocs.length) {
+    notes.push(`${absentDocs.length} generated .waffle/ doc(s) absent — fine when gitignored (presence-optional; a present copy is still hash-checked)`);
+  }
   if (render.stale.length || render.unexpected.length || render.absent.length) {
     notes.push(`the lock does not match what ${CONFIG_FILE} (+ ${EXTENSIONS_DIR}/) would render — re-render and commit the result`);
   }
@@ -160,11 +168,9 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     }
   }
 
-  const driftOk = allowMissing
-    ? modified.length === 0 && (!nothingPresent || verified)
-    : modified.length === 0 && missing.length === 0;
+  const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
   const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
-  return { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance };
+  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */

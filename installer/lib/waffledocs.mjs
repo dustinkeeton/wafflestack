@@ -8,7 +8,7 @@
 import path from 'node:path';
 import { lookupPath } from './util.mjs';
 import { substitute } from './template.mjs';
-import { makeResolver } from './project.mjs';
+import { makeResolver, AVATARS_DIR } from './project.mjs';
 import { resolveAgentSkill } from './refs.mjs';
 
 const CHEATSHEET_MD = path.join('.waffle', 'CHEATSHEET.md');
@@ -16,7 +16,22 @@ const CHEATSHEET_HTML = path.join('.waffle', 'cheatsheet.html');
 const TEAM_MD = path.join('.waffle', 'TEAM.md');
 const TEAM_HTML = path.join('.waffle', 'team.html');
 const AVATARS_MD = path.join('.waffle', 'AVATARS.md');
-const AVATARS_DIR = path.join('.waffle', 'avatars');
+
+/**
+ * The generated-docs class (#528): reading material, not agent behavior, so `doctor` treats an
+ * ABSENT member as a note (consumers may gitignore them) while a present one is still hash-checked.
+ */
+export const GENERATED_DOCS = Object.freeze([CHEATSHEET_MD, CHEATSHEET_HTML, TEAM_MD, TEAM_HTML, AVATARS_MD, AVATARS_DIR]);
+
+const slashes = (rel) => String(rel).replace(/\\/g, '/');
+const GENERATED_DOC_FILES = new Set(GENERATED_DOCS.filter((rel) => rel !== AVATARS_DIR).map(slashes));
+const AVATARS_PREFIX = `${slashes(AVATARS_DIR)}/`;
+
+/** Whether a lock-tracked `rel` belongs to the generated-docs class (a file, or anything under avatars/). */
+export function isGeneratedDoc(rel) {
+  const r = slashes(rel);
+  return GENERATED_DOC_FILES.has(r) || r.startsWith(AVATARS_PREFIX);
+}
 
 /** Rendered avatar file for an agent — the `rel` key `emit()` writes and the lock tracks. */
 const avatarRel = (name) => path.join(AVATARS_DIR, `${name}.svg`);

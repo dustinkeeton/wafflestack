@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-09-17
+last-updated: 2026-10-06
 ---
 
 # AGENTS.md — wafflestack
@@ -82,7 +82,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) |
 | `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers |
 | `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver, `resolveInside` containment guard |
-| `doctor.mjs` | Drift check vs `readTreeLock`; `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129) |
+| `doctor.mjs` | Drift check vs `readTreeLock`; generated `.waffle/` docs presence-optional (#528); `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129) |
 | `eject.mjs` | `eject` / `installRefs` / `init` |
 | `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) |
 | `setup.mjs` | `setup` output: SETUP.md playbook + inventory (+ update-mode section) |
@@ -189,7 +189,9 @@ export function gitignoreMentions(cwd, entry)  // → boolean (literal basename 
 export const GITIGNORE_MARKER = '# wafflestack'
 export function ensureGitignoreEntries(cwd, entries)  // consent-gated idempotent append (exact-line dedupe); → entries added
 export function removeGitignoreEntries(cwd, entries)  // exact-line inverse (#182); strips the marker only once it labels nothing
-export function recommendedGitignoreEntries(toolkit, project) // → [local overlay, local lock, + resolved git.worktreesDir when an enabled stack declares it]
+export const AVATARS_DIR = '.waffle/avatars'    // where render emits the per-agent SVGs; waffledocs derives its rels from it (#528)
+export const BASELINE_GITIGNORE_ENTRIES          // frozen [local overlay, local lock, `${AVATARS_DIR}/`] — the stack-independent seed `init --gitignore` writes and `uninstall` falls back to (#528)
+export function recommendedGitignoreEntries(toolkit, project) // → [...BASELINE_GITIGNORE_ENTRIES, + resolved git.worktreesDir when an enabled stack declares it]
 export function makeResolver(stack, values, target, runtime = {})   // → (key) => value | undefined (harness.* override → built-in → `runtime[sub]` fallback, the CLI-supplied `toolkitVersion` (#461); `<key>.flag.<side>` → the stack's flag: token, no project value consulted (#486); else config value → stack default)
 
 // util.mjs — shared helpers
@@ -208,7 +210,7 @@ export function compareVersions(a, b)          // → -1 | 0 | 1 (unparseable so
 export function resolveInside(cwd, rel)        // → abs path | null — null when `rel` escapes cwd (lexical `../`, or a symlinked parent realpathing outside); shared by uninstall and render's stale-prune (#182, #459)
 
 // doctor.mjs — drift check against the lock that describes the tree (readTreeLock, #317)
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false }) // → { ok, modified, missing, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance } — unmet `require` prerequisite fails ok, as does a non-empty ejectOverlaps (#497); attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false }) // → { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance } — unmet `require` prerequisite fails ok, as does a non-empty ejectOverlaps (#497); absentDocs = absent members of the generated-docs class (`isGeneratedDoc`), a note in every mode and never in `missing` (#528); nothingPresent is flag-independent so a docs-only lock with nothing on disk still fails; attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok
 export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { evaluated, ok, checked, stale, absent, unexpected, errors } — re-renders the COMMITTED inputs (no overlay) into a temp dir and diffs against the canonical lock; the working tree is never touched (#314/#317). Disagreement kinds (doctor.mjs:217-223): stale = same path, different hash; absent = the lock tracks a path the config no longer produces; unexpected = the config produces a path the lock does not track
 
 // migrations.mjs — AUTHOR CONTRACT (migrations.mjs:15): key a step by the version that SHIPS the change; run(cwd, { log }) must be IDEMPOTENT — no applied-bookkeeping is persisted, so every upgrade whose (from, to] window covers a step re-invokes it. A key past package.json's version is PENDING (#501): it must be announced under CHANGELOG [Unreleased] as "migration `X.Y.Z`" (migrations.test.mjs release guard — a bump below the key fails CI), and an UNRELEASED toolkit runs it anyway
@@ -251,6 +253,8 @@ export function setupGuide(toolkitRoot, toolkitVersion, cwd) // → string — s
 export function toolkitInventory(toolkit, version) // → string
 
 // waffledocs.mjs — generated .waffle/ overview docs, emitted via render's emit() (lock-tracked + pruned)
+export const GENERATED_DOCS                     // frozen [CHEATSHEET.md, cheatsheet.html, TEAM.md, team.html, AVATARS.md, AVATARS_DIR] under .waffle/ — the presence-optional class doctor consults (#528)
+export function isGeneratedDoc(rel)             // → boolean — rel is one of GENERATED_DOCS or under avatars/ (either separator)
 export function generateWaffleDocs({ toolkit, project, selection, errors = [] }) // → [{ rel, content }] for .waffle/{CHEATSHEET.md,cheatsheet.html,TEAM.md,team.html,AVATARS.md,avatars/<agent>.svg}; each set omitted when its item set is empty
 export function agentFlavor(name)              // → deterministic per-agent palette/persona seed (name-hashed)
 export function agentAvatarSvg(name, skillCount = 0, opts) // → inline wafflebot avatar SVG (#161)
@@ -387,7 +391,7 @@ Import graph (real `import` statements only; `util.mjs` and `template.mjs` depen
 cli.mjs      → render, doctor, eject, validate, setup, report, upgrade, uninstall, toolkit,
                prerequisites, list, toggle, toolkit-ref, project, avatars-sync (dynamic)
 render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, project, util
-doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, util
+doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, util
 report.mjs   → render, doctor, prerequisites, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
@@ -438,7 +442,7 @@ first arg, `init`/`setup`/`doctor`/`validate` silently ignore it.
 | `--yes` | `reinstall` | required by `--clean` only; a plain refresh needs none |
 | `--keep-config` | `uninstall` | keep `.waffle/` — config, overlay, `extensions/` and both locks |
 | `--clean` | `reinstall` | wipe incl. config, then re-scaffold via `init` (requires `--yes`) |
-| `--allow-missing` | `doctor`, `uninstall` | tolerate managed files absent from disk |
+| `--allow-missing` | `doctor`, `uninstall` | tolerate managed files absent from disk (the generated `.waffle/` docs are presence-optional without it, #528) |
 | `--verify-render` | `doctor` | re-render committed inputs in a temp dir vs the committed lock |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
 | `--json` | `report` | print the diagnostics bundle as JSON on stdout instead of the Markdown `<details>` block |
@@ -470,7 +474,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:181`). `render.mjs:52` |
 | `bake` | Pure alias for `render` — a fall-through case sharing its body and guards (#176). |
 | `upgrade` | Lock-vs-CLI version diff, CHANGELOG delta, migrations in `(from, to]` (an unreleased toolkit also runs the steps keyed past its version, #501), pin reconcile (#372), render (`refreshSources: true`, reporting source + built-in toolkit commit moves, #374) + doctor. Missing lock degrades to render + doctor; a lock recording no `toolkitVersion` skips migrations and the changelog delta (`upgrade.mjs:51`). Exit follows doctor. `upgrade.mjs:28` |
-| `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:37` |
+| `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. An absent generated `.waffle/` doc (`isGeneratedDoc`) is a note in every mode, never drift (#528); the all-absent guard (#311) stays flag-independent. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:37` |
 | `report` | Print a REDACTED diagnostics bundle for an upstream toolkit bug report (#473): committed lock summary (version, `toolkit` block, targets, stacks, include, tracked-file COUNT, external source names), committed config (targets, stacks, external names/refs, eject, config KEY paths — never values), environment (CLI version/status, node, platform, overlay PRESENCE), and a `doctor({ canonical: true })` summary. Never opens `waffle.local.yaml` or `waffle.local.lock.json`; scrubs cwd/home/emails/remotes. Markdown `<details>` by default, `--json` for machines. Takes no refs; never contacts GitHub; exit 0 even on a red doctor. `report.mjs`, `cli.mjs:119` |
 | `eject <kind/NAME>` | Add to `eject:`, strip matching `include:`, drop the item's files from the lock; files stay in place, project-owned. Never renders (offline, ungated): prints a run-`render` hint naming closure-only deps the dropped include orphaned (#497). `eject.mjs:26` |
 | `uninstall` | Remove the whole install, driven entirely off the lock: `remove` only when the sha256 still matches the render; `drifted` skipped unless `--force`; refuses the whole run on an absent lock or a path resolving outside `cwd` (incl. symlink escapes). Also removes `.waffle/` meta (unless `--keep-config`), prunes genuinely-emptied dirs, strips wafflestack's `.gitignore` lines. Dry run until `--yes`. Skips exit 0; errors exit 1 (#359). Read `lockRetained` off the result, not the plan. `uninstall.mjs` (#182) |
@@ -700,8 +704,8 @@ pre-0.6.0 `.wafflestack.*` names still read with a deprecation note, migrated in
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated (committed) | rendered file → sha256 map + toolkitVersion + optional `toolkit` (#374) and `sources` (#125) provenance blocks. Hashes the CANONICAL render (committed inputs only, #317) — byte-identical on every machine; `doctor --verify-render` reproduces it |
 | `.waffle/waffle.local.lock.json` | gitignored | the render this machine actually wrote; written only when the overlay changes an output byte. `readTreeLock` prefers it |
-| `.waffle/{CHEATSHEET,TEAM}.md` + `{cheatsheet,team}.html` | generated (committed by consumers) | overview of the installed selection; emitted via `emit()` so lock-tracked, doctor-checked, pruned |
-| `.waffle/AVATARS.md` + `.waffle/avatars/<agent>.svg` | generated (committed by consumers) | deterministic per-agent avatar SVGs + Gravatar-registration manifest with derived commit emails (#157). Same `emit()` lifecycle |
+| `.waffle/{CHEATSHEET,TEAM}.md` + `{cheatsheet,team}.html` | generated (committed or gitignored by consumers) | overview of the installed selection; emitted via `emit()` so lock-tracked, pruned, hash-checked when present — absence is a doctor note, not drift (#528) |
+| `.waffle/AVATARS.md` + `.waffle/avatars/<agent>.svg` | generated (committed or gitignored by consumers) | deterministic per-agent avatar SVGs + Gravatar-registration manifest with derived commit emails (#157). Same `emit()` lifecycle; `--gitignore` offers `.waffle/avatars/` (#528) |
 
 ## Build / test / verify
 

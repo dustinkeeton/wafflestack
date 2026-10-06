@@ -21,8 +21,7 @@ import {
   ensureGitignoreEntries,
   recommendedGitignoreEntries,
   CONFIG_FILE,
-  LOCAL_CONFIG_FILE,
-  LOCAL_LOCK_FILE,
+  BASELINE_GITIGNORE_ENTRIES,
 } from './lib/project.mjs';
 
 const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
@@ -89,6 +88,7 @@ try {
       const tolerated = allowMissing && (!result.nothingPresent || result.render.evaluated);
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
       for (const f of result.missing) console.log((tolerated ? `missing (tolerated): ${f}` : `missing:  ${f}`) + from(f));
+      for (const f of result.absentDocs) console.log(`absent (generated doc, optional): ${f}${from(f)}`);
       for (const f of result.render.stale) console.log(`stale render: ${f}${from(f)} — the config would render different content than the lock records`);
       for (const f of result.render.absent) console.log(`stale lock entry: ${f}${from(f)} — tracked by the lock but no longer rendered by the config`);
       for (const f of result.render.unexpected) console.log(`unrendered: ${f} — the config would render this file but the lock does not track it`);
@@ -101,9 +101,10 @@ try {
         if (result.render.evaluated) {
           console.log(`render verified: a fresh render of ${CONFIG_FILE} reproduces the lock (${result.render.checked} files); the working tree was not touched`);
         }
+        const absent = result.missing.length + result.absentDocs.length;
         console.log(
-          result.missing.length
-            ? `all present managed files match the lock manifest (${result.missing.length} absent, tolerated)`
+          absent
+            ? `all present managed files match the lock manifest (${absent} absent, tolerated)`
             : 'all managed files match the lock manifest',
         );
         if (result.prerequisites.unmetRecommended.length) {
@@ -200,9 +201,9 @@ try {
       const file = init({ cwd });
       console.log(`wrote ${file} — pick stacks and config values, then run \`wafflestack render\``);
       console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
-      // Only the local overlay and its lock are knowable at init — no stacks are chosen yet;
-      // `install --gitignore` adds the rest once a stack that declares them is enabled.
-      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE]));
+      // No stack is chosen yet, so only the stack-independent baseline is knowable;
+      // `install --gitignore` adds the worktrees dir once a stack that declares it is enabled.
+      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [...BASELINE_GITIGNORE_ENTRIES]));
       break;
     }
     case 'setup': {

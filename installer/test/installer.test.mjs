@@ -20,7 +20,7 @@ import { normalizePrerequisites, applicablePrerequisites, checksDigest, formatCh
 import { applicableMigrations, runMigrations, MIGRATIONS } from '../lib/migrations.mjs';
 import { upgrade, changelogBetween } from '../lib/upgrade.mjs';
 import { uninstall, reinstall, planUninstall } from '../lib/uninstall.mjs';
-import { agentAvatarSvg, agentFlavor, extractBaseEmail, deriveAgentEmail, withIdentity } from '../lib/waffledocs.mjs';
+import { agentAvatarSvg, agentFlavor, extractBaseEmail, deriveAgentEmail, withIdentity, isGeneratedDoc, GENERATED_DOCS } from '../lib/waffledocs.mjs';
 import { enumerateAgentAvatars, runAvatarsSync, TOKEN_ENV } from '../lib/avatars-sync.mjs';
 import {
   loadProjectConfig,
@@ -32,6 +32,8 @@ import {
   normalizeStackEntries,
   classifyStackSource,
   HARNESS_BUILTINS,
+  BASELINE_GITIGNORE_ENTRIES,
+  AVATARS_DIR,
 } from '../lib/project.mjs';
 
 // This suite spawns the REAL cli.mjs, and render/install/upgrade/doctor REFUSE when the toolkit is not a release (#373).
@@ -813,22 +815,55 @@ describe('gitignore offer (#29)', () => {
     const toolkit = loadToolkit(repoRoot);
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { stacks: [], values: {}, targets: ['claude'] }),
-      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json'],
+      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.waffle/avatars/'],
     );
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { stacks: ['github-workflow'], values: {}, targets: ['claude'] }),
-      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.claude/worktrees/'],
+      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.waffle/avatars/', '.claude/worktrees/'],
     );
     // a project override of git.worktreesDir wins over the stack default (and is slash-normalized)
     assert.deepEqual(
       recommendedGitignoreEntries(toolkit, { stacks: ['github-workflow'], values: { git: { worktreesDir: '.wt' } }, targets: ['claude'] }),
-      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.wt/'],
+      ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.waffle/avatars/', '.wt/'],
     );
+  });
+
+  // #528: the avatar SVGs are regenerated every render and are reading material, so the offer covers them from `init` on.
+  test('BASELINE_GITIGNORE_ENTRIES: the stack-independent seed, derived from where render emits the avatars', () => {
+    assert.deepEqual([...BASELINE_GITIGNORE_ENTRIES], ['.waffle/waffle.local.yaml', '.waffle/waffle.local.lock.json', '.waffle/avatars/']);
+    assert.ok(BASELINE_GITIGNORE_ENTRIES.includes(`${AVATARS_DIR}/`));
+    assert.ok(GENERATED_DOCS.includes(AVATARS_DIR), 'the same constant drives the doctor class');
+  });
+
+  test('render --gitignore and install --gitignore add .waffle/avatars/ once and leave it alone when present (#528)', () => {
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = (cmd) => spawnSync(process.execPath, [cli, cmd, '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n');
+
+    const first = run('render');
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.match(first.stdout, /\.gitignore: added .*\.waffle\/avatars\//);
+    const after = 'node_modules/\n\n# wafflestack\n.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n.waffle/avatars/\n';
+    assert.equal(gi(), after);
+
+    for (const cmd of ['render', 'install']) {
+      const again = run(cmd);
+      assert.equal(again.status, 0, again.stdout + again.stderr);
+      assert.match(again.stdout, /already lists the recommended entries/);
+      assert.equal(gi(), after, `${cmd} --gitignore is idempotent`);
+    }
+
+    // a hand-written line counts as present — only the missing entries are appended
+    fs.writeFileSync(path.join(cwd, '.gitignore'), '.waffle/avatars/\n');
+    const partial = run('install');
+    assert.equal(partial.status, 0, partial.stdout + partial.stderr);
+    assert.equal(gi(), '.waffle/avatars/\n\n# wafflestack\n.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n');
   });
 
   test('CLI: init --gitignore seeds the local overlay + local lock; the flag is not mistaken for a ref', () => {
     const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
-    const seeded = '# wafflestack\n.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n';
+    const seeded = '# wafflestack\n.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n.waffle/avatars/\n';
     const initRun = spawnSync(process.execPath, [cli, 'init', '--gitignore', '--cwd', cwd], { encoding: 'utf8' });
     assert.equal(initRun.status, 0, initRun.stdout + initRun.stderr);
     assert.equal(gi(), seeded);
@@ -6693,7 +6728,7 @@ describe('doctor --allow-missing (CI drift gate)', () => {
     assert.equal(lenient.ok, false, 'a wholly absent render is a never-rendered repo, not a tolerated subset');
     assert.equal(lenient.nothingPresent, true);
     assert.deepEqual(lenient.modified, [], 'it fails on absence, not on drift — nothing was left to be modified');
-    assert.deepEqual(lenient.missing.sort(), tracked.sort());
+    assert.deepEqual([...lenient.missing, ...lenient.absentDocs].sort(), tracked.sort());
     // the note must be actionable: what happened, and the two ways out
     const note = lenient.notes.find((n) => /every managed file/.test(n));
     assert.ok(note, JSON.stringify(lenient.notes));
@@ -6761,6 +6796,120 @@ describe('doctor --allow-missing (CI drift gate)', () => {
     assert.equal(lenient.status, 0, lenient.stdout + lenient.stderr);
     assert.match(lenient.stdout, /missing \(tolerated\):.*demo-skill\/SKILL\.md/);
     assert.match(lenient.stdout, /tolerated/);
+  });
+});
+
+// The generated .waffle/ docs are reading material consumers gitignore (docs/gitignore.md, Posture 2), so plain `doctor` treats
+// their ABSENCE as a note (#528). Integrity is untouched: a present copy is hash-checked, and the all-absent guard (#311) holds.
+describe('doctor: the generated-docs class is presence-optional (#528)', () => {
+  let toolkitRoot;
+  let cwd;
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-gd-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-gd-'));
+    makeFixtureToolkit(toolkitRoot);
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+  });
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+  const SKILL = '.claude/skills/demo-skill/SKILL.md';
+  const LOCK = '.waffle/waffle.lock.json';
+  const docs = () => Object.keys(JSON.parse(read(cwd, LOCK)).files).filter((rel) => isGeneratedDoc(rel));
+  const removeDocs = () => { for (const rel of docs()) fs.rmSync(path.join(cwd, rel)); };
+
+  test('isGeneratedDoc: the five docs and anything under avatars/, on either separator; nothing else', () => {
+    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html', '.waffle/AVATARS.md', '.waffle/avatars/helper.svg', '.waffle\\avatars\\helper.svg']) {
+      assert.equal(isGeneratedDoc(rel), true, rel);
+    }
+    for (const rel of ['.claude/agents/helper.md', '.waffle/waffle.lock.json', '.waffle/avatars', '.waffle/avatarsx/y.svg', 'docs/.waffle/TEAM.md']) {
+      assert.equal(isGeneratedDoc(rel), false, rel);
+    }
+  });
+
+  test('the fixture tracks the whole class, so the branches below exercise every member', () => {
+    assert.equal(render().ok, true);
+    const tracked = docs();
+    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html', '.waffle/AVATARS.md', '.waffle/avatars/helper.svg']) {
+      assert.ok(tracked.includes(rel), `${rel} is lock-tracked`);
+    }
+  });
+
+  test('plain doctor passes with every generated doc absent and the rest of the render intact', () => {
+    assert.equal(render().ok, true);
+    const expected = docs().sort();
+    removeDocs();
+
+    const strict = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(strict.ok, true, JSON.stringify(strict));
+    assert.deepEqual(strict.missing, [], 'an absent generated doc is never `missing`');
+    assert.deepEqual(strict.absentDocs.sort(), expected);
+    assert.equal(strict.nothingPresent, false);
+    assert.ok(strict.notes.some((n) => /6 generated \.waffle\/ doc\(s\) absent/.test(n)), JSON.stringify(strict.notes));
+    assert.ok(!strict.notes.some((n) => /tolerated/.test(n)), 'no flag was involved, so nothing was "tolerated"');
+  });
+
+  test('a PRESENT generated doc is still hash-checked: a hand-edit fails plain doctor and --allow-missing alike', () => {
+    assert.equal(render().ok, true);
+    fs.appendFileSync(path.join(cwd, '.waffle/TEAM.md'), '\nhand edit\n');
+    fs.rmSync(path.join(cwd, '.waffle/avatars/helper.svg')); // an absent member next to the edited one changes nothing
+
+    for (const flags of [{}, { allowMissing: true }]) {
+      const dr = doctor({ cwd, toolkitVersion: '0.0.test', ...flags });
+      assert.equal(dr.ok, false, JSON.stringify(flags));
+      assert.deepEqual(dr.modified, ['.waffle/TEAM.md']);
+      assert.deepEqual(dr.absentDocs, ['.waffle/avatars/helper.svg']);
+      assert.deepEqual(dr.missing, []);
+    }
+  });
+
+  test('--allow-missing keeps its meaning for everything else: an absent .claude/ render still needs it', () => {
+    assert.equal(render().ok, true);
+    removeDocs();
+    fs.rmSync(path.join(cwd, SKILL));
+
+    const strict = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(strict.ok, false);
+    assert.deepEqual(strict.missing, [SKILL]);
+
+    const lenient = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(lenient.ok, true, JSON.stringify(lenient));
+    assert.deepEqual(lenient.missing, [SKILL]);
+    assert.ok(lenient.notes.some((n) => /1 managed file\(s\) absent but tolerated/.test(n)), 'the flag note counts only the non-doc absence');
+  });
+
+  test('the all-absent guard (#311) holds: a lock tracking only generated docs, none present, verified nothing', () => {
+    assert.equal(render().ok, true);
+    removeDocs();
+    const lockPath = path.join(cwd, LOCK);
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    lock.files = Object.fromEntries(Object.entries(lock.files).filter(([rel]) => isGeneratedDoc(rel)));
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+
+    for (const flags of [{}, { allowMissing: true }]) {
+      const dr = doctor({ cwd, toolkitVersion: '0.0.test', ...flags });
+      assert.equal(dr.ok, false, JSON.stringify(flags));
+      assert.equal(dr.nothingPresent, true);
+      assert.deepEqual(dr.missing, []);
+      assert.ok(dr.notes.some((n) => /verified nothing/.test(n)), JSON.stringify(dr.notes));
+      assert.ok(!dr.notes.some((n) => /generated \.waffle\/ doc\(s\) absent/.test(n)), 'the softer note yields to the guard');
+    }
+  });
+
+  test('CLI: plain doctor exits 0 with the docs gitignored away, labelling them optional rather than missing', () => {
+    assert.equal(render().ok, true);
+    removeDocs();
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = spawnSync(process.execPath, [cli, 'doctor', '--cwd', cwd], { encoding: 'utf8' });
+
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /^absent \(generated doc, optional\): \.waffle\/TEAM\.md$/m);
+    assert.doesNotMatch(run.stdout, /^missing/m);
+    assert.match(run.stdout, /all present managed files match the lock manifest \(6 absent, tolerated\)/);
   });
 });
 
@@ -11788,6 +11937,7 @@ describe('uninstall / reinstall (#182)', () => {
     fs.writeFileSync(path.join(cwd, '.gitignore'), 'node_modules/\n.env\n');
     ensureGitignoreEntries(cwd, recommendedGitignoreEntries(loadToolkit(toolkitRoot), loadProjectConfig(cwd)));
     assert.match(read(cwd, '.gitignore'), /# wafflestack/);
+    assert.match(read(cwd, '.gitignore'), /^\.waffle\/avatars\/$/m, 'the #528 entry was offered, so it is in scope to strip');
 
     assert.equal(run({ dryRun: false }).ok, true);
     assert.equal(read(cwd, '.gitignore'), 'node_modules/\n.env\n', 'byte-for-byte the file we started with');

@@ -31,6 +31,20 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **`--gitignore` recommends `.waffle/avatars/`, and `doctor` treats the generated `.waffle/`
+  docs as presence-optional (#528).** The per-agent avatar SVGs are regenerated on every render
+  and are reading material, so `init|install|render --gitignore` now offer `.waffle/avatars/`
+  alongside the local overlay and local lock (`uninstall` strips it with the rest), and the
+  setup playbook lists the same set. Because those files are lock-tracked, ignoring them used
+  to fail plain `doctor` — so the generated-docs class (`CHEATSHEET.md`, `TEAM.md`, their HTML,
+  `AVATARS.md`, `avatars/`) is now presence-optional in every mode: an absent member is a note
+  (`absent (generated doc, optional): …`), a present one is still hash-checked, and the
+  all-absent guard (#311) still refuses a tree with nothing to verify. `--allow-missing` keeps
+  its meaning for everything else. Consumer impact: a repo that set `doctor.flags:
+  --allow-missing` only to ignore the overview docs can drop it; re-render to pick up the
+  updated `/waffle-init` and `/waffle-doctor` skill text — no config change.
+
 ### Fixed
 - **A refused `install` / `list --interactive` apply restores `.waffle/waffle.yaml` byte-for-byte
   (#548).** `installRefs` saves the selection before the render runs its `needs config values`

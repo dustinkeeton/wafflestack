@@ -43,6 +43,13 @@ export const LOCK_FILE = '.waffle/waffle.lock.json';
 // since `LOCK_FILE` records the shared CANONICAL render. Written only when the overlay moves a byte,
 // removed when it stops; account-specific, so never committed (`recommendedGitignoreEntries` offers it).
 export const LOCAL_LOCK_FILE = '.waffle/waffle.local.lock.json';
+/** Where render emits the per-agent avatar SVGs (#157); waffledocs builds its `rel`s from it. */
+export const AVATARS_DIR = '.waffle/avatars';
+/**
+ * The `.gitignore` entries knowable before any stack is chosen (#528): the local overlay, its local
+ * lock, and the avatar SVGs (regenerated every render — reading material, not agent behavior).
+ */
+export const BASELINE_GITIGNORE_ENTRIES = Object.freeze([LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, `${AVATARS_DIR}/`]);
 export const EXTENSIONS_DIR = path.join('.waffle', 'extensions');
 
 // Legacy (0.6.0–0.7.x) repo-root dot-paths (#17), moved into `.waffle/` by 0.8.0 (#43); still read
@@ -284,17 +291,17 @@ export function removeGitignoreEntries(cwd, entries) {
 }
 
 /**
- * The `.gitignore` entries wafflestack recommends for a `project` — the baseline behind `--gitignore`
- * and the setup playbook: always the local overlay and its derivative local lock, plus the resolved
- * `git.worktreesDir` when a stack declares it. Ignoring rendered output is a separate case-by-case
- * opt-in that pairs with `doctor --allow-missing` (presence, never integrity). See `docs/gitignore.md`.
+ * The `.gitignore` entries wafflestack recommends for a `project` — the set behind `--gitignore`
+ * and the setup playbook: `BASELINE_GITIGNORE_ENTRIES`, plus the resolved `git.worktreesDir` when
+ * a stack declares it. Ignoring OTHER rendered output is a separate case-by-case opt-in that pairs
+ * with `doctor --allow-missing` (presence, never integrity). See `docs/gitignore.md`.
  *
  * @param {Toolkit} toolkit
  * @param {ProjectConfig} project
  * @returns {string[]}
  */
 export function recommendedGitignoreEntries(toolkit, project) {
-  const entries = [LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE];
+  const entries = [...BASELINE_GITIGNORE_ENTRIES];
   for (const name of project.stacks ?? []) {
     const stack = toolkit.stacks.get(name);
     if (!stack || !('git.worktreesDir' in stack.config)) continue;

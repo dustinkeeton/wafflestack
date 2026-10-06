@@ -2,7 +2,7 @@
 name: waffle-init
 description: Scaffold a starter `.waffle/waffle.yaml` so wafflestack can render into this repo. Use in a repo that has never run wafflestack, before picking stacks and running /waffle-render.
 user-invocable: true
-argument-hint: "(no refs — add --gitignore to also seed .waffle/waffle.local.yaml into .gitignore)"
+argument-hint: "(no refs — add --gitignore to also seed the baseline entries — local overlay, local lock, .waffle/avatars/ — into .gitignore)"
 ---
 
 # Initialize wafflestack in this repo
@@ -17,9 +17,10 @@ It **errors if a config already exists** at any generation, so it is safe to run
 npx --yes github:dustinkeeton/wafflestack init
 ```
 
-Pass `--gitignore` through if `$ARGUMENTS` asks for it — that also appends
-`.waffle/waffle.local.yaml` to `.gitignore` (nothing else is knowable yet, since no stack is
-chosen):
+Pass `--gitignore` through if `$ARGUMENTS` asks for it — that also appends the
+stack-independent baseline to `.gitignore`: `.waffle/waffle.local.yaml`,
+`.waffle/waffle.local.lock.json` and `.waffle/avatars/` (the worktrees dir is not knowable
+yet, since no stack is chosen; `install --gitignore` adds it later):
 
 ```bash
 npx --yes github:dustinkeeton/wafflestack init --gitignore

@@ -21,8 +21,8 @@ node_modules/
 # commit it. Absent entirely on a machine with no overlay.
 .waffle/waffle.local.lock.json
 # Generated .waffle/ overview docs (cheat sheet + team intro, Markdown + branded HTML).
-# Consumers commit these; here they are generated-only, covered by doctor's
-# --allow-missing like the label-hook workflow above.
+# Consumers commit these; here they are generated-only. doctor treats the class as
+# presence-optional (#528), so unlike the label-hook workflow above they need no flag.
 .waffle/CHEATSHEET.md
 .waffle/TEAM.md
 .waffle/cheatsheet.html
