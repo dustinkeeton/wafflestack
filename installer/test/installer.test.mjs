@@ -1191,7 +1191,8 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
     // milestone calls — and NOTHING that writes files or touches git (it holds issues:write only).
     const enrich = argsOf(wf, 'enrich');
     assert.match(enrich, /^--allowedTools '/, `enrich opens with the baked allowlist: ${enrich}`);
-    for (const tool of ['Bash(gh issue:*)', 'Bash(gh api:*)']) {
+    // #544: the issue skill lists labels before applying them, so that read is granted rather than denied.
+    for (const tool of ['Bash(gh issue:*)', 'Bash(gh api:*)', 'Bash(gh label list:*)']) {
       assert.ok(enrich.includes(tool), `enrich allowlist covers ${tool}`);
     }
     for (const forbidden of ['Edit', 'Write', 'Bash(git:*)', 'Bash(gh pr:*)']) {
@@ -1371,7 +1372,16 @@ describe('github-workflow: waffle-label-hook payload (#27)', () => {
       assert.match(guard.run, /exit 1/, `${job} guard can fail the job`);
       // the no-PR/no-drift heuristic is hygiene-specific — these jobs get the denial check only
       assert.doesNotMatch(guard.run, /no drift/, `${job} guard omits the hygiene no-op heuristic`);
-      assert.doesNotMatch(JSON.stringify(guard), /github\.event/, `${job} guard has no untrusted event data`);
+      // the dispatched issue NUMBER (an integer, env-passed, re-validated numeric in the script) is the
+      // one event field the enrich guard may read — it is its delivery-evidence key (#544)
+      const guardSansIssue = JSON.stringify(guard).replace(/\$\{\{ github\.event\.issue\.number \}\}/g, '');
+      assert.doesNotMatch(guardSansIssue, /github\.event/, `${job} guard has no untrusted event data`);
+      if (job === 'enrich') {
+        assert.equal(guard.env.ISSUE, '${{ github.event.issue.number }}', 'enrich guard receives the issue number via env');
+        assert.match(guard.run, /case "\$\{ISSUE:-\}" in\s+''\|\*\[!0-9\]\*\)/, 'enrich guard fails closed on a non-numeric ISSUE');
+      } else {
+        assert.equal(guard.env.ISSUE, undefined, 'implement keeps PR-URL-only delivery evidence');
+      }
 
       // #82 bootstrap: implement needs node_modules for its pre-flight, so it installs deps BEFORE
       // the paid dispatch; enrich is read-only (no edits, no pre-flight) so it gets NO install step.
@@ -4160,14 +4170,14 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
   };
 
   // execute a guard script against a log fixture; return { code, out }
-  const runGuard = (script, log) => {
+  const runGuard = (script, log, extraEnv = {}) => {
     const gf = path.join(cwd, 'guard.sh');
     const lf = path.join(cwd, 'log.json');
     fs.writeFileSync(gf, script);
     fs.writeFileSync(lf, JSON.stringify(log));
     const res = spawnSync('bash', [gf], {
       encoding: 'utf8',
-      env: { ...process.env, EXECUTION_FILE: lf, RUNNER_TEMP: os.tmpdir() },
+      env: { ...process.env, EXECUTION_FILE: lf, RUNNER_TEMP: os.tmpdir(), ...extraEnv },
     });
     return { code: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
   };
@@ -4291,6 +4301,85 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       assert.equal(code, 1, `${job} must red an undelivered run with hard denials: ${out}`);
       assert.match(out, /may not have landed its work/, `${job} uses the softened wording: ${out}`);
     });
+  });
+
+  // #544: an enrich run never opens a PR, so "PR URL or red" false-redded a run that had already rewritten the issue.
+  // The dispatched issue's URL is enrich's proof of delivery; read-only gh calls are SOFT in both label-hook jobs.
+  const ISSUE_544_DENIALS = [
+    B('gh label list --limit 100'),
+    B("gh label list --limit 100 --json name --jq '.[].name'"),
+    { tool_name: 'Write', tool_input: { file_path: '/tmp/issue-536-body.md', content: '# body' } },
+    { tool_name: 'Write', tool_input: { file_path: '/home/runner/work/r/r/.issue-536-body.md', content: '# body' } },
+  ];
+  const ISSUE_544_FINAL = 'Enriched https://github.com/dustinkeeton/wafflenet/issues/536 — title and body rewritten. Labels: added `enhancement` and `priority: medium`; removed `waffle:needs-inference`.';
+
+  test('enrich: the #544 run (2× gh label list + 2× scratch Write, issue URL reported) goes GREEN with warnings', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const { code, out } = runGuard(g.enrich, RESULT(ISSUE_544_DENIALS, ISSUE_544_FINAL), { ISSUE: '536' });
+    assert.equal(code, 0, `enrich must not red a delivered enrich run: ${out}`);
+    assert.doesNotMatch(out, /::error/, `no error on the delivered run: ${out}`);
+    assert.match(out, /denied 2 delivery-classified tool call\(s\), but the run reported the issue URL/, `the two Writes downgrade on the issue URL: ${out}`);
+    assert.match(out, /denied 2 read-only tool call\(s\)/, `the two gh label list reads are SOFT: ${out}`);
+  });
+
+  test('enrich: only the DISPATCHED issue URL is delivery evidence; a non-numeric ISSUE fails closed', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const log = RESULT([{ tool_name: 'Write', tool_input: { file_path: '/tmp/b.md' } }], ISSUE_544_FINAL);
+    for (const [issue, why] of [['537', 'another issue'], ['53', 'a prefix of the number'], ['', 'no number'], ['536; rm -rf /', 'a non-numeric value']]) {
+      const { code, out } = runGuard(g.enrich, log, { ISSUE: issue });
+      assert.equal(code, 1, `enrich must stay red when the URL is for ${why} (ISSUE=${JSON.stringify(issue)}): ${out}`);
+      assert.match(out, /neither the issue URL nor a PR URL/, `enrich names both evidence kinds: ${out}`);
+    }
+    const ok = runGuard(g.enrich, log, { ISSUE: '536' });
+    assert.equal(ok.code, 0, `the dispatched issue's URL IS evidence: ${ok.out}`);
+    // implement never reads the issue number: an issue URL is not its proof (a PR is)
+    const impl = runGuard(g.implement, log, { ISSUE: '536' });
+    assert.equal(impl.code, 1, `implement keeps PR-URL-only delivery semantics: ${impl.out}`);
+  });
+
+  test('both label-hook jobs: read-only gh verbs are SOFT (warn only, no delivery evidence needed)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const log = RESULT([
+      B('gh label list --limit 100'),
+      B('gh issue view 536 --json title,body,labels'),
+      B('gh api repos/o/r/labels --paginate'),
+      B('gh api --method GET repos/o/r'),
+      B('gh api -X GET repos/o/r --jq .name'),
+      B('gh  label  list'),
+      B('gh api repos/o/r/labels | head; gh label list'),
+    ], 'Nothing to report.');
+    for (const job of ['enrich', 'implement']) {
+      const { code, out } = runGuard(g[job], log);
+      assert.equal(code, 0, `${job} must not red read-only gh calls: ${out}`);
+      assert.doesNotMatch(out, /::error/, `${job} emits no error: ${out}`);
+      assert.match(out, /denied 7 read-only/, `${job} counts all seven as SOFT: ${out}`);
+    }
+  });
+
+  test('both label-hook jobs: mutating gh verbs stay DELIV — red without delivery evidence', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    for (const cmd of [
+      'gh label create waffle:x',
+      'gh issue edit 536 --add-label x',
+      'gh api --method POST repos/o/r/labels -f name=x',
+      'gh api -X DELETE repos/o/r/labels/x',
+      'gh api --method=PATCH repos/o/r',
+      'gh api graphql -f query=q',
+      'gh api repos/o/r/issues --input body.json',
+      'gh label list; gh api --method DELETE repos/o/r/labels/x',
+      'gh pr create --fill',
+      'gh',
+    ]) {
+      for (const job of ['enrich', 'implement']) {
+        const { code, out } = runGuard(g[job], RESULT([B(cmd)], 'Nothing to report.'));
+        assert.equal(code, 1, `${job}: \`${cmd}\` must stay a delivery denial: ${out}`);
+        assert.match(out, /may not have landed its work/, `${job} reds \`${cmd}\` as DELIV: ${out}`);
+      }
+    }
   });
 
   // pr-green cannot use the siblings' "did the final text print a PR URL?" proof, since the reviewed PR's URL pre-exists. It asks GitHub instead,
@@ -4776,9 +4865,14 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     for (const name of ['enrich', 'implement', 'prResponse', 'hygiene']) {
       const list = listOf(name, g[name]);
       assert.equal(list, canonical, `${name}'s destructive list must equal pr-green's — one list, five hooks`);
-      // both classifiers derive from the declaration; neither re-types the programs
-      assert.match(g[name], /classify hard "gh\|git\|\$\{destructive\}"/,
-        `${name}: HARD = (gh|git) + the shared list — derived, not re-typed`);
+      // both classifiers derive from the declaration; neither re-types the programs. The label-hook
+      // jobs tier `gh` by verb inline (#544), so their HARD progs are `git` + the list; the others keep `gh` in.
+      const hardProgs = name === 'enrich' || name === 'implement' ? 'git' : 'gh|git';
+      assert.match(g[name], new RegExp(`classify hard "${hardProgs.replace(/\|/g, '\\|')}\\|\\$\\{destructive\\}"`),
+        `${name}: HARD = (${hardProgs}) + the shared list — derived, not re-typed`);
+      if (hardProgs === 'git') {
+        assert.match(g[name], /\|gh\\\\b\(\?!/, `${name}: gh is still HARD by default — a read-only verb lookahead carves out the SOFT forms`);
+      }
       assert.match(g[name], /classify danger "\$destructive"/,
         `${name}: DANGER = the shared list — derived, not re-typed`);
       const inline = g[name].match(/\(rm\|rmdir\|[^)]*mkfs\)/g) || [];

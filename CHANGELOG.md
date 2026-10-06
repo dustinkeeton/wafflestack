@@ -39,6 +39,14 @@ is what you reach for across a breaking one.
   rendered, and every later `render`/`upgrade` failed the same way. Any refused render now rolls
   the just-saved selection back and says so. Consumer impact: CLI behavior only; no re-render or
   config change.
+- **The label-hook enrich job no longer reds a run that delivered (#544).** Its `Check harness
+  result` step only accepted a PR URL as delivery evidence — which an enrich run never produces —
+  and classified every denied `gh` call as a delivery denial, so a stray `gh label list` or a
+  scratch-file `Write` failed a run that had already rewritten the issue. Enrich now counts the
+  dispatched issue's URL in the final text as delivery; both label-hook jobs tier read-only `gh`
+  calls (`gh <noun> list|view`, `gh api` with no mutating method or body) as warn-only; and the
+  enrich allowlist grants `Bash(gh label list:*)`. Sandbox escapes and the exfil/destructive list
+  stay red. Consumer impact: re-render to pick up the workflow; no config change.
 
 ## [0.16.1] - 2026-09-18
 

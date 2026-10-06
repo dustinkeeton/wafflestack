@@ -328,8 +328,9 @@ setup: |-
   auto-denied — with no allowlist at all the harness changes nothing, opens no PR, and bills you
   for a no-op. The two jobs carry DIFFERENT defaults matched to their scope. **enrich** authorizes
   only the issue and project-board calls it needs to re-draft the issue in place — `Bash(gh
-  issue:*)` for the title/body/label edits and `Bash(gh api:*)` for the GraphQL board plus
-  milestone calls — with no file edits and no git. **implement** additionally authorizes the full
+  issue:*)` for the title/body/label edits, `Bash(gh api:*)` for the GraphQL board plus
+  milestone calls, and `Bash(gh label list:*)` for the label read the issue skill makes before
+  applying any — with no file edits and no git. **implement** additionally authorizes the full
   delivery chain: edit the code (`Edit`/`Write`), branch/stage/commit/push (`Bash(git:*)`), open
   the PR (`Bash(gh pr:*)`), comment the PR link on the issue (`Bash(gh issue:*)`), read-only repo
   inspection (`Bash(gh repo view:*)`), and the
@@ -366,8 +367,10 @@ setup: |-
   the issue/PR the job delivers, so reddening the whole run for it (the pre-#82 fail-on-*any*-denial
   behavior) was a false alarm. Widening the allowlist stays the fix for a *hard* denial; the
   read-only warning is just an FYI that a task may have used a fallback path.
+  A read-only `gh` call (`gh <noun> list|view`, or `gh api` with no mutating `--method`/`-X` and
+  no `-f`/`-F`/`--field`/`--input` body) is also a warning, not a delivery denial (#544).
   **Delivery-aware downgrade (#85).** The program-name classifier can't read intent — it can't
-  tell a read-only `git status` / `gh api` GET from a mutating `git push`, and a `cd …`-prefixed
+  tell a read-only `git status` from a mutating `git push`, and a `cd …`-prefixed
   compound (`cd /home/runner/work/… && …`) matches no allowlist entry at all, so a legitimate
   audit command gets denied and then hard-classified for merely *containing* `git`/`gh`/`xargs`.
   When that happens but the run's final text still reports a **PR URL** — proof it delivered — the
