@@ -32,8 +32,11 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **Mods: `setup` says how a mod loads, `validate` runs `claude plugin validate`, the loader skips engine-laid files (#564, part of #552).** `wafflestack setup` on a configured repo whose selection renders a mod adds a `## Mods` block per mod — the post-render `claude plugin validate .claude/mods/<name>`, the per-session `claude --plugin-dir "$PWD/.claude/mods/<name>"`, the `CLAUDE_CODE_PLUGIN_DIRS` route, the marketplace install line, `claude plugin test` when `claude` ≥ 2.1.291 is on PATH (a note otherwise), and the `.gitignore` lines for the files a load lays into the dir. `npm run validate` now runs `claude plugin validate` over every `stacks/*/mods/<name>/` when the CLI is present and prints a visible `skipped:` line — never a pass — when it is absent. `loadStack` skips `MOD_ENGINE_LAID` (`tsconfig.json`, `.claude-plugin/types/`) so a source dir someone loaded with `--plugin-dir` can no longer ship those files to consumers. **Consumer impact:** none on the render — `setup` output and toolkit-developer lint only; re-render is a no-op.
+- **waffle-view slices by the last skill invocation (#563, part of #552).** `wafflestack state --json` gains two additive `version: 1` slots — `config` (every declared key resolved with its layer) and `skills` (per selected skill: the declared keys its files reference, derived from its placeholders, plus the run files it writes from the small `SKILL_RUN_FILE_KEYS` table: delegate's checkpoint dir, newest checkpoint and memory file, autopilot's plan dir) — and the `waffle-view` pane tracks the person's last `/name` prompt or command and narrows to that skill's keys, the other config it reads, and its run files; a plain prompt or an unknown name restores the full view. **Consumer impact:** additive — re-render to pick up the mod's new version; `state --json` consumers see two more top-level keys.
 - **The `waffle-view` mod (#562, part of #552).** The first built-in mod, shipped by the
-  `wafflestack` stack as `mods/waffle-view`: `/waffle-view` opens a pane that draws the repo's
+  `wafflestack` stack as `mods/waffle-view`: `/waffle-view` toggles a pane (a second invocation
+  closes it) that draws the repo's
   resolved state — behavioral keys (effective value, source layer, invocation tokens; a value the
   local overlay changed is marked against the lock's), delegate run files, committed vs local lock,
   doctor drift, and the project's targets/stacks/include — read only through

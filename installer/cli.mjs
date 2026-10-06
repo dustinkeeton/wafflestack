@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { eject, init, installRefs, unejectCollisions } from './lib/eject.mjs';
-import { validateToolkit } from './lib/validate.mjs';
+import { validateToolkit, validateModPlugins, formatModPluginChecks } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { collectReport, formatReportMarkdown } from './lib/report.mjs';
 import { collectState, formatStateText } from './lib/state.mjs';
@@ -291,6 +291,10 @@ try {
     }
     case 'validate': {
       const problems = validateToolkit(toolkitRoot);
+      // Claude Code's own lint over each mod source dir (#564) — "skipped" when the CLI is absent.
+      const mods = validateModPlugins(toolkitRoot);
+      for (const line of formatModPluginChecks(mods)) console.log(line);
+      problems.push(...mods.problems);
       for (const p of problems) console.error(p);
       console.log(problems.length ? `${problems.length} problems` : 'toolkit is valid');
       process.exit(problems.length ? 1 : 0);
