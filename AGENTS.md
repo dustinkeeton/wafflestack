@@ -92,6 +92,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `harness-tools.mjs` | Per-target roster of call-shaped harness tools (#445): `HARNESS_TOOLS` data (`claude` declared; `codex` / `agents-dir` `null` = unverified) + the pure `toolCalls` / `unknownToolCalls` extractor `content.test.mjs` sweeps every source and render with. THE place a harness tool rename or removal is recorded |
 | `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); `formatReportMarkdown` renders the `<details>` block (`--json` is `JSON.stringify` of the bundle in `cli.mjs:127`, no renderer export); `health` does not surface doctor's `absentDocs` (#528) — only `notes` carries them |
+| `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `skills: {}` is reserved for #563 |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) |
 | `upgrade.mjs` | Version diff, changelog delta, migrations, pin reconcile (#372), render + doctor |
@@ -336,6 +337,12 @@ export function scrub(text, { cwd, home } = {}) // → string — cwd → `<repo
 export function redact(value, scope)           // → value with scrub applied to every string in the tree, object keys included
 export function formatReportMarkdown(b)        // → string — the collapsed Markdown `<details>` block; the only renderer export
 
+// state.mjs — `state` document (#561); read-only, offline; the overlay is opened ONLY to attribute a layer
+export const STATE_SHAPE_VERSION = 1, LAYERS = ['local-overlay', 'waffle.yaml', 'stack-default'], CHECKPOINT_PHASES // [phase, requiredSections][] in order — mirrors checkpoint.schema.json `x-phaseSections`
+export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { version, cli, project, keys, runFiles: { delegate }, locks, drift, skills: {} } — the "`state --json` shape" below; throws when waffle.yaml is absent
+export function resolveBehavioralKeys(stacks, { project, canonical, overlayValues, target }) // → BehavioralKey[] sorted by key, one entry per key across the selected stacks (`stacks` lists every declarer); pure over loaded stacks
+export function formatStateText(state)         // → string — the human default; ends in a newline
+
 // prerequisites.mjs — typed external prerequisites (#47/#129)
 export const PREREQ_KINDS = ['tool','secret','scope','label','setting','service','env'], PREREQ_LEVELS = ['require','recommend']
 export const RENDER_PROBE_KINDS                // Set{'tool','env'} — the cheap kinds render probes (doctor probes all)
@@ -394,11 +401,12 @@ export function formatProvenanceWarning(identity) // → stderr warning for non-
 Import graph (real `import` statements only; `util.mjs` and `template.mjs` depend only on `yaml`):
 
 ```
-cli.mjs      → render, doctor, eject, validate, setup, report, upgrade, uninstall, toolkit,
+cli.mjs      → render, doctor, eject, validate, setup, report, state, upgrade, uninstall, toolkit,
                prerequisites, list, toggle, toolkit-ref, project, avatars-sync (dynamic)
 render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, project, util
 doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, util
 report.mjs   → render, doctor, prerequisites, project, util
+state.mjs    → toolkit, sources, refs, render, doctor, template, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
 eject.mjs    → render, toolkit, sources, refs, project, util
@@ -482,12 +490,66 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `upgrade` | Lock-vs-CLI version diff, CHANGELOG delta, migrations in `(from, to]` (an unreleased toolkit also runs the steps keyed past its version, #501), pin reconcile (#372), render (`refreshSources: true`, reporting source + built-in toolkit commit moves, #374) + doctor. Missing lock degrades to render + doctor; a lock recording no `toolkitVersion` skips migrations and the changelog delta (`upgrade.mjs:51`). Exit follows doctor. `upgrade.mjs:28` |
 | `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. An absent generated `.waffle/` doc (`isGeneratedDoc`) is a note in every mode, never drift (#528); the all-absent guard (#311) stays flag-independent. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:38` |
 | `report` | Print a REDACTED diagnostics bundle for an upstream toolkit bug report (#473): committed lock summary (version, `toolkit` block, targets, stacks, include, tracked-file COUNT, external source names), committed config (targets, stacks, external names/refs, eject, config KEY paths — never values), environment (CLI version/status, node, platform, overlay PRESENCE), and a `doctor({ canonical: true })` summary. Never opens `waffle.local.yaml` or `waffle.local.lock.json`; scrubs cwd/home/emails/remotes. Markdown `<details>` by default, `--json` for machines. Takes no refs; never contacts GitHub; exit 0 even on a red doctor. `report.mjs`, `cli.mjs:120` |
+| `state` | Print the resolved state (#561): every `modes:`/`flag:` key with its effective value, the layer it came from and its invocation tokens; `delegate.checkpointDir` (newest `<runId>.json`, the last phase whose sections are all PRESENT — shape only; the delegate skill's `checkpoint.mjs` is the validator) and `delegate.memoryFile` (bytes vs `delegate.memoryMaxBytes`); committed vs local lock (presence, toolkit version/status/ref, per-file divergence); plain-`doctor` drift against `readTreeLock` (#317). Human text by default, `--json` for the document below. Takes no refs; read-only, offline, no prerequisite probes, writes nothing; exit 0 even on red drift. `state.mjs`, `cli.mjs:121` |
 | `eject <kind/NAME>` | Add to `eject:`, strip matching `include:`, drop the item's files from the lock; files stay in place, project-owned. Never renders (offline, ungated): prints a run-`render` hint naming closure-only deps the dropped include orphaned (#497). `eject.mjs:26` |
 | `uninstall` | Remove the whole install, driven entirely off the lock: `remove` only when the sha256 still matches the render; `drifted` skipped unless `--force`; refuses the whole run on an absent lock or a path resolving outside `cwd` (incl. symlink escapes). Also removes `.waffle/` meta (unless `--keep-config`), prunes genuinely-emptied dirs, strips wafflestack's `.gitignore` lines. Dry run until `--yes`. Skips exit 0; errors exit 1 (#359). Read `lockRetained` off the result, not the plan. `uninstall.mjs` (#182) |
 | `reinstall` | Refresh in place: snapshot → uninstall(keepConfig+keepLock, force) → re-render, rollback on failure; keeping the lock is load-bearing (the `trackedFiles` re-admission keeps poured opt-in syrup selected). `--clean` = wipe to empty + `init` (requires `--yes`, no render). Both shapes need a lock (#359). `uninstall.mjs` (#182) |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285): `sync` rasters + uploads/assigns each verified agent email's avatar; `status` reports drift only. Token from `WAFFLE_GRAVATAR_TOKEN`; unverified addresses are a manual remainder. `status` exits 1 on drift; any `failed` exits 1. `avatars-sync.mjs`, `cli.mjs:272` |
 | `validate` | Toolkit-developer lint (see `validate.mjs` above). Exit 1 on problems. `validate.mjs:58` |
 | `help` | Banner + usage + one line per command/flag to stdout, exit 0. `helpText` `cli.mjs:364` (#187) |
+
+### `state --json` shape (#561)
+
+One document, `version: 1`. Additive fields keep the version; a renamed or removed field bumps it.
+`keys[].value` is the effective mode (overlay included — what this machine renders); `keys[].canonical`
+is the committed-inputs mode (what the shared lock renders, #317); `source` is one of `LAYERS`; `flag`
+is null when the key declares no `flag:` (an unnamed side is null); `modes` is `[]` for a flag-only
+key; `description` is the first sentence. `runFiles.delegate` is null unless a selected stack declares
+`delegate.checkpointDir`; `latest.lastPhase` walks fetch → classify → plan → execute → report and stops
+at the first phase whose sections are missing. `locks.tree` names the lock describing the disk;
+`inSync` (same toolkit version + commit) and `divergence` are null without a local lock. `drift` is
+plain `doctor()` with no toolkit root. `skills` is reserved for the per-skill `keys`/`files` map (#563)
+— consumers must tolerate it being populated.
+
+```json
+{
+  "version": 1,
+  "cli": { "version": "0.16.1", "status": "release", "commit": "<40-char sha or null>" },
+  "project": { "targets": ["claude"], "stacks": ["github-workflow", "orchestration"], "include": [], "eject": [], "localOverlay": false, "errors": [] },
+  "keys": [
+    {
+      "key": "issue.confirmGate", "stacks": ["github-workflow"],
+      "value": true, "source": "stack-default", "canonical": true, "default": true,
+      "modes": [true, false, "prompt"], "prompt": false, "nonInteractive": false, "lockMode": null,
+      "flag": { "on": "--confirm", "off": "--yes" },
+      "description": "Whether `/issue` pauses at the plan gate before mutating GitHub — create, enrich, and label."
+    },
+    {
+      "key": "autopilot.autoMerge", "stacks": ["orchestration"],
+      "value": "prompt", "source": "stack-default", "canonical": "prompt", "default": "prompt",
+      "modes": [true, false, "prompt"], "prompt": true, "nonInteractive": false, "lockMode": "prompt",
+      "flag": { "on": "+automerge", "off": null },
+      "description": "Per-run auto-merge consent for the autopilot backlog runner — whether an autopilot run may arm `gh pr merge --auto --merge` on the PRs it opens."
+    }
+  ],
+  "runFiles": {
+    "delegate": {
+      "checkpoints": {
+        "path": ".claude/worktrees/.delegate", "exists": true, "runs": 1,
+        "latest": { "file": ".claude/worktrees/.delegate/delegate-1700000000.json", "runId": "delegate-1700000000", "mtime": "2026-10-06T12:00:00.000Z", "lastPhase": "plan", "sections": ["scope", "issues", "classification", "plan"], "parseError": null }
+      },
+      "memory": { "path": ".claude/worktrees/.delegate/memory.md", "exists": true, "bytes": 812, "maxBytes": 4096, "overCap": false }
+    }
+  },
+  "locks": {
+    "committed": { "path": ".waffle/waffle.lock.json", "present": true, "toolkitVersion": "0.16.1", "toolkitStatus": "release", "toolkitRef": "v0.16.1", "files": 67 },
+    "local": { "path": ".waffle/waffle.local.lock.json", "present": false, "toolkitVersion": null, "toolkitStatus": null, "toolkitRef": null, "files": 0 },
+    "tree": "committed", "inSync": null, "divergence": null
+  },
+  "drift": { "ok": true, "modified": [], "missing": [], "absentDocs": [], "notes": ["rendered by toolkit 0.16.1; installed CLI is 0.16.1"] },
+  "skills": {}
+}
+```
 
 ## Item refs and render selection
 

@@ -80,6 +80,7 @@ npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness file
 | `upgrade` | Move an install across toolkit versions: print CHANGELOG, run migrations, re-render, `doctor`. |
 | `doctor` | Diff managed files against the lock; report edits, missing files, env gaps. Exit 1 on drift. |
 | `report` | Print redacted diagnostics (lock, config keys, doctor summary) for an upstream toolkit bug report; `--json` for machines. |
+| `state` | Print the resolved state — every behavioral key with its value, layer and tokens, the delegate run files, lock status and drift; `--json` for the documented document. |
 | `eject <item>` | Stop managing an item — its files stay and become project-owned; drops it from `include:`. `install <item>` un-ejects it. |
 | `uninstall` | Remove the whole install (reports until you pass `--yes`; keeps hand-edited files). |
 | `reinstall` | Re-render the same selection from clean; `--clean --yes` for a full reset. |

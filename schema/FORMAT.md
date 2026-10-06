@@ -131,6 +131,8 @@ resolves in one of three ways:
 **Precedence** (highest first): explicit command token → `.waffle/waffle.local.yaml` →
 `.waffle/waffle.yaml` → the stack's `default:`. A consumer changes a skill's behavior by setting
 the key in config — never by editing the rendered skill, which the `doctor` drift gate reverts.
+`wafflestack state --json` reports every such key with its effective value, the layer it resolved
+from, and its tokens (the document shape is in `AGENTS.md`).
 
 The four fields, and what `validate` holds them to:
 

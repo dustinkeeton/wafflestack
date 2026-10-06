@@ -32,6 +32,13 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **`wafflestack state [--json]` (#561, part of #552).** One read-only document of the repo's
+  resolved state: every `modes:`/`flag:` key with its effective value, the layer it came from
+  (`local-overlay` → `waffle.yaml` → `stack-default`) and its invocation tokens; the delegate run
+  files (newest checkpoint and its last present phase, memory bytes vs cap); committed vs local
+  lock; and plain-`doctor` drift read through the tree lock (#317). Shape documented in AGENTS.md
+  with a reserved `skills` slot for #563. **Consumer impact:** none — additive; nothing renders
+  differently.
 - **The `mods/` render kind (#560, part of #552).** A stack may carry `mods/<name>/` — a Claude
   Code plugin dir (`.claude-plugin/plugin.json` + hooks) listed under `mods:` in `stack.yaml` —
   and the toolkit renders it **verbatim** (no `{{…}}` substitution: a `.tsx` hook is code) to
