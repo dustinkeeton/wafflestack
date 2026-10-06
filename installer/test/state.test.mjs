@@ -225,8 +225,28 @@ describe('state: behavioral keys, run files, locks, drift (#561)', () => {
     assert.deepEqual(drift.modified, []);
   });
 
-  test('the skills slot is reserved and empty (#563)', () => {
-    assert.deepEqual(collect().skills, {});
+  test('config: every declared key resolves with its layer, nested placeholders expanded (#563)', () => {
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  demo:\n    plain: overlaid\n');
+    const { config } = collect();
+    assert.deepEqual(Object.keys(config), ['delegate.checkpointDir', 'delegate.memoryFile', 'delegate.memoryMaxBytes', 'demo.consent', 'demo.gate', 'demo.plain', 'git.worktreesDir'], 'sorted, behavioral keys included');
+    assert.deepEqual(config['demo.plain'], { value: 'overlaid', source: 'local-overlay', stacks: ['demo'] });
+    assert.deepEqual(config['delegate.memoryFile'], { value: '.claude/worktrees/.delegate/memory.md', source: 'stack-default', stacks: ['demo'] });
+    assert.equal(config['delegate.memoryMaxBytes'].value, 32, 'a non-string value is passed through as is');
+  });
+
+  test('skills: the keys a skill references (flag placeholders folded onto their key) and the run files it writes (#563)', () => {
+    write(toolkitRoot, 'stacks/demo/stack.yaml', fs.readFileSync(path.join(toolkitRoot, 'stacks/demo/stack.yaml'), 'utf8').replace('skills: [gated]', 'skills: [gated, delegate, quiet]'));
+    write(toolkitRoot, 'stacks/demo/skills/delegate/SKILL.md', '---\nname: delegate\ndescription: Writes run files.\n---\n\n{{delegate.checkpointDir}} {{delegate.memoryFile}} {{demo.consent.flag.on}} {{harness.toolkitVersion}}\n');
+    write(toolkitRoot, 'stacks/demo/skills/quiet/SKILL.md', '---\nname: quiet\ndescription: References nothing.\n---\n\nNo placeholders here.\n');
+    write(cwd, '.claude/worktrees/.delegate/delegate-1.json', JSON.stringify({ version: 1, runId: 'delegate-1', scope: {}, issues: [] }));
+
+    const { skills } = collect();
+    assert.deepEqual(Object.keys(skills), ['delegate', 'gated', 'quiet'], 'every selected skill, sorted');
+    assert.deepEqual(skills.gated.keys, ['delegate.checkpointDir', 'delegate.memoryFile', 'delegate.memoryMaxBytes', 'demo.consent', 'demo.gate', 'demo.plain', 'git.worktreesDir']);
+    assert.deepEqual(skills.gated.files, [], 'gated is not in SKILL_RUN_FILE_KEYS');
+    assert.deepEqual(skills.delegate.keys, ['delegate.checkpointDir', 'delegate.memoryFile', 'demo.consent'], 'the flag placeholder counts as its key; harness.* is not a declared key');
+    assert.deepEqual(skills.delegate.files, ['.claude/worktrees/.delegate', '.claude/worktrees/.delegate/delegate-1.json', '.claude/worktrees/.delegate/memory.md']);
+    assert.deepEqual(skills.quiet, { keys: [], files: [] });
   });
 
   test('the text rendering names each key with its layer and tokens', () => {
@@ -252,7 +272,12 @@ describe('state: CLI surface (#561)', () => {
     const r = runCli(['state', '--json'], cwd);
     assert.equal(r.status, 0, r.stderr);
     const doc = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'skills']);
+    assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'config', 'skills']);
+    assert.deepEqual(doc.skills.issue.keys, ['issue.confirmGate', 'issue.inferenceLabel', 'issue.priorityLabels', 'issue.reassessLabel', 'issue.typeLabels', 'project.name']);
+    assert.deepEqual(doc.skills.issue.files, []);
+    assert.equal(doc.config['project.name'].value, 'StateFixture');
+    assert.equal(doc.config['project.name'].source, 'waffle.yaml');
+    assert.match(doc.config['issue.priorityLabels'].value, /priority: critical/);
     const gate = doc.keys.find((k) => k.key === 'issue.confirmGate');
     assert.deepEqual(gate.flag, { on: '--confirm', off: '--yes' });
     assert.equal(gate.source, 'stack-default');

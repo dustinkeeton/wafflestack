@@ -66,7 +66,7 @@ unenforced (a fork), a corrupt one = hard error.
 | `engineering-team` | `stacks/engineering-team/` | lead-engineer, data-engineer, qa-engineer, devops-engineer, ux-designer, security-engineer | webapp-security-audit | Product-eng roster (browser-app security variant); lead-engineer is the general architect. Slots into `orchestration`'s roster. |
 | `expo-dev` | `stacks/expo-dev/` | mobile-architect | expo-ui, expo-app-dev | Expo / React Native app development; mobile-architect is the domain architect. |
 | `harness-architect` | `stacks/harness-architect/` | harness-architect | (none) | Single domain agent — expert in agent harness design. One optional config key (`project.longName`). This repo appends a project extension grounding it in the toolkit's own paradigms. |
-| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle; mod: waffle-view | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). Two optional config keys: `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469) and `waffle.reportConfirmGate` (#487: `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` — the one gate with no non-interactive skip). Ships the first built-in mod, `mods/waffle-view` (#562, part of #552): a Claude Code plugin dir (`.claude-plugin/plugin.json`, `hooks/hooks.json` → `hooks/register.tsx`, `hooks/state.ts`, `types/index.d.ts`, `hooks/waffle-view.test.ts`) that registers `/waffle-view` on `session.start`, opens a `Pane` (`$.ui.open`), and draws the `state --json` document — project, keys (value/source/tokens, `value !== canonical` marked), delegate run files, locks, drift — reading ONLY through `$.process.run` of `wafflestack state --json --offline` (`installer/cli.mjs` at the cwd → `node_modules/.bin/wafflestack` → `npx --yes github:dustinkeeton/wafflestack`; `resolveArgv` in `state.ts`). Refreshes after `/waffle-view`, every other `command.run`, `prompt.submit` and the main loop's `turn.complete` while the pane is open; `$.state` atoms `doc`/`error`/`isRefreshing`. `selectKeys(doc, context)` in `state.ts` is the #563 seam (returns every key today). Rendered verbatim to `.claude/mods/waffle-view/` here (claude target); `claude plugin validate|test` are the mod's own gates. Enabled in this repo's own render. |
+| `wafflestack` | `stacks/wafflestack/` | (none) | waffle-init, waffle-setup, waffle-install, waffle-render, waffle-upgrade, waffle-doctor, waffle-eject, waffle-validate, waffle-report, waffle-toggle; mod: waffle-view | Self-referential stack (#70): one user-invocable `/waffle-*` skill per CLI subcommand, each shelling out to `npx <waffle.toolkitRef> <sub>`. `/waffle-report` (#473) wraps `report` and files a toolkit bug UPSTREAM (target resolved from `waffle.toolkitRef`; `bug`/`feature`/`rough-idea` forms; post-redaction gate; no-auth URL fallback); it ships two eval cases under `stacks/wafflestack/evals/`. `/waffle-toggle` (#476) wraps `toggle` — the per-skill `disable-model-invocation` override — and always drives it by `--disable`/`--enable` flags (the picker needs a TTY). Two optional config keys: `waffle.toolkitRef` (default `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — the release that rendered, #469) and `waffle.reportConfirmGate` (#487: `default: true`, `modes: [true, false, prompt]`, `flag: { off: "--yes" }`, `nonInteractive: fail` — the one gate with no non-interactive skip). Ships the first built-in mod, `mods/waffle-view` (#562, part of #552): a Claude Code plugin dir (`.claude-plugin/plugin.json`, `hooks/hooks.json` → `hooks/register.tsx`, `hooks/state.ts`, `types/index.d.ts`, `hooks/waffle-view.test.ts`) that registers `/waffle-view` on `session.start`, opens a `Pane` (`$.ui.open`), and draws the `state --json` document — project, keys (value/source/tokens, `value !== canonical` marked), delegate run files, locks, drift — reading ONLY through `$.process.run` of `wafflestack state --json --offline` (`installer/cli.mjs` at the cwd → `node_modules/.bin/wafflestack` → `npx --yes github:dustinkeeton/wafflestack`; `resolveArgv` in `state.ts`). Refreshes after `/waffle-view`, every other `command.run`, `prompt.submit` and the main loop's `turn.complete` while the pane is open; `$.state` atoms `doc`/`error`/`isRefreshing`. Context slicing (#563): a `skill` atom holds the name the person's last prompt invoked (`prompt.submit` text `/name …`, or `command.run`'s `command`; peer/task/scheduled origins never move it; `/waffle-view` itself leaves it alone), and `selectSlice(doc, { skill })` in `state.ts` narrows the pane to `doc.skills[skill]` — its behavioral keys, the other config it reads (from `doc.config`, values line-capped), the run files it writes (delegate facts when among them) — hiding project/locks/drift; a plain prompt, or a name `doc.skills` does not know, restores the full view. Rendered verbatim to `.claude/mods/waffle-view/` here (claude target); `claude plugin validate|test` are the mod's own gates. Enabled in this repo's own render. |
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The output-conflict guard
@@ -339,7 +339,10 @@ export function formatReportMarkdown(b)        // → string — the collapsed M
 
 // state.mjs — `state` document (#561); read-only, offline; the overlay is opened ONLY to attribute a layer
 export const STATE_SHAPE_VERSION = 1, LAYERS = ['local-overlay', 'waffle.yaml', 'stack-default'], CHECKPOINT_PHASES // [phase, requiredSections][] in order — mirrors checkpoint.schema.json `x-phaseSections`
-export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { version, cli, project, keys, runFiles: { delegate }, locks, drift, skills: {} } — the "`state --json` shape" below; throws when waffle.yaml is absent
+export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { version, cli, project, keys, runFiles: { delegate }, locks, drift, config, skills } — the "`state --json` shape" below; throws when waffle.yaml is absent
+export function resolveConfig(stacks, { project, canonical, overlayValues, target })   // → Record<key, { value, source, stacks }>: every declared key across the selected stacks, nested {{…}} expanded (#563)
+export function resolveSkills(items, { project, target, delegate })                  // → Record<skill, { keys, files }>: keys from collectUsedKeys over the skill's own files (flag placeholders folded), files from SKILL_RUN_FILE_KEYS (#563)
+export const SKILL_RUN_FILE_KEYS // { delegate: [delegate.checkpointDir, delegate.memoryFile], autopilot: [autopilot.planDir] } — the run files a skill WRITES, by the config keys naming them; no manifest declares this
 export function resolveBehavioralKeys(stacks, { project, canonical, overlayValues, target }) // → BehavioralKey[] sorted by key, one entry per key across the selected stacks (`stacks` lists every declarer); pure over loaded stacks
 export function formatStateText(state)         // → string — the human default; ends in a newline
 
@@ -508,8 +511,13 @@ key; `description` is the first sentence. `runFiles.delegate` is null unless a s
 `delegate.checkpointDir`; `latest.lastPhase` walks fetch → classify → plan → execute → report and stops
 at the first phase whose sections are missing. `locks.tree` names the lock describing the disk;
 `inSync` (same toolkit version + commit) and `divergence` are null without a local lock. `drift` is
-plain `doctor()` with no toolkit root. `skills` is reserved for the per-skill `keys`/`files` map (#563)
-— consumers must tolerate it being populated.
+plain `doctor()` with no toolkit root. `config` (#563) is EVERY declared key across the selected stacks
+resolved through the same layers (`value` with nested `{{…}}` expanded, `source`, `stacks`) — `keys` is
+its behavioral subset with the mode machinery. `skills` (#563) maps each selected skill to the declared
+keys its own files reference (`collectUsedKeys` over the skill, `<key>.flag.<side>` folded onto `<key>`,
+sorted) and the run files it writes: `SKILL_RUN_FILE_KEYS` expanded (`delegate` → checkpoint dir, its
+newest checkpoint when one exists, memory file; `autopilot` → plan dir), `[]` for every other skill. A
+skill selected from two stacks merges. The waffle-view mod slices by `skills[<last /name>]`.
 
 ```json
 {
@@ -547,7 +555,20 @@ plain `doctor()` with no toolkit root. `skills` is reserved for the per-skill `k
     "tree": "committed", "inSync": null, "divergence": null
   },
   "drift": { "ok": true, "modified": [], "missing": [], "absentDocs": [], "notes": ["rendered by toolkit 0.16.1; installed CLI is 0.16.1"] },
-  "skills": {}
+  "config": {
+    "delegate.checkpointDir": { "value": ".claude/worktrees/.delegate", "source": "stack-default", "stacks": ["orchestration"] },
+    "issue.confirmGate": { "value": true, "source": "stack-default", "stacks": ["github-workflow"] },
+    "issue.priorityLabels": { "value": "| Signal in issue content | Label |\n|---|---|\n…", "source": "stack-default", "stacks": ["github-workflow"] },
+    "project.name": { "value": "wafflestack", "source": "waffle.yaml", "stacks": ["github-workflow", "orchestration"] }
+  },
+  "skills": {
+    "delegate": {
+      "keys": ["autoMerge.label", "delegate.approveBeforePush", "delegate.autoMerge", "delegate.batchMode", "delegate.checkpointDir", "delegate.memoryFile", "…"],
+      "files": [".claude/worktrees/.delegate", ".claude/worktrees/.delegate/delegate-1700000000.json", ".claude/worktrees/.delegate/memory.md"]
+    },
+    "git-workflow": { "keys": ["git.cmd", "git.coAuthorTrailer", "…"], "files": [] },
+    "issue": { "keys": ["issue.confirmGate", "issue.inferenceLabel", "issue.priorityLabels", "issue.reassessLabel", "issue.typeLabels", "project.name"], "files": [] }
+  }
 }
 ```
 
@@ -807,7 +828,7 @@ lock toolkit block, pin reconcile — hermetic, strips the env var per spawn),
 required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation),
 `mods.test.mjs` (#560: the `mods/` kind on a fixture stack — load shape, ref grammar, verbatim
 claude-only render → lock → doctor hand-edit → eject → prune on target change, include-skip warning,
-opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory; #562: the built-in `wafflestack/mods/waffle-view` loads with its six files, its manifest/hooks.json point at shipped files, it reads only via `state --json --offline`, and it renders byte-identical into a claude consumer's lock),
+opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory; #562: the built-in `wafflestack/mods/waffle-view` loads with its six files, its manifest/hooks.json point at shipped files, it reads only via `state --json --offline`, and it renders byte-identical into a claude consumer's lock; #563: `config` resolves every declared key with its layer, `skills` lists a skill's referenced keys (flag placeholders folded) and its `SKILL_RUN_FILE_KEYS` files incl. delegate's newest checkpoint),
 `comment-gate.test.mjs` (#388 doctrine enforced mechanically over git-TRACKED `installer/**` and
 `stacks/**` `.mjs` plus workflow YAML: comment-ratio ceiling 15% — 20% for `stacks/**/*.mjs`, ≤12
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the

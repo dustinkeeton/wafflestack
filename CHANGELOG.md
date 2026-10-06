@@ -32,6 +32,7 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Added
+- **waffle-view slices by the last skill invocation (#563, part of #552).** `wafflestack state --json` gains two additive `version: 1` slots — `config` (every declared key resolved with its layer) and `skills` (per selected skill: the declared keys its files reference, derived from its placeholders, plus the run files it writes from the small `SKILL_RUN_FILE_KEYS` table: delegate's checkpoint dir, newest checkpoint and memory file, autopilot's plan dir) — and the `waffle-view` pane tracks the person's last `/name` prompt or command and narrows to that skill's keys, the other config it reads, and its run files; a plain prompt or an unknown name restores the full view. **Consumer impact:** additive — re-render to pick up the mod's new version; `state --json` consumers see two more top-level keys.
 - **The `waffle-view` mod (#562, part of #552).** The first built-in mod, shipped by the
   `wafflestack` stack as `mods/waffle-view`: `/waffle-view` opens a pane that draws the repo's
   resolved state — behavioral keys (effective value, source layer, invocation tokens; a value the
