@@ -60,9 +60,9 @@
     ".claude/skills/qa/SKILL.md": "9c417c30e189eab85271d9c81103315c302ff69c64c5c10f85d7cf317daa1a71",
     ".claude/skills/release/SKILL.md": "eef645cb4d979d9156c5a1631d6200d79d1d5a8ca29f133d40280193e34828ee",
     ".claude/skills/standup/SKILL.md": "ce895493c85f5861a4fda350cb9f4def2890887fbb8f09fe7e50279cebbd62a8",
-    ".claude/skills/waffle-doctor/SKILL.md": "61937c7805393b3548f36d02ca2df613fca852ca0ad711b8c943972a2bc6f5c6",
+    ".claude/skills/waffle-doctor/SKILL.md": "7561ae5679e03f9d2dd81d7cf5094fb2bc7f0f054a89e0e240348c1804ff300c",
     ".claude/skills/waffle-eject/SKILL.md": "ce36ac44fbe9c58bb0338611cb41e59102dc19ce555ea8c4dcbdadeb0440c001",
-    ".claude/skills/waffle-init/SKILL.md": "9e9b9109ee4356bd876908cffec44d8b95373c13b27934669513576d77b822b3",
+    ".claude/skills/waffle-init/SKILL.md": "e7962002d713b2f75888da0ec13073564f20d8dcb2ad9d46a7353def66e3f5d0",
     ".claude/skills/waffle-install/SKILL.md": "8438ba5ec3bc16872360667cfd94044aa226c2c0404b1ce7c10e1510bae0004c",
     ".claude/skills/waffle-render/SKILL.md": "b4061aca4b03490071275abdda8f9ea59e0abce9278bc86878aaca67c54d741b",
     ".claude/skills/waffle-report/SKILL.md": "ace88ee425f63af81e1491d3ecc75d00b99c52d5f1e196631243149c800adcca",
@@ -90,8 +90,8 @@
     ".waffle/avatars/product-manager.svg": "dd3e1d2a1cb4b26292df2c7661e17059b930740553ccbff1f5e8892150100dd2",
     ".waffle/avatars/project-manager.svg": "336d96cedd1bb58ef98357e2c6a772a1a0e67ea114b6d870e72588541c585be8",
     ".waffle/avatars/task-planner.svg": "1bd6892e305bc5aa05dca39d1f7953928eee07212b6c3c3b0ef815607135edfd",
-    ".waffle/cheatsheet.html": "7c349c38aa158585ab08e1df0d4e07a08671acc43f3d8104d2e4879452ec39f9",
-    ".waffle/CHEATSHEET.md": "d5ff2459091f1180ae2279be559868e8f9a47c3f261e076abb57a9f3a6880a89",
+    ".waffle/cheatsheet.html": "af3f00a4a37ccf5aa5ab44f4fffc9bf1621358dea179b4844888ca7499c68428",
+    ".waffle/CHEATSHEET.md": "b009b2d678af1179e539ff6bb678a5f31825782b293f2dd2b1a81afe7f078e83",
     ".waffle/team.html": "843f121b170b2d17b82ed288166767787eb8fffa14b2483e70080985aa56e9ab",
     ".waffle/TEAM.md": "6dece27e3ea184ef039d2e16785e95a702796b8b8e19918515c9adea010982b3"
   }

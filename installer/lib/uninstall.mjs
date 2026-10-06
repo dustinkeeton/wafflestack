@@ -18,6 +18,7 @@ import {
   LOCAL_LOCK_FILE,
   LOCK_FILE,
   EXTENSIONS_DIR,
+  BASELINE_GITIGNORE_ENTRIES,
 } from './project.mjs';
 
 /**
@@ -157,7 +158,7 @@ export function planUninstall({
     if (!toolkitRoot) throw new Error('no toolkit root');
     gitignore = recommendedGitignoreEntries(loadToolkit(toolkitRoot), loadProjectConfig(cwd));
   } catch {
-    gitignore = [LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE];
+    gitignore = [...BASELINE_GITIGNORE_ENTRIES];
     notes.push(`could not read ${CONFIG_FILE} to compute the full .gitignore offer — falling back to the baseline entries`);
   }
 

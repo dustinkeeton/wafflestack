@@ -152,7 +152,8 @@ Everything above depends on the drift gate, so be precise about what it does.
 | --- | --- | --- |
 | Lock file absent | **fail** | **fail** — the flag is never even consulted |
 | Managed file absent | fail (`missing: <f>`) | pass (`missing (tolerated): <f>`) |
-| Managed file edited by hand | **fail** (`modified: <f>`) | **fail** (`modified: <f>`) |
+| A generated `.waffle/` doc absent — `CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/` | pass (`absent (generated doc, optional): <f>`) | pass (same) |
+| Managed file edited by hand — a generated doc included | **fail** (`modified: <f>`) | **fail** (`modified: <f>`) |
 | **Every** managed file absent | fail — all of them missing | **fail** — a repo with no render is a repo that never rendered ([Posture 2b](#posture-2b-commit-the-lock-only)) |
 | Config edited, never re-rendered | **pass** — see below | **pass** — see below |
 
@@ -165,14 +166,19 @@ Everything above depends on the drift gate, so be precise about what it does.
 The decisive line is the `driftOk` computation in `doctor.mjs`:
 
 ```js
-const driftOk = allowMissing
-  ? modified.length === 0 && (!nothingPresent || verified)
-  : modified.length === 0 && missing.length === 0;
+const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
 ```
 
 Modified files fail either way. That is the whole point: the flag relaxes *presence*, never
 *integrity*. (`verified` is `--verify-render` having reproduced the render — the one thing that
 excuses an all-absent tree, because something was checked after all.)
+
+The generated `.waffle/` overview docs never reach `missing` at all: an absent one is sorted
+into a separate `absentDocs` list and reported as a note, flag or no flag. They are reading
+material, not agent behavior, and consumers routinely gitignore them — so their absence is not
+drift. A *present* copy is hashed like any other managed file, and a hand-edit to it still
+fails. (`--gitignore` adds `.waffle/avatars/` for you; the five `.md`/`.html` files you add by
+hand if you want them out too.)
 
 ### The one thing plain `doctor` cannot see: a forgotten re-render
 
@@ -307,7 +313,7 @@ shipped workflow interpolates into its run line. They compose:
 # .waffle/waffle.yaml
 config:
   doctor:
-    flags: --allow-missing                    # Posture 2 — some renders gitignored
+    flags: --allow-missing                    # Posture 2 — some renders gitignored (beyond the overview docs)
     # flags: --verify-render                  # also catch a forgotten re-render
     # flags: --allow-missing --verify-render  # Posture 2b — the whole render gitignored
 ```
@@ -347,14 +353,18 @@ one of the costs above is actively hurting you.
 
 ### Posture 2: commit the lock, ignore a subset of renders
 
-Commit the lock, gitignore the parts of the render you do not want in the tree, and set
-`doctor.flags: --allow-missing` so the deliberately-absent files do not red the build.
+Commit the lock, and gitignore the parts of the render you do not want in the tree.
 
 The usual consumer version of this: commit `.claude/`, but gitignore the generated `.waffle/`
 overview docs — `CHEATSHEET.md`, `TEAM.md`, their branded HTML, `AVATARS.md`, and `avatars/`.
 They are generated reading material, not agent behavior; nothing breaks if they are absent,
-and they add diff noise on every render. The other common case is rendering to a harness some
-of your team uses locally but the repo does not need in git.
+and they add diff noise on every render. **This version needs no flag**: `doctor` treats that
+class as presence-optional — an absent one is a note, a present one is still hash-checked —
+and `--gitignore` already adds `.waffle/avatars/` to the offered entries.
+
+The other common case is rendering to a harness some of your team uses locally but the repo
+does not need in git. Ignoring *that* kind of render is where `doctor.flags: --allow-missing`
+comes in, so the deliberately-absent files do not red the build.
 
 **Fits**: repos that want the render committed but not *all* of it. **Keeps**: the full drift
 gate on everything you *did* commit — hand-edits still fail. **Costs**: absent files are now
@@ -553,7 +563,7 @@ uncluttered by it.
 | --- | --- | --- | --- | --- |
 | **CI `doctor` gate** | Full strength | Full on committed files | Full — by re-rendering, not by reading files | **Cannot run** |
 | **What actually gates CI** | `doctor` | `doctor` | `doctor --verify-render` | *nothing* |
-| **`doctor.flags`** | *(empty)*, or `--verify-render` | `--allow-missing` | `--allow-missing --verify-render` | n/a — no lock to check |
+| **`doctor.flags`** | *(empty)*, or `--verify-render` | `--allow-missing` — or *(empty)* when only the `.waffle/` overview docs are ignored | `--allow-missing --verify-render` | n/a — no lock to check |
 | **Hand-edits caught?** | Yes | Yes, on committed files | Yes, locally — CI has nothing to edit | No |
 | **Forgotten re-render caught?** | Only with `--verify-render` | Only with `--verify-render` | Yes — that *is* the gate | No |
 | **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person; CI reproduces it | Every person, always |

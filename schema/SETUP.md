@@ -382,7 +382,8 @@ content is already byte-identical to the render is adopted silently, no flag nee
   `github-workflow` stack ships an installable `.github/workflows/waffle-doctor.yml`
   that runs it on every push and pull request, so committing the render + lock is what makes
   that gate meaningful (set `doctor.flags: --allow-missing` if the repo gitignores some
-  renders — only modified files fail).
+  renders — only modified files fail; the generated `.waffle/` overview docs need no flag,
+  since `doctor` treats their absence as a note).
 - **Gitignore** — wafflestack never edits `.gitignore` *unasked*, so **offer** the entries
   and apply them on the user's approval. Propose the concrete lines, then either run
   `wafflestack install --gitignore` (it idempotently appends only the missing ones under a
@@ -393,9 +394,14 @@ content is already byte-identical to the render is adopted silently, no flag nee
     account-specific for the same reason the overlay is. `doctor`/`list` read it in preference to
     the committed lock, so hand-edits are still caught locally while the committed lock stays
     canonical. Committing it would push one machine's hashes into everyone's `doctor`.
+  - `.waffle/avatars/` — **always**. The per-agent avatar SVGs are regenerated on every
+    render and are reading material, not agent behavior; keeping them out of git spares a
+    diff on every roster change. `doctor` treats an absent generated `.waffle/` doc
+    (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/`) as a note — a present
+    copy is still hash-checked — so ignoring them needs no `--allow-missing`.
   - the configured `git.worktreesDir` when an enabled stack declares one (throwaway
-    working state). `init --gitignore` seeds the overlay and its local lock, since no stack is
-    chosen yet; `install --gitignore` adds the worktrees dir once one is enabled.
+    working state). `init --gitignore` seeds the overlay, its local lock and `.waffle/avatars/`,
+    since no stack is chosen yet; `install --gitignore` adds the worktrees dir once one is enabled.
 - **Dev-only or self-hosting waffle**: when the render should *not* be committed — a
   consumer who wants the waffle only in their own working environment, or the wafflestack
   source repo itself (where committed copies would duplicate every skill in the tree) —
@@ -403,7 +409,8 @@ content is already byte-identical to the render is adopted silently, no flag nee
   separate decision**, and it is the one that decides whether CI can gate at all:
   - **Keep `.waffle/waffle.lock.json` committed.** Ignoring *some* renders: set
     `doctor.flags: --allow-missing` (github-workflow stack) and the drift gate keeps full
-    strength on the rest — only modified files fail. Ignoring *every* render: set
+    strength on the rest — only modified files fail (the generated `.waffle/` overview docs
+    are presence-optional already and need no flag). Ignoring *every* render: set
     `doctor.flags: --allow-missing --verify-render`. `doctor` refuses to pass on an all-absent
     tree (a check that inspected nothing is not a green), and `--verify-render` is the principled
     escape — it re-renders the committed config into a temp dir and holds the result against the

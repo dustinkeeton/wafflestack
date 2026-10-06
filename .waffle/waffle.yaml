@@ -1,7 +1,8 @@
 # wafflestack dogfoods itself. The rendered .claude/ output and the lock are COMMITTED, and the
 # doctor drift gate (required check on main) protects them from hand-edits. Still gitignored:
-# the label-hook workflow (committing it would arm a live dispatch) and the .waffle/ overview
-# docs — hence doctor's --allow-missing. After a stack edit, re-render and commit render + lock:
+# the label-hook workflow (committing it would arm a live dispatch) — hence doctor's
+# --allow-missing — and the .waffle/ overview docs, which doctor treats as presence-optional
+# on its own (#528). After a stack edit, re-render and commit render + lock:
 #   node installer/cli.mjs render --allow-unreleased
 # (#373: `render` refuses from a non-release toolkit, and a working tree never is one.)
 targets: [ claude ]

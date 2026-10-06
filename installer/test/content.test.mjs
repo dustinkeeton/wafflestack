@@ -3696,6 +3696,7 @@ describe('source + rendered content: the abolished team concept does not survive
     { pattern: /team beats a single loop/gi, why: 'harness-architect: generic fan-out design advice' },
     { pattern: /engineering-team/gi, why: 'a stack name that merely contains the word' },
     { pattern: /Team Standup/gi, why: 'the standup skill\'s title' },
+    { pattern: /CHEATSHEET\.md, TEAM\.md, their HTML/g, why: 'waffle-doctor: the generated .waffle/ overview files, named as a file list (#528)' },
     { pattern: /GitHub Pro \/ Team \/ Enterprise/g, why: 'GitHub\'s paid plan tiers, named in the auto-merge prerequisite (#205)' },
     { pattern: /Teammates cannot spawn other teammates — the team roster is flat/g, why: 'the harness\'s verbatim rejection of a named spawn from a named seat, quoted in contract clause 4 (#369)' },
   ];
