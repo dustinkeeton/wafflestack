@@ -5,8 +5,8 @@
 
 - **Version**: v0.16.1 (tagged 2026-09-18; pre-1.0 — the file contract can still change
   between minor releases). `main` carries unreleased work on top — see below.
-- **Last updated**: 2026-09-17
-- **Health**: 🟢 tests 1469 in 203 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `5d082e1` (PR #499's merge)
+- **Last updated**: 2026-10-06
+- **Health**: 🟢 tests 1576 in 215 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `5e28be6` (PR #557's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -31,7 +31,15 @@ All 15 commands work (plus `bake`, a pure alias for `render`), over 26 pipeline 
 `installer/lib/`: `init` · `setup` · `list` · `toggle` · `install` · `render` · `upgrade` ·
 `doctor` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
-## Current focus — shipped in v0.16.0
+## Unreleased on `main` — merged 2026-10-06
+
+| Change | What it gives you | State |
+|--------|-------------------|-------|
+| Generated `.waffle/` docs are presence-optional; `.waffle/avatars/` joins the gitignore baseline (#528) | Gitignoring the overview docs no longer needs `doctor --allow-missing`: absent is a note, an edited copy still fails. `--gitignore` now offers `avatars/` too. [Why](DECISIONS.md#2026-10-06-the-generated-waffle-docs-are-presence-optional-in-doctor-gitignoring-them-no-longer-needs---allow-missing-528) | ✅ Merged (PR #557) — `report`'s health line does not show the new `absentDocs` count yet |
+| A refused `install` restores `waffle.yaml` for any reason (#548) | Missing config values, collisions, guards — every refused render rolls the just-saved selection back byte-for-byte, not only an un-eject collision. [Why](DECISIONS.md#2026-10-06-a-refused-install-restores-waffleyaml-byte-for-byte-whatever-the-refusal-548) | ✅ Merged (PR #554) |
+| Enrich runs are not reddened by read-only `gh` denials (#544) | The label-hook enrich job accepts the dispatched issue's URL as delivery proof; `gh … list\|view` and read-only `gh api` denials are warnings in both jobs. hygiene / pr-response guards unchanged (#342/#408). [Why](DECISIONS.md#2026-10-06-an-enrich-run-proves-delivery-with-the-issue-url-and-a-read-only-gh-denial-is-a-warning-544) | ✅ Merged (PR #555) — re-render to pick up the workflow |
+
+## Shipped in v0.16.0
 
 Merged 2026-09-15 through 09-18 and ships in v0.16.0 (CHANGELOG `[0.16.0]`):
 
@@ -46,17 +54,8 @@ Merged 2026-09-15 through 09-18 and ships in v0.16.0 (CHANGELOG `[0.16.0]`):
 
 Also in v0.16.0: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSection` default
 (#472), and `WebFetch` + `WebSearch` granted as a pair across the shipped agents (#474).
-
-## Shipped in v0.15.0
-
-| Change | Why |
-|--------|-----|
-| `/clean-up` sweeps a `/delegate` run's leaked agents, judged by PR state, not task status (#172) | [Why](DECISIONS.md#2026-09-12-clean-up-judges-a-delegate-runs-agents-by-pr-state-from-a-hardcoded-checkpoint-glob-172) |
-| `/audit` ships as two staged Claude workflow scripts — opt-in, sign-off between the runs (#363); it invokes `/docs` rather than copying it (#361) | [Why](DECISIONS.md#2026-09-12-audit-ships-as-two-staged-claude-workflow-scripts--opt-in-claude-scoped-syrup-363-epic-184) |
-| Codex coverage has a definition of done: no literal `.claude/…` path in harness-neutral source (#190) | [Why](DECISIONS.md#2026-09-12-the-codex-toml-carries-no-skill-grant-and-a-sparse-codex-is-the-whole-render-190) |
-| **Breaking default:** labels are `waffle:<label>` everywhere, one bootstrap table in `schema/SETUP.md` step 4 (#451, #452). Rename with `gh label edit`, or pin the old names in config | [Why](DECISIONS.md#2026-09-12-harness-labels-live-in-the-waffle-namespace-with-one-bootstrap-list-in-setupmd-451-452) |
-| Auto-merge's third prerequisite — a required status check — is preflighted (#205) | [Why](DECISIONS.md#2026-09-12-auto-merge-has-three-prerequisites-and-the-third-is-preflighted-205) |
-| Stacks can recommend external plugins: `setup` offers, never installs (#199) | [Why](DECISIONS.md#2026-09-12-a-stack-may-recommend-external-plugins-that-setup-offers-but-never-installs-199) |
+**Earlier releases** (v0.15.0's `waffle:` label namespace, `/audit` workflow scripts, `/clean-up`
+sweep, plugin recommendations): CHANGELOG `[0.15.0]` and the 2026-09-12 entries in DECISIONS.md.
 
 ## Known issues & things to watch
 
@@ -75,8 +74,9 @@ Also in v0.16.0: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSecti
 - **The self-render is committed.** After editing `stacks/**`, re-run
   `node installer/cli.mjs render --allow-unreleased` (flag required, #373) and commit files +
   lock. Two required checks guard it: `waffle-doctor` and the `tests` workflow's render gate.
-- **Deliberately gitignored here** (tolerated by `doctor --allow-missing`): `.claude/worktrees/`,
-  `.codex/`/`.agents/`, `waffle-label-hook.yml`, and the generated `.waffle/` overview docs.
+- **Deliberately gitignored here:** `.claude/worktrees/`, `.codex/`/`.agents/`, and
+  `waffle-label-hook.yml` — these are why `doctor` runs with `--allow-missing`. The generated
+  `.waffle/` overview docs and `avatars/` are gitignored too but need no flag since #528.
 
 ## Dependencies
 
@@ -91,7 +91,7 @@ Also in v0.16.0: the `diagram` proxy skill (#471), the `docs.voiceGuardrailSecti
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1469 tests, 203 suites)
+npm test                          # installer test suite (1576 tests, 215 suites)
 npm run validate                  # manifests + placeholders lint
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate
