@@ -95,7 +95,8 @@ function selectedRefs(toolkitRoot, cwd) {
  * Additive per-item/stack install — the mirror of `eject`. Persistence is required, not
  * cosmetic: the frozen-image contract would otherwise delete an ad-hoc install on the next
  * render. Dependency closure is NOT persisted; it is recomputed each render.
- * An ejected item ref is UN-EJECTED (#497); `rollback()` restores the config as it was found.
+ * An ejected item ref is UN-EJECTED (#497). `rollback()` restores the config byte-for-byte as it
+ * was found, and returns whether there was anything to restore (#548).
  */
 export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const { file: configFile, legacy, note } = resolveConfigFile(cwd);
@@ -173,7 +174,7 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const wrote = renamedKey || touchedStacks || touchedInclude || unejected.length > 0;
   if (wrote) fs.writeFileSync(configFile, doc.toString());
 
-  return { added, closures, unejected, rollback: () => { if (wrote) fs.writeFileSync(configFile, original); } };
+  return { added, closures, unejected, rollback: () => { if (wrote) fs.writeFileSync(configFile, original); return wrote; } };
 }
 
 const stillEjected = (ref) =>

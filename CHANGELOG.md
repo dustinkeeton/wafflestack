@@ -31,6 +31,15 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Fixed
+- **A refused `install` / `list --interactive` apply restores `.waffle/waffle.yaml` byte-for-byte
+  (#548).** `installRefs` saves the selection before the render runs its `needs config values`
+  check, and #497's rollback fired only on an un-eject collision — so picking a stack whose required
+  config was missing left the new `include:` list (and a re-serialized file) behind with nothing
+  rendered, and every later `render`/`upgrade` failed the same way. Any refused render now rolls
+  the just-saved selection back and says so. Consumer impact: CLI behavior only; no re-render or
+  config change.
+
 ## [0.16.1] - 2026-09-18
 
 ### Fixed

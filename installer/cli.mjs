@@ -413,17 +413,21 @@ function helpText() {
 
 // `toolkitIdentity` is what `requireRelease()` already resolved; every caller here is a gated
 // command, so it is never null, and the lock records WHICH toolkit rendered (#374).
-// `installed` is what `installRefs` just persisted: an un-eject whose project-owned file the render
-// refused to overwrite is rolled back, so a refused install leaves waffle.yaml as it found it (#497).
+// `installed` is what `installRefs` just persisted. The render's own checks (`needs config values`,
+// collisions, …) run AFTER that save, so ANY refusal rolls it back and a refused install leaves
+// waffle.yaml as it found it (#548); an un-eject collision additionally names its `--force` remedy (#497).
 function runRender(force = false, toolkitIdentity = null, installed = null) {
   const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, log: console.log });
   for (const w of result.warnings) console.warn(`warning: ${w}`);
   if (!result.ok) {
     for (const e of result.errors) console.error(`error: ${e}`);
-    const blocked = installed ? unejectCollisions(installed.unejected, result.collisions) : [];
-    if (blocked.length) {
-      installed.rollback();
-      console.error(`error: install refused — ${installed.unejected.map((u) => u.ref).join(', ')} stay${installed.unejected.length === 1 ? 's' : ''} ejected and ${CONFIG_FILE} was restored; nothing was written. The project-owned ${blocked.length === 1 ? 'copy differs' : 'copies differ'} from the render: re-run with \`--force\` to overwrite, or move your edits into ${CONFIG_FILE} config / .waffle/extensions/ first`);
+    if (installed?.rollback()) {
+      const blocked = unejectCollisions(installed.unejected, result.collisions);
+      console.error(
+        blocked.length
+          ? `error: install refused — ${installed.unejected.map((u) => u.ref).join(', ')} stay${installed.unejected.length === 1 ? 's' : ''} ejected and ${CONFIG_FILE} was restored; nothing was written. The project-owned ${blocked.length === 1 ? 'copy differs' : 'copies differ'} from the render: re-run with \`--force\` to overwrite, or move your edits into ${CONFIG_FILE} config / .waffle/extensions/ first`
+          : `error: install refused — ${CONFIG_FILE} was restored, so the selection is exactly as it was; nothing was written. Fix the errors above, then re-run the install`,
+      );
     }
     process.exit(1);
   }
