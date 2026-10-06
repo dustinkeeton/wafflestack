@@ -312,3 +312,8 @@ waffles:
     stack: wafflestack
     path: stacks/wafflestack/skills/waffle-toggle
     status: stable
+  - name: waffle-view
+    kind: mod
+    stack: wafflestack
+    path: stacks/wafflestack/mods/waffle-view
+    status: stable

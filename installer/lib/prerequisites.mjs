@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { normalizeItemRef } from './refs.mjs';
 
 /** The external environment a stack declares it leans on — distinct from `requires:`, which maps render-closure edges. */
@@ -35,6 +37,39 @@ export function runCheck(check, cwd, { timeoutMs = 15000 } = {}) {
     return { ran: true, ok: false };
   }
   return { ran: true, ok: res.status === 0 };
+}
+
+/** First executable named `name` on `env.PATH` (Windows: also `<name>.cmd`/`.exe`), or null. */
+export function findOnPath(name, env = process.env) {
+  const names = process.platform === 'win32' ? [name, `${name}.cmd`, `${name}.exe`] : [name];
+  for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    for (const n of names) {
+      const file = path.join(dir, n);
+      try {
+        if (fs.statSync(file).isFile()) {
+          fs.accessSync(file, fs.constants.X_OK);
+          return file;
+        }
+      } catch { /* not here */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * Probe the Claude Code CLI the mods surface (#564) leans on: `{ path, version }` when `claude` is
+ * on PATH (version from `claude --version`, null when that fails), or null when it is absent.
+ * `setup` and `validate` both degrade to a visible "skipped"/note when this returns null.
+ */
+export function claudeCli({ env = process.env, timeoutMs = 10000 } = {}) {
+  const file = findOnPath('claude', env);
+  if (!file) return null;
+  let version = null;
+  try {
+    const res = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] });
+    version = res.status === 0 ? (res.stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null) : null;
+  } catch { /* unreadable version: still present */ }
+  return { path: file, version };
 }
 
 /** The prerequisites a `selection` pulls in, scoped like `requires:`; flat, each carrying its `stackName`, in manifest order. */

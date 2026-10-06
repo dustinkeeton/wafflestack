@@ -305,7 +305,7 @@ describe('waffle registry: enforcement — the three-way reconcile turns drift r
     // Counts, so a waffle added without an entry (or an entry with no waffle) is caught by arithmetic
     // as well as by the reconcile.
     const live = [...toolkit.stacks.values()];
-    const waffles = live.reduce((n, s) => n + s.agents.length + s.skills.length, 0);
+    const waffles = live.reduce((n, s) => n + s.agents.length + s.skills.length + s.mods.length, 0);
     assert.equal(toolkit.registry.live.size, waffles);
     // Every registered status is one of the four; today the whole tree is `stable`.
     for (const e of toolkit.registry.entries) assert.ok(WAFFLE_STATUSES.includes(e.status), `${e.name}: ${e.status}`);

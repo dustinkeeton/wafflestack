@@ -9,9 +9,9 @@ import path from 'node:path';
 import { loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection } from './refs.mjs';
-import { readLock, readLocalLock, readTreeLock } from './render.mjs';
+import { readLock, readLocalLock, readTreeLock, collectUsedKeys } from './render.mjs';
 import { doctor } from './doctor.mjs';
-import { substitute, PROMPT_MODE, modeMatches } from './template.mjs';
+import { substitute, PROMPT_MODE, modeMatches, parseFlagPlaceholder } from './template.mjs';
 import {
   loadProjectConfig,
   makeResolver,
@@ -51,6 +51,17 @@ const FLAG_SIDES = ['on', 'off'];
 const CHECKPOINT_DIR_KEY = 'delegate.checkpointDir';
 const MEMORY_FILE_KEY = 'delegate.memoryFile';
 const MEMORY_CAP_KEY = 'delegate.memoryMaxBytes';
+
+/**
+ * The run files a skill WRITES, as the config keys naming their paths (#563). No manifest
+ * declares this, so it is a table: a skill absent here writes none the pane should show. The
+ * delegate entry is joined by its newest checkpoint file at collection time.
+ */
+/** @type {Readonly<Record<string, ReadonlyArray<string>>>} */
+export const SKILL_RUN_FILE_KEYS = {
+  delegate: [CHECKPOINT_DIR_KEY, MEMORY_FILE_KEY],
+  autopilot: ['autopilot.planDir'],
+};
 
 /**
  * @typedef {typeof LAYERS[number]} Layer
@@ -97,7 +108,17 @@ const MEMORY_CAP_KEY = 'delegate.memoryMaxBytes';
  * @property {{ delegate: DelegateFacts|null }} runFiles `delegate` is null when no selected stack declares `delegate.checkpointDir`
  * @property {{ committed: LockFacts, local: LockFacts, tree: 'local'|'committed'|null, inSync: boolean|null, divergence: { changed: number, onlyLocal: number, onlyCommitted: number } | null }} locks
  * @property {{ ok: boolean, modified: string[], missing: string[], absentDocs: string[], notes: string[] }} drift the plain `doctor` verdict against the tree lock
- * @property {Record<string, never>} skills reserved for the per-skill `keys`/`files` map (#563); always `{}` here
+ * @property {Record<string, ConfigValue>} config every declared key across the selected stacks, resolved (#563); `keys` is the behavioral subset with its mode machinery
+ * @property {Record<string, SkillContext>} skills per selected skill: the declared keys its files reference and the run files it writes (#563)
+ *
+ * @typedef {object} ConfigValue one declared config key, resolved
+ * @property {any} value the effective value, nested `{{…}}` expanded (overlay included); null when unset
+ * @property {Layer} source the layer `value` came from
+ * @property {string[]} stacks the selected stacks declaring it
+ *
+ * @typedef {object} SkillContext what one skill cares about
+ * @property {string[]} keys the declared keys the skill's files reference (flag placeholders fold onto their key), sorted
+ * @property {string[]} files repo-relative run files the skill writes (`SKILL_RUN_FILE_KEYS`, expanded; delegate adds its newest checkpoint)
  */
 
 /**
@@ -128,6 +149,7 @@ export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity
   const stacks = new Map();
   for (const sel of selection.items) if (!stacks.has(sel.stackName)) stacks.set(sel.stackName, sel.stack);
   const target = project.targets[0] ?? 'claude';
+  const delegate = delegateFacts(cwd, stacks, project, target);
 
   return {
     version: STATE_SHAPE_VERSION,
@@ -141,11 +163,73 @@ export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity
       errors: selection.errors,
     },
     keys: resolveBehavioralKeys(stacks, { project, canonical, overlayValues, target }),
-    runFiles: { delegate: delegateFacts(cwd, stacks, project, target) },
+    runFiles: { delegate },
     locks: lockFacts(cwd),
     drift: driftFacts(cwd, toolkitVersion, toolkitIdentity),
-    skills: {},
+    config: resolveConfig(stacks, { project, overlayValues, canonical, target }),
+    skills: resolveSkills(selection.items, { project, target, delegate }),
   };
+}
+
+/**
+ * Every declared key across the selected stacks, resolved through the same layers as `keys`.
+ *
+ * @param {Map<string, Stack>} stacks
+ * @param {{ project: ProjectConfig, canonical: ProjectConfig, overlayValues: Record<string, any>, target: Target }} ctx
+ * @returns {Record<string, ConfigValue>}
+ */
+export function resolveConfig(stacks, { project, canonical, overlayValues, target }) {
+  /** @type {Map<string, ConfigValue>} */
+  const byKey = new Map();
+  for (const [stackName, stack] of stacks) {
+    const resolve = makeResolver(stack, project.values, target);
+    for (const key of Object.keys(stack.config ?? {})) {
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.stacks.push(stackName);
+        continue;
+      }
+      const raw = resolve(key);
+      const value = typeof raw === 'string' ? expandKey(stack, project, target, key) ?? raw : raw ?? null;
+      byKey.set(key, { value, source: layerOf(key, overlayValues, canonical.values), stacks: [stackName] });
+    }
+  }
+  return Object.fromEntries([...byKey].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/**
+ * The per-skill context map: keys from the placeholders the skill's own files reference (what
+ * `render` would substitute into it), files from `SKILL_RUN_FILE_KEYS`. A skill name selected
+ * from two stacks merges.
+ *
+ * @param {import('./refs.mjs').SelectionItem[]} items
+ * @param {{ project: ProjectConfig, target: Target, delegate: DelegateFacts|null }} ctx
+ * @returns {Record<string, SkillContext>}
+ */
+export function resolveSkills(items, { project, target, delegate }) {
+  /** @type {Map<string, { keys: Set<string>, files: Set<string> }>} */
+  const bySkill = new Map();
+  for (const sel of items) {
+    if (sel.kind !== 'skills') continue;
+    const { stack } = sel;
+    const entry = bySkill.get(sel.item.name) ?? { keys: new Set(), files: new Set() };
+    bySkill.set(sel.item.name, entry);
+    for (const used of collectUsedKeys([sel])) {
+      const key = parseFlagPlaceholder(used)?.key ?? used;
+      if (stack.declared.has(key)) entry.keys.add(key);
+    }
+    for (const key of SKILL_RUN_FILE_KEYS[sel.item.name] ?? []) {
+      if (!stack.declared.has(key)) continue;
+      const rel = expandKey(stack, project, target, key);
+      if (rel) entry.files.add(rel);
+      if (key === CHECKPOINT_DIR_KEY && delegate?.checkpoints.latest) entry.files.add(delegate.checkpoints.latest.file);
+    }
+  }
+  return Object.fromEntries(
+    [...bySkill]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, { keys, files }]) => [name, { keys: [...keys].sort(), files: [...files] }]),
+  );
 }
 
 /**

@@ -111,6 +111,19 @@ config **keys** only, no overlay, no absolute paths — shows you the exact payl
 against the toolkit's issue forms on your yes. No `gh` auth? It prints the body and a prefilled
 new-issue URL instead.
 
+**Want the state at a glance?** The `wafflestack` stack also ships the toolkit's first Claude Code
+**mod**, `waffle-view`: once rendered (`.claude/mods/waffle-view/`), check it with
+`claude plugin validate .claude/mods/waffle-view`, load it with
+`claude --plugin-dir "$PWD/.claude/mods/waffle-view"` (or list the absolute path in
+`CLAUDE_CODE_PLUGIN_DIRS` for every session), and type `/waffle-view` to toggle a pane showing every
+behavioral key's effective value and source layer, the delegate run files, lock status, and doctor
+drift — all read through `wafflestack state --json`, refreshed as you work. `wafflestack setup`
+prints the full load block for every mod a repo renders. The pane narrows to the last `/skill` *you*
+typed (a Skill-tool call the model makes does not move it; a `/name` that is not a toolkit skill
+reads as the full view), and the values it shows include your gitignored `waffle.local.yaml`
+overlay. Load the rendered copy, never a stack's source dir: a load lays `tsconfig.json` and
+`.claude-plugin/types/` into the dir it loads (gitignore them under `.claude/mods/*/`).
+
 ## Updating
 
 WaffleStack ships as git tags (`vX.Y.Z`), versioned **from a consumer's point of view**:
