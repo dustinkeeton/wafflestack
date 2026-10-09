@@ -4560,3 +4560,27 @@ describe('pr-docs keeps the caller contract (#584, part of #572)', () => {
     }
   });
 });
+
+// #585: the orchestrator runs pr-docs before arming; autopilot's audit step suppresses it.
+describe('delegate and autopilot wire pr-docs before arming (#585, part of #572)', () => {
+  const delegate = fs.readFileSync(path.join(STACKS, 'orchestration', 'skills', 'delegate', 'SKILL.md'), 'utf8');
+  const autopilot = fs.readFileSync(path.join(STACKS, 'orchestration', 'skills', 'autopilot', 'SKILL.md'), 'utf8');
+
+  test('the spawned agent skips arming while docs refresh is on', () => {
+    assert.match(delegate, /\*\*Docs refresh on — the orchestrator arms, not you\.\*\*/);
+  });
+
+  test('Phase 4 runs pr-docs after verification and arms only after the docs commit lands', () => {
+    const at = delegate.indexOf('**Docs refresh — after verification, before arming.**');
+    assert.ok(at > delegate.indexOf('### Post-agent verification') && at < delegate.indexOf('**Checkpoint** — after all agents finish'));
+    const block = delegate.slice(at, delegate.indexOf('**Checkpoint** — after all agents finish'));
+    assert.match(block, /\{\{delegate\.docsRefresh\}\}/);
+    assert.match(block, /Run `pr-docs <PR#>`/);
+    assert.match(block, /`stopped` → do \*\*not\*\* arm/);
+    assert.match(block, /Arm only after the docs commit has landed/);
+  });
+
+  test('autopilot turns docs refresh off for the delegate run when the audit step is on', () => {
+    assert.match(autopilot, /`delegate\.docsRefresh` off for the delegate run when the audit step \(§4\) is on/);
+  });
+});
