@@ -39,6 +39,11 @@ npx --yes {{waffle.toolkitRef}} install <refs…> [--force] [--gitignore]
 - **Report what was pulled in.** Installing an item drags its **dependency closure**
   (an agent's `skills:` and any `requires:`) transitively across stacks — the CLI prints the
   added refs. Name them so the user isn't surprised by extra rendered files.
+- **Already selected.** `note: <ref> is already selected via stack <name> — nothing to persist`
+  means a stack in `stacks:` already renders the item: `waffle.yaml` is untouched and the render
+  only repairs a stale or missing copy. Say the install was a no-op. If the user expected it to
+  *do* something, the item was likely present but inactive — for a `mods/` ref the note names
+  `wafflestack setup`, whose load block (`claude --plugin-dir …`) is the activation step.
 - **Report the render.** Relay the `rendered N files` / `removed stale: …` lines.
 - **Missing config.** If the render fails demanding a required key
   (`config.<stack>.<key>`), add it to `.waffle/waffle.yaml` `config:` (or the gitignored

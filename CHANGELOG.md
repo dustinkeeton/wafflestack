@@ -64,6 +64,7 @@ is what you reach for across a breaking one.
   **Consumer impact:** none — additive; a re-render changes nothing until a stack ships a mod.
 
 ### Changed
+- **`install` of a ref a selected stack already provides persists nothing (#571).** `wafflestack install <item-ref>` no longer appends a redundant `include:` entry when a stack in `stacks:` already renders the item (opt-in syrup excepted); it prints `note: <ref> is already selected via stack <name> — nothing to persist` instead of `installing …` — plus a `wafflestack setup` pointer for a `mods/` ref — and still renders. An ejected item still un-ejects. **Consumer impact:** re-render to pick up the updated `waffle-install` skill; existing redundant `include:` entries are harmless and may be dropped by hand.
 - **`--gitignore` recommends `.waffle/avatars/`, and `doctor` treats the generated `.waffle/`
   docs as presence-optional (#528).** The per-agent avatar SVGs are regenerated on every render
   and are reading material, so `init|install|render --gitignore` now offer `.waffle/avatars/`

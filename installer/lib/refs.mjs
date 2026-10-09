@@ -137,6 +137,22 @@ export function findItems(toolkit, kind, name) {
 }
 
 /**
+ * The selected stack that already renders a resolved item ref, or null (#571). Opt-in syrup is not
+ * provided by its stack alone, so it never counts.
+ *
+ * @param {Toolkit} toolkit
+ * @param {string[]} stacks the project's `stacks:` list
+ * @param {{ kind: ItemKind, name: string, stack: string }} target a resolved item ref
+ * @returns {string | null}
+ */
+export function selectingStack(toolkit, stacks, target) {
+  if (!stacks.includes(target.stack)) return null;
+  const stack = toolkit.stacks.get(target.stack);
+  if (!stack || stack.optIn.has(`${target.kind}/${target.name}`)) return null;
+  return target.stack;
+}
+
+/**
  * Parse a raw ref into one of:
  *   { form: 'qualified', stack, kind, name }   — `<stack>/(agents|skills|files|mods)/<name>`
  *   { form: 'item', kind, name }               — `(agents|skills|files|mods)[:/]<name>`

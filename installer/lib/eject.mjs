@@ -5,7 +5,7 @@ import { exists, writeFileEnsuringDir } from './util.mjs';
 import { readLock, readLocalLock, readTreeLock } from './render.mjs';
 import { loadToolkit, loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { normalizeItemRef, resolveRef, closureDeps, includeRefMatches, itemOutputMatcher, computeSelection } from './refs.mjs';
+import { normalizeItemRef, resolveRef, closureDeps, selectingStack, includeRefMatches, itemOutputMatcher, computeSelection } from './refs.mjs';
 import {
   CONFIG_FILE,
   LEGACY_ROOT_CONFIG_FILE,
@@ -149,19 +149,23 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     }
     const canonical = target.canonicalRef;
     const plain = `${target.kind}/${target.name}`;
-    if (isEjected(plain)) {
+    const isEjectedNow = isEjected(plain);
+    if (isEjectedNow) {
       ejected = ejected.filter((e) => normalizeItemRef(e) !== plain);
       unejected.push({ ref: canonical, kind: target.kind, name: target.name });
       log(`un-ejecting ${canonical} — dropping it from \`eject:\` so wafflestack manages it again (a project-owned copy that differs from the render is refused without \`--force\`)`);
     }
-    if (!include.includes(canonical)) {
+    // Checked AFTER the un-eject: a stack-selected item still leaves `eject:`, it just needs no include.
+    const via = selectingStack(toolkit, stacks, target);
+    if (!via && !include.includes(canonical)) {
       include.push(canonical);
       added.push(canonical);
       touchedInclude = true;
     }
     const deps = closureDeps(toolkit, target);
     closures.push({ ref: canonical, deps });
-    log(`installing ${canonical}${deps.length ? ` (+${deps.length} dep${deps.length === 1 ? '' : 's'}: ${deps.join(', ')})` : ''}`);
+    if (via && !isEjectedNow) log(alreadySelected(canonical, target.kind, via));
+    else log(`installing ${canonical}${deps.length ? ` (+${deps.length} dep${deps.length === 1 ? '' : 's'}: ${deps.join(', ')})` : ''}`);
     for (const dep of deps) if (isEjected(dep)) log(stillEjected(dep));
   }
 
@@ -176,6 +180,10 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
 
   return { added, closures, unejected, rollback: () => { if (wrote) fs.writeFileSync(configFile, original); return wrote; } };
 }
+
+const alreadySelected = (ref, kind, stack) =>
+  `note: ${ref} is already selected via stack ${stack} — nothing to persist` +
+  (kind === 'mods' ? '; run `wafflestack setup` for the load block (`claude --plugin-dir …`)' : '');
 
 const stillEjected = (ref) =>
   `note: ${ref} stays ejected (project-owned, not rendered) — \`wafflestack install ${ref}\` un-ejects it`;
