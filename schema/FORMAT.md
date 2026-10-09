@@ -570,6 +570,11 @@ stacks/<stack>/mods/waffle-view/
   `claude plugin validate stacks/<stack>/mods/<name>` for every mod when the `claude` CLI is on
   PATH (`ok:`/`FAIL:` per mod, its output surfaced on failure) and prints one `skipped:` line — not
   a pass — when it is absent, so a CI runner without the CLI stays honest.
+- **The toolkit repo is a plugin marketplace.** The root `.claude-plugin/marketplace.json` (named
+  like `toolkit.yaml`'s `name`) lists every mod once, `source: ./stacks/<stack>/mods/<name>`,
+  under its `plugin.json` `name`. `validate` fails when a mod is unlisted, an entry points at a
+  missing or undeclared dir, or a name disagrees with `plugin.json`; with the CLI present it also
+  runs `claude plugin validate` on the marketplace. Adding a mod means adding its entry.
 
 Same frozen-image contract as everything else: every file under `.claude/mods/<name>/` is tracked
 in `.waffle/waffle.lock.json`, restored verbatim by `render`, drift-flagged by `doctor`, and

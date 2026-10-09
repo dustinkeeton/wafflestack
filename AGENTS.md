@@ -103,6 +103,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `list.mjs` | `list` command: per-item state model + table + interactive picker (#119); exports the keypress loop `toggle` reuses (#476) |
 | `prerequisites.mjs` | Typed external prerequisites: normalize, scope, probe, bucket (#47/#129) |
 | `plugins.mjs` | Recommended EXTERNAL harness plugins a stack offers via `setup` (#199); never installed |
+| `marketplace.mjs` | The repo-root `.claude-plugin/marketplace.json` that lists every stack mod's SOURCE dir (#593); validate keeps it in sync |
 | `sources.mjs` | External `source:` resolution: local path or pinned-git cache (#88/#125) |
 | `toolkit-ref.mjs` | Toolkit self-identification (#373), lock `toolkit` block (#374), write-side pin (#372) |
 
@@ -259,8 +260,8 @@ export function init({ cwd })                  // → configFile path (starter .
 // validate.mjs — see the module table; targets: is NOT linted here (every malformation is a hard LOAD error in toolkit.mjs)
 export const RESERVED_AGENT_KEYS = ['name', 'description', 'skills', 'identity'] // validate.mjs:56
 export function validateToolkit(rootDir)       // → string[] problems ([] = clean): manifests, frontmatter, placeholder↔declaration sync, requires: integrity, pattern:/entryPatterns: compilability + default-match, behavioral-key fields (modes:/flag:/lockMode:/nonInteractive:, #478), prerequisites fields, harness built-ins, waffle-registry reconcile, mod plugin.json parses — pure, no subprocess
-export function validateModPlugins(rootDir, { locate = claudeCli, run, timeoutMs = 60000 } = {}) // → { cli: {path,version}|null, mods: [{stack,mod,dir}], checks: [{…,ok,output}], problems } — `claude plugin validate <stacks/*/mods/<name>>` per mod SOURCE dir (#564); cli null ⇒ SKIPPED (checks empty, problems empty), never a pass; `locate`/`run` are the stubs tests inject; the CLI `validate` case appends .problems
-export function formatModPluginChecks(result)  // → string[] — `ok: claude plugin validate <stack>/mods/<name> (claude X.Y.Z)` | `FAIL: …` | one `skipped: … \`claude\` is not on PATH; N mod(s) unchecked: …` line; [] when the toolkit has no mods
+export function validateModPlugins(rootDir, { locate = claudeCli, run, timeoutMs = 60000 } = {}) // → { cli: {path,version}|null, mods: [{stack,mod,dir}], marketplace: {ok,output}|null, checks: [{…,ok,output}], problems } — `claude plugin validate <toolkitRoot>` on the root marketplace when MARKETPLACE_FILE exists (#593), then per mod SOURCE dir (#564) — never a rendered copy; cli null ⇒ SKIPPED (checks empty, problems empty), never a pass; `locate`/`run` are the stubs tests inject; the CLI `validate` case appends .problems
+export function formatModPluginChecks(result)  // → string[] — `ok: claude plugin validate .claude-plugin/marketplace.json (…)` first when checked (#593), then `ok: claude plugin validate <stack>/mods/<name> (claude X.Y.Z)` | `FAIL: …` | one `skipped: … \`claude\` is not on PATH; N mod(s) unchecked: …` line; [] when the toolkit has no mods
 export function behavioralKeyProblems(spec)    // → string[] — the #478 lint for one config: spec: modes non-empty/distinct scalars with default a member and no pattern:; lockMode = default and ∈ modes; flag { on, off } single tokens on boolean modes; nonInteractive required iff prompt ∈ modes
 export function validateRegistry(rootDir, toolkit) // → string[] — the registry ↔ filesystem ↔ stack.yaml three-way reconcile (#335): entry shape/unknown keys, duplicates, stack+path must be the loader's path and exist, stack.yaml must list it, tombstone must NOT still resolve and its replacedBy chain must end live, un-registered waffles on disk OR in a manifest, and an offered waffle requiring a `wip` one. [] when the toolkit ships no registry (fork/fixture) or the stack is external
 export function validateSourceBytes(rootDir)   // → string[] — raw control bytes in installer/ + stacks/ text sources
@@ -383,6 +384,13 @@ export const PLUGIN_ENTRY_KEYS                 // ['name','source','why','items'
 export function normalizeRecommendedPlugins(raw) // → [{ index, name, source, why, items, targets, unknownKeys, raw }] — never throws; a non-list value becomes ONE unusable entry so validate reports it; items normalized to kind/name refs; targets advisory (printed, never a filter)
 export function offerablePlugins(plugins)      // → entries with a usable name + source; malformed ones are validate's report and are not shown
 
+// marketplace.mjs — the toolkit repo as a Claude Code plugin marketplace (#593)
+export const MARKETPLACE_FILE                  // '.claude-plugin/marketplace.json' (toolkit-root-relative); ships in the npm `files`
+export const marketplaceSource = (stack, mod)  // → './stacks/<stack>/mods/<mod>' — the entry `source` validate expects
+export const marketplacePluginId = (plugin, marketplace) // → '<plugin>@<marketplace>' — the `enabledPlugins` key shape
+export function readMarketplace(rootDir)       // → parsed JSON | null when absent; throws on malformed JSON
+export function validateMarketplace(rootDir, toolkit) // → problems: missing file while mods exist; `name` ≠ toolkit.yaml name; non-list `plugins`; entry without string `source`; duplicate name/source; source dir missing; a declared mod unlisted; entry name ≠ its plugin.json `name`; an existing source that is not a declared mod. No mods ⇒ no marketplace needed. Called by validateToolkit
+
 // sources.mjs — external source: resolution (#88/#125)
 export function resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, gitOriginUrl, gitRefCommit, refresh = false } = {}) // → { root, commit } (local path in place, or git fetched at the pinned ref into a content-addressed cache; rejects leading-`-` source/ref; a present `.git` is served ONLY if checkoutMatches, else discarded + re-fetched (#460))
 export function resolveSourceRoot(ext, opts)   // → root path only (back-compat wrapper)
@@ -430,7 +438,7 @@ state.mjs    → toolkit, sources, refs, render, doctor, template, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, project, util
 eject.mjs    → render, toolkit, sources, refs, project, util
-validate.mjs → toolkit, template, refs, prerequisites, plugins, project, registry
+validate.mjs → toolkit, template, refs, prerequisites, plugins, marketplace, project, registry
 setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registry, util
 list.mjs     → toolkit, render, refs, project, util
 toggle.mjs   → toolkit, sources, refs, render, project, list, model-invocation
@@ -443,6 +451,7 @@ migrations.mjs → project, refs, util
 toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID_TARGETS only), template (flagPlaceholders only), util
 prerequisites.mjs → refs
 plugins.mjs  → refs
+marketplace.mjs → toolkit
 refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle)
 registry.mjs → util
 sources.mjs  → util
@@ -516,7 +525,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `uninstall` | Remove the whole install, driven entirely off the lock: `remove` only when the sha256 still matches the render; `drifted` skipped unless `--force`; refuses the whole run on an absent lock or a path resolving outside `cwd` (incl. symlink escapes). Also removes `.waffle/` meta (unless `--keep-config`), prunes genuinely-emptied dirs, strips wafflestack's `.gitignore` lines. Dry run until `--yes`. Skips exit 0; errors exit 1 (#359). Read `lockRetained` off the result, not the plan. `uninstall.mjs` (#182) |
 | `reinstall` | Refresh in place: snapshot → uninstall(keepConfig+keepLock, force) → re-render, rollback on failure; keeping the lock is load-bearing (the `trackedFiles` re-admission keeps poured opt-in syrup selected). `--clean` = wipe to empty + `init` (requires `--yes`, no render). Both shapes need a lock (#359). `uninstall.mjs` (#182) |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline (#285): `sync` rasters + uploads/assigns each verified agent email's avatar; `status` reports drift only. Token from `WAFFLE_GRAVATAR_TOKEN`; unverified addresses are a manual remainder. `status` exits 1 on drift; any `failed` exits 1. `avatars-sync.mjs`, `cli.mjs:284` |
-| `validate` | Toolkit-developer lint (see `validate.mjs` above), then `claude plugin validate` over every `stacks/*/mods/<name>/` when `claude` is on PATH — prints `ok:`/`FAIL:` per mod, or one `skipped:` line (not a pass) when the CLI is absent, so CI without it stays honest (#564). Exit 1 on problems. `validate.mjs:59` |
+| `validate` | Toolkit-developer lint (see `validate.mjs` above), (including the `.claude-plugin/marketplace.json` ↔ stack-mods sync, #593), then `claude plugin validate` over the root marketplace and every `stacks/*/mods/<name>/` when `claude` is on PATH — prints `ok:`/`FAIL:` per mod, or one `skipped:` line (not a pass) when the CLI is absent, so CI without it stays honest (#564). Exit 1 on problems. `validate.mjs:59` |
 | `help` | Banner + usage + one line per command/flag to stdout, exit 0. `helpText` `cli.mjs:380` (#187) |
 
 ### `state --json` shape (#561)

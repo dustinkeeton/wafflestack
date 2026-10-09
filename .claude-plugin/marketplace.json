@@ -1,0 +1,14 @@
+{
+  "name": "wafflestack",
+  "owner": { "name": "Dustin Keeton", "url": "https://github.com/dustinkeeton/wafflestack" },
+  "metadata": {
+    "description": "Claude Code plugins (mods) shipped by wafflestack stacks — each entry points at its source dir under stacks/<stack>/mods/<name>."
+  },
+  "plugins": [
+    {
+      "name": "waffle-view",
+      "source": "./stacks/wafflestack/mods/waffle-view",
+      "description": "A pane showing this repo's resolved wafflestack state — behavioral keys, run files, locks, drift — read through `wafflestack state --json`."
+    }
+  ]
+}
