@@ -7,6 +7,7 @@ import { computeListModel, formatListTable, selectableChoices, describeBlockers 
 import { renderProject, summarizeConfigKeys } from '../lib/render.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
 import { reconcileToolkitRefPins, staleTagMentions } from '../lib/upgrade.mjs';
+import { eject } from '../lib/eject.mjs';
 
 const write = (root, rel, content) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
@@ -29,6 +30,7 @@ function fixture(toolkitRoot) {
   write(toolkitRoot, 'stacks/cq/stack.yaml', [
     'name: cq',
     'description: Code quality.',
+    'agents: [rev]',
     'skills: [qa, arch, gate]',
     'files: [plain.txt, templ.txt]',
     'config:',
@@ -54,6 +56,7 @@ function fixture(toolkitRoot) {
   write(toolkitRoot, 'stacks/cq/skills/qa/SKILL.md', '---\nname: qa\ndescription: QA.\n---\n\nNo config.\n');
   write(toolkitRoot, 'stacks/cq/skills/arch/SKILL.md', '---\nname: arch\ndescription: Arch.\n---\n\n{{arch.layers}} {{arch.modules}}\n');
   write(toolkitRoot, 'stacks/cq/skills/gate/SKILL.md', '---\nname: gate\ndescription: Gate.\n---\n\n{{gate.mode}} {{gate.tag}}\n');
+  write(toolkitRoot, 'stacks/cq/agents/rev.md', '---\nname: rev\ndescription: Reviews {{note.text}}.\n---\n\nSay {{note.text}}.\n');
   write(toolkitRoot, 'stacks/cq/files/plain.txt', 'verbatim\n');
   write(toolkitRoot, 'stacks/cq/files/templ.txt', 'say {{note.text}}\n');
 }
@@ -99,13 +102,41 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
     write(cwd, '.claude/skills/qa/SKILL.md', 'hand-written\n');
     write(cwd, 'plain.txt', 'verbatim\n');
     write(cwd, 'templ.txt', 'say hi\n');
-    const m = model();
+    let m = model();
     assert.deepEqual(row(m, 'skills/qa').blockers.unmanaged, [path.join('.claude', 'skills', 'qa', 'SKILL.md')]);
     assert.deepEqual(describeBlockers(row(m, 'skills/qa').blockers), [`unmanaged file at ${path.join('.claude', 'skills', 'qa', 'SKILL.md')} (needs --force)`]);
     assert.equal(row(m, 'files/plain.txt').blockers, null, 'identical verbatim bytes are adopted silently by render');
-    assert.deepEqual(row(m, 'files/templ.txt').blockers.unmanaged, ['templ.txt'], 'a templated file cannot be compared cheaply');
+    assert.equal(row(m, 'files/templ.txt').blockers, null, 'a templated file whose render matches is adopted too (#577)');
     write(cwd, 'plain.txt', 'edited\n');
-    assert.deepEqual(row(model(), 'files/plain.txt').blockers.unmanaged, ['plain.txt']);
+    write(cwd, 'templ.txt', 'say {{note.text}}\n');
+    m = model();
+    assert.deepEqual(row(m, 'files/plain.txt').blockers.unmanaged, ['plain.txt']);
+    assert.deepEqual(row(m, 'files/templ.txt').blockers.unmanaged, ['templ.txt'], 'differing rendered bytes stay flagged');
+  });
+
+  test('a just-ejected item whose files are unchanged shows no unmanaged blocker (#577)', () => {
+    const cfg = 'targets: [claude, codex]\nstacks: [orch]\ninclude: [skills/arch, agents/rev]\nconfig:\n  arch:\n    layers: a\n    modules: b\n';
+    write(cwd, '.waffle/waffle.yaml', cfg);
+    const result = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    eject({ cwd, item: 'skills/arch' });
+    eject({ cwd, item: 'agents/rev' });
+    let m = model();
+    assert.equal(row(m, 'skills/arch').status, 'not-installed');
+    assert.equal(row(m, 'skills/arch').blockers, null, 'an ejected skill re-renders to the same bytes');
+    assert.equal(row(m, 'agents/rev').blockers, null, 'agent frontmatter and codex TOML match too');
+    assert.doesNotMatch(formatListTable(m), /unmanaged file/);
+
+    const md = path.join('.claude', 'skills', 'arch', 'SKILL.md');
+    fs.appendFileSync(path.join(cwd, md), 'hand edit\n');
+    assert.deepEqual(row(model(), 'skills/arch').blockers.unmanaged, [md]);
+  });
+
+  test('a render that would fail keeps the unmanaged flag (#577)', () => {
+    write(cwd, '.claude/skills/arch/SKILL.md', '---\nname: arch\ndescription: Arch.\n---\n\n{{arch.layers}} {{arch.modules}}\n');
+    const b = row(model(), 'skills/arch').blockers;
+    assert.deepEqual(b.config, ['config.arch.layers', 'config.arch.modules']);
+    assert.deepEqual(b.unmanaged, [path.join('.claude', 'skills', 'arch', 'SKILL.md')]);
   });
 
   test("a dependency's blockers surface on the dependent's row", () => {

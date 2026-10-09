@@ -418,15 +418,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   const guards = compileGuards(toolkit, errors);
 
   for (const [stackName, { stack, items }] of groups) {
-    // One resolver per enabled target — the reserved `harness.*` keys resolve per target.
-    const primaryTarget = project.targets[0] ?? 'claude';
-    const resolvers = {};
-    const runtime = { toolkitVersion };
-    for (const target of project.targets) resolvers[target] = makeResolver(stack, project.values, target, runtime);
-    const primaryResolver = resolvers[primaryTarget] ?? makeResolver(stack, project.values, primaryTarget, runtime);
-    // A scoped file substitutes with the primary-most target it DECLARES (#364).
-    const resolverFor = (f) =>
-      (f.targets ? resolvers[project.targets.find((t) => f.targets.includes(t))] : primaryResolver) ?? primaryResolver;
+    const { resolvers, primaryResolver } = targetResolvers(stack, project, toolkitVersion);
     // Scoped to the *selected* items' keys, so one skill never demands its siblings' config.
     const usedKeys = collectUsedKeys(items);
     const missing = missingRequiredKeys(stack, project.values, (values, key) => primaryResolver(key), usedKeys);
@@ -438,12 +430,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
       continue;
     }
 
-    for (const { kind, item } of items) {
-      if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, guards });
-      else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, guards });
-      else if (kind === 'mods') renderMod({ mod: item, stack, project, emit });
-      else renderFiles({ file: item, stack, resolve: resolverFor(item), emit, errors, guards });
-    }
+    for (const { kind, item } of items) renderItem({ kind, item, stack, resolvers, primaryResolver, project, cwd, emit, errors, guards });
     checkEnvPrerequisites({ stack, project, cwd, warnings });
   }
 
@@ -456,6 +443,55 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   }
 
   return { outputs, producedBy, groups, selection };
+}
+
+/** One resolver per enabled target — the reserved `harness.*` keys resolve per target. */
+function targetResolvers(stack, project, toolkitVersion) {
+  const primaryTarget = project.targets[0] ?? 'claude';
+  /** @type {Record<string, (key: string) => any>} */
+  const resolvers = {};
+  const runtime = { toolkitVersion };
+  for (const target of project.targets) resolvers[target] = makeResolver(stack, project.values, target, runtime);
+  const primaryResolver = resolvers[primaryTarget] ?? makeResolver(stack, project.values, primaryTarget, runtime);
+  return { resolvers, primaryResolver };
+}
+
+function renderItem({ kind, item, stack, resolvers, primaryResolver, project, cwd, emit, errors, guards }) {
+  if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, guards });
+  else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, guards });
+  else if (kind === 'mods') renderMod({ mod: item, stack, project, emit });
+  else {
+    // A scoped file substitutes with the primary-most target it DECLARES (#364).
+    const declared = item.targets ? resolvers[project.targets.find((t) => item.targets.includes(t))] : null;
+    renderFiles({ file: item, stack, resolve: declared ?? primaryResolver, emit, errors, guards });
+  }
+}
+
+/**
+ * One item's outputs exactly as `render` would write them, in memory (#577): `Map<rel, content>`,
+ * or `null` when the render would error (missing config, failing guard). Writes nothing.
+ *
+ * @param {{ toolkit: import('./toolkit.mjs').Toolkit, project: import('./project.mjs').ProjectConfig,
+ *   cwd: string, node: { stack: string, kind: string, item: any }, toolkitVersion?: string }} args
+ * @returns {Map<string, string | Buffer> | null}
+ */
+export function renderItemInMemory({ toolkit, project, cwd, node, toolkitVersion }) {
+  const stack = toolkit.stacks.get(node.stack);
+  if (!stack) return null;
+  /** @type {string[]} */
+  const errors = [];
+  const guards = compileGuards(toolkit, errors);
+  const { resolvers, primaryResolver } = targetResolvers(stack, project, toolkitVersion);
+  const used = collectUsedKeys([node]);
+  if (missingRequiredKeys(stack, project.values, (_v, key) => primaryResolver(key), used).length) return null;
+  const outputs = new Map();
+  const emit = (rel, content) => outputs.set(rel, content);
+  try {
+    renderItem({ kind: node.kind, item: node.item, stack, resolvers, primaryResolver, project, cwd, emit, errors, guards });
+  } catch {
+    return null;
+  }
+  return errors.length ? null : outputs;
 }
 
 /**
