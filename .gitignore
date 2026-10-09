@@ -31,11 +31,8 @@ node_modules/
 .waffle/AVATARS.md
 .waffle/avatars/
 
-# Files the Claude Code engine lays beside a mod it loads from disk (`claude --plugin-dir <mod>`):
-# this build's API declarations + a tsconfig for `tsc -p <mod>`. Generated per machine, never
-# part of the rendered (lock-managed) mod or its stack source (#562).
-.claude/mods/*/tsconfig.json
-.claude/mods/*/.claude-plugin/types/
+# Files the Claude Code engine lays into a mod's source dir when a toolkit developer loads it from
+# disk (`claude --plugin-dir` / `claude plugin test`). Per machine, never shipped (#562, #564).
 stacks/*/mods/*/tsconfig.json
 stacks/*/mods/*/.claude-plugin/types/
 

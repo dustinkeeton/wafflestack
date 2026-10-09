@@ -31,6 +31,13 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+**Mods load with no flags (#592).** A stack mod such as `waffle-view` now ships through the
+toolkit's own Claude Code plugin marketplace and is enabled in the consumer's committed
+`.claude/settings.json`, pinned to the `waffle.toolkitRef` release — so `/waffle-view` works in a
+fresh session after trusting the repo, with no `--plugin-dir` flag or env var. The entries below
+are the slices (#593–#596). **Consumer impact (whole release):** re-render and commit
+`.claude/settings.json` + the lock; `.claude/mods/` disappears.
+
 ### Added
 - **The toolkit repo is a Claude Code plugin marketplace (#593, part of #592).** A root
   `.claude-plugin/marketplace.json` named `wafflestack` lists every stack mod at its source dir
@@ -72,6 +79,13 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** re-render. A repo with a mod enabled gains `ref` in its marketplace entry
   (`--verify-render` reports that key stale until you do); commit `.claude/settings.json` and the lock.
+- **Docs describe the marketplace path, not `--plugin-dir` (#596, part of #592).** README,
+  SETUP, AGENTS, STATUS and ARCHITECTURE now say a mod is enabled through `.claude/settings.json`
+  from the `wafflestack` marketplace, with the `ref` following `waffle.toolkitRef`. The dead
+  `.claude/mods/*` `.gitignore` lines are gone. This repo's own render enables
+  `waffle-view@wafflestack` (unpinned here, so it tracks `main`).
+
+  **Consumer impact:** none — docs only.
 
 ## [0.17.0] - 2026-10-09
 
