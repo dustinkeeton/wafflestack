@@ -62,7 +62,7 @@ The labels wafflestack's workflows and skills gate on are listed once — table 
 cd your-project
 npx github:dustinkeeton/wafflestack init              # writes a starter .waffle/waffle.yaml
 # edit .waffle/waffle.yaml: pick stacks, fill in config values
-npx github:dustinkeeton/wafflestack#v0.13.0 render    # renders all harness files + lock manifest
+npx github:dustinkeeton/wafflestack#vX.Y.Z render     # X.Y.Z = latest release tag; renders harness files + lock
 ```
 
 > [release resolution](docs/upgrades.md#release-resolution).

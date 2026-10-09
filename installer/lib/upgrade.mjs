@@ -248,9 +248,42 @@ export function reconcileToolkitRefPins({ cwd, identity = null, log = () => {}, 
     }
   }
 
+  for (const note of staleTagMentions(text, pinMoves)) log(note);
+
   // The dirty guard is the bytes themselves: no splice, no write.
   if (text !== source) fs.writeFileSync(configFile, text);
   return pinMoves;
+}
+
+/**
+ * Read-only (#549): the splice moves the pin only, so an old tag in a comment or example command
+ * goes stale. Name each line still carrying a bumped-away `#<tag>`; never rewrite them.
+ *
+ * @param {string} text the config AFTER the splice
+ * @param {{key: string, from: string, to: string|null, action: string}[]} pinMoves
+ * @returns {string[]}
+ */
+export function staleTagMentions(text, pinMoves) {
+  const notes = [];
+  const seen = new Set();
+  const lines = text.split('\n');
+  for (const { key, from, to, action } of pinMoves) {
+    if (action !== 'bumped' || !to || !from.includes('#')) continue;
+    const oldTag = from.slice(from.indexOf('#') + 1);
+    const newTag = to.slice(to.indexOf('#') + 1);
+    if (seen.has(oldTag)) continue;
+    seen.add(oldTag);
+    const escaped = oldTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`#${escaped}(?![\\w-]|\\.\\d)`);
+    const hits = lines.flatMap((l, i) => (re.test(l) ? [i + 1] : []));
+    if (!hits.length) continue;
+    notes.push(
+      `note: ${CONFIG_FILE} still mentions #${oldTag} on line${hits.length > 1 ? 's' : ''} ${hits.join(', ')} ` +
+        `(a comment or example command) — \`upgrade\` moves only the pin; change it to #${newTag} by hand, or ` +
+        `word it as "the tag in ${key}" so it cannot go stale`,
+    );
+  }
+  return notes;
 }
 
 /**

@@ -6391,7 +6391,7 @@ describe('cross-stack requires: onto a disabled stack (#520)', () => {
     { ref: 'files/plain.txt', requiredBy: 'files/owner.txt', stackName: 'sb', installRef: 'files/plain.txt' },
   ];
   const disabledWarn = (w) =>
-    /selected agents\/alpha requires agents\/beta, which is provided by stack "sb" — that stack is not enabled here.*NOT rendered.*Add "sb" to `stacks:`.*wafflestack install agents\/beta/.test(w);
+    /selected agents\/alpha requires agents\/beta, which is provided by stack "sb" — that stack is not enabled here.*NOT rendered.*Cheapest fix: run `wafflestack install agents\/beta`.*needs no config values\. Or add "sb" to `stacks:`/.test(w);
 
   beforeEach(() => {
     toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-xstack520-'));
