@@ -199,6 +199,11 @@ waffles:
     stack: orchestration
     path: stacks/orchestration/skills/standup
     status: stable
+  - name: pr-docs
+    kind: skill
+    stack: orchestration
+    path: stacks/orchestration/skills/pr-docs
+    status: stable
 
   # ── engineering-team ────────────────────────────────────────────────────────
   - name: lead-engineer

@@ -11,14 +11,14 @@
 
 ## Stacks
 
-All 9 stacks are shipped and stable — **14 agents and 40 skills** in total. Pick what a project needs.
+All 9 stacks are shipped and stable — **14 agents and 41 skills** in total. Pick what a project needs.
 
 | Stack | What you get |
 |--------|--------------|
 | `docs-system` | Two-audience docs: machine (`AGENTS.md`) + human (these files), plus the writing-craft skills (`prose`, `md-maximalist`, `accurate`) and the `diagram` proxy skill |
 | `github-workflow` | Git / GitHub issue / Projects / release skills + 14 prefab `files/` payloads: the doctor drift-gate workflow, **7 opt-in syrup hooks** (label-hook, hygiene, release, post-merge, evals, pr-green, pr-response — the four that dispatch Claude are `targets: [claude]`, #190), and 6 issue/PR/review templates. Only stack with a `setup:` step; declares typed `prerequisites:` |
 | `code-quality` | Cross-cutting practice skills: tdd, codebase-architecture, adversarial-review (hostile green-PR review), qa (green PR vs. the linked issue's intent), dry |
-| `orchestration` | Multi-agent orchestration: delegate (typed checkpoints, run memory, approval gate), autopilot (unattended backlog runner with opt-in QA / review / audit gates), audit, docs, standup + 3 manager/planner agents. Also ships `/audit` as **2 opt-in Claude workflow scripts** (#363) |
+| `orchestration` | Multi-agent orchestration: delegate (typed checkpoints, run memory, approval gate), autopilot (unattended backlog runner with opt-in QA / review / audit gates), audit, docs, standup, pr-docs (diff-scoped docs refresh on one PR) + 3 manager/planner agents. Also ships `/audit` as **2 opt-in Claude workflow scripts** (#363) |
 | `engineering-team` | 6-agent product-engineering roster + webapp-security-audit |
 | `obsidian-dev` | Obsidian plugin development (+ electron-security-audit) |
 | `expo-dev` | Expo / React Native app development |
