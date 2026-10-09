@@ -136,6 +136,45 @@ describe('mods/ render kind (#560)', () => {
     assert.deepEqual(again.removed, [], 'a re-render is a no-op');
   });
 
+  const pinned = (ref) => write(cwd, '.waffle/waffle.yaml', [
+    'config:', '  waffle:', `    toolkitRef: ${ref}`, 'targets: [claude]', 'stacks: [mb]', ''].join('\n'));
+  const marketSource = () => settings().extraKnownMarketplaces.fixture.source;
+
+  test('the marketplace source pins waffle.toolkitRef\'s tag; an unpinned or non-GitHub value omits ref (#595)', () => {
+    pinned('github:acme/fixture#v1.2.3');
+    assert.equal(render().ok, true);
+    assert.deepEqual(marketSource(), { source: 'github', repo: 'acme/fixture', ref: 'v1.2.3' });
+    assert.deepEqual(lock().settings[MARKET], { source: { source: 'github', repo: 'acme/fixture', ref: 'v1.2.3' } });
+    for (const unpinned of ['github:acme/fixture', './local/toolkit']) {
+      pinned(unpinned);
+      assert.equal(render().ok, true);
+      assert.deepEqual(marketSource(), ENTRIES[MARKET].source, `${unpinned} tracks the default branch`);
+    }
+  });
+
+  test('a pin that disagrees with the rendered ref is drift; a re-render rolls it forward (#595)', () => {
+    pinned('github:acme/fixture#v1.2.3');
+    render();
+    write(cwd, SETTINGS_FILE, JSON.stringify({ ...settings(), extraKnownMarketplaces: { fixture: { source: { ...marketSource(), ref: 'v9.9.9' } } } }));
+    assert.deepEqual(doctor({ cwd, toolkitVersion: '0.0.test' }).modified, [MARKET], 'a hand-edited ref is an edit');
+    render();
+
+    pinned('github:acme/fixture#v1.3.0');
+    const verify = () => doctor({ cwd, toolkitRoot, toolkitVersion: '0.0.test', verifyRender: true });
+    assert.deepEqual(verify().render.stale, [MARKET], 'a moved pin leaves the committed ref stale');
+    const result = render();
+    assert.equal(result.ok, true, 'a managed key rolls forward without a collision');
+    assert.equal(marketSource().ref, 'v1.3.0');
+    assert.equal(verify().ok, true);
+  });
+
+  test('a pin naming another repo still sets ref, with a warning (#595)', () => {
+    pinned('github:fork/fixture#v1.2.3');
+    const result = render();
+    assert.equal(marketSource().ref, 'v1.2.3');
+    assert.ok(result.warnings.some((w) => /pins fork\/fixture, but mods install from the acme\/fixture marketplace/.test(w)));
+  });
+
   test('merges beside the consumer\'s own keys and never overwrites them', () => {
     const own = {
       env: { FOO: '1' },
@@ -541,7 +580,11 @@ describe('built-in mod: wafflestack/mods/waffle-view (#562)', () => {
       const id = marketplacePluginId('waffle-view', loadToolkit(REPO_ROOT).name);
       assert.equal(id, 'waffle-view@wafflestack');
       assert.equal(lock.settings[pluginKey(id)], true);
-      assert.deepEqual(lock.settings[marketplaceKey('wafflestack')], { source: { source: 'github', repo: 'dustinkeeton/wafflestack' } });
+      assert.deepEqual(
+        lock.settings[marketplaceKey('wafflestack')],
+        { source: { source: 'github', repo: 'dustinkeeton/wafflestack', ref: 'v0.0.test' } },
+        'the stack default pins waffle.toolkitRef to the rendering release',
+      );
       assert.equal(JSON.parse(read(consumer, SETTINGS_FILE)).enabledPlugins[id], true);
       assert.equal(fs.existsSync(path.join(consumer, '.claude', 'mods')), false);
       assert.equal(doctor({ cwd: consumer, toolkitVersion: '0.0.test' }).ok, true);

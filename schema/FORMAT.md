@@ -533,8 +533,11 @@ optionally `types/index.d.ts`, and whatever else the plugin needs. Each name in 
 `mods:` list is a directory under the stack's `mods/`. A mod is delivered through the toolkit's
 plugin marketplace, so it renders **no files**: selecting it merges two project-scope entries into
 the consumer's `.claude/settings.json` — `extraKnownMarketplaces.<toolkit name>` (the marketplace
-source, `{ "source": "github", "repo": "<owner>/<repo>" }`, the repo read from the toolkit's
-`package.json` `repository`) and `enabledPlugins["<name>@<toolkit name>"]: true`.
+source, `{ "source": "github", "repo": "<owner>/<repo>", "ref": "<tag>" }`, the repo read from the
+toolkit's `package.json` `repository`) and `enabledPlugins["<name>@<toolkit name>"]: true`. The
+`ref` is the `#fragment` of `waffle.toolkitRef` as the stack resolves it (by default the rendering
+release, `v<version>`), so the mod and the `/waffle-*` CLI are the same toolkit version; an unpinned
+or non-GitHub `waffle.toolkitRef` omits `ref` and tracks the marketplace's default branch (#595).
 
 ```
 stacks/<stack>/mods/waffle-view/

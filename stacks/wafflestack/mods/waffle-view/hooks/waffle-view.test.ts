@@ -151,6 +151,16 @@ describe('state helpers', () => {
     expect(parseStateOutput(exited(0, '{"version":2}')).error).toMatch(/version 2/)
   })
 
+  // The backstop behind the marketplace ref pin (#595): a mod from another release refuses the doc.
+  test('parseStateOutput refuses any schema version but 1, naming what it got', () => {
+    const refused = (stdout: string) => parseStateOutput(exited(0, stdout))
+    expect(refused('{"version":2}')).toEqual({ doc: null, error: 'state document version 2 is not the version 1 this pane reads' })
+    expect(refused('{"version":"1"}').error).toBe('state document version 1 is not the version 1 this pane reads')
+    expect(refused('{}').error).toBe('state document version undefined is not the version 1 this pane reads')
+    expect(refused('[1]').error).toBe('state document version undefined is not the version 1 this pane reads')
+    expect(refused('null').error).toBe('state document version undefined is not the version 1 this pane reads')
+  })
+
   test('selectKeys narrows to the skill the context names and falls back to every key, and tokensOf names the sides', () => {
     expect(selectKeys(DOC, { skill: null })).toEqual(DOC.keys)
     expect(selectKeys(DOC, { skill: 'issue' })).toEqual([DOC.keys[0]])

@@ -47,7 +47,9 @@ config:
       `/waffle-upgrade` and `/waffle-reinstall` REFUSE (#373), with an error naming the exact pinned
       command to run instead. (That refusal is the feature: an unpinned render writes unreleased
       content while stamping the last released version number into your lock, which is what silently
-      breaks `doctor --verify-render` in CI.)
+      breaks `doctor --verify-render` in CI.) The same pin's `#tag` becomes the `ref` of the mod
+      marketplace source rendered into `.claude/settings.json`, so `mods/waffle-view` installs from
+      the toolkit version your skills run; an unpinned value renders no `ref` (#595).
       BECAUSE THE DEFAULT PINS, `/waffle-upgrade` ALWAYS STARTS FROM THE OLD CLI — expected, not a
       misconfiguration, and answered by REPORTING rather than by re-exec: a pinned CLI renders only
       its own content, so it prints `a newer toolkit release exists: vX.Y.Z` with the exact pinned

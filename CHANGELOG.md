@@ -60,6 +60,18 @@ is what you reach for across a breaking one.
   **Consumer impact:** re-render. A repo that rendered a mod loses `.claude/mods/<name>/` (the
   lock forgets the files) and gains the two entries in `.claude/settings.json`. Commit both. Claude
   Code offers the marketplace and plugin install the next time the repo is trusted.
+- **The mod marketplace source is pinned to `waffle.toolkitRef` (#595, part of #592).** The
+  rendered `extraKnownMarketplaces.<toolkit>.source` now carries `ref`: the `#fragment` of
+  `waffle.toolkitRef` as the shipping stack resolves it. Its default is the release that rendered
+  (`v<version>`), so a marketplace install fetches the same toolkit as the `/waffle-*` CLI. An
+  unpinned (`github:owner/repo`) or non-GitHub value omits `ref` and tracks the default branch; a
+  pin naming a different repo than the marketplace still sets `ref`, with a render warning.
+  `doctor` flags a hand-edited `ref`, `doctor --verify-render` flags one the pin has moved past, and
+  `render`/`upgrade` roll it forward. The `waffle-view` mod's `state --json` `version: 1` check stays
+  as the backstop and is now tested for every mismatch shape.
+
+  **Consumer impact:** re-render. A repo with a mod enabled gains `ref` in its marketplace entry
+  (`--verify-render` reports that key stale until you do); commit `.claude/settings.json` and the lock.
 
 ## [0.17.0] - 2026-10-09
 

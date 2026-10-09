@@ -9,6 +9,37 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-09: The mod marketplace source is pinned to `waffle.toolkitRef` (#595, part of #592)
+
+**Context**: Since #594 a mod is enabled through an `extraKnownMarketplaces` entry, and Claude Code
+fetches the plugin from the toolkit repo itself. An unpinned source tracks the repo's default
+branch, so the mod could come from a newer toolkit than the pinned CLI it reads through
+`state --json`. A schema change between the two would break the pane.
+
+**Decision** (owner, 2026-10-09): `render` writes `ref` into the marketplace source: the
+`#fragment` of `waffle.toolkitRef`, resolved the way the shipping stack's skills resolve it. The
+stack default pins `v<toolkitVersion>`, the release that rendered. The value comes from the
+project config being rendered, never from the running CLI's identity, so the committed lock stays
+canonical. An unpinned (`github:owner/repo`) or non-GitHub value writes no `ref` and tracks the
+default branch, matching what the CLI itself would fetch. A pin naming a repo other than the
+marketplace still sets `ref`, with a warning. The mod keeps refusing any `state --json` document
+whose `version` is not 1, as a backstop.
+
+**Alternatives**:
+- *Pin from the running CLI's version.* Rejected: the lock would depend on which CLI ran, and
+  `--verify-render` would go stale across machines (#384 F2).
+- *Read `doctor.toolkitRef`.* Rejected: that key belongs to the CI workflow; `waffle.toolkitRef`
+  is the one the local `/waffle-*` skills, and so the mod's user, actually run.
+- *Version the plugin separately and check compatibility at load.* Rejected: a second version to
+  keep in step, where the schema `version` check already catches a mismatch.
+
+**Impact**: A consumer with a mod gains `ref` on re-render. Changing the pin is drift under
+`doctor --verify-render` until the next render; `upgrade` rewrites a release pin and re-renders in
+one run, so the ref follows it. This repo keeps `waffle.toolkitRef` unpinned, so its own entry has
+no `ref`.
+
+---
+
 ## 2026-10-09: Mods are delivered as project-scope settings entries, not rendered files (#594, part of #592)
 
 **Context**: A mod rendered as a copy of its plugin dir under `.claude/mods/<name>/`, and nothing

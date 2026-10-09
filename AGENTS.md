@@ -391,7 +391,7 @@ export const settingsKey = (segments, file)    // → '<file>#/<escaped pointer>
 export const marketplaceKey = (m), pluginKey = (id) // → the `extraKnownMarketplaces/<m>` / `enabledPlugins/<id>` keys
 export const ownsModKey = (name)               // → (key) => boolean — key enables `<name>@<any marketplace>`
 export const lockKeys = (lock)                 // → [...files keys, ...settings keys] — the "already poured" set every computeSelection caller passes
-export function modSettingsEntries({ pluginIds, marketplace, repo }) // → Map<key, value>: marketplace `{ source: { source: 'github', repo } }` (unpinned until #595) + each id → true; empty for no ids
+export function modSettingsEntries({ pluginIds, marketplace, repo, ref = null }) // → Map<key, value>: marketplace `{ source: { source: 'github', repo, ref? } }` (`ref` omitted when null; render passes the `#fragment` of `waffle.toolkitRef`, #595) + each id → true; empty for no ids
 export function settingsConflicts(cwd, desired, managed) // → { collisions, errors } — untracked key holding a different value (or a non-object parent) = collision; unparseable file = error
 export function applySettings(cwd, desired, managed) // → removed keys — merges desired, prunes managed-not-desired, drops emptied parents; rewrites a file only when a value changes
 export function removeSettingsEntries(cwd, keys) // → removed keys (eject/uninstall)

@@ -8,7 +8,7 @@ import {
   stringifyFrontmatter,
 } from './util.mjs';
 import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template.mjs';
-import { toolkitLockEntry, lockRepoSlug } from './toolkit-ref.mjs';
+import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
 import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
@@ -453,7 +453,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   }
 
   warnings.push(...modelInvocationWarnings(project, selection));
-  const settings = modSettings({ selection, project, marketplace, errors, warnings });
+  const settings = modSettings({ selection, project, marketplace, errors, warnings, toolkitVersion, guards });
 
   if (!errors.length) {
     for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors, toolkitVersion })) {
@@ -468,8 +468,9 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
  * Selected mods → project-scope settings entries (#594). Only built-in mods are in the toolkit's
  * marketplace, so an external stack's mod is skipped with a warning.
  */
-function modSettings({ selection, project, marketplace, errors, warnings }) {
+function modSettings({ selection, project, marketplace, errors, warnings, toolkitVersion, guards }) {
   const mods = [];
+  let modStack = null;
   const shippedBy = new Map();
   for (const { stackName, stack, kind, item } of selection.items) {
     if (kind !== 'mods' || !project.targets.includes('claude')) continue;
@@ -482,6 +483,7 @@ function modSettings({ selection, project, marketplace, errors, warnings }) {
       continue;
     }
     shippedBy.set(item.name, stackName);
+    modStack ??= stack;
     mods.push(item);
   }
   if (mods.length && !marketplace?.repo) {
@@ -492,7 +494,27 @@ function modSettings({ selection, project, marketplace, errors, warnings }) {
     return new Map();
   }
   const pluginIds = mods.map((m) => marketplacePluginId(m.name, marketplace.name));
-  return modSettingsEntries({ pluginIds, marketplace: marketplace.name, repo: marketplace.repo });
+  const ref = mods.length ? modMarketplaceRef({ stack: modStack, project, toolkitVersion, guards, marketplace, warnings }) : null;
+  return modSettingsEntries({ pluginIds, marketplace: marketplace.name, repo: marketplace.repo, ref });
+}
+
+/** The key whose pin the marketplace source follows (#595), so a mod and the CLI are one version. */
+export const MOD_REF_KEY = 'waffle.toolkitRef';
+
+/**
+ * The git ref the marketplace source pins: the `#fragment` of `waffle.toolkitRef` as the shipping
+ * stack resolves it (its default pins `v<toolkitVersion>`). Unpinned or non-GitHub → null, no `ref`.
+ */
+function modMarketplaceRef({ stack, project, toolkitVersion, guards, marketplace, warnings }) {
+  const resolve = makeResolver(stack, project.values, 'claude', { toolkitVersion });
+  const value = substitute(`{{${MOD_REF_KEY}}}`, resolve, new Set([MOD_REF_KEY]), [], MOD_REF_KEY, guards);
+  const found = classifyToolkitRefValue(value);
+  if (!('fragment' in found)) return null;
+  const pinRepo = `${found.slug.owner}/${found.slug.repo}`;
+  if (pinRepo.toLowerCase() !== marketplace.repo.toLowerCase()) {
+    warnings.push(`${MOD_REF_KEY} pins ${pinRepo}, but mods install from the ${marketplace.repo} marketplace — its ref ${found.fragment} must exist there`);
+  }
+  return found.fragment;
 }
 
 /** `owner/repo` the toolkit's marketplace lives at — a content-bearing source, so the lock stays deterministic. */
