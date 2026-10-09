@@ -69,8 +69,8 @@ select it individually — the inventory lists items in installable ref form
 - Or edit `.waffle/waffle.yaml` directly: stack names under `stacks:`, item refs under
   `include:`, then run `render`.
 
-Refs: a stack name, `skills/<name>`, `agents/<name>`, `mods/<name>` (a Claude Code plugin dir —
-renders only when `claude` is a target), or `<stack>/skills/<name>` when a
+Refs: a stack name, `skills/<name>`, `agents/<name>`, `mods/<name>` (a Claude Code plugin —
+enabled in `.claude/settings.json` only when `claude` is a target), or `<stack>/skills/<name>` when a
 name appears in more than one stack (an unqualified ambiguous ref fails with the
 candidates listed). Installing an item automatically pulls its dependency closure — an
 agent's frontmatter `skills:` and any declared `requires:` — transitively and across
@@ -433,7 +433,8 @@ content is already byte-identical to the render is adopted silently, no flag nee
   the toolkit marketplace under `extraKnownMarketplaces` and `enabledPlugins["<name>@<toolkit>"]`
   — merged beside the project's own keys. Claude Code offers to install them the next time the
   user trusts the repo; `wafflestack setup` in update mode prints the `/plugin install` fallback
-  per mod. Commit `.claude/settings.json` with the render.
+  per mod. The marketplace entry's `ref` follows `waffle.toolkitRef`'s `#tag`, so repinning
+  means a re-render. Commit `.claude/settings.json` with the render.
 - Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
   skipped (with reasons); the both/one/neither call for each opt-in syrup pairing

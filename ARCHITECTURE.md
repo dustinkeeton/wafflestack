@@ -532,7 +532,7 @@ the `include:` entry, and renders — refusing without `--force` if your project
 from the render. Then commit. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
-The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/mods/waffle-view/`, `.claude/settings.json`)
+The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json` — which also enables the `waffle-view` mod)
 and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
 consuming project — the `waffle-doctor` drift gate (a required check on `main`) can
 only compare against a render + lock that live in git, and CI-dispatched harness runs

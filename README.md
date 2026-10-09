@@ -23,7 +23,8 @@ harnesses and keeps it current; it doesn't produce that content (that's a proces
 ## Vocabulary
 
 - **waffle** — an individual installable item: an agent, a skill, or a mod (a Claude Code
-  plugin dir, rendered verbatim for the `claude` target only).
+  plugin from the toolkit's marketplace, enabled in `.claude/settings.json` for the `claude`
+  target only).
 - **stack** — a named group of waffles.
 - **syrup** — the generic `files/` payload a stack can also carry (CI workflows, scripts, config),
   rendered verbatim to any repo-relative path with the same `{{key}}` substitution, lock tracking,
@@ -113,8 +114,10 @@ new-issue URL instead.
 
 **Want the state at a glance?** The `wafflestack` stack also ships the toolkit's first Claude Code
 **mod**, `waffle-view`. Render enables it in your `.claude/settings.json` (the `wafflestack`
-marketplace plus `enabledPlugins["waffle-view@wafflestack"]`, beside your own keys); Claude Code
-offers the install the next time you trust the repo, or run `/plugin install waffle-view@wafflestack`.
+marketplace, pinned to your `waffle.toolkitRef` release, plus `enabledPlugins["waffle-view@wafflestack"]`,
+beside your own keys); Claude Code offers the install the next time you trust the repo, or run
+`/plugin install waffle-view@wafflestack` (outside a rendered repo: `claude plugin marketplace add
+dustinkeeton/wafflestack` first).
 Then type `/waffle-view` to toggle a pane showing every
 behavioral key's effective value and source layer, the delegate run files, lock status, and doctor
 drift — all read through `wafflestack state --json`, refreshed as you work. The pane narrows to the
