@@ -3,8 +3,8 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.16.1 (tagged 2026-09-18; pre-1.0 — the file contract can still change
-  between minor releases). `main` carries unreleased work on top — see below.
+- **Version**: v0.17.0 (2026-10-09; pre-1.0 — the file contract can still change
+  between minor releases).
 - **Last updated**: 2026-10-09
 - **Health**: 🟢 tests 1664 in 226 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `0e674a0` (PR #589's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
@@ -31,7 +31,7 @@ All 16 commands work (plus `bake`, a pure alias for `render`), over 27 pipeline 
 `installer/lib/`: `init` · `setup` · `list` · `toggle` · `install` · `render` · `upgrade` ·
 `doctor` · `state` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
-## Unreleased on `main` — merged 2026-10-06 through 10-09
+## Shipped in v0.17.0 — merged 2026-10-06 through 10-09
 
 | Change | What it gives you | State |
 |--------|-------------------|-------|
