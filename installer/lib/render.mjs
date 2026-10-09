@@ -11,7 +11,7 @@ import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template
 import { toolkitLockEntry } from './toolkit-ref.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, modOutputDir } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, modOutputDir, closureFor } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import {
   applicablePrerequisites,
@@ -343,12 +343,23 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
 
   // A cross-stack `requires:` edge onto a stack this project does not enable (#520): expansion
   // never pulls another stack's items in, so it warns instead — never silently enables.
+  // Leads with the item route: it is a subset of the stack route, so never needs more config (#549).
   for (const { ref, requiredBy, stackName, installRef } of disabledStackRequires(toolkit, selection)) {
+    const needs = (keys) => (keys.length ? `needs ${summarizeConfigKeys(keys)}` : 'needs no config values');
+    const whole = toolkit.stacks.get(stackName);
+    const [kind, ...rest] = ref.split('/');
+    const name = rest.join('/');
+    const item = whole?.[kind]?.find((i) => i.name === name);
+    const itemNodes = item ? closureFor(toolkit, { stack: stackName, kind, name, item }) : [];
+    const itemNeeds = needs(missingConfigFor(toolkit, project, itemNodes));
+    const stackNodes = whole ? itemsOfStack(whole) : [];
+    const stackNeeds = needs(missingConfigFor(toolkit, project, stackNodes));
     warnings.push(
       `selected ${requiredBy} requires ${ref}, which is provided by stack "${stackName}" — that stack is not ` +
-        `enabled here, so the dependency is NOT rendered and the flow is incomplete. Add "${stackName}" to ` +
-        `\`stacks:\` in ${CONFIG_FILE}, run \`wafflestack install ${installRef}\` to pull just that item ` +
-        `(with its own dependencies), or expect ${requiredBy} to run without it.`,
+        `enabled here, so the dependency is NOT rendered and the flow is incomplete. Cheapest fix: run ` +
+        `\`wafflestack install ${installRef}\` to pull just that item (with its own dependencies) — it ` +
+        `${itemNeeds}. Or add "${stackName}" to \`stacks:\` in ${CONFIG_FILE}, which renders the whole stack and ` +
+        `${stackNeeds}. Or expect ${requiredBy} to run without it.`,
     );
   }
 
@@ -817,4 +828,51 @@ export function collectUsedKeys(items) {
     }
   }
   return keys;
+}
+
+/**
+ * Required config keys a set of items would demand but `project` leaves unresolved (#549) — the
+ * same check `render` refuses on, asked before an install. `nodes` are `{ stack, kind, item }`.
+ *
+ * @param {import('./toolkit.mjs').Toolkit} toolkit
+ * @param {import('./project.mjs').ProjectConfig} project
+ * @param {{ stack: string, kind: string, item: any }[]} nodes
+ * @returns {string[]} `config.`-prefixed keys, sorted
+ */
+export function missingConfigFor(toolkit, project, nodes) {
+  const byStack = new Map();
+  for (const n of nodes) {
+    if (!byStack.has(n.stack)) byStack.set(n.stack, []);
+    byStack.get(n.stack).push(n);
+  }
+  const missing = new Set();
+  for (const [stackName, items] of byStack) {
+    const stack = toolkit.stacks.get(stackName);
+    if (!stack) continue;
+    const resolve = makeResolver(stack, project.values, project.targets[0] ?? 'claude');
+    for (const k of missingRequiredKeys(stack, project.values, (_v, key) => resolve(key), collectUsedKeys(items))) {
+      missing.add(`config.${k}`);
+    }
+  }
+  return [...missing].sort();
+}
+
+/** Shorten `config.arch.a, config.arch.b` to `config.arch.*` — one entry per first segment. */
+export function summarizeConfigKeys(keys) {
+  const groups = new Map();
+  for (const k of keys) {
+    const head = k.split('.').slice(0, 2).join('.');
+    if (!groups.has(head)) groups.set(head, []);
+    groups.get(head).push(k);
+  }
+  return [...groups].map(([head, ks]) => (ks.length > 1 ? `${head}.*` : ks[0])).join(', ');
+}
+
+/** Every item of a stack as `{ stack, kind, item }` nodes — what enabling it would render. */
+function itemsOfStack(stack) {
+  return ['agents', 'skills', 'files', 'mods'].flatMap((kind) =>
+    (stack[kind] ?? [])
+      .filter((item) => kind === 'agents' || kind === 'skills' || !stack.optIn.has(`${kind}/${item.name}`))
+      .map((item) => ({ stack: stack.name, kind, item })),
+  );
 }

@@ -3,8 +3,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit } from './toolkit.mjs';
-import { computeSelection, itemOutputMatcher, fileMatchesTargets } from './refs.mjs';
-import { readTreeLock } from './render.mjs';
+import { computeSelection, itemOutputMatcher, fileMatchesTargets, closureFor, modOutputDir } from './refs.mjs';
+import { readTreeLock, missingConfigFor, summarizeConfigKeys, collectUsedKeys } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 
 /** What the toolkit offers versus what this repo has — classified against the TREE lock, never the committed one (#317). */
@@ -95,17 +95,27 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     [STATUS.NOT_INSTALLABLE]: 0,
     [STATUS.PENDING_REMOVAL]: 0,
   };
+  // Only a row the picker would ADD can be blocked; a selected row's failure is the render's own error.
+  const blockersFor = (stackName, kind, name, item, status) => {
+    if (!project || selection.errors.length) return null;
+    if (status !== STATUS.NOT_INSTALLED && status !== STATUS.PENDING_REMOVAL) return null;
+    const nodes = closureForSafe(toolkit, { stack: stackName, kind, name, item });
+    const config = missingConfigFor(toolkit, project, nodes);
+    const unmanaged = nodes.flatMap((n) => unmanagedOutputs(cwd, n, project.targets, trackedFiles));
+    return config.length || unmanaged.length ? { config, unmanaged } : null;
+  };
   const addRow = (rows, stackName, kind, name, optIn = false, item = null) => {
     const { status, removalReason } = classify(stackName, kind, name, item);
     counts[status] += 1;
-    rows.push({ kind, name, ref: `${kind}/${name}`, status, removalReason, optIn, targets: item?.targets ?? null });
+    const blockers = item ? blockersFor(stackName, kind, name, item, status) : null;
+    rows.push({ kind, name, ref: `${kind}/${name}`, status, removalReason, optIn, targets: item?.targets ?? null, blockers });
   };
 
   const stacks = [];
   for (const stack of toolkit.stacks.values()) {
     const rows = [];
-    for (const a of stack.agents) addRow(rows, stack.name, 'agents', a.name);
-    for (const s of stack.skills) addRow(rows, stack.name, 'skills', s.name);
+    for (const a of stack.agents) addRow(rows, stack.name, 'agents', a.name, false, a);
+    for (const s of stack.skills) addRow(rows, stack.name, 'skills', s.name, false, s);
     for (const f of stack.files) addRow(rows, stack.name, 'files', f.name, stack.optIn.has(`files/${f.name}`), f);
     for (const m of stack.mods) addRow(rows, stack.name, 'mods', m.name, stack.optIn.has(`mods/${m.name}`), m);
     stacks.push({ name: stack.name, description: stack.description, enabled: enabledStacks.has(stack.name), rows });
@@ -124,6 +134,60 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     stacks,
     counts,
   };
+}
+
+/** A closure the toolkit cannot resolve is `validate`'s to report — the row then just carries no blockers. */
+function closureForSafe(toolkit, root) {
+  try {
+    return closureFor(toolkit, root);
+  } catch {
+    return [root];
+  }
+}
+
+/**
+ * The paths an item would write that already hold a file the lock does not track (#549) — `render`
+ * refuses those without `--force`. A verbatim payload whose bytes already match is adopted, so it
+ * is not reported; a templated one cannot be compared without rendering, so it is.
+ */
+export function unmanagedOutputs(cwd, node, targets, trackedFiles) {
+  /** @type {{ rel: string, source: string | null }[]} */
+  const candidates = [];
+  const { kind, name, item } = node;
+  if (kind === 'agents') {
+    if (targets.includes('claude')) candidates.push({ rel: path.join('.claude', 'agents', `${name}.md`), source: null });
+    if (targets.includes('codex')) candidates.push({ rel: path.join('.codex', 'agents', `${name}.toml`), source: null });
+  } else if (kind === 'skills') {
+    const dirs = new Set();
+    if (targets.includes('claude')) dirs.add(path.join('.claude', 'skills', name));
+    if (targets.includes('agents-dir') || targets.includes('codex')) dirs.add(path.join('.agents', 'skills', name));
+    for (const dir of dirs) for (const rel of item.files) candidates.push({ rel: path.join(dir, rel), source: null });
+  } else if (kind === 'files') {
+    if (!fileMatchesTargets(item, targets)) return [];
+    const verbatim = item.binary || !collectUsedKeys([{ kind, item }]).size;
+    candidates.push({ rel: name, source: verbatim ? item.path : null });
+  } else if (kind === 'mods') {
+    if (!targets.includes('claude')) return [];
+    for (const rel of item.files) candidates.push({ rel: path.join(modOutputDir(name), rel), source: path.join(item.dir, rel) });
+  }
+  return candidates
+    .filter(({ rel, source }) => {
+      if (trackedFiles.has(rel)) return false;
+      const abs = path.join(cwd, rel);
+      if (!exists(abs) || !fs.statSync(abs).isFile()) return false;
+      return !(source && sha256(fs.readFileSync(abs)) === sha256(fs.readFileSync(source)));
+    })
+    .map(({ rel }) => rel);
+}
+
+/** One short phrase per blocker class, e.g. `needs config.arch.*` · `unmanaged file at X (needs --force)`. */
+export function describeBlockers(blockers) {
+  if (!blockers) return [];
+  const out = [];
+  if (blockers.config.length) out.push(`needs ${summarizeConfigKeys(blockers.config)}`);
+  const [first, ...more] = blockers.unmanaged;
+  if (first) out.push(`unmanaged file at ${first}${more.length ? ` (+${more.length} more)` : ''} (needs --force)`);
+  return out;
 }
 
 // ── Plain table renderer ────────────────────────────────────────────────────────────────────
@@ -204,7 +268,9 @@ export function formatListTable(model, { color = false } = {}) {
               ANSI.yellow,
             )}`
           : '';
-      lines.push(`  ${status}  ${row.ref}${tag}${scope}${doomed}`);
+      const blocked = describeBlockers(row.blockers);
+      const blockers = blocked.length ? `  ${paint(`— ${blocked.join('; ')}`, ANSI.yellow)}` : '';
+      lines.push(`  ${status}  ${row.ref}${tag}${scope}${doomed}${blockers}`);
     }
     lines.push('');
   }
@@ -258,6 +324,7 @@ export function selectableChoices(model) {
         installRef: `${stack.name}/${row.ref}`,
         status: row.status,
         optIn: row.optIn,
+        blockers: describeBlockers(row.blockers),
         checked: row.status === STATUS.OUTDATED,
       });
     }
@@ -279,7 +346,8 @@ export function interactiveSelect(model, { input = process.stdin, output = proce
           ? `${ANSI.yellow}keep${ANSI.reset}`
           : `${ANSI.dim}install${ANSI.reset}`;
     const tag = c.optIn ? ` ${ANSI.cyan}(opt-in syrup)${ANSI.reset}` : '';
-    return `${c.stack} › ${c.ref}  [${action}]${tag}`;
+    const blocked = c.blockers.length ? ` ${ANSI.yellow}⚠ ${c.blockers.join('; ')}${ANSI.reset}` : '';
+    return `${c.stack} › ${c.ref}  [${action}]${tag}${blocked}`;
   };
   return keypressMultiSelect({ title: 'Select waffles to install or update', choices, label, input, output }).then(
     (result) => ({ applied: result.applied, refs: result.checked.map((c) => c.installRef) }),

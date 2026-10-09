@@ -198,7 +198,8 @@ export function unejectCollisions(unejected, collisions = []) {
 }
 
 const STARTER_CONFIG = `# wafflestack project config — see the toolkit repo's schema/FORMAT.md
-# Version pin is the npx ref you install with, e.g. npx github:OWNER/wafflestack#v0.1.0
+# Version pin is the npx ref you install with (npx github:OWNER/wafflestack#<release tag>);
+# once pinned, the tag in doctor.toolkitRef is the one of record — don't copy it into comments
 targets: [claude, codex, agents-dir]
 stacks: []
 #  - docs-system
