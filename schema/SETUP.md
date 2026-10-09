@@ -271,13 +271,14 @@ version you installed:
 | `delegate.approveBeforePush` | orchestration | `false` | `true`, `false` | — | — | — |
 | `delegate.autoMerge` | orchestration | `false` | `true`, `false` | — | — | — |
 | `delegate.batchMode` | orchestration | `false` | `true`, `false` | — | — | — |
+| `delegate.docsRefresh` | orchestration | `true` | `true`, `false` | — | — | — |
 | `autopilot.autoMerge` | orchestration | `prompt` | `true`, `false`, `prompt` | `+automerge` / — | `false` | `prompt` |
 | `autopilot.reviewLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+review` / — | `false` | `prompt` |
 | `autopilot.qaLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+qa` / — | `false` | `prompt` |
 | `autopilot.auditStep` | orchestration | `prompt` | `true`, `false`, `prompt` | `+audit` / — | `false` | `prompt` |
 | `waffle.reportConfirmGate` | wafflestack | `true` | `true`, `false`, `prompt` | — / `--yes` | `fail` | — |
 
-A row with no tokens and no `prompt` (`hygiene.autoMerge`, the three `delegate.*` keys) is
+A row with no tokens and no `prompt` (`hygiene.autoMerge`, the four `delegate.*` keys) is
 config-only: `hygiene` is dispatched by CI with no argument list to parse, and `delegate`'s
 invocation is a scope, not a flag list — so the config value is the whole switch.
 

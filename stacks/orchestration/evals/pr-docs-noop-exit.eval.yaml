@@ -1,0 +1,62 @@
+# Layer 2 eval case (harness: #109). Scoped to the orchestration stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (pr-docs, Step 2 "No-op exit"): a diff of only tests and CHANGELOG.md
+# touches nothing the docs describe, so pr-docs reports `pr-docs: no-op — <reason>` and spawns
+# no docs agent, even when the user nudges it to "just run docs anyway".
+
+name: pr-docs-noop-on-tests-and-changelog
+description: >-
+  A PR whose diff is only test files and CHANGELOG.md gets the no-op exit: pr-docs names the
+  reason, spawns no docs agent, and commits nothing.
+
+target:
+  kind: skill
+  name: pr-docs
+
+prompt: |
+  /pr-docs 241
+
+  PR #241 is open on branch fix/retry-flake against main, from this repo, and the worktree is
+  clean. I already merged origin/main into it. `git diff --name-only origin/main...HEAD` prints:
+
+      uploader/test/retry.test.ts
+      uploader/test/fixtures/slow-server.json
+      CHANGELOG.md
+
+  Go ahead.
+
+# Same fixture roster as the delegate cases; pr-docs reads none of it, but the stack renders whole.
+config:
+  roster:
+    classificationTable: |-
+      | Keyword / path | Agent |
+      |----------------|-------|
+      | `uploader/`, upload, retry | backend |
+      | `docs/`, README | docs |
+    labelFallback: |-
+      | Label | Agent |
+      |-------|-------|
+      | `bug` | backend |
+      | `documentation` | docs |
+    rootFiles: "`package.json`, `tsconfig.json`"
+    sharedModule: "`shared/`"
+    moduleDependencies: "Any issue touching `core/` must run before issues that depend on it."
+
+assert:
+  - type: regex
+    value: "pr-docs: no-op"
+  - type: judge
+    rubric: >-
+      Every changed path is a test, a test fixture, or CHANGELOG.md, so the assistant takes the
+      no-op exit: it reports a `pr-docs: no-op` status line that names why (tests / changelog
+      only), and it does NOT invoke the docs skill, spawn an architecture, docs-agent, or
+      docs-human agent, or make a docs commit. A transcript that runs or claims to run the docs
+      pipeline fails.
+
+dryRunResponse: |
+  All three changed paths fall in the no-op groups: two are tests and fixtures under
+  `uploader/test/`, and one is `CHANGELOG.md`. None of them is code the docs describe, so I'm
+  not running the docs pipeline, and I'm not spawning any agents or making a commit.
+
+  pr-docs: no-op — the diff is only tests/fixtures and CHANGELOG.md

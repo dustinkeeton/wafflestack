@@ -4530,3 +4530,33 @@ describe('SETUP.md documents the three-mode behavioral config contract for the s
     assert.match(md, /\*\*"Behavioral keys — the three modes, precedence, `lockMode`"\*\*/);
   });
 });
+
+// #584: the contract delegate/autopilot will call in #585 — merge-not-rebase, diff focus, no-op exit, one status line.
+describe('pr-docs keeps the caller contract (#584, part of #572)', () => {
+  const md = fs.readFileSync(path.join(STACKS, 'orchestration', 'skills', 'pr-docs', 'SKILL.md'), 'utf8');
+
+  test('merges the base, never rebases or force-pushes, and never arms', () => {
+    assert.match(md, /git merge --no-edit origin\/<base>/);
+    assert.match(md, /Merge, never rebase\. Never force-push\./);
+    assert.match(md, /Never mark the PR ready and never arm auto-merge/);
+  });
+
+  test('scopes docs to the merge-base diff and delegates the pipeline to the docs skill', () => {
+    assert.match(md, /git diff --name-only origin\/<base>\.\.\.HEAD/);
+    assert.match(md, /Invoke the `docs` skill/);
+    assert.match(md, /Never spawn those agents directly from here/);
+  });
+
+  test('the caller-gating key is delegate.docsRefresh, declared default true', () => {
+    assert.match(md, /\{\{delegate\.docsRefresh\}\}/);
+    const spec = loadToolkit(REPO_ROOT).stacks.get('orchestration').config['delegate.docsRefresh'];
+    assert.equal(spec.default, true);
+    assert.deepEqual(spec.modes, [true, false]);
+  });
+
+  test('ends with exactly one of the four status lines a caller branches on', () => {
+    for (const s of ['no-op — <reason>', 'up to date — …', 'refreshed — …', 'stopped — <reason>']) {
+      assert.ok(md.includes(`| \`pr-docs: ${s}\` |`), `status row "${s}"`);
+    }
+  });
+});

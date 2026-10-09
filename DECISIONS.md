@@ -9,6 +9,42 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-09: Every PR gets a docs refresh scoped to its own diff — a `pr-docs` skill plus `delegate.docsRefresh`, default on (#572, #584)
+
+**Context**: Docs were refreshed in two places only. The daily `hygiene` run updates them against
+`main`, so docs trail merged code by up to a day, and that run's separate branch is a known source
+of conflicts on the root docs. Autopilot's opt-in `/audit` gate runs `docs` on a PR's diff, but only
+when that gate is consented. PRs from plain `/delegate` or from manual work never got a docs pass,
+so reviewers saw code changes without the doc changes that should go with them.
+
+**Decision**: Option C, chosen by the owner on 2026-10-07: a standalone skill plus a config key.
+
+- **`pr-docs`** (`stacks/orchestration/skills/pr-docs/SKILL.md`) works on one open PR. It merges the
+  latest base into the branch (merge, never rebase), computes the changed paths from the merge
+  base, runs the `docs` skill with those paths as its focus, and commits and pushes the doc updates
+  onto the PR branch. When every changed path is a test, `CHANGELOG.md`, a doc file, or generated
+  output, it exits as a no-op without spawning any agent. It runs as late as possible, right before
+  the PR is marked ready or armed, so the shared root docs are refreshed against the newest base.
+  It ends with one `pr-docs: <status>` line that a caller can branch on.
+- **`delegate.docsRefresh`** (`modes: [true, false]`, default `true`) is the key delegate and
+  autopilot read to decide whether to call it. The key belongs to the caller, not to the skill:
+  it gates delegate's own Phase 4 step, as `delegate.autoMerge` gates delegate's arming, and
+  autopilot implements through delegate, so one key covers both. A key on the skill would gate
+  nothing, because a hand invocation is consent on its own. The `docs` skill gains an optional focus
+  argument so the diff scope is passed in the same way from `pr-docs` and from `/audit`.
+
+**Alternatives**: *A — inline in delegate's Phase 4.* Simple, but manual PRs get nothing and
+delegate's playbook grows. *B — the skill with no key.* Every caller gets the same implementation,
+but consumers can't opt out of three agents per PR. A key named after the skill (or a new `pr.*`
+namespace) was considered and rejected: neither has a reader that the key would gate.
+
+**Consequences**: Wiring the call into delegate and autopilot — and skipping it when autopilot's
+`/audit` gate already runs `docs` on the PR — is the next slice (#585). Narrowing the daily hygiene
+docs run to a drift backstop follows (#586). Until #585 lands, the key is declared but no caller
+reads it; `/pr-docs <PR#>` works by hand.
+
+---
+
 ## 2026-10-06: The generated `.waffle/` docs are presence-optional in `doctor`; gitignoring them no longer needs `--allow-missing` (#528)
 
 **Context**: `docs/gitignore.md` already told consumers to ignore the per-agent avatar SVGs —
