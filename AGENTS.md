@@ -117,6 +117,7 @@ export function readTreeLock(cwd)              // → readLocalLock(cwd) ?? read
 export function configGuardProblems({ toolkit, project, selection }) // → string[] — the guard failures a render WOULD produce, without rendering (#218; runs the real substitute() per used guarded key, so bare doctor enforces pattern:/entryPatterns:/modes:/lockMode:)
 export function collectUsedKeys(items)         // → Set<string> placeholder keys referenced by a selection's source content
 export function missingConfigFor(toolkit, project, nodes) // → sorted `config.`-prefixed required keys the given `{ stack, kind, item }` nodes reference but the project leaves unresolved — render's own refusal, asked before an install (#549)
+export function failingConfigFor(toolkit, project, nodes) // → { pattern: string[], modes: string[] } — `config.`-prefixed keys the nodes use whose resolved value fails a render guard (shares configGuardProblems' real-substitute() loop; `modes` iff only modes:/lockMode: fails) (#578)
 export function summarizeConfigKeys(keys)     // → 'config.arch.*, config.data.brief' — one entry per first segment; a lone key stays whole (#549)
 
 // refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs + the registry gate from registry.mjs)
@@ -311,7 +312,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) // → { 
 export function formatListTable(model, { color = false } = {}) // → aligned plain-text table; color gates ANSI
 export function selectableChoices(model)       // → actionable rows (not current, not scoped out; a pending-removal row iff removalReason is deselected (#371), unchecked; outdated pre-checked; each carries `blockers: string[]` from describeBlockers, shown on the picker row, #549) (pure)
 export function unmanagedOutputs(cwd, node, targets, trackedFiles) // → repo-relative paths a `{ kind, name, item }` would write that hold a file the lock does not track (render refuses without --force); a byte-identical verbatim payload is omitted (#549)
-export function describeBlockers(blockers)    // → ['needs config.arch.*', 'unmanaged file at <path> (needs --force)'] for a row's `blockers` (null ⇒ [])
+export function describeBlockers(blockers)    // → ['needs config.arch.*', 'config.x fails its pattern', 'config.y is not one of its declared modes', 'unmanaged file at <path> (needs --force)'] for a row's `blockers` `{ config, pattern, modes, unmanaged }` (null ⇒ [])
 export function interactiveSelect(model, { input, output } = {}) // → Promise<{ applied, refs, reason? }> (keypress multi-select; TTY-guarded by caller)
 export function keypressMultiSelect({ title, choices, label, input, output }) // → Promise<{ applied, checked }> — the shared ↑/↓/space/a/enter/esc loop behind `list --interactive` and `toggle` (#476); mutates choices[].checked; TTY-guarded by caller
 export const ANSI                              // escape codes the tables and pickers share
