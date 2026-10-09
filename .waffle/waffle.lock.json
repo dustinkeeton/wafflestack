@@ -1,5 +1,5 @@
 {
-  "toolkitVersion": "0.16.1",
+  "toolkitVersion": "0.17.0",
   "toolkit": {
     "source": "github:dustinkeeton/wafflestack",
     "sourceType": "git",
