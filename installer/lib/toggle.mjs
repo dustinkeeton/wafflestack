@@ -8,6 +8,7 @@ import { loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection } from './refs.mjs';
 import { readTreeLock } from './render.mjs';
+import { lockKeys } from './settings.mjs';
 import { loadProjectConfig, resolveConfigFile, CONFIG_FILE } from './project.mjs';
 import { ANSI, keypressMultiSelect } from './list.mjs';
 import { CONFIG_PATH, overrideFor, frontmatterDisablesModelInvocation } from './model-invocation.mjs';
@@ -40,7 +41,7 @@ export function computeToggleModel({ toolkitRoot, cwd }) {
     cacheDir: defaultSourceCacheDir(),
   });
   const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
-  const trackedFiles = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
+  const trackedFiles = new Set(lockKeys(readTreeLock(cwd)));
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
 
   /** @type {ToggleRow[]} */

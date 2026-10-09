@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadToolkit, missingRequiredKeys, MOD_MANIFEST, MOD_ENGINE_LAID } from './toolkit.mjs';
-import { exists, lookupPath, compareVersions } from './util.mjs';
+import { loadToolkit, missingRequiredKeys, MOD_MANIFEST } from './toolkit.mjs';
+import { marketplacePluginId } from './marketplace.mjs';
+import { exists, lookupPath } from './util.mjs';
 import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
-import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle, modOutputDir } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle } from './refs.mjs';
 import { waffleStatus } from './registry.mjs';
 import { readTreeLock, collectUsedKeys } from './render.mjs';
+import { lockKeys } from './settings.mjs';
 import {
   applicablePrerequisites,
   evaluatePrerequisites,
@@ -59,7 +61,7 @@ function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {
 
   // The TREE lock (#317), not the committed one: on a machine with a `.local` overlay it is the
   // tree lock that answers "what is already installed in this working copy".
-  const trackedFiles = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
+  const trackedFiles = new Set(lockKeys(readTreeLock(cwd)));
   const selection = computeSelection(toolkit, project, trackedFiles);
   const primaryTarget = project.targets[0] ?? 'claude';
 
@@ -228,7 +230,7 @@ function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {
   }
 
   const mods = selection.items.filter((i) => i.kind === 'mods');
-  if (mods.length) lines.push(...modsSection(mods, locateClaude));
+  if (mods.length) lines.push(...modsSection(mods, toolkit.name, locateClaude));
 
   const { unmetRequired: unmetReqPrereqs, unmetRecommended: unmetRecPrereqs } = evaluatePrerequisites(
     applicablePrerequisites(toolkit, selection),
@@ -259,56 +261,37 @@ function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {
   return lines.join('\n').trimEnd();
 }
 
-/** `claude plugin test` landed in this Claude Code release; older builds have `validate` only. */
-const PLUGIN_TEST_MIN = '2.1.291';
-
 /**
- * The "## Mods" block of the update view (#564): a rendered mod is inert until Claude Code loads
- * it, so each selected mod gets its post-render check and the three load paths, plus a note on
- * the files a `--plugin-dir` load lays into the dir. `locateClaude` is the CLI probe (stubbable).
+ * The "## Mods" block of the update view: a mod renders as two `.claude/settings.json` entries
+ * (#594), so Claude Code offers the install on the next trusted session. `locateClaude` is the
+ * CLI probe (stubbable).
  */
-function modsSection(mods, locateClaude = claudeCli) {
+function modsSection(mods, marketplace, locateClaude = claudeCli) {
   const cli = locateClaude() ?? null;
-  const canTest = Boolean(cli?.version) && compareVersions(cli.version, PLUGIN_TEST_MIN) >= 0;
-  const cliNote = !cli
-    ? '`claude` is not on PATH here — the commands below are for the user\'s machine; do not run them from this one.'
-    : canTest
-      ? `\`claude\` ${cli.version} is on PATH (${cli.path}).`
-      : `\`claude\` ${cli.version ?? '(version unknown)'} is on PATH; \`claude plugin test\` needs ≥ ${PLUGIN_TEST_MIN}, so skip the test line.`;
+  const cliNote = cli
+    ? `\`claude\` ${cli.version ?? '(version unknown)'} is on PATH (${cli.path}).`
+    : '`claude` is not on PATH here — the commands below are for the user\'s machine; do not run them from this one.';
   const lines = [
-    '## Mods (Claude Code plugins) — load them after `render`',
+    '## Mods (Claude Code plugins) — enabled through `.claude/settings.json`',
     '',
-    '`render` writes a mod\'s files; nothing loads them. For each mod below, after `render` and',
-    '`doctor`: run the check, then ask the user which load path they want — per-session flag,',
-    `every-session env, or a permanent marketplace install. ${cliNote}`,
+    `\`render\` merges \`extraKnownMarketplaces.${marketplace}\` and one \`enabledPlugins\` key per mod into`,
+    'the project\'s `.claude/settings.json`, beside its own keys; no plugin files are written. On the next',
+    'session in this repo Claude Code asks the user to trust the folder and install the marketplace',
+    `and plugins. ${cliNote}`,
     '',
   ];
   for (const { stackName, item } of mods) {
-    const out = modOutputDir(item.name).split(path.sep).join('/');
+    const id = marketplacePluginId(item.name, marketplace);
     let description = '';
     try {
       description = JSON.parse(fs.readFileSync(path.join(item.dir, MOD_MANIFEST), 'utf8')).description ?? '';
-    } catch { /* validate reports a bad manifest; the load lines still apply */ }
-    lines.push(`### \`mods/${item.name}\` (${stackName}) → \`${out}/\``, '');
+    } catch { /* validate reports a bad manifest */ }
+    lines.push(`### \`mods/${item.name}\` (${stackName}) → \`enabledPlugins["${id}"]\``, '');
     if (description) lines.push(description, '');
-    lines.push(
-      `- check (post-render): \`claude plugin validate ${out}\``,
-      `- load, this session only: \`claude --plugin-dir "$PWD/${out}"\` (repeat the flag for several mods)`,
-      '- load, every session, no flag: add the ABSOLUTE path to `CLAUDE_CODE_PLUGIN_DIRS` (path-list separated) in the',
-      '  process env or the `env` block of `~/.claude/settings.json` — never a project\'s settings file',
-      `- install permanently: a marketplace — a \`.claude-plugin/marketplace.json\` listing the mod (\`"source": "./${out}"\`),`,
-      `  then \`/plugin install ${item.name} --marketplace <owner>/<repo>\` (or \`claude plugin marketplace add <folder>\` locally)`,
-      canTest
-        ? `- test: \`claude plugin test ${out}\` — runs the mod's own \`*.test.ts\` against the engine`
-        : `- test: \`claude plugin test ${out}\` needs \`claude\` ≥ ${PLUGIN_TEST_MIN} — skip until then`,
-      '',
-    );
+    lines.push(`- no prompt, or declined: \`/plugin install ${id}\` in a session here`, '');
   }
   lines.push(
-    `> A \`--plugin-dir\` load lays ${MOD_ENGINE_LAID.map((e) => `\`${e}\``).join(' and ')} INTO the dir it loads — per-machine files,`,
-    '> not lock-managed (`doctor` ignores them). Offer the matching `.gitignore` lines',
-    `> (${MOD_ENGINE_LAID.map((e) => `\`.claude/mods/*/${e}\``).join(', ')}) alongside the baseline in step 6, and always load the`,
-    '> RENDERED copy, never a stack\'s `mods/` source dir.',
+    '> `doctor` flags a removed or edited entry; `wafflestack eject mods/<name>` removes it for good.',
     '',
   );
   return lines;

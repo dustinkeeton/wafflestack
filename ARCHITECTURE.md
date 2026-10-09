@@ -26,7 +26,7 @@ compiler — neutral source in, harness-native files out.
   toolkit.yaml         ┐
   stacks/<name>/      │   wafflestack render      .claude/agents/*.md
     stack.yaml        ├──────────────────────►    .claude/skills/*/
-    agents/*.md        │   (fill placeholders,     .claude/mods/*/   (claude only)
+    agents/*.md        │   (fill placeholders,     .claude/settings.json (mod entries, claude only)
     skills/*/SKILL.md  │    resolve per target,    .codex/agents/*.toml
     mods/*/            │    append extensions)     .agents/agents/*.md
   schema/FORMAT.md     ┘                           .agents/skills/*/
@@ -218,14 +218,13 @@ A **mod** is a Claude Code plugin directory — `.claude-plugin/plugin.json` plu
 that can draw a live pane inside a session. A stack lists it under `mods:` and carries it in
 `mods/<name>/` (#560).
 
-- **Rendered verbatim.** Render copies the dir byte-for-byte to `.claude/mods/<name>/`, with no
-  placeholder substitution, because a `.tsx` hook is code.
+- **Rendered as settings entries.** Render writes no mod files: it merges the toolkit marketplace
+  and `enabledPlugins["<name>@<toolkit>"]` into `.claude/settings.json`, beside the project's own
+  keys, and Claude Code installs the plugin from the marketplace (#594).
 - **Claude only.** Claude Code is the one harness with a mod surface, so a Codex- or
   agents-dir-only project never receives one, and disabling `claude` prunes it.
-- **Managed like everything else.** Mods are lock-tracked, doctor-checked, and ejectable
-  (`wafflestack eject mods/<name>`).
-- **Loaded by you.** `setup` prints how each rendered mod loads; per session it is
-  `claude --plugin-dir "$PWD/.claude/mods/<name>"` (#564).
+- **Managed like everything else.** The entries are lock-tracked, doctor-checked, and ejectable
+  (`wafflestack eject mods/<name>` removes them).
 
 The first mod is **`waffle-view`** in the `wafflestack` stack. `/waffle-view` toggles a pane that
 shows the repo's resolved state, and narrows it to the skill you last invoked by `/name` (#562,

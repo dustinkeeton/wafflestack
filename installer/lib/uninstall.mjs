@@ -5,6 +5,7 @@ import { exists, resolveInside, sha256 } from './util.mjs';
 import { readLocalLock, readTreeLock, renderProject } from './render.mjs';
 import { init } from './eject.mjs';
 import { loadToolkit } from './toolkit.mjs';
+import { settingsDrift, removeSettingsEntries } from './settings.mjs';
 import {
   loadProjectConfig,
   recommendedGitignoreEntries,
@@ -196,6 +197,14 @@ export function planUninstall({
     if (sha256(body) !== hash) drifted.push(rel); // the same compare doctor makes
     else remove.push(rel);
   }
+  // Settings entries (#594) classify like files; a removed one leaves the consumer's other keys alone.
+  const entries = tree.settings ?? {};
+  const settingsState = settingsDrift(cwd, entries);
+  for (const key of Object.keys(entries)) {
+    if (settingsState.missing.includes(key)) absent.push(key);
+    else if (settingsState.modified.includes(key)) drifted.push(key);
+    else remove.push(key);
+  }
   remove.sort();
   drifted.sort();
   absent.sort();
@@ -229,12 +238,13 @@ export function planUninstall({
     addMeta(path.join(cwd, EXTENSIONS_DIR), 'dir');
   }
 
+  const isFile = (/** @type {string} */ rel) => !(rel in entries);
   const removing = [
-    ...(force ? [...remove, ...drifted] : remove).map((rel) => path.join(cwd, rel)),
+    ...(force ? [...remove, ...drifted] : remove).filter(isFile).map((rel) => path.join(cwd, rel)),
     ...meta.map((m) => m.abs),
   ];
   const candidates = [
-    ...[...remove, ...drifted, ...absent].map((rel) => path.join(cwd, rel)),
+    ...[...remove, ...drifted, ...absent].filter(isFile).map((rel) => path.join(cwd, rel)),
     ...meta.map((m) => m.abs),
   ];
   const prunedDirs = planPrunedDirs(cwd, removing, candidates);
@@ -349,7 +359,15 @@ export function uninstall({
   let metaKeptOnError = false;
 
   if (!dryRun) {
+    const settingsKeys = doomed.filter((rel) => rel in (readTreeLock(cwd)?.settings ?? {}));
+    try {
+      removeSettingsEntries(cwd, settingsKeys);
+      removed.push(...settingsKeys);
+    } catch (err) {
+      errors.push(`failed to remove settings entries: ${/** @type {Error} */ (err).message}`);
+    }
     for (const rel of doomed) {
+      if (settingsKeys.includes(rel)) continue;
       const abs = resolveInside(cwd, rel);
       if (!abs) continue; // unreachable — refused above; belt and braces before an rmSync
       try {

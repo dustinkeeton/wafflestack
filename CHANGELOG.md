@@ -44,6 +44,23 @@ is what you reach for across a breaking one.
   **Consumer impact:** none yet — `render` still emits `.claude/mods/`. Toolkit forks that ship
   mods must add a `marketplace.json` entry per mod or `validate` fails.
 
+### Changed
+- **Mods render as project-scope settings entries, not files (#594, part of #592).** Selecting a
+  mod no longer writes `.claude/mods/<name>/`. `render` merges `extraKnownMarketplaces.<toolkit>`
+  (`{ "source": "github", "repo": "<owner>/<repo>" }`, unpinned for now) and
+  `enabledPlugins["<name>@<toolkit>"]: true` into `.claude/settings.json`, beside the project's own
+  keys. It never overwrites a foreign key: an untracked key holding a different value is refused
+  without `--force`. The lock gains a `settings` map (`.claude/settings.json#/<JSON pointer>` →
+  value). `doctor` flags an edited or dropped entry, `eject mods/<name>` removes the entry (and
+  the marketplace entry with the last mod), and `uninstall` removes them. `setup` prints the
+  `/plugin install <name>@<toolkit>` fallback instead of `--plugin-dir` lines. `validate` now
+  requires a mod's `plugin.json` `name` to equal its directory name. Emptied directories left by a
+  prune are removed. New module `installer/lib/settings.mjs`; `modOutputDir` is now `legacyModDir`.
+
+  **Consumer impact:** re-render. A repo that rendered a mod loses `.claude/mods/<name>/` (the
+  lock forgets the files) and gains the two entries in `.claude/settings.json`. Commit both. Claude
+  Code offers the marketplace and plugin install the next time the repo is trusted.
+
 ## [0.17.0] - 2026-10-09
 
 ### Added

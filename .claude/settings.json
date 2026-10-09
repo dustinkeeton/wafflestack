@@ -6,5 +6,16 @@
     "commit": "",
     "pr": ""
   },
-  "includeCoAuthoredBy": false
+  "includeCoAuthoredBy": false,
+  "extraKnownMarketplaces": {
+    "wafflestack": {
+      "source": {
+        "source": "github",
+        "repo": "dustinkeeton/wafflestack"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "waffle-view@wafflestack": true
+  }
 }

@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { VALID_TARGETS } from './project.mjs';
 import { isWaffleWip, replacementFor } from './registry.mjs';
+import { ownsModKey } from './settings.mjs';
 
 /** @import { Toolkit, Stack, Item } from './toolkit.mjs' */
 
@@ -77,19 +78,20 @@ export function itemOutputMatcher(kind, name) {
           path.join('.agents', 'agents', `${name}.md`),
         ]
       : kind === 'mods'
-        ? [modOutputDir(name) + path.sep]
+        ? [legacyModDir(name) + path.sep]
         : [path.join('.claude', 'skills', name) + path.sep, path.join('.agents', 'skills', name) + path.sep];
-  return (rel) => patterns.some((p) => rel === p || rel.startsWith(p));
+  const settingsEntry = kind === 'mods' ? ownsModKey(name) : () => false;
+  return (rel) => settingsEntry(rel) || patterns.some((p) => rel === p || rel.startsWith(p));
 }
 
 /**
- * The repo-relative directory a mod renders into (#560) — its only output root, since Claude Code
- * is the one harness with a mod surface.
+ * Where a mod rendered as FILES before #594 made it a settings entry — matched only so an old lock
+ * still counts as "poured" while the next render migrates it.
  *
  * @param {string} name
  * @returns {string}
  */
-export function modOutputDir(name) {
+export function legacyModDir(name) {
   return path.join('.claude', 'mods', name);
 }
 

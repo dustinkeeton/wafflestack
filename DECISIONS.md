@@ -9,6 +9,37 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-09: Mods are delivered as project-scope settings entries, not rendered files (#594, part of #592)
+
+**Context**: A mod rendered as a copy of its plugin dir under `.claude/mods/<name>/`, and nothing
+loaded it: the user had to pass `--plugin-dir` every session or edit an env var. A `--plugin-dir`
+load also writes per-machine files into the dir it loads. Since #593 the toolkit repo is a plugin
+marketplace, so Claude Code can fetch the plugin itself.
+
+**Decision** (owner, 2026-10-09): Selecting a mod merges two entries into the consumer's
+`.claude/settings.json`: `extraKnownMarketplaces.<toolkit>` (the marketplace source) and
+`enabledPlugins["<name>@<toolkit>"]: true`. No mod files are written. The entries sit beside the
+consumer's own keys and never overwrite them. The lock gains a `settings` map, keyed by file and
+JSON pointer, so `doctor`, `eject`, `uninstall` and the stale prune treat each entry the way they
+treat a rendered file. `eject` removes the entry instead of leaving it, because a project-owned
+`enabledPlugins` key would keep loading the mod. An old lock's `.claude/mods/` files are pruned
+by the normal stale-file sweep on the next render. The marketplace source is left unpinned here;
+#595 pins it to the toolkit ref.
+
+**Alternatives**:
+- *`recommendedPlugins:`.* Rejected: it names plugins the toolkit offers but never installs or
+  tracks, so there would be no drift check and no eject.
+- *Keep rendering files and add the settings entries alongside.* Rejected: two copies of one
+  plugin, and the file copy still needs `--plugin-dir`.
+- *Manage `.claude/settings.json` as a whole file.* Rejected: it is the consumer's file (env,
+  permissions, attribution), so a whole-file render would clobber their keys.
+
+**Impact**: A consumer re-render removes `.claude/mods/<name>/` and adds the two entries. A mod's
+`plugin.json` `name` must equal its directory name. A mod from an external stack is skipped with a
+warning, since it is not in this toolkit's marketplace.
+
+---
+
 ## 2026-10-09: Hygiene's daily docs run is narrowed to a drift backstop, not removed (#572, #586)
 
 **Context**: Once delegate and autopilot run `pr-docs` on every PR they open (#585), the daily

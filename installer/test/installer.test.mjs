@@ -12721,7 +12721,7 @@ describe('install of a ref a selected stack already provides persists nothing (#
     const logs = [];
     install(repoRoot, ['mods/waffle-view'], logs);
     assert.equal(read(cwd, CONFIG), before);
-    assert.ok(logs.some((l) => /mods\/waffle-view is already selected via stack wafflestack.*`wafflestack setup`.*--plugin-dir/.test(l)), logs.join('\n'));
+    assert.ok(logs.some((l) => /mods\/waffle-view is already selected via stack wafflestack.*\.claude\/settings\.json.*`wafflestack setup`/.test(l)), logs.join('\n'));
   });
 
   test('an ejected item of a selected stack still un-ejects, without a redundant include', () => {
