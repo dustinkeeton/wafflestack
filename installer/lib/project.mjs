@@ -453,8 +453,79 @@ export function appendSeqIn(source, key, values) {
     const lines = items(dash[1]).map((l) => `${l}${eol}`).join('');
     next = nl === -1 ? `${source}${eol}${lines}` : `${source.slice(0, nl + 1)}${lines}${source.slice(nl + 1)}`;
   }
+  return proven(next, expected);
+}
+
+/**
+ * BYTE-VERBATIM removal of the TOP-LEVEL sequence `key`'s string entries matching `shouldDrop` — the
+ * inverse of `appendSeqIn`. Cuts each dropped block item's whole line; an emptied sequence (block or a
+ * one-line flow) loses its key lines too, as `dropIncludeEntries` deletes it. A partly-kept flow → null.
+ *
+ * @param {string} source the raw text of a YAML file
+ * @param {string} key a top-level mapping key, e.g. `eject`
+ * @param {(entry: string) => boolean} shouldDrop
+ * @returns {string|null} the rewritten text, or null when nothing matched or it can't splice
+ */
+export function removeSeqIn(source, key, shouldDrop) {
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length || !YAML.isMap(doc.contents)) return null;
+  const pair = doc.contents.items.find((p) => YAML.isScalar(p.key) && p.key.value === key);
+  const node = /** @type {any} */ (pair?.value);
+  if (!YAML.isSeq(node)) return null;
+  const drop = (/** @type {any} */ n) => YAML.isScalar(n) && typeof n.value === 'string' && shouldDrop(n.value);
+  const dropped = /** @type {any[]} */ (node.items.filter(drop));
+  if (!dropped.length) return null;
+  const kept = node.items.filter((/** @type {any} */ n) => !drop(n));
+  const expected = doc.toJSON();
+  if (kept.length) expected[key] = kept.map((/** @type {any} */ n) => n.toJSON());
+  else delete expected[key];
+
+  /** @type {[number, number][]} */
+  const cuts = [];
+  if (!kept.length) {
+    const keyStart = /** @type {any} */ (pair).key.range[0];
+    if (lineStartOf(source, keyStart) !== keyStart) return null;
+    cuts.push([keyStart, lineEndOf(source, node.flow ? node.range[1] : /** @type {any} */ (node.items.at(-1)).range[1])]);
+  } else if (node.flow) {
+    return null;
+  } else {
+    for (const n of dropped) {
+      const start = lineStartOf(source, n.range[0]);
+      const end = lineEndOf(source, n.range[1]);
+      if (!/^[ \t]*-[ \t]+$/.test(source.slice(start, n.range[0]))) return null;
+      if (!/^[ \t]*(#[^\n]*)?\r?\n?$/.test(source.slice(n.range[1], end))) return null;
+      cuts.push([start, end]);
+    }
+  }
+  let next = source;
+  for (const [start, end] of cuts.reverse()) next = `${next.slice(0, start)}${next.slice(end)}`;
+  return proven(next, expected);
+}
+
+/**
+ * BYTE-VERBATIM rename of a TOP-LEVEL plain-scalar key — the text twin of `renameLegacyStacksKey`.
+ *
+ * @param {string} source the raw text of a YAML file
+ * @param {string} from
+ * @param {string} to
+ * @returns {string|null} the rewritten text, or null when `from` is absent, `to` exists, or it can't splice
+ */
+export function renameKeyIn(source, from, to) {
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length || !YAML.isMap(doc.contents) || doc.has(to)) return null;
+  const pair = doc.contents.items.find((p) => YAML.isScalar(p.key) && p.key.value === from);
+  const keyNode = /** @type {any} */ (pair?.key);
+  if (!keyNode || keyNode.type !== 'PLAIN' || source.slice(keyNode.range[0], keyNode.range[1]) !== from) return null;
+  const { [from]: value, ...rest } = doc.toJSON();
+  return proven(`${source.slice(0, keyNode.range[0])}${to}${source.slice(keyNode.range[1])}`, { ...rest, [to]: value });
+}
+
+const lineStartOf = (/** @type {string} */ s, /** @type {number} */ i) => s.lastIndexOf('\n', i - 1) + 1;
+const lineEndOf = (/** @type {string} */ s, /** @type {number} */ i) => (s.indexOf('\n', i) + 1 || s.length);
+
+/** Re-parsing is the proof: the whole document must equal the intended edit, or nothing splices. */
+function proven(/** @type {string|null} */ next, /** @type {unknown} */ expected) {
   if (next === null) return null;
-  // Re-parsing is the proof: the whole document must equal the intended edit, or nothing splices.
   const check = YAML.parseDocument(next);
   return !check.errors?.length && isDeepStrictEqual(check.toJSON(), expected) ? next : null;
 }
