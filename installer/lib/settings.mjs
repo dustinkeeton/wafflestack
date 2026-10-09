@@ -32,15 +32,15 @@ export const lockKeys = (lock) => [...Object.keys(lock?.files ?? {}), ...Object.
 
 /**
  * The entries a mod selection renders: the marketplace once, each plugin id (`<name>@<marketplace>`)
- * enabled under it. The source is deliberately unpinned (no `ref`) until #595.
+ * enabled under it. A `ref` pins the source to the toolkit release (#595); null tracks the default branch.
  *
- * @param {{ pluginIds: string[], marketplace: string, repo: string }} opts
+ * @param {{ pluginIds: string[], marketplace: string, repo: string, ref?: string | null }} opts
  * @returns {Map<string, unknown>}
  */
-export function modSettingsEntries({ pluginIds, marketplace, repo }) {
+export function modSettingsEntries({ pluginIds, marketplace, repo, ref = null }) {
   const entries = new Map();
   if (!pluginIds.length) return entries;
-  entries.set(marketplaceKey(marketplace), { source: { source: 'github', repo } });
+  entries.set(marketplaceKey(marketplace), { source: { source: 'github', repo, ...(ref ? { ref } : {}) } });
   for (const id of pluginIds) entries.set(pluginKey(id), true);
   return entries;
 }
