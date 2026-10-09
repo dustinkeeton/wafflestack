@@ -9,6 +9,44 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-09: Hygiene's daily docs run is narrowed to a drift backstop, not removed (#572, #586)
+
+**Context**: Once delegate and autopilot run `pr-docs` on every PR they open (#585), the daily
+`hygiene` docs run is no longer how docs get updated. Run as before, it re-audited the whole repo
+every day, spent three agents even on quiet days, and opened a root-docs branch that conflicted
+with a fast-moving `main`. Some drift still gets past the per-PR pass: repos with
+`delegate.docsRefresh: false`, hand-opened PRs, PRs whose `pr-docs` stopped, code that changed
+after the docs pass, and drift across PRs that each looked fine on their own.
+
+**Decision**: Keep the task, but narrow it. Hygiene task 1 is now a backstop that works in four
+steps:
+
+1. **One docs PR at a time.** If a `chore/hygiene-docs-*` PR is still open, skip the run.
+2. **Drift gate.** Collect the paths that changed on the default branch since the previous run.
+   Drop the paths in `pr-docs`'s no-op groups. If nothing is left, report `no drift` and spawn no
+   agents.
+3. **Scoped refresh.** Otherwise, run `docs` with the remaining paths as its focus.
+4. **Merge before push.** Merge the latest default branch into the docs branch (never rebase).
+   If the merge conflicts, abort and leave it to the next run.
+
+Hygiene does not read `delegate.docsRefresh`. That key belongs to the orchestration stack and
+gates delegate's own step, and the backstop is meant to catch drift whatever produced it.
+
+**Alternatives**:
+- *Remove the task.* Rejected: drift from hand-opened PRs, `docsRefresh: false`, and cross-PR
+  interactions would then go unnoticed.
+- *Keep the whole-repo daily run.* Rejected: it pays the full cost every day and keeps the
+  conflict mode.
+- *Branch on `delegate.docsRefresh`.* Rejected: it would need a key from another stack, and it
+  would miss the hand-opened PRs that the backstop exists to catch.
+
+**Consequences**: On a quiet day the run costs a fetch and a diff. A day with code changes runs
+three agents on just those paths, and lands only when the audit finds real drift. The window is
+time-based (one day plus slack for the default cron), so a missed run loses coverage for that
+gap unless someone runs hygiene by hand with a wider window.
+
+---
+
 ## 2026-10-09: Every PR gets a docs refresh scoped to its own diff — a `pr-docs` skill plus `delegate.docsRefresh`, default on (#572, #584)
 
 **Context**: Docs were refreshed in two places only. The daily `hygiene` run updates them against
