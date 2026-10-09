@@ -26,9 +26,10 @@ compiler — neutral source in, harness-native files out.
   toolkit.yaml         ┐
   stacks/<name>/      │   wafflestack render      .claude/agents/*.md
     stack.yaml        ├──────────────────────►    .claude/skills/*/
-    agents/*.md        │   (fill placeholders,     .codex/agents/*.toml
-    skills/*/SKILL.md  │    resolve per target,    .agents/agents/*.md
-  schema/FORMAT.md     ┘    append extensions)     .agents/skills/*/
+    agents/*.md        │   (fill placeholders,     .claude/mods/*/   (claude only)
+    skills/*/SKILL.md  │    resolve per target,    .codex/agents/*.toml
+    mods/*/            │    append extensions)     .agents/agents/*.md
+  schema/FORMAT.md     ┘                           .agents/skills/*/
                                                    .waffle/waffle.lock.json
 
               ▲                                            │
@@ -48,11 +49,12 @@ only inputs you own — everything under `.claude/` (etc.) is generated.
 
 A **stack** is a themed group of agents and skills you enable together (for
 example `github-workflow` or `docs-system`). `toolkit.yaml` lists every stack;
-each stack's `stack.yaml` manifest declares its agents, skills, config keys, and
+each stack's `stack.yaml` manifest declares its agents, skills, mods, config keys, and
 any environment or service prerequisites. There are **9 stacks** today — one of
 them, `wafflestack`, is self-referential: ten `/waffle-*` skills, each a thin wrapper
 that runs one CLI command (`npx wafflestack <command>`) and interprets the output — so
-the toolkit ships its own lifecycle the same way it ships everything else.
+the toolkit ships its own lifecycle the same way it ships everything else. It also ships
+the first mod, `waffle-view`.
 
 **A stack can also come from outside this toolkit.** A `stacks:` entry is usually a
 built-in name, but it can instead be a `{ name, source, ref }` mapping that points at a
@@ -103,17 +105,25 @@ external provider is preferred without being depended on (#471).
 ### Picking what to install
 
 You don't have to take a whole stack. A **ref** names something installable. An
-item is one of three kinds — an `agents/` definition, a `skills/` definition, or a
-`files/` payload (a workflow or script copied to a repo-relative path):
+item is one of four kinds — an `agents/` definition, a `skills/` definition, a
+`files/` payload (a workflow or script copied to a repo-relative path), or a `mods/`
+plugin dir (Claude Code only — see [Mods](#mods-live-ui-inside-claude-code)):
 
 | Ref | Example | Means |
 |-----|---------|-------|
 | stack | `github-workflow` | the whole stack |
-| item | `skills/issue`, `agents/project-manager`, `files/.github/workflows/waffle-hygiene.yml` | one item (the name/path must be unique across the toolkit) |
+| item | `skills/issue`, `agents/project-manager`, `files/.github/workflows/waffle-hygiene.yml`, `mods/waffle-view` | one item (the name/path must be unique across the toolkit) |
 | qualified item | `engineering-team/skills/webapp-security-audit` | one item in a named stack — use this when the same name exists in two stacks |
 
 `wafflestack install <ref…>` records your choice in `.waffle/waffle.yaml`
-(stacks in the `stacks:` list, single items in an `include:` list) and then renders.
+(stacks in the `stacks:` list, single items in an `include:` list) and then renders. It
+edits only the lines it adds or removes, so your comments and formatting survive (#575),
+and it writes nothing for an item a selected stack already provides (#571).
+
+**The picker warns before you apply.** `list --interactive` marks a row that would fail —
+unset required config, a value that fails its guard, an untracked file in the way — and hints
+at prerequisites and untrusted external sources. The checks reuse render's own code, so the
+picker and the render agree. Hints are advisory; every row stays selectable (#549, #577–#579).
 
 **Dependencies resolve automatically** — installing an item pulls in whatever it
 needs, transitively and across stacks:
@@ -170,7 +180,7 @@ doesn't render for.
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 40 skills** in total.
+one source can render everywhere. There are **14 agents and 41 skills** in total.
 
 **Tool calls are checked, not trusted (#445).** A skill is prose, so nothing compiles it — a
 call to a tool the harness has since removed looks fine in review and fails at runtime. A
@@ -202,6 +212,27 @@ The checkpoint outlives the run. `/clean-up` reads the same `.delegate/*.json` f
 agents an interrupted run left behind, and judges each by its **work**, not its task status: an
 agent is stopped only once its PR is merged or closed (#172).
 
+### Mods: live UI inside Claude Code
+
+A **mod** is a Claude Code plugin directory — `.claude-plugin/plugin.json` plus function hooks —
+that can draw a live pane inside a session. A stack lists it under `mods:` and carries it in
+`mods/<name>/` (#560).
+
+- **Rendered verbatim.** Render copies the dir byte-for-byte to `.claude/mods/<name>/`, with no
+  placeholder substitution, because a `.tsx` hook is code.
+- **Claude only.** Claude Code is the one harness with a mod surface, so a Codex- or
+  agents-dir-only project never receives one, and disabling `claude` prunes it.
+- **Managed like everything else.** Mods are lock-tracked, doctor-checked, and ejectable
+  (`wafflestack eject mods/<name>`).
+- **Loaded by you.** `setup` prints how each rendered mod loads; per session it is
+  `claude --plugin-dir "$PWD/.claude/mods/<name>"` (#564).
+
+The first mod is **`waffle-view`** in the `wafflestack` stack. `/waffle-view` toggles a pane that
+shows the repo's resolved state, and narrows it to the skill you last invoked by `/name` (#562,
+#563). It reads only one data source: **`wafflestack state --json`**, a read-only, offline CLI
+command (#561). That keeps the mod thin, and the same document is useful on its own.
+See [DECISIONS.md](DECISIONS.md#2026-10-06-stacks-can-ship-claude-code-mods-rendered-verbatim-and-read-through-state---json-552-560564).
+
 ### Orchestrators are skills; workflow scripts only sequence them
 
 The `/audit` chain shows the split. The prose `audit` skill runs on every harness and is the
@@ -215,6 +246,21 @@ test keeps the prose chain order and the scripts' phase order identical.
 Two related rules keep the orchestrators from drifting apart: `/audit` invokes `/docs` rather
 than re-implementing it (#361), and the spawn-and-collect scaffold every orchestrator uses has
 one home — a contract section in `audit` that `standup` and `autopilot` cite (#365).
+
+### Docs refresh per PR, with a daily backstop
+
+Docs are updated on the PR that changes the code, not a day later on `main` (#572):
+
+| Path | When it runs | What it does |
+|------|--------------|--------------|
+| **`/pr-docs <PR#>`** (#584) | By hand, or from delegate when `delegate.docsRefresh` is on (the default) | Merges the latest base into the PR branch (never rebases), runs `docs` on the PR's changed paths, and pushes the doc updates. A diff of only tests, `CHANGELOG.md`, docs, or generated output is a no-op with no agents |
+| **Delegate's Phase 4** (#585) | After verifying each PR | The orchestrator, not the spawned agent, runs `pr-docs`, then arms auto-merge only once the docs commit is the PR's head. A `stopped` result leaves the PR unarmed. Autopilot turns the step off when its `/audit` gate is on, since that chain already runs `docs` |
+| **Hygiene's docs task** (#586) | On the daily hygiene run | A drift backstop: skips while a hygiene docs PR is open, diffs the default branch since the last run, and reports `no drift` with no agents when nothing relevant changed. Otherwise it runs `docs` on just those paths |
+
+Why each piece is shaped this way:
+[`pr-docs`](DECISIONS.md#2026-10-09-every-pr-gets-a-docs-refresh-scoped-to-its-own-diff--a-pr-docs-skill-plus-delegatedocsrefresh-default-on-572-584) ·
+[delegate wiring](DECISIONS.md#2026-10-09-the-orchestrator-not-the-spawned-agent-runs-pr-docs-and-arms-auto-merge-585-part-of-572) ·
+[hygiene backstop](DECISIONS.md#2026-10-09-hygienes-daily-docs-run-is-narrowed-to-a-drift-backstop-not-removed-572-586).
 
 ### Agent identity and avatars
 
@@ -272,6 +318,9 @@ not missing coverage. The Codex agent TOML carries **no skill grant** — Codex'
 stated in its body prose instead, and a content test keeps every harness-neutral source free of
 literal `.claude/skills/` paths (#190).
 
+Mods are the one exception to "every target": they render for `claude` only (see
+[Mods](#mods-live-ui-inside-claude-code)).
+
 The small per-harness differences (like whose name goes in an attribution line)
 come from a reserved `harness.*` set of values that resolve differently per
 target — so the *same* source file renders correctly for each.
@@ -289,15 +338,17 @@ the installer substitutes the values you set in config. Two rules keep this safe
   `delegate.memoryFile` defaults to `{{delegate.checkpointDir}}/memory.md`, which
   itself defaults to `{{git.worktreesDir}}/.delegate`.
 
-**Some keys switch a behavior instead of filling in text (#478 — partly landed).** A confirmation
+**Some keys switch a behavior instead of filling in text (#478).** A confirmation
 gate or an auto-merge consent is a *behavioral* key: it declares a closed `modes:` list (the
 reserved mode `prompt` means "never assume, ask"), optional `flag:` tokens that override it for
 one run, an optional `lockMode:` pinning what config may say, and a `nonInteractive:` fallback
 for CI and agent callers. Precedence is fixed: run token → `waffle.local.yaml` → `waffle.yaml` →
 the stack default. A value outside `modes:`, or one that overrides a lock, fails `render` and
-bare `doctor`. **Only the schema, the `validate` lint and the flag inventory have shipped** (PR
-#493) — the four autopilot consents declare the new fields as metadata, and no skill's prose has
-migrated yet (#486–#490, open). See
+bare `doctor`. All of it shipped in v0.16.0: skills render a key's value and its tokens
+(`{{key}}`, `{{key.flag.on}}`, #486); `issue`, `pr-response`, and `clean-up` read
+`*.confirmGate` keys (#487); hygiene's auto-merge is `hygiene.autoMerge` (#488); autopilot's four
+consents are locked to `prompt` (#489); and `schema/SETUP.md` documents the contract (#490).
+`wafflestack state` shows each key's effective value and the layer it came from (#561). See
 [DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12).
 
 ### The installer (render pipeline)
@@ -308,25 +359,26 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | Command | What it does |
 |---------|--------------|
 | `init` | Write a starter `.waffle/waffle.yaml`. `--gitignore` also adds the baseline ignore entries: the local overlay, the local lock, and `.waffle/avatars/` (#528). |
-| `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section. |
-| `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them. |
+| `setup` | Print the agent-driven install playbook + a generated inventory. On an already-configured repo, also prints a live "Current configuration — update mode" section, plus a `## Mods` block saying how each rendered mod loads (#564). |
+| `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them, with a hint on any row that would fail to apply (#549, #577–#579). `--check-prereqs` runs the hinted prerequisite checks and shows only the unmet ones. |
 | `toggle` | Choose, per skill, whether an agent may invoke it on its own or only you can via `/slash` (#476). A checkbox picker in a terminal, a plain table on a pipe, `--disable` / `--enable` flags for agents and CI. Writes `waffle.yaml`, then renders. See [below](#two-consumer-side-knobs-toggle-and-report). |
-| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Installing an **ejected** item un-ejects it (#497). If the render is refused for any reason — missing config values, a collision, a guard — `waffle.yaml` is restored byte-for-byte and nothing changes (#548); when the refusal is your differing project-owned copy of that un-ejected item, the error names `--force`. Bare `install` just renders. |
+| `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Only the changed lines of `waffle.yaml` are edited (#575), and an item a selected stack already provides persists nothing (#571). Installing an **ejected** item un-ejects it (#497). If the render is refused for any reason — missing config values, a collision, a guard — `waffle.yaml` is restored byte-for-byte and nothing changes (#548); when the refusal is your differing project-owned copy of that un-ejected item, the error names `--force`. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations (an unreleased toolkit also runs the steps keyed past its own version, #501), move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. The generated `.waffle/` overview docs are presence-optional (#528): an absent one is a note, an edited one still fails; `--allow-missing` tolerates every *other* absent file. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. |
+| `state` | Print the repo's resolved state (#561): each behavioral key's effective value, the layer it came from and its tokens; delegate's run files; committed vs local lock; and drift. `--json` for machines — the `waffle-view` mod reads it. Read-only, offline, exit 0 even on drift. |
 | `report` | Print a **redacted** diagnostics bundle for a toolkit bug report (#473) — Markdown by default, `--json` for machines. Read-only, never contacts GitHub, exit 0 even when `doctor` is red. |
-| `eject <skills/NAME\|agents/NAME\|files/PATH>` | Stop managing an item — its files stay and become project-owned. Also drops a matching `include:` entry. Never renders: it prints which dependencies only that entry was selecting, for the next `render` to prune (#497). |
+| `eject <skills/NAME\|agents/NAME\|files/PATH\|mods/NAME>` | Stop managing an item — its files stay and become project-owned. Also drops a matching `include:` entry. Never renders: it prints which dependencies only that entry was selecting, for the next `render` to prune (#497). |
 | `uninstall` | Remove the whole install — the only destructive command. Deletes only what the lock tracks *and* whose content still matches; **a dry run until `--yes`**. See [Taking it back out](#taking-it-back-out-uninstall--reinstall). |
 | `reinstall` | Refresh in place: remove the rendered files, re-render the same selection. Keeps your config, overlay and extensions, so it needs no `--yes`. `--clean --yes` wipes the config too and re-scaffolds it. |
 | `avatars <sync\|status>` | Owner-side Gravatar pipeline: register each agent's deterministic avatar for its verified commit email (`sync`), or report roster drift without writing (`status`, exit 1 on drift). Owner-only OAuth2 token from `WAFFLE_GRAVATAR_TOKEN`. |
-| `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. |
+| `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. Then runs `claude plugin validate` over each mod source when the `claude` CLI is on PATH, and prints a visible `skipped:` line — never a pass — when it is not (#564). |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 26 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 27 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
 the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
-own identity, etc.). The full function-level registry is in the root `AGENTS.md`.
+own identity, build the `state` document, etc.). The full function-level registry is in the root `AGENTS.md`.
 
 ### Two consumer-side knobs: `toggle` and `report`
 
@@ -415,7 +467,8 @@ A render is a straight-line flow:
    item and its dependency closure, minus anything in `eject:`. An item listed in both
    `include:` and `eject:` fails the render before anything is written (#497).
 4. For every selected item and every target, **substitute** placeholders and
-   **append** any project extension.
+   **append** any project extension. Mods skip this step — they are copied verbatim, for
+   `claude` only.
 5. **Write** the harness-native files, then record hashes in the lock. The committed
    `.waffle/waffle.lock.json` hashes the **canonical** render — what the committed inputs
    produce on their own, overlay excluded — so it is byte-identical on every machine and
@@ -480,7 +533,7 @@ the `include:` entry, and renders — refusing without `--force` if your project
 from the render. Then commit. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
-The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json`)
+The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/mods/waffle-view/`, `.claude/settings.json`)
 and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
 consuming project — the `waffle-doctor` drift gate (a required check on `main`) can
 only compare against a render + lock that live in git, and CI-dispatched harness runs
@@ -542,6 +595,7 @@ gitignored too, but `doctor` treats that class as presence-optional on its own s
    level instead, which is why the step in `tests.yml` carries no flag.)
 4. **Documentation is generated by agents.** The machine registry (`AGENTS.md`)
    and these human docs (`DECISIONS.md`, `STATUS.md`, `ARCHITECTURE.md`) are
-   maintained by the `docs-system` stack's agents. The owner-voiced
+   maintained by the `docs-system` stack's agents — refreshed on each delegated PR by
+   `pr-docs`, with hygiene's daily run as the backstop. The owner-voiced
    `README.md`, `schema/FORMAT.md`, and `schema/SETUP.md` are edited by hand —
    don't rewrite them in a docs pass.

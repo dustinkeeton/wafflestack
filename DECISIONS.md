@@ -47,6 +47,42 @@ gap unless someone runs hygiene by hand with a wider window.
 
 ---
 
+## 2026-10-09: The orchestrator, not the spawned agent, runs `pr-docs` and arms auto-merge (#585, part of #572)
+
+**Context**: With `pr-docs` shipped (#584), delegate and autopilot had to call it. Until now each
+spawned agent armed auto-merge on its own PR right after `gh pr create`. A docs commit pushed after
+that point could land after the merge, or not at all. And the docs pipeline spawns three agents
+of its own, which a specialist agent may not be able to do.
+
+**Decision**: When `delegate.docsRefresh` is on, delegate's orchestrator owns both the docs pass and
+the arming, in Phase 4, on every path (single-issue, serial, parallel, batch):
+
+1. **Agents stop arming.** A spawned agent opens its PR and reports it as
+   `not armed — pending docs refresh`.
+2. **The orchestrator runs `pr-docs <PR#>`** on each verified PR, one at a time. In a serial group it
+   finishes PR N before spawning the next agent.
+3. **It branches on the last line.** `no-op`, `up to date`, or `refreshed` go on. `stopped` leaves
+   the PR open but not armed, with the reason in the report.
+4. **It arms only after the docs commit is the PR's remote head.** `gh pr merge --auto --merge`
+   then waits for the required checks on that new head, so CI re-runs on the docs commit.
+
+**Autopilot turns the key off when its `/audit` step is on.** That chain already runs `docs` on the
+same diff, and docs must never run twice on one PR. With the audit step off, delegate's own docs
+pass runs before autopilot's QA and review gates, so those gates see the refreshed PR.
+
+**Alternatives**:
+- *Let each agent run `pr-docs` itself.* Rejected: specialists may lack the `Agent` tool the docs
+  pipeline needs to spawn its writers.
+- *Keep agents arming first and push docs afterwards.* Not taken: the PR could merge on green
+  before the docs commit arrives.
+
+**Impact**: Each delegated PR gets a docs pass scoped to its diff — up to three extra agents, none
+when the diff only touches tests, the changelog, docs, or generated output. Consumers re-render
+to pick it up. `delegate.docsRefresh: false` restores the old behavior, where agents arm their own
+PRs.
+
+---
+
 ## 2026-10-09: Every PR gets a docs refresh scoped to its own diff — a `pr-docs` skill plus `delegate.docsRefresh`, default on (#572, #584)
 
 **Context**: Docs were refreshed in two places only. The daily `hygiene` run updates them against
@@ -80,6 +116,105 @@ namespace) was considered and rejected: neither has a reader that the key would 
 `/audit` gate already runs `docs` on the PR — is the next slice (#585). Narrowing the daily hygiene
 docs run to a drift backstop follows (#586). Until #585 lands, the key is declared but no caller
 reads it; `/pr-docs <PR#>` works by hand.
+
+**Updated 2026-10-09 — both follow-ups merged.** #585 wired the call into delegate and autopilot,
+and #586 narrowed the hygiene run (both entries above). The key is now live.
+
+---
+
+## 2026-10-09: `install` and `eject` edit only the lines they change in `waffle.yaml` (#571, #575)
+
+**Context**: `install` and `eject` saved `waffle.yaml` by re-serializing the whole document, so a
+save could touch bytes well beyond the lines it meant to change. And `install` of an item a selected stack already renders appended a redundant
+`include:` entry.
+
+**Decision**:
+- **Splice, don't rewrite (#575).** `install` adds new `include:` / `stacks:` entries after the
+  last existing one, removes an un-ejected item's `eject:` line, and renames a legacy `bundles:`
+  key in place. `eject` adds its `eject:` entry and removes the matching `include:` line the same
+  way. Each splice is proven by re-parsing the whole document.
+- **All or nothing per save.** A save is either all splices or one full re-serialize. When a
+  splice can't be done — a non-empty flow list like `include: [a, b]`, or a quoted `'bundles':`
+  key — the whole save falls back to the old rewrite.
+- **Persist nothing when nothing changes (#571).** `install` of a ref a selected stack already
+  provides prints `note: <ref> is already selected via stack <name> — nothing to persist` and still
+  renders. Opt-in syrup is the exception; an ejected item still un-ejects.
+
+**Alternatives**: *Keep the full re-serialize.* It stays as the fallback, but as the default it
+can rewrite bytes the edit never meant to touch.
+
+**Impact**: Comments, quoting, key order and CRLF line endings survive, and an install diff shows
+only the new lines. No re-render needed. Existing redundant `include:` entries are harmless.
+
+---
+
+## 2026-10-09: The picker warns about blockers before you apply, using render's own checks (#549, #577, #578, #579)
+
+**Context**: `list --interactive` let you pick an item that would then fail when applied — missing
+config, a file in the way, a bad config value — and you only found out from the render error.
+
+**Decision**: A not-installed row now carries a hint for each blocker it would hit:
+
+| Hint | Meaning | Issue |
+|------|---------|-------|
+| `needs config.<key>` | Required config the item or its dependencies use is unset | #549 |
+| `unmanaged file at <path> (needs --force)` | A file the lock does not track is in the way, and its bytes differ from what render would write | #549, #577 |
+| `config.<key> fails its pattern` / `is not one of its declared modes` | A set value would fail a render guard | #578 |
+| `has prerequisites: <names>` | The item declares prerequisites your selection doesn't already have; `--check-prereqs` runs them and shows only the unmet ones | #579 |
+| `external source — trust prompt on apply (<name>)` | The row comes from an external source whose checks are not yet acknowledged | #579 |
+
+Three rules keep the hints honest:
+
+- **The picker reuses render's own code.** Guard checks run render's `substitute()`, and the
+  unmanaged-file check renders the item in memory first, so a just-ejected, unchanged item no longer
+  shows a false "needs --force".
+- **Unknown is never met.** A prerequisite check that times out, dies, or belongs to an
+  unacknowledged external stack reads as unchecked.
+- **Hints are advisory.** Every row stays selectable.
+
+**Alternatives**: *Separate picker-side checks.* Not taken: they could drift from what render
+actually enforces, and the picker would then disagree with the render it is about to run.
+
+**Impact**: Output only, no re-render. `list` now loads the external sources `waffle.yaml`
+declares, so it may fetch a git source just as `render` does.
+
+---
+
+## 2026-10-06: Stacks can ship Claude Code mods, rendered verbatim and read through `state --json` (#552, #560–#564)
+
+**Context**: Claude Code now supports **mods** — plugin directories of function hooks that draw live
+panes and other UI inside a session. wafflestack could only render agents, skills, and `files/`
+payloads, so a mod had to be hand-written and hand-loaded outside the lock, with no `doctor`
+coverage and no eject. Separately, the state a user wants to see — which gate is on, which run
+files exist — was scattered across the config, the overlay, two locks, and delegate's run files.
+
+**Decision**: Two layers.
+
+- **A `mods/` render kind (#560).** A stack lists `mods:` and carries `mods/<name>/`, a plugin dir
+  with `.claude-plugin/plugin.json`. Render copies it **verbatim** to `.claude/mods/<name>/` — no
+  placeholder substitution, because a `.tsx` hook is code. It renders for the `claude` target
+  only, the one harness with a mod surface. Mods are registered, lock-managed, doctor-covered, and
+  ejectable like every other kind, and every malformed `mods:` entry is a hard load error.
+- **One read-only data source (#561, #563).** `wafflestack state [--json]` prints the resolved
+  state: each behavioral key's value, the layer it came from, and its tokens; delegate's run files;
+  committed vs local lock; and doctor drift. It writes nothing and runs offline.
+- **The first mod, `waffle-view` (#562, #563).** Shipped by the `wafflestack` stack, `/waffle-view`
+  toggles a pane that reads only `state --json --offline`. It narrows to the skill you last
+  invoked by `/name` and falls back to the full view.
+- **Loading and lint (#564).** `setup` prints how each rendered mod loads. `validate` runs
+  `claude plugin validate` over each mod source when the CLI is present, and prints a visible
+  `skipped:` line — never a pass — when it is not. The loader skips the files a
+  `--plugin-dir` load lays into a source dir.
+
+**Alternatives**:
+- *Leave mods hand-written outside the lock.* Rejected: no drift check, no eject.
+- *Reuse `recommendedPlugins:`.* Rejected: that key names external plugins the toolkit offers but
+  never installs, while mods are rendered and locked by the toolkit.
+
+**Impact**: Additive. A `claude`-target consumer of the `wafflestack` stack gains
+`.claude/mods/waffle-view/` on the next render and loads it with
+`claude --plugin-dir .claude/mods/waffle-view`. Codex and agents-dir targets are untouched. The
+pane follows the last `/name` you typed, not a skill the model calls mid-turn.
 
 ---
 
@@ -351,6 +486,9 @@ rides the existing `pattern:` enforcement points (`render`, `doctor`), which is 
 keys), `stacks/orchestration/stack.yaml` (four autopilot keys). Consumer-facing: any autopilot
 consent set in config now fails the render. Follow-ups: #486 threads the tokens through render,
 #487–#489 migrate the skills, #490 documents the contract in SETUP.md.
+
+**Updated 2026-09-18 — every slice shipped in v0.16.0.** #486–#490 all closed on 2026-09-18, and
+#478 is closed. Hygiene's auto-merge (row 5 above) now has its key, `hygiene.autoMerge` (#488).
 
 ---
 
