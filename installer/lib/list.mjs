@@ -4,7 +4,7 @@ import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit } from './toolkit.mjs';
 import { computeSelection, itemOutputMatcher, fileMatchesTargets, closureFor, modOutputDir } from './refs.mjs';
-import { readTreeLock, missingConfigFor, failingConfigFor, summarizeConfigKeys, collectUsedKeys } from './render.mjs';
+import { readTreeLock, missingConfigFor, failingConfigFor, summarizeConfigKeys, collectUsedKeys, renderItemInMemory } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 
 /** What the toolkit offers versus what this repo has — classified against the TREE lock, never the committed one (#317). */
@@ -102,7 +102,9 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     const nodes = closureForSafe(toolkit, { stack: stackName, kind, name, item });
     const config = missingConfigFor(toolkit, project, nodes);
     const { pattern, modes } = failingConfigFor(toolkit, project, nodes);
-    const unmanaged = nodes.flatMap((n) => unmanagedOutputs(cwd, n, project.targets, trackedFiles));
+    const unmanaged = nodes.flatMap((n) =>
+      unmanagedOutputs(cwd, n, project.targets, trackedFiles, () => renderItemInMemory({ toolkit, project, cwd, node: n, toolkitVersion })),
+    );
     const blockers = { config, pattern, modes, unmanaged };
     return Object.values(blockers).some((list) => list.length) ? blockers : null;
   };
@@ -149,10 +151,13 @@ function closureForSafe(toolkit, root) {
 
 /**
  * The paths an item would write that already hold a file the lock does not track (#549) — `render`
- * refuses those without `--force`. A verbatim payload whose bytes already match is adopted, so it
- * is not reported; a templated one cannot be compared without rendering, so it is.
+ * refuses those without `--force`, but adopts bytes it would write anyway, so those are not reported.
+ * A templated output is compared via `render()` (#577), called only if such a file exists; a `null`
+ * render (missing config, failing guard) keeps it flagged.
+ *
+ * @param {() => Map<string, string | Buffer> | null} [render]
  */
-export function unmanagedOutputs(cwd, node, targets, trackedFiles) {
+export function unmanagedOutputs(cwd, node, targets, trackedFiles, render = () => null) {
   /** @type {{ rel: string, source: string | null }[]} */
   const candidates = [];
   const { kind, name, item } = node;
@@ -172,12 +177,19 @@ export function unmanagedOutputs(cwd, node, targets, trackedFiles) {
     if (!targets.includes('claude')) return [];
     for (const rel of item.files) candidates.push({ rel: path.join(modOutputDir(name), rel), source: path.join(item.dir, rel) });
   }
+  /** @type {Map<string, string | Buffer> | null | undefined} */
+  let rendered;
+  const expected = (rel) => {
+    if (rendered === undefined) rendered = render();
+    return rendered?.get(rel);
+  };
   return candidates
     .filter(({ rel, source }) => {
       if (trackedFiles.has(rel)) return false;
       const abs = path.join(cwd, rel);
       if (!exists(abs) || !fs.statSync(abs).isFile()) return false;
-      return !(source && sha256(fs.readFileSync(abs)) === sha256(fs.readFileSync(source)));
+      const want = source ? fs.readFileSync(source) : expected(rel);
+      return want === undefined || sha256(fs.readFileSync(abs)) !== sha256(want);
     })
     .map(({ rel }) => rel);
 }
