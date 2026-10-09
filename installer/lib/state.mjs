@@ -10,6 +10,7 @@ import { loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection } from './refs.mjs';
 import { readLock, readLocalLock, readTreeLock, collectUsedKeys } from './render.mjs';
+import { lockKeys } from './settings.mjs';
 import { doctor } from './doctor.mjs';
 import { substitute, PROMPT_MODE, modeMatches, parseFlagPlaceholder } from './template.mjs';
 import {
@@ -142,7 +143,7 @@ export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity
     refreshSources: false,
   });
   const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
-  const trackedFiles = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
+  const trackedFiles = new Set(lockKeys(readTreeLock(cwd)));
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
 
   /** @type {Map<string, Stack>} selected stacks, in selection order */

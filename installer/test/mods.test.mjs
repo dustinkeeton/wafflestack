@@ -1,5 +1,5 @@
-// The `mods/` render kind (#560): a Claude Code plugin dir a stack ships, copied verbatim to
-// `.claude/mods/<name>/` for the `claude` target only, lock-managed like every other kind.
+// The `mods/` render kind (#560): a Claude Code plugin dir a stack ships, rendered for the `claude`
+// target as project-scope `.claude/settings.json` entries (#594), lock-managed like every other kind.
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,15 +7,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
+import { uninstall } from '../lib/uninstall.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject } from '../lib/eject.mjs';
 import { validateToolkit, validateModPlugins, formatModPluginChecks } from '../lib/validate.mjs';
 import { toolkitInventory, setupGuide } from '../lib/setup.mjs';
 import { loadToolkit, MOD_MANIFEST, MOD_TARGETS, MOD_ENGINE_LAID, isEngineLaid } from '../lib/toolkit.mjs';
-import { resolveRef, parseRef, normalizeItemRef, itemOutputMatcher, modOutputDir, computeSelection } from '../lib/refs.mjs';
+import { resolveRef, parseRef, normalizeItemRef, itemOutputMatcher, legacyModDir, computeSelection } from '../lib/refs.mjs';
 import { computeListModel, STATUS } from '../lib/list.mjs';
 import { WAFFLE_KINDS, refKindOf, waffleKindOf, canonicalWafflePath } from '../lib/registry.mjs';
 import { MARKETPLACE_FILE, validateMarketplace, marketplacePluginId } from '../lib/marketplace.mjs';
+import { SETTINGS_FILE, settingsKey, parseSettingsKey, marketplaceKey, pluginKey } from '../lib/settings.mjs';
 
 const MOD_FILES = {
   [MOD_MANIFEST]: '{"name": "viewer", "version": "0.0.1"}\n',
@@ -24,7 +26,11 @@ const MOD_FILES = {
   'hooks/register.tsx': 'export const banner = `{{project.name}} and {{ harness.name }}`;\n',
   'types/index.d.ts': 'export {};\n',
 };
-const OUT = Object.keys(MOD_FILES).map((rel) => path.join('.claude', 'mods', 'viewer', rel)).sort();
+const LEGACY_OUT = Object.keys(MOD_FILES).map((rel) => path.join('.claude', 'mods', 'viewer', rel)).sort();
+const MARKET = marketplaceKey('fixture');
+const PLUGIN = pluginKey('viewer@fixture');
+const ENTRIES = { [MARKET]: { source: { source: 'github', repo: 'acme/fixture' } }, [PLUGIN]: true };
+const OUT = Object.keys(ENTRIES).sort();
 
 function write(root, rel, content) {
   const abs = path.join(root, rel);
@@ -57,6 +63,7 @@ describe('mods/ render kind (#560)', () => {
     write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: mods\nstacks: [mb]\n');
     writeStack(toolkitRoot, 'mb');
     writeMarketplace(toolkitRoot);
+    write(toolkitRoot, 'package.json', JSON.stringify({ name: 'fixture', repository: { url: 'git+https://github.com/acme/fixture.git' } }));
     write(cwd, '.waffle/waffle.yaml', project(['targets: [claude, codex, agents-dir]', 'stacks: [mb]']));
   });
 
@@ -66,8 +73,10 @@ describe('mods/ render kind (#560)', () => {
   });
 
   const render = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
-  const lockFiles = () => Object.keys(JSON.parse(read(cwd, '.waffle/waffle.lock.json')).files);
-  const modPaths = () => lockFiles().filter((rel) => rel.startsWith(path.join('.claude', 'mods') + path.sep)).sort();
+  const lock = () => JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+  const modPaths = () => Object.keys(lock().settings ?? {}).sort();
+  const settings = () => JSON.parse(read(cwd, SETTINGS_FILE));
+  const noModsDir = () => assert.equal(fs.existsSync(path.join(cwd, '.claude', 'mods')), false, 'no .claude/mods/');
 
   test('loads as a ModItem: verbatim file list, scoped to claude', () => {
     const [mod] = loadToolkit(toolkitRoot).stacks.get('mb').mods;
@@ -88,9 +97,12 @@ describe('mods/ render kind (#560)', () => {
     assert.equal(resolved.type, 'item');
     assert.equal(resolved.canonicalRef, 'mods/viewer');
     assert.equal(resolved.item.kind, 'mod');
-    assert.equal(modOutputDir('viewer'), path.join('.claude', 'mods', 'viewer'));
+    assert.equal(legacyModDir('viewer'), path.join('.claude', 'mods', 'viewer'));
     const owns = itemOutputMatcher('mods', 'viewer');
-    assert.equal(owns(path.join('.claude', 'mods', 'viewer', 'hooks', 'hooks.json')), true);
+    assert.equal(owns(PLUGIN), true);
+    assert.equal(owns(pluginKey('viewer2@fixture')), false);
+    assert.equal(owns(MARKET), false, 'the marketplace entry belongs to no single mod');
+    assert.equal(owns(path.join('.claude', 'mods', 'viewer', 'hooks', 'hooks.json')), true, 'a pre-#594 lock still counts as poured');
     assert.equal(owns(path.join('.claude', 'mods', 'viewer2', 'hooks', 'hooks.json')), false);
     assert.equal(owns(path.join('.claude', 'skills', 'viewer', 'SKILL.md')), false);
   });
@@ -102,32 +114,117 @@ describe('mods/ render kind (#560)', () => {
     assert.equal(canonicalWafflePath('mb', 'mod', 'viewer'), 'stacks/mb/mods/viewer');
   });
 
-  test('renders verbatim to .claude/mods/<name>/ only, lands in the lock, doctor round-trips', () => {
+  test('pointer keys escape per RFC 6901 and round-trip', () => {
+    const key = settingsKey(['enabledPlugins', 'a/b~c@m']);
+    assert.equal(key, `${SETTINGS_FILE}#/enabledPlugins/a~1b~0c@m`);
+    assert.deepEqual(parseSettingsKey(key), { file: SETTINGS_FILE, segments: ['enabledPlugins', 'a/b~c@m'] });
+  });
+
+  test('renders settings entries — never .claude/mods/ — lands in the lock, doctor round-trips', () => {
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    for (const [rel, content] of Object.entries(MOD_FILES)) {
-      assert.equal(read(cwd, path.join('.claude', 'mods', 'viewer', rel)), content);
-    }
-    assert.deepEqual(modPaths(), OUT);
+    noModsDir();
+    assert.deepEqual(settings(), {
+      extraKnownMarketplaces: { fixture: { source: { source: 'github', repo: 'acme/fixture' } } },
+      enabledPlugins: { 'viewer@fixture': true },
+    });
+    assert.deepEqual(lock().settings, ENTRIES);
+    assert.ok(!Object.keys(lock().files).some((rel) => rel.includes('viewer')), 'no file is rendered for a mod');
     assert.ok(!result.written.some((rel) => /^\.(codex|agents)\//.test(rel) && rel.includes('viewer')), 'no codex/agents-dir surface');
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+    const again = render();
+    assert.deepEqual(again.removed, [], 'a re-render is a no-op');
+  });
+
+  test('merges beside the consumer\'s own keys and never overwrites them', () => {
+    const own = {
+      env: { FOO: '1' },
+      enabledPlugins: { 'other@elsewhere': true },
+      extraKnownMarketplaces: { elsewhere: { source: { source: 'github', repo: 'x/y' } } },
+      permissions: { allow: ['Bash(ls)'] },
+    };
+    write(cwd, SETTINGS_FILE, `${JSON.stringify(own, null, 2)}\n`);
+    assert.equal(render().ok, true);
+    assert.deepEqual(settings(), {
+      ...own,
+      enabledPlugins: { 'other@elsewhere': true, 'viewer@fixture': true },
+      extraKnownMarketplaces: { ...own.extraKnownMarketplaces, fixture: ENTRIES[MARKET] },
+    });
+
+    write(cwd, '.waffle/waffle.yaml', project(['targets: [codex]', 'stacks: [mb]']));
+    const result = render();
+    assert.deepEqual([...result.removed].sort(), OUT);
+    assert.deepEqual(settings(), own, 'the prune takes only our keys back out');
+    assert.equal(lock().settings, undefined);
+  });
+
+  test('an unmanaged key holding a different value is refused; an identical one is adopted', () => {
+    write(cwd, SETTINGS_FILE, JSON.stringify({ enabledPlugins: { 'viewer@fixture': false } }));
+    const refused = render();
+    assert.equal(refused.ok, false);
+    assert.match(refused.errors.join('\n'), /refusing to overwrite settings entry .*viewer@fixture/);
+    assert.deepEqual(settings(), { enabledPlugins: { 'viewer@fixture': false } }, 'a refusal writes nothing');
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', force: true }).ok, true);
+    assert.equal(settings().enabledPlugins['viewer@fixture'], true);
+
+    fs.rmSync(path.join(cwd, '.waffle', 'waffle.lock.json'));
+    assert.equal(render().ok, true, 'identical bytes are adopted silently');
+
+    write(cwd, SETTINGS_FILE, '{ not json');
+    const bad = render();
+    assert.equal(bad.ok, false);
+    assert.match(bad.errors.join('\n'), /settings\.json is not valid JSON/);
+  });
+
+  test('frozen image: doctor flags an edited or removed entry, and render restores it', () => {
+    render();
+    write(cwd, SETTINGS_FILE, JSON.stringify({ ...settings(), enabledPlugins: { 'viewer@fixture': false } }));
+    let dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.equal(dr.ok, false);
+    assert.deepEqual(dr.modified, [PLUGIN]);
+
+    const { extraKnownMarketplaces, ...rest } = settings();
+    write(cwd, SETTINGS_FILE, JSON.stringify(rest));
+    dr = doctor({ cwd, toolkitVersion: '0.0.test', allowMissing: true });
+    assert.equal(dr.ok, false, 'a key dropped from a present file is an edit, not a partial checkout');
+    assert.deepEqual(dr.modified.sort(), OUT);
+
+    fs.rmSync(path.join(cwd, SETTINGS_FILE));
+    dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+    assert.deepEqual(dr.missing.sort(), OUT, 'an absent settings file reads as a partial checkout');
+
+    render();
+    assert.deepEqual(settings().enabledPlugins, { 'viewer@fixture': true });
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
   });
 
-  test('frozen image: a hand-edit is flagged by doctor and restored by render', () => {
-    render();
-    const file = path.join(cwd, '.claude', 'mods', 'viewer', 'hooks', 'register.tsx');
-    fs.appendFileSync(file, '// tampered\n');
-    const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
-    assert.equal(dr.ok, false);
-    assert.deepEqual(dr.modified, [path.join('.claude', 'mods', 'viewer', 'hooks', 'register.tsx')]);
-    render();
-    assert.equal(fs.readFileSync(file, 'utf8'), MOD_FILES['hooks/register.tsx']);
+  test('migration: a pre-#594 lock\'s .claude/mods/ files are pruned and the entries written', () => {
+    for (const [rel, content] of Object.entries(MOD_FILES)) write(cwd, path.join(legacyModDir('viewer'), rel), content);
+    write(cwd, path.join(legacyModDir('viewer'), 'tsconfig.json'), '{}\n'); // engine-laid, unmanaged
+    const files = Object.fromEntries(LEGACY_OUT.map((rel) => [rel, 'stale-hash']));
+    write(cwd, '.waffle/waffle.lock.json', JSON.stringify({ toolkitVersion: '0.0.old', files }));
+
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.deepEqual(result.removed.filter((r) => r.startsWith(legacyModDir('viewer'))).sort(), LEGACY_OUT);
+    for (const rel of LEGACY_OUT) assert.equal(fs.existsSync(path.join(cwd, rel)), false, rel);
+    assert.ok(!Object.keys(lock().files).some((rel) => rel.startsWith(path.join('.claude', 'mods'))), 'the lock forgets the files');
+    assert.deepEqual(lock().settings, ENTRIES);
+    assert.equal(fs.existsSync(path.join(cwd, legacyModDir('viewer'), 'hooks')), false, 'emptied dirs go too');
+    assert.equal(fs.existsSync(path.join(cwd, legacyModDir('viewer'), 'tsconfig.json')), true, 'an unmanaged file survives');
+
+    fs.rmSync(path.join(cwd, '.claude', 'mods'), { recursive: true });
+    write(toolkitRoot, 'stacks/mb/stack.yaml', 'name: mb\ndescription: x.\nmods: [viewer]\noptIn: [mods/viewer]\n');
+    write(cwd, '.waffle/waffle.lock.json', JSON.stringify({ toolkitVersion: '0.0.old', files }));
+    assert.equal(render().ok, true);
+    assert.deepEqual(lock().settings, ENTRIES, 'an opt-in mod poured under the old lock stays poured');
+    noModsDir();
   });
 
   test('does not render without the claude target, and disabling claude after a render prunes it', () => {
     write(cwd, '.waffle/waffle.yaml', project(['targets: [codex, agents-dir]', 'stacks: [mb]']));
     assert.equal(render().ok, true);
-    assert.equal(fs.existsSync(path.join(cwd, '.claude', 'mods')), false);
+    assert.equal(fs.existsSync(path.join(cwd, SETTINGS_FILE)), false);
     assert.deepEqual(modPaths(), []);
 
     write(cwd, '.waffle/waffle.yaml', project(['targets: [claude, codex]', 'stacks: [mb]']));
@@ -138,8 +235,26 @@ describe('mods/ render kind (#560)', () => {
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.deepEqual([...result.removed].sort(), OUT);
-    for (const rel of OUT) assert.equal(fs.existsSync(path.join(cwd, rel)), false, rel);
+    assert.deepEqual(settings(), {});
     assert.deepEqual(modPaths(), []);
+  });
+
+  test('a mod the local overlay adds stays out of the committed lock (#317)', () => {
+    write(toolkitRoot, 'stacks/mb/stack.yaml', 'name: mb\ndescription: x.\nmods: [viewer]\noptIn: [mods/viewer]\n');
+    write(cwd, '.waffle/waffle.yaml', project(['targets: [claude]', 'stacks: [mb]']));
+    write(cwd, '.waffle/waffle.local.yaml', 'include: [mods/viewer]\n');
+    assert.equal(render().ok, true);
+    assert.equal(lock().settings, undefined, 'canonical lock: no overlay entries');
+    assert.deepEqual(JSON.parse(read(cwd, '.waffle/waffle.local.lock.json')).settings, ENTRIES);
+    assert.equal(settings().enabledPlugins['viewer@fixture'], true);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
+  test('a toolkit with no known GitHub repo cannot enable a mod', () => {
+    fs.rmSync(path.join(toolkitRoot, 'package.json'));
+    const result = render();
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /cannot enable mods\/viewer: no GitHub repository is known for the "fixture" marketplace/);
   });
 
   test('an explicit include: of a mod with claude disabled is reported, not silently dropped', () => {
@@ -162,20 +277,37 @@ describe('mods/ render kind (#560)', () => {
     assert.equal(row().status, STATUS.CURRENT);
   });
 
-  test('eject mods/<name> releases every file and leaves the dir project-owned', () => {
-    render();
-    const { released } = eject({ cwd, item: 'mods/viewer' });
-    assert.deepEqual(released, OUT);
-    assert.match(read(cwd, '.waffle/waffle.yaml'), /eject:\n\s+- mods\/viewer/);
-    assert.deepEqual(modPaths(), []);
+  test('eject mods/<name> removes its entries and the lock forgets them; uninstall removes the rest', () => {
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: mods\nstacks: [mb]\n');
+    write(toolkitRoot, 'stacks/mb/stack.yaml', 'name: mb\ndescription: x.\nmods: [viewer, pane]\n');
+    writeMod(toolkitRoot, 'mb', 'pane');
+    write(toolkitRoot, `stacks/mb/mods/pane/${MOD_MANIFEST}`, '{"name": "pane"}\n');
+    writeMarketplace(toolkitRoot, [{ name: 'viewer', source: './stacks/mb/mods/viewer' }, { name: 'pane', source: './stacks/mb/mods/pane' }]);
+    write(cwd, SETTINGS_FILE, JSON.stringify({ env: { KEEP: '1' } }));
+    assert.equal(render().ok, true);
+    const PANE = pluginKey('pane@fixture');
 
-    const file = path.join(cwd, '.claude', 'mods', 'viewer', 'hooks', 'register.tsx');
-    fs.appendFileSync(file, '// project-owned\n');
-    const result = render();
-    assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.match(fs.readFileSync(file, 'utf8'), /project-owned/);
-    assert.deepEqual(modPaths(), []);
+    const { released } = eject({ cwd, item: 'mods/viewer' });
+    assert.deepEqual(released, [PLUGIN]);
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /eject:\n\s+- mods\/viewer/);
+    assert.deepEqual(modPaths(), [MARKET, PANE].sort());
+    assert.deepEqual(settings().enabledPlugins, { 'pane@fixture': true });
+
+    assert.equal(render().ok, true);
+    assert.deepEqual(settings().enabledPlugins, { 'pane@fixture': true }, 'an ejected mod is not re-enabled');
     assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+
+    assert.deepEqual(eject({ cwd, item: 'mods/pane' }).released, [MARKET, PANE].sort(), 'the last mod out takes the marketplace');
+    assert.deepEqual(settings(), { env: { KEEP: '1' } });
+    assert.equal(lock().settings, undefined);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+
+    write(cwd, '.waffle/waffle.yaml', project(['targets: [claude]', 'stacks: [mb]']));
+    assert.equal(render().ok, true);
+    const result = uninstall({ cwd, toolkitRoot, dryRun: false });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.ok([MARKET, PLUGIN, PANE].every((k) => result.removed.includes(k)), JSON.stringify(result.removed));
+    assert.deepEqual(settings(), { env: { KEEP: '1' } }, 'uninstall leaves foreign keys');
   });
 
   test('two enabled stacks shipping the same mod name is a hard render error', () => {
@@ -184,7 +316,7 @@ describe('mods/ render kind (#560)', () => {
     write(cwd, '.waffle/waffle.yaml', project(['targets: [claude]', 'stacks: [mb, mb2]']));
     const result = render();
     assert.equal(result.ok, false);
-    assert.ok(result.errors.some((e) => /output conflict: .*\.claude[\\/]mods[\\/]viewer/.test(e)), JSON.stringify(result.errors));
+    assert.ok(result.errors.some((e) => /output conflict: mods\/viewer is shipped by both mb and mb2/.test(e)), JSON.stringify(result.errors));
   });
 
   test('optIn: gates a mod out of stack expansion; include pours it; the lock then keeps it', () => {
@@ -238,6 +370,11 @@ describe('mods/ render kind (#560)', () => {
     assert.ok(validateToolkit(toolkitRoot).some((p) => /mod viewer .*plugin\.json is not valid JSON/.test(p)));
   });
 
+  test('validate reds a mod whose plugin name is not its directory name', () => {
+    write(toolkitRoot, `stacks/mb/mods/viewer/${MOD_MANIFEST}`, '{"name": "renamed"}\n');
+    assert.ok(validateToolkit(toolkitRoot).some((p) => /mod viewer .*plugin\.json names it "renamed" — it must equal the directory name/.test(p)));
+  });
+
   test('setup inventory offers the mod as a claude-only plugin', () => {
     assert.match(toolkitInventory(loadToolkit(toolkitRoot), '0.0.test'), /- mods \(Claude Code plugins[^)]*\): mods\/viewer/);
   });
@@ -259,8 +396,7 @@ describe('mods/ render kind (#560)', () => {
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     assert.deepEqual(modPaths(), OUT);
-    assert.equal(fs.existsSync(path.join(cwd, '.claude', 'mods', 'viewer', 'tsconfig.json')), false);
-    assert.equal(fs.existsSync(path.join(cwd, '.claude', 'mods', 'viewer', '.claude-plugin', 'types')), false);
+    noModsDir();
   });
 
   test('validateModPlugins runs `claude plugin validate` per mod source dir when the CLI is present', () => {
@@ -339,30 +475,22 @@ describe('mods/ render kind (#560)', () => {
     assert.deepEqual(formatModPluginChecks(none), []);
   });
 
-  test('setup prints how each rendered mod loads, with the CLI probe degrading to a note', () => {
+  test('setup says each mod is enabled through settings, with the CLI probe degrading to a note', () => {
     write(toolkitRoot, 'schema/SETUP.md', '# Setup\n');
     const guide = (locateClaude) => setupGuide(toolkitRoot, '0.0.test', cwd, { locateClaude });
 
     const current = guide(() => ({ path: '/stub/bin/claude', version: '2.1.292' }));
-    assert.match(current, /## Mods \(Claude Code plugins\)/);
-    assert.match(current, /### `mods\/viewer` \(mb\) → `\.claude\/mods\/viewer\/`/);
-    assert.match(current, /claude plugin validate \.claude\/mods\/viewer/);
-    assert.match(current, /claude --plugin-dir "\$PWD\/\.claude\/mods\/viewer"/);
-    assert.match(current, /CLAUDE_CODE_PLUGIN_DIRS/);
-    assert.match(current, /\/plugin install viewer --marketplace <owner>\/<repo>/);
-    assert.match(current, /- test: `claude plugin test \.claude\/mods\/viewer` — runs/);
-    assert.match(current, /`\.claude\/mods\/\*\/tsconfig\.json`, `\.claude\/mods\/\*\/\.claude-plugin\/types\/`/);
+    assert.match(current, /## Mods \(Claude Code plugins\) — enabled through `\.claude\/settings\.json`/);
+    assert.match(current, /`extraKnownMarketplaces\.fixture`/);
+    assert.match(current, /### `mods\/viewer` \(mb\) → `enabledPlugins\["viewer@fixture"\]`/);
+    assert.match(current, /`\/plugin install viewer@fixture`/);
+    assert.match(current, /`claude` 2\.1\.292 is on PATH/);
+    assert.doesNotMatch(current, /\.claude\/mods|--plugin-dir/);
 
-    const old = guide(() => ({ path: '/stub/bin/claude', version: '2.1.200' }));
-    assert.match(old, /`claude plugin test` needs ≥ 2\.1\.291, so skip the test line/);
-    assert.match(old, /- test: `claude plugin test \.claude\/mods\/viewer` needs `claude` ≥ 2\.1\.291/);
-
-    const absent = guide(() => null);
-    assert.match(absent, /`claude` is not on PATH here/);
-    assert.match(absent, /claude --plugin-dir "\$PWD\/\.claude\/mods\/viewer"/, 'the load lines are for the user even when the agent lacks the CLI');
+    assert.match(guide(() => null), /`claude` is not on PATH here/);
 
     write(cwd, '.waffle/waffle.yaml', project(['targets: [codex]', 'stacks: [mb]']));
-    assert.doesNotMatch(guide(() => null), /## Mods \(Claude Code plugins\)/, 'no claude target ⇒ no mod renders ⇒ no load block');
+    assert.doesNotMatch(guide(() => null), /## Mods \(Claude Code plugins\)/, 'no claude target ⇒ no mod renders ⇒ no block');
   });
 });
 
@@ -403,18 +531,19 @@ describe('built-in mod: wafflestack/mods/waffle-view (#562)', () => {
     assert.match(state, /export function selectKeys\(/, 'the #563 context seam is one named function');
   });
 
-  test('renders verbatim into a claude consumer and lands in its lock', () => {
+  test('renders as wafflestack marketplace entries in a claude consumer and lands in its lock', () => {
     const consumer = fs.mkdtempSync(path.join(os.tmpdir(), 'project-waffle-view-'));
     try {
       write(consumer, '.waffle/waffle.yaml', project(['targets: [claude]', 'stacks: [wafflestack]']));
       const result = renderProject({ toolkitRoot: REPO_ROOT, cwd: consumer, toolkitVersion: '0.0.test' });
       assert.equal(result.ok, true, JSON.stringify(result.errors));
       const lock = JSON.parse(read(consumer, '.waffle/waffle.lock.json'));
-      const out = path.join('.claude', 'mods', 'waffle-view');
-      for (const rel of ['hooks/register.tsx', 'hooks/waffle-view.test.ts', MOD_MANIFEST]) {
-        assert.ok(lock.files[path.join(out, rel)], `${rel} is lock-managed`);
-        assert.equal(read(consumer, path.join(out, rel)), fs.readFileSync(path.join(MOD_DIR, rel), 'utf8'), `${rel} is byte-identical`);
-      }
+      const id = marketplacePluginId('waffle-view', loadToolkit(REPO_ROOT).name);
+      assert.equal(id, 'waffle-view@wafflestack');
+      assert.equal(lock.settings[pluginKey(id)], true);
+      assert.deepEqual(lock.settings[marketplaceKey('wafflestack')], { source: { source: 'github', repo: 'dustinkeeton/wafflestack' } });
+      assert.equal(JSON.parse(read(consumer, SETTINGS_FILE)).enabledPlugins[id], true);
+      assert.equal(fs.existsSync(path.join(consumer, '.claude', 'mods')), false);
       assert.equal(doctor({ cwd: consumer, toolkitVersion: '0.0.test' }).ok, true);
     } finally {
       fs.rmSync(consumer, { recursive: true, force: true });

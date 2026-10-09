@@ -6,6 +6,7 @@ import { exists, writeFileEnsuringDir } from './util.mjs';
 import { readLock, readLocalLock, readTreeLock } from './render.mjs';
 import { loadToolkit, loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
+import { lockKeys, modReleaseKeys, removeSettingsEntries } from './settings.mjs';
 import { normalizeItemRef, resolveRef, closureDeps, selectingStack, includeRefMatches, itemOutputMatcher, computeSelection } from './refs.mjs';
 import {
   CONFIG_FILE,
@@ -24,7 +25,8 @@ import {
 
 /**
  * Stop managing an item: add it to the config's `eject:` list and drop its rendered files
- * from the lock so they become project-owned. The files themselves are left in place.
+ * from the lock so they become project-owned. The files themselves are left in place — but a mod's
+ * settings entries (#594) are REMOVED, since a project-owned `enabledPlugins` key would keep loading it.
  * Deliberately render-free (#497): `orphaned` names what the next `render` will prune instead.
  */
 export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
@@ -63,6 +65,8 @@ export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
     { lock: readLock(cwd), file: LOCK_FILE },
     { lock: readLocalLock(cwd), file: LOCAL_LOCK_FILE },
   ];
+  // The TREE lock names what is on disk, so it decides which entries leave settings.json.
+  if (kind === 'mods') removeSettingsEntries(cwd, modReleaseKeys(readTreeLock(cwd)?.settings, name));
   for (const { lock, file } of locks) {
     if (!lock) continue;
     for (const rel of Object.keys(lock.files)) {
@@ -70,6 +74,13 @@ export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
         delete lock.files[rel];
         released.add(rel);
       }
+    }
+    if (kind === 'mods' && lock.settings) {
+      for (const key of modReleaseKeys(lock.settings, name)) {
+        delete lock.settings[key];
+        released.add(key);
+      }
+      if (!Object.keys(lock.settings).length) delete lock.settings;
     }
     // Always write to the current location — a lock read via the legacy fallback migrates here.
     writeFileEnsuringDir(path.join(cwd, file), `${JSON.stringify(lock, null, 2)}\n`);
@@ -90,7 +101,7 @@ function selectedRefs(toolkitRoot, cwd) {
       refreshSources: false,
     });
     const stacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
-    const tracked = new Set(Object.keys(readTreeLock(cwd)?.files ?? {}));
+    const tracked = new Set(lockKeys(readTreeLock(cwd)));
     return new Set(computeSelection(toolkit, { ...project, stacks }, tracked).items.map((i) => `${i.kind}/${i.item.name}`));
   } catch {
     return null;
@@ -203,7 +214,7 @@ function spliceAll(original, steps, doc) {
 
 const alreadySelected = (ref, kind, stack) =>
   `note: ${ref} is already selected via stack ${stack} — nothing to persist` +
-  (kind === 'mods' ? '; run `wafflestack setup` for the load block (`claude --plugin-dir …`)' : '');
+  (kind === 'mods' ? '; it is enabled through `.claude/settings.json` — run `wafflestack setup` for how it loads' : '');
 
 const stillEjected = (ref) =>
   `note: ${ref} stays ejected (project-owned, not rendered) — \`wafflestack install ${ref}\` un-ejects it`;

@@ -33,12 +33,6 @@
     ".claude/agents/product-manager.md": "ac43e4c161cf3c5f71e72a27c3e474eab582ff1a09ee18035a1dc2e33d5340b6",
     ".claude/agents/project-manager.md": "64ab733483180482ffd881d5f9587754ff7c3b89acedbb774ef3dc64eda90854",
     ".claude/agents/task-planner.md": "629b0f8e5c8ba1845a3e8086c4637ac75ec75e8c0c313e6f817c683103196604",
-    ".claude/mods/waffle-view/.claude-plugin/plugin.json": "cfa856a06c259de36f7fc8d895f03a66cceade97f590e8d1e91d4cf04798dde6",
-    ".claude/mods/waffle-view/hooks/hooks.json": "d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828",
-    ".claude/mods/waffle-view/hooks/register.tsx": "d24d2c79ed0476a8892fee3ca36d856caaffc51159d0123db8a172b3e4b2fdd2",
-    ".claude/mods/waffle-view/hooks/state.ts": "16a8b18d9d7632ed22267ff19e786e78739189ec2196b3d7eff912f6d10730f5",
-    ".claude/mods/waffle-view/hooks/waffle-view.test.ts": "474ed0ac06ce5ec43a5bdd05ef0556f5ea499dd6a801fa9b2d9ff0ca58469131",
-    ".claude/mods/waffle-view/types/index.d.ts": "fc6ee3571e48b50c91acebe577eb6000b05eca2422bc7261b1c9f1eabd2b24a1",
     ".claude/skills/accurate/SKILL.md": "b4afc3f598b5fbd6255e89bf54cb1fc362fc1fe3294d2230abb0978faec681b7",
     ".claude/skills/adversarial-review/SKILL.md": "1e47513c99b8345bf070c9d13d91a9a0115da51d1920de3a9363a61755decd56",
     ".claude/skills/audit/SKILL.md": "1be0c87f4724ae6d00a5268a5a1aa18d016927b7938c5d7664f2099f335ffca7",
@@ -70,7 +64,7 @@
     ".claude/skills/waffle-doctor/SKILL.md": "7561ae5679e03f9d2dd81d7cf5094fb2bc7f0f054a89e0e240348c1804ff300c",
     ".claude/skills/waffle-eject/SKILL.md": "ce36ac44fbe9c58bb0338611cb41e59102dc19ce555ea8c4dcbdadeb0440c001",
     ".claude/skills/waffle-init/SKILL.md": "e7962002d713b2f75888da0ec13073564f20d8dcb2ad9d46a7353def66e3f5d0",
-    ".claude/skills/waffle-install/SKILL.md": "5340ba7cfb1c114d83cd23a5b436c7eee57e516fa3682d5801e0f9418d286478",
+    ".claude/skills/waffle-install/SKILL.md": "48c67aa80f70a26426f3a63744d9ee6e4c7fa93d5e66fee3921d1d74c61de2f1",
     ".claude/skills/waffle-render/SKILL.md": "b4061aca4b03490071275abdda8f9ea59e0abce9278bc86878aaca67c54d741b",
     ".claude/skills/waffle-report/SKILL.md": "052d8012ae53bfa38f769d98b71e91b86a65a48e8c57a23fc62d00fbafc0915a",
     ".claude/skills/waffle-setup/SKILL.md": "cc7fbcfe2dda973e0b2ef72df5f55e32f7eb4f1f997b3ac0df0ad79a199a682b",
@@ -101,5 +95,14 @@
     ".waffle/CHEATSHEET.md": "65ee134ab0c2f848efbcaa62e3cc5aaf9d08d34e3a56c0ca74dd641057086c3c",
     ".waffle/team.html": "843f121b170b2d17b82ed288166767787eb8fffa14b2483e70080985aa56e9ab",
     ".waffle/TEAM.md": "6dece27e3ea184ef039d2e16785e95a702796b8b8e19918515c9adea010982b3"
+  },
+  "settings": {
+    ".claude/settings.json#/enabledPlugins/waffle-view@wafflestack": true,
+    ".claude/settings.json#/extraKnownMarketplaces/wafflestack": {
+      "source": {
+        "source": "github",
+        "repo": "dustinkeeton/wafflestack"
+      }
+    }
   }
 }

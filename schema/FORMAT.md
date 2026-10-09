@@ -20,7 +20,7 @@ stacks/<stack>/
   agents/<name>.md           neutral agent definitions
   skills/<name>/SKILL.md     neutral skill definitions (+ supporting files)
   files/<repo-rel-path>      generic project files (CI workflows, scripts, config)
-  mods/<name>/               Claude Code mods (plugin dirs), rendered verbatim for `claude` only
+  mods/<name>/               Claude Code mods (plugin dirs), enabled via settings for `claude` only
   evals/<name>.eval.yaml     Layer 2 behavioral eval cases (metered; see below)
 installer/                   the render CLI (`wafflestack`) + the eval runner
 schema/                      this document
@@ -28,9 +28,9 @@ schema/                      this document
 
 Four payload types share the same render machinery — **agents** and **skills** target
 harness dirs (`.claude/`, `.codex/`, `.agents/`), **files** render to an arbitrary
-repo-relative path, and **mods** render to `.claude/mods/` for the `claude` target only. All
-four get lock tracking, `doctor` drift detection, and `eject`; the first three also get
-`{{key}}` substitution (a mod is code and is copied verbatim).
+repo-relative path, and **mods** render as entries in `.claude/settings.json` for the `claude`
+target only. All four get lock tracking, `doctor` drift detection, and `eject`; the first three
+also get `{{key}}` substitution (a mod is code, shipped as-is through the toolkit's marketplace).
 
 ## stack.yaml
 
@@ -530,8 +530,11 @@ but relevant if you ever render from CI.
 A **mod** is a Claude Code plugin a stack ships: a directory of function hooks —
 `.claude-plugin/plugin.json` (required), typically `hooks/hooks.json` and `hooks/register.tsx`,
 optionally `types/index.d.ts`, and whatever else the plugin needs. Each name in the manifest's
-`mods:` list is a directory under the stack's `mods/`; it renders **verbatim** — every file,
-byte-for-byte — to `.claude/mods/<name>/` in the consuming project.
+`mods:` list is a directory under the stack's `mods/`. A mod is delivered through the toolkit's
+plugin marketplace, so it renders **no files**: selecting it merges two project-scope entries into
+the consumer's `.claude/settings.json` — `extraKnownMarketplaces.<toolkit name>` (the marketplace
+source, `{ "source": "github", "repo": "<owner>/<repo>" }`, the repo read from the toolkit's
+`package.json` `repository`) and `enabledPlugins["<name>@<toolkit name>"]: true`.
 
 ```
 stacks/<stack>/mods/waffle-view/
@@ -547,7 +550,7 @@ stacks/<stack>/mods/waffle-view/
   it, the same frozen-image contract as dropping a stack. An explicit `include: [mods/<name>]` in a
   repo without `claude` is reported as scoped-out, not silently dropped.
 - **No substitution.** A `.tsx` hook file is code, not a template: nothing under a mod dir gets
-  `{{key}}` substitution, so a `{{…}}`-looking run inside it is left exactly as authored, and
+  `{{key}}` substitution (it is fetched from the marketplace as authored), and
   `validate` collects no placeholders from it. Project extensions do not apply either. A mod that
   must read project configuration reads it at runtime from the rendered harness, never from the
   toolkit's template values.
@@ -560,12 +563,13 @@ stacks/<stack>/mods/waffle-view/
   separator, a name with no directory, or a directory with no `.claude-plugin/plugin.json` makes
   `loadToolkit` throw — the same posture as a `files:` `targets:` typo, and for the same reason:
   a mod the render cannot reproduce is a poured copy the prune would delete. `validate` additionally
-  reds a `plugin.json` that is not JSON.
+  reds a `plugin.json` that is not JSON, or whose `name` is not the mod's directory name (that name
+  is the `enabledPlugins` key).
 - **Engine-laid files are skipped.** Loading a mod from disk (`claude --plugin-dir <dir>`) lays
   `tsconfig.json` and `.claude-plugin/types/**` into that dir — per-machine files for the build's
   API declarations. The loader skips exactly these (`MOD_ENGINE_LAID` in `toolkit.mjs`), so a source
-  dir someone once loaded still renders clean; they are gitignored under `stacks/*/mods/*/` too.
-  Load the **rendered** copy when you try a mod, never the stack's source dir.
+  dir someone once loaded still stays clean; they are gitignored under `stacks/*/mods/*/` too.
+  Never `--plugin-dir` a stack's source dir; `claude plugin validate` is read-only.
 - **`validate` runs Claude Code's own lint.** `npm run validate` runs
   `claude plugin validate stacks/<stack>/mods/<name>` for every mod when the `claude` CLI is on
   PATH (`ok:`/`FAIL:` per mod, its output surfaced on failure) and prints one `skipped:` line — not
@@ -576,11 +580,17 @@ stacks/<stack>/mods/waffle-view/
   missing or undeclared dir, or a name disagrees with `plugin.json`; with the CLI present it also
   runs `claude plugin validate` on the marketplace. Adding a mod means adding its entry.
 
-Same frozen-image contract as everything else: every file under `.claude/mods/<name>/` is tracked
-in `.waffle/waffle.lock.json`, restored verbatim by `render`, drift-flagged by `doctor`, and
-released with `wafflestack eject mods/<name>` (the directory stays and becomes project-owned). Two
-enabled stacks that ship a mod of the **same name** is a hard render error — the same cross-stack
-conflict rule as same-named skills.
+Same frozen-image contract as everything else, applied to **entries** instead of files: the lock's
+`settings` map records each entry (`.claude/settings.json#/<JSON pointer>` → value). `render` merges
+them beside the consumer's own keys — never overwriting one: an untracked key already holding a
+different value is refused without `--force`, an identical one adopted — restores an edited entry,
+and prunes one no longer selected. `doctor` flags an entry that is edited or dropped from the file
+(an absent settings file reads as missing, like an absent rendered file). `wafflestack eject
+mods/<name>` **removes** the mod's entry (and the marketplace entry with the last mod) and the lock
+forgets it. A lock from before #594 that recorded `.claude/mods/<name>/` files migrates on the next
+`render`: the files are pruned and the entries written. Two enabled stacks that ship a mod of the
+**same name** is a hard render error; an external stack's mod is skipped with a warning (it is not
+in this toolkit's marketplace).
 
 ## Layer 2 eval cases (`stacks/<stack>/evals/`)
 

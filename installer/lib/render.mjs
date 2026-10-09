@@ -8,10 +8,12 @@ import {
   stringifyFrontmatter,
 } from './util.mjs';
 import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template.mjs';
-import { toolkitLockEntry } from './toolkit-ref.mjs';
+import { toolkitLockEntry, lockRepoSlug } from './toolkit-ref.mjs';
+import { marketplacePluginId } from './marketplace.mjs';
+import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, modOutputDir, closureFor } from './refs.mjs';
+import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, closureFor } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import {
   applicablePrerequisites,
@@ -117,6 +119,7 @@ export function renderProject({
   const treeLock = localLock ?? lock;
 
   const errors = [];
+  const marketplace = { name: toolkit.name, repo: toolkitRepo(toolkitRoot) };
   const effective = computeOutputs({
     toolkit,
     project,
@@ -124,7 +127,8 @@ export function renderProject({
     errors,
     warnings,
     toolkitVersion,
-    trackedFiles: new Set(Object.keys(treeLock?.files ?? {})),
+    trackedFiles: new Set(lockKeys(treeLock)),
+    marketplace,
   });
 
   // Deliberately OUTSIDE `computeOutputs`: this shells out, so it runs once. Warns, never fails.
@@ -155,7 +159,8 @@ export function renderProject({
           errors: canonicalErrors,
           warnings: [],
           toolkitVersion,
-          trackedFiles: new Set(Object.keys(lock?.files ?? {})),
+          trackedFiles: new Set(lockKeys(lock)),
+          marketplace,
         });
 
   // A canonical error surviving a clean effective render means the overlay supplied something the
@@ -176,10 +181,13 @@ export function renderProject({
   }
 
   const managed = treeLock?.files ?? {};
+  const managedSettings = treeLock?.settings ?? {};
 
   // Checked before any write or prune (#25), so a refusal leaves the tree untouched.
+  const settingsCheck = settingsConflicts(cwd, effective.settings, managedSettings);
+  if (settingsCheck.errors.length) return { ok: false, errors: settingsCheck.errors, warnings };
   if (!force) {
-    const collisions = [];
+    const collisions = [...settingsCheck.collisions];
     for (const [rel, content] of effective.outputs) {
       if (rel in managed) continue; // already ours — re-render/restore is expected
       const abs = path.join(cwd, rel);
@@ -190,9 +198,10 @@ export function renderProject({
     if (collisions.length) {
       const errs = collisions
         .sort((a, b) => a.localeCompare(b))
-        .map(
-          (rel) =>
-            `refusing to overwrite ${rel}: a pre-existing file not tracked by ${LOCK_FILE} — back it up or remove it and re-render, or pass \`--force\` to overwrite it`,
+        .map((rel) =>
+          effective.settings.has(rel)
+            ? `refusing to overwrite settings entry ${rel}: it already holds a different value not tracked by ${LOCK_FILE} — remove it and re-render, or pass \`--force\` to overwrite it`
+            : `refusing to overwrite ${rel}: a pre-existing file not tracked by ${LOCK_FILE} — back it up or remove it and re-render, or pass \`--force\` to overwrite it`,
         );
       return { ok: false, errors: errs, warnings, collisions };
     }
@@ -209,14 +218,19 @@ export function renderProject({
     if (!exists(abs)) continue;
     fs.rmSync(abs);
     removed.push(rel);
+    pruneEmptyDirs(cwd, path.dirname(abs));
   }
 
   for (const [rel, content] of sortedOutputs(effective.outputs)) {
     writeFileEnsuringDir(path.join(cwd, rel), content);
   }
+  removed.push(...applySettings(cwd, effective.settings, managedSettings));
 
   const canonicalFiles = hashOutputs(canonical.outputs);
   const effectiveFiles = canonical === effective ? canonicalFiles : hashOutputs(effective.outputs);
+  const canonicalSettings = settingsLockMap(canonical.settings);
+  const effectiveSettings = settingsLockMap(effective.settings);
+  const settingsBlock = (map) => (Object.keys(map).length ? { settings: map } : {});
 
   const sources = collectSourceProvenance(canonical.groups, canonical.producedBy, canonicalFiles);
 
@@ -231,12 +245,15 @@ export function renderProject({
     include: canonicalProject.include,
     ...(sources.length ? { sources } : {}),
     files: canonicalFiles,
+    ...settingsBlock(canonicalSettings),
   });
 
   // Written only when the overlay actually moved a byte, and removed again the moment that stops
   // being true — a stale local lock would describe a tree that no longer exists.
   const localLockFile = localLockPath(cwd);
-  const overlayChangedTheRender = JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles);
+  const overlayChangedTheRender =
+    JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles) ||
+    JSON.stringify(effectiveSettings) !== JSON.stringify(canonicalSettings);
   if (overlayChangedTheRender) {
     const localToolkitBlock = toolkitLockEntry(toolkitIdentity, {
       prevLock: localLock,
@@ -254,6 +271,7 @@ export function renderProject({
         return s.length ? { sources: s } : {};
       })(),
       files: effectiveFiles,
+      ...settingsBlock(effectiveSettings),
     });
     // Commit an un-ignored local lock and every teammate's `doctor` reads YOUR machine's hashes.
     if (!gitignoreMentions(cwd, LOCAL_LOCK_FILE)) {
@@ -284,7 +302,7 @@ export function renderProject({
  * Compute every file a `project` config would render — the pure core of `renderProject`, run once
  * per config (effective and canonical). Writes nothing; `errors`/`warnings` are caller-owned sinks.
  */
-function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings, toolkitVersion }) {
+function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings, toolkitVersion, marketplace }) {
   const outputs = new Map(); // relative path -> content (string | Buffer)
   const producedBy = new Map(); // relative path -> "stack/kind/name" that emitted it
   // Two enabled stacks defining a same-named item would silently last-write-wins; fail loudly instead.
@@ -435,6 +453,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   }
 
   warnings.push(...modelInvocationWarnings(project, selection));
+  const settings = modSettings({ selection, project, marketplace, errors, warnings });
 
   if (!errors.length) {
     for (const { rel, content } of generateWaffleDocs({ toolkit, project, selection, errors, toolkitVersion })) {
@@ -442,7 +461,61 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
     }
   }
 
-  return { outputs, producedBy, groups, selection };
+  return { outputs, producedBy, groups, selection, settings };
+}
+
+/**
+ * Selected mods → project-scope settings entries (#594). Only built-in mods are in the toolkit's
+ * marketplace, so an external stack's mod is skipped with a warning.
+ */
+function modSettings({ selection, project, marketplace, errors, warnings }) {
+  const mods = [];
+  const shippedBy = new Map();
+  for (const { stackName, stack, kind, item } of selection.items) {
+    if (kind !== 'mods' || !project.targets.includes('claude')) continue;
+    if (stack.provenance) {
+      warnings.push(`mods/${item.name} comes from external stack "${stackName}", which has no marketplace here — not enabled`);
+      continue;
+    }
+    if (shippedBy.has(item.name)) {
+      errors.push(`output conflict: mods/${item.name} is shipped by both ${shippedBy.get(item.name)} and ${stackName} — enable only one, or eject one of them`);
+      continue;
+    }
+    shippedBy.set(item.name, stackName);
+    mods.push(item);
+  }
+  if (mods.length && !marketplace?.repo) {
+    errors.push(
+      `cannot enable ${mods.map((m) => `mods/${m.name}`).join(', ')}: no GitHub repository is known for the ` +
+        `"${marketplace?.name}" marketplace — set \`repository\` in the toolkit's package.json`,
+    );
+    return new Map();
+  }
+  const pluginIds = mods.map((m) => marketplacePluginId(m.name, marketplace.name));
+  return modSettingsEntries({ pluginIds, marketplace: marketplace.name, repo: marketplace.repo });
+}
+
+/** `owner/repo` the toolkit's marketplace lives at — a content-bearing source, so the lock stays deterministic. */
+function toolkitRepo(toolkitRoot) {
+  let pkg = null;
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(toolkitRoot, 'package.json'), 'utf8'));
+  } catch { /* no package.json: only npm's lockfile can answer */ }
+  const slug = lockRepoSlug({ toolkitRoot, pkg });
+  return slug ? `${slug.owner}/${slug.repo}` : null;
+}
+
+/** Remove `dir` and each parent it leaves empty, stopping below `cwd`. */
+function pruneEmptyDirs(cwd, dir) {
+  const root = path.resolve(cwd);
+  for (let d = path.resolve(dir); d !== root && d.startsWith(root + path.sep); d = path.dirname(d)) {
+    try {
+      if (fs.readdirSync(d).length) return;
+      fs.rmdirSync(d);
+    } catch {
+      return;
+    }
+  }
 }
 
 /** One resolver per enabled target — the reserved `harness.*` keys resolve per target. */
@@ -459,7 +532,7 @@ function targetResolvers(stack, project, toolkitVersion) {
 function renderItem({ kind, item, stack, resolvers, primaryResolver, project, cwd, emit, errors, guards }) {
   if (kind === 'agents') renderAgent({ agent: item, stack, resolvers, project, cwd, emit, errors, guards });
   else if (kind === 'skills') renderSkill({ skill: item, stack, resolvers, project, cwd, emit, errors, guards });
-  else if (kind === 'mods') renderMod({ mod: item, stack, project, emit });
+  else if (kind === 'mods') return; // a settings entry, not a file — see modSettings
   else {
     // A scoped file substitutes with the primary-most target it DECLARES (#364).
     const declared = item.targets ? resolvers[project.targets.find((t) => item.targets.includes(t))] : null;
@@ -649,18 +722,6 @@ function renderFiles({ file, stack, resolve, emit, errors, guards }) {
   }
   const raw = fs.readFileSync(file.path, 'utf8');
   emit(file.name, substitute(raw, resolve, stack.declared, errors, context, guards), context);
-}
-
-/**
- * Emit a mod (#560) verbatim to `.claude/mods/<name>/`: a plugin dir is code, so no `{{…}}`
- * substitution and no extension append. Selection already scoped it to `claude`; the guard is
- * defense in depth against a caller that bypassed `computeSelection`.
- */
-function renderMod({ mod, stack, project, emit }) {
-  if (!project.targets.includes('claude')) return;
-  const context = `${stack.name}/mods/${mod.name}`;
-  const outDir = modOutputDir(mod.name);
-  for (const rel of mod.files) emit(path.join(outDir, rel), fs.readFileSync(path.join(mod.dir, rel)), context);
 }
 
 function appendExtension(body, cwd, relPath) {

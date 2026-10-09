@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit, loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { applicablePrerequisites, externalCheckGates, unacknowledgedStacks, runCheck } from './prerequisites.mjs';
-import { computeSelection, itemOutputMatcher, fileMatchesTargets, closureFor, modOutputDir } from './refs.mjs';
+import { computeSelection, itemOutputMatcher, fileMatchesTargets, closureFor } from './refs.mjs';
 import { readTreeLock, missingConfigFor, failingConfigFor, summarizeConfigKeys, collectUsedKeys, renderItemInMemory } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
+import { lockKeys, settingsValueAt } from './settings.mjs';
 
 /** What the toolkit offers versus what this repo has — classified against the TREE lock, never the committed one (#317). */
 export const STATUS = {
@@ -64,7 +66,14 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion, checkPrereq
 
   const lock = readTreeLock(cwd);
   const lockFiles = lock?.files ?? {};
-  const trackedFiles = new Set(Object.keys(lockFiles));
+  const lockSettings = lock?.settings ?? {};
+  const trackedFiles = new Set(lockKeys(lock));
+  // A settings entry (#594) is "on disk" when its key holds a value, "intact" when that value matches.
+  const present = (rel) => (rel in lockSettings ? settingsValueAt(cwd, rel) !== undefined : exists(path.join(cwd, rel)));
+  const intact = (rel) =>
+    rel in lockSettings
+      ? isDeepStrictEqual(settingsValueAt(cwd, rel), lockSettings[rel])
+      : exists(path.join(cwd, rel)) && sha256(fs.readFileSync(path.join(cwd, rel))) === lockFiles[rel];
   const lockVersion = lock?.toolkitVersion ?? null;
   const versionSkew = Boolean(lock && lockVersion && toolkitVersion && lockVersion !== toolkitVersion);
 
@@ -93,10 +102,10 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion, checkPrereq
   // A render with a selection error refuses before it prunes, so nothing is doomed until it is fixed.
   const canPrune = Boolean(project) && !selection.errors.length;
   const doomed = (owned) =>
-    canPrune && owned.some((rel) => exists(path.join(cwd, rel)) && !producedBySelection(rel));
+    canPrune && owned.some((rel) => present(rel) && !producedBySelection(rel));
 
   const classify = (stackName, kind, name, item) => {
-    const owned = Object.keys(lockFiles).filter(itemOutputMatcher(kind, name));
+    const owned = [...trackedFiles].filter(itemOutputMatcher(kind, name));
 
     // Checked BEFORE the selection lookup: a scoped-out file is absent from the selection, so the
     // NOT_INSTALLED branch below would otherwise swallow it (#364).
@@ -111,10 +120,7 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion, checkPrereq
         : { status: STATUS.NOT_INSTALLED, removalReason: null };
     }
     if (!owned.length) return { status: STATUS.OUTDATED, removalReason: null }; // selected but never rendered
-    for (const rel of owned) {
-      const abs = path.join(cwd, rel);
-      if (!exists(abs) || sha256(fs.readFileSync(abs)) !== lockFiles[rel]) return { status: STATUS.OUTDATED, removalReason: null };
-    }
+    if (!owned.every(intact)) return { status: STATUS.OUTDATED, removalReason: null };
     return { status: versionSkew ? STATUS.OUTDATED : STATUS.CURRENT, removalReason: null };
   };
 
@@ -216,10 +222,8 @@ export function unmanagedOutputs(cwd, node, targets, trackedFiles, render = () =
     if (!fileMatchesTargets(item, targets)) return [];
     const verbatim = item.binary || !collectUsedKeys([{ kind, item }]).size;
     candidates.push({ rel: name, source: verbatim ? item.path : null });
-  } else if (kind === 'mods') {
-    if (!targets.includes('claude')) return [];
-    for (const rel of item.files) candidates.push({ rel: path.join(modOutputDir(name), rel), source: path.join(item.dir, rel) });
   }
+  // A mod writes no file (#594); a clashing settings entry is render's own refusal to report.
   /** @type {Map<string, string | Buffer> | null | undefined} */
   let rendered;
   const expected = (rel) => {

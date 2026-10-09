@@ -694,10 +694,12 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     // A files entry's `targets:` (#364) is deliberately NOT linted here: every malformation of it
     // is a hard load error in `loadToolkit`, which is a gate a forked toolkit cannot skip.
 
-    // A mod (#560) is copied verbatim, so it contributes no placeholders; its manifest must parse.
+    // A mod contributes no placeholders; its manifest must parse, and its `name` IS the mod name —
+    // the `enabledPlugins` key a render writes is `<dir name>@<marketplace>` (#594).
     for (const mod of stack.mods) {
       try {
-        JSON.parse(fs.readFileSync(path.join(mod.dir, MOD_MANIFEST), 'utf8'));
+        const { name } = JSON.parse(fs.readFileSync(path.join(mod.dir, MOD_MANIFEST), 'utf8'));
+        if (name !== mod.name) problems.push(`${ctx}: mod ${mod.name} ${MOD_MANIFEST} names it "${name}" — it must equal the directory name`);
       } catch (err) {
         problems.push(`${ctx}: mod ${mod.name} ${MOD_MANIFEST} is not valid JSON: ${err.message}`);
       }

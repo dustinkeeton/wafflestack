@@ -19,6 +19,7 @@ import { isGeneratedDoc } from './waffledocs.mjs';
 import { computeSelection, includeEjectOverlaps, formatEjectOverlap } from './refs.mjs';
 import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, formatCheckGate, unacknowledgedStacks } from './prerequisites.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
+import { settingsDrift, lockKeys } from './settings.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
@@ -67,9 +68,13 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     }
   }
 
+  const settings = settingsDrift(cwd, tree.settings ?? {});
+  modified.push(...settings.modified);
+  missing.push(...settings.missing);
+
   // The all-absent guard (#311): flag-independent, so a docs-only lock with nothing on disk never
   // passes having checked nothing. `total > 0` excludes an empty lock (nothing to have failed).
-  const total = Object.keys(tree.files).length;
+  const total = lockKeys(tree).length;
   const nothingPresent = total > 0 && missing.length + absentDocs.length === total;
 
   const notes = [];
@@ -148,7 +153,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
         refreshSources: false,
       });
       const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
-      const trackedFiles = new Set(Object.keys(lock.files ?? {}));
+      const trackedFiles = new Set(lockKeys(lock));
       const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
       const applicable = applicablePrerequisites(toolkit, selection);
       // Unacknowledged external check commands are listed, never run (#458); this never gates `ok`.
@@ -218,8 +223,9 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
     // Warnings dropped: they describe the temp dir (about to vanish), not the real tree.
 
     // Files-only, deliberately: comparing the `toolkit` block would red every unpinned consumer (#374).
-    const produced = readLock(tmp)?.files ?? {};
-    const tracked = lock.files ?? {};
+    const both = (l) => ({ ...(l?.files ?? {}), ...stringified(l?.settings) });
+    const produced = both(readLock(tmp));
+    const tracked = both(lock);
     for (const [rel, hash] of Object.entries(tracked)) {
       if (!(rel in produced)) result.absent.push(rel);
       else if (produced[rel] !== hash) result.stale.push(rel);
@@ -240,6 +246,9 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+/** A lock `settings` map with each value serialized, so it compares like a `files` hash. */
+const stringified = (settings) => Object.fromEntries(Object.entries(settings ?? {}).map(([k, v]) => [k, JSON.stringify(v)]));
 
 /** Human label for a lock `sources` entry, used to attribute drift (#125). */
 function sourceLabel(src) {

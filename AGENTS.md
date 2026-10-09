@@ -25,7 +25,7 @@ stacks/<name>/
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
   files/<repo-rel-path>    neutral syrup payload (CI workflow/script/config), rendered verbatim to that path
-  mods/<name>/             Claude Code mod (plugin dir: .claude-plugin/plugin.json + hooks), copied verbatim to .claude/mods/<name>/ for the claude target only (#560); engine-laid `tsconfig.json` + `.claude-plugin/types/` are skipped at load (#564)
+  mods/<name>/             Claude Code mod (plugin dir: .claude-plugin/plugin.json + hooks), rendered as `.claude/settings.json` entries (marketplace + `enabledPlugins`) for the claude target only (#560, #594) — no files; engine-laid `tsconfig.json` + `.claude-plugin/types/` are skipped at load (#564)
   evals/<name>.eval.yaml   Layer 2 behavioral eval case (metered; inert to render/validate/lock)
 installer/cli.mjs          bin entry: dispatches commands, global --cwd flag
 installer/evals.mjs        eval runner entry (`npm run evals`, metered — NOT in npm test)
@@ -103,6 +103,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `list.mjs` | `list` command: per-item state model + table + interactive picker (#119); exports the keypress loop `toggle` reuses (#476) |
 | `prerequisites.mjs` | Typed external prerequisites: normalize, scope, probe, bucket (#47/#129) |
 | `plugins.mjs` | Recommended EXTERNAL harness plugins a stack offers via `setup` (#199); never installed |
+| `settings.mjs` | Lock-managed entries inside `.claude/settings.json` (#594): pointer keys, merge/prune, drift, mod release |
 | `marketplace.mjs` | The repo-root `.claude-plugin/marketplace.json` that lists every stack mod's SOURCE dir (#593); validate keeps it in sync |
 | `sources.mjs` | External `source:` resolution: local path or pinned-git cache (#88/#125) |
 | `toolkit-ref.mjs` | Toolkit self-identification (#373), lock `toolkit` block (#374), write-side pin (#372) |
@@ -122,9 +123,9 @@ export function failingConfigFor(toolkit, project, nodes) // → { pattern: stri
 export function renderItemInMemory({ toolkit, project, cwd, node, toolkitVersion }) // → Map<rel, string|Buffer> of one `{ stack, kind, item }` node's outputs via render's own per-kind emitters (frontmatter, codex TOML, model-invocation, extensions), or null when its render would error; writes nothing (#577)
 export function summarizeConfigKeys(keys)     // → 'config.arch.*, config.data.brief' — one entry per first segment; a lone key stays whole (#549)
 
-// refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs + the registry gate from registry.mjs)
-export function itemOutputMatcher(kind, name)  // → (rel) => boolean — item → lock-path predicate (eject + list; stack-BLIND, matches by path; 'mods' ⇒ modOutputDir(name)/ prefix, #560)
-export function modOutputDir(name)             // → '.claude/mods/<name>' — a mod's ONLY output root (#560); render and the matcher both read it
+// refs.mjs — ref grammar, resolution, dependency closure, selection (imports only VALID_TARGETS from project.mjs, the registry gate from registry.mjs, ownsModKey from settings.mjs)
+export function itemOutputMatcher(kind, name)  // → (rel) => boolean — item → lock-key predicate (eject + list; stack-BLIND; 'mods' ⇒ its `enabledPlugins/<name>@…` settings key, or a pre-#594 legacyModDir(name)/ path)
+export function legacyModDir(name)             // → '.claude/mods/<name>' — where a mod rendered before #594; matched only so an old lock still counts as poured
 export function normalizeItemRef(ref)          // → "agents/NAME" | "skills/NAME" | "files/PATH" | "mods/NAME"
 export function itemsOfKind(stack, kind)       // → stack.agents | stack.skills | stack.files | stack.mods
 export function findItems(toolkit, kind, name) // → [{ stackName, item }] across the toolkit
@@ -228,7 +229,7 @@ export function compareVersions(a, b)          // → -1 | 0 | 1 (unparseable so
 export function resolveInside(cwd, rel)        // → abs path | null — null when `rel` escapes cwd (lexical `../`, or a symlinked parent realpathing outside); shared by uninstall and render's stale-prune (#182, #459)
 
 // doctor.mjs — drift check against the lock that describes the tree (readTreeLock, #317)
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false }) // → { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance } — unmet `require` prerequisite fails ok, as does a non-empty ejectOverlaps (#497); absentDocs = absent members of the generated-docs class (`isGeneratedDoc`), a note in every mode and never in `missing` (#528); nothingPresent is flag-independent so a docs-only lock with nothing on disk still fails; attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false }) // → { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance } — modified/missing also carry lock `settings` keys (#594: a dropped or changed entry in a present settings file is modified, an absent file is missing); unmet `require` prerequisite fails ok, as does a non-empty ejectOverlaps (#497); absentDocs = absent members of the generated-docs class (`isGeneratedDoc`), a note in every mode and never in `missing` (#528); modified/missing also carry lock `settings` keys (#594: a dropped or changed entry in a present settings file is modified, an absent file is missing); nothingPresent is flag-independent so a docs-only lock with nothing on disk still fails; attribution maps external files → source; toolkitProvenance (#374) is a NOTE ONLY, deliberately absent from ok
 export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir }) // → { evaluated, ok, checked, stale, absent, unexpected, errors } — re-renders the COMMITTED inputs (no overlay) into a temp dir and diffs against the canonical lock; the working tree is never touched (#314/#317). Disagreement kinds (doctor.mjs:224-228): stale = same path, different hash; absent = the lock tracks a path the config no longer produces; unexpected = the config produces a path the lock does not track
 
 // migrations.mjs — AUTHOR CONTRACT (migrations.mjs:16): key a step by the version that SHIPS the change; run(cwd, { log }) must be IDEMPOTENT — no applied-bookkeeping is persisted, so every upgrade whose (from, to] window covers a step re-invokes it. A key past package.json's version is PENDING (#501): it must be announced under CHANGELOG [Unreleased] as "migration `X.Y.Z`" (migrations.test.mjs release guard — a bump below the key fails CI), and an UNRELEASED toolkit runs it anyway
@@ -384,6 +385,21 @@ export const PLUGIN_ENTRY_KEYS                 // ['name','source','why','items'
 export function normalizeRecommendedPlugins(raw) // → [{ index, name, source, why, items, targets, unknownKeys, raw }] — never throws; a non-list value becomes ONE unusable entry so validate reports it; items normalized to kind/name refs; targets advisory (printed, never a filter)
 export function offerablePlugins(plugins)      // → entries with a usable name + source; malformed ones are validate's report and are not shown
 
+// settings.mjs — lock-managed entries in a consumer-owned JSON settings file (#594); lock `settings` = { '<file>#/<RFC 6901 pointer>': value }
+export const SETTINGS_FILE                     // '.claude/settings.json'
+export const settingsKey = (segments, file)    // → '<file>#/<escaped pointer>'; parseSettingsKey(key) → { file, segments } | null
+export const marketplaceKey = (m), pluginKey = (id) // → the `extraKnownMarketplaces/<m>` / `enabledPlugins/<id>` keys
+export const ownsModKey = (name)               // → (key) => boolean — key enables `<name>@<any marketplace>`
+export const lockKeys = (lock)                 // → [...files keys, ...settings keys] — the "already poured" set every computeSelection caller passes
+export function modSettingsEntries({ pluginIds, marketplace, repo }) // → Map<key, value>: marketplace `{ source: { source: 'github', repo } }` (unpinned until #595) + each id → true; empty for no ids
+export function settingsConflicts(cwd, desired, managed) // → { collisions, errors } — untracked key holding a different value (or a non-object parent) = collision; unparseable file = error
+export function applySettings(cwd, desired, managed) // → removed keys — merges desired, prunes managed-not-desired, drops emptied parents; rewrites a file only when a value changes
+export function removeSettingsEntries(cwd, keys) // → removed keys (eject/uninstall)
+export function settingsDrift(cwd, entries)    // → { modified, missing } — absent file ⇒ missing; dropped/changed key in a present file ⇒ modified
+export function settingsValueAt(cwd, key)      // → current value | undefined
+export function modReleaseKeys(settings, name) // → a mod's plugin keys, + marketplace keys when no other plugin key remains
+export const settingsLockMap = (entries)       // → sorted plain object for the lock
+
 // marketplace.mjs — the toolkit repo as a Claude Code plugin marketplace (#593)
 export const MARKETPLACE_FILE                  // '.claude-plugin/marketplace.json' (toolkit-root-relative); ships in the npm `files`
 export const marketplaceSource = (stack, mod)  // → './stacks/<stack>/mods/<mod>' — the entry `source` validate expects
@@ -431,17 +447,17 @@ Import graph (real `import` statements only; `util.mjs` and `template.mjs` depen
 ```
 cli.mjs      → render, doctor, eject, validate, setup, report, state, upgrade, uninstall, toolkit,
                prerequisites, list, toggle, toolkit-ref, project, avatars-sync (dynamic)
-render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, project, util
-doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, util
+render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, marketplace, settings, project, util
+doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, settings, util
 report.mjs   → render, doctor, prerequisites, project, util
-state.mjs    → toolkit, sources, refs, render, doctor, template, project, util
+state.mjs    → toolkit, sources, refs, render, doctor, template, settings, project, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
-uninstall.mjs → render, eject, toolkit, project, util
-eject.mjs    → render, toolkit, sources, refs, project, util
+uninstall.mjs → render, eject, toolkit, settings, project, util
+eject.mjs    → render, toolkit, sources, refs, settings, project, util
 validate.mjs → toolkit, template, refs, prerequisites, plugins, marketplace, project, registry
-setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registry, util
-list.mjs     → toolkit, render, refs, project, util
-toggle.mjs   → toolkit, sources, refs, render, project, list, model-invocation
+setup.mjs    → toolkit, render, project, refs, prerequisites, plugins, registry, marketplace, settings, util
+list.mjs     → toolkit, render, refs, settings, project, util
+toggle.mjs   → toolkit, sources, refs, render, settings, project, list, model-invocation
 model-invocation.mjs → util
 harness-tools.mjs → (nothing; test-only consumer: content.test.mjs)
 waffledocs.mjs → template, project, refs, util
@@ -452,7 +468,7 @@ toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID
 prerequisites.mjs → refs
 plugins.mjs  → refs
 marketplace.mjs → toolkit
-refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle)
+refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle), settings (ownsModKey; settings.mjs imports only util.mjs)
 registry.mjs → util
 sources.mjs  → util
 toolkit-ref.mjs → util
@@ -604,7 +620,7 @@ skill selected from two stacks merges. The waffle-view mod slices by `skills[<la
 A ref (used by `install`, `include:`, `eject`, `requires:`) names something installable.
 Grammar + resolution in `refs.mjs` (`parseRef` `refs.mjs:167`, `resolveRef` `refs.mjs:236`).
 Kinds: `agents`, `skills`, `files` (a payload byte/text-copied to its repo-relative path), `mods`
-(a Claude Code plugin dir copied verbatim to `.claude/mods/<name>/`, claude target only — #560).
+(a Claude Code plugin dir, enabled through `.claude/settings.json` entries, claude target only — #560, #594).
 
 | Form | Example | Meaning |
 |------|---------|---------|
@@ -898,7 +914,7 @@ pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waff
 neither is in `include:`, the lock tracks neither rendered path, and neither file exists under
 `.github/workflows/`. Re-arm one (#343): `install <files/ref>` — un-ejects it, adds the `include:` entry and renders (`eject.mjs:154-161`, `cli.mjs:76-77`; a differing project-owned copy refuses and rolls back without `--force`) — then commit.
 
-The render (`.claude/agents/`, `.claude/skills/`, `.claude/mods/waffle-view/` — the first mod, #562 — `.claude/settings.json`) and the lock are
+The render (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json` — whose `waffle-view@wafflestack` entries are lock-managed, #594) and the lock are
 COMMITTED, like a consuming project — the doctor drift gate (required check on main) needs render
 + lock in git. Re-render AND commit after editing `stacks/**`. Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
