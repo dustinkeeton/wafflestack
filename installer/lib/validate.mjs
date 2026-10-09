@@ -6,6 +6,7 @@ import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { spawnSync } from 'node:child_process';
 import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
+import { MARKETPLACE_FILE, validateMarketplace } from './marketplace.mjs';
 import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
 import {
   REGISTRY_FILE,
@@ -67,6 +68,7 @@ export function validateToolkit(rootDir) {
   problems.push(...validateHarnessBuiltins());
   problems.push(...validateSourceBytes(rootDir));
   problems.push(...validateRegistry(rootDir, toolkit));
+  problems.push(...validateMarketplace(rootDir, toolkit));
   for (const stack of toolkit.stacks.values()) problems.push(...validateStack(toolkit, stack));
   return problems;
 }
@@ -83,11 +85,13 @@ function runPluginValidate(cli, dir, timeoutMs) {
   }
 }
 
+const tailOf = (output) => output.split('\n').filter(Boolean).slice(-8).map((l) => `    ${l}`).join('\n');
+
 /**
- * Run Claude Code's own lint, `claude plugin validate`, over every mod SOURCE dir (#564). The CLI
- * is probed with `locate` (default: PATH) so CI runners without it get a visible **skipped**
+ * Run Claude Code's own lint, `claude plugin validate`, over the root marketplace (#593) and
+ * every mod SOURCE dir (#564) — never a rendered copy. The CLI is probed with `locate` (default: PATH) so CI runners without it get a visible **skipped**
  * result, never a pass; `run` is the per-mod runner (default: spawn). Returns
- * `{ cli, mods: [{ stack, mod, dir }], checks: [{ stack, mod, dir, ok, output }], problems }`
+ * `{ cli, mods: [{ stack, mod, dir }], marketplace: { ok, output } | null, checks: [{ stack, mod, dir, ok, output }], problems }`
  * — `cli === null` ⇒ skipped, `checks` empty.
  */
 export function validateModPlugins(rootDir, { locate = claudeCli, run = runPluginValidate, timeoutMs = 60000 } = {}) {
@@ -95,23 +99,25 @@ export function validateModPlugins(rootDir, { locate = claudeCli, run = runPlugi
   try {
     toolkit = loadToolkit(rootDir);
   } catch {
-    return { cli: null, mods: [], checks: [], problems: [] };
+    return { cli: null, mods: [], marketplace: null, checks: [], problems: [] };
   }
   const mods = [];
   for (const stack of toolkit.stacks.values()) {
     for (const mod of stack.mods) mods.push({ stack: stack.name, mod: mod.name, dir: mod.dir });
   }
-  const result = { cli: null, mods, checks: [], problems: [] };
+  const result = { cli: null, mods, marketplace: null, checks: [], problems: [] };
   if (!mods.length) return result;
   result.cli = locate() ?? null;
   if (!result.cli) return result;
+  if (fs.existsSync(path.join(rootDir, MARKETPLACE_FILE))) {
+    const { ok, output } = run(result.cli.path, rootDir, timeoutMs);
+    result.marketplace = { ok, output };
+    if (!ok) result.problems.push(`${MARKETPLACE_FILE} fails \`claude plugin validate\`:\n${tailOf(output)}`);
+  }
   for (const m of mods) {
     const { ok, output } = run(result.cli.path, m.dir, timeoutMs);
     result.checks.push({ ...m, ok, output });
-    if (!ok) {
-      const tail = output.split('\n').filter(Boolean).slice(-8).map((l) => `    ${l}`).join('\n');
-      result.problems.push(`stack ${m.stack}: mod ${m.mod} fails \`claude plugin validate\`:\n${tail}`);
-    }
+    if (!ok) result.problems.push(`stack ${m.stack}: mod ${m.mod} fails \`claude plugin validate\`:\n${tailOf(output)}`);
   }
   return result;
 }
@@ -124,7 +130,9 @@ export function formatModPluginChecks(result) {
     return [`skipped: claude plugin validate — \`claude\` is not on PATH; ${result.mods.length} mod(s) unchecked: ${result.mods.map(ref).join(', ')}`];
   }
   const who = result.cli.version ? `claude ${result.cli.version}` : 'claude';
-  return result.checks.map((c) => `${c.ok ? 'ok' : 'FAIL'}: claude plugin validate ${ref(c)} (${who})`);
+  const line = (ok, what) => `${ok ? 'ok' : 'FAIL'}: claude plugin validate ${what} (${who})`;
+  const market = result.marketplace ? [line(result.marketplace.ok, MARKETPLACE_FILE)] : [];
+  return [...market, ...result.checks.map((c) => line(c.ok, ref(c)))];
 }
 
 /**

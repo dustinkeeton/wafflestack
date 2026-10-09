@@ -13,6 +13,7 @@
     "wafflestack": "installer/cli.mjs"
   },
   "files": [
+    ".claude-plugin",
     "installer",
     "stacks",
     "schema",

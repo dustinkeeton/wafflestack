@@ -31,6 +31,19 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **The toolkit repo is a Claude Code plugin marketplace (#593, part of #592).** A root
+  `.claude-plugin/marketplace.json` named `wafflestack` lists every stack mod at its source dir
+  (today `waffle-view` → `./stacks/wafflestack/mods/waffle-view`), so
+  `claude plugin marketplace add dustinkeeton/wafflestack` offers it. `validate` keeps the file in
+  lockstep with the stacks (unlisted mod, dangling or undeclared source, or a name that disagrees
+  with `plugin.json` are problems) and, when `claude` is on PATH, runs `claude plugin validate` on
+  the marketplace as well as each mod source dir. New module `installer/lib/marketplace.mjs`; the
+  file ships in the npm package.
+
+  **Consumer impact:** none yet — `render` still emits `.claude/mods/`. Toolkit forks that ship
+  mods must add a `marketplace.json` entry per mod or `validate` fails.
+
 ## [0.17.0] - 2026-10-09
 
 ### Added

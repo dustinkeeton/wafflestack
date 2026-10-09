@@ -15,6 +15,7 @@ import { loadToolkit, MOD_MANIFEST, MOD_TARGETS, MOD_ENGINE_LAID, isEngineLaid }
 import { resolveRef, parseRef, normalizeItemRef, itemOutputMatcher, modOutputDir, computeSelection } from '../lib/refs.mjs';
 import { computeListModel, STATUS } from '../lib/list.mjs';
 import { WAFFLE_KINDS, refKindOf, waffleKindOf, canonicalWafflePath } from '../lib/registry.mjs';
+import { MARKETPLACE_FILE, validateMarketplace, marketplacePluginId } from '../lib/marketplace.mjs';
 
 const MOD_FILES = {
   [MOD_MANIFEST]: '{"name": "viewer", "version": "0.0.1"}\n',
@@ -41,6 +42,9 @@ function writeStack(root, name, extra = []) {
   writeMod(root, name);
 }
 
+const writeMarketplace = (root, plugins = [{ name: 'viewer', source: './stacks/mb/mods/viewer' }]) =>
+  write(root, MARKETPLACE_FILE, JSON.stringify({ name: 'fixture', owner: { name: 'x' }, plugins }));
+
 const project = (lines) => ['config: {}', ...lines, ''].join('\n');
 
 describe('mods/ render kind (#560)', () => {
@@ -52,6 +56,7 @@ describe('mods/ render kind (#560)', () => {
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-mods-'));
     write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: mods\nstacks: [mb]\n');
     writeStack(toolkitRoot, 'mb');
+    writeMarketplace(toolkitRoot);
     write(cwd, '.waffle/waffle.yaml', project(['targets: [claude, codex, agents-dir]', 'stacks: [mb]']));
   });
 
@@ -266,17 +271,56 @@ describe('mods/ render kind (#560)', () => {
     };
     const locate = () => ({ path: '/stub/bin/claude', version: '2.1.292' });
     const result = validateModPlugins(toolkitRoot, { locate, run, timeoutMs: 1234 });
-    assert.deepEqual(calls, [{ cli: '/stub/bin/claude', dir: path.join(toolkitRoot, 'stacks/mb/mods/viewer'), timeoutMs: 1234 }]);
+    assert.deepEqual(calls, [
+      { cli: '/stub/bin/claude', dir: toolkitRoot, timeoutMs: 1234 },
+      { cli: '/stub/bin/claude', dir: path.join(toolkitRoot, 'stacks/mb/mods/viewer'), timeoutMs: 1234 },
+    ]);
     assert.deepEqual(result.problems, []);
-    assert.deepEqual(formatModPluginChecks(result), ['ok: claude plugin validate mb/mods/viewer (claude 2.1.292)']);
+    assert.deepEqual(formatModPluginChecks(result), [
+      `ok: claude plugin validate ${MARKETPLACE_FILE} (claude 2.1.292)`,
+      'ok: claude plugin validate mb/mods/viewer (claude 2.1.292)',
+    ]);
 
     const failing = validateModPlugins(toolkitRoot, {
       locate,
       run: () => ({ ok: false, output: 'Validating plugin manifest\n  ✖ hooks/hooks.json: modules[0] ./missing.tsx not found\n' }),
     });
-    assert.equal(failing.problems.length, 1);
-    assert.match(failing.problems[0], /stack mb: mod viewer fails `claude plugin validate`:\n\s+Validating plugin manifest\n\s+✖ hooks\/hooks\.json/);
-    assert.deepEqual(formatModPluginChecks(failing), ['FAIL: claude plugin validate mb/mods/viewer (claude 2.1.292)']);
+    assert.equal(failing.problems.length, 2);
+    assert.match(failing.problems[0], /marketplace\.json fails `claude plugin validate`/);
+    assert.match(failing.problems[1], /stack mb: mod viewer fails `claude plugin validate`:\n\s+Validating plugin manifest\n\s+✖ hooks\/hooks\.json/);
+    assert.deepEqual(formatModPluginChecks(failing), [
+      `FAIL: claude plugin validate ${MARKETPLACE_FILE} (claude 2.1.292)`,
+      'FAIL: claude plugin validate mb/mods/viewer (claude 2.1.292)',
+    ]);
+  });
+
+  // #593: the repo root is a plugin marketplace listing every mod at its source dir.
+  test('validate keeps the marketplace in lockstep with the stack mods', () => {
+    const check = () => validateMarketplace(toolkitRoot, loadToolkit(toolkitRoot));
+    assert.deepEqual(check(), []);
+    assert.equal(marketplacePluginId('viewer', 'fixture'), 'viewer@fixture');
+
+    writeMarketplace(toolkitRoot, []);
+    assert.ok(check().some((p) => /mod mb\/mods\/viewer is not listed \(add source "\.\/stacks\/mb\/mods\/viewer"\)/.test(p)));
+
+    writeMarketplace(toolkitRoot, [{ name: 'viewer', source: './stacks/mb/mods/viewer' }, { name: 'ghost', source: './stacks/mb/mods/ghost' }]);
+    assert.deepEqual(check(), [`${MARKETPLACE_FILE}: plugin "ghost" points at nonexistent ./stacks/mb/mods/ghost`]);
+
+    writeMarketplace(toolkitRoot, [{ name: 'renamed', source: './stacks/mb/mods/viewer' }]);
+    assert.match(check().join('\n'), /is named "renamed" but its .*plugin\.json says "viewer"/);
+
+    writeMarketplace(toolkitRoot, [{ name: 'viewer', source: './stacks/mb/mods/viewer' }, { name: 'viewer', source: './stacks/mb' }]);
+    const dup = check();
+    assert.ok(dup.some((p) => /plugin name "viewer" is listed twice/.test(p)), JSON.stringify(dup));
+    assert.ok(dup.some((p) => /\.\/stacks\/mb, which is not a declared stack mod/.test(p)), JSON.stringify(dup));
+
+    write(toolkitRoot, MARKETPLACE_FILE, JSON.stringify({ name: 'other', plugins: [{ name: 'viewer', source: './stacks/mb/mods/viewer' }] }));
+    assert.deepEqual(check(), [`${MARKETPLACE_FILE}: name "other" must equal toolkit.yaml name "fixture"`]);
+
+    fs.rmSync(path.join(toolkitRoot, MARKETPLACE_FILE));
+    assert.ok(validateToolkit(toolkitRoot).some((p) => /marketplace\.json is missing but the toolkit ships 1 mod/.test(p)));
+    write(toolkitRoot, 'stacks/mb/stack.yaml', 'name: mb\ndescription: x.\n');
+    assert.deepEqual(check(), [], 'no mods, no marketplace needed');
   });
 
   test('validateModPlugins reports a skipped check — not a pass — when the CLI is absent', () => {
