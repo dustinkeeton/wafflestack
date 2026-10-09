@@ -4,7 +4,7 @@ import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
 import { loadToolkit } from './toolkit.mjs';
 import { computeSelection, itemOutputMatcher, fileMatchesTargets, closureFor, modOutputDir } from './refs.mjs';
-import { readTreeLock, missingConfigFor, summarizeConfigKeys, collectUsedKeys } from './render.mjs';
+import { readTreeLock, missingConfigFor, failingConfigFor, summarizeConfigKeys, collectUsedKeys } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 
 /** What the toolkit offers versus what this repo has — classified against the TREE lock, never the committed one (#317). */
@@ -101,8 +101,10 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     if (status !== STATUS.NOT_INSTALLED && status !== STATUS.PENDING_REMOVAL) return null;
     const nodes = closureForSafe(toolkit, { stack: stackName, kind, name, item });
     const config = missingConfigFor(toolkit, project, nodes);
+    const { pattern, modes } = failingConfigFor(toolkit, project, nodes);
     const unmanaged = nodes.flatMap((n) => unmanagedOutputs(cwd, n, project.targets, trackedFiles));
-    return config.length || unmanaged.length ? { config, unmanaged } : null;
+    const blockers = { config, pattern, modes, unmanaged };
+    return Object.values(blockers).some((list) => list.length) ? blockers : null;
   };
   const addRow = (rows, stackName, kind, name, optIn = false, item = null) => {
     const { status, removalReason } = classify(stackName, kind, name, item);
@@ -180,11 +182,16 @@ export function unmanagedOutputs(cwd, node, targets, trackedFiles) {
     .map(({ rel }) => rel);
 }
 
-/** One short phrase per blocker class, e.g. `needs config.arch.*` · `unmanaged file at X (needs --force)`. */
+/** One short phrase per blocker class, e.g. `needs config.arch.*` · `config.x fails its pattern` · `unmanaged file at X (needs --force)`. */
 export function describeBlockers(blockers) {
   if (!blockers) return [];
   const out = [];
   if (blockers.config.length) out.push(`needs ${summarizeConfigKeys(blockers.config)}`);
+  const fails = (keys, one, many) => `${summarizeConfigKeys(keys)} ${keys.length > 1 ? many : one}`;
+  if (blockers.pattern.length) out.push(fails(blockers.pattern, 'fails its pattern', 'fail their patterns'));
+  if (blockers.modes.length) {
+    out.push(fails(blockers.modes, 'is not one of its declared modes', 'are not among their declared modes'));
+  }
   const [first, ...more] = blockers.unmanaged;
   if (first) out.push(`unmanaged file at ${first}${more.length ? ` (+${more.length} more)` : ''} (needs --force)`);
   return out;

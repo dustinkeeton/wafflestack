@@ -787,28 +787,60 @@ export function configGuardProblems({ toolkit, project, selection }) {
   const problems = [];
   // A guard that fails to compile is a toolkit-authoring bug; surface it here, matching render.
   const guards = compileGuards(toolkit, problems);
+  const nodes = selection.items.map(({ stackName, stack, kind, item }) => ({ stack: stackName, stackDef: stack, kind, item }));
+  for (const f of guardFailures(toolkit, project, nodes, guards)) problems.push(...f.problems);
+  return problems;
+}
 
+/**
+ * Each used, resolved, guarded key whose value fails a guard, once per key: `{ key, stackName, stack,
+ * resolve, problems }`. Runs the real `substitute()` on `{{key}}` with the primary-target resolver.
+ */
+function* guardFailures(toolkit, project, nodes, guards) {
   const groups = new Map();
-  for (const { stackName, stack, kind, item } of selection.items) {
-    if (!groups.has(stackName)) groups.set(stackName, { stack, items: [] });
-    groups.get(stackName).items.push({ kind, item });
+  for (const n of nodes) {
+    const stack = n.stackDef ?? toolkit.stacks.get(n.stack);
+    if (!stack) continue;
+    if (!groups.has(n.stack)) groups.set(n.stack, { stack, items: [] });
+    groups.get(n.stack).items.push({ kind: n.kind, item: n.item });
   }
-
   const reported = new Set();
+  const target = project.targets?.[0] ?? 'claude';
   for (const [stackName, { stack, items }] of groups) {
-    // The primary target, exactly as render's `primaryResolver` does.
-    const target = project.targets?.[0] ?? 'claude';
     const resolve = makeResolver(stack, project.values, target);
     for (const key of collectUsedKeys(items)) {
       if (reported.has(key)) continue;
       if (!guards.patterns.has(key) && !guards.entryPatterns.has(key) && !guards.modes.has(key)) continue;
-      if (resolve(key) === undefined) continue; // see above — not this check's business
-      const before = problems.length;
+      if (resolve(key) === undefined) continue; // a missing key is missingConfigFor's to report
+      const problems = [];
       substitute(`{{${key}}}`, resolve, stack.declared, problems, `stack "${stackName}"`, guards);
-      if (problems.length > before) reported.add(key);
+      if (!problems.length) continue;
+      reported.add(key);
+      yield { key, stackName, stack, resolve, problems };
     }
   }
-  return problems;
+}
+
+/**
+ * Keys a set of items would use whose resolved value fails a guard render enforces (#578), split by
+ * guard: `modes` when only the `modes:`/`lockMode:` check fails, else `pattern`. `config.`-prefixed, sorted.
+ *
+ * @param {import('./toolkit.mjs').Toolkit} toolkit
+ * @param {import('./project.mjs').ProjectConfig} project
+ * @param {{ stack: string, kind: string, item: any }[]} nodes
+ * @returns {{ pattern: string[], modes: string[] }}
+ */
+export function failingConfigFor(toolkit, project, nodes) {
+  const guards = compileGuards(toolkit, []);
+  const unmoded = { ...guards, modes: new Map() };
+  const pattern = new Set();
+  const modes = new Set();
+  for (const { key, stackName, stack, resolve } of guardFailures(toolkit, project, nodes, guards)) {
+    const rest = [];
+    substitute(`{{${key}}}`, resolve, stack.declared, rest, `stack "${stackName}"`, unmoded);
+    (rest.length ? pattern : modes).add(`config.${key}`);
+  }
+  return { pattern: [...pattern].sort(), modes: [...modes].sort() };
 }
 
 /** Placeholder keys referenced by a set of selected items' source content. */

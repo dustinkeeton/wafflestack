@@ -29,7 +29,7 @@ function fixture(toolkitRoot) {
   write(toolkitRoot, 'stacks/cq/stack.yaml', [
     'name: cq',
     'description: Code quality.',
-    'skills: [qa, arch]',
+    'skills: [qa, arch, gate]',
     'files: [plain.txt, templ.txt]',
     'config:',
     '  arch.layers:',
@@ -41,10 +41,19 @@ function fixture(toolkitRoot) {
     '  note.text:',
     '    default: hi',
     '    description: A defaulted key.',
+    '  gate.mode:',
+    '    required: true',
+    '    description: A behavioral key.',
+    '    modes: [fast, slow]',
+    '  gate.tag:',
+    '    default: v1',
+    '    pattern: "^v[0-9]+$"',
+    '    description: A guarded key.',
     '',
   ].join('\n'));
   write(toolkitRoot, 'stacks/cq/skills/qa/SKILL.md', '---\nname: qa\ndescription: QA.\n---\n\nNo config.\n');
   write(toolkitRoot, 'stacks/cq/skills/arch/SKILL.md', '---\nname: arch\ndescription: Arch.\n---\n\n{{arch.layers}} {{arch.modules}}\n');
+  write(toolkitRoot, 'stacks/cq/skills/gate/SKILL.md', '---\nname: gate\ndescription: Gate.\n---\n\n{{gate.mode}} {{gate.tag}}\n');
   write(toolkitRoot, 'stacks/cq/files/plain.txt', 'verbatim\n');
   write(toolkitRoot, 'stacks/cq/files/templ.txt', 'say {{note.text}}\n');
 }
@@ -72,7 +81,7 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
 
   test('a row needing unset required config is marked, collapsed to its prefix', () => {
     const m = model();
-    assert.deepEqual(row(m, 'skills/arch').blockers, { config: ['config.arch.layers', 'config.arch.modules'], unmanaged: [] });
+    assert.deepEqual(row(m, 'skills/arch').blockers, { config: ['config.arch.layers', 'config.arch.modules'], pattern: [], modes: [], unmanaged: [] });
     assert.deepEqual(describeBlockers(row(m, 'skills/arch').blockers), ['needs config.arch.*']);
     assert.equal(row(m, 'skills/qa').blockers, null, 'qa needs nothing');
     assert.equal(row(m, 'files/templ.txt').blockers, null, 'a defaulted key is not a blocker');
@@ -110,7 +119,42 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     const w = result.warnings.find((x) => /requires skills\/qa/.test(x));
     assert.ok(w, JSON.stringify(result.warnings));
-    assert.match(w, /Cheapest fix: run `wafflestack install skills\/qa` .* it needs no config values\. Or add "cq" to `stacks:`.* needs config\.arch\.\*\./);
+    assert.match(w, /Cheapest fix: run `wafflestack install skills\/qa` .* it needs no config values\. Or add "cq" to `stacks:`.* needs config\.arch\.\*, config\.gate\.mode\./);
+  });
+
+  test('a set value failing its pattern or modes is flagged; a valid one is not (#578)', () => {
+    const cfg = (mode, tag) =>
+      `targets: [claude]\nstacks: [orch]\nconfig:\n  gate:\n    mode: ${mode}\n${tag ? `    tag: ${tag}\n` : ''}`;
+    write(cwd, '.waffle/waffle.yaml', cfg('fast', 'nope'));
+    let m = model();
+    assert.deepEqual(row(m, 'skills/gate').blockers, { config: [], pattern: ['config.gate.tag'], modes: [], unmanaged: [] });
+    assert.deepEqual(describeBlockers(row(m, 'skills/gate').blockers), ['config.gate.tag fails its pattern']);
+    assert.match(formatListTable(m), /skills\/gate {2}— config\.gate\.tag fails its pattern/);
+    assert.deepEqual(selectableChoices(m).find((c) => c.ref === 'skills/gate').blockers, ['config.gate.tag fails its pattern']);
+
+    write(cwd, '.waffle/waffle.yaml', cfg('sometimes'));
+    m = model();
+    assert.deepEqual(row(m, 'skills/gate').blockers.modes, ['config.gate.mode']);
+    assert.deepEqual(describeBlockers(row(m, 'skills/gate').blockers), ['config.gate.mode is not one of its declared modes']);
+
+    write(cwd, '.waffle/waffle.yaml', cfg('sometimes', 'bad'));
+    assert.deepEqual(describeBlockers(row(model(), 'skills/gate').blockers), [
+      'config.gate.tag fails its pattern',
+      'config.gate.mode is not one of its declared modes',
+    ]);
+
+    write(cwd, '.waffle/waffle.yaml', cfg('slow', 'v2'));
+    assert.equal(row(model(), 'skills/gate').blockers, null, 'valid values are not blockers');
+  });
+
+  test('a missing guarded key keeps the needs text, not a guard failure (#578)', () => {
+    assert.deepEqual(describeBlockers(row(model(), 'skills/gate').blockers), ['needs config.gate.mode']);
+  });
+
+  test('describeBlockers groups several failing keys like missing ones', () => {
+    assert.deepEqual(describeBlockers({ config: [], pattern: ['config.a.x', 'config.a.y'], modes: [], unmanaged: [] }), [
+      'config.a.* fail their patterns',
+    ]);
   });
 
   test('summarizeConfigKeys keeps a lone key whole', () => {
