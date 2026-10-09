@@ -27,16 +27,16 @@ export function normalizePrerequisites(raw) {
   });
 }
 
-/** Run a prerequisite's `check`: exit 0 => satisfied; a non-zero exit, signal, timeout, or spawn failure => unmet. */
+/** Run a prerequisite's `check`: exit 0 => ok; `failed` = signal, timeout, or spawn failure (#579). */
 export function runCheck(check, cwd, { timeoutMs = 15000 } = {}) {
-  if (!check) return { ran: false, ok: false };
+  if (!check) return { ran: false, ok: false, failed: false };
   let res;
   try {
     res = spawnSync(check, { cwd, shell: true, stdio: 'ignore', timeout: timeoutMs });
   } catch {
-    return { ran: true, ok: false };
+    return { ran: true, ok: false, failed: true };
   }
-  return { ran: true, ok: res.status === 0 };
+  return { ran: true, ok: res.status === 0, failed: Boolean(res.error) || res.status === null };
 }
 
 /** First executable named `name` on `env.PATH` (Windows: also `<name>.cmd`/`.exe`), or null. */

@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { sha256, exists } from './util.mjs';
-import { loadToolkit } from './toolkit.mjs';
+import { loadToolkit, loadToolkitWithSources } from './toolkit.mjs';
+import { defaultSourceCacheDir } from './sources.mjs';
+import { applicablePrerequisites, externalCheckGates, unacknowledgedStacks, runCheck } from './prerequisites.mjs';
 import { computeSelection, itemOutputMatcher, fileMatchesTargets, closureFor, modOutputDir } from './refs.mjs';
 import { readTreeLock, missingConfigFor, failingConfigFor, summarizeConfigKeys, collectUsedKeys, renderItemInMemory } from './render.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
@@ -27,9 +29,15 @@ export const REMOVAL_REASON = {
   DESELECTED: 'deselected',
 };
 
-export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
-  const toolkit = loadToolkit(toolkitRoot);
-
+/**
+ * @param {object} opts
+ * @param {string} opts.toolkitRoot
+ * @param {string} opts.cwd
+ * @param {string} [opts.toolkitVersion]
+ * @param {boolean} [opts.checkPrereqs] run each hinted prerequisite's `check` (#579)
+ * @param {string} [opts.sourceCacheDir]
+ */
+export function computeListModel({ toolkitRoot, cwd, toolkitVersion, checkPrereqs = false, sourceCacheDir = defaultSourceCacheDir() }) {
   const notes = [];
   let project = null;
   let configError = null;
@@ -42,6 +50,18 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     }
   }
 
+  // Declared external sources load like render loads them (#579); one that fails degrades to a note.
+  let toolkit = loadToolkit(toolkitRoot);
+  let externalNames = [];
+  if (project?.externalStacks?.length) {
+    try {
+      toolkit = loadToolkitWithSources({ builtinRoot: toolkitRoot, externalStacks: project.externalStacks, cwd, cacheDir: sourceCacheDir });
+      externalNames = project.externalStacks.map((s) => s.name);
+    } catch (err) {
+      notes.push(`external stacks not listed — ${err.message}`);
+    }
+  }
+
   const lock = readTreeLock(cwd);
   const lockFiles = lock?.files ?? {};
   const trackedFiles = new Set(Object.keys(lockFiles));
@@ -49,10 +69,20 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
   const versionSkew = Boolean(lock && lockVersion && toolkitVersion && lockVersion !== toolkitVersion);
 
   const selection = project
-    ? computeSelection(toolkit, project, trackedFiles)
+    ? computeSelection(toolkit, { ...project, stacks: [...project.stacks, ...externalNames] }, trackedFiles)
     : { items: [], closures: [], errors: [] };
   const selectedKeys = new Set(selection.items.map((i) => `${i.stackName}::${i.kind}/${i.item.name}`));
-  const enabledStacks = new Set(project?.stacks ?? []);
+  const enabledStacks = new Set([...(project?.stacks ?? []), ...externalNames]);
+  const untrusted = project && externalNames.length ? unacknowledgedStacks(externalCheckGates(toolkit, project)) : new Set();
+  const prereqKey = (p) => `${p.stackName}::${p.kind}/${p.name}`;
+  const alreadyApplicable = new Set(applicablePrerequisites(toolkit, selection).map(prereqKey));
+  /** @type {Map<string, 'met' | 'unmet' | 'unknown'>} */
+  const probed = new Map();
+  const probe = (p) => {
+    const key = prereqKey(p);
+    if (!probed.has(key)) probed.set(key, untrusted.has(p.stackName) ? 'unknown' : probeVerdict(runCheck(p.check, cwd)));
+    return probed.get(key);
+  };
 
   // `render`'s own prune question, asked selection-WIDE: is a live lock path produced by ANY selected
   // item? `owned` below matches stack-blind, so "this row is deselected" alone would announce the
@@ -105,7 +135,14 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     const unmanaged = nodes.flatMap((n) =>
       unmanagedOutputs(cwd, n, project.targets, trackedFiles, () => renderItemInMemory({ toolkit, project, cwd, node: n, toolkitVersion })),
     );
-    const blockers = { config, pattern, modes, unmanaged };
+    const prereqs = applicablePrerequisites(toolkit, { items: nodes.map((n) => ({ stackName: n.stack, kind: n.kind, item: n.item })) })
+      .filter((p) => !alreadyApplicable.has(prereqKey(p)));
+    const named = (list) => [...new Set(list.map((p) => p.name))];
+    const prerequisites = checkPrereqs ? [] : named(prereqs);
+    const unmetPrereqs = checkPrereqs ? named(prereqs.filter((p) => probe(p) === 'unmet')) : [];
+    const unknownPrereqs = checkPrereqs ? named(prereqs.filter((p) => probe(p) === 'unknown')) : [];
+    const trust = [...new Set(nodes.map((n) => n.stack).filter((s) => untrusted.has(s)))];
+    const blockers = { config, pattern, modes, unmanaged, prerequisites, unmetPrereqs, unknownPrereqs, trust };
     return Object.values(blockers).some((list) => list.length) ? blockers : null;
   };
   const addRow = (rows, stackName, kind, name, optIn = false, item = null) => {
@@ -138,6 +175,12 @@ export function computeListModel({ toolkitRoot, cwd, toolkitVersion }) {
     stacks,
     counts,
   };
+}
+
+/** A probe that could not run, timed out or died on a signal is `unknown` — never `met` (#579). */
+function probeVerdict({ ran, ok, failed }) {
+  if (!ran || failed) return 'unknown';
+  return ok ? 'met' : 'unmet';
 }
 
 /** A closure the toolkit cannot resolve is `validate`'s to report — the row then just carries no blockers. */
@@ -194,7 +237,10 @@ export function unmanagedOutputs(cwd, node, targets, trackedFiles, render = () =
     .map(({ rel }) => rel);
 }
 
-/** One short phrase per blocker class, e.g. `needs config.arch.*` · `config.x fails its pattern` · `unmanaged file at X (needs --force)`. */
+/**
+ * One short phrase per blocker class, e.g. `needs config.arch.*` · `unmanaged file at X (needs --force)`.
+ * Prerequisites and trust are advisory hints (#579): the row stays selectable.
+ */
 export function describeBlockers(blockers) {
   if (!blockers) return [];
   const out = [];
@@ -206,6 +252,10 @@ export function describeBlockers(blockers) {
   }
   const [first, ...more] = blockers.unmanaged;
   if (first) out.push(`unmanaged file at ${first}${more.length ? ` (+${more.length} more)` : ''} (needs --force)`);
+  if (blockers.prerequisites.length) out.push(`has prerequisites: ${blockers.prerequisites.join(', ')}`);
+  if (blockers.unmetPrereqs.length) out.push(`unmet prerequisites: ${blockers.unmetPrereqs.join(', ')}`);
+  if (blockers.unknownPrereqs.length) out.push(`prerequisites unchecked (probe failed or not run): ${blockers.unknownPrereqs.join(', ')}`);
+  if (blockers.trust.length) out.push(`external source — trust prompt on apply (${blockers.trust.join(', ')})`);
   return out;
 }
 
