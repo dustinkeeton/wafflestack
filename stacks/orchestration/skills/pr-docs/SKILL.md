@@ -13,7 +13,8 @@ Bring the docs up to date **inside the PR that changed the code**, so a reviewer
 
 - **By hand:** `/pr-docs <PR#>` on any open PR. Running it by hand is consent on its own. The key below is **not** consulted.
 - **From delegate / autopilot:** they read `delegate.docsRefresh` (this project: `{{delegate.docsRefresh}}`, default `true`) and call this skill once per PR when it is `true`. When it is `false`, they skip the call. That is the consumer's opt-out from running three agents per PR. The key gates the **caller**. This skill never reads it to refuse an explicit invocation.
-- **Never twice per PR.** When autopilot's `/audit` gate runs on a PR, its chain already invokes `docs` scoped to the same diff. Don't run this skill on that PR as well.
+- **Never twice per PR.** When autopilot's `/audit` gate runs on a PR, its chain already invokes `docs` scoped to the same diff. Don't run this skill on that PR as well. Autopilot turns `delegate.docsRefresh` off for its delegate run whenever the audit step is on.
+- **Where delegate calls it:** Phase 4, after post-agent verification. The orchestrator runs it, not the spawned specialist, and arms auto-merge itself afterwards.
 
 ## Preconditions
 
