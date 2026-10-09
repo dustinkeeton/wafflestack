@@ -8650,8 +8650,8 @@ describe('install: persistence and eject include-cleanup', () => {
   });
 
   test('unambiguous item persists unqualified', () => {
-    install(['skills/issue']);
-    assert.match(read(cwd, '.waffle/waffle.yaml'), /include:\n\s*- skills\/issue/);
+    install(['skills/deleg']); // orch is unselected — a base item would be stack-selected (#571)
+    assert.match(read(cwd, '.waffle/waffle.yaml'), /include:\n\s*- skills\/deleg/);
   });
 
   test('reports the dependency closure', () => {
@@ -12678,5 +12678,72 @@ describe('external stack check commands: gated on a recorded acknowledgement (#4
     assert.match(onBranch, /ref "main" looks like a branch, not a tag or commit — these commands can change under the pin/);
     assert.match(onBranch, /- \[require\] tool gh: gh\. — check: `command -v gh`/);
     assert.doesNotMatch(formatCheckGate(gate('v1.2.0')), /looks like a branch/);
+  });
+});
+
+describe('install of a ref a selected stack already provides persists nothing (#571)', () => {
+  const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  let root;
+  let cwd;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-sel-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-sel-'));
+    makeRefFixture(root);
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const CONFIG = '.waffle/waffle.yaml';
+  const writeConfig = (lines) => write(cwd, CONFIG, `${lines.join('\n')}\n`);
+  const config = () => YAML.parse(read(cwd, CONFIG));
+  const install = (toolkitRoot, refs, logs = []) => installRefs({ toolkitRoot, cwd, refs, log: (m) => logs.push(m) });
+
+  test('an already-selected skill leaves waffle.yaml byte-identical and says so', () => {
+    writeConfig(['targets: [claude]', 'stacks: [wafflestack]', 'config: {}']);
+    const before = read(cwd, CONFIG);
+    const logs = [];
+    const result = install(repoRoot, ['skills/waffle-doctor'], logs);
+    assert.deepEqual(result.added, []);
+    assert.equal(read(cwd, CONFIG), before);
+    assert.equal(result.rollback(), false);
+    assert.ok(logs.some((l) => l === 'note: skills/waffle-doctor is already selected via stack wafflestack — nothing to persist'), logs.join('\n'));
+    assert.ok(!logs.some((l) => /^installing/.test(l)), logs.join('\n'));
+  });
+
+  test('an already-selected mod also points at `wafflestack setup` for activation', () => {
+    writeConfig(['targets: [claude]', 'stacks: [wafflestack]', 'config: {}']);
+    const before = read(cwd, CONFIG);
+    const logs = [];
+    install(repoRoot, ['mods/waffle-view'], logs);
+    assert.equal(read(cwd, CONFIG), before);
+    assert.ok(logs.some((l) => /mods\/waffle-view is already selected via stack wafflestack.*`wafflestack setup`.*--plugin-dir/.test(l)), logs.join('\n'));
+  });
+
+  test('an ejected item of a selected stack still un-ejects, without a redundant include', () => {
+    writeConfig(['targets: [claude]', 'stacks: [base]', 'eject: [skills/git]', 'config: {}']);
+    const logs = [];
+    const result = install(root, ['skills/git'], logs);
+    assert.deepEqual(result.unejected, [{ ref: 'skills/git', kind: 'skills', name: 'git' }]);
+    assert.equal('eject' in config(), false);
+    assert.equal('include' in config(), false);
+    assert.ok(logs.some((l) => /un-ejecting skills\/git/.test(l)), logs.join('\n'));
+    assert.ok(!logs.some((l) => /already selected/.test(l)), logs.join('\n'));
+  });
+
+  test('an item whose stack is not selected still lands in include:', () => {
+    writeConfig(['targets: [claude]', 'stacks: [orch]', 'config: {}']);
+    const logs = [];
+    const result = install(root, ['skills/git'], logs);
+    assert.deepEqual(result.added, ['skills/git']);
+    assert.deepEqual(config().include, ['skills/git']);
+    assert.ok(logs.some((l) => /^installing skills\/git/.test(l)), logs.join('\n'));
+  });
+
+  test('a qualified ref to another stack\'s variant is not shadowed by the selected one', () => {
+    writeConfig(['targets: [claude]', 'stacks: [alt]', 'config: {}']);
+    install(root, ['alt2/skills/dupe']);
+    assert.deepEqual(config().include, ['alt2/skills/dupe']);
   });
 });

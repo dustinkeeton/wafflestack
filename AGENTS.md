@@ -123,6 +123,7 @@ export function modOutputDir(name)             // → '.claude/mods/<name>' — 
 export function normalizeItemRef(ref)          // → "agents/NAME" | "skills/NAME" | "files/PATH" | "mods/NAME"
 export function itemsOfKind(stack, kind)       // → stack.agents | stack.skills | stack.files | stack.mods
 export function findItems(toolkit, kind, name) // → [{ stackName, item }] across the toolkit
+export function selectingStack(toolkit, stacks, target) // → the selected stack already rendering a resolved item ref (opt-in syrup never counts), or null (#571)
 export function parseRef(raw)                  // → { form: 'qualified'|'item'|'stack', … }
 export function resolveRef(toolkit, raw)       // → { type:'stack',name } | { type:'item',kind,name,stack,item,canonicalRef,forwardedFrom? }; throws — registry-gated (#335): a `wip` ref is REFUSED (its own message, not "unknown"; wip matches are filtered before the unknown/ambiguous count decides), a `replaced` ref is FORWARDED to its successor with forwardedFrom set
 export function resolveDepStrict(toolkit, refString, preferStack) // → { kind,name,stack,item }; throws (authored requires: dep)
