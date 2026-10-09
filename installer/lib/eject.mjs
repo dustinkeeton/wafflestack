@@ -16,6 +16,7 @@ import {
   renameLegacyStacksKey,
   dropIncludeEntries,
   loadProjectConfig,
+  appendSeqIn,
 } from './project.mjs';
 
 /**
@@ -130,15 +131,14 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const added = [];
   const closures = [];
   const unejected = [];
-  let touchedStacks = false;
-  let touchedInclude = false;
+  const appended = { stacks: /** @type {string[]} */ ([]), include: /** @type {string[]} */ ([]) };
 
   for (const target of resolved) {
     if (target.type === 'stack') {
       if (!stacks.includes(target.name)) {
         stacks.push(target.name);
         added.push(target.name);
-        touchedStacks = true;
+        appended.stacks.push(target.name);
       }
       log(`installing ${target.name} (stack)`);
       const stack = toolkit.stacks.get(target.name);
@@ -160,7 +160,7 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     if (!via && !include.includes(canonical)) {
       include.push(canonical);
       added.push(canonical);
-      touchedInclude = true;
+      appended.include.push(canonical);
     }
     const deps = closureDeps(toolkit, target);
     closures.push({ ref: canonical, deps });
@@ -169,16 +169,26 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     for (const dep of deps) if (isEjected(dep)) log(stillEjected(dep));
   }
 
-  if (touchedStacks) doc.set('stacks', stacks);
-  if (touchedInclude) doc.set('include', include);
+  if (appended.stacks.length) doc.set('stacks', stacks);
+  if (appended.include.length) doc.set('include', include);
   if (unejected.length) {
     if (ejected.length) doc.set('eject', ejected);
     else doc.delete('eject');
   }
-  const wrote = renamedKey || touchedStacks || touchedInclude || unejected.length > 0;
-  if (wrote) fs.writeFileSync(configFile, doc.toString());
+  const wrote = renamedKey || appended.stacks.length > 0 || appended.include.length > 0 || unejected.length > 0;
+  if (wrote) fs.writeFileSync(configFile, spliceAppends(original, appended, renamedKey || unejected.length > 0) ?? doc.toString());
 
   return { added, closures, unejected, rollback: () => { if (wrote) fs.writeFileSync(configFile, original); return wrote; } };
+}
+
+/** Pure-append installs splice (#575); any other mutation, or one unspliceable key, re-serializes the whole save. */
+function spliceAppends(original, appended, otherEdits) {
+  if (otherEdits) return null;
+  let text = original;
+  for (const key of /** @type {const} */ (['stacks', 'include'])) {
+    if (text !== null && appended[key].length) text = appendSeqIn(text, key, appended[key]);
+  }
+  return text;
 }
 
 const alreadySelected = (ref, kind, stack) =>

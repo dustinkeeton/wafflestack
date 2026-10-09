@@ -195,6 +195,7 @@ export function normalizeStackEntries(raw)     // → { stacks, externalStacks }
 export function renameLegacyStacksKey(doc)     // in-place comment-preserving bundles:→stacks: KEY rename; → true if renamed
 export function dropIncludeEntries(doc, shouldDrop) // → dropped refs, file order — removes matching include: items IN PLACE (sibling comments survive), deletes an emptied key; shared by eject() and the 0.16.0 migration (#501)
 export function setScalarIn(source, keyPath, value) // → new text | null (#372/#386: splices ONE scalar's own bytes via node.range, re-parse-verified; NEVER creates a key — missing key/parent, non-scalar, or already-equal value → null, writes nothing)
+export function appendSeqIn(source, key, values) // → new text | null (#575): byte-verbatim append of strings to a TOP-LEVEL sequence — after a block seq's last item, `[]` expanded to block items, or an absent key appended at EOF; CRLF kept; re-parse proves the whole doc; non-empty flow / null / non-seq → null. installRefs splices pure appends with it, any other edit (un-eject, bundles: rename) or a null → full re-serialize
 export function resolveConfigFile(cwd), resolveLocalConfigFile(cwd), resolveLockFile(cwd) // → { file, legacy, note }
 export function localLockPath(cwd)             // → absolute .waffle/waffle.local.lock.json (no legacy generations)
 export function migrateLegacyDotfiles(cwd)     // → [{ from, to }] — in-place chain .wafflestack.* → .waffle.* → .waffle/waffle.* (idempotent)
