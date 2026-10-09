@@ -3,11 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { computeListModel, formatListTable, selectableChoices, describeBlockers } from '../lib/list.mjs';
+import { checksDigest, runCheck } from '../lib/prerequisites.mjs';
+import { loadToolkitWithSources } from '../lib/toolkit.mjs';
 import { renderProject, summarizeConfigKeys } from '../lib/render.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
 import { reconcileToolkitRefPins, staleTagMentions } from '../lib/upgrade.mjs';
 import { eject } from '../lib/eject.mjs';
+
+const NO_HINTS = { prerequisites: [], unmetPrereqs: [], unknownPrereqs: [], trust: [] };
 
 const write = (root, rel, content) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
@@ -84,7 +90,7 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
 
   test('a row needing unset required config is marked, collapsed to its prefix', () => {
     const m = model();
-    assert.deepEqual(row(m, 'skills/arch').blockers, { config: ['config.arch.layers', 'config.arch.modules'], pattern: [], modes: [], unmanaged: [] });
+    assert.deepEqual(row(m, 'skills/arch').blockers, { config: ['config.arch.layers', 'config.arch.modules'], pattern: [], modes: [], unmanaged: [], ...NO_HINTS });
     assert.deepEqual(describeBlockers(row(m, 'skills/arch').blockers), ['needs config.arch.*']);
     assert.equal(row(m, 'skills/qa').blockers, null, 'qa needs nothing');
     assert.equal(row(m, 'files/templ.txt').blockers, null, 'a defaulted key is not a blocker');
@@ -158,7 +164,7 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
       `targets: [claude]\nstacks: [orch]\nconfig:\n  gate:\n    mode: ${mode}\n${tag ? `    tag: ${tag}\n` : ''}`;
     write(cwd, '.waffle/waffle.yaml', cfg('fast', 'nope'));
     let m = model();
-    assert.deepEqual(row(m, 'skills/gate').blockers, { config: [], pattern: ['config.gate.tag'], modes: [], unmanaged: [] });
+    assert.deepEqual(row(m, 'skills/gate').blockers, { config: [], pattern: ['config.gate.tag'], modes: [], unmanaged: [], ...NO_HINTS });
     assert.deepEqual(describeBlockers(row(m, 'skills/gate').blockers), ['config.gate.tag fails its pattern']);
     assert.match(formatListTable(m), /skills\/gate {2}— config\.gate\.tag fails its pattern/);
     assert.deepEqual(selectableChoices(m).find((c) => c.ref === 'skills/gate').blockers, ['config.gate.tag fails its pattern']);
@@ -183,7 +189,7 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
   });
 
   test('describeBlockers groups several failing keys like missing ones', () => {
-    assert.deepEqual(describeBlockers({ config: [], pattern: ['config.a.x', 'config.a.y'], modes: [], unmanaged: [] }), [
+    assert.deepEqual(describeBlockers({ config: [], pattern: ['config.a.x', 'config.a.y'], modes: [], unmanaged: [], ...NO_HINTS }), [
       'config.a.* fail their patterns',
     ]);
   });
@@ -191,6 +197,142 @@ describe('picker blockers and the cheaper dependency fix (#549)', () => {
   test('summarizeConfigKeys keeps a lone key whole', () => {
     assert.equal(summarizeConfigKeys(['config.data.brief']), 'config.data.brief');
     assert.equal(summarizeConfigKeys(['config.a.x', 'config.a.y', 'config.b']), 'config.a.*, config.b');
+  });
+});
+
+describe('picker hints: prerequisites and external-source trust (#579)', () => {
+  let toolkitRoot;
+  let extRoot;
+  let cwd;
+  let cacheDir;
+  const sentinel = (name) => path.join(cwd, `${name}.ran`);
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-hints-'));
+    extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ext-hints-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-hints-'));
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-hints-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: hints\nstacks: [core, ops]\n');
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [base]\nrequires:\n  skills/base:\n    - skills/triage\n');
+    write(toolkitRoot, 'stacks/core/skills/base/SKILL.md', '---\nname: base\ndescription: Base.\n---\n\nBase.\n');
+    write(toolkitRoot, 'stacks/ops/stack.yaml', [
+      'name: ops',
+      'description: Ops.',
+      'skills: [triage, quiet]',
+      'prerequisites:',
+      '  - { kind: label, name: "waffle:reassess", description: Label., check: "true", items: [skills/triage] }',
+      '  - { kind: tool, name: missing, description: Absent., check: "false", items: [skills/triage] }',
+      `  - { kind: env, name: touched, description: Proof., check: 'touch "${'${PWD}'}/ops.ran"', items: [skills/triage] }`,
+      '',
+    ].join('\n'));
+    write(toolkitRoot, 'stacks/ops/skills/triage/SKILL.md', '---\nname: triage\ndescription: Triage.\n---\n\nTriage.\n');
+    write(toolkitRoot, 'stacks/ops/skills/quiet/SKILL.md', '---\nname: quiet\ndescription: Quiet.\n---\n\nQuiet.\n');
+    write(extRoot, 'stacks/acme/stack.yaml', [
+      'name: acme',
+      'description: Acme.',
+      'skills: [tool]',
+      'files: [extra.txt]',
+      'optIn: [files/extra.txt]',
+      'prerequisites:',
+      `  - { kind: tool, name: acme-probe, description: Probe., check: 'touch "${'${PWD}'}/acme.ran"' }`,
+      '',
+    ].join('\n'));
+    write(extRoot, 'stacks/acme/skills/tool/SKILL.md', '---\nname: tool\ndescription: Tool.\n---\n\nTool.\n');
+    write(extRoot, 'stacks/acme/files/extra.txt', 'extra\n');
+    config();
+  });
+  afterEach(() => {
+    for (const d of [toolkitRoot, extRoot, cwd, cacheDir]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  function config({ ext = false, ack = null } = {}) {
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude]',
+      'stacks:',
+      '  - core',
+      ...(ext ? ['  - name: acme', `    source: ${extRoot}`, ...(ack ? [`    acknowledgedChecks: ${ack}`] : [])] : []),
+      'config: {}',
+      '',
+    ].join('\n'));
+  }
+  const model = (opts = {}) => computeListModel({ toolkitRoot, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cacheDir, ...opts });
+  const row = (m, ref) => m.stacks.flatMap((s) => s.rows).find((r) => r.ref === ref);
+
+  test('a row whose closure declares prerequisites shows the hint, and no probe runs', () => {
+    config();
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [base]\n');
+    const m = model();
+    assert.deepEqual(row(m, 'skills/triage').blockers, { config: [], pattern: [], modes: [], unmanaged: [], ...NO_HINTS, prerequisites: ['waffle:reassess', 'missing', 'touched'] });
+    assert.deepEqual(describeBlockers(row(m, 'skills/triage').blockers), ['has prerequisites: waffle:reassess, missing, touched']);
+    assert.equal(row(m, 'skills/quiet').blockers, null, 'a prerequisite scoped by items: does not leak to a sibling');
+    assert.equal(fs.existsSync(sentinel('ops')), false, 'listing never runs a check');
+    const choice = selectableChoices(m).find((c) => c.ref === 'skills/triage');
+    assert.ok(choice, 'a hinted row stays selectable');
+    assert.match(formatListTable(m), /skills\/triage {2}— has prerequisites: waffle:reassess/);
+  });
+
+  test("a dependency's prerequisites surface on the dependent's row", () => {
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    assert.deepEqual(row(model(), 'skills/base').blockers.prerequisites, ['waffle:reassess', 'missing', 'touched']);
+  });
+
+  test('--check-prereqs shows only the unmet ones', () => {
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [base]\n');
+    const b = row(model({ checkPrereqs: true }), 'skills/triage').blockers;
+    assert.deepEqual(b.prerequisites, [], 'the unchecked hint is replaced by the verdicts');
+    assert.deepEqual(b.unmetPrereqs, ['missing']);
+    assert.deepEqual(b.unknownPrereqs, []);
+    assert.equal(fs.existsSync(sentinel('ops')), true, 'the checks did run');
+    assert.deepEqual(describeBlockers(b), ['unmet prerequisites: missing']);
+  });
+
+  test('a probe that breaks counts as unknown, never met', () => {
+    assert.deepEqual(runCheck('sleep 5', cwd, { timeoutMs: 50 }), { ran: true, ok: false, failed: true });
+    assert.deepEqual(runCheck('', cwd), { ran: false, ok: false, failed: false });
+    assert.deepEqual(runCheck('exit 3', cwd), { ran: true, ok: false, failed: false });
+    write(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [base, slow]\nprerequisites:\n  - { kind: tool, name: hangs, description: Hangs., check: "kill -9 $$", items: [skills/slow] }\n');
+    write(toolkitRoot, 'stacks/core/skills/slow/SKILL.md', '---\nname: slow\ndescription: Slow.\n---\n\nSlow.\n');
+    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const b = row(model({ checkPrereqs: true }), 'skills/slow').blockers;
+    assert.deepEqual(b.unknownPrereqs, ['hangs']);
+    assert.deepEqual(b.unmetPrereqs, []);
+    assert.deepEqual(describeBlockers(b), ['prerequisites unchecked (probe failed or not run): hangs']);
+  });
+
+  test('a row from an untrusted external source shows the trust hint; a trusted one does not', () => {
+    config({ ext: true });
+    let m = model();
+    assert.ok(m.stacks.some((s) => s.name === 'acme' && s.enabled), 'the declared external stack is listed');
+    assert.equal(row(m, 'skills/tool').blockers, null, 'a row already selected is not hinted — the prompt is render\'s own');
+    const extra = row(m, 'files/extra.txt');
+    assert.equal(extra.status, 'not-installed');
+    assert.deepEqual(extra.blockers.trust, ['acme']);
+    assert.ok(describeBlockers(extra.blockers).includes('external source — trust prompt on apply (acme)'));
+
+    const checked = row(model({ checkPrereqs: true }), 'files/extra.txt').blockers;
+    assert.equal(fs.existsSync(sentinel('acme')), false, 'an untrusted source\'s check never runs');
+    assert.deepEqual(checked.unknownPrereqs, [], 'its stack-wide prerequisite already applies, so it is not new to this row');
+
+    const digest = checksDigest(
+      loadToolkitWithSources({ builtinRoot: toolkitRoot, externalStacks: [{ name: 'acme', source: extRoot, sourceType: 'path', ref: null }], cwd, cacheDir }).stacks.get('acme'),
+    );
+    config({ ext: true, ack: digest });
+    m = model();
+    assert.equal(row(m, 'files/extra.txt').blockers, null, 'an acknowledged source is trusted');
+  });
+
+  test('a built-in row never carries the trust hint, and an unloadable source degrades to a note', () => {
+    write(cwd, '.waffle/waffle.yaml', `targets: [claude]\nstacks:\n  - core\n  - name: gone\n    source: ${path.join(extRoot, 'nope')}\nconfig: {}\n`);
+    const m = model();
+    assert.ok(m.notes.some((n) => /external stacks not listed/.test(n)), JSON.stringify(m.notes));
+    assert.deepEqual(row(m, 'skills/triage').blockers.trust, []);
+  });
+
+  test('CLI list --check-prereqs is accepted and documented in help', () => {
+    const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+    const run = spawnSync(process.execPath, [cli, 'list', '--check-prereqs', '--cwd', cwd], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(run.status, 0, run.stderr);
+    const help = spawnSync(process.execPath, [cli, 'help'], { encoding: 'utf8', timeout: 20000 });
+    assert.match(help.stdout, /--check-prereqs {3}list: run the hinted prerequisite checks/);
   });
 });
 

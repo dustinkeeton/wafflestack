@@ -226,9 +226,10 @@ try {
     case 'list': {
       const interactive = extractFlag(args, '--interactive');
       const noColor = extractFlag(args, '--no-color');
+      const checkPrereqs = extractFlag(args, '--check-prereqs');
       if (args.length) fail(`list takes no refs (got ${args.join(', ')}) — it reports the whole toolkit surface`);
       warnProvenance(identity()); // read-only report: warn, never refuse (see `setup`)
-      const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: pkg.version });
+      const model = computeListModel({ toolkitRoot, cwd, toolkitVersion: pkg.version, checkPrereqs });
 
       // The DEFAULT must stay the plain table — CI, pipes and agents drive this CLI, so a missing
       // TTY degrades to the table rather than blocking on readline.
@@ -416,6 +417,7 @@ function helpText() {
     '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
     '                    state: print the state document as JSON (the shape AGENTS.md documents)',
     '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
+    '  --check-prereqs   list: run the hinted prerequisite checks and show only the unmet ones',
     '  --disable SKILL   toggle: render SKILL slash-only (disable-model-invocation: true); repeatable',
     '  --enable SKILL    toggle: let an agent invoke SKILL again; repeatable. Either flag skips the picker',
     '  --allow-unreleased  render/install/upgrade/reinstall/doctor --verify-render: write files from',
