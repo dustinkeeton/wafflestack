@@ -1,6 +1,7 @@
 // @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import YAML from 'yaml';
 import { readYaml, deepMerge, exists, lookupPath } from './util.mjs';
 import { normalizeModelInvocation } from './model-invocation.mjs';
@@ -405,6 +406,128 @@ function spliceScalar(source, node, keyPath, value) {
   // could never fail alone, the branch-that-cannot-fail defect #386 exists to remove.
   const check = YAML.parseDocument(next);
   return !check.errors?.length && check.getIn(keyPath) === value ? next : null;
+}
+
+/**
+ * BYTE-VERBATIM append of string `values` to the TOP-LEVEL sequence `key` — the sequence twin of
+ * `setScalarIn` (#575). Splices a block sequence after its last item, expands an empty `[]` to block
+ * items, or appends an absent key at EOF; every other line stays byte-identical.
+ *
+ * @param {string} source the raw text of a YAML file
+ * @param {string} key a top-level mapping key, e.g. `include`
+ * @param {string[]} values
+ * @returns {string|null} the rewritten text, or null when it can't splice (the caller re-serializes)
+ */
+export function appendSeqIn(source, key, values) {
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length || !YAML.isMap(doc.contents) || doc.contents.flow || !values.length) return null;
+  const pair = doc.contents.items.find((p) => YAML.isScalar(p.key) && p.key.value === key);
+  const current = pair ? doc.get(key) : [];
+  if (!YAML.isSeq(current) && !Array.isArray(current)) return null;
+  const expected = { ...doc.toJSON(), [key]: [...(Array.isArray(current) ? current : current.toJSON()), ...values] };
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
+  const items = (/** @type {string} */ indent) =>
+    values.map((v) => `${indent}- ${YAML.stringify(v, { lineWidth: 0 }).trimEnd()}`);
+
+  let next = null;
+  const node = /** @type {any} */ (pair?.value);
+  if (!pair) {
+    const body = source.length && !source.endsWith('\n') ? `${source}${eol}` : source;
+    next = `${body}${key}:${eol}${items('  ').join(eol)}${eol}`;
+  } else if (node.flow && node.items.length === 0) {
+    const keyStart = /** @type {any} */ (pair.key).range[0];
+    const keyEnd = /** @type {any} */ (pair.key).range[1];
+    if (!/^[ \t]*:[ \t]*\[[ \t]*\]$/.test(source.slice(keyEnd, node.range[1]))) return null;
+    const keyIndent = source.slice(source.lastIndexOf('\n', keyStart - 1) + 1, keyStart);
+    const nl = source.indexOf('\n', node.range[1]);
+    const cut = nl === -1 ? source.length : source[nl - 1] === '\r' ? nl - 1 : nl; // a trailing comment stays on the key line
+    const lines = items(`${keyIndent}  `).map((l) => `${eol}${l}`).join('');
+    next = `${source.slice(0, keyEnd)}:${source.slice(node.range[1], cut)}${lines}${source.slice(cut)}`;
+  } else if (!node.flow && node.items.length) {
+    const last = node.items.at(-1);
+    if (!YAML.isScalar(last) || !last.range) return null;
+    const lineStart = source.lastIndexOf('\n', last.range[0] - 1) + 1;
+    const dash = /^([ \t]*)-[ \t]+$/.exec(source.slice(lineStart, last.range[0]));
+    if (!dash) return null;
+    const nl = source.indexOf('\n', last.range[1]);
+    const lines = items(dash[1]).map((l) => `${l}${eol}`).join('');
+    next = nl === -1 ? `${source}${eol}${lines}` : `${source.slice(0, nl + 1)}${lines}${source.slice(nl + 1)}`;
+  }
+  return proven(next, expected);
+}
+
+/**
+ * BYTE-VERBATIM removal of the TOP-LEVEL sequence `key`'s string entries matching `shouldDrop` — the
+ * inverse of `appendSeqIn`. Cuts each dropped block item's whole line; an emptied sequence (block or a
+ * one-line flow) loses its key lines too, as `dropIncludeEntries` deletes it. A partly-kept flow → null.
+ *
+ * @param {string} source the raw text of a YAML file
+ * @param {string} key a top-level mapping key, e.g. `eject`
+ * @param {(entry: string) => boolean} shouldDrop
+ * @returns {string|null} the rewritten text, or null when nothing matched or it can't splice
+ */
+export function removeSeqIn(source, key, shouldDrop) {
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length || !YAML.isMap(doc.contents)) return null;
+  const pair = doc.contents.items.find((p) => YAML.isScalar(p.key) && p.key.value === key);
+  const node = /** @type {any} */ (pair?.value);
+  if (!YAML.isSeq(node)) return null;
+  const drop = (/** @type {any} */ n) => YAML.isScalar(n) && typeof n.value === 'string' && shouldDrop(n.value);
+  const dropped = /** @type {any[]} */ (node.items.filter(drop));
+  if (!dropped.length) return null;
+  const kept = node.items.filter((/** @type {any} */ n) => !drop(n));
+  const expected = doc.toJSON();
+  if (kept.length) expected[key] = kept.map((/** @type {any} */ n) => n.toJSON());
+  else delete expected[key];
+
+  /** @type {[number, number][]} */
+  const cuts = [];
+  if (!kept.length) {
+    const keyStart = /** @type {any} */ (pair).key.range[0];
+    if (lineStartOf(source, keyStart) !== keyStart) return null;
+    cuts.push([keyStart, lineEndOf(source, node.flow ? node.range[1] : /** @type {any} */ (node.items.at(-1)).range[1])]);
+  } else if (node.flow) {
+    return null;
+  } else {
+    for (const n of dropped) {
+      const start = lineStartOf(source, n.range[0]);
+      const end = lineEndOf(source, n.range[1]);
+      if (!/^[ \t]*-[ \t]+$/.test(source.slice(start, n.range[0]))) return null;
+      if (!/^[ \t]*(#[^\n]*)?\r?\n?$/.test(source.slice(n.range[1], end))) return null;
+      cuts.push([start, end]);
+    }
+  }
+  let next = source;
+  for (const [start, end] of cuts.reverse()) next = `${next.slice(0, start)}${next.slice(end)}`;
+  return proven(next, expected);
+}
+
+/**
+ * BYTE-VERBATIM rename of a TOP-LEVEL plain-scalar key — the text twin of `renameLegacyStacksKey`.
+ *
+ * @param {string} source the raw text of a YAML file
+ * @param {string} from
+ * @param {string} to
+ * @returns {string|null} the rewritten text, or null when `from` is absent, `to` exists, or it can't splice
+ */
+export function renameKeyIn(source, from, to) {
+  const doc = YAML.parseDocument(source);
+  if (doc.errors?.length || !YAML.isMap(doc.contents) || doc.has(to)) return null;
+  const pair = doc.contents.items.find((p) => YAML.isScalar(p.key) && p.key.value === from);
+  const keyNode = /** @type {any} */ (pair?.key);
+  if (!keyNode || keyNode.type !== 'PLAIN' || source.slice(keyNode.range[0], keyNode.range[1]) !== from) return null;
+  const { [from]: value, ...rest } = doc.toJSON();
+  return proven(`${source.slice(0, keyNode.range[0])}${to}${source.slice(keyNode.range[1])}`, { ...rest, [to]: value });
+}
+
+const lineStartOf = (/** @type {string} */ s, /** @type {number} */ i) => s.lastIndexOf('\n', i - 1) + 1;
+const lineEndOf = (/** @type {string} */ s, /** @type {number} */ i) => (s.indexOf('\n', i) + 1 || s.length);
+
+/** Re-parsing is the proof: the whole document must equal the intended edit, or nothing splices. */
+function proven(/** @type {string|null} */ next, /** @type {unknown} */ expected) {
+  if (next === null) return null;
+  const check = YAML.parseDocument(next);
+  return !check.errors?.length && isDeepStrictEqual(check.toJSON(), expected) ? next : null;
 }
 
 /**

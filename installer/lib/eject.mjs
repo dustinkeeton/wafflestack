@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import YAML from 'yaml';
 import { exists, writeFileEnsuringDir } from './util.mjs';
 import { readLock, readLocalLock, readTreeLock } from './render.mjs';
@@ -16,6 +17,9 @@ import {
   renameLegacyStacksKey,
   dropIncludeEntries,
   loadProjectConfig,
+  appendSeqIn,
+  removeSeqIn,
+  renameKeyIn,
 } from './project.mjs';
 
 /**
@@ -32,20 +36,22 @@ export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
 
   const { file: configFile, legacy, note } = resolveConfigFile(cwd);
   if (legacy) log(note);
-  const doc = YAML.parseDocument(fs.readFileSync(configFile, 'utf8'));
-  let dirty = false;
+  const original = fs.readFileSync(configFile, 'utf8');
+  const doc = YAML.parseDocument(original);
+  const steps = [];
   const current = doc.get('eject');
   const list = current ? current.toJSON() : [];
   if (!list.includes(ref)) {
     doc.set('eject', [...list, ref]);
-    dirty = true;
+    steps.push((t) => appendSeqIn(t, 'eject', [ref]));
   }
   // Drop any matching include entry (qualified or not): the two lists are mutually exclusive (#497).
-  const droppedInclude = dropIncludeEntries(doc, (r) => includeRefMatches(r, kind, name)).length > 0;
-  if (droppedInclude) dirty = true;
+  const matchesInclude = (r) => includeRefMatches(r, kind, name);
+  const droppedInclude = dropIncludeEntries(doc, matchesInclude).length > 0;
+  if (droppedInclude) steps.push((t) => removeSeqIn(t, 'include', matchesInclude));
   // Only a dropped include can orphan anything: a stack expansion never walks a closure.
   const before = toolkitRoot && droppedInclude ? selectedRefs(toolkitRoot, cwd) : null;
-  if (dirty) fs.writeFileSync(configFile, doc.toString());
+  if (steps.length) fs.writeFileSync(configFile, spliceAll(original, steps, doc) ?? doc.toString());
   const after = before ? selectedRefs(toolkitRoot, cwd) : null;
   const orphaned = after ? [...before].filter((r) => r !== ref && !after.has(r)).sort((a, b) => a.localeCompare(b)) : [];
 
@@ -130,15 +136,14 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const added = [];
   const closures = [];
   const unejected = [];
-  let touchedStacks = false;
-  let touchedInclude = false;
+  const appended = { stacks: /** @type {string[]} */ ([]), include: /** @type {string[]} */ ([]) };
 
   for (const target of resolved) {
     if (target.type === 'stack') {
       if (!stacks.includes(target.name)) {
         stacks.push(target.name);
         added.push(target.name);
-        touchedStacks = true;
+        appended.stacks.push(target.name);
       }
       log(`installing ${target.name} (stack)`);
       const stack = toolkit.stacks.get(target.name);
@@ -160,7 +165,7 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     if (!via && !include.includes(canonical)) {
       include.push(canonical);
       added.push(canonical);
-      touchedInclude = true;
+      appended.include.push(canonical);
     }
     const deps = closureDeps(toolkit, target);
     closures.push({ ref: canonical, deps });
@@ -169,16 +174,31 @@ export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
     for (const dep of deps) if (isEjected(dep)) log(stillEjected(dep));
   }
 
-  if (touchedStacks) doc.set('stacks', stacks);
-  if (touchedInclude) doc.set('include', include);
+  if (appended.stacks.length) doc.set('stacks', stacks);
+  if (appended.include.length) doc.set('include', include);
   if (unejected.length) {
     if (ejected.length) doc.set('eject', ejected);
     else doc.delete('eject');
   }
-  const wrote = renamedKey || touchedStacks || touchedInclude || unejected.length > 0;
-  if (wrote) fs.writeFileSync(configFile, doc.toString());
+  const wrote = renamedKey || appended.stacks.length > 0 || appended.include.length > 0 || unejected.length > 0;
+  const steps = [];
+  if (renamedKey) steps.push((t) => renameKeyIn(t, 'bundles', 'stacks'));
+  for (const key of /** @type {const} */ (['stacks', 'include'])) {
+    if (appended[key].length) steps.push((t) => appendSeqIn(t, key, appended[key]));
+  }
+  const unejectedRefs = new Set(unejected.map(({ kind, name }) => `${kind}/${name}`));
+  if (unejected.length) steps.push((t) => removeSeqIn(t, 'eject', (e) => unejectedRefs.has(normalizeItemRef(e))));
+  if (wrote) fs.writeFileSync(configFile, spliceAll(original, steps, doc) ?? doc.toString());
 
   return { added, closures, unejected, rollback: () => { if (wrote) fs.writeFileSync(configFile, original); return wrote; } };
+}
+
+/** Byte-level save (#575): every step must splice AND land on `doc`'s content, else null — never a mix with re-serialize. */
+function spliceAll(original, steps, doc) {
+  let text = original;
+  for (const step of steps) if ((text = step(text)) === null) return null;
+  const check = YAML.parseDocument(text);
+  return !check.errors?.length && isDeepStrictEqual(check.toJSON(), doc.toJSON()) ? text : null;
 }
 
 const alreadySelected = (ref, kind, stack) =>

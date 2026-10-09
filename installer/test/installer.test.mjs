@@ -34,6 +34,9 @@ import {
   HARNESS_BUILTINS,
   BASELINE_GITIGNORE_ENTRIES,
   AVATARS_DIR,
+  appendSeqIn,
+  removeSeqIn,
+  renameKeyIn,
 } from '../lib/project.mjs';
 
 // This suite spawns the REAL cli.mjs, and render/install/upgrade/doctor REFUSE when the toolkit is not a release (#373).
@@ -12745,5 +12748,158 @@ describe('install of a ref a selected stack already provides persists nothing (#
     writeConfig(['targets: [claude]', 'stacks: [alt]', 'config: {}']);
     install(root, ['alt2/skills/dupe']);
     assert.deepEqual(config().include, ['alt2/skills/dupe']);
+  });
+});
+
+describe('install splice-saves waffle.yaml (#575)', () => {
+  let root;
+  let cwd;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-splice-'));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-splice-'));
+    makeRefFixture(root);
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const CONFIG = '.waffle/waffle.yaml';
+  const install = (refs) => installRefs({ toolkitRoot: root, cwd, refs });
+  const STYLED = [
+    '# my config',
+    "targets: [ claude ]   # spaced flow",
+    'stacks:',
+    '  - base # keep',
+    'include:',
+    '  # one-offs',
+    '  - alt/skills/dupe # why',
+    '#  - skills/old',
+    'config:',
+    '  base:',
+    "    botEmail: 'bot@x.io'   # quoted",
+    '',
+  ].join('\n');
+
+  test('an item install changes only the include: block, byte-for-byte', () => {
+    write(cwd, CONFIG, STYLED);
+    install(['skills/deleg']);
+    assert.equal(read(cwd, CONFIG), STYLED.replace('  - alt/skills/dupe # why\n', '  - alt/skills/dupe # why\n  - skills/deleg\n'));
+  });
+
+  test('a stack install splices stacks: the same way', () => {
+    write(cwd, CONFIG, STYLED);
+    install(['orch']);
+    assert.equal(read(cwd, CONFIG), STYLED.replace('  - base # keep\n', '  - base # keep\n  - orch\n'));
+  });
+
+  test('an empty include: [] expands to a block list, keeping its comment and the rest', () => {
+    const src = 'targets: [claude]\nstacks: []\ninclude: [] # one-offs\n#  - skills/issue\nconfig: {}\n';
+    write(cwd, CONFIG, src);
+    install(['skills/git']);
+    assert.equal(read(cwd, CONFIG), src.replace('include: [] # one-offs\n', 'include: # one-offs\n  - skills/git\n'));
+  });
+
+  test('an absent include: key is appended at EOF (no trailing newline is repaired)', () => {
+    write(cwd, CONFIG, '# c\ntargets: [claude]\nconfig: {}');
+    install(['skills/git']);
+    assert.equal(read(cwd, CONFIG), '# c\ntargets: [claude]\nconfig: {}\ninclude:\n  - skills/git\n');
+  });
+
+  test('CRLF line endings are kept', () => {
+    const src = 'targets: [claude]\r\ninclude:\r\n- skills/git\r\nconfig: {}\r\n';
+    write(cwd, CONFIG, src);
+    install(['skills/gpm']);
+    assert.equal(read(cwd, CONFIG), 'targets: [claude]\r\ninclude:\r\n- skills/git\r\n- skills/gpm\r\nconfig: {}\r\n');
+  });
+
+  test('a non-empty flow include: falls back to a full re-serialize', () => {
+    write(cwd, CONFIG, 'targets: [claude]\ninclude: [skills/git]\nconfig: {}\n');
+    install(['skills/gpm']);
+    assert.deepEqual(YAML.parse(read(cwd, CONFIG)).include, ['skills/git', 'skills/gpm']);
+  });
+
+  test('an un-eject + include append splices end-to-end, cutting only the eject: line', () => {
+    const src = '# c\ntargets: [claude]\ninclude:\n  - skills/git # why\neject:\n  - skills/gpm # was ours\n  - alt/skills/dupe\nconfig: {}\n';
+    write(cwd, CONFIG, src);
+    const { unejected } = install(['skills/gpm']);
+    assert.equal(unejected.length, 1);
+    assert.equal(read(cwd, CONFIG), '# c\ntargets: [claude]\ninclude:\n  - skills/git # why\n  - skills/gpm\neject:\n  - alt/skills/dupe\nconfig: {}\n');
+  });
+
+  test('an un-eject that empties a one-line eject: drops that line', () => {
+    write(cwd, CONFIG, 'targets: [claude]\ninclude: [] # one-offs\neject: [skills/gpm] # mine\nconfig: {}\n');
+    install(['skills/gpm']);
+    assert.equal(read(cwd, CONFIG), 'targets: [claude]\ninclude: # one-offs\n  - skills/gpm\nconfig: {}\n');
+  });
+
+  test('an un-eject from a partly-kept flow eject: falls back to a full re-serialize', () => {
+    write(cwd, CONFIG, 'targets: [claude]\ninclude:\n  - skills/git # why\neject: [skills/gpm, alt/skills/dupe]\nconfig: {}\n');
+    install(['skills/gpm']);
+    const cfg = YAML.parse(read(cwd, CONFIG));
+    assert.deepEqual(cfg.include, ['skills/git', 'skills/gpm']);
+    assert.deepEqual(cfg.eject, ['alt/skills/dupe']);
+  });
+
+  test('a legacy bundles: key is renamed in place alongside the append', () => {
+    const src = '# c\ntargets: [claude]\nbundles: # legacy\n  - base\ninclude: []\nconfig: {}\n';
+    write(cwd, CONFIG, src);
+    install(['skills/deleg']);
+    assert.equal(read(cwd, CONFIG), '# c\ntargets: [claude]\nstacks: # legacy\n  - base\ninclude:\n  - skills/deleg\nconfig: {}\n');
+  });
+
+  test('a quoted bundles: key falls back to a full re-serialize', () => {
+    write(cwd, CONFIG, "targets: [claude]\n'bundles': [base]\nconfig: {}\n");
+    install(['skills/deleg']);
+    const cfg = YAML.parse(read(cwd, CONFIG));
+    assert.deepEqual(cfg.stacks, ['base']);
+    assert.equal(cfg.bundles, undefined);
+    assert.deepEqual(cfg.include, ['skills/deleg']);
+  });
+
+  test('eject() splices: its include: line is cut and eject: is appended', () => {
+    write(cwd, CONFIG, STYLED);
+    eject({ cwd, item: 'skills/dupe' });
+    assert.equal(read(cwd, CONFIG), `${STYLED.replace('include:\n  # one-offs\n  - alt/skills/dupe # why\n', '')}eject:\n  - skills/dupe\n`);
+  });
+
+  test('eject() appends after an existing block eject: list', () => {
+    const src = 'targets: [claude]\neject:\n  - skills/git # mine\nconfig: {}\n';
+    write(cwd, CONFIG, src);
+    eject({ cwd, item: 'skills/gpm' });
+    assert.equal(read(cwd, CONFIG), 'targets: [claude]\neject:\n  - skills/git # mine\n  - skills/gpm\nconfig: {}\n');
+  });
+
+  test('eject() onto a non-empty flow eject: falls back to a full re-serialize', () => {
+    write(cwd, CONFIG, 'targets: [claude]\neject: [skills/git]\nconfig: {}\n');
+    eject({ cwd, item: 'skills/gpm' });
+    assert.deepEqual(YAML.parse(read(cwd, CONFIG)).eject, ['skills/git', 'skills/gpm']);
+  });
+
+  test('an already-selected item stays a no-op: the file is untouched (#571)', () => {
+    write(cwd, CONFIG, STYLED);
+    install(['skills/git']);
+    assert.equal(read(cwd, CONFIG), STYLED);
+  });
+
+  test('appendSeqIn declines what it cannot splice, and proves what it can', () => {
+    assert.equal(appendSeqIn('include: [a]\n', 'include', ['b']), null, 'non-empty flow');
+    assert.equal(appendSeqIn('include:\n', 'include', ['b']), null, 'null value');
+    assert.equal(appendSeqIn('include: a\n', 'include', ['b']), null, 'scalar value');
+    assert.equal(appendSeqIn('- a\n', 'include', ['b']), null, 'non-map document');
+    assert.equal(appendSeqIn('a: [\n', 'include', ['b']), null, 'unparseable');
+    assert.equal(appendSeqIn('include:\n  - a', 'include', ['x: y']), 'include:\n  - a\n  - "x: y"\n');
+  });
+
+  test('removeSeqIn and renameKeyIn decline what they cannot splice', () => {
+    const isB = (r) => r === 'b';
+    assert.equal(removeSeqIn('eject: [a, b]\n', 'eject', isB), null, 'partly-kept flow');
+    assert.equal(removeSeqIn('eject:\n  - a\n', 'eject', isB), null, 'nothing matched');
+    assert.equal(removeSeqIn('eject: b\n', 'eject', isB), null, 'scalar value');
+    assert.equal(removeSeqIn('x:\n  eject: [b]\n', 'eject', isB), null, 'not top-level');
+    assert.equal(removeSeqIn('a: 1\r\neject:\r\n  - a\r\n  - b # x\r\n', 'eject', isB), 'a: 1\r\neject:\r\n  - a\r\n');
+    assert.equal(renameKeyIn("'bundles': [x]\n", 'bundles', 'stacks'), null, 'quoted key');
+    assert.equal(renameKeyIn('bundles: [x]\nstacks: []\n', 'bundles', 'stacks'), null, 'target exists');
+    assert.equal(renameKeyIn('a: 1\n', 'bundles', 'stacks'), null, 'absent');
   });
 });
