@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-09
+
 **Mods load with no flags (#592).** A stack mod such as `waffle-view` now ships through the
 toolkit's own Claude Code plugin marketplace and is enabled in the consumer's committed
 `.claude/settings.json`, pinned to the `waffle.toolkitRef` release — so `/waffle-view` works in a

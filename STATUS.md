@@ -3,7 +3,7 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.17.0 (2026-10-09; pre-1.0 — the file contract can still change
+- **Version**: v0.17.1 (2026-10-09; pre-1.0 — the file contract can still change
   between minor releases).
 - **Last updated**: 2026-10-09
 - **Health**: 🟢 tests 1664 in 226 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `0e674a0` (PR #589's merge)
