@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-11
+
 ### Changed
 - **`/waffle-view` wears the brand (#604).** The pane colours each kind of content by role from
   the wafflestack palette (`assets/README.md`): a Golden box-drawing waffle and title in the
