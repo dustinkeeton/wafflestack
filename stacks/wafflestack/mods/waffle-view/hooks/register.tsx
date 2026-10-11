@@ -3,20 +3,29 @@ import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
 import type { WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
 import {
+  BRAND,
+  CAPTION_TONE,
+  HEADING_TONE,
   LOCAL_BIN,
   LOCAL_CLI,
   PANE,
+  TAGLINE,
   TITLE,
+  WAFFLE_GLYPH,
   formatMode,
   isOverridden,
   isPersonsPrompt,
+  keyTone,
   parseStateOutput,
   promptSkill,
   resolveArgv,
   selectKeys,
   selectSlice,
+  sourceTone,
+  statusTone,
   tokensOf,
   valueLines,
+  valueTone,
 } from './state'
 
 const doc = atom({ plugin: 'waffle-view', key: 'doc' } as const, null)
@@ -108,35 +117,42 @@ export const register: Register = on => {
 
     const section = (title: string, rows: RenderNode[]) => (
       <Box flexDirection="column" marginBottom={1}>
-        <Text bold underline>{title}</Text>
+        <Text underline {...HEADING_TONE}>{title}</Text>
         {rows}
       </Box>
     )
     const dim = (text: string) => <Text dimColor>{text}</Text>
+    const caption = (text: string) => <Text {...CAPTION_TONE}>{text}</Text>
+    const lockNote = (key: WaffleViewKey) =>
+      isOverridden(key) ? <Text color="warning">{` (lock: ${formatMode(key.canonical)})`}</Text> : null
 
     const keyRow = (key: WaffleViewKey) => {
-      const over = isOverridden(key)
-      const value = formatMode(key.value) + (over ? ` (lock: ${formatMode(key.canonical)})` : '')
       const tokens = tokensOf(key)
-      const style = over ? { color: 'warning' as const } : {}
       if (!wide) {
         return (
-          <Text wrap="truncate-end" {...style}>
-            {`${key.key}  ${value}  ${key.source}${tokens ? `  ${tokens}` : ''}`}
-          </Text>
+          <Box>
+            <Text {...keyTone(key)}>{key.key}</Text>
+            <Text {...valueTone(key.value)}>{`  ${formatMode(key.value)}`}</Text>
+            {lockNote(key)}
+            <Text {...sourceTone(key.source)}>{`  ${key.source}`}</Text>
+            {tokens && <Text wrap="truncate-end" {...CAPTION_TONE}>{`  ${tokens}`}</Text>}
+          </Box>
         )
       }
 
       return (
         <Box>
           <Box width={30}>
-            <Text wrap="truncate-end">{key.key}</Text>
+            <Text wrap="truncate-end" {...keyTone(key)}>{key.key}</Text>
           </Box>
           <Box width={26}>
-            <Text bold {...style}>{value}</Text>
+            <Text {...valueTone(key.value)}>{formatMode(key.value)}</Text>
+            {lockNote(key)}
           </Box>
-          <Box width={16}>{dim(key.source)}</Box>
-          <Text dimColor wrap="truncate-end">{tokens}</Text>
+          <Box width={16}>
+            <Text {...sourceTone(key.source)}>{key.source}</Text>
+          </Box>
+          <Text wrap="truncate-end" {...CAPTION_TONE}>{tokens}</Text>
         </Box>
       )
     }
@@ -145,10 +161,10 @@ export const register: Register = on => {
       const keys = selectKeys(state, context)
       const header = wide ? (
         <Box>
-          <Box width={30}>{dim('key')}</Box>
-          <Box width={26}>{dim('value')}</Box>
-          <Box width={16}>{dim('source')}</Box>
-          {dim('tokens')}
+          <Box width={30}>{caption('key')}</Box>
+          <Box width={26}>{caption('value')}</Box>
+          <Box width={16}>{caption('source')}</Box>
+          {caption('tokens')}
         </Box>
       ) : null
       const rows: RenderNode[] =
@@ -164,8 +180,8 @@ export const register: Register = on => {
       if (config.length === 0) return null
       const rows: RenderNode[] = config.flatMap(({ key, value, source }) => [
         <Box>
-          <Text bold>{key}</Text>
-          {dim(`  ${source}`)}
+          <Text bold color={BRAND.cream}>{key}</Text>
+          <Text {...sourceTone(source)}>{`  ${source}`}</Text>
         </Box>,
         ...valueLines(value).map(line => <Text wrap="truncate-end">{`  ${line}`}</Text>),
       ])
@@ -187,7 +203,7 @@ export const register: Register = on => {
       const { checkpoints, memory } = delegate
       const latest = checkpoints.latest
       const rows: RenderNode[] = [
-        <Text>
+        <Text {...(checkpoints.exists ? {} : { dimColor: true })}>
           {checkpoints.exists
             ? `delegate checkpoints: ${checkpoints.runs} run${checkpoints.runs === 1 ? '' : 's'} in ${checkpoints.path}`
             : `delegate checkpoints: none (${checkpoints.path})`}
@@ -195,13 +211,13 @@ export const register: Register = on => {
       ]
       if (latest) {
         rows.push(
-          <Text {...(latest.parseError ? { color: 'error' as const } : {})}>
+          <Text {...statusTone(latest.parseError === null)}>
             {`  latest ${latest.runId} · phase ${latest.lastPhase ?? '—'} · ${latest.mtime}${latest.parseError ? ` · unreadable: ${latest.parseError}` : ''}`}
           </Text>,
         )
       }
       rows.push(
-        <Text {...(memory.overCap ? { color: 'error' as const } : {})}>
+        <Text {...(memory.exists ? statusTone(!memory.overCap) : { dimColor: true })}>
           {memory.exists
             ? `delegate memory: ${memory.bytes}/${memory.maxBytes} bytes${memory.overCap ? ' — OVER CAP' : ''}`
             : `delegate memory: none (${memory.path})`}
@@ -224,8 +240,8 @@ export const register: Register = on => {
 
       return section('Locks', [
         <Text>{`tree: ${locks.tree}`}</Text>,
-        <Text>{`committed: ${describe(locks.committed)}`}</Text>,
-        <Text {...(locks.inSync === false ? { color: 'warning' as const } : {})}>
+        <Text {...(locks.committed.present ? {} : { color: 'warning' as const })}>{`committed: ${describe(locks.committed)}`}</Text>,
+        <Text {...(locks.local.present ? statusTone(locks.inSync, 'warning') : { dimColor: true })}>
           {`local: ${locks.local.present ? describe(locks.local) + sync : 'none'}`}
         </Text>,
       ])
@@ -233,9 +249,9 @@ export const register: Register = on => {
 
     const driftSection = ({ drift }: WaffleViewDoc) => {
       const rows: RenderNode[] = drift.ok
-        ? [<Text color="success">clean — the render matches the lock</Text>]
+        ? [<Text {...statusTone(true)}>clean — the render matches the lock</Text>]
         : [
-            <Text color="error">{`${drift.modified.length} modified · ${drift.missing.length} missing`}</Text>,
+            <Text {...statusTone(false)}>{`${drift.modified.length} modified · ${drift.missing.length} missing`}</Text>,
             ...drift.modified.slice(0, 5).map(file => dim(`  M ${file}`)),
             ...drift.missing.slice(0, 5).map(file => dim(`  ? ${file}`)),
           ]
@@ -254,17 +270,23 @@ export const register: Register = on => {
         ...project.errors.map(problem => <Text color="error">{problem}</Text>),
       ])
 
-    const heading = state ? (
+    // The splash moment: the brand waffle, Golden, with the toolkit's name and version beside it.
+    const heading = (
       <Box marginBottom={1}>
-        <Text bold>{`wafflestack ${state.cli.version}`}</Text>
-        {dim(` (${state.cli.status}${state.cli.commit ? ` ${state.cli.commit.slice(0, 7)}` : ''})`)}
-        {slice && <Text color="suggestion">{` · /${slice.skill}`}</Text>}
-        {busy && dim(' · refreshing…')}
-      </Box>
-    ) : (
-      <Box marginBottom={1}>
-        <Text bold>wafflestack</Text>
-        {dim(busy ? ' · reading state…' : ' · no state read yet')}
+        <Box flexDirection="column" marginRight={2}>
+          {WAFFLE_GLYPH.map(row => <Text {...HEADING_TONE}>{row}</Text>)}
+        </Box>
+        <Box flexDirection="column">
+          <Box>
+            <Text {...HEADING_TONE}>{state ? `wafflestack ${state.cli.version}` : 'wafflestack'}</Text>
+            {state
+              ? dim(` (${state.cli.status}${state.cli.commit ? ` ${state.cli.commit.slice(0, 7)}` : ''})`)
+              : dim(busy ? ' · reading state…' : ' · no state read yet')}
+            {slice && <Text color="suggestion">{` · /${slice.skill}`}</Text>}
+            {state && busy && dim(' · refreshing…')}
+          </Box>
+          {caption(TAGLINE)}
+        </Box>
       </Box>
     )
 
@@ -278,7 +300,7 @@ export const register: Register = on => {
         {state && runFilesSection(state)}
         {state && !slice && locksSection(state)}
         {state && !slice && driftSection(state)}
-        {slice && dim(`sliced to what /${slice.skill} reads — a plain prompt restores the full view`)}
+        {slice && caption(`sliced to what /${slice.skill} reads — a plain prompt restores the full view`)}
       </Box>
     )
   })

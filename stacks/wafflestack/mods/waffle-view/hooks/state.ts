@@ -1,4 +1,4 @@
-import type { WaffleViewContext, WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
+import type { WaffleViewContext, WaffleViewDoc, WaffleViewKey, WaffleViewLayer, WaffleViewSlice } from '../types'
 
 export const PANE = 'waffle-view'
 export const TITLE = 'Waffle view'
@@ -100,3 +100,48 @@ export function tokensOf(key: WaffleViewKey): string {
 }
 
 export const isOverridden = (key: WaffleViewKey): boolean => key.value !== key.canonical
+
+// The brand palette (assets/README.md, "Palette"): every colour role below resolves to one of
+// these, or to a theme status key; a pane with colour stripped keeps bold/dim and the literal words.
+export const BRAND = {
+  golden: '#F5C752',
+  syrup: '#F08A1D',
+  pocket: '#DE8127',
+  cream: '#FFF3DC',
+  caption: '#C9A87C',
+} as const
+
+export type Tone = { color?: string; dimColor?: boolean; bold?: boolean }
+
+// The 2-row variant of the CLI waffle (assets/README.md, "CLI waffle"), for the pane header.
+export const WAFFLE_GLYPH = ['┏━┳━┳━┓', '┗━┻━┻━┛'] as const
+export const TAGLINE = 'one batter, every repo'
+
+export const HEADING_TONE: Tone = { color: BRAND.golden, bold: true }
+export const CAPTION_TONE: Tone = { color: BRAND.caption, dimColor: true }
+
+// A key name: Cream, or the theme's warning when its value differs from the lock.
+export const keyTone = (key: WaffleViewKey): Tone => (isOverridden(key) ? { color: 'warning' } : { color: BRAND.cream })
+
+// A behavioral value by kind: `true` Golden, `false` muted, `prompt` Syrup, other text Cream, unset dim.
+export function valueTone(value: WaffleViewKey['value']): Tone {
+  if (value === null || value === undefined) return { dimColor: true }
+  if (value === true) return { color: BRAND.golden, bold: true }
+  if (value === false) return { color: BRAND.caption, bold: true }
+  if (value === 'prompt') return { color: BRAND.syrup, bold: true }
+  return { color: BRAND.cream, bold: true }
+}
+
+// Where a value came from: the stack default dim, the project's `waffle.yaml` Pocket, the
+// machine's local overlay Syrup.
+export function sourceTone(source: WaffleViewLayer): Tone {
+  if (source === 'local-overlay') return { color: BRAND.syrup }
+  if (source === 'waffle.yaml') return { color: BRAND.pocket }
+  return { dimColor: true }
+}
+
+// A pass/fail state in the theme's status colours; null is no verdict.
+export function statusTone(ok: boolean | null, failure: 'error' | 'warning' = 'error'): Tone {
+  if (ok === null) return {}
+  return { color: ok ? 'success' : failure }
+}

@@ -2,17 +2,23 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import type { WaffleViewDoc } from '../types'
 import {
+  BRAND,
   LOCAL_BIN,
   LOCAL_CLI,
   PANE,
+  WAFFLE_GLYPH,
   isPersonsPrompt,
+  keyTone,
   parseStateOutput,
   promptSkill,
   resolveArgv,
   selectKeys,
   selectSlice,
+  sourceTone,
+  statusTone,
   tokensOf,
   valueLines,
+  valueTone,
 } from './state'
 
 const STATE_ARGS = ['state', '--json', '--offline']
@@ -208,6 +214,26 @@ describe('state helpers', () => {
     expect(valueLines({ a: 1 })).toEqual(['{"a":1}'])
     expect(valueLines(null)).toEqual(['—'])
   })
+
+  // The colour roles (#604): brand palette for content, theme status keys for pass/fail only.
+  test('tones tell value kinds, source layers and overrides apart, and status stays theme-coloured', () => {
+    expect(valueTone(true)).toEqual({ color: BRAND.golden, bold: true })
+    expect(valueTone(false)).toEqual({ color: BRAND.caption, bold: true })
+    expect(valueTone('prompt')).toEqual({ color: BRAND.syrup, bold: true })
+    expect(valueTone('v0.16.1')).toEqual({ color: BRAND.cream, bold: true })
+    expect(valueTone(null)).toEqual({ dimColor: true })
+    expect(sourceTone('stack-default')).toEqual({ dimColor: true })
+    expect(sourceTone('waffle.yaml')).toEqual({ color: BRAND.pocket })
+    expect(sourceTone('local-overlay')).toEqual({ color: BRAND.syrup })
+    expect(keyTone(DOC.keys[0]!)).toEqual({ color: 'warning' })
+    expect(keyTone(DOC.keys[1]!)).toEqual({ color: BRAND.cream })
+    expect(statusTone(true)).toEqual({ color: 'success' })
+    expect(statusTone(false)).toEqual({ color: 'error' })
+    expect(statusTone(false, 'warning')).toEqual({ color: 'warning' })
+    expect(statusTone(null)).toEqual({})
+    expect(WAFFLE_GLYPH).toEqual(['┏━┳━┳━┓', '┗━┻━┻━┛'])
+    expect(Object.values(BRAND).every(hex => /^#[0-9A-F]{6}$/.test(hex))).toBe(true)
+  })
 })
 
 describe('the pane', () => {
@@ -236,13 +262,21 @@ describe('the pane', () => {
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await $.ui.mount({ plugin: PANE, surface, component: 'Pane', requestId: PANE, props: PANE_PROPS })
       expect(await ui.find({ type: 'Text', text: /wafflestack 0\.16\.1/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'issue.confirmGate' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'false (lock: true)' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'on --confirm · off --yes' })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: WAFFLE_GLYPH[0] }))?.props.color).toBe(BRAND.golden)
+      expect((await ui.find({ type: 'Text', text: 'Keys (2)' }))?.props).toMatchObject({ color: BRAND.golden, bold: true, underline: true })
+      expect((await ui.find({ type: 'Text', text: 'issue.confirmGate' }))?.props.color).toBe('warning')
+      expect((await ui.find({ type: 'Text', text: /^false$/ }))?.props).toMatchObject({ color: BRAND.caption, bold: true })
+      expect((await ui.find({ type: 'Text', text: ' (lock: true)' }))?.props.color).toBe('warning')
+      expect((await ui.find({ type: 'Text', text: /^prompt$/ }))?.props).toMatchObject({ color: BRAND.syrup, bold: true })
+      expect((await ui.find({ type: 'Text', text: 'autopilot.autoMerge' }))?.props.color).toBe(BRAND.cream)
+      expect((await ui.find({ type: 'Text', text: /^local-overlay$/ }))?.props.color).toBe(BRAND.syrup)
+      expect((await ui.find({ type: 'Text', text: /^stack-default$/ }))?.props).toMatchObject({ dimColor: true })
+      expect((await ui.find({ type: 'Text', text: 'on --confirm · off --yes' }))?.props).toMatchObject({ color: BRAND.caption, dimColor: true })
       expect(await ui.find({ type: 'Text', text: /latest delegate-1700000000 · phase plan/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /812\/4096 bytes/ })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: /812\/4096 bytes/ }))?.props.color).toBe('success')
       expect(await ui.find({ type: 'Text', text: /toolkit 0\.16\.1 \(release, v0\.16\.1\) · 67 files/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: '0 modified · 1 missing' })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: /^local: none$/ }))?.props).toMatchObject({ dimColor: true })
+      expect((await ui.find({ type: 'Text', text: '0 modified · 1 missing' }))?.props.color).toBe('error')
       expect(await ui.find({ type: 'Text', text: /stacks: github-workflow, orchestration/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /last refresh failed/ })).toBeUndefined()
       await ui.unmount()
@@ -271,7 +305,7 @@ describe('the pane', () => {
     expect(reads).toBe(0)
   })
 
-  test('a narrow pane folds each key onto one line', async ($, on) => {
+  test('a narrow pane folds each key onto one row of toned segments', async ($, on) => {
     on('fs.exists', () => ({ value: false }))
     on('process.run', () => ({ value: exited(0, JSON.stringify(DOC)) }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -286,7 +320,12 @@ describe('the pane', () => {
       requestId: PANE,
       props: { ...PANE_PROPS, bodyColumns: 60, placement: 'inline' },
     })
-    expect(await ui.find({ type: 'Text', text: 'issue.confirmGate  false (lock: true)  local-overlay  on --confirm · off --yes' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'key' })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: 'issue.confirmGate' }))?.props.color).toBe('warning')
+    expect((await ui.find({ type: 'Text', text: /^  false$/ }))?.props).toMatchObject({ color: BRAND.caption, bold: true })
+    expect(await ui.find({ type: 'Text', text: ' (lock: true)' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /^  local-overlay$/ }))?.props.color).toBe(BRAND.syrup)
+    expect((await ui.find({ type: 'Text', text: '  on --confirm · off --yes' }))?.props).toMatchObject({ dimColor: true })
     await ui.unmount()
   })
 
@@ -392,9 +431,30 @@ describe('the pane', () => {
     await ui.unmount()
   })
 
-  test('before any read the pane says so instead of drawing nothing', async $ => {
+  test('a clean render reads green; a diverged local lock reads as a warning', async ($, on) => {
+    const clean: WaffleViewDoc = {
+      ...DOC,
+      drift: { ok: true, modified: [], missing: [], absentDocs: [], notes: [] },
+      locks: { ...DOC.locks, local: { ...DOC.locks.committed, path: '.waffle/waffle.local.lock.json' }, tree: 'local', inSync: false },
+    }
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(clean)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: 'clean — the render matches the lock' }))?.props.color).toBe('success')
+    expect((await ui.find({ type: 'Text', text: /DIVERGED from committed/ }))?.props.color).toBe('warning')
+    await ui.unmount()
+  })
+
+  test('before any read the pane still wears the waffle and says so instead of drawing nothing', async $ => {
     const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: 'no state read yet' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: WAFFLE_GLYPH[1] })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'one batter, every repo' })).toBeDefined()
     await ui.unmount()
   })
 })
