@@ -31,6 +31,21 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **`/waffle-view` wears the brand (#604).** The pane colours each kind of content by role from
+  the wafflestack palette (`assets/README.md`): a Golden box-drawing waffle and title in the
+  header, Golden section headings, Cream key names, `true` / `false` / `prompt` values told apart
+  (Golden / muted / Syrup), the `source` column by layer (stack default dim, `waffle.yaml` Pocket,
+  local overlay Syrup), muted token hints. The theme's green/amber/red stay reserved for status:
+  Drift as before, and now a diverged or absent lock, the delegate memory cap and an unreadable
+  checkpoint. A key whose value differs from the lock carries the warning tone on its name and
+  `(lock: …)` note. Colour is additive — bold, dim and the literal words still carry the same
+  meaning with it stripped. Mod version `0.2.1` → `0.3.0`; roles are pure helpers in
+  `hooks/state.ts` (`valueTone`, `sourceTone`, `keyTone`, `statusTone`, `WAFFLE_GLYPH`).
+
+  **Consumer impact:** none to do — the mod ships from the marketplace at the pinned release;
+  the next toolkit release carries it.
+
 ## [0.17.1] - 2026-10-09
 
 **Mods load with no flags (#592).** A stack mod such as `waffle-view` now ships through the
