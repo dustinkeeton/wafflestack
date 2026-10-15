@@ -2502,7 +2502,7 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
     const formatMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'FORMAT.md'), 'utf8');
     assert.match(formatMd, /`recommended:` is an optional boolean/);
     const agentsMd = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf8');
-    assert.match(agentsMd, /\.recommended/);
+    assert.match(agentsMd, /manifest: recommended\b/);
   });
 });
 
@@ -2532,7 +2532,8 @@ describe('recommended external plugins: documented in lockstep with the schema (
   });
 
   test('AGENTS.md registers the loader field and the module', () => {
-    assert.match(agentsMd, /\.recommendedPlugins/);
+    assert.match(agentsMd, /manifest: recommended, recommendedPlugins\b/);
+    assert.match(agentsMd, /^\| `plugins\.mjs` \|.*`normalizeRecommendedPlugins`/m);
     assert.match(agentsMd, /## Recommended external plugins/);
   });
 });
@@ -2570,9 +2571,9 @@ describe('waffle registry: documented in lockstep with the schema (#335)', () =>
 
   test('AGENTS.md registers the file, the module, and the enforcement entry point', () => {
     assert.match(agentsMd, /stacks\/registry\.yaml/);
-    assert.match(agentsMd, /\/\/ registry\.mjs — the WAFFLE registry/);
-    assert.match(agentsMd, /export function validateRegistry\(rootDir, toolkit\)/);
-    assert.match(agentsMd, /export function forwardRenamedWaffleRefs/);
+    assert.match(agentsMd, /^\| `registry\.mjs` \| WAFFLE registry.*`loadRegistry`/m);
+    assert.match(agentsMd, /^\| `validate\.mjs` \|.*`validateRegistry`/m);
+    assert.match(agentsMd, /^\| `upgrade\.mjs` \|.*`forwardRenamedWaffleRefs`/m);
   });
 });
 

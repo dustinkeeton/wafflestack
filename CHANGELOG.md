@@ -31,6 +31,15 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+- **`AGENTS.md` drops full export signatures (#415).** This repo's `docs.machineDocSpec` now asks
+  for one module-registry row per `installer/lib/*.mjs` file with its purpose and export names.
+  Signatures live in source only. The ~330-line `js` signature fence is replaced by an Exports
+  column in the module table. The prose trim against the 300-line cap is still to come (#442).
+
+  **Consumer impact:** none — the change is in this repo's own config override. The toolkit
+  default `machineDocSpec` (`stacks/docs-system`) is unchanged.
+
 ## [0.17.2] - 2026-10-11
 
 ### Changed
