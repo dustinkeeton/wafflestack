@@ -576,7 +576,7 @@ poured so the render + lock exercise the opt-in `targets:` path; tracked in git)
 ARMED — PR #495 re-added its `include:` line, PR #496 dropped its `eject:` entry and re-rendered, so
 `.github/workflows/waffle-hygiene.yml` is lock-managed (`waffle.lock.json:89`) and tracked in git (cron
 `0 13 * * *` + `workflow_dispatch`, reads `secrets.ANTHROPIC_API_KEY`; `waffle-hygiene.yml:9-10,37`).
-pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waffle.yaml:203-205`; #414),
+pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waffle.yaml:202-204`; #414),
 neither is in `include:`, the lock tracks neither rendered path, and neither file exists under
 `.github/workflows/`. Re-arm one (#343): `install <files/ref>` — un-ejects it, adds the `include:` entry and renders (`eject.mjs:154-161`, `cli.mjs:76-77`; a differing project-owned copy refuses and rolls back without `--force`) — then commit.
 

@@ -71,7 +71,7 @@ Also in v0.16.0: the `diagram` proxy skill (#471), `docs.voiceGuardrailSection` 
 - **Dogfood hooks:** hygiene is **armed** (daily cron). pr-green and pr-response stay **ejected**;
   #343 (pluggable CI engine) and #355 (pr-response never dispatches) are both open.
 - **Comment burn-down follow-ups (open):** #440 bash essays in workflow `run:` blocks, #441
-  DECISIONS triage, #442 `AGENTS.md` prose over its 300-line cap.
+  DECISIONS triage, #442 `AGENTS.md` prose trim (608 lines, cap 300; fences gone since #415).
 - **The self-render is committed.** After editing `stacks/**`, re-run
   `node installer/cli.mjs render --allow-unreleased` (flag required, #373) and commit files + lock.
 - **Deliberately gitignored here:** `.claude/worktrees/`, `.codex/`/`.agents/`, and
