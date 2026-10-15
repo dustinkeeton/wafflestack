@@ -9,6 +9,44 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-14: This repo's `AGENTS.md` lists export names, not signatures (#415)
+
+**Context**: `AGENTS.md` had grown to 942 lines, and 379 of them were export signatures inside two
+`js` fences. Those fences caused most of the file's churn: 24 of the last 30 commits touching it
+changed a signature line, so nearly every installer PR had to hand-edit the registry. Many lines
+also carried long trailing `// →` comments with issue refs and behaviour notes — the
+comment-as-spec pattern the #388 doctrine says to shrink. No skill or agent tells anyone to look up
+a signature in `AGENTS.md`; agents read `installer/lib/*.mjs` directly.
+
+**Decision** (owner, 2026-10-14): This repo's `docs.machineDocSpec` override in
+`.waffle/waffle.yaml` changes in two places:
+- **Module registry** — one row per `installer/lib/*.mjs` file with its purpose and export names.
+  Signatures live in source only.
+- **Format rule 6** — drops the signature-fence exclusion added in #431, so the 300-line cap counts
+  every line.
+
+`AGENTS.md` swaps the `js` signature fence for an Exports column in the module table, which brings
+it to 608 lines. The toolkit default in `stacks/docs-system/stack.yaml` is unchanged and keeps the
+exclusion.
+
+**Alternatives considered**:
+- *Raise the cap for this repo's override* (e.g. to 700 lines) and keep the full-signature
+  registry. Not chosen: it keeps the churn and the content no consumer reads.
+- *Re-introduce splitting* — a root `AGENTS.md` under 300 lines as an index, with the export
+  registry moved to a second machine doc such as `installer/AGENTS.md`. Not chosen for the same
+  reason: the signatures would still be hand-maintained, just in another file.
+
+**Rationale**: A hand-copied signature is one more claim that can drift from the code; source cannot
+drift from itself. What stays earns its place by saving exploration and rarely changing: the stack
+and module registries, import graph, CLI command table, consuming-project contract, and build/test
+commands.
+
+**Impact**: Installer PRs no longer touch `AGENTS.md` for a parameter change. This alone does not
+meet the cap: the remaining prose is still over 300 lines, and trimming it stays with #442 — now a
+pure prose trim. Consumers see no change.
+
+---
+
 ## 2026-10-09: The mod marketplace source is pinned to `waffle.toolkitRef` (#595, part of #592)
 
 **Context**: Since #594 a mod is enabled through an `extraKnownMarketplaces` entry, and Claude Code
@@ -1069,6 +1107,11 @@ excluded): `installer/lib` 30% → 10.4%, all scoped files 9.8%, every comment r
 grandfather map empty — 6,070 comment lines deleted, 1,244 added, across seven residue-proven
 comment-only PRs. Remaining debt: bash comment essays inside workflow `run: |` blocks (~420
 lines), deliberately out of the YAML classifier's scope, awaiting a bash-aware residue proof.
+
+**Superseded in part 2026-10-14 — for this repo's override only (#415, the entry above).** This
+repo's `AGENTS.md` no longer carries signatures, so its `machineDocSpec` drops the signature-fence
+exclusion and the 300-line cap counts every line. The toolkit default in
+`stacks/docs-system/stack.yaml` keeps part (3) as written.
 
 **Context**: #324 (below) namespaced the PR-gate skills' staging files per PR, which killed
 cross-PR contamination — but successive rounds on the *same* PR still reused one file, so

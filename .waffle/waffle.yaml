@@ -105,8 +105,8 @@ config:
 
       - Project purpose (1-2 sentences)
       - Stack registry: table of stacks with path, description, skills, agents
-      - Installer module registry: table of `installer/lib/*.mjs` files with exported
-        functions (full signatures) and purpose
+      - Installer module registry: table of `installer/lib/*.mjs` files, one row per
+        module with its purpose and export names (signatures live in source only)
       - CLI command registry: table of `wafflestack <cmd>` commands with behavior
       - Template semantics summary: placeholder syntax, `harness.*` namespace,
         nested substitution, extension points
@@ -115,14 +115,13 @@ config:
 
       ## Format Rules
 
-      1. Use language-tagged fenced code blocks (e.g. ```js) for exported signatures and examples
+      1. Use language-tagged fenced code blocks (e.g. ```yaml) for examples
       2. Use tables for registries and enumerations
       3. Use `file.mjs:42` format for source references (line number after the colon)
       4. No markdown emphasis (bold/italic) in structured sections
       5. Frontmatter with `last-updated` timestamp (YYYY-MM-DD)
-      6. Keep the file's prose under 300 lines — the language-tagged signature fence is
-         excluded from the count; the stack registry summarizes, and per-stack detail
-         stays in each `stack.yaml`
+      6. Keep the file's prose under 300 lines — the stack registry summarizes, and
+         per-stack detail stays in each `stack.yaml`
     voiceGuardrailSection: |-
       ## Owner-voiced docs — do not rewrite
 
