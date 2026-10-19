@@ -884,7 +884,7 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
   test('the loop: wait-green then adversarial-review then pr-response --yes, converge on 0 implemented', () => {
     assert.match(md, /adversarial-review <pr>/);
     assert.match(md, /pr-response <pr> --yes/);
-    assert.match(md, /A round that implements \*\*0 findings\*\* is the terminal signal/);
+    assert.match(md, /A \*\*cold\*\* round that implements \*\*0 findings\*\* is the terminal signal/);
     assert.match(md, /re-wait for green/);
   });
 
@@ -986,7 +986,7 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
   test('the loop: wait-green then qa then pr-response --yes, converge on 0 implemented', () => {
     assert.match(qaStep, /run `qa <pr>`/);
     assert.match(qaStep, /pr-response <pr> --yes/);
-    assert.match(qaStep, /A round that implements \*\*0 findings\*\* is the terminal signal/);
+    assert.match(qaStep, /A \*\*cold\*\* round that implements \*\*0 findings\*\* is the terminal signal/);
     assert.match(qaStep, /re-wait for green/);
   });
 
@@ -1198,6 +1198,92 @@ describe('autopilot skill: a cap-reached gate reports what it shed (#348)', () =
   });
 });
 
+describe('autopilot skill: gate loops converge only on a cold round (#510, #357)', () => {
+  let md;
+  let steps;
+  let report;
+  let guardrails;
+  const sentences = (text) =>
+    text
+      .replace(/[*_`]/g, '')
+      .split(/(?<=[.!?;])\s+|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const says = (text, ...res) => sentences(text).find((s) => res.every((re) => re.test(s)));
+
+  before(() => {
+    md = readSkill('autopilot');
+    steps = {
+      QA: md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6')),
+      review: md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7')),
+    };
+    report = md.slice(md.indexOf('## End-of-run housekeeping'), md.indexOf('## Guardrails'));
+    guardrails = md.slice(md.indexOf('## Guardrails'), md.indexOf('## Failure handling'));
+    assert.ok(steps.QA.length > 0 && steps.review.length > 0 && report.length > 0 && guardrails.length > 0);
+  });
+
+  for (const name of ['QA', 'review']) {
+    test(`${name} loop: only a cold round ends it; an anchored zero is a candidate`, () => {
+      const step = steps[name];
+      assert.ok(says(step, /Only a cold round can end the loop/i, /counts toward the cap/i), `${name}: the cold-round stop rule or its cap accounting is gone`);
+      assert.ok(says(step, /anchored-clean/i, /candidate, not convergence/i), `${name}: an anchored zero reads as convergence again — #339's leak`);
+      assert.ok(says(step, /Do not break/i) || says(step, /cold certification round/i, /next/i), `${name}: nothing schedules the certification round`);
+      assert.ok(says(step, /cap hatch/i, /certif/i), `${name}: no round left for certification has no fallback`);
+    });
+
+    test(`${name} loop: the certification reviewer is fresh and unnamed; the responder stays persistent`, () => {
+      const step = steps[name];
+      assert.ok(says(step, /cold certification round/i, /fresh and unnamed/i), `${name}: the certification reviewer may be the anchored agent`);
+      assert.ok(says(step, /responder is always resumed/i), `${name}: a cold round may drop the responder's verdict memory — re-litigation (#295)`);
+      assert.match(step, /cold rounds included/);
+    });
+
+    test(`${name} hatch: the bound counts certification inside the cap, and an anchored-clean final round is certified there`, () => {
+      const step = steps[name];
+      assert.ok(says(step, /cap\+1/, /cold certification rounds included/i, /at most cap `?pr-response`? passes/i), `${name}: the hatch no longer states the bound with certification inside it`);
+      assert.ok(says(step, /anchored-clean/i, /this pass is that round's cold certification/i), `${name}: the hatch does not certify an anchored-clean final round`);
+    });
+  }
+
+  test('guardrails state the worst-case passes per PR with the defaults filled in', () => {
+    assert.ok(says(guardrails, /Worst-case spend per PR/i), 'no worst-case spend guardrail');
+    assert.ok(says(guardrails, /10 gate passes/i), 'the guardrail does not state the default-cap total');
+    assert.ok(says(guardrails, /under 20/i), 'the guardrail does not bound the retry case');
+    assert.match(guardrails, /converges \*\*only on a cold round\*\*/);
+  });
+
+  test('the run report carries cold-round counts and the certification catch beside the shed', () => {
+    assert.ok(says(md, /shed count/i, /how many of them were cold/i), 'the shed count no longer reports how many rounds were cold');
+    assert.ok(says(report, /certification catch/i, /total/i), 'the run report does not total the certification catch');
+    assert.ok(says(report, /before\/after/i, /#510/), 'the report no longer names its before/after measurement');
+    assert.match(report, /converged on a cold round after _k_ rounds/);
+  });
+
+  test('the cap is per-run, not per-PR, and never bounds a manual /pr-response (#357)', () => {
+    const consent = md.slice(md.indexOf('### 3. Review-loop consent'), md.indexOf('### 4.'));
+    assert.ok(says(consent, /per-run, not per-PR/i), '§3 no longer says the cap is not a per-PR bound');
+    assert.ok(says(consent, /restarts its count from zero/i), '§3 does not say a re-entrant run restarts');
+    assert.ok(says(consent, /nothing bounds a human running/i, /pr-response/), '§3 lets the cap bound the manual path');
+    assert.ok(says(guardrails, /per-run, not per-PR/i, /manual/i), 'the consent guardrail drops the per-run statement');
+  });
+
+  test('DECISIONS.md records the criterion, its bound, and the #357 ruling', () => {
+    const decisions = fs.readFileSync(path.join(REPO_ROOT, 'DECISIONS.md'), 'utf8');
+    const entry = decisions.slice(decisions.indexOf('converge only on a cold round'));
+    assert.ok(entry.length > 0, 'no #510 entry');
+    const body = entry.slice(0, entry.indexOf('\n---\n'));
+    assert.match(body, /10 gate passes per PR per run/);
+    assert.match(body, /Per-run vs per-PR \(#357\)/);
+    assert.match(body, /certification catch/);
+  });
+
+  test('both gate skills name certification rounds among their cold spawns', () => {
+    for (const name of ['qa', 'adversarial-review']) {
+      assert.match(readSkill(name), /autopilot's cold certification rounds and its cap-escape evidence pass/);
+    }
+  });
+});
+
 describe('autopilot skill: persistent gate agents across subloop rounds (#295)', () => {
   let md;
   let qaStep;
@@ -1231,7 +1317,7 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
   test('the structured return contract — and therefore convergence — is unchanged', () => {
     for (const step of [qaStep, reviewStep]) {
       assert.match(step, /The return contract is identical/);
-      assert.match(step, /A round that implements \*\*0 findings\*\* is the terminal signal/);
+      assert.match(step, /A \*\*cold\*\* round that implements \*\*0 findings\*\* is the terminal signal/);
     }
     assert.match(qaStep, /never take an agent's word over the PR's own state/);
   });
@@ -1497,8 +1583,8 @@ describe('gate loops: cold-start signal is invocation-carried; triggers cover an
     const cold = /this pass is deliberately cold — do not seed history from the PR/g;
     assert.equal(
       [...md.matchAll(cold)].length,
-      2,
-      "both cap hatches (QA and review) carry the deliberately-cold sentence in the pass's prompt",
+      4,
+      "both cap hatches and both loops' cold certification rounds carry the deliberately-cold sentence (#510)",
     );
     for (const step of [qaStep, reviewStep]) {
       assert.match(step, /\*\*say so in the prompt\*\*/);

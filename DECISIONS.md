@@ -9,6 +9,67 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-19: Autopilot's gate loops converge only on a cold round; the cap stays per-run (#510, #357)
+
+**Context**: #348 found that autopilot's QA and review loops leak findings because every round after
+the first shares a context with the fixes it just made. The leak is not a shortage of rounds. #339
+is the control case: its in-loop round 3 came back clean, and a cold pass over the same head found
+seven findings. A "zero findings" stop rule judged by an anchored reviewer stops exactly where the
+fixed cap does. The cap hatch's cold evidence pass already finds the leaked class, but it runs once,
+after the loop. Separately, #357 asked whether the cap needs a durable per-PR bound, because it
+lives only in the model's context and a second run restarts it.
+
+**Decision**: **De-anchor the terminal round.** A round is *cold* when its reviewer carries no
+history of the PR. Round 1 always qualifies, and so does a fresh, unnamed reviewer whose prompt says
+"this pass is deliberately cold — do not seed history from the PR". Only a cold round that implements
+0 converges. An anchored round that implements 0 is *anchored-clean*: a candidate. The next round
+is a **cold certification round** over the same unmoved head, and it counts toward the cap. If the
+cap leaves no room, the existing hatch evidence pass is the certification. Only the reviewer goes
+cold. The responder is always the persistent agent, so its verdict memory still stops
+re-litigation (#295). A cold reviewer that re-raises a declined finding gets the same Decline again,
+which counts as 0 implemented and so converges. A re-raise therefore costs review noise, never a
+round.
+
+**The bound.** Unchanged in shape: cap + 1 reviewer passes and at most cap `pr-response` passes per
+loop per run, each with one retry. Certification spends a round of the cap instead of adding one.
+With both loops on at the default caps of 2, the worst case is **10 gate passes per PR per run**
+(QA: 3 + 2; review: 3 + 2), and under 20 if every pass retries once. The skill states this in a
+dedicated guardrail. A loop still cannot spin. The cost moves to the clean case: a PR whose
+round 2 is anchored-clean now spends its cap reaching certification rather than stopping early.
+
+**Measurement.** The #348 shed count stays the before/after metric. It is reported per cap-reached
+gate and totalled per run, and it now notes how many of the spent rounds were cold. A new
+**certification catch** counts findings a cold round raised over a head an anchored round had called
+clean. The old rule would have merged those with no report at all, so the catch measures the leak
+this change closes. The shed count measures what still overflows the cap.
+
+**Per-run vs per-PR (#357): no durable bound, by design.** The cap is per-run. A re-entrant run
+over the same PR restarts at zero, and its round 1 is cold again, so the restart buys a fresh look
+rather than a repeat. Nothing bounds a human running `/pr-response` by hand. The reasons:
+- Every run's spend is authorized by that run's own `lockMode: prompt` consent.
+- The only automatic re-entry path, the CI hooks, is disarmed in this repo (#396).
+- A forge-side counter (option 1, the CI `responseLabel` counter; option 2, a commit-status counter)
+  would either bound the manual path, or need a carve-out that tells autopilot's passes apart from
+  a human's. That would be a new trust boundary for little gain.
+
+The skill says this where the cap is defined (§3) and in the consent guardrail.
+
+**Alternatives**: *Alternate the reviewer's context every k rounds.* Rejected: it de-anchors on a
+schedule rather than at the moment that matters. A fresh spawn mid-loop finds things, but only the
+*terminal* round decides whether findings leak. *Cold reviewer every round.* Rejected: it throws
+away the persistent reviewer's token and continuity savings without improving the stop decision,
+which only the terminal round makes. *Raise the default cap.* Still rejected for #348's reason, and
+certification now spends the extra round where it counts. *Durable per-PR bound.* See above.
+
+**Consequences**: Behavior change for consumers who opt into `+qa` / `+review`: a loop no longer stops on
+an anchored zero. At the default cap of 2, a PR that needed fixes in round 1 now usually reaches the
+hatch's cold pass rather than converging in-loop. The run report shows it, through cold-round counts,
+certification catch, and shed. `qa` and `adversarial-review` already honour the
+deliberately-cold sentence, so they need only a wording update. Content tests pin the cold-round
+rule, the shared sentence (four uses now), the bound, and the per-run statement.
+
+---
+
 ## 2026-10-14: This repo's `AGENTS.md` lists export names, not signatures (#415)
 
 **Context**: `AGENTS.md` had grown to 942 lines, and 379 of them were export signatures inside two
