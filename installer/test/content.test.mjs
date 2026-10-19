@@ -1198,6 +1198,82 @@ describe('autopilot skill: a cap-reached gate reports what it shed (#348)', () =
   });
 });
 
+describe('autopilot skill: the manual-review queue has a service level (#511)', () => {
+  let md;
+  let hatches;
+  let audit;
+  let report;
+  let failures;
+  const sentences = (text) =>
+    text
+      .replace(/[*_`]/g, '')
+      .split(/(?<=[.!?;])\s+|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const says = (text, ...res) => sentences(text).find((s) => res.every((re) => re.test(s)));
+
+  before(() => {
+    md = readSkill('autopilot');
+    const qaStep = md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6'));
+    const reviewStep = md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7'));
+    hatches = { QA: qaStep.slice(qaStep.indexOf('#### QA cap reached')), review: reviewStep.slice(reviewStep.indexOf('#### Cap reached')) };
+    audit = md.slice(md.indexOf('### Step 7'), md.indexOf('### Step 8'));
+    report = md.slice(md.indexOf('## End-of-run housekeeping'), md.indexOf('## Guardrails'));
+    failures = md.slice(md.indexOf('## Failure handling'));
+    assert.ok(hatches.QA.length > 0 && hatches.review.length > 0 && audit.length > 0 && report.length > 0 && failures.length > 0);
+  });
+
+  for (const name of ['QA', 'review']) {
+    test(`${name} hatch: files only should-fix and blocker findings; nits go to the run report`, () => {
+      const h = hatches[name];
+      assert.ok(says(h, /severity floor/i, /only should-fix and blocker/i), `${name}: the hatch no longer states the severity floor`);
+      assert.ok(says(h, /Nits never go into a follow-up/i), `${name}: nits can ride into a held follow-up again`);
+      assert.ok(says(h, /nits only/i, /file nothing/i), `${name}: a nit-only pass still opens an issue`);
+      assert.ok(says(h, /certification catch/i, /fallback/i), `${name}: the floor no longer covers certification catch and the fallback`);
+      assert.ok(says(h, /never applies to the audit gate/i), `${name}: the floor could be read as suppressing the audit gate's Critical/High filing`);
+    });
+
+    test(`${name} hatch: the shed count still reports what was not filed`, () => {
+      const h = hatches[name];
+      assert.ok(says(h, /shed count/i, /reported but did not file/i), `${name}: the shed count drops the not-filed nits — the floor would hide them`);
+      assert.ok(says(h, /nit-only pass/i, /reported-not-filed/i), `${name}: the nit-only path reports no shed count`);
+    });
+
+    test(`${name} hatch: names who burns the queue down`, () => {
+      assert.ok(says(hatches[name], /Who burns the queue down/i, /run report/i), `${name}: the hold label again has no named reader`);
+    });
+  }
+
+  test('the errored-twice fallback filing obeys the same floor in both loops', () => {
+    const hits = sentences(failures).filter((s) => /fall back to filing/i.test(s) && /same severity floor/i.test(s));
+    assert.equal(hits.length, 2, 'each loop’s errored-twice fallback must apply the severity floor');
+  });
+
+  test('the audit gate still files every unresolved Critical/High — no floor there', () => {
+    assert.match(audit, /File a follow-up so the unresolved findings aren't lost/);
+    assert.doesNotMatch(audit, /severity floor/i, 'the severity floor leaked into the audit gate');
+  });
+
+  test('the run report lists the open hold queue on every run', () => {
+    assert.ok(says(report, /reported but not filed/i), 'the run report drops the not-filed nits');
+    assert.ok(says(report, /open hold queue/i), 'the run report no longer closes with the hold queue');
+    assert.match(report, /gh issue list --state open --label "waffle:manual-review"/);
+    assert.ok(says(report, /hold queue: empty/i), 'an empty queue is silent — indistinguishable from a skipped listing');
+    assert.ok(says(report, /no free scheduled sweep/i, /paid/i), 'the report promises a cadence the toolkit cannot run');
+    assert.match(report, /cap-reached with nits reported, not filed/);
+  });
+
+  test('DECISIONS.md records the service level and who burns the queue down', () => {
+    const decisions = fs.readFileSync(path.join(REPO_ROOT, 'DECISIONS.md'), 'utf8');
+    const start = decisions.indexOf('severity floor on filing');
+    assert.ok(start >= 0, 'no #511 entry');
+    const body = decisions.slice(start, decisions.indexOf('\n---\n', start));
+    assert.match(body, /\*\*Who burns it down\*\*/);
+    assert.match(body, /\*\*Why no scheduled cadence\*\*/);
+    assert.match(body, /never covers the audit gate/);
+  });
+});
+
 describe('autopilot skill: gate loops converge only on a cold round (#510, #357)', () => {
   let md;
   let steps;

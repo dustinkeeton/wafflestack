@@ -9,6 +9,61 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-19: The manual-review queue gets a severity floor on filing, and every run report burns it down (#511)
+
+**Context**: Autopilot's cap hatches file a follow-up labeled `autopilot.holdLabel`
+(`waffle:manual-review`) so that shed findings "aren't lost". The label keeps the issue out of
+every automatic scope form, so only a human naming `#N` ever picks it up again, and nothing told
+that human to look. When #348 was filed the queue held ten such issues: nine open, no owner, and
+18% of the open backlog. Across the ten, **zero** shed a blocker and **six** shed nits only. #348
+made each filing loud through the shed count. It did not say what happens to the issue afterwards.
+
+**Decision**: Two pieces, both mechanical.
+
+1. **A severity floor on cap-hatch filing.** A cap hatch files a follow-up only for findings graded
+   should-fix or blocker. Nits never go into a follow-up, whether the pass raised nits only or nits
+   alongside a should-fix. They are listed in that PR's run-report line, one line each with
+   file:line, and the shed count gains a "reported but not filed" count. So the report still
+   shows everything the loop shed. The floor covers the hatch's certification catch (#510) and
+   the errored-twice fallback. It never covers the audit gate, which files every unresolved
+   Critical/High finding.
+2. **The run report is the burn-down.** Every autopilot run ends its report with the open
+   hold-labeled queue, listed by number, title and age. The human who started the run reads it
+   and disposes of each item in one of three ways: implement it by naming `#N`, reprioritize it by
+   removing the label, or close it. Autopilot is the queue's only producer, so the queue cannot
+   grow without the list being printed.
+
+**Who burns it down**: the repo owner, at the end of each autopilot run. Not a cron.
+
+**Why no scheduled cadence**: the only scheduled mechanism is the daily `waffle-hygiene` workflow,
+and it is a paid Claude dispatch (#396). It is re-armed here, and a repo secret named
+`ANTHROPIC_API_KEY` exists. But every recent run (2026-10-12 to 10-19) shows the harness exiting
+`is_error: true` after one turn, at $0, before doing any work. The likeliest cause is an unfunded
+key, though that is inferred, not confirmed. A sweep wired into hygiene would be a prose promise in this repo. The free hooks
+(doctor, release, post-merge) are deterministic and event-driven, and none of them can judge an
+issue. Once hygiene runs on a funded key (#343), a hygiene task that sweeps the queue is the
+natural next step. It is not promised here.
+
+**Alternatives**:
+- *Expiry / auto-close after N days.* Rejected. A deterministic close would need a new scheduled
+  workflow. After the floor, every survivor carries a should-fix, so closing it unread would drop
+  real work.
+- *A configurable floor key* (for example `autopilot.fileFloor`). Deferred. One fixed floor
+  matches the evidence, and a key can be added if a consumer needs nits filed.
+- *Fold nits into a should-fix follow-up.* Rejected. A follow-up should hold only work, and the
+  run report already keeps the nits.
+- *Do nothing.* Valid only with a named reader. The run-report listing is that reader.
+
+**Triage of the existing queue**: proposed, not applied. The PR for this change carries a
+disposition table, and the owner applies it after approval.
+
+**Consequences**: Behavior change for consumers who opt into `+qa` / `+review`. A cap-reached gate
+whose fresh pass raises only nits no longer opens an issue, and every run report ends with the
+hold queue. Content tests pin the floor in both hatches and the fallback, the audit gate's
+exemption, the "reported but not filed" shed count, and the queue listing.
+
+---
+
 ## 2026-10-19: Autopilot's gate loops converge only on a cold round; the cap stays per-run (#510, #357)
 
 **Context**: #348 found that autopilot's QA and review loops leak findings because every round after
