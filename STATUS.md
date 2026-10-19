@@ -5,8 +5,8 @@
 
 - **Version**: v0.17.2 (2026-10-11; pre-1.0 — the file contract can still change
   between minor releases).
-- **Last updated**: 2026-10-09
-- **Health**: 🟢 tests 1664 in 226 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `0e674a0` (PR #589's merge)
+- **Last updated**: 2026-10-19
+- **Health**: 🟢 tests 1686 in 227 suites (2 skipped by design, #445) · `validate` clean · CI green on `main` at `0e674a0` (PR #589's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 ## Stacks
@@ -31,6 +31,12 @@ All 16 commands work (plus `bake`, a pure alias for `render`), over 27 pipeline 
 `installer/lib/`: `init` · `setup` · `list` · `toggle` · `install` · `render` · `upgrade` ·
 `doctor` · `state` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
+## Unreleased — after v0.17.2
+
+| Change | What it gives you | State |
+|--------|-------------------|-------|
+| Autopilot gate loops converge on a cold round (#510, #357) | The QA and review loops stop only when a **cold** reviewer (no history of the PR) implements 0 findings; an anchored "clean" triggers one fresh certification round. Bound: cap + 1 reviewer passes per loop, 10 gate passes per PR per run with both loops on at the default caps. The cap stays per-run. [Why](DECISIONS.md#2026-10-19-autopilots-gate-loops-converge-only-on-a-cold-round-the-cap-stays-per-run-510-357) | 🔄 In review (PR #617) — re-render |
+
 ## Shipped in v0.17.0 — merged 2026-10-06 through 10-09
 
 | Change | What it gives you | State |
@@ -47,18 +53,9 @@ All 16 commands work (plus `bake`, a pure alias for `render`), over 27 pipeline 
 
 ## Shipped in v0.16.0
 
-Merged 2026-09-15 through 09-18 (CHANGELOG `[0.16.0]`); v0.16.1 followed the same day with fixes.
-
-| Feature | What it gives you |
-|---------|-------------------|
-| `wafflestack report` + `/waffle-report` (#473) | A redacted diagnostics bundle, and a skill that files a toolkit bug **upstream** behind a confirmation gate |
-| `wafflestack toggle` + `/waffle-toggle` (#476) | Per skill: may an agent invoke it on its own, or only you via `/slash`? Claude target only |
-| Harness tool allowlist (#445) | `npm test` fails on any `Tool(` call outside the per-target roster; `codex` / `agents-dir` rosters undeclared, so those 2 checks skip |
-| Three-mode config keys (#478, #486–#490) | Behavioral keys declare `modes:` / `flag:` / `lockMode:` / `nonInteractive:`; the skills now read them. **Tightening:** an autopilot consent set in config fails `render` and `doctor` |
-| `include:` / `eject:` mutually exclusive (#497, #501) | **Tightening:** an item in both fails `render` and `doctor`; `upgrade` migrates the overlap out of `waffle.yaml` |
-
-Also in v0.16.0: the `diagram` proxy skill (#471), `docs.voiceGuardrailSection` (#472), `WebFetch`
-+ `WebSearch` granted as a pair (#474), and the `list` deletion-visibility fixes (#371, #502).
+Merged 2026-09-15 through 09-18 (CHANGELOG `[0.16.0]`): `wafflestack report` + `/waffle-report`
+(#473), `wafflestack toggle` (#476), the harness tool allowlist (#445), three-mode config keys
+(#478), `include:`/`eject:` exclusivity (#497) — both tighten `render` and `doctor` — and the `diagram` proxy skill (#471).
 
 ## Known issues & things to watch
 
@@ -91,7 +88,7 @@ Also in v0.16.0: the `diagram` proxy skill (#471), `docs.voiceGuardrailSection` 
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1664 tests, 226 suites)
+npm test                          # installer test suite (1686 tests, 227 suites)
 npm run validate                  # manifests + placeholders lint, plus mod validation
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate

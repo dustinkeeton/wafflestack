@@ -358,8 +358,8 @@ cold-start rules below, when you are the fresh spawn that *replaces* a resumable
   again — never a skipped gate. Whether this head *was QA'd* is the `waffle/qa` commit status
   (step 7), and evidence in the new head always outranks recovered history.
 - **An empty context is *not* itself the signal — never infer the seed from it.** A loop may spawn
-  you deliberately **cold**: autopilot's cap-escape evidence pass does precisely that, so that your
-  look at the final head is *not* anchored by what earlier rounds declined — and its prompt says so
+  you deliberately **cold**: autopilot's cold certification rounds and its cap-escape evidence pass
+  do precisely that, so that your look at the head is *not* anchored by what earlier rounds declined — and its prompt says so
   ("this pass is deliberately cold — do not seed history from the PR"). **When the invocation says
   the pass is deliberately cold, do not seed**: seeding would re-anchor you on the very verdicts the
   cold spawn exists to escape, suppressing every finding earlier rounds declined. Absent an

@@ -32,6 +32,19 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **Autopilot's QA and review loops converge only on a cold round (#510, #357).** Round 1 is
+  cold. An anchored round that implements 0 is now a candidate: the next round is a fresh, unnamed
+  "deliberately cold" reviewer over the same head, with the persistent responder kept. If the cap
+  leaves no room, the hatch's evidence pass certifies instead. The bound is unchanged in shape:
+  cap + 1 reviewer passes and at most cap `pr-response` passes per loop. That is 10 gate passes per
+  PR per run at the default caps, and the skill now states it in a guardrail. The run report adds a
+  **certification catch** total beside the #348 shed count. The caps are per-run, not per-PR: a
+  re-entrant run restarts, and a manual `/pr-response` is never bounded (#357, recorded in
+  `DECISIONS.md`).
+
+  **Consumer impact:** `+qa` / `+review` loops no longer stop on an anchored zero. At the default
+  cap of 2, a PR that needed fixes in round 1 now usually ends on the hatch's cold pass. Re-render
+  to pick up the skill text. No config change.
 - **`AGENTS.md` drops full export signatures (#415).** This repo's `docs.machineDocSpec` now asks
   for one module-registry row per `installer/lib/*.mjs` file with its purpose and export names.
   Signatures live in source only. The ~330-line `js` signature fence is replaced by an Exports

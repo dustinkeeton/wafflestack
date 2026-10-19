@@ -741,7 +741,8 @@ config:
       autopilot.autoMerge: the loop can run on a PR that will then be armed OR on one left for
       human review (cleaning it up first). When true, autopilot withholds auto-merge arming from
       the delegate run, waits for each PR to go green, then loops up to autopilot.maxReviewRounds
-      rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging when a round
+      rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging only when a COLD
+      round (round 1, or a fresh unnamed certification round after an anchored round implemented 0)
       implements 0 findings, and arms auto-merge itself afterward if that was also consented.
       Locked to prompt like autopilot.autoMerge: the flag token is the only on-switch, and an
       unattended run without it resolves to off.
@@ -750,8 +751,9 @@ config:
     default: 2
     description: >-
       Hard cap on the number of adversarial-review → pr-response rounds the review loop runs per
-      PR before giving up on convergence (only consulted when autopilot.reviewLoop is on). A round
-      that implements 0 findings converges and breaks early; reaching the cap without converging is
+      PR before giving up on convergence (only consulted when autopilot.reviewLoop is on). A COLD round
+      that implements 0 findings converges and breaks early; an anchored round's 0 is only a candidate
+      that the next round, a cold certification, must confirm, and that round counts toward the cap; reaching the cap without converging is
       a safety bound, NOT a merge blocker — autopilot runs one fresh adversarial-review pass
       (outside the cap, no pr-response follows it) purely as the brief's source, files an
       autopilot.holdLabel-labeled follow-up issue from THOSE findings so the remaining work isn't
@@ -762,7 +764,8 @@ config:
       rubric matures — more rounds buy more quality once each round is trustworthy. Default 2.
       This is the render-time DEFAULT: a single run may override it with `+review:N` in the
       autopilot invocation (captured alongside the consent, per-run, never sticky — this rendered
-      value governs every run that doesn't say otherwise).
+      value governs every run that doesn't say otherwise). Per-run, not per-PR: a later run over the same
+      PR restarts from zero, and a human's manual /pr-response is never bounded (#357).
   autopilot.qaLoop:
     required: false
     default: prompt
@@ -777,8 +780,8 @@ config:
       coverage the way `/qa` and `/pr-response` do by hand. INDEPENDENT of autopilot.autoMerge,
       autopilot.reviewLoop, and autopilot.auditStep: any combination may be on. When true, autopilot
       withholds auto-merge arming from the delegate run, waits for each PR to go green, then loops
-      up to autopilot.maxQaRounds rounds of `qa <PR#>` → `pr-response <PR#> --yes`, converging when
-      a round implements 0 findings; it arms auto-merge itself afterward only if that was also
+      up to autopilot.maxQaRounds rounds of `qa <PR#>` → `pr-response <PR#> --yes`, converging only
+      when a COLD round (round 1, or a fresh unnamed certification round) implements 0 findings; it arms auto-merge itself afterward only if that was also
       consented AND the review loop and audit gate are both off — otherwise the last enabled gate
       arms. Locked to prompt like autopilot.autoMerge: the flag token is the only on-switch, and
       an unattended run without it resolves to off.
@@ -787,8 +790,9 @@ config:
     default: 2
     description: >-
       Hard cap on the number of qa → pr-response rounds the QA gate runs per PR before giving up on
-      convergence (only consulted when autopilot.qaLoop is on). A round that implements 0 findings
-      converges and breaks early; reaching the cap without converging is a safety bound, NOT a merge
+      convergence (only consulted when autopilot.qaLoop is on). A COLD round that implements 0 findings
+      converges and breaks early; an anchored round's 0 is only a candidate that the next round, a
+      cold certification, must confirm, and that round counts toward the cap; reaching the cap without converging is a safety bound, NOT a merge
       blocker — autopilot runs one fresh qa pass (outside the cap, no pr-response follows it)
       purely as the brief's source, files an autopilot.holdLabel-labeled follow-up issue from THOSE
       findings so the remaining work isn't lost — a clean fresh pass skips the follow-up (it is the
@@ -798,7 +802,7 @@ config:
       for a human). Pass, then file, then arm: the fresh pass always precedes the filing it briefs,
       and the arming always follows both. Default 2. This is the render-time DEFAULT: a single run may override it with `+qa:N` in the
       autopilot invocation (captured alongside the consent, per-run, never sticky — this rendered
-      value governs every run that doesn't say otherwise).
+      value governs every run that doesn't say otherwise). Per-run, not per-PR (#357).
   autopilot.holdLabel:
     required: false
     default: "waffle:manual-review"

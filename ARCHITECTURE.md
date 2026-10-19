@@ -246,6 +246,23 @@ Two related rules keep the orchestrators from drifting apart: `/audit` invokes `
 than re-implementing it (#361), and the spawn-and-collect scaffold every orchestrator uses has
 one home — a contract section in `audit` that `standup` and `autopilot` cite (#365).
 
+### Autopilot's gate loops end only on a cold round
+
+Autopilot's optional QA and review loops (reviewer → `pr-response` → repeat) stop only when a
+**cold** round implements zero findings (#510). A round is cold when its reviewer has no history of
+the PR:
+
+- **Round 1** — always cold.
+- **Cold certification round** — when a resumed ("anchored") reviewer comes back clean, autopilot
+  spawns one fresh, unnamed reviewer told not to seed history from the PR. Its verdict decides.
+- **Every other round** — anchored, so it can drive fixes but never ends the loop.
+
+Every round counts toward the cap, so a loop costs at most cap + 1 reviewer passes and cap
+`pr-response` passes. With both loops on at the default caps of 2, that is 10 gate passes per PR per run. The cap is
+**per-run, not per-PR** (#357): a later run starts its count over, and a hand-run `/pr-response`
+is never bounded. See
+[DECISIONS.md](DECISIONS.md#2026-10-19-autopilots-gate-loops-converge-only-on-a-cold-round-the-cap-stays-per-run-510-357).
+
 ### Docs refresh per PR, with a daily backstop
 
 Docs are updated on the PR that changes the code, not a day later on `main` (#572):
