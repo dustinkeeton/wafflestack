@@ -54,8 +54,9 @@ natural next step. It is not promised here.
   run report already keeps the nits.
 - *Do nothing.* Valid only with a named reader. The run-report listing is that reader.
 
-**Triage of the existing queue**: proposed, not applied. The PR for this change carries a
-disposition table, and the owner applies it after approval.
+**Triage of the existing queue**: applied once, with owner approval (PR #618's disposition
+table). #359 and #263 cleared the floor and left the hold for normal scope; #267 (one nit) was
+closed as not planned. The queue held no open issues afterwards.
 
 **Consequences**: Behavior change for consumers who opt into `+qa` / `+review`. A cap-reached gate
 whose fresh pass raises only nits no longer opens an issue, and every run report ends with the
