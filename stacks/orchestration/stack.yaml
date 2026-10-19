@@ -812,12 +812,13 @@ config:
       autopilot.maxReviewRounds without converging (in both cap cases the filing follows the fresh
       escape-hatch pass: a clean pass skips it, a pass that errors twice falls back to filing from
       the LAST round's findings, and the QA gate's filing defers to the review loop whenever that
-      loop is on — the last enabled fix loop is the one that files), OR when the /audit
+      loop is on — the last enabled fix loop is the one that files; a cap hatch files only
+      should-fix and blocker findings, and nits go in the run report instead), OR when the /audit
       gate hard-blocks a PR on
       unresolved Critical/High findings (autopilot.auditStep). It marks the issue as held for
       human triage: autopilot's scope resolution EXCLUDES hold-labeled issues from every automatic
       scope form (all-open, a label, or a milestone) — only naming the issue explicitly by #N
-      re-actions it. Must pre-exist in the repo — `gh issue edit --add-label` will not create it.
+      re-actions it. Every run report lists the open hold-labeled queue for that human. Must pre-exist in the repo — `gh issue edit --add-label` will not create it.
       Default waffle:manual-review.
   autopilot.auditStep:
     required: false

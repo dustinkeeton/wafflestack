@@ -32,6 +32,15 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **Autopilot's manual-review queue gets a service level (#511).** A cap hatch now files a
+  `waffle:manual-review` follow-up only for should-fix and blocker findings. Nits are listed in the
+  run report as "reported but not filed", so the shed count still shows them. The audit gate's
+  Critical/High filing is unchanged. Every run report now ends with the open hold queue (number,
+  title, age), and the human reading it burns the queue down. There is no scheduled sweep, because
+  the hygiene cron is a paid dispatch (recorded in `DECISIONS.md`).
+
+  **Consumer impact:** with `+qa` / `+review` on, a cap-reached gate whose fresh pass raises only
+  nits no longer opens an issue. Re-render to pick it up. No config change.
 - **Autopilot's QA and review loops converge only on a cold round (#510, #357).** Round 1 is
   cold. An anchored round that implements 0 is now a candidate: the next round is a fresh, unnamed
   "deliberately cold" reviewer over the same head, with the persistent responder kept. If the cap

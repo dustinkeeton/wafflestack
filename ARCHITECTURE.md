@@ -263,6 +263,27 @@ Every round counts toward the cap, so a loop costs at most cap + 1 reviewer pass
 is never bounded. See
 [DECISIONS.md](DECISIONS.md#2026-10-19-autopilots-gate-loops-converge-only-on-a-cold-round-the-cap-stays-per-run-510-357).
 
+### A cap-reached loop files only real work, and every run lists the queue
+
+When a QA or review loop hits its cap, autopilot can file a follow-up labeled `waffle:manual-review`
+(`autopilot.holdLabel`). That label keeps the issue out of every automatic scope, so only a human
+naming `#N` picks it up again. Since #511, two rules keep that queue small and visible:
+
+- **Severity floor** — a cap hatch files only should-fix and blocker findings. This covers the
+  cold certification catch and the errored-twice fallback too.
+- **Nits are reported, not filed** — a fresh pass that raises only nits files nothing. Its nits go
+  in the run report, one line each with file:line, under the outcome "cap-reached with nits
+  reported, not filed".
+- **The audit gate is exempt** — it still files every unresolved Critical/High finding.
+- **Every run report ends with the hold queue** — each open hold-labeled issue with its number,
+  title, and age, or "hold queue: empty". The person who started the run implements, relabels,
+  or closes each item.
+- **No cadence is wired** — the only scheduled job, the hygiene cron, is a paid Claude dispatch,
+  so the run report is the burn-down.
+
+See
+[DECISIONS.md](DECISIONS.md#2026-10-19-the-manual-review-queue-gets-a-severity-floor-on-filing-and-every-run-report-burns-it-down-511).
+
 ### Docs refresh per PR, with a daily backstop
 
 Docs are updated on the PR that changes the code, not a day later on `main` (#572):
