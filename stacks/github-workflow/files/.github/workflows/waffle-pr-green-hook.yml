@@ -84,7 +84,8 @@ jobs:
           #     visible, and capped by this SHA); the cost of the other direction is a silently
           #     suppressed security review. So an unverifiable answer must never SKIP.
           statuses="$(gh api "repos/${OWNER}/${REPO}/commits/${HEAD_SHA}/statuses" --paginate 2>/dev/null || echo '[]')"
-          seen="$(printf '%s' "$statuses" | jq '[ .[] | select(.context=="waffle/adversarial-review" and .state=="success") ] | length' 2>/dev/null || echo 0)"
+          # -s folds --paginate's per-page arrays before counting (#334).
+          seen="$(printf '%s' "$statuses" | jq -s 'add // [] | [ .[] | select(.context=="waffle/adversarial-review" and .state=="success") ] | length' 2>/dev/null || echo 0)"
           case "$seen" in ''|*[!0-9]*) seen=0 ;; esac
           if [ "$seen" -ne 0 ]; then skip "PR #${N} head ${HEAD_SHA} already carries the waffle/adversarial-review status — skipping to avoid a duplicate review."; fi
           echo "should_review=true" >> "$GITHUB_OUTPUT"
@@ -187,7 +188,8 @@ jobs:
             if [ -n "$delivered" ]; then return 0; fi
             delivered=0
             statuses="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/statuses" --paginate 2>/dev/null || echo '[]')"
-            n="$(printf '%s' "$statuses" | jq '[ .[] | select(.context=="waffle/adversarial-review" and .state=="success") ] | length' 2>/dev/null || echo 0)"
+            # -s folds --paginate's per-page arrays before counting (#334).
+            n="$(printf '%s' "$statuses" | jq -s 'add // [] | [ .[] | select(.context=="waffle/adversarial-review" and .state=="success") ] | length' 2>/dev/null || echo 0)"
             case "$n" in ''|*[!0-9]*) n=0 ;; esac
             if [ "$n" -gt 0 ]; then delivered=1; fi
           }

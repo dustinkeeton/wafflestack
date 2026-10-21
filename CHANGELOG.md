@@ -62,6 +62,16 @@ is what you reach for across a breaking one.
   **Consumer impact:** none — the change is in this repo's own config override. The toolkit
   default `machineDocSpec` (`stacks/docs-system`) is unchanged.
 
+### Fixed
+
+- **pr-green no longer double-reviews a head with paginated statuses (#334).** `gh api --paginate`
+  prints one JSON array per page. The idempotency gate and `check_delivered` counted per page, so
+  when a head had more statuses than one page holds, the gate re-dispatched a paid review and
+  `check_delivered` reddened a run that had delivered. Both now fold the pages with
+  `jq -s 'add // []'`. The gate step is now exec-tested against a fake `gh`.
+
+  **Consumer impact:** re-render if you opted into `waffle-pr-green-hook`. No config change.
+
 ## [0.17.2] - 2026-10-11
 
 ### Changed
