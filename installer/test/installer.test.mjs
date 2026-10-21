@@ -3981,6 +3981,12 @@ describe('docs-system: the prose → md-maximalist requires edge (#299)', () => 
 
 // The pr-green hook died on its first live invocation: the skill instructed a `gh api … --input - <<'EOF'` heredoc, and Bash() patterns
 // match on the leading program, so `Bash(gh api:*)` never matched a MULTI-LINE command (#188). The skill's commands stay single-line, and the allowlist covers each.
+// Evaluate a step's YAML env against a simulated event context, so a test sees WHICH expression feeds the shell. Unknown ⇒ throw.
+const envFrom = (step, ctx) => Object.fromEntries(Object.entries(step.env || {}).map(([k, v]) => [k, String(v).replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_, e) => {
+  if (!(e in ctx)) throw new Error(`${k}: unmodelled expression ${e}`);
+  return ctx[e];
+})]));
+
 describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
   const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
   const REL = '.github/workflows/waffle-pr-green-hook.yml';
@@ -4199,10 +4205,18 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     assert.ok(!/\$\{\{/.test(steps[rec].run), 'no ${{ }} spliced into the record script');
 
     const HEAD = 'c'.repeat(40);
+    // Hop 1 as GitHub delivers it: workflow_run carries the PR head, github.sha is main's tip. Rebinding any env to an unmodelled expression throws.
+    const HOP1 = {
+      'steps.gate.outputs.pr_number': '7',
+      'github.event.workflow_run.head_sha': HEAD,
+      'github.event.workflow_run.head_branch': 'feat/thing',
+      'github.event.workflow_run.head_repository.full_name': 'o/r',
+      'github.sha': '2'.repeat(40),
+    };
     const tmp = path.join(cwd, 'tmp');
     fs.mkdirSync(tmp);
     const produced = spawnSync('bash', ['-c', steps[rec].run], { encoding: 'utf8', env: {
-      ...process.env, RUNNER_TEMP: tmp, PR_NUMBER: '7', HEAD_SHA: HEAD, HEAD_REF: 'feat/thing', HEAD_REPO: 'o/r',
+      ...process.env, RUNNER_TEMP: tmp, ...envFrom(steps[rec], HOP1),
     } });
     assert.equal(produced.status, 0, produced.stderr);
     const target = fs.readFileSync(path.join(tmp, 'waffle-pr-target', 'target.json'), 'utf8');
@@ -11397,11 +11411,6 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     return { ...r, outputs: fs.readFileSync(outFile, 'utf8'), calls: read(cwd, 'gh_calls.log').split('\n').filter(Boolean) };
   };
   const outputsOf = (text) => Object.fromEntries(text.split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
-  // Evaluate a step's YAML env against a simulated event context, so a test sees WHICH expression feeds the shell. Unknown ⇒ throw.
-  const envFrom = (step, ctx) => Object.fromEntries(Object.entries(step.env || {}).map(([k, v]) => [k, String(v).replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_, e) => {
-    if (!(e in ctx)) throw new Error(`${k}: unmodelled expression ${e}`);
-    return ctx[e];
-  })]));
 
   // Drive the loop-bound claim step.
   const runBound = ({ labelFails = false } = {}) => {
