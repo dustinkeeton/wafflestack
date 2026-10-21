@@ -11789,6 +11789,10 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     // resolve: read-only, producer provenance (pr-green's real workflow_run hop from this repo)
     const res = doc.jobs.resolve;
     assert.deepEqual(res.permissions, { actions: 'read' });
+    // step id → resolve.outputs → needs.resolve.outputs.*: a broken link skips every run silently
+    const consumed = new Set([...JSON.stringify(job).matchAll(/needs\.resolve\.outputs\.(\w+)/g)].map((m) => m[1]));
+    assert.deepEqual([...consumed].sort(), Object.keys(res.outputs).sort());
+    for (const k of consumed) assert.equal(res.outputs[k], `\${{ steps.${res.steps[0].id}.outputs.${k} }}`, k);
     const cond = res.if.replace(/\s+/g, ' ');
     assert.match(cond, /github\.event\.workflow_run\.conclusion == 'success'/);
     assert.match(cond, /github\.event\.workflow_run\.event == 'workflow_run'/);
