@@ -567,7 +567,8 @@ All three were disarmed on 2026-07-15 (#396) and ejected the next day so the loc
 rendered paths (#414, PR #417) — an ejected hook cannot be re-armed by a stray `git add -A`.
 Re-arming one is a single command since #497: `wafflestack install <files/ref>` un-ejects it, adds
 the `include:` entry, and renders — refusing without `--force` if your project-owned copy differs
-from the render. Then commit. See
+from the render. Then commit. Re-arm pr-green and pr-response together: pr-response reads its
+target PR from an artifact pr-green uploads, so without pr-green every pr-response run skips. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
 The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json` — which also enables the `waffle-view` mod)
