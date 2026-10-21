@@ -4449,14 +4449,18 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     fs.mkdirSync(bin, { recursive: true });
     const sf = path.join(cwd, 'statuses.json');
     const rf = path.join(cwd, 'reviews.json');
-    // a raw string is served verbatim — e.g. `--paginate`'s back-to-back page arrays (#334)
-    fs.writeFileSync(sf, typeof statuses === 'string' ? statuses : JSON.stringify(statuses));
+    // a raw string is served verbatim; `{ pages }` serves page 1 alone unless `--paginate` is passed (#334)
+    const p1 = path.join(cwd, 'statuses-p1.json');
+    const pages = statuses && statuses.pages;
+    fs.writeFileSync(sf, pages ? pages.map((pg) => JSON.stringify(pg)).join('') : typeof statuses === 'string' ? statuses : JSON.stringify(statuses));
+    fs.writeFileSync(p1, pages ? JSON.stringify(pages[0]) : fs.readFileSync(sf, 'utf8'));
     fs.writeFileSync(rf, JSON.stringify(reviews));
     const ghPath = path.join(bin, 'gh');
     fs.writeFileSync(ghPath, [
       '#!/bin/sh',
       'case "$*" in',
-      `  */statuses*) cat ${JSON.stringify(sf)} ;;`,
+      `  */statuses*--paginate*) cat ${JSON.stringify(sf)} ;;`,
+      `  */statuses*) cat ${JSON.stringify(p1)} ;;`,
       `  *)           cat ${JSON.stringify(rf)} ;;`,
       'esac',
     ].join('\n'));
@@ -5099,9 +5103,9 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     if (!hasShell) return t.skip('jq/bash unavailable');
     const g = renderGuards();
     const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
-    let r = runPrGreenGuard(g.prGreen, log, JSON.stringify(MANY) + JSON.stringify(STATUS));
+    let r = runPrGreenGuard(g.prGreen, log, { pages: [MANY, STATUS] });
     assert.equal(r.code, 0, `the status on page 2 IS delivery: ${r.out}`);
-    r = runPrGreenGuard(g.prGreen, log, JSON.stringify(MANY) + JSON.stringify(OTHER_STATUS));
+    r = runPrGreenGuard(g.prGreen, log, { pages: [MANY, OTHER_STATUS] });
     assert.equal(r.code, 1, `two pages with no review status stay fail-closed: ${r.out}`);
   });
 });
