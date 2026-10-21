@@ -4176,6 +4176,56 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
     // the job can actually WRITE one (the harness posts it with this token's scope)
     assert.equal(YAML.parse(wf).jobs['adversarial-review'].permissions.statuses, 'write');
   });
+
+  // #355: pr-response's workflow_run sees only main's tip, so pr-green hands it the target. Producer → consumer, executed end to end.
+  test('P6 pr-green records the waffle-pr-target artifact that pr-response resolves (#355)', (t) => {
+    if (spawnSync('jq', ['--version']).status !== 0) return t.skip('jq unavailable');
+    const RESP = '.github/workflows/waffle-pr-response-hook.yml';
+    write(cwd, '.waffle/waffle.yaml',
+      `targets: [claude]\ninclude: [${REF}, ${SKILL_REF}, files/${RESP}]\nconfig:\n  project:\n    name: ${proj}\n`);
+    const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    const steps = YAML.parse(read(cwd, REL)).jobs['adversarial-review'].steps;
+    const at = (n) => { const i = steps.findIndex((st) => st.name === n); assert.ok(i >= 0, n); return i; };
+    const rec = at('Record the review target for waffle-pr-response-hook');
+    const up = at('Upload the review target');
+    // after the gate decides, BEFORE anything checks out or runs the PR's code
+    assert.ok(at('Resolve target PR and gate the review') < rec && rec < up && up < at('Check out the PR head'));
+    assert.ok(up < at('Dispatch harness (adversarial-review)'));
+    for (const i of [rec, up]) assert.equal(steps[i].if, "steps.gate.outputs.should_review == 'true'");
+    assert.match(steps[up].uses, /^actions\/upload-artifact@[0-9a-f]{40}$/);
+    assert.equal(steps[up].with.name, 'waffle-pr-target');
+    assert.equal(steps[up].with['if-no-files-found'], 'error');
+    assert.ok(!/\$\{\{/.test(steps[rec].run), 'no ${{ }} spliced into the record script');
+
+    const HEAD = 'c'.repeat(40);
+    const tmp = path.join(cwd, 'tmp');
+    fs.mkdirSync(tmp);
+    const produced = spawnSync('bash', ['-c', steps[rec].run], { encoding: 'utf8', env: {
+      ...process.env, RUNNER_TEMP: tmp, PR_NUMBER: '7', HEAD_SHA: HEAD, HEAD_REF: 'feat/thing', HEAD_REPO: 'o/r',
+    } });
+    assert.equal(produced.status, 0, produced.stderr);
+    const target = fs.readFileSync(path.join(tmp, 'waffle-pr-target', 'target.json'), 'utf8');
+    assert.deepEqual(JSON.parse(target), { pr_number: 7, head_sha: HEAD, head_ref: 'feat/thing', head_repo: 'o/r' });
+
+    // the consumer's resolve step accepts exactly what the producer wrote
+    const bin = path.join(cwd, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'gh'), [
+      '#!/usr/bin/env bash',
+      'd=""; prev=""; for a in "$@"; do if [ "$prev" = "-D" ]; then d="$a"; fi; prev="$a"; done',
+      'mkdir -p "$d"; cp "$FAKE_TARGET_FILE" "$d/target.json"',
+    ].join('\n'), { mode: 0o755 });
+    const of = path.join(cwd, 'out');
+    fs.writeFileSync(of, '');
+    const consumed = spawnSync('bash', ['-c', YAML.parse(read(cwd, RESP)).jobs.resolve.steps[0].run], { encoding: 'utf8', env: {
+      ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: path.join(cwd, 'rt'), GITHUB_REPOSITORY: 'o/r',
+      GH_TOKEN: 'x', PRODUCER_RUN_ID: '42', GITHUB_OUTPUT: of, GITHUB_STEP_SUMMARY: path.join(cwd, 'sum'),
+      FAKE_TARGET_FILE: path.join(tmp, 'waffle-pr-target', 'target.json'),
+    } });
+    assert.equal(consumed.status, 0, consumed.stderr);
+    assert.equal(read(cwd, 'out'), `pr_number=7\nhead_sha=${HEAD}\nhead_repo=o/r\n`);
+  });
 });
 
 // The harness-result guard CLASSIFIES denials rather than failing on every one (#82): red on delivery/sandbox, warn on ad-hoc read-only shell.
@@ -11237,19 +11287,30 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
   const HEAD = 'c'.repeat(40);
   const LABEL = 'waffle:pr-response';
 
-  // A fake `gh` on PATH, so the rendered scripts' API calls are driven rather than mocked away. It dispatches on request path — commits/{sha}/pulls,
-  // commits/{sha}/statuses, issues/{n}/labels — and FAKE_GH=error fails every request, to drive the fail-closed paths.
+  // A fake `gh` on PATH, dispatching on request path; FAKE_GH=error fails every request. Calls are logged to FAKE_GH_LOG.
+  // Statuses: FAKE_STATUS_SHA scopes them to one SHA, and FAKE_STATUSES_PAGE2 is served only under --paginate (#355, as #334).
   const installFakeGh = () => {
     const bin = path.join(cwd, 'bin');
     fs.mkdirSync(bin, { recursive: true });
     const gh = path.join(bin, 'gh');
     fs.writeFileSync(gh, [
       '#!/usr/bin/env bash',
+      'if [ -n "${FAKE_GH_LOG:-}" ]; then printf \'%s\\n\' "$*" >> "$FAKE_GH_LOG"; fi',
       'if [ "${FAKE_GH:-}" = "error" ]; then echo "gh: HTTP 502" >&2; exit 1; fi',
       'case "$*" in',
+      '  "run download"*)',
+      '    d=""; prev=""; for a in "$@"; do if [ "$prev" = "-D" ]; then d="$a"; fi; prev="$a"; done',
+      '    if [ -z "${FAKE_TARGET:-}" ] || [ -z "$d" ]; then echo "no artifact matches" >&2; exit 1; fi',
+      '    mkdir -p "$d"; printf \'%s\' "$FAKE_TARGET" > "$d/target.json" ;;',
       '  */labels*)   if [ "${FAKE_LABEL_FAIL:-}" = "1" ]; then echo "gh: HTTP 403" >&2; exit 1; fi; printf \'%s\' \'[]\' ;;',
-      '  */pulls*)    printf \'%s\' "${FAKE_PRS:-[]}" ;;',
-      '  */statuses*) printf \'%s\' "${FAKE_STATUSES:-[]}" ;;',
+      '  */commits/*/pulls*) printf \'%s\' "${FAKE_COMMIT_PRS:-[]}" ;;',
+      '  */pulls/*)   if [ "${FAKE_PRS:-}" = "404" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi; printf \'%s\' "${FAKE_PRS:-{\}}" ;;',
+      '  */statuses*)',
+      '    if [ -n "${FAKE_STATUS_SHA:-}" ] && [[ "$*" != *"commits/${FAKE_STATUS_SHA}/statuses"* ]]; then printf \'[]\'; exit 0; fi',
+      '    case "$*" in',
+      '      *--paginate*) printf \'%s%s\' "${FAKE_STATUSES:-[]}" "${FAKE_STATUSES_PAGE2:-}" ;;',
+      '      *)            printf \'%s\' "${FAKE_STATUSES:-[]}" ;;',
+      '    esac ;;',
       '  *)           printf \'%s\' "${FAKE_COMMENTS:-[]}" ;;',
       'esac',
     ].join('\n'));
@@ -11257,17 +11318,17 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     return bin;
   };
 
-  // the PR `commits/{sha}/pulls` returns — overridable per test
-  const PR = (over = {}) => JSON.stringify([{
+  // the PR object `pulls/{n}` returns — overridable per test
+  const PR = (over = {}) => JSON.stringify({
     number: 7,
     state: 'open',
     draft: false,
     user: { type: 'User' },
-    head: { sha: HEAD, ref: 'feat/thing' },
+    head: { sha: HEAD, ref: 'feat/thing', repo: { full_name: 'o/r' } },
     base: { ref: 'main' },
     labels: [],
     ...over,
-  }]);
+  });
   // pr-green delivered a review on this head (its harness wrote the status)
   const REVIEWED = JSON.stringify([{ context: 'waffle/adversarial-review', state: 'success' }]);
   // …and this hook delivered its reply (its harness wrote its own status)
@@ -11294,6 +11355,8 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
         GH_TOKEN: 'x',
         RUNNER_TEMP: cwd,
         HEAD_SHA: HEAD,
+        PR_NUMBER: '7',
+        HEAD_REPO: 'o/r',
         DEFAULT_BRANCH: 'main',
         RESPONSE_LABEL: LABEL,
         ...env,
@@ -11303,21 +11366,42 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
   };
 
   // Drive the gate step. Everything it decides on now comes from the API, not the event payload.
-  const runGate = (doc, { prs = PR(), statuses = REVIEWED, comments = QUOTING_COMMENTS, fakeGh = '' } = {}) => {
+  const runGate = (doc, { prs = PR(), statuses = REVIEWED, page2 = '', comments = QUOTING_COMMENTS, fakeGh = '', env = {} } = {}) => {
     const outFile = path.join(cwd, 'gh_output');
     const sumFile = path.join(cwd, 'gh_summary');
-    fs.writeFileSync(outFile, '');
-    fs.writeFileSync(sumFile, '');
+    const logFile = path.join(cwd, 'gh_calls.log');
+    for (const f of [outFile, sumFile, logFile]) fs.writeFileSync(f, '');
     const r = runScript(stepNamed(doc, 'Resolve target PR and gate the response').run, {
       FAKE_GH: fakeGh,
       FAKE_PRS: prs,
       FAKE_STATUSES: statuses,
+      FAKE_STATUSES_PAGE2: page2,
       FAKE_COMMENTS: comments,
+      FAKE_GH_LOG: logFile,
       GITHUB_OUTPUT: outFile,
       GITHUB_STEP_SUMMARY: sumFile,
+      ...env,
     });
-    return { ...r, outputs: fs.readFileSync(outFile, 'utf8') };
+    return { ...r, outputs: fs.readFileSync(outFile, 'utf8'), calls: read(cwd, 'gh_calls.log').split('\n').filter(Boolean) };
   };
+
+  // Drive the resolve job's one step: it reads pr-green's waffle-pr-target artifact (#355).
+  const runResolve = (doc, { target = '', runId = '42', env = {} } = {}) => {
+    const outFile = path.join(cwd, 'gh_output');
+    const logFile = path.join(cwd, 'gh_calls.log');
+    for (const f of [outFile, logFile]) fs.writeFileSync(f, '');
+    const r = runScript(doc.jobs.resolve.steps[0].run, {
+      FAKE_TARGET: target, FAKE_GH_LOG: logFile, PRODUCER_RUN_ID: runId,
+      GITHUB_OUTPUT: outFile, GITHUB_STEP_SUMMARY: path.join(cwd, 'gh_summary'), ...env,
+    });
+    return { ...r, outputs: fs.readFileSync(outFile, 'utf8'), calls: read(cwd, 'gh_calls.log').split('\n').filter(Boolean) };
+  };
+  const outputsOf = (text) => Object.fromEntries(text.split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+  // Evaluate a step's YAML env against a simulated event context, so a test sees WHICH expression feeds the shell. Unknown ⇒ throw.
+  const envFrom = (step, ctx) => Object.fromEntries(Object.entries(step.env || {}).map(([k, v]) => [k, String(v).replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_, e) => {
+    if (!(e in ctx)) throw new Error(`${k}: unmodelled expression ${e}`);
+    return ctx[e];
+  })]));
 
   // Drive the loop-bound claim step.
   const runBound = ({ labelFails = false } = {}) => {
@@ -11334,15 +11418,17 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
   // Drive the Check-harness-result guard against a sample execution log.
   const B = (command, extra = {}) => ({ tool_name: 'Bash', tool_input: { command, ...extra } });
   const RESULT = (denials, result = '') => [{ type: 'result', result, permission_denials: denials }];
-  const runGuard = (doc, log, { statuses = '[]', comments = QUOTING_COMMENTS, fakeGh = '' } = {}) => {
+  const runGuard = (doc, log, { statuses = '[]', page2 = '', comments = QUOTING_COMMENTS, fakeGh = '', env = {} } = {}) => {
     const lf = path.join(cwd, 'log.json');
     fs.writeFileSync(lf, JSON.stringify(log));
     return runScript(stepNamed(doc, 'Check harness result').run, {
       FAKE_GH: fakeGh,
       FAKE_STATUSES: statuses,
+      FAKE_STATUSES_PAGE2: page2,
       FAKE_COMMENTS: comments,
       EXECUTION_FILE: lf,
       PR_NUMBER: '7',
+      ...env,
     });
   };
 
@@ -11394,19 +11480,21 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     assert.equal(stepNamed(doc, 'Upload harness execution log').with.name, 'claude-execution-log-pr-response');
   });
 
-  test('R2 GUARD 1 — the fork-head gate is in the job `if:`, and NO predicate reads a body (#338)', () => {
+  test('R2 GUARD 1 — provenance gates the resolve job `if:`, and NO predicate reads a body (#338, #355)', () => {
     const doc = renderHook();
     const job = doc.jobs['pr-response'];
-    const cond = job.if.replace(/\s+/g, ' ');
+    const cond = doc.jobs.resolve.if.replace(/\s+/g, ' ');
 
-    // The security boundary itself: same-repo head, evaluated before a runner is claimed. workflow_run is a base-repo-context trigger just like its predecessor.
+    // Producer provenance, evaluated before a runner is claimed; the fork-head guard proper is on the API-verified PR (R10).
     assert.match(cond, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
     // a redded producing run is not a clean premise for a paid, committing response
     assert.match(cond, /github\.event\.workflow_run\.conclusion == 'success'/);
 
     // THE CORE INVARIANT OF #338: no body predicate survives at the job level. Narrowing the match could never fix it — a human can type a marker on line 1.
-    assert.doesNotMatch(cond, /review\.body/, '#338: no body predicate may gate this paid, committing job');
-    assert.doesNotMatch(cond, /startsWith/, '#338: nothing here matches text at all');
+    for (const c of [cond, job.if]) {
+      assert.doesNotMatch(c, /review\.body/, '#338: no body predicate may gate this paid, committing job');
+      assert.doesNotMatch(c, /startsWith/, '#338: nothing here matches text at all');
+    }
 
     // the gate + bound run FIRST, and the checkout is gated on them — nothing checks out a head
     // before the job has decided it may spend money on it.
@@ -11416,13 +11504,13 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const checkout = stepNamed(doc, 'Check out the PR head branch');
     assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/, 'checkout is SHA-pinned');
     assert.equal(checkout.if, "steps.gate.outputs.should_respond == 'true'");
-    // the checked-out ref comes from the PR the gate RESOLVED (by head SHA), not from event payload
+    // the checked-out ref comes from the PR the gate VERIFIED via the API, not from event payload
     assert.match(checkout.with.ref, /steps\.gate\.outputs\.head_ref/);
 
     // untrusted content never reaches a shell: the gate takes only SHA/branch/label through env
     const gate = stepNamed(doc, 'Resolve target PR and gate the response');
     assert.ok(!/body/i.test(codeOf(gate.run)), 'no body of any kind enters the gate script');
-    for (const key of ['HEAD_SHA', 'DEFAULT_BRANCH', 'RESPONSE_LABEL']) {
+    for (const key of ['PR_NUMBER', 'HEAD_SHA', 'HEAD_REPO', 'DEFAULT_BRANCH', 'RESPONSE_LABEL']) {
       assert.ok(key in gate.env, `gate passes ${key} through env`);
     }
     assert.ok(!/\$\{\{/.test(gate.run), 'no ${{ }} expansion is spliced into the gate script body');
@@ -11505,7 +11593,7 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     assert.match(errored.outputs, /should_respond=false/, `an API error must skip, not dispatch: ${errored.out}`);
     assert.match(errored.out, /fail-closed/);
 
-    // no open PR on this head (the review landed on a since-closed PR)
+    // the recorded PR no longer resolves (deleted, or the API returns no object)
     const gone = runGate(doc, { prs: '[]' });
     assert.match(gone.outputs, /should_respond=false/, `an unresolvable PR must skip: ${gone.out}`);
 
@@ -11598,6 +11686,7 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     // (a) THE TRIGGER. A body cannot raise the event at all now — the only trigger is the producing workflow completing.
     assert.deepEqual(doc.on ?? doc[true], { workflow_run: { workflows: ['waffle-pr-green-hook'], types: ['completed'] } });
     assert.doesNotMatch(doc.jobs['pr-response'].if, /body/, 'no body reaches the job trigger');
+    assert.doesNotMatch(doc.jobs.resolve.if, /body/, 'nor the resolve job');
 
     // (b) THE LOOP BOUND. Three quoting comments, one LED by the literal at offset 0, on a PR carrying no label — so it is UNCLAIMED and still gets its one reply.
     const unclaimed = runGate(doc, { comments: QUOTING_COMMENTS });
@@ -11626,6 +11715,129 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const real = runGuard(doc, RESULT([B('git push')]), { statuses: RESPONDED, comments: '[]' });
     assert.equal(real.code, 0, `the commit status alone proves delivery: ${real.out}`);
     assert.doesNotMatch(real.out, /::error/);
+  });
+
+  const MAIN_TIP = '2'.repeat(40);
+  const TARGET = (over = {}) => JSON.stringify({ pr_number: 7, head_sha: HEAD, head_ref: 'feat/thing', head_repo: 'o/r', ...over });
+  // Hop 2 as GitHub really delivers it: the triggering run is pr-green's own, so its head is MAIN's tip and pull_requests is empty.
+  const HOP2 = {
+    'github.token': 'x',
+    'github.repository': 'o/r',
+    'github.event.workflow_run.id': '42',
+    'github.event.workflow_run.head_sha': MAIN_TIP,
+    'github.event.workflow_run.head_branch': 'main',
+    'github.event.repository.default_branch': 'main',
+  };
+
+  test('R8 REGRESSION (#355) — at hop 2 the hook targets the PR pr-green reviewed, never main\'s tip', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+    // main's tip resolves (via commits/{sha}/pulls) only to the long-merged PR that produced it — the measured payload
+    const mergedPr = JSON.stringify([{ number: 353, state: 'closed', head: { sha: 'e'.repeat(40) }, base: { ref: 'main' } }]);
+    const resolved = { 'needs.resolve.outputs.pr_number': '7', 'needs.resolve.outputs.head_sha': HEAD, 'needs.resolve.outputs.head_repo': 'o/r' };
+
+    // (1) the gate, fed exactly what its YAML env evaluates to at hop 2
+    const gateEnv = envFrom(stepNamed(doc, 'Resolve target PR and gate the response'), { ...HOP2, ...resolved });
+    const g = runGate(doc, { env: { ...gateEnv, FAKE_COMMIT_PRS: mergedPr, FAKE_STATUS_SHA: HEAD } });
+    assert.equal(g.code, 0, g.out);
+    assert.match(g.outputs, /^should_respond=true$/m, `hop 2 must reach the reviewed PR: ${g.out}`);
+    assert.match(g.outputs, /^pr_number=7$/m);
+    assert.match(g.outputs, new RegExp(`^head_sha=${HEAD}$`, 'm'));
+    assert.match(g.outputs, /^head_ref=feat\/thing$/m);
+    assert.ok(!g.calls.some((c) => c.includes(MAIN_TIP)), `no call keys on main's tip: ${g.calls.join(' | ')}`);
+    assert.ok(!g.calls.some((c) => /commits\/[^/]+\/pulls/.test(c)), 'the PR is not re-resolved from a commit');
+    assert.ok(g.calls.some((c) => /repos\/o\/r\/pulls\/7\b/.test(c)), 'the threaded PR is re-verified via pulls/{n}');
+
+    // (2) the resolve job reads the target from pr-green's artifact, keyed on the producer run id
+    const r = runResolve(doc, { target: TARGET(), runId: envFrom(doc.jobs.resolve.steps[0], HOP2).PRODUCER_RUN_ID });
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(outputsOf(r.outputs), { pr_number: '7', head_sha: HEAD, head_repo: 'o/r' });
+    assert.match(r.calls[0], /^run download 42 -R o\/r -n waffle-pr-target -D /, r.calls.join(' | '));
+
+    // (3) the delivery check reads statuses on the gate's head, not main's tip
+    const guardEnv = envFrom(stepNamed(doc, 'Check harness result'), {
+      ...HOP2, 'steps.harness.outputs.execution_file': '', 'steps.gate.outputs.pr_number': '7', 'steps.gate.outputs.head_sha': HEAD,
+    });
+    delete guardEnv.EXECUTION_FILE;
+    const c = runGuard(doc, RESULT([B('git push')]), { statuses: RESPONDED, env: { ...guardEnv, FAKE_STATUS_SHA: HEAD } });
+    assert.equal(c.code, 0, `delivery on the PR head is seen at hop 2: ${c.out}`);
+  });
+
+  test('R9 static (#355) — no workflow_run head is read; concurrency is per PR, after resolve', () => {
+    const doc = renderHook();
+    const wf = read(cwd, REL);
+    assert.doesNotMatch(wf, /workflow_run\.head_sha/, 'hop 2\'s head_sha is main\'s tip — never read it');
+    assert.doesNotMatch(wf, /workflow_run\.head_branch/, 'nor its head_branch');
+    assert.doesNotMatch(wf, /KNOWN DEFECT/);
+    assert.equal(doc.concurrency, undefined, 'no workflow-level (repo-wide) group');
+    const job = doc.jobs['pr-response'];
+    assert.deepEqual([].concat(job.needs), ['resolve']);
+    assert.equal(job.if.trim(), "needs.resolve.outputs.pr_number != ''");
+    assert.match(job.concurrency.group, /needs\.resolve\.outputs\.pr_number/);
+    assert.equal(job.concurrency['cancel-in-progress'], false);
+    assert.match(stepNamed(doc, 'Dispatch harness (pr-response)').with.prompt, /statuses\/\$\{\{ steps\.gate\.outputs\.head_sha \}\}/);
+    assert.equal(stepNamed(doc, 'Check harness result').env.HEAD_SHA, '${{ steps.gate.outputs.head_sha }}');
+    // resolve: read-only, producer provenance (pr-green's real workflow_run hop from this repo)
+    const res = doc.jobs.resolve;
+    assert.deepEqual(res.permissions, { actions: 'read' });
+    const cond = res.if.replace(/\s+/g, ' ');
+    assert.match(cond, /github\.event\.workflow_run\.conclusion == 'success'/);
+    assert.match(cond, /github\.event\.workflow_run\.event == 'workflow_run'/);
+    assert.match(cond, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+    assert.ok(!/\$\{\{/.test(res.steps[0].run), 'no ${{ }} spliced into the resolve script');
+    assert.doesNotMatch(cond, /body|startsWith/);
+  });
+
+  test('R10 the fork-head guard is enforced on the API-verified PR (#355)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+    const head = (repo) => ({ head: { sha: HEAD, ref: 'feat/thing', repo } });
+    for (const [label, opts] of [
+      ['fork head', { prs: PR(head({ full_name: 'evil/r' })) }],
+      ['deleted fork', { prs: PR(head(null)) }],
+      ['artifact names a fork', { env: { HEAD_REPO: 'evil/r' } }],
+    ]) {
+      const r = runGate(doc, opts);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.outputs, /^should_respond=false$/m, `${label} must skip: ${r.out}`);
+      assert.match(r.out, /fork-head guard/, label);
+    }
+    assert.match(runGate(doc).outputs, /^should_respond=true$/m, 'same-repo control dispatches');
+    // the head moved past the reviewed commit, or the PR was retargeted ⇒ the new head gets its own review
+    for (const over of [{ head: { sha: 'd'.repeat(40), ref: 'feat/thing', repo: { full_name: 'o/r' } } }, { base: { ref: 'dev' } }, { state: 'closed' }]) {
+      assert.match(runGate(doc, { prs: PR(over) }).outputs, /^should_respond=false$/m, JSON.stringify(over));
+    }
+    // a 404 (deleted PR) and an untrusted PR_NUMBER both skip, and the latter makes no call at all
+    assert.match(runGate(doc, { prs: '404' }).out, /fail-closed/);
+    const bad = runGate(doc, { env: { PR_NUMBER: '7;id' } });
+    assert.match(bad.outputs, /^should_respond=false$/m);
+    assert.deepEqual(bad.calls, []);
+  });
+
+  test('R11 resolve fails closed on a missing or malformed target (#355)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+    const none = (r, why) => { assert.equal(r.code, 0, `${why}: ${r.out}`); assert.equal(r.outputs, '', `${why}: ${r.outputs}`); };
+    none(runResolve(doc), 'no artifact (pr-green skipped, or it expired)');
+    for (const over of [
+      { pr_number: '7; rm -rf /' }, { pr_number: 0 }, { pr_number: 7.5 }, { head_sha: 'c'.repeat(39) }, { head_sha: 'C'.repeat(40) },
+      { head_repo: 'o/r x' }, { head_repo: '../r' }, { head_repo: null },
+    ]) none(runResolve(doc, { target: TARGET(over) }), JSON.stringify(over));
+    none(runResolve(doc, { target: 'not json' }), 'non-JSON');
+    const badId = runResolve(doc, { target: TARGET(), runId: '42; id' });
+    none(badId, 'non-numeric run id');
+    assert.deepEqual(badId.calls, [], 'gh is never called with an untrusted run id');
+  });
+
+  // #355 scope addition: --paginate emits one array per page; without -s the count is per-page and the case-guard zeroes it.
+  test('R12 both statuses reads fold every --paginate page (#355, as #334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+    const MANY = JSON.stringify(Array.from({ length: 30 }, (_, i) => ({ context: `ci/${i}`, state: 'success' })));
+    assert.match(runGate(doc, { statuses: MANY, page2: REVIEWED }).outputs, /^should_respond=true$/m, 'page-2 review is seen by the gate');
+    assert.match(runGate(doc, { statuses: MANY, page2: MANY }).outputs, /^should_respond=false$/m, 'two pages, no review ⇒ skip');
+    assert.equal(runGuard(doc, RESULT([B('git push')]), { statuses: MANY, page2: RESPONDED }).code, 0, 'page-2 delivery is seen');
+    assert.equal(runGuard(doc, RESULT([B('git push')]), { statuses: MANY, page2: MANY }).code, 1, 'two pages, no delivery ⇒ red');
   });
 });
 
