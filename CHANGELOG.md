@@ -64,6 +64,18 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **waffle-pr-response-hook now resolves the PR it answers (#355).** At its hop of the
+  `workflow_run` chain, `workflow_run.head_sha` is the default branch's tip, so the hook never
+  found a PR and never dispatched. pr-green now uploads a `waffle-pr-target` artifact (PR number and
+  reviewed head) before its harness runs. A new `resolve` job (`actions: read`) reads the artifact
+  back and validates it, failing closed. The gate re-verifies the PR through `pulls/{n}` (open, base
+  branch, head unchanged, same-repo head). Concurrency is now per PR. The gate's reviewed-status
+  count and `check_delivered` also now fold `--paginate` pages (as #334), so a head with many
+  statuses no longer skips a delivered review or reddens a delivered reply.
+
+  **Consumer impact:** if you opted into the pr-response hook, re-render **both** it and the pr-green
+  hook. Until both are re-rendered, every run skips cleanly ("recorded no review target"), which is
+  no worse than before. No config change.
 - **pr-green no longer double-reviews a head with paginated statuses (#334).** `gh api --paginate`
   prints one JSON array per page. The idempotency gate and `check_delivered` counted per page, so
   when a head had more statuses than one page holds, the gate re-dispatched a paid review and

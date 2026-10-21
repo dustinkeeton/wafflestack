@@ -67,7 +67,7 @@ Merged 2026-09-15 through 09-18 (CHANGELOG `[0.16.0]`): `wafflestack report` + `
 - **`waffle-view` follows typed commands only:** the pane tracks the last `/name` you typed, not a
   skill the model calls mid-turn. Its `config` values include your gitignored overlay.
 - **Dogfood hooks:** hygiene is **armed** (daily cron). pr-green and pr-response stay **ejected**;
-  #343 (pluggable CI engine) and #355 (pr-response never dispatches) are both open.
+  #343 (pluggable CI engine) is open. pr-response targets its PR via pr-green's artifact (#355).
 - **Comment burn-down follow-ups (open):** #440 bash essays in workflow `run:` blocks, #441
   DECISIONS triage, #442 `AGENTS.md` prose trim (608 lines, cap 300; fences gone since #415).
 - **The self-render is committed.** After editing `stacks/**`, re-run
