@@ -4157,6 +4157,7 @@ describe('github-workflow: waffle-pr-green-hook payload (#112, #188)', () => {
       assert.doesNotMatch(script, /index\("<!-- waffle-/, '#338: no tolerant substring match survives either');
       assert.doesNotMatch(script, /test\("waffle-/, '#211: and no bare-word regex, the original sin');
       assert.doesNotMatch(script, /\/reviews/, '#338: delivery is not inferred from the review list at all');
+      assert.match(script, /jq -s 'add \/\/ \[\] \| \[ \.\[\] \| select\(\.context=="waffle\/adversarial-review"/, '#334: both counts fold --paginate pages');
     }
     // …and BOTH sites key on the same out-of-band artifact: a commit status on the head SHA. It takes
     // PUSH ACCESS to write one, so no body — at any offset — can forge it.
@@ -4204,6 +4205,8 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
       implement: guardOf('.github/workflows/waffle-label-hook.yml', 'implement'),
       prGreen: guardOf('.github/workflows/waffle-pr-green-hook.yml', 'adversarial-review'),
       prResponse: guardOf('.github/workflows/waffle-pr-response-hook.yml', 'pr-response'),
+      prGreenGate: YAML.parse(read(cwd, '.github/workflows/waffle-pr-green-hook.yml'))
+        .jobs['adversarial-review'].steps.find((s) => s.id === 'gate').run,
     };
   };
 
@@ -4446,13 +4449,18 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     fs.mkdirSync(bin, { recursive: true });
     const sf = path.join(cwd, 'statuses.json');
     const rf = path.join(cwd, 'reviews.json');
-    fs.writeFileSync(sf, JSON.stringify(statuses));
+    // a raw string is served verbatim; `{ pages }` serves page 1 alone unless `--paginate` is passed (#334)
+    const p1 = path.join(cwd, 'statuses-p1.json');
+    const pages = statuses && statuses.pages;
+    fs.writeFileSync(sf, pages ? pages.map((pg) => JSON.stringify(pg)).join('') : typeof statuses === 'string' ? statuses : JSON.stringify(statuses));
+    fs.writeFileSync(p1, pages ? JSON.stringify(pages[0]) : fs.readFileSync(sf, 'utf8'));
     fs.writeFileSync(rf, JSON.stringify(reviews));
     const ghPath = path.join(bin, 'gh');
     fs.writeFileSync(ghPath, [
       '#!/bin/sh',
       'case "$*" in',
-      `  */statuses*) cat ${JSON.stringify(sf)} ;;`,
+      `  */statuses*--paginate*) cat ${JSON.stringify(sf)} ;;`,
+      `  */statuses*) cat ${JSON.stringify(p1)} ;;`,
       `  *)           cat ${JSON.stringify(rf)} ;;`,
       'esac',
     ].join('\n'));
@@ -4481,6 +4489,78 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     });
     return { code: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
   };
+
+  // #334: EXECUTE the gate step. Its own fake gh fails ONLY the statuses call (a global error would also fail `pulls` ⇒ "no open PR" skip),
+  // and serves page 2 only under --paginate, so dropping that flag fails too.
+  const fakeGateGh = () => {
+    const bin = path.join(cwd, 'gatebin');
+    fs.mkdirSync(bin, { recursive: true });
+    const ghPath = path.join(bin, 'gh');
+    fs.writeFileSync(ghPath, [
+      '#!/usr/bin/env bash',
+      'printf \'%s\\n\' "$*" >> "$FAKE_GH_LOG"',
+      'case "$*" in',
+      '  *"commits/${FAKE_STATUS_SHA}/statuses"*)',
+      '    case "${FAKE_STATUSES_MODE:-ok}" in',
+      "      error)   echo 'gh: HTTP 502' >&2; exit 1 ;;",
+      "      nonjson) printf '<html>rate limited</html>'; exit 0 ;;",
+      '    esac',
+      '    case "$*" in',
+      '      *--paginate*) printf \'%s%s\' "$FAKE_PAGE1" "${FAKE_PAGE2:-}" ;;',
+      '      *)            printf \'%s\' "$FAKE_PAGE1" ;;',
+      '    esac ;;',
+      "  */statuses*) printf '[]' ;;",
+      '  */pulls*)    printf \'%s\' "$FAKE_PRS" ;;',
+      "  *\"pr view\"*) printf '[]' ;;",
+      '  *)           echo "unexpected gh $*" >&2; exit 99 ;;',
+      'esac',
+    ].join('\n'));
+    fs.chmodSync(ghPath, 0o755);
+    return bin;
+  };
+  const OPEN_PR = [{ number: 7, state: 'open', draft: false, user: { type: 'User' }, head: { sha: HEAD }, base: { ref: 'main' } }];
+  const runPrGreenGate = (script, { statuses = [], page2, statusSha = HEAD, mode = 'ok', prs = OPEN_PR } = {}) => {
+    const bin = fakeGateGh();
+    const gf = path.join(cwd, 'gate-pr-green.sh');
+    const of = path.join(cwd, 'gh_output');
+    const sf = path.join(cwd, 'gh_summary');
+    const lf = path.join(cwd, 'gh_calls.log');
+    fs.writeFileSync(gf, script);
+    for (const f of [of, sf, lf]) fs.writeFileSync(f, '');
+    const res = spawnSync('bash', [gf], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        GITHUB_REPOSITORY: 'o/r', GH_TOKEN: 'fake', HEAD_SHA: HEAD, DEFAULT_BRANCH: 'main',
+        GITHUB_OUTPUT: of, GITHUB_STEP_SUMMARY: sf,
+        FAKE_GH_LOG: lf, FAKE_STATUS_SHA: statusSha, FAKE_STATUSES_MODE: mode,
+        FAKE_PAGE1: JSON.stringify(statuses), FAKE_PAGE2: page2 ? JSON.stringify(page2) : '',
+        FAKE_PRS: JSON.stringify(prs),
+      },
+    });
+    return {
+      code: res.status,
+      out: `${res.stdout || ''}${res.stderr || ''}`,
+      outputs: fs.readFileSync(of, 'utf8'),
+      summary: fs.readFileSync(sf, 'utf8'),
+      calls: fs.readFileSync(lf, 'utf8').split('\n').filter(Boolean),
+    };
+  };
+  const dispatched = (r, why) => {
+    assert.equal(r.code, 0, `${why}: ${r.out}`);
+    assert.match(r.outputs, /^should_review=true$/m, `${why}: ${r.out}`);
+    assert.match(r.outputs, /^pr_number=7$/m, `${why}: ${r.out}`);
+  };
+  // the skip REASON is asserted, so a broken fake (non-green rollup, no PR) cannot pass a dedup test
+  const skippedAsReviewed = (r, why) => {
+    assert.equal(r.code, 0, `${why}: ${r.out}`);
+    assert.match(r.outputs, /^should_review=false$/m, `${why}: ${r.out}`);
+    assert.doesNotMatch(r.outputs, /should_review=true/, `${why}: ${r.out}`);
+    assert.match(r.summary, /already carries the waffle\/adversarial-review status/, `${why}: ${r.out}`);
+  };
+  // 30 unrelated statuses fill page 1, so the delivery signal lands on page 2 (#334)
+  const MANY = Array.from({ length: 30 }, (_, i) => ({ context: `ci/job-${i}`, state: 'success' }));
 
   test('pr-green: a denied read-only git log does NOT red a run whose review posted (#188)', (t) => {
     if (!hasShell) return t.skip('jq/bash unavailable');
@@ -4969,6 +5049,64 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     assert.equal(code, 0, `a soft denial must not red pr-response: ${out}`);
     assert.match(out, /::warning/, `it warns on the soft denial: ${out}`);
     assert.doesNotMatch(out, /::error/, `no error on a soft denial: ${out}`);
+  });
+
+  test('pr-green gate: an unreviewed green head dispatches, via a paginated per-HEAD statuses read (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const r = runPrGreenGate(g.prGreenGate);
+    dispatched(r, 'no status on the head ⇒ dispatch');
+    assert.equal(r.calls.length, 3, `exactly pulls, pr view, statuses: ${r.calls.join(' | ')}`);
+    assert.match(r.calls[0], new RegExp(`commits/${HEAD}/pulls`));
+    assert.match(r.calls[1], /^pr view 7 /);
+    assert.match(r.calls[2], new RegExp(`^api repos/o/r/commits/${HEAD}/statuses .*--paginate`));
+  });
+
+  test('pr-green gate: the waffle/adversarial-review success status on this head skips (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    skippedAsReviewed(runPrGreenGate(g.prGreenGate, { statuses: STATUS }), 'the delivered head is deduped');
+  });
+
+  test('pr-green gate: a wrong context, or a pending/failure state, still dispatches (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    dispatched(runPrGreenGate(g.prGreenGate, { statuses: OTHER_STATUS }), 'an unrelated context is not a review');
+    for (const state of ['pending', 'failure']) {
+      const statuses = [{ context: 'waffle/adversarial-review', state }];
+      dispatched(runPrGreenGate(g.prGreenGate, { statuses }), `state=${state} is not a delivered review`);
+    }
+  });
+
+  test('pr-green gate: a success status on a DIFFERENT sha does not dedup this head (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    dispatched(runPrGreenGate(g.prGreenGate, { statuses: STATUS, statusSha: OTHER_SHA }), 'the read is keyed on HEAD_SHA');
+  });
+
+  test('pr-green gate: a failing or non-JSON statuses read fails OPEN — dispatch (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // pins `|| echo '[]'` (gh exits non-zero) and `|| echo 0` (jq rejects the body) respectively
+    dispatched(runPrGreenGate(g.prGreenGate, { statuses: STATUS, mode: 'error' }), 'gh exit 1 ⇒ unverifiable ⇒ dispatch');
+    dispatched(runPrGreenGate(g.prGreenGate, { statuses: STATUS, mode: 'nonjson' }), 'non-JSON ⇒ unverifiable ⇒ dispatch');
+  });
+
+  test('pr-green gate: a success status on page 2 of --paginate still skips (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    skippedAsReviewed(runPrGreenGate(g.prGreenGate, { statuses: MANY, page2: STATUS }), 'page 2 delivery is seen');
+    dispatched(runPrGreenGate(g.prGreenGate, { statuses: MANY, page2: OTHER_STATUS }), 'two pages, no review ⇒ dispatch');
+  });
+
+  test('pr-green: check_delivered folds --paginate pages — page-2 delivery is delivered (#334)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
+    let r = runPrGreenGuard(g.prGreen, log, { pages: [MANY, STATUS] });
+    assert.equal(r.code, 0, `the status on page 2 IS delivery: ${r.out}`);
+    r = runPrGreenGuard(g.prGreen, log, { pages: [MANY, OTHER_STATUS] });
+    assert.equal(r.code, 1, `two pages with no review status stay fail-closed: ${r.out}`);
   });
 });
 
