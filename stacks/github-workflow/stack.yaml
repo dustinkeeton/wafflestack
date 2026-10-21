@@ -735,7 +735,9 @@ setup: |-
   `waffle/adversarial-review` **commit status**, which the harness writes on the reviewed SHA right
   after its review lands. So a re-run of checks on an already-reviewed head posts no duplicate, while
   a new commit (new head SHA, no status) is reviewed afresh — once per green transition. The review
-  posts findings only (no commits, no file edits), so it can't itself retrigger CI.
+  posts findings only (no commits, no file edits), so it can't itself retrigger CI. Before its harness
+  runs, a dispatching job also uploads a **`waffle-pr-target`** artifact (PR number, reviewed head
+  SHA/ref/repo; 7-day retention) — the only way the pr-response hook below learns which PR to answer.
   **The delivery signal is out-of-band, not a marker in prose (#338).** Both hooks used to decide
   "the bot did a thing" by string-matching a marker literal inside a free-text body anyone can write.
   That is the common root of #211, #332 and #333: a human comment on PR #207 and a QA review on
@@ -830,10 +832,13 @@ setup: |-
   **Fork-head guard (security boundary).** `workflow_run` runs in **base-repo context** — exactly
   like the `pull_request_review` it replaces, it gets this repo's secrets and a write-scoped token
   even for a fork's PR. Checking out a fork head and handing it to an agent holding `contents: write`
-  would be arbitrary code execution plus secret exfiltration. The job-level `if:` therefore requires
-  `github.event.workflow_run.head_repository.full_name == github.repository`. Never relax it to a
-  label or an author association; the checkout must never happen for a fork head. Consequence:
-  **fork PRs get no automated response** — answer them by running `/pr-response` locally.
+  would be arbitrary code execution plus secret exfiltration. The gate therefore skips unless the
+  API-verified PR's `head.repo.full_name` — and the `head_repo` pr-green recorded — are both this
+  repo (a deleted fork's null head repo skips too). Never relax it to a label or an author
+  association; the checkout must never happen for a fork head. Consequence: **fork PRs get no
+  automated response** — answer them by running `/pr-response` locally. Separately, the `resolve`
+  job's `if:` is a **producer-provenance** check (`workflow_run.event == 'workflow_run'`, same-repo
+  producer), so a fork's own same-named `pull_request` workflow can never trigger this hook.
   **Loop bound — per PR, not per head commit, and written before the money.** pr-green's dedup is
   keyed per head SHA, so it cannot bound this cycle: review → response commits a fix → new head SHA →
   CI green → pr-green reviews the *new* SHA → response again. The bound lives in this workflow, and
@@ -854,17 +859,15 @@ setup: |-
   label by hand first: deliberate friction, since re-arming a paid committing run is a human
   decision. Do not "optimize" the guard back to per-SHA and do not move it into the harness — either
   reintroduces an unbounded paid loop in which every individual fire looks locally correct.
-  **Known defect (#338 follow-up): this hook is currently inert.** `github.event.workflow_run.head_sha`
-  is the **default branch's tip**, not the reviewed PR head — GitHub does not carry a head across a
-  `workflow_run` hop, and this hook sits at the SECOND hop (doctor → pr-green → here), so it receives
-  pr-green's own run object, whose head is `main`. The gate asks `commits/{head_sha}/pulls` for an open
-  PR whose head IS that SHA (main's tip never is), so every run skips at step (1) and the paid harness
-  is never reached (measured live: recent pr-green runs report `head_branch: main`, `pull_requests:
-  []`). The fix is to thread the PR number + reviewed head SHA out-of-band from pr-green (an artifact
-  read back via `workflow_run.id` — job outputs are not exposed to a `workflow_run` consumer and
-  `pull_requests` is empty), which also re-arms the fork clause and makes the concurrency group per-PR
-  rather than the repo-wide constant it is now. Until then the hook is inert: not a live loop, and the
-  loop-bound + delivery-signal design above is unexercised.
+  **Target threading (#355).** At this SECOND hop (doctor → pr-green → here) `workflow_run` carries
+  pr-green's own run, whose head is the **default branch's tip** and whose `pull_requests` is empty;
+  job outputs do not cross the hop either. So pr-green uploads the `waffle-pr-target` artifact before
+  its harness runs, and a cheap `resolve` job (`actions: read`, nothing else) reads it back with
+  `gh run download <workflow_run.id>`, validates its shape strictly and fails closed. The gate then
+  re-verifies the PR via `pulls/{n}` — open, based on the default branch, head still at the reviewed
+  SHA (a newer head gets its own review) — and the response job's concurrency is per PR. The hook
+  reads no `workflow_run` head at all. **Re-render pr-green alongside this hook**: without the
+  artifact every run skips cleanly ("recorded no review target").
   **What the harness may do (baked-in allowlist).** `claude_args` ships a default
   `--allowedTools 'Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh repo view:*)'` plus
   the four `project.*` pre-flight commands the skill runs before pushing. `Write` is load-bearing

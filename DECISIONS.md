@@ -9,6 +9,53 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-21: pr-response threads its target through a pr-green artifact (#355)
+
+**Context**: waffle-pr-response-hook sits at the second hop of a `workflow_run` chain
+(doctor → pr-green → pr-response). At that hop the event describes pr-green's own run. Its
+`head_sha` is the default branch's tip and its `pull_requests` is empty. The hook resolved its
+PR from that SHA, so every run skipped at step (1) and the paid harness was never reached. Its
+concurrency group was one repo-wide constant, and its fork-head clause could never be false.
+
+**Decision**:
+
+1. **pr-green records the target.** When it is about to dispatch, it uploads a `waffle-pr-target`
+   artifact (PR number, reviewed head SHA/ref/repo, 7-day retention). It writes the artifact
+   *before* its harness runs, so neither the PR diff nor the agent can rewrite it. Job outputs do
+   not cross a `workflow_run` hop, and an artifact keyed on `workflow_run.id` does. The upload is
+   an `actions/upload-artifact` step, but it reuses the SHA already pinned in the stack's other
+   workflows, so no new action pin appears.
+2. **A read-only `resolve` job reads it** with `gh run download` in a `run:` script. That adds no
+   new `uses:` surface on the pr-response side, and the existing fake-`gh` harness can exec-test it. It needs
+   `actions: read` and nothing else. It validates the shape strictly (integer PR number, 40-hex
+   SHA, `owner/repo`) and fails closed: a missing or malformed artifact writes no outputs, so the
+   response job is skipped.
+3. **The gate stays in the serialized job.** The artifact is a pointer, not truth. The gate
+   re-verifies it via `pulls/{n}`: open, based on the default branch, head still at the reviewed
+   SHA, and a same-repo head. The gate and the loop-bound claim stay together in the
+   `pr-response` job, under a per-PR concurrency group. The label claim is a check-then-claim and
+   the POST is idempotent, so a gate moved into the unserialized `resolve` job would let two
+   pr-green completions both pass the check and both claim. That is a double paid, committing
+   dispatch.
+4. **Two guards, renamed for what they do.** The `resolve` job's `if:` is now a
+   *producer-provenance* check (`workflow_run.event == 'workflow_run'`, same-repo producer). It stops
+   a fork's own same-named `pull_request` workflow from triggering the hook. The *fork-head guard*
+   moves into the gate, on the API-verified PR's `head.repo`, and is cross-checked against the
+   recorded `head_repo`.
+
+**Alternatives considered**: Re-resolving from the PR list by branch was rejected because pr-green's
+head is `main`. `actions/download-artifact` with `run-id` in pr-response was rejected because it
+adds a new pinned action, and the fake-`gh` harness can't drive it. Moving the gate into `resolve` was rejected for
+the race in (3).
+
+**Consequences**: Consumers must re-render pr-green with this hook. Until then the hook skips
+cleanly. A head pushed after the review skips by design, because the new head gets its own review.
+The artifact may not be listable the instant the `completed` event fires. If that shows up live,
+add a bounded retry in `resolve`. The hook is still ejected here, so live proof waits for #343's
+re-arm.
+
+---
+
 ## 2026-10-19: The manual-review queue gets a severity floor on filing, and every run report burns it down (#511)
 
 **Context**: Autopilot's cap hatches file a follow-up labeled `autopilot.holdLabel`
