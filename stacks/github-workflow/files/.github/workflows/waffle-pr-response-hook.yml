@@ -43,10 +43,11 @@ jobs:
             # Still skip, but keep gh's error visible (one flattened line: no workflow-command injection).
             err="$(printf '%s' "$err" | tr '\r\n' '  ' | cut -c1-500)"
             case "$err" in
-              *"no artifact matches"*|*"no valid artifacts"*) echo "gh run download: ${err}" ;;
-              *) echo "::warning::waffle-pr-response-hook: gh run download failed for run ${PRODUCER_RUN_ID}: ${err}" ;;
+              *"no artifact matches"*|*"no valid artifacts"*) echo "gh run download: ${err}"
+                skip "pr-green run ${PRODUCER_RUN_ID} recorded no review target (it skipped, or the artifact expired) — nothing to respond to." ;;
             esac
-            skip "pr-green run ${PRODUCER_RUN_ID} recorded no review target (it skipped, or the artifact expired) — nothing to respond to."
+            echo "::warning::waffle-pr-response-hook: gh run download failed for run ${PRODUCER_RUN_ID}: ${err}"
+            skip "could not download pr-green run ${PRODUCER_RUN_ID}'s review target — see the warning above; refusing to dispatch (fail-closed)."
           fi
           f="$dir/target.json"; [ -f "$f" ] || f="$dir/waffle-pr-target/target.json"
           # FAIL-CLOSED shape check: a pointer, re-verified against the API by the gate.

@@ -11847,6 +11847,7 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     none(absent, 'no artifact (pr-green skipped, or it expired)');
     assert.match(absent.out, /no artifact matches/, 'the expected no-artifact text is logged');
     assert.doesNotMatch(absent.out, /::warning::/, 'an expected absence is not a warning');
+    assert.match(absent.out, /recorded no review target/, 'an expected absence keeps the no-target summary');
     for (const over of [
       { pr_number: '7; rm -rf /' }, { pr_number: 0 }, { pr_number: 7.5 }, { head_sha: 'c'.repeat(39) }, { head_sha: 'C'.repeat(40) },
       { head_repo: 'o/r x' }, { head_repo: '../r' }, { head_repo: null },
@@ -11864,6 +11865,8 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     assert.equal(broken.code, 0, broken.out);
     assert.equal(broken.outputs, '', 'a failed download writes no outputs');
     assert.match(broken.out, /::warning::.*HTTP 403: Resource not accessible by integration/, broken.out);
+    assert.match(broken.out, /could not download .*see the warning above/, 'the summary names the failed download');
+    assert.doesNotMatch(broken.out, /recorded no review target/, 'a broken download is not summarized as an absence');
     const injected = runResolve(doc, { target: TARGET(), env: { FAKE_DOWNLOAD_ERR: 'line one\n::error::injected' } });
     assert.equal(injected.outputs, '', 'a multi-line error still skips');
     assert.match(injected.out, /::warning::.*line one/, injected.out);

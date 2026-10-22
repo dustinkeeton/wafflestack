@@ -68,7 +68,8 @@ is what you reach for across a breaking one.
   threw away `gh run download`'s stderr, so a 403, auth, or network failure looked like the normal
   "recorded no review target" skip. It still skips (fail-closed), but now logs gh's error. The
   expected no-artifact case is a plain log line, and any other failure is a `::warning::`
-  annotation, flattened to one line so stderr cannot inject workflow commands.
+  annotation, flattened to one line so stderr cannot inject workflow commands. The step summary
+  names the failed download instead of the no-target skip.
   **Consumer impact:** re-render if you opted into `waffle-pr-response-hook`. No config change.
 - **A test now pins pr-green's `check_delivered` non-JSON fallback (#620).** A `gh` call that
   exits 0 with a non-JSON statuses body (an HTML rate-limit page, say) must not count as delivery.
