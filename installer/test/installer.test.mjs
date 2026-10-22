@@ -11325,7 +11325,8 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
       'case "$*" in',
       '  "run download"*)',
       '    d=""; prev=""; for a in "$@"; do if [ "$prev" = "-D" ]; then d="$a"; fi; prev="$a"; done',
-      '    if [ -z "${FAKE_TARGET:-}" ] || [ -z "$d" ]; then echo "no artifact matches" >&2; exit 1; fi',
+      '    if [ -n "${FAKE_DOWNLOAD_ERR:-}" ]; then printf \'%s\\n\' "$FAKE_DOWNLOAD_ERR" >&2; exit 1; fi',
+      '    if [ -z "${FAKE_TARGET:-}" ] || [ -z "$d" ]; then echo "no artifact matches any of the names or patterns provided" >&2; exit 1; fi',
       '    mkdir -p "$d"; printf \'%s\' "$FAKE_TARGET" > "$d/target.json" ;;',
       '  */labels*)   if [ "${FAKE_LABEL_FAIL:-}" = "1" ]; then echo "gh: HTTP 403" >&2; exit 1; fi; printf \'%s\' \'[]\' ;;',
       '  */commits/*/pulls*) printf \'%s\' "${FAKE_COMMIT_PRS:-[]}" ;;',
@@ -11842,7 +11843,10 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     if (!hasShell) return t.skip('jq/bash unavailable');
     const doc = renderHook();
     const none = (r, why) => { assert.equal(r.code, 0, `${why}: ${r.out}`); assert.equal(r.outputs, '', `${why}: ${r.outputs}`); };
-    none(runResolve(doc), 'no artifact (pr-green skipped, or it expired)');
+    const absent = runResolve(doc);
+    none(absent, 'no artifact (pr-green skipped, or it expired)');
+    assert.match(absent.out, /no artifact matches/, 'the expected no-artifact text is logged');
+    assert.doesNotMatch(absent.out, /::warning::/, 'an expected absence is not a warning');
     for (const over of [
       { pr_number: '7; rm -rf /' }, { pr_number: 0 }, { pr_number: 7.5 }, { head_sha: 'c'.repeat(39) }, { head_sha: 'C'.repeat(40) },
       { head_repo: 'o/r x' }, { head_repo: '../r' }, { head_repo: null },
@@ -11851,6 +11855,19 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const badId = runResolve(doc, { target: TARGET(), runId: '42; id' });
     none(badId, 'non-numeric run id');
     assert.deepEqual(badId.calls, [], 'gh is never called with an untrusted run id');
+  });
+
+  test('R11b a broken gh run download still skips, but its error stays in the log (#624)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const doc = renderHook();
+    const broken = runResolve(doc, { target: TARGET(), env: { FAKE_DOWNLOAD_ERR: 'HTTP 403: Resource not accessible by integration' } });
+    assert.equal(broken.code, 0, broken.out);
+    assert.equal(broken.outputs, '', 'a failed download writes no outputs');
+    assert.match(broken.out, /::warning::.*HTTP 403: Resource not accessible by integration/, broken.out);
+    const injected = runResolve(doc, { target: TARGET(), env: { FAKE_DOWNLOAD_ERR: 'line one\n::error::injected' } });
+    assert.equal(injected.outputs, '', 'a multi-line error still skips');
+    assert.match(injected.out, /::warning::.*line one/, injected.out);
+    assert.doesNotMatch(injected.out, /^::error::/m, 'stderr cannot start its own workflow command');
   });
 
   // #355 scope addition: --paginate emits one array per page; without -s the count is per-page and the case-guard zeroes it.
