@@ -64,6 +64,13 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **waffle-pr-response-hook re-verifies the checked-out commit (#623).** Checkout is by branch
+  name, so a push between the gate and checkout used to hand the harness a commit nobody reviewed.
+  A new step after checkout compares `git rev-parse HEAD` with the gate's reviewed SHA and reds the
+  job before install or the paid harness runs. The response label is already claimed by then, so
+  the error tells you to remove it and run `/pr-response` by hand on the new head.
+
+  **Consumer impact:** opt-in `files/` payload. Re-render to pick up the step. No config change.
 - **waffle-pr-response-hook accepts exactly one review target (#622).** The `resolve` job's shape
   check now slurps `target.json` and requires a single JSON object. Before, a file holding two valid
   objects passed and wrote each output key twice. The untested `waffle-pr-target/target.json`
