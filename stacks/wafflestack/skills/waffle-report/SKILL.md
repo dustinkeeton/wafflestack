@@ -221,6 +221,14 @@ gh issue edit <issue url> --repo OWNER/REPO --add-label "waffle:reassess"       
 gh issue edit <issue url> --repo OWNER/REPO --add-label "waffle:consumer-report" || echo "warn: waffle:consumer-report not applied"
 ```
 
+Then **read the labels back** — the `warn:` lines cannot see a label GitHub dropped silently:
+
+```bash
+gh issue view <issue url> --repo OWNER/REPO --json labels -q '.labels[].name'
+```
+
+Build the not-applied list from that output, never from which `echo` fired.
+
 A fixed label that fails to apply is a **warning, never a failed
 filing**: the issue already exists. Expect it for most filers. Adding a label takes **triage or
 write access** on the toolkit repo, and a typical consumer has neither. GitHub may also silently
@@ -229,7 +237,7 @@ drop the form label from `gh issue create`. A fork's tracker can also lack the l
 maintainer's automation will treat it as ordinary scope.
 
 On success, report the issue URL, each hosted attachment, and one line per placeholder asking the
-user to attach that file by hand. For each label that was **not** applied (fixed or form), say so
+user to attach that file by hand. For each label missing from the read-back (fixed or form), say so
 plainly, give the likely cause (no triage rights on `OWNER/REPO`), and tell the user to comment
 on the issue asking the maintainer to add it. Name `waffle:reassess` first. Without it the report
 is not held.
