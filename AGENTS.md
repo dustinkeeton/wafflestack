@@ -85,7 +85,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers | `CONFIG_FILE`, `LOCAL_CONFIG_FILE`, `LOCK_FILE`, `LOCAL_LOCK_FILE`, `AVATARS_DIR`, `BASELINE_GITIGNORE_ENTRIES`, `EXTENSIONS_DIR`, `LEGACY_ROOT_CONFIG_FILE`, `LEGACY_ROOT_LOCAL_CONFIG_FILE`, `LEGACY_ROOT_LOCK_FILE`, `LEGACY_CONFIG_FILE`, `LEGACY_LOCAL_CONFIG_FILE`, `LEGACY_LOCK_FILE`, `LEGACY_EXTENSIONS_DIR`, `VALID_TARGETS`, `resolveConfigFile`, `resolveLocalConfigFile`, `resolveLockFile`, `localLockPath`, `migrateLegacyDotfiles`, `staleGitignoreEntries`, `gitignoreMentions`, `GITIGNORE_MARKER`, `ensureGitignoreEntries`, `removeGitignoreEntries`, `recommendedGitignoreEntries`, `renameLegacyStacksKey`, `dropIncludeEntries`, `setScalarIn`, `appendSeqIn`, `removeSeqIn`, `renameKeyIn`, `loadProjectConfig`, `classifyStackSource`, `normalizeStackEntries`, `HARNESS_BUILTINS`, `HARNESS_PATTERNS`, `makeResolver` |
 | `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver, `resolveInside` containment guard | `sha256`, `isBinary`, `readYaml`, `exists`, `writeFileEnsuringDir`, `deepMerge`, `parseVersion`, `compareVersions`, `lookupPath`, `FRONTMATTER_RE`, `parseFrontmatter`, `stringifyFrontmatter`, `resolveInside` |
 | `doctor.mjs` | Drift check vs `readTreeLock`; generated `.waffle/` docs presence-optional (#528); `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129) | `doctor`, `verifyRenderAgainstLock` |
-| `eject.mjs` | `eject` / `installRefs` / `init` | `eject`, `installRefs`, `unejectCollisions`, `init` |
+| `eject.mjs` | `eject` / `installRefs` / `setup`+`init` scaffold | `eject`, `installRefs`, `unejectCollisions`, `init`, `scaffoldConfig` |
 | `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) | `RESERVED_AGENT_KEYS`, `validateToolkit`, `validateModPlugins`, `formatModPluginChecks`, `validateRegistry`, `validateSourceBytes`, `validateHarnessBuiltins`, `validateExternalStacks`, `validateStack`, `behavioralKeyProblems` |
 | `setup.mjs` | `setup` output: SETUP.md playbook + inventory (+ update-mode section) | `setupGuide`, `toolkitInventory` |
 | `model-invocation.mjs` | Per-skill model-invocation override (#476): `skills.modelInvocation` normalization (throws on shape errors, like invalid `targets:`) + the pure `disable-model-invocation` frontmatter patch render applies to the `claude` copy | `MODEL_INVOCATION_KEY`, `CONFIG_PATH`, `emptyOverride`, `normalizeModelInvocation`, `overrideFor`, `frontmatterDisablesModelInvocation`, `sourceDisablesModelInvocation`, `applyModelInvocation` |
@@ -144,7 +144,7 @@ project.mjs  → util, model-invocation, template (parseFlagPlaceholder only; bo
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Usage:
-`wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
+`wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
 (`USAGE`, `cli.mjs:47`).
 
 Dispatch and exit contract: `help`/`--help`/`-h` print the full help to stdout, exit 0 —
@@ -162,11 +162,11 @@ first arg, `init`/`setup`/`doctor`/`validate` silently ignore it.
 | `--help`, `-h` | every command | print help to stdout, exit 0; intercepted before dispatch |
 | `--force` | `render`, `bake`, `install`, `reinstall` | override render's unmanaged-file overwrite guard |
 | `--force` | `uninstall`, `reinstall --clean` | also delete drifted (hand-edited) managed files |
-| `--gitignore` | `init`, `render`, `bake`, `install` | append the recommended `.gitignore` entries |
+| `--gitignore` | `setup`, `init`, `render`, `bake`, `install` | append the recommended `.gitignore` entries |
 | `--yes` | `uninstall` | actually delete; without it `uninstall` is a dry run |
 | `--yes` | `reinstall` | required by `--clean` only; a plain refresh needs none |
 | `--keep-config` | `uninstall` | keep `.waffle/` — config, overlay, `extensions/` and both locks |
-| `--clean` | `reinstall` | wipe incl. config, then re-scaffold via `init` (requires `--yes`) |
+| `--clean` | `reinstall` | wipe incl. config, then re-scaffold via lib `init()` (requires `--yes`) |
 | `--allow-missing` | `doctor`, `uninstall` | tolerate managed files absent from disk (the generated `.waffle/` docs are presence-optional without it, #528) |
 | `--verify-render` | `doctor` | re-render committed inputs in a temp dir vs the committed lock |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
@@ -183,17 +183,16 @@ command) when provably not a release. Gated: `render`/`bake`, `install`, `upgrad
 `doctor --verify-render`, `list --interactive` (once a selection is applied), `toggle` whenever it
 writes (`--disable`/`--enable`, and the TTY picker — gated BEFORE the prompt so a refusal never
 follows the user's picks). Not gated: plain `toggle` with no flags (read-only table ⇒ warning),
-`doctor` (pure hash-vs-lock; gets the offline identity), `list`/`setup` (read-only ⇒
+`doctor` (pure hash-vs-lock; gets the offline identity), `list`/`setup`/`init` (report, or the static starter only ⇒
 `formatProvenanceWarning` to stderr), `report` (read-only ⇒ warning, and OFFLINE identity so a
-diagnostics dump never stalls on a lookup), `init`, `eject`, `uninstall`, `validate`, `avatars`, `help`.
+diagnostics dump never stalls on a lookup), `eject`, `uninstall`, `validate`, `avatars`, `help`.
 `unverified` (offline / no git / unreadable npm lockfile) proceeds with a warning — fail open on
 ignorance, fail closed only on a successful "not a release" lookup. The identity is threaded to
 `renderProject`/`upgrade`/`reinstall` and written into the lock's `toolkit` block (#374).
 
 | Command | Behavior |
 |---------|----------|
-| `init` | Write starter `.waffle/waffle.yaml`; errors if one exists at any generation. `--gitignore` appends `BASELINE_GITIGNORE_ENTRIES` — the three pre-stack-knowable entries (local overlay, local lock, `.waffle/avatars/`; #528, `cli.mjs:217`). `eject.mjs:264` |
-| `setup` | Print `schema/SETUP.md` playbook + toolkit inventory; already-configured cwd adds a live update-mode section — including, when the selection renders a mod, a `## Mods` block with each mod's check/load/install/test lines (#564). `setup.mjs:23` |
+| `setup` / `init` (alias) | #611: one handler (`cli.mjs:210`), byte-identical output. `scaffoldConfig` (`eject.mjs`) writes the starter `.waffle/waffle.yaml` only when `resolveConfigFile` finds no config at any generation (a legacy `.waffle.yaml`/`.wafflestack.yaml` counts as existing); never overwrites. `wrote …` goes to stderr so stdout stays the pure playbook. `--gitignore` always applies `BASELINE_GITIGNORE_ENTRIES` — the three pre-stack-knowable entries (local overlay, local lock, `.waffle/avatars/`; #528), reported on stderr. Exit 0 whether it scaffolded or found a config. Then prints the `schema/SETUP.md` playbook + toolkit inventory; a freshly scaffolded config gets the first-install guide, an existing one adds a live update-mode section — including, when the selection renders a mod, a `## Mods` block with each mod's check/load/install/test lines (#564). `setup.mjs:25` |
 | `list` | Per-stack per-item state table (`current`/`outdated`/`not-installed`/`not-installable`/`PENDING REMOVAL` — the last on every deselection path, scope or stack/include, #371); plain aligned table by default (ANSI only on a TTY); `--interactive` multi-select installs + renders. Takes no refs. `list.mjs`, `cli.mjs:226` |
 | `toggle` | Per-skill agent-invocation override (#476): one row per RENDERED skill (`agent-invocable` / `slash-only`, `(source)` / `(override)`), read from the COMMITTED config and the tree lock; externals (#471) never listed. No flags + real TTY on stdin AND stdout → keypress picker (checked = agent-invocable; `enter` writes the FULL desired state, `esc` writes nothing); no flags + non-TTY → the plain table, exit 0, readline never opened; `--disable`/`--enable` → write without a prompt. A write persists a MINIMAL `skills.modelInvocation` block (a skill lands in `disabled:`/`enabled:` only where it differs from its source; empty block removed) to `waffle.yaml` comment-preservingly, then runs a full render so the lock records the patched skill. `no change` when every named skill is already in that state. Takes no refs. `toggle.mjs`, `cli.mjs:253` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. An EJECTED item ref is un-ejected, loudly (#497). ANY refused render rolls the config back to the text as found (#548, `cli.mjs:444`); when the refusal is an un-ejected item's differing project-owned copy the error names `--force` and the item stays ejected. Bare `install` = `render`. `eject.mjs:107` |

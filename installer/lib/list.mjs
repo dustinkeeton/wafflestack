@@ -308,7 +308,7 @@ export function formatListTable(model, { color = false } = {}) {
     lines.push('');
   } else if (!model.hasConfig) {
     lines.push(paint('this repo is not configured — nothing installed', ANSI.dim));
-    lines.push('Run `wafflestack init`, pick stacks, then `wafflestack install` (or `render`).');
+    lines.push('Run `wafflestack setup`, pick stacks, then `wafflestack install` (or `render`).');
     lines.push('');
   }
   for (const note of model.notes) lines.push(paint(`note: ${note}`, ANSI.dim));

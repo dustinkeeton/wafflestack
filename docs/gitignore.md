@@ -590,7 +590,7 @@ unasked.
 - **The configured `git.worktreesDir`** (default `.claude/worktrees/`) — throwaway working
   state. Emitted when an enabled stack declares the key.
 
-`init --gitignore` seeds the first two, since no stack is chosen yet; run
+`setup --gitignore` (alias `init`) seeds the first two plus `.waffle/avatars/`, since no stack is chosen yet; run
 `install --gitignore` once a stack is enabled to pick up the worktrees directory.
 
 ---

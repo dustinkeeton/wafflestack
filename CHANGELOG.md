@@ -41,6 +41,18 @@ is what you reach for across a breaking one.
   **Consumer impact:** additive — re-render. The three gate keys now also accept `false` in config.
 
 ### Changed
+- **`init` and `setup` are one onboarding command (#611).** `setup` now writes the starter
+  `.waffle/waffle.yaml` when no config exists at any generation, then prints the playbook and
+  inventory. It never overwrites a config; on a configured repo it prints update mode as before.
+  `init` is an alias with byte-identical output, and `/waffle-init` is an alias skill of
+  `/waffle-setup`. `--gitignore` works on both and always seeds the baseline entries, even on an
+  existing config. The `wrote …` and `.gitignore:` notices go to stderr, so `setup > plan.md` still
+  captures only the playbook. `init` now prints the toolkit provenance warning that `setup` prints.
+
+  **Consumer impact:** re-render to pick up the skill text. No config change, no migration. Behavior
+  change: `init` on a repo that already has a config used to exit 1 ("already exists"); it now
+  exits 0 and prints the update-mode playbook. Scripts that relied on that exit 1 should check for
+  `.waffle/waffle.yaml` themselves.
 - **project-manager owns grouping issues into epics (#633).** A new responsibility has it group
   related open issues under an `[epic]` parent while it reviews the backlog. The parent is an
   existing epic or a new one filed with the `issue` skill. It confirms with the user before

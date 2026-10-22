@@ -5,7 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
-import { eject, init, installRefs, unejectCollisions } from './lib/eject.mjs';
+import { eject, scaffoldConfig, installRefs, unejectCollisions } from './lib/eject.mjs';
 import { validateToolkit, validateModPlugins, formatModPluginChecks } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
 import { collectReport, formatReportMarkdown } from './lib/report.mjs';
@@ -36,7 +36,7 @@ const cwd = extractCwd(args) ?? process.cwd();
 const allowUnreleased = extractFlag(args, '--allow-unreleased') || envAllowUnreleased();
 const offline = extractFlag(args, '--offline') || envOffline();
 
-// Resolved at most once, and only when a command needs it: `validate`/`help`/`init`/`eject` never do.
+// Resolved at most once, and only when a command needs it: `validate`/`help`/`eject` never do.
 /** @type {import('./lib/toolkit-ref.mjs').ToolkitIdentity | null} */
 let identityCache = null;
 /** @type {import('./lib/toolkit-ref.mjs').ToolkitIdentity | null} */
@@ -45,7 +45,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -207,20 +207,18 @@ try {
       process.exit(result.ok ? 0 : 1);
       break;
     }
-    case 'init': {
-      const gitignore = extractFlag(args, '--gitignore');
-      const file = init({ cwd });
-      console.log(`wrote ${file} — pick stacks and config values, then run \`wafflestack render\``);
-      console.log('(or run `wafflestack setup` and hand the printed playbook to your coding agent)');
-      // No stack is chosen yet, so only the stack-independent baseline is knowable;
-      // `install --gitignore` adds the worktrees dir once a stack that declares it is enabled.
-      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [...BASELINE_GITIGNORE_ENTRIES]));
-      break;
-    }
+    case 'init':
     case 'setup': {
-      // Reporting only — it writes nothing, so it warns rather than refusing (#373).
-      warnProvenance(identity());
-      process.stdout.write(setupGuide(toolkitRoot, pkg.version, cwd));
+      // One onboarding command (#611). stdout stays the pure playbook; notices go to stderr.
+      const gitignore = extractFlag(args, '--gitignore');
+      // Refuse before scaffolding: a dropped ref would otherwise exit 0 having written a starter.
+      if (args.length) fail(`${command} takes no refs (got ${args.join(', ')}) — use \`wafflestack install <ref…>\` to add a stack or item`);
+      warnProvenance(identity()); // writes only the static starter, so it warns rather than refusing (#373)
+      const { file, created } = scaffoldConfig({ cwd });
+      if (created) console.error(`wrote ${file} — the playbook below walks you (or your coding agent) through the rest`);
+      // No stack is chosen yet, so only the stack-independent baseline is knowable.
+      if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [...BASELINE_GITIGNORE_ENTRIES]), console.error);
+      process.stdout.write(setupGuide(toolkitRoot, pkg.version, created ? undefined : cwd));
       break;
     }
     case 'list': {
@@ -383,8 +381,8 @@ function helpText() {
     USAGE,
     '',
     'commands:',
-    '  init        scaffold .waffle/waffle.yaml so you can pick stacks and config values',
-    '  setup       print the install playbook to hand to your coding agent',
+    '  setup       scaffold .waffle/waffle.yaml if missing, then print the install playbook for your coding agent',
+    '  init        alias for setup — same command',
     '  list        show every stack and item in the toolkit, and what this repo has selected',
     '  toggle      pick which rendered skills an agent may invoke on its own (TTY picker), then render',
     '  install     add stacks/items to the selection (persists them), then render',
@@ -406,7 +404,7 @@ function helpText() {
     '  --help, -h        print this help and exit 0; after a command, explain instead of running it',
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
     '                    uninstall: also delete files that were hand-edited after rendering',
-    '  --gitignore       init/render/install: append the recommended .gitignore entries',
+    '  --gitignore       setup/init/render/install: append the recommended .gitignore entries',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
     '                    reinstall: required by --clean, the one path that deletes your config',
     '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
@@ -462,8 +460,8 @@ function offerGitignore() {
   reportGitignore(ensureGitignoreEntries(cwd, recommendedGitignoreEntries(toolkit, project)));
 }
 
-function reportGitignore(added) {
-  console.log(
+function reportGitignore(added, out = console.log) {
+  out(
     added.length
       ? `.gitignore: added ${added.join(', ')}`
       : '.gitignore: already lists the recommended entries — left unchanged',

@@ -4783,3 +4783,30 @@ describe('delegate and autopilot wire pr-docs before arming (#585, part of #572)
     assert.match(autopilot, /`delegate\.docsRefresh` off for the delegate run when the audit step \(§4\) is on/);
   });
 });
+
+describe('init and setup are one onboarding command (#611)', () => {
+  const skill = (n) => fs.readFileSync(path.join(STACKS, 'wafflestack', 'skills', n, 'SKILL.md'), 'utf8');
+  const setupMd = () => fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
+
+  test('/waffle-init says it is an alias of /waffle-setup and no longer errors on an existing config', () => {
+    const init = skill('waffle-init');
+    assert.match(parseFrontmatter(init).data.description, /^Alias of \/waffle-setup/);
+    assert.doesNotMatch(init, /errors if a config already exists/i);
+    assert.match(skill('waffle-setup'), /never overwrites/);
+    assert.doesNotMatch(skill('waffle-setup'), /`\/waffle-init`\*\* first/);
+  });
+
+  test('SETUP.md step 1 is the scaffold `setup` already did, not a separate `init` run', () => {
+    const md = setupMd();
+    assert.match(md, /^## 1\. Scaffold$/m);
+    assert.doesNotMatch(md, /`init` refuses to overwrite|Skip step 1/);
+    assert.doesNotMatch(md, /Run `wafflestack init`/);
+  });
+
+  test('SETUP.md keys update mode on the printed section, not on the config file setup just wrote', () => {
+    const md = setupMd();
+    assert.match(md, /If the CLI printed a \*\*"Current configuration — update mode"\*\* section/);
+    assert.doesNotMatch(md, /If `\.waffle\/waffle\.yaml` already exists, this is an \*\*update\*\*/);
+    assert.doesNotMatch(md, /Add `--gitignore` to that run/);
+  });
+});

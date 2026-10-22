@@ -19,13 +19,14 @@ so the whole install uses one toolkit version.
 
 - Work from the project root (where `.git` lives) — the renderer writes files relative
   to the cwd. Node >= 18 is required.
-- If `.waffle/waffle.yaml` already exists, this is an **update**, not a first install. The
-  CLI injects a **"Current configuration — update mode"** section between this playbook and
-  the inventory: your live targets, enabled stacks, individual includes, ejects, effective
-  config values (current vs. default), any unset required keys, unmet prerequisites, and opt-in
-  syrup items — read from the repo, so you do not have to open the file yourself. Skip step 1
-  (`init` refuses to overwrite an existing config) and revisit only the steps the change calls
-  for (new stack → steps 2–7; config change → steps 3, 5, 7).
+- If the CLI printed a **"Current configuration — update mode"** section between this
+  playbook and the inventory, this is an **update**, not a first install. Do not key on
+  `.waffle/waffle.yaml` existing: on a first install the `setup` that printed this guide has
+  just written a starter there, and it prints no update-mode section. That section lists
+  your live targets, enabled stacks, individual includes, ejects, effective config values
+  (current vs. default), any unset required keys, unmet prerequisites, and opt-in syrup items — read from the repo, so you do not have to open the file yourself. Step 1 is
+  already done (`setup` never overwrites an existing config), so revisit only the steps the
+  change calls for (new stack → steps 2–7; config change → steps 3, 5, 7).
 - If instead a legacy root `.waffle.yaml` (pre-0.8.0) or `.wafflestack.yaml` (pre-0.6.0)
   exists, it is still read with a deprecation note; the next `render`/`upgrade` moves it
   and the other dotfiles into `.waffle/` in place. Afterwards, update the repo's
@@ -40,10 +41,12 @@ so the whole install uses one toolkit version.
     skills convention.
   Confirm the list with the user; fewer targets means less rendered noise.
 
-## 1. Init
+## 1. Scaffold
 
-Run `wafflestack init` (via the pinned invocation). It writes a starter
-`.waffle/waffle.yaml` and refuses to overwrite an existing one.
+Already done: the `setup` that printed this guide wrote a starter `.waffle/waffle.yaml`
+if no config existed (it said `wrote …` on stderr), and it never overwrites an existing
+one. `init` is an alias of `setup`, the same command. To also seed the baseline `.gitignore`
+entries, re-run `setup --gitignore` (idempotent).
 
 ## 2. Choose stacks (or individual items)
 
@@ -409,7 +412,7 @@ content is already byte-identical to the render is adopted silently, no flag nee
     (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/`) as a note — a present
     copy is still hash-checked — so ignoring them needs no `--allow-missing`.
   - the configured `git.worktreesDir` when an enabled stack declares one (throwaway
-    working state). `init --gitignore` seeds the overlay, its local lock and `.waffle/avatars/`,
+    working state). `setup --gitignore` (or its alias `init`) seeds the overlay, its local lock and `.waffle/avatars/`,
     since no stack is chosen yet; `install --gitignore` adds the worktrees dir once one is enabled.
 - **Dev-only or self-hosting waffle**: when the render should *not* be committed — a
   consumer who wants the waffle only in their own working environment, or the wafflestack

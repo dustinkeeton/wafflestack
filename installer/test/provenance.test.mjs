@@ -909,8 +909,8 @@ describe('the gate matrix: which commands refuse an unreleased toolkit (#373)', 
     assert.equal(gated(['help']).status, 0);
   });
 
-  test('`list` and `setup` WARN instead of refusing, and name the release to pin', { skip: skipUnlessUnreleased }, () => {
-    for (const cmd of ['list', 'setup']) {
+  test('`list`, `setup` and its alias `init` WARN instead of refusing, and name the release to pin', { skip: skipUnlessUnreleased }, () => {
+    for (const cmd of ['list', 'setup', 'init']) {
       const r = gated([cmd]);
       assert.doesNotMatch(r.stderr, REFUSAL);
       assert.match(r.stderr, /NOT a release/, `${cmd} must say what it is`);
