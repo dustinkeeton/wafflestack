@@ -378,15 +378,20 @@ the installer substitutes the values you set in config. Two rules keep this safe
 **Some keys switch a behavior instead of filling in text (#478).** A confirmation
 gate or an auto-merge consent is a *behavioral* key: it declares a closed `modes:` list (the
 reserved mode `prompt` means "never assume, ask"), optional `flag:` tokens that override it for
-one run, an optional `lockMode:` pinning what config may say, and a `nonInteractive:` fallback
+one run, an optional `lockMode:` pinning the one mode config may say (or `configModes:`, the subset
+config may say, #626), and a `nonInteractive:` fallback
 for CI and agent callers. Precedence is fixed: run token → `waffle.local.yaml` → `waffle.yaml` →
-the stack default. A value outside `modes:`, or one that overrides a lock, fails `render` and
-bare `doctor`. All of it shipped in v0.16.0: skills render a key's value and its tokens
+the stack default. A value outside `modes:` or `configModes:`, or one that overrides a lock, fails
+`render` and bare `doctor`. All of it shipped in v0.16.0: skills render a key's value and its tokens
 (`{{key}}`, `{{key.flag.on}}`, #486); `issue`, `pr-response`, and `clean-up` read
 `*.confirmGate` keys (#487); hygiene's auto-merge is `hygiene.autoMerge` (#488); autopilot's four
-consents are locked to `prompt` (#489); and `schema/SETUP.md` documents the contract (#490).
-`wafflestack state` shows each key's effective value and the layer it came from (#561). See
-[DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12).
+consents were locked to `prompt` (#489); and `schema/SETUP.md` documents the contract (#490).
+`wafflestack state` shows each key's effective value and the layer it came from (#561). Since #626
+only `autopilot.autoMerge` stays locked: the QA, review, and audit gates are
+`configModes: [false, prompt]`, so config may turn a gate off but never on, and each gate gains an
+off token (`-qa`, `-review`, `-audit`). See
+[DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12)
+and [the #626 entry](DECISIONS.md#2026-10-22-config-may-turn-autopilots-gates-off-never-on-626).
 
 ### The installer (render pipeline)
 
