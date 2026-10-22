@@ -21,15 +21,16 @@ concurrency group was one repo-wide constant, and its fork-head clause could nev
 
 1. **pr-green records the target.** When it is about to dispatch, it uploads a `waffle-pr-target`
    artifact (PR number, reviewed head SHA/ref/repo, 7-day retention). It writes the artifact
-   *before* its harness runs, so neither the PR diff nor the agent can rewrite it. Job outputs do
-   not cross a `workflow_run` hop, and an artifact keyed on `workflow_run.id` does. The upload is
-   an `actions/upload-artifact` step, but it reuses the SHA already pinned in the stack's other
-   workflows, so no new action pin appears.
+   *before* its harness runs. That does not make it tamper-proof, because the job's runtime token
+   can still upload, so the consumer treats it as an unverified pointer and re-checks it (#622).
+   Job outputs do not cross a `workflow_run` hop, and an artifact keyed on `workflow_run.id` does.
+   The upload is an `actions/upload-artifact` step, but it reuses the SHA already pinned in the
+   stack's other workflows, so no new action pin appears.
 2. **A read-only `resolve` job reads it** with `gh run download` in a `run:` script. That adds no
    new `uses:` surface on the pr-response side, and the existing fake-`gh` harness can exec-test it. It needs
-   `actions: read` and nothing else. It validates the shape strictly (integer PR number, 40-hex
-   SHA, `owner/repo`) and fails closed: a missing or malformed artifact writes no outputs, so the
-   response job is skipped.
+   `actions: read` and nothing else. It validates the shape strictly (exactly one JSON object,
+   integer PR number, 40-hex SHA, `owner/repo`) and fails closed: a missing or malformed artifact
+   writes no outputs, so the response job is skipped.
 3. **The gate stays in the serialized job.** The artifact is a pointer, not truth. The gate
    re-verifies it via `pulls/{n}`: open, based on the default branch, head still at the reviewed
    SHA, and a same-repo head. The gate and the loop-bound claim stay together in the

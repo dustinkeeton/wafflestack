@@ -11327,7 +11327,8 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
       '    d=""; prev=""; for a in "$@"; do if [ "$prev" = "-D" ]; then d="$a"; fi; prev="$a"; done',
       '    if [ -n "${FAKE_DOWNLOAD_ERR:-}" ]; then printf \'%s\\n\' "$FAKE_DOWNLOAD_ERR" >&2; exit 1; fi',
       '    if [ -z "${FAKE_TARGET:-}" ] || [ -z "$d" ]; then echo "no artifact matches any of the names or patterns provided" >&2; exit 1; fi',
-      '    mkdir -p "$d"; printf \'%s\' "$FAKE_TARGET" > "$d/target.json" ;;',
+      '    mkdir -p "$d"; if [ "${FAKE_TARGET_PATH:-}" = "-" ]; then exit 0; fi',
+      '    mkdir -p "$(dirname "$d/${FAKE_TARGET_PATH:-target.json}")"; printf \'%s\' "$FAKE_TARGET" > "$d/${FAKE_TARGET_PATH:-target.json}" ;;',
       '  */labels*)   if [ "${FAKE_LABEL_FAIL:-}" = "1" ]; then echo "gh: HTTP 403" >&2; exit 1; fi; printf \'%s\' \'[]\' ;;',
       '  */commits/*/pulls*) printf \'%s\' "${FAKE_COMMIT_PRS:-[]}" ;;',
       '  */pulls/*)   if [ "${FAKE_PRS:-}" = "404" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi; printf \'%s\' "${FAKE_PRS:-{\}}" ;;',
@@ -11416,6 +11417,7 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     const outFile = path.join(cwd, 'gh_output');
     const logFile = path.join(cwd, 'gh_calls.log');
     for (const f of [outFile, logFile]) fs.writeFileSync(f, '');
+    fs.rmSync(path.join(cwd, 'waffle-pr-target'), { recursive: true, force: true });
     const r = runScript(doc.jobs.resolve.steps[0].run, {
       FAKE_TARGET: target, FAKE_GH_LOG: logFile, PRODUCER_RUN_ID: runId,
       GITHUB_OUTPUT: outFile, GITHUB_STEP_SUMMARY: path.join(cwd, 'gh_summary'), ...env,
@@ -11853,9 +11855,18 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
       { head_repo: 'o/r x' }, { head_repo: '../r' }, { head_repo: null },
     ]) none(runResolve(doc, { target: TARGET(over) }), JSON.stringify(over));
     none(runResolve(doc, { target: 'not json' }), 'non-JSON');
+    none(runResolve(doc, { target: TARGET() + TARGET() }), 'two identical documents (#622)');
+    none(runResolve(doc, { target: TARGET() + '\n' + TARGET({ pr_number: 8 }) }), 'two differing documents (#622)');
+    none(runResolve(doc, { target: `[${TARGET()}]` }), 'an array-wrapped target (#622)');
     const badId = runResolve(doc, { target: TARGET(), runId: '42; id' });
     none(badId, 'non-numeric run id');
     assert.deepEqual(badId.calls, [], 'gh is never called with an untrusted run id');
+    // A download that succeeds without `target.json` at the root must skip as malformed, never fall back (#629).
+    for (const [where, why] of [['-', 'download wrote nothing'], ['waffle-pr-target/target.json', 'target only in a subdirectory']]) {
+      const r = runResolve(doc, { target: TARGET(), env: { FAKE_TARGET_PATH: where } });
+      none(r, why);
+      assert.match(r.out, /malformed/, `${why}: ${r.out}`);
+    }
   });
 
   test('R11b a broken gh run download still skips, but its error stays in the log (#624)', (t) => {
