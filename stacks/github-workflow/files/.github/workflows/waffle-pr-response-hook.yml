@@ -39,8 +39,15 @@ jobs:
           skip() { echo "🧇 waffle-pr-response-hook: $1" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
           case "$PRODUCER_RUN_ID" in ''|*[!0-9]*) skip "non-numeric producer run id — refusing to dispatch (fail-closed)." ;; esac
           dir="${RUNNER_TEMP}/waffle-pr-target"
-          if ! gh run download "$PRODUCER_RUN_ID" -R "$GITHUB_REPOSITORY" -n waffle-pr-target -D "$dir" >/dev/null 2>&1; then
-            skip "pr-green run ${PRODUCER_RUN_ID} recorded no review target (it skipped, or the artifact expired) — nothing to respond to."
+          if ! err="$(gh run download "$PRODUCER_RUN_ID" -R "$GITHUB_REPOSITORY" -n waffle-pr-target -D "$dir" 2>&1 >/dev/null)"; then
+            # Still skip, but keep gh's error visible (one flattened line: no workflow-command injection).
+            err="$(printf '%s' "$err" | tr '\r\n' '  ' | cut -c1-500)"
+            case "$err" in
+              *"no artifact matches"*|*"no valid artifacts"*) echo "gh run download: ${err}"
+                skip "pr-green run ${PRODUCER_RUN_ID} recorded no review target (it skipped, or the artifact expired) — nothing to respond to." ;;
+            esac
+            echo "::warning::waffle-pr-response-hook: gh run download failed for run ${PRODUCER_RUN_ID}: ${err}"
+            skip "could not download pr-green run ${PRODUCER_RUN_ID}'s review target — see the warning above; refusing to dispatch (fail-closed)."
           fi
           f="$dir/target.json"; [ -f "$f" ] || f="$dir/waffle-pr-target/target.json"
           # FAIL-CLOSED shape check: a pointer, re-verified against the API by the gate.
