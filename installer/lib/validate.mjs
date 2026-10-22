@@ -728,7 +728,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
 
 /**
  * Lint the behavioral-key fields of one `config:` spec (#478): `modes:`, `flag:`, `lockMode:`,
- * `nonInteractive:`. The consumer-side counterpart (a `waffle.yaml` value outside `modes:` or
+ * `configModes:` (#626), `nonInteractive:`. The consumer-side counterpart (a `waffle.yaml` value outside `modes:` or
  * overriding a locked key) is `modeProblems` in template.mjs, enforced at render and by doctor.
  */
 export function behavioralKeyProblems(spec) {
@@ -765,6 +765,34 @@ export function behavioralKeyProblems(spec) {
         problems.push('declares `lockMode` without a literal `default` — a locked key must default to the mode it is locked to');
       } else if (!modeMatches(spec.lockMode, spec.default)) {
         problems.push(`\`lockMode\` ${JSON.stringify(spec.lockMode)} does not equal its default ${JSON.stringify(spec.default)}`);
+      }
+    }
+  }
+  if (has('configModes')) {
+    const cm = spec.configModes;
+    if (!Array.isArray(cm) || cm.length === 0 || !cm.every(isModeScalar)) {
+      problems.push('`configModes` must be a non-empty list of scalars');
+    } else {
+      const seen = new Set();
+      for (const m of cm) {
+        if (seen.has(String(m))) problems.push(`\`configModes\` lists ${JSON.stringify(m)} more than once`);
+        seen.add(String(m));
+      }
+      if (has('lockMode')) problems.push('declares both `lockMode` and `configModes` — a lock is the one-mode case; pick one');
+      if (!modes) {
+        problems.push('declares `configModes` but no `modes` — config modes are a subset of the declared modes');
+      } else {
+        for (const m of cm) {
+          if (!modes.some((x) => modeMatches(x, m))) problems.push(`\`configModes\` ${JSON.stringify(m)} is not one of its declared modes`);
+        }
+        if (modes.every((x) => cm.some((m) => modeMatches(m, x)))) {
+          problems.push('`configModes` admits every declared mode — it restricts nothing; drop it');
+        }
+      }
+      if (!literalDefault) {
+        problems.push('declares `configModes` without a literal `default` — the default must be a mode config may say');
+      } else if (!cm.some((m) => modeMatches(m, spec.default))) {
+        problems.push(`default ${JSON.stringify(spec.default)} is not one of its \`configModes\``);
       }
     }
   }

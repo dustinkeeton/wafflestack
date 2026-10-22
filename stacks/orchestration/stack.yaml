@@ -731,9 +731,9 @@ config:
     required: false
     default: prompt
     modes: [true, false, prompt]
-    lockMode: prompt
+    configModes: [false, prompt]
     nonInteractive: false
-    flag: { on: "+review" }
+    flag: { on: "+review", off: "-review" }
     description: >-
       Per-run consent for the autopilot adversarial-review → pr-response loop — whether an
       autopilot run reviews each PR after it goes green (and before it is armed or left for a
@@ -744,8 +744,9 @@ config:
       rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging only when a COLD
       round (round 1, or a fresh unnamed certification round after an anchored round implemented 0)
       implements 0 findings, and arms auto-merge itself afterward if that was also consented.
-      Locked to prompt like autopilot.autoMerge: the flag token is the only on-switch, and an
-      unattended run without it resolves to off.
+      Config may say false (the run never asks and never loops) or prompt, never true — render and
+      doctor reject it (configModes, #626), so only the per-run +review token can turn the loop on;
+      -review or +review:0 turns it off for one run, and an unattended run with no token resolves to off.
   autopilot.maxReviewRounds:
     required: false
     default: 2
@@ -764,15 +765,15 @@ config:
       rubric matures — more rounds buy more quality once each round is trustworthy. Default 2.
       This is the render-time DEFAULT: a single run may override it with `+review:N` in the
       autopilot invocation (captured alongside the consent, per-run, never sticky — this rendered
-      value governs every run that doesn't say otherwise). Per-run, not per-PR: a later run over the same
+      value governs every run that doesn't say otherwise); `+review:0` means off, exactly like `-review`. Per-run, not per-PR: a later run over the same
       PR restarts from zero, and a human's manual /pr-response is never bounded (#357).
   autopilot.qaLoop:
     required: false
     default: prompt
     modes: [true, false, prompt]
-    lockMode: prompt
+    configModes: [false, prompt]
     nonInteractive: false
-    flag: { on: "+qa" }
+    flag: { on: "+qa", off: "-qa" }
     description: >-
       Per-run consent for the autopilot qa → pr-response functional-QA loop — whether an autopilot
       run QAs each PR after it goes green (ahead of the review loop, the audit gate, and arming),
@@ -783,8 +784,9 @@ config:
       up to autopilot.maxQaRounds rounds of `qa <PR#>` → `pr-response <PR#> --yes`, converging only
       when a COLD round (round 1, or a fresh unnamed certification round) implements 0 findings; it arms auto-merge itself afterward only if that was also
       consented AND the review loop and audit gate are both off — otherwise the last enabled gate
-      arms. Locked to prompt like autopilot.autoMerge: the flag token is the only on-switch, and
-      an unattended run without it resolves to off.
+      arms. Config may say false (the run never asks and never QAs) or prompt, never true — render
+      and doctor reject it (configModes, #626), so only the per-run +qa token can turn the loop on;
+      -qa or +qa:0 turns it off for one run, and an unattended run with no token resolves to off.
   autopilot.maxQaRounds:
     required: false
     default: 2
@@ -802,7 +804,7 @@ config:
       for a human). Pass, then file, then arm: the fresh pass always precedes the filing it briefs,
       and the arming always follows both. Default 2. This is the render-time DEFAULT: a single run may override it with `+qa:N` in the
       autopilot invocation (captured alongside the consent, per-run, never sticky — this rendered
-      value governs every run that doesn't say otherwise). Per-run, not per-PR (#357).
+      value governs every run that doesn't say otherwise); `+qa:0` means off, exactly like `-qa`. Per-run, not per-PR (#357).
   autopilot.holdLabel:
     required: false
     default: "waffle:manual-review"
@@ -824,9 +826,9 @@ config:
     required: false
     default: prompt
     modes: [true, false, prompt]
-    lockMode: prompt
+    configModes: [false, prompt]
     nonInteractive: false
-    flag: { on: "+audit" }
+    flag: { on: "+audit", off: "-audit" }
     description: >-
       Per-run consent for the autopilot /audit gate — whether an autopilot run runs the /audit
       chain on each PR as the FINAL pre-merge quality gate, after the review loop and before the
@@ -840,9 +842,10 @@ config:
       branch and re-waits for green, then HARD-GATES on unresolved Critical/High findings: such a
       finding blocks the merge (the PR is left for a human with an autopilot.holdLabel follow-up
       issue) EVEN IF auto-merge was consented — autopilot never merges past an unresolved security
-      gate. Auto-merge is armed, if consented, only once the gate passes green. Locked to prompt like
-      autopilot.autoMerge: the flag token is the only on-switch, and an unattended run without it
-      resolves to off.
+      gate. Auto-merge is armed, if consented, only once the gate passes green. Config may say false
+      (the run never asks and never audits) or prompt, never true — render and doctor reject it
+      (configModes, #626), so only the per-run +audit token can turn the gate on; -audit turns it off
+      for one run, and an unattended run with no token resolves to off.
   docs.auditChecklist:
     required: false
     description: >-

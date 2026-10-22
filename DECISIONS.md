@@ -9,6 +9,38 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-22: Config may turn autopilot's gates off, never on (#626)
+
+**Context**: #489 locked all four autopilot consents to `prompt`, so a run that named no token
+always stopped to ask. For auto-merge that is right. For the QA, review, and audit gates it meant
+a repo that never wants a gate was still asked on every run, and there was no way to say "off" in
+the invocation either: the gates had only on-tokens, and `+qa:0` / `+review:0` were malformed.
+
+**Decision**:
+- A new `configModes: [..]` field lists the modes config may say. It is the subset form of
+  `lockMode:` and exclusive with it. `qaLoop`, `reviewLoop`, and `auditStep` drop `lockMode: prompt`
+  for `configModes: [false, prompt]`. Config `true` still fails `render` and `doctor`.
+- The gates gain off-tokens: `-qa`, `-review`, `-audit`. `+qa:0` / `+review:0` mean off, exactly
+  like the off-token. Contradictory tokens for one gate stop the run.
+- `autopilot.autoMerge` keeps `lockMode: prompt`.
+
+**Why this stays inside #489**: the lock exists so config cannot pre-authorize spend or a merge.
+Turning a gate off authorizes neither. It skips spend, and an audit-off run merges only under the
+same per-run auto-merge consent it already needed. Config `true` would pre-authorize spend, so it
+stays rejected. This partly supersedes #489's rows 10–12 and the #357 note that "every run's spend
+is authorized by that run's own `lockMode: prompt` consent": spend is still authorized only per
+run, but a gate's *absence* can now come from config.
+
+**Alternatives considered**: a list-valued `lockMode:` — rejected: it breaks the scalar-mode lint
+and the state-JSON contract, and a "lock" that admits two values reads wrongly. Dropping the lock
+for the three gates — rejected: config `true` would let a repo pre-authorize spend on every run.
+
+**Affects**: `installer/lib/{validate,template,render,state}.mjs`, `stacks/orchestration` (stack.yaml
+and the autopilot skill), `schema/FORMAT.md`, `schema/SETUP.md`, `AGENTS.md`, the waffle-view
+state type.
+
+---
+
 ## 2026-10-21: pr-response threads its target through a pr-green artifact (#355)
 
 **Context**: waffle-pr-response-hook sits at the second hop of a `workflow_run` chain

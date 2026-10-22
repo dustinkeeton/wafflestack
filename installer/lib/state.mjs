@@ -78,6 +78,7 @@ export const SKILL_RUN_FILE_KEYS = {
  * @property {boolean} prompt whether `value` is the reserved `prompt` mode
  * @property {any} nonInteractive the `nonInteractive:` fallback, or null when the key is not promptable
  * @property {any} lockMode the `lockMode:` pin, or null
+ * @property {any[]|null} configModes the `configModes:` subset config may say, or null
  * @property {{ on: string|null, off: string|null } | null} flag the invocation tokens, or null when the key has no `flag:`
  * @property {string} description the key's `description:`, one line
  *
@@ -268,6 +269,7 @@ export function resolveBehavioralKeys(stacks, { project, canonical, overlayValue
         prompt: modeMatches(PROMPT_MODE, value),
         nonInteractive: spec.nonInteractive ?? null,
         lockMode: spec.lockMode ?? null,
+        configModes: Array.isArray(spec.configModes) ? spec.configModes : null,
         flag,
         description: firstSentence(spec.description),
       });
@@ -459,7 +461,8 @@ export function formatStateText(s) {
     const flag = k.flag;
     const tokens = flag ? FLAG_SIDES.filter((side) => flag[side]).map((side) => `${flag[side]} ${side === 'on' ? 'forces' : 'skips'}`).join(', ') : '';
     const locked = k.lockMode !== null ? `, locked to ${JSON.stringify(k.lockMode)}` : '';
-    lines.push(`  ${k.key}: ${JSON.stringify(k.value)} (${k.source}${locked})${tokens ? ` — ${tokens}` : ''}`);
+    const subset = k.configModes ? `, config may say ${JSON.stringify(k.configModes)}` : '';
+    lines.push(`  ${k.key}: ${JSON.stringify(k.value)} (${k.source}${locked}${subset})${tokens ? ` — ${tokens}` : ''}`);
   }
 
   const d = s.runFiles.delegate;

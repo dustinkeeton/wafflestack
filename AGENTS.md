@@ -237,14 +237,14 @@ skill selected from two stacks merges. The waffle-view mod slices by `skills[<la
     {
       "key": "issue.confirmGate", "stacks": ["github-workflow"],
       "value": true, "source": "stack-default", "canonical": true, "default": true,
-      "modes": [true, false, "prompt"], "prompt": false, "nonInteractive": false, "lockMode": null,
+      "modes": [true, false, "prompt"], "prompt": false, "nonInteractive": false, "lockMode": null, "configModes": null,
       "flag": { "on": "--confirm", "off": "--yes" },
       "description": "Whether `/issue` pauses at the plan gate before mutating GitHub — create, enrich, and label."
     },
     {
       "key": "autopilot.autoMerge", "stacks": ["orchestration"],
       "value": "prompt", "source": "stack-default", "canonical": "prompt", "default": "prompt",
-      "modes": [true, false, "prompt"], "prompt": true, "nonInteractive": false, "lockMode": "prompt",
+      "modes": [true, false, "prompt"], "prompt": true, "nonInteractive": false, "lockMode": "prompt", "configModes": null,
       "flag": { "on": "+automerge", "off": null },
       "description": "Per-run auto-merge consent for the autopilot backlog runner — whether an autopilot run may arm `gh pr merge --auto --merge` on the PRs it opens."
     }
@@ -440,16 +440,20 @@ registry entry (a plugin has no path, no render, nothing to prune).
   `doctor`; linted by `validate`.
 - Behavioral keys (#478) — a key declares a closed `modes:` list (scalars; `prompt` = ask the
   human) instead of a `pattern:`, optional `flag: { on, off }` invocation tokens, optional
-  `lockMode: <mode>` (config may not set anything else; `default:` must equal it), and
-  `nonInteractive:` (a mode or `fail`; required iff `prompt` ∈ modes). Precedence: explicit
+  `lockMode: <mode>` (config may not set anything else; `default:` must equal it), optional
+  `configModes: [..]` (#626 — the subset of `modes` config may say; `default:` must be in it;
+  exclusive with `lockMode`, and may not list every mode), and `nonInteractive:` (a mode or `fail`; required iff `prompt` ∈ modes). Precedence: explicit
   token → `waffle.local.yaml` → `waffle.yaml` → `default:`. Membership is judged on rendered
   text; enforced at the same points as `pattern:` (`modeProblems`, `template.mjs`). A skill reads
   the resolved mode as `{{key}}` and the tokens as `{{key.flag.on}}` / `{{key.flag.off}}` (#486):
   `loadStack` adds each declared side to `stack.declared` (`flagPlaceholders`), `makeResolver`
   answers it from the stack's `flag:` map before any project value, and a side the key does not
   name fails `validate` and the render (`undeclaredFlagProblem`). A token is optional to reference.
-  The four `autopilot.*` consents are `default: prompt` + `lockMode: prompt` (#489): config may
-  only say `prompt`, the `+token` is the per-run on-switch, `nonInteractive: false`. Schema: `schema/FORMAT.md` § Behavioral keys.
+  The four `autopilot.*` consents default to `prompt` with `nonInteractive: false` (#489):
+  `autopilot.autoMerge` is `lockMode: prompt` (config may only say `prompt`; `+automerge` is the
+  per-run on-switch), while `qaLoop`/`reviewLoop`/`auditStep` are `configModes: [false, prompt]`
+  (#626 — config may pre-answer *off*, never *on*) with two-sided `+qa`/`-qa`, `+review`/`-review`,
+  `+audit`/`-audit` tokens. Schema: `schema/FORMAT.md` § Behavioral keys.
 - Project command values — `project.{lint,typecheck,test,build}Cmd` (13 declarations, one
   byte-identical `pattern:`, `stacks/code-quality/stack.yaml:66`; `project.installCmd` and
   `sec.auditCmd` sit outside it by design) render into a `Bash(<cmd>:*)` grant, so each must be ONE

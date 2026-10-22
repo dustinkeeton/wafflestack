@@ -147,15 +147,21 @@ The four fields, and what `validate` holds them to:
 - **`lockMode: <mode>`** — pins what **config** may say: the `default:` must equal it, and a
   `waffle.yaml` / `waffle.local.yaml` value that is anything else fails the render. The lock is
   about the config layer only — the `flag:` token still overrides per invocation. Use it for
-  consents that must be captured fresh every run (autopilot's `+automerge` / `+review` / `+qa` /
-  `+audit`): the never-sticky rule becomes a declared property of the key, not a paragraph.
+  consents that must be captured fresh every run (autopilot's `+automerge`): the never-sticky rule
+  becomes a declared property of the key, not a paragraph.
+- **`configModes: [<mode>, …]`** — the looser sibling of `lockMode:`: the subset of `modes:` that
+  **config** may say. The `default:` must be one of its entries; it may not list every declared mode
+  (it would restrict nothing), and it is exclusive with `lockMode:` (a lock is the one-mode case).
+  The `flag:` tokens still override per invocation. Autopilot's three gates (`+qa` / `+review` /
+  `+audit`) are `configModes: [false, prompt]` (#626): config may pre-answer a gate *off*, which
+  authorizes nothing, but never *on*.
 - **`nonInteractive:`** — required exactly when `prompt` is a mode, forbidden otherwise: a mode
   value the key resolves to when no human can answer (a CI job, a subagent), or the word `fail`.
   This generalizes the `issue` skill's rule that *non-interactive* — not *agent* — is the test.
 
 Enforcement mirrors `pattern:`. `validate` lints the declaration (every rule above). The consumer
 side — a value outside `modes:`, a list or map where a scalar is expected, or a value overriding a
-`lockMode:` — is checked by `render` (top-level and nested substitution; a failed guard bails
+`lockMode:`, or a value outside `configModes:` — is checked by `render` (top-level and nested substitution; a failed guard bails
 before the tree is touched) and by bare `doctor`, so a value edited after a clean render is still
 caught.
 

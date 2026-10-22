@@ -31,6 +31,15 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+- **Autopilot's gates can be turned off — per run or in config (#626).** The QA, review, and audit
+  gates gain off-tokens (`-qa`, `-review`, `-audit`), and `+qa:0` / `+review:0` now mean off instead of
+  being malformed. A new behavioral-key field, `configModes: [..]`, restricts which modes config may
+  say. The three gates are `configModes: [false, prompt]`, so `autopilot.qaLoop: false` in
+  `waffle.yaml` skips that gate without asking. Config `true` is still rejected, and contradictory
+  tokens for one gate stop the run. `autopilot.autoMerge` is unchanged (`lockMode: prompt`).
+  **Consumer impact:** additive — re-render. The three gate keys now also accept `false` in config.
+
 ### Changed
 - **project-manager owns grouping issues into epics (#633).** A new responsibility has it group
   related open issues under an `[epic]` parent while it reviews the backlog. The parent is an
