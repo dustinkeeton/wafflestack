@@ -1029,6 +1029,8 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     assert.match(md, /\*\*Contradictory tokens for one gate stop the run\.\*\*/);
     assert.match(md, /report it and \*\*stop\*\* before any work starts/);
     assert.match(md, /two tokens that agree on off \(`-review` with `\+review:0`\): they say one thing, so the gate is off/);
+    assert.match(md, /the bare on token with a count \(`\+qa` with `\+qa:3` — bare means the rendered default cap, so that is two caps/);
+    assert.match(md, /a malformed count beside any other token for the same gate \(`\+qa:deep` with `\+qa`\) are a contradiction/);
     assert.match(md, /\| The off token, or `<on>:0` \| Off for this run — no question\. \| Off for this run\. \|/);
     assert.match(md, /\| No token, rendered gate `false` \| Off — config pre-answered it; no question\. \| Off\. \|/);
     assert.match(md, /A token always beats config/);
