@@ -138,8 +138,9 @@ The check is on the **commit**, not on whether you typed `#ref` — which is str
 re-cut or force-pushed tag stops matching and gets caught. It costs at most one `git ls-remote` on
 the npx path, and nothing at all for a local checkout, where `git describe` answers offline.
 
-Read-only commands are untouched — plain `doctor`, `init`, `eject`, `uninstall`, `validate`. `list`
-and `setup` report rather than write, so they warn and carry on.
+Read-only commands are untouched — plain `doctor`, `eject`, `uninstall`, `validate`. `list` and
+`setup` (alias `init`) report rather than render, so they warn and carry on; `setup` writes only
+the static starter config, never toolkit content.
 
 **Developing the toolkit itself?** Rendering from a working tree is the whole point — pass
 `--allow-unreleased` (or set `WAFFLESTACK_ALLOW_UNRELEASED=1`). It drops the *refusal*, not the

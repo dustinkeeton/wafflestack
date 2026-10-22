@@ -61,7 +61,7 @@ The labels wafflestack's workflows and skills gate on are listed once — table 
 
 ```bash
 cd your-project
-npx github:dustinkeeton/wafflestack init              # writes a starter .waffle/waffle.yaml
+npx github:dustinkeeton/wafflestack setup             # writes a starter .waffle/waffle.yaml if missing + prints the playbook
 # edit .waffle/waffle.yaml: pick stacks, fill in config values
 npx github:dustinkeeton/wafflestack#vX.Y.Z render     # X.Y.Z = latest release tag; renders harness files + lock
 ```
@@ -72,8 +72,7 @@ npx github:dustinkeeton/wafflestack#vX.Y.Z render     # X.Y.Z = latest release t
 
 | Command | What it does |
 |---|---|
-| `init` | Write a starter `.waffle/waffle.yaml` (`--gitignore` also appends overlay/local-lock ignores). |
-| `setup` | Print the agent-driven install playbook + generated toolkit inventory. |
+| `setup` (alias `init`) | Write a starter `.waffle/waffle.yaml` if none exists (never overwrites one), then print the agent-driven install playbook + generated toolkit inventory. `--gitignore` also appends overlay/local-lock ignores. |
 | `list` | Show every waffle and syrup file per stack with its status; `--interactive` for a TTY multi-select, `--check-prereqs` to probe the prerequisites a row would add. |
 | `toggle` | Pick which rendered skills an agent may invoke on its own (`disable-model-invocation`, per project): TTY picker, or `--disable`/`--enable <skill>`; writes `.waffle/waffle.yaml` and re-renders. |
 | `render` (alias `bake`) | Regenerate every managed file from source + config, prune stale ones, write the lock. |

@@ -8902,7 +8902,7 @@ describe('install: persistence and eject include-cleanup', () => {
 
   test('install requires an existing config file', () => {
     fs.rmSync(path.join(cwd, '.waffle/waffle.yaml'));
-    assert.throws(() => install(['base']), /run `wafflestack init`/);
+    assert.throws(() => install(['base']), /run `wafflestack setup`/);
   });
 });
 
@@ -12103,6 +12103,85 @@ describe('help command (#187)', () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /usage: wafflestack </);
     assert.doesNotMatch(r.stderr, /takes no refs/);
+  });
+});
+
+describe('CLI: setup/init alias (#611)', () => {
+  const dirs = [];
+  const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'project-onboard-')); dirs.push(d); return d; };
+  const run = (args, cwd) => runCli([...args, '--offline'], cwd);
+  const cfg = (cwd) => path.join(cwd, '.waffle/waffle.yaml');
+  const UPDATE = /^# Current configuration — update mode$/m;
+  afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+  test('a fresh repo: setup scaffolds the starter init() writes, then prints the first-install playbook', () => {
+    const cwd = fresh();
+    const r = run(['setup'], cwd);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const ref = fresh();
+    init({ cwd: ref });
+    assert.equal(fs.readFileSync(cfg(cwd), 'utf8'), fs.readFileSync(cfg(ref), 'utf8'));
+    assert.match(r.stdout, /^# wafflestack setup — agent playbook/);
+    assert.doesNotMatch(r.stdout, UPDATE, 'a starter written a moment ago is not an update');
+    assert.match(r.stderr, /wrote .*waffle\.yaml/);
+    assert.doesNotMatch(r.stdout, /^wrote /m, 'stdout stays the pure playbook');
+  });
+
+  test('init is a true alias: same file bytes, same stdout, same exit code', () => {
+    const [a, b] = [fresh(), fresh()];
+    const viaSetup = run(['setup'], a);
+    const viaInit = run(['init'], b);
+    assert.equal(viaInit.status, viaSetup.status);
+    assert.equal(viaInit.stdout, viaSetup.stdout);
+    assert.equal(fs.readFileSync(cfg(b), 'utf8'), fs.readFileSync(cfg(a), 'utf8'));
+  });
+
+  test('an existing config is never overwritten — both names exit 0 in update mode', () => {
+    for (const cmd of ['setup', 'init']) {
+      const cwd = fresh();
+      const config = 'targets: [claude]\nstacks: []\nconfig: {}\n';
+      write(cwd, '.waffle/waffle.yaml', config);
+      const r = run([cmd], cwd);
+      assert.equal(r.status, 0, `${cmd}: ${r.stdout}${r.stderr}`);
+      assert.equal(fs.readFileSync(cfg(cwd), 'utf8'), config, `${cmd} must not touch the config`);
+      assert.match(r.stdout, UPDATE);
+      assert.doesNotMatch(r.stderr, /^wrote /m);
+    }
+  });
+
+  test('a legacy root .waffle.yaml counts as existing — no .waffle/waffle.yaml is scaffolded', () => {
+    const cwd = fresh();
+    write(cwd, '.waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    const r = run(['init'], cwd);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(fs.existsSync(cfg(cwd)), false);
+    assert.match(r.stdout, UPDATE);
+  });
+
+  test('--gitignore seeds the baseline on a fresh AND an existing config, idempotently, off stdout', () => {
+    const seeded = '# wafflestack\n.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n.waffle/avatars/\n';
+    const gi = (cwd) => fs.readFileSync(path.join(cwd, '.gitignore'), 'utf8');
+    const a = fresh();
+    const first = run(['setup', '--gitignore'], a);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.equal(gi(a), seeded);
+    assert.match(first.stderr, /\.gitignore: added /);
+    assert.doesNotMatch(first.stdout, /\.gitignore:/);
+    const again = run(['setup', '--gitignore'], a);
+    assert.equal(again.status, 0);
+    assert.match(again.stderr, /already lists the recommended entries/);
+    assert.equal(gi(a), seeded, 'idempotent');
+
+    const b = fresh();
+    write(b, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+    assert.equal(run(['init', '--gitignore'], b).status, 0);
+    assert.equal(gi(b), seeded, 'applies even when the config already existed');
+  });
+
+  test('help lists setup first and names init as its alias', () => {
+    const r = runCli(['help'], fresh());
+    assert.match(r.stdout, /^\s+init\s+alias for setup/m);
+    assert.ok(r.stdout.indexOf('  setup ') < r.stdout.indexOf('  init '));
   });
 });
 

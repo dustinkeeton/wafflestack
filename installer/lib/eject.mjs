@@ -118,7 +118,7 @@ function selectedRefs(toolkitRoot, cwd) {
 export function installRefs({ toolkitRoot, cwd, refs, log = () => {} }) {
   const { file: configFile, legacy, note } = resolveConfigFile(cwd);
   if (!exists(configFile)) {
-    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack init\` first`);
+    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack setup\` first`);
   }
   if (legacy) log(note);
   const toolkit = loadToolkit(toolkitRoot);
@@ -282,4 +282,11 @@ export function init({ cwd }) {
   }
   writeFileEnsuringDir(configFile, STARTER_CONFIG);
   return configFile;
+}
+
+/** `setup`/`init` (#611): write the starter only when no config of any generation exists; never overwrite. */
+export function scaffoldConfig({ cwd }) {
+  const existing = resolveConfigFile(cwd).file;
+  if (exists(existing)) return { file: existing, created: false };
+  return { file: init({ cwd }), created: true };
 }

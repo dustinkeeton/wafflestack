@@ -1,14 +1,16 @@
 ---
 name: waffle-setup
-description: Print the wafflestack setup playbook and full stack/skill/agent inventory for this repo, then help pick stacks and config. Use to plan an install or audit what the toolkit offers.
+description: Onboard wafflestack in this repo — scaffolds `.waffle/waffle.yaml` if missing (never overwrites one), then prints the setup playbook and full stack/skill/agent inventory and helps pick stacks and config. Use to start an install, plan an update, or audit what the toolkit offers. /waffle-init is an alias.
 user-invocable: true
-argument-hint: "(no arguments)"
+argument-hint: "(no refs — add --gitignore to also seed the baseline .gitignore entries)"
 ---
 
 # Setup playbook + inventory
 
-Wraps `wafflestack setup` — it prints the agent-driven install playbook (`schema/SETUP.md`)
-followed by a generated inventory of **every** stack: its items, config schema (required vs.
+Wraps `wafflestack setup` (alias: `wafflestack init`, #611). When no config exists at any
+generation it first writes a starter `.waffle/waffle.yaml` (reported on stderr as `wrote …`);
+it **never overwrites** an existing one. Then it prints the agent-driven install playbook
+(`schema/SETUP.md`) followed by a generated inventory of **every** stack: its items, config schema (required vs.
 defaulted keys), env prerequisites, opt-in syrup items, and any `setup:` notes. It reads
 current config when one exists, adding a **"Current configuration — update mode"** section
 (live targets/stacks/includes/ejects/effective config/unset required keys/opt-in syrup state),
@@ -20,6 +22,10 @@ so a re-run curates an update pass.
 npx --yes {{waffle.toolkitRef}} setup
 ```
 
+Pass `--gitignore` through if `$ARGUMENTS` asks for it — it appends the stack-independent
+baseline (`.waffle/waffle.local.yaml`, `.waffle/waffle.local.lock.json`, `.waffle/avatars/`)
+to `.gitignore`, idempotently, whether or not a config already existed.
+
 ## Interpret it for the user
 
 Do not just dump the output — read it and help the user decide:
@@ -28,8 +34,7 @@ Do not just dump the output — read it and help the user decide:
   and the required config keys each would demand. Flag any **opt-in syrup** items (sensitive
   `files/` payloads, marked "do NOT install by default") and explain what enabling one implies.
 - **Point at the next command.** Turning the plan into files is **`/waffle-install <ref…>`**
-  (persists the choice, then renders) — or, on a repo with no config yet, **`/waffle-init`**
-  first. `/waffle-render` re-renders an existing selection.
+  (persists the choice, then renders). `/waffle-render` re-renders an existing selection.
 - **Surface prerequisites.** If a stack lists `env:` or a `setup:` block (e.g. `gh auth`,
   labels, a Projects v2 board, secrets), call those out before rendering — the render will
   warn on missing env, but service-side setup is on the user.

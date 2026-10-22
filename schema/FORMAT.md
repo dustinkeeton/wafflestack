@@ -817,8 +817,8 @@ not a release — enough to tighten `unverified` to `unreleased`.
 | Gated (refuses when `unreleased`) | Not gated |
 |---|---|
 | `render` / `bake`, `install`, `upgrade`, `reinstall` | plain `doctor` — pure hash-vs-lock; it reads no toolkit content, so it is correct from *any* toolkit. Gating it would red `waffle-doctor.yml` for every consumer that pins CI to something other than a release (the toolkit's own repo runs it unpinned). |
-| `doctor --verify-render` — it *renders* | `list`, `setup` — read-only reports: they **warn**, naming the tag to pin |
-| `list --interactive`, once a selection is applied | `init`, `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
+| `doctor --verify-render` — it *renders* | `list`, `setup` (alias `init`) — reports (`setup` writes only the static starter config): they **warn**, naming the tag to pin |
+| `list --interactive`, once a selection is applied | `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
 
 **Escape hatch:** `--allow-unreleased`, or `WAFFLESTACK_ALLOW_UNRELEASED=1`. It suppresses the
 *refusal*, and it can never **manufacture** a release: identity is still resolved — network lookup

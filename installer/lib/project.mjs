@@ -543,7 +543,7 @@ function proven(/** @type {string|null} */ next, /** @type {unknown} */ expected
 export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
   const cfgPath = resolveConfigFile(cwd);
   if (!exists(cfgPath.file)) {
-    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack init\` first`);
+    throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack setup\` first`);
   }
   if (cfgPath.legacy) notes.push(cfgPath.note);
   let cfg = readYaml(cfgPath.file) ?? {};

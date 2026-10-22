@@ -9,6 +9,41 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-22: `init` and `setup` merge into one onboarding command (#611)
+
+**Context**: both commands presented themselves as the first thing to run, and each sent you to
+the other. `init` wrote a starter config, refused an existing one, and pointed at `setup`.
+`setup` wrote nothing, printed the playbook, and that playbook's step 1 said to run `init`. The
+`/waffle-setup` skill said "on a repo with no config yet, `/waffle-init` first". Nobody needs the
+inventory *without* a scaffold on an unconfigured repo: the playbook's next move is always to
+write the config, and an agent following it ran `init` anyway.
+
+**Decision** (owner ruling on the issue: alias them):
+- One handler serves `setup` and `init`, with byte-identical output and exit codes.
+- It writes the starter `.waffle/waffle.yaml` only when no config exists at any generation. A
+  legacy `.waffle.yaml` / `.wafflestack.yaml` counts as existing. It never overwrites.
+- The `wrote …` notice and the `--gitignore` report go to stderr, so stdout stays the pure
+  playbook. A config scaffolded a moment ago gets the first-install guide, not an update-mode
+  section about an empty starter.
+- `--gitignore` is carried over and always applies, even on an existing config. It only adds
+  entries and is idempotent, the same as `install --gitignore`.
+- Both names stay in the CLI usage and help, and both skills stay (`/waffle-init` becomes a thin
+  alias of `/waffle-setup`), so existing invocations and doc links keep working.
+- The release gate treats it like `setup`: it warns about provenance and never refuses. The only
+  thing it writes is the static starter, never toolkit content.
+
+**Alternatives considered**: keep both and clarify the docs — rejected, because the split had
+no user behind it, and two "first" commands invite running them in the wrong order. Delete `init`
+outright — rejected, because it breaks existing invocations, skills, and links for no gain.
+
+**Affects**: `installer/cli.mjs`, `installer/lib/{eject,setup,project,list}.mjs`, the
+`waffle-init` and `waffle-setup` skills, `schema/SETUP.md` (step 1 is now "Scaffold"),
+`schema/FORMAT.md`, README, AGENTS, ARCHITECTURE, STATUS, `docs/{upgrades,gitignore}.md`. User-visible:
+`init` on an existing config exits 0 (update mode) instead of 1, and `init` now prints the
+provenance warning. No migration. A re-render picks up the skill text.
+
+---
+
 ## 2026-10-22: Config may turn autopilot's gates off, never on (#626)
 
 **Context**: #489 locked all four autopilot consents to `prompt`, so a run that named no token
