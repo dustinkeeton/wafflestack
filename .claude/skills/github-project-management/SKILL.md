@@ -394,7 +394,7 @@ gh api graphql -H "GraphQL-Features: sub_issues" -f query='
 ' -f parentId="$PARENT_ID" -f childId="$CHILD_ID"
 ```
 
-An issue has at most one parent, so `addSubIssue` fails if the child already has one. To **re-parent**, either pass `replaceParent: true` in the `addSubIssue` input, or unlink first with `removeSubIssue` (same input shape, same header) and then link to the new parent. Check the child's current parent first (above), and show any re-parenting to the user before running it.
+An issue has at most one parent, so `addSubIssue` fails if the child already has one. To **re-parent**, pass `replaceParent: true` in the `addSubIssue` input: it moves the child in one call. Check the child's current parent first (above), and show any re-parenting to the user before running it.
 
 ### Query sub-issues of a parent
 

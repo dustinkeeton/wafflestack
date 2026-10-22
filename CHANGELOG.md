@@ -37,7 +37,7 @@ is what you reach for across a breaking one.
   existing epic or a new one filed with the `issue` skill. It confirms with the user before
   linking, and calls out any re-parenting. `github-project-management` gains a "Link an existing
   issue to a parent epic" recipe: resolve both node IDs, check the child's current parent, then
-  `addSubIssue`. It covers re-parenting through `replaceParent: true` or `removeSubIssue`.
+  `addSubIssue`. It covers re-parenting through `replaceParent: true`.
 
   **Consumer impact:** re-render to pick up the agent and skill text. No config change.
 - **Autopilot's manual-review queue gets a service level (#511).** A cap hatch now files a
