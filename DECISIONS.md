@@ -9,6 +9,44 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-22: `/waffle-report` is the reassess hold's one automated entry point (#609)
+
+**Context**: a consumer report arrives unreproduced: the maintainer has not seen the bug yet. Until
+#609, `/waffle-report` filed it with only the form's own label, so `delegate`, `autopilot`, and the
+`label-hook` implement path could pick it up and build on an unverified claim. Nothing marked where
+the issue came from, either.
+
+**Decision**: every filing carries the form label plus two fixed labels.
+
+| Label | Role | Who adds it | Who removes it |
+|-------|------|-------------|----------------|
+| `waffle:reassess` | The hold: keeps the issue out of `delegate`, `autopilot`, and the `label-hook` implement path | `/waffle-report`, upstream, at filing only | Only the upstream human |
+| `waffle:consumer-report` | Provenance: the issue came from a consuming repo via `/waffle-report` | `/waffle-report`, at filing | — |
+
+- **Literal names, not config.** The report lands in the upstream tracker, whose labels are fixed.
+  A consumer's own `issue.reassessLabel` does not apply.
+- **Provenance is upstream-only.** `waffle:consumer-report` lives in the toolkit's tracker and is
+  never a consumer prerequisite. `doctor` never checks for it.
+- **One tolerant call per label.** `gh issue create` applies the form label. Each fixed label is
+  then added in its own `gh issue edit --add-label` call. If one fails, the skill warns. The
+  usual cause is a filer without triage rights; a fork's tracker may also lack the label. The
+  filing still counts, because the issue already exists. The hold is therefore best-effort, and
+  the final report tells the filer to ask the maintainer for any label that didn't apply.
+- **The no-`gh` fallback URL carries both labels** in `labels=`. GitHub drops that for a user
+  without triage rights, so the skill tells the user the maintainer may need to add them.
+
+**Alternatives considered**:
+- **Put the hold on the issue form** — rejected. Issue forms must never auto-apply the hold.
+- **Pass `--label` on `gh issue create`** — rejected. A label missing from the target tracker
+  would fail the whole filing.
+
+**Impact**: `stacks/wafflestack/skills/waffle-report/SKILL.md`, pinned in
+`installer/test/content.test.mjs`. This supersedes the "only the form's own label" bullet in the
+[#473 entry](#2026-09-15-report-is-a-cli-command-behind-a-thin-skill-wrapper-and-its-redaction-is-structural-473).
+Consumers pick it up on re-render. Upstream needs both labels to exist for a clean filing.
+
+---
+
 ## 2026-10-22: `init` and `setup` merge into one onboarding command (#611)
 
 **Context**: both commands presented themselves as the first thing to run, and each sent you to
@@ -928,7 +966,7 @@ skill stays a thin wrapper**.
   (a fork's consumer reports to the fork). The report routes onto the upstream `bug.yml` /
   `feature.yml` / `rough-idea.yml` forms with only the form's own label — never `priority: *`,
   never the board. The gate shows the **post-redaction** payload, so you approve the bytes that
-  get published.
+  get published. *(Superseded by #609: filings now also carry `waffle:reassess` and `waffle:consumer-report`.)*
 
 **Alternatives considered**: Widening the one-skill-per-subcommand rule for a skill-only
 implementation — rejected on the issue in favour of growing the CLI. Prefilling the no-`gh`-auth

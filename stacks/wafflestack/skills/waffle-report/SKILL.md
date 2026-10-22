@@ -99,9 +99,18 @@ Route honestly: a one-liner is a **rough idea**, not a bug you invent details fo
 `waffle:needs-inference` label is the enrichment queue — filing there is the low-friction path, and
 padding a one-liner into a fake bug report defeats it.
 
-Apply **only the form's own label**. Never apply a `priority: *` label (that is the maintainer's
-triage call), never touch the upstream project board or milestones, and never guess at labels
-beyond the three above.
+Apply the form's own label **plus two fixed labels** on every filing:
+
+- `waffle:reassess` — the hold. A consumer report has not been reproduced by the maintainer, so it
+  enters the tracker held out of `delegate`, `autopilot`, and the `label-hook` implement path. This
+  skill is the hold's **entry point**: it applies it at filing time and never removes it — only the
+  upstream human clears it.
+- `waffle:consumer-report` — provenance: this issue arrived via `/waffle-report` from a consuming repo.
+
+Both names are literal, not config: the report lands in the **upstream** tracker, whose labels are
+fixed, so a consumer's own `issue.reassessLabel` does not apply here. Never apply a `priority: *`
+label (that is the maintainer's triage call), never touch the upstream project board or
+milestones, and never guess at labels beyond the form label and these two.
 
 Draft with `##` headings matching the form field labels, a title under 70 characters, and the
 diagnostics block appended under the last section:
@@ -185,7 +194,8 @@ scrubs) on a public branch; the user is approving that disclosure too.
 Present, and gate on an explicit yes:
 
 - **Target**: `OWNER/REPO` (and how it was resolved)
-- **Form / label**: `bug.yml` → `bug`, etc.
+- **Form / labels**: the form label plus the two fixed ones — `rough-idea.yml` →
+  `waffle:needs-inference` + `waffle:reassess` + `waffle:consumer-report`, etc.
 - **Title**
 - **The full body, post-redaction** — the exact bytes, not a summary or a promise about them
 - **Attachments** — each file (new name, size), where it will be hosted (`<consumer>` on the public
@@ -199,25 +209,55 @@ On a decline, stop. Skipped by `{{waffle.reportConfirmGate.flag.off}}` or a rend
 Write the approved body to a file (never an inline `--body` and never a heredoc), then:
 
 ```bash
-gh issue create --repo OWNER/REPO --title "<title>" --body-file "${TMPDIR:-/tmp}/waffle-report-<slug>.md" --label "<label>"
+gh issue create --repo OWNER/REPO --title "<title>" --body-file "${TMPDIR:-/tmp}/waffle-report-<slug>.md" --label "<form label>"
 ```
 
 Upload the approved attachments first (step 4b), so the body's links resolve when the issue
-lands. Gate on the **exit status**, not the output. On success, report the issue URL, each hosted
-attachment, and one line per placeholder asking the user to attach that file by hand.
+lands. Gate on the **exit status** of `gh issue create`, not the output. Then add the two fixed
+labels to the URL it printed, **each in its own call**:
 
-**If it fails** — no `gh` auth, no access to the toolkit repo, or the label does not exist there —
+```bash
+gh issue edit <issue url> --repo OWNER/REPO --add-label "waffle:reassess"        || echo "warn: waffle:reassess not applied"
+gh issue edit <issue url> --repo OWNER/REPO --add-label "waffle:consumer-report" || echo "warn: waffle:consumer-report not applied"
+```
+
+Then **read the labels back** — the `warn:` lines cannot see a label GitHub dropped silently:
+
+```bash
+gh issue view <issue url> --repo OWNER/REPO --json labels -q '.labels[].name'
+```
+
+Build the not-applied list from that output, never from which `echo` fired.
+
+A fixed label that fails to apply is a **warning, never a failed
+filing**: the issue already exists. Expect it for most filers. Adding a label takes **triage or
+write access** on the toolkit repo, and a typical consumer has neither. GitHub may also silently
+drop the form label from `gh issue create`. A fork's tracker can also lack the label. So the
+**hold is best-effort**: an issue without `waffle:reassess` is **not on hold**, and the
+maintainer's automation will treat it as ordinary scope.
+
+On success, report the issue URL, each hosted attachment, and one line per placeholder asking the
+user to attach that file by hand. For each label missing from the read-back (fixed or form), say so
+plainly, give the likely cause (no triage rights on `OWNER/REPO`), and tell the user to comment
+on the issue asking the maintainer to add it. Name `waffle:reassess` first. Without it the report
+is not held.
+
+**If `gh issue create` fails** — no `gh` auth, no access to the toolkit repo, or the form label does not exist there —
 **say plainly that nothing was submitted**, then hand the user the one-paste path:
 
 1. Print the finished title and body.
 2. Print a prefilled new-issue URL that selects the form and fills its fields by their ids —
    issue *forms* ignore a `body=` parameter, so prefill the field ids instead: `problem`,
    `solution`, `context` for `bug.yml` / `feature.yml`; `idea`, `context` for `rough-idea.yml`;
-   plus `title`. URL-encode each value:
+   plus `title`, and `labels=` with the two fixed labels. URL-encode each value
+   (`:` → `%3A`, `,` → `%2C`):
 
    ```text
-   https://github.com/OWNER/REPO/issues/new?template=bug.yml&title=<title>&problem=<…>&context=<…>
+   https://github.com/OWNER/REPO/issues/new?template=bug.yml&labels=waffle%3Areassess%2Cwaffle%3Aconsumer-report&title=<title>&problem=<…>&context=<…>
    ```
+
+   GitHub drops `labels=` for a user without triage rights; the form still applies its own label,
+   so tell the user the maintainer may need to add `waffle:reassess` and `waffle:consumer-report`.
 
    Browsers and GitHub cap URL length around 8 KB; if the body would exceed that, give the
    `template` + `title` URL and tell the user to paste the printed sections in.

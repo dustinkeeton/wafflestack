@@ -339,7 +339,7 @@ the `recommend` level, and the setup inventory's `### prerequisites` block surfa
 | `waffle:auto-merged` | `autoMerge.label` | github-workflow · `waffle-hygiene.yml` (opt-in); orchestration · `delegate`, `autopilot` | harness-owned |
 | `waffle:manual-review` | `autopilot.holdLabel` | orchestration · `autopilot` | harness-owned |
 | `waffle:needs-inference` | `issue.inferenceLabel` | github-workflow · `issue` | harness-owned |
-| `waffle:reassess` | `issue.reassessLabel` | github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot` | harness-owned (human-applied hold) |
+| `waffle:reassess` | `issue.reassessLabel` | github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot`; wafflestack · `waffle-report` (applies it upstream) | harness-owned (human-applied hold) |
 | `priority: critical` / `priority: high` / `priority: medium` / `priority: low` | `issue.priorityLabels` | github-workflow · `issue` | taxonomy |
 | `bug` | `issue.bugLabel` (also `issue.typeLabels`) | github-workflow · `issue` | taxonomy |
 | `enhancement` | `issue.featureLabel` (also `issue.typeLabels`) | github-workflow · `issue` | taxonomy |
@@ -369,6 +369,23 @@ against a repo that only has the other spelling, so use one form everywhere. The
 `implement` words in the `label-hook` skill are **action tokens**, not label text: the label-hook
 workflow gates on the `labelHook.enrichLabel` / `labelHook.implementLabel` values and hands the skill
 the token, so renaming a trigger label via config changes nothing in the skill.
+
+#### Upstream-tracker labels
+
+`/waffle-report` files a consumer's report into the **toolkit's** tracker, not this repo, and applies
+the form's label plus `waffle:reassess` and the label below there. These are fixed upstream names, not
+config keys. A consumer repo does **not** need this label, and `doctor` does not check for it; only the
+toolkit repo (or a fork that receives reports) creates it. A tracker that lacks it gets a warning from
+`/waffle-report`, and the report still files.
+
+| Label | Config key | Needed by | Kind |
+|---|---|---|---|
+| `waffle:consumer-report` | (none — fixed upstream name) | wafflestack · `waffle-report` (upstream tracker only) | provenance |
+
+```bash
+# upstream toolkit tracker only — not a consumer-repo prerequisite
+gh label create "waffle:consumer-report" --force --color 0E7C86 --description "Filed via /waffle-report from a consuming repo — provenance; arrives on waffle:reassess hold"
+```
 
 ## 5. Render
 

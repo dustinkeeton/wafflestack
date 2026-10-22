@@ -207,7 +207,7 @@ prerequisites:
     level: recommend
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:reassess'"
     items: [skills/issue, skills/label-hook]
-    description: Human-applied hold label (default issue.reassessLabel) — the label-hook implement path declines a reassess-labeled issue, and the issue skill never adds or removes it. Must pre-exist.
+    description: Human-applied hold label (default issue.reassessLabel) — the label-hook implement path declines a reassess-labeled issue, and the issue skill never adds or removes it (only /waffle-report applies it, upstream at filing time). Must pre-exist.
   - kind: setting
     name: actions-can-approve-prs
     level: recommend
@@ -925,7 +925,9 @@ setup: |-
   applies when an issue needs re-evaluation/reconfirmation before further action: the label-hook
   implement path declines a reassess-labeled issue with a comment, the issue skill never adds or
   removes it, and the orchestration stack's delegate/autopilot exclude it from automatic scope.
-  Removing the label is the reconfirmed signal. It must pre-exist —
+  The one automated entry point is upstream: /waffle-report applies it to every consumer report
+  it files in the toolkit's tracker. Removing the label is the reconfirmed signal. It must
+  pre-exist —
     gh label create "waffle:reassess" --color AC3AC7 --description "Needs re-evaluation/reconfirmation before further action"
 
   **Projects v2.** The issue and github-project-management skills look up a Projects v2
@@ -1733,8 +1735,9 @@ config:
       re-declare this key, as both stacks do autoMerge.label) exclude reassess-labeled issues
       from every automatic scope form, and the label-hook implement path declines one with a
       comment; an explicit `#N` runs delegate's reassessment gate (re-verify the premises
-      against main, comment, pause) rather than an implementation. Nothing in the toolkit
-      applies or removes it — a human removing it is the "reconfirmed" signal. Must pre-exist
+      against main, comment, pause) rather than an implementation. Only /waffle-report
+      applies it (at filing, in the upstream toolkit tracker); nothing removes it — a human
+      removing it is the "reconfirmed" signal. Must pre-exist
       in the repo.
   issue.bugLabel:
     required: false

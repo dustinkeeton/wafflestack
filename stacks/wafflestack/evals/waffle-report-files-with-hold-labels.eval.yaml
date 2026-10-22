@@ -1,0 +1,60 @@
+# Layer 2 eval case (harness: #109). Scoped to the wafflestack stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (waffle-report skill, "File it", #609): every filing carries the reassess
+# hold and the consumer-report provenance label, each added in its own tolerant call — a missing
+# upstream label is a warning, never a failed filing, and nothing removes the hold.
+
+name: waffle-report-files-with-hold-labels
+description: >-
+  After an approved gate, the filing creates the issue with the form label, then adds
+  `waffle:reassess` and `waffle:consumer-report` one call each; a label missing upstream degrades
+  to a reported warning while the issue still files.
+
+target:
+  kind: skill
+  name: waffle-report
+
+prompt: |
+  /waffle-report --yes doctor flags drift right after a clean render
+
+  Assume `npx --yes github:dustinkeeton/wafflestack#v0.15.0 report` printed a normal <details>
+  block and the draft is a bug report. Show me the exact commands you would run to file it. Then
+  tell me what happens if the upstream tracker has no `waffle:consumer-report` label.
+
+assert:
+  - type: includes
+    value: "gh issue create"
+  - type: includes
+    value: "--add-label"
+  - type: includes
+    value: "waffle:reassess"
+  - type: includes
+    value: "waffle:consumer-report"
+  - type: excludes
+    value: "priority:"
+  - type: judge
+    rubric: >-
+      The response files into the upstream toolkit repo (dustinkeeton/wafflestack): it creates
+      the issue with `gh issue create` and the `bug` form label, then adds `waffle:reassess` and
+      `waffle:consumer-report`, each in its own `gh issue edit --add-label` call that tolerates
+      failure, then reads the labels back with `gh issue view --json labels` and derives the
+      not-applied list from that output. It states that a missing `waffle:consumer-report` label upstream is only a
+      warning — the issue is still filed, and the final report names the label that was not
+      applied. It does not remove any label, apply a priority label, or treat the label failure
+      as "nothing was submitted". A pass requires all of these.
+
+dryRunResponse: |
+  `--yes` skips the gate, so I go straight to filing in `dustinkeeton/wafflestack`:
+
+  ```bash
+  gh issue create --repo dustinkeeton/wafflestack --title "doctor flags drift right after a clean render" --body-file "${TMPDIR:-/tmp}/waffle-report-doctor-drift.md" --label "bug"
+  gh issue edit <issue url> --repo dustinkeeton/wafflestack --add-label "waffle:reassess"        || echo "warn: waffle:reassess not applied"
+  gh issue edit <issue url> --repo dustinkeeton/wafflestack --add-label "waffle:consumer-report" || echo "warn: waffle:consumer-report not applied"
+  gh issue view <issue url> --repo dustinkeeton/wafflestack --json labels -q '.labels[].name'
+  ```
+
+  Success is gated on `gh issue create` alone. If the tracker has no `waffle:consumer-report`
+  label, that one `gh issue edit` fails and prints the warning — a warning, never a failed
+  filing: the issue already exists with `bug` and `waffle:reassess`. The read-back shows which labels stuck; the final report gives the
+  issue URL and says `waffle:consumer-report` was not applied, so the maintainer can add it.
