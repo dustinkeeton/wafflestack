@@ -12180,6 +12180,16 @@ describe('CLI: setup/init alias (#611)', () => {
     assert.equal(gi(b), seeded, 'applies even when the config already existed');
   });
 
+  test('refs are refused before anything is written — both names', () => {
+    for (const cmd of ['setup', 'init']) {
+      const cwd = fresh();
+      const r = run([cmd, 'github-workflow'], cwd);
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, new RegExp(`${cmd} takes no refs \\(got github-workflow\\).*wafflestack install`));
+      assert.equal(fs.existsSync(cfg(cwd)), false, `${cmd} must not scaffold when it refuses`);
+    }
+  });
+
   test('help lists setup first and names init as its alias', () => {
     const r = runCli(['help'], fresh());
     assert.match(r.stdout, /^\s+init\s+alias for setup/m);

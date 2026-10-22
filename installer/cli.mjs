@@ -211,6 +211,8 @@ try {
     case 'setup': {
       // One onboarding command (#611). stdout stays the pure playbook; notices go to stderr.
       const gitignore = extractFlag(args, '--gitignore');
+      // Refuse before scaffolding: a dropped ref would otherwise exit 0 having written a starter.
+      if (args.length) fail(`${command} takes no refs (got ${args.join(', ')}) — use \`wafflestack install <ref…>\` to add a stack or item`);
       warnProvenance(identity()); // writes only the static starter, so it warns rather than refusing (#373)
       const { file, created } = scaffoldConfig({ cwd });
       if (created) console.error(`wrote ${file} — the playbook below walks you (or your coding agent) through the rest`);
