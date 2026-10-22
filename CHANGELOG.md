@@ -32,6 +32,14 @@ is what you reach for across a breaking one.
 ## [Unreleased]
 
 ### Changed
+- **project-manager owns grouping issues into epics (#633).** A new responsibility has it group
+  related open issues under an `[epic]` parent while it reviews the backlog. The parent is an
+  existing epic or a new one filed with the `issue` skill. It confirms with the user before
+  linking, and calls out any re-parenting. `github-project-management` gains a "Link an existing
+  issue to a parent epic" recipe: resolve both node IDs, check the child's current parent, then
+  `addSubIssue`. It covers re-parenting through `replaceParent: true` or `removeSubIssue`.
+
+  **Consumer impact:** re-render to pick up the agent and skill text. No config change.
 - **Autopilot's manual-review queue gets a service level (#511).** A cap hatch now files a
   `waffle:manual-review` follow-up only for should-fix and blocker findings. Nits are listed in the
   run report as "reported but not filed", so the shed count still shows them. The audit gate's
@@ -64,6 +72,12 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **`github-project-management` queries native sub-issues (#633).** "Query sub-issues of a
+  parent" read `trackedIssues`, the legacy task-list relation, which returns nothing for children
+  linked with `addSubIssue`. It now reads `subIssues` and `subIssuesSummary` with the
+  `GraphQL-Features: sub_issues` header (checked against epic #552: 5 sub-issues, 0 tracked).
+
+  **Consumer impact:** re-render. No config change.
 - **waffle-pr-response-hook re-verifies the checked-out commit (#623).** Checkout is by branch
   name, so a push between the gate and checkout used to hand the harness a commit nobody reviewed.
   A new step after checkout compares `git rev-parse HEAD` with the gate's reviewed SHA and reds the
