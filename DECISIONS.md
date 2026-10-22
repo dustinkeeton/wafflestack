@@ -21,7 +21,8 @@ concurrency group was one repo-wide constant, and its fork-head clause could nev
 
 1. **pr-green records the target.** When it is about to dispatch, it uploads a `waffle-pr-target`
    artifact (PR number, reviewed head SHA/ref/repo, 7-day retention). It writes the artifact
-   *before* its harness runs, so neither the PR diff nor the agent can rewrite it. Job outputs do
+   *before* its harness runs. That does not make it tamper-proof (the job's runtime token can still
+   upload), so the consumer treats it as an unverified pointer and re-checks it (#622). Job outputs do
    not cross a `workflow_run` hop, and an artifact keyed on `workflow_run.id` does. The upload is
    an `actions/upload-artifact` step, but it reuses the SHA already pinned in the stack's other
    workflows, so no new action pin appears.

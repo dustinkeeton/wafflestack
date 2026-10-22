@@ -92,7 +92,7 @@ jobs:
           echo "pr_number=${N}" >> "$GITHUB_OUTPUT"
           echo "🧇 waffle-pr-green-hook: PR #${N} is green and unreviewed at ${HEAD_SHA} — dispatching adversarial review." | tee -a "$GITHUB_STEP_SUMMARY"
       # The review target for waffle-pr-response-hook, whose own workflow_run only sees main's tip (#355).
-      # Written BEFORE the harness runs, so neither the PR diff nor the agent can rewrite it.
+      # An unverified pointer: waffle-pr-response-hook re-checks it against pulls/{n} and the review status.
       - name: Record the review target for waffle-pr-response-hook
         if: steps.gate.outputs.should_review == 'true'
         env:

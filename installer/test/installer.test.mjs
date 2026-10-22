@@ -11853,6 +11853,9 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
       { head_repo: 'o/r x' }, { head_repo: '../r' }, { head_repo: null },
     ]) none(runResolve(doc, { target: TARGET(over) }), JSON.stringify(over));
     none(runResolve(doc, { target: 'not json' }), 'non-JSON');
+    none(runResolve(doc, { target: TARGET() + TARGET() }), 'two identical documents (#622)');
+    none(runResolve(doc, { target: TARGET() + '\n' + TARGET({ pr_number: 8 }) }), 'two differing documents (#622)');
+    none(runResolve(doc, { target: `[${TARGET()}]` }), 'an array-wrapped target (#622)');
     const badId = runResolve(doc, { target: TARGET(), runId: '42; id' });
     none(badId, 'non-numeric run id');
     assert.deepEqual(badId.calls, [], 'gh is never called with an untrusted run id');

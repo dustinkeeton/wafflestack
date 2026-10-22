@@ -64,6 +64,15 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **waffle-pr-response-hook accepts exactly one review target (#622).** The `resolve` job's shape
+  check now slurps `target.json` and requires a single JSON object. Before, a file holding two valid
+  objects passed and wrote each output key twice. The untested `waffle-pr-target/target.json`
+  fallback is gone, since a single-name `gh run download` extracts straight into `-D`. The
+  pr-green record-step comment and `DECISIONS.md` no longer claim the agent cannot rewrite the
+  artifact: it is an unverified pointer that the consumer re-checks against the API.
+
+  **Consumer impact:** both hooks are opt-in `files/` payloads. Re-render to pick up the stricter
+  check. No config change.
 - **waffle-pr-response-hook no longer hides a broken artifact download (#624).** The `resolve` job
   threw away `gh run download`'s stderr, so a 403, auth, or network failure looked like the normal
   "recorded no review target" skip. It still skips (fail-closed), but now logs gh's error. The
