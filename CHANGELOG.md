@@ -64,6 +64,10 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **A test now pins pr-green's `check_delivered` non-JSON fallback (#620).** A `gh` call that
+  exits 0 with a non-JSON statuses body (an HTML rate-limit page, say) must not count as delivery.
+  The new case fails if the `|| echo 0` fallback ever flips. **Consumer impact:** none. Test only,
+  no re-render.
 - **waffle-pr-response-hook now resolves the PR it answers (#355).** At its hop of the
   `workflow_run` chain, `workflow_run.head_sha` is the default branch's tip, so the hook never
   found a PR and never dispatched. pr-green now uploads a `waffle-pr-target` artifact (PR number and

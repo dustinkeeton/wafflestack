@@ -5172,6 +5172,17 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     r = runPrGreenGuard(g.prGreen, log, { pages: [MANY, OTHER_STATUS] });
     assert.equal(r.code, 1, `two pages with no review status stay fail-closed: ${r.out}`);
   });
+
+  test('pr-green: check_delivered fails closed on a non-JSON statuses body (#620)', (t) => {
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    const g = renderGuards();
+    // A posting log reaches rung (3), which reds unless check_delivered proves delivery.
+    const log = RESULT([B('gh pr review 7 --comment --body-file /tmp/x.md')], 'Posted.');
+    let r = runPrGreenGuard(g.prGreen, log, '<html>rate limited</html>');
+    assert.equal(r.code, 1, `a non-JSON statuses body is not delivery proof: ${r.out}`);
+    r = runPrGreenGuard(g.prGreen, log, STATUS);
+    assert.equal(r.code, 0, `control: a real success status is delivery: ${r.out}`);
+  });
 });
 
 // The syrup gate is generic — these prove the parse/gate/validate halves on a throwaway fixture.
