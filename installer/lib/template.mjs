@@ -87,7 +87,7 @@ export const modeMatches = (mode, value) => String(mode) === String(value);
 const describeModeList = (modes) => `[${modes.map((m) => JSON.stringify(m)).join(', ')}]`;
 
 /**
- * Check a resolved value against the key's declared `modes:` / `lockMode:` guards (#478). The raw
+ * Check a resolved value against the key's declared `modes:` / `lockMode:` / `configModes:` guards (#478, #626). The raw
  * value is type-checked (a list or map is never a mode); membership runs on the expanded text.
  * Returns the first problem, or null when clean or unguarded.
  */
@@ -103,6 +103,12 @@ export function modeProblems(guards, key, raw, expanded) {
       return (
         `is locked to ${JSON.stringify(g.lockMode)} by ${g.source} (lockMode) — ` +
         `config may not set it; the skill's own flag token is the only per-run override`
+      );
+    }
+    if (g.configModes && !g.configModes.some((m) => modeMatches(m, expanded))) {
+      return (
+        `is restricted to ${describeModeList(g.configModes)} by ${g.source} (configModes) — ` +
+        `config may not set it to ${JSON.stringify(expanded)}; the skill's own flag token is the only per-run override`
       );
     }
     if (g.modes && !g.modes.some((m) => modeMatches(m, expanded))) {

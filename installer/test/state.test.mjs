@@ -118,6 +118,17 @@ describe('state: behavioral keys, run files, locks, drift (#561)', () => {
     assert.deepEqual(consent.flag, { on: '+go', off: null });
   });
 
+  test('a configModes key reports its subset in JSON and the text line (#626)', () => {
+    const yaml = path.join(toolkitRoot, 'stacks/demo/stack.yaml');
+    fs.writeFileSync(yaml, fs.readFileSync(yaml, 'utf8').replace('    lockMode: prompt\n', '    configModes: [false, prompt]\n'));
+    const state = collect();
+    const consent = keyOf(state, 'demo.consent');
+    assert.equal(consent.lockMode, null);
+    assert.deepEqual(consent.configModes, [false, 'prompt']);
+    assert.equal(keyOf(state, 'demo.gate').configModes, null);
+    assert.match(formatStateText(state), /demo\.consent: "prompt" \(stack-default, config may say \[false,"prompt"\]\) — \+go forces/);
+  });
+
   test('a committed value reports the waffle.yaml layer', () => {
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\nconfig:\n  demo:\n    gate: false\n');
     const gate = keyOf(collect(), 'demo.gate');

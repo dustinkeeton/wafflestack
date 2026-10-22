@@ -204,7 +204,7 @@ Walk the config schema of every enabled stack (from the inventory):
 
 Some keys govern a **behavior** rather than fill in a string: whether a skill pauses at a
 confirmation gate, arms auto-merge, runs a review loop. A stack declares such a key with a closed
-`modes:` list (plus optional `flag:`, `lockMode:`, `nonInteractive:`) — the authoring side is
+`modes:` list (plus optional `flag:`, `lockMode:` or `configModes:`, `nonInteractive:`) — the authoring side is
 [`FORMAT.md` § Behavioral keys](FORMAT.md#behavioral-keys--modes-flag-lockmode-noninteractive);
 this is the consumer side. In the inventory a behavioral key looks like any other defaulted key
 (`optional; default: true`); its description names the modes it accepts, and the table at the end of
@@ -241,28 +241,35 @@ What config **cannot** set:
 
 - **The tokens.** `flag:` tokens are stack-authored; no config value renames them, and a skill
   references only the sides its key declares — `waffle.reportConfirmGate` has `--yes` and no
-  `--confirm`; the autopilot consents have an on-token (`+automerge`, …) and no off-token.
+  `--confirm`; `autopilot.autoMerge` has `+automerge` and no off-token, while the three autopilot
+  gates have both (`+qa` / `-qa`, `+review` / `-review`, `+audit` / `-audit`).
 - **The non-interactive fallback.** `nonInteractive:` is declared by the stack and stated in the
   skill's mode table (its "Non-interactive caller" column); it is not a config key. The test is *no
   human on the turn*, not *an agent is running*.
-- **A locked key.** `lockMode: <mode>` pins what config may say. The four autopilot consents are
+- **A locked key.** `lockMode: <mode>` pins what config may say. `autopilot.autoMerge` is
   `lockMode: prompt`, so `autopilot.autoMerge: true` in either config file fails `render` — nothing is
   written — with `config value for {{autopilot.autoMerge}} is locked to "prompt" by stack
   "orchestration" (lockMode) — config may not set it; the skill's own flag token is the only per-run
   override`; the same value edited after a clean render fails bare `doctor` as an
   `invalid config value:` note. The per-run `+automerge` token still works: the lock is about the
   config layer, which is what makes the consent fresh every run.
+- **A restricted key.** `configModes: [..]` lists the only modes config may say. Autopilot's three
+  gates are `configModes: [false, prompt]`: `autopilot.reviewLoop: false` renders (the gate never
+  asks and never runs), but `true` fails `render` and bare `doctor` with `config value for
+  {{autopilot.reviewLoop}} is restricted to [false, "prompt"] by stack "orchestration" (configModes)
+  — config may not set it to "true"; the skill's own flag token is the only per-run override`. Config
+  may pre-answer a gate *off*, never *on*.
 
 A value outside the list fails the same two commands with `config value for {{<key>}} is not one of
 its declared modes [...]`. Both checks cover the keys the selected items actually reference, and
 `validate` reads no project config — so neither is ever a `validate` failure. When the user wants a
 behavior a key does not offer (a `prompt` mode on `hygiene.autoMerge`, an always-on autopilot
-consent), the answer is a toolkit change, not a config value.
+gate), the answer is a toolkit change, not a config value.
 
 Built-in behavioral keys — every key that declares `modes:`; the inventory is authoritative for the
 version you installed:
 
-| Key | Stack | Default | Modes | Tokens (on / off) | Non-interactive | Locked |
+| Key | Stack | Default | Modes | Tokens (on / off) | Non-interactive | Locked (or config may say) |
 |---|---|---|---|---|---|---|
 | `issue.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
 | `prResponse.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
@@ -273,9 +280,9 @@ version you installed:
 | `delegate.batchMode` | orchestration | `false` | `true`, `false` | — | — | — |
 | `delegate.docsRefresh` | orchestration | `true` | `true`, `false` | — | — | — |
 | `autopilot.autoMerge` | orchestration | `prompt` | `true`, `false`, `prompt` | `+automerge` / — | `false` | `prompt` |
-| `autopilot.reviewLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+review` / — | `false` | `prompt` |
-| `autopilot.qaLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+qa` / — | `false` | `prompt` |
-| `autopilot.auditStep` | orchestration | `prompt` | `true`, `false`, `prompt` | `+audit` / — | `false` | `prompt` |
+| `autopilot.reviewLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+review` / `-review` | `false` | `false`, `prompt` |
+| `autopilot.qaLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+qa` / `-qa` | `false` | `false`, `prompt` |
+| `autopilot.auditStep` | orchestration | `prompt` | `true`, `false`, `prompt` | `+audit` / `-audit` | `false` | `false`, `prompt` |
 | `waffle.reportConfirmGate` | wafflestack | `true` | `true`, `false`, `prompt` | — / `--yes` | `fail` | — |
 
 A row with no tokens and no `prompt` (`hygiene.autoMerge`, the four `delegate.*` keys) is

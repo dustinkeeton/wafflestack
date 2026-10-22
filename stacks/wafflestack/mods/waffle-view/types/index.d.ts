@@ -16,6 +16,7 @@ export type WaffleViewKey = {
   prompt: boolean
   nonInteractive: boolean | 'fail' | null
   lockMode: WaffleViewMode | null
+  configModes: WaffleViewMode[] | null
   flag: { on: string | null; off: string | null } | null
   description: string
 }

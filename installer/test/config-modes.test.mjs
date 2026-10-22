@@ -105,6 +105,20 @@ describe('behavioral config keys — stack-side validate rules (#478)', () => {
     assert.deepEqual(problemsFor(['default: false', 'modes: [true, false]', 'lockMode: false']), []);
   });
 
+  test('configModes is a proper subset of modes holding the default, exclusive with lockMode (#626)', () => {
+    const base = ['default: prompt', 'modes: [true, false, prompt]', 'nonInteractive: false'];
+    assert.deepEqual(problemsFor([...base, 'configModes: [false, prompt]']), []);
+    expectProblem([...base, 'configModes: [maybe, prompt]'], /`configModes` "maybe" is not one of its declared modes/);
+    expectProblem([...base, 'configModes: [false]'], /default "prompt" is not one of its `configModes`/);
+    expectProblem(['required: false', 'modes: [true, false, prompt]', 'nonInteractive: false', 'configModes: [false, prompt]'], /declares `configModes` without a literal `default`/);
+    expectProblem([...base, 'lockMode: prompt', 'configModes: [false, prompt]'], /declares both `lockMode` and `configModes`/);
+    expectProblem([...base, 'configModes: prompt'], /`configModes` must be a non-empty list of scalars/);
+    expectProblem([...base, 'configModes: []'], /`configModes` must be a non-empty list of scalars/);
+    expectProblem([...base, 'configModes: [prompt, prompt]'], /`configModes` lists "prompt" more than once/);
+    expectProblem([...base, 'configModes: [true, false, prompt]'], /`configModes` admits every declared mode/);
+    expectProblem(['default: prompt', 'configModes: [prompt]'], /declares `configModes` but no `modes`/);
+  });
+
   test('flag is a map of on/off tokens, each a single whitespace-free string, and needs boolean modes', () => {
     expectProblem(['default: true', 'modes: [true, false]', 'flag: "--yes"'], /`flag` must be a map of \{ on, off \} tokens/);
     expectProblem(['default: true', 'modes: [true, false]', 'flag: { yes: "--yes" }'], /`flag` has unknown key\(s\) yes/);
@@ -200,6 +214,28 @@ describe('behavioral config keys — consumer-side render and doctor guards (#47
     );
   });
 
+  test('a configModes key admits only its listed modes from config, at render and in bare doctor (#626)', () => {
+    toolkitRoot = fixtureToolkit(['default: prompt', 'modes: [true, false, prompt]', 'configModes: [false, prompt]', 'nonInteractive: false', 'flag: { on: "+go", off: "-go" }']);
+    project('false');
+    assert.equal(render().ok, true, 'config may pre-answer off');
+    assert.match(rendered(), /The gate for this run is \*\*false\*\*/);
+    project('prompt');
+    assert.equal(render().ok, true);
+    project('true');
+    const r = render();
+    assert.equal(r.ok, false);
+    assert.ok(
+      r.errors.some((e) => /\{\{demo\.gate\}\} is restricted to \[false, "prompt"\] by stack "demo" \(configModes\) — config may not set it to "true"; the skill's own flag token is the only per-run override/.test(e)),
+      JSON.stringify(r.errors),
+    );
+    project('false');
+    assert.equal(render().ok, true);
+    project('true', { local: true });
+    const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot });
+    assert.equal(dr.ok, false);
+    assert.ok(dr.configProblems.some((p) => /\{\{demo\.gate\}\} is restricted to/.test(p)), JSON.stringify(dr.configProblems));
+  });
+
   test('the local overlay cannot smuggle a locked value past the guard either', () => {
     toolkitRoot = fixtureToolkit(['default: false', 'modes: [true, false]', 'lockMode: false']);
     project('true', { local: true });
@@ -224,28 +260,36 @@ describe('behavioral config keys — consumer-side render and doctor guards (#47
   });
 });
 
-describe('autopilot consents are locked in config (#478 acceptance)', () => {
+describe('autopilot consents: auto-merge locked, gates restricted to off/prompt in config (#478, #626)', () => {
   const KEYS = ['autopilot.autoMerge', 'autopilot.reviewLoop', 'autopilot.qaLoop', 'autopilot.auditStep'];
+  const GATES = { 'autopilot.reviewLoop': 'review', 'autopilot.qaLoop': 'qa', 'autopilot.auditStep': 'audit' };
   let cwd;
   beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-478-orch-')); });
   afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
 
-  test('the shipped orchestration stack declares each consent as a locked three-mode key with its + token', () => {
+  test('auto-merge is lockMode: prompt with +automerge; the three gates are configModes [false, prompt] with +/- tokens', () => {
     const toolkit = loadToolkit(repoRoot);
     const config = toolkit.stacks.get('orchestration').config;
-    const tokens = { 'autopilot.autoMerge': '+automerge', 'autopilot.reviewLoop': '+review', 'autopilot.qaLoop': '+qa', 'autopilot.auditStep': '+audit' };
     for (const key of KEYS) {
       const spec = config[key];
       assert.deepEqual(spec.modes, [true, false, 'prompt'], key);
-      assert.equal(spec.lockMode, 'prompt', key);
+      assert.equal(spec.default, 'prompt', key);
       assert.equal(spec.nonInteractive, false, key);
-      assert.deepEqual(spec.flag, { on: tokens[key] }, key);
-      assert.equal(spec.default, spec.lockMode, `${key}: a locked key defaults to its lock`);
+    }
+    const am = config['autopilot.autoMerge'];
+    assert.equal(am.lockMode, 'prompt');
+    assert.equal(am.configModes, undefined);
+    assert.deepEqual(am.flag, { on: '+automerge' });
+    for (const [key, word] of Object.entries(GATES)) {
+      const spec = config[key];
+      assert.equal(spec.lockMode, undefined, `${key}: no lock`);
+      assert.deepEqual(spec.configModes, [false, 'prompt'], key);
+      assert.deepEqual(spec.flag, { on: `+${word}`, off: `-${word}` }, key);
     }
     assert.deepEqual(validateToolkit(repoRoot).filter((p) => /autopilot\./.test(p)), []);
   });
 
-  const renderAutopilot = (consent) => {
+  const renderAutopilot = (consent, leaf = 'autoMerge') => {
     write(cwd, '.waffle/waffle.yaml', [
       'targets: [claude]',
       'include: [orchestration/skills/autopilot]',
@@ -265,7 +309,7 @@ describe('autopilot consents are locked in config (#478 acceptance)', () => {
       '    complianceAgentName: integrity',
       '    complianceDescription: Validates the thing.',
       '    compliancePrompt: Run the checks.',
-      ...(consent ? ['  autopilot:', `    autoMerge: ${consent}`] : []),
+      ...(consent ? ['  autopilot:', `    ${leaf}: ${consent}`] : []),
       '',
     ].join('\n'));
     return renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
@@ -285,6 +329,20 @@ describe('autopilot consents are locked in config (#478 acceptance)', () => {
   test('autopilot.autoMerge: prompt in waffle.yaml is the one config value the lock admits', () => {
     const r = renderAutopilot('prompt');
     assert.equal(r.ok, true, JSON.stringify(r.errors));
+  });
+
+  test('a gate set to false in waffle.yaml renders; true is refused naming configModes (#626)', () => {
+    for (const [key, word] of Object.entries(GATES)) {
+      const leaf = key.split('.')[1];
+      const ok = renderAutopilot('false', leaf);
+      assert.equal(ok.ok, true, `${key}: false — ${JSON.stringify(ok.errors)}`);
+      const md = fs.readFileSync(path.join(cwd, '.claude/skills/autopilot/SKILL.md'), 'utf8');
+      assert.ok(md.includes(`Rendered gate for this repo: \`false\``), `${key} renders its config-off mode`);
+      assert.ok(md.includes(`\`-${word}\``), `${key}: off token rendered`);
+      const bad = renderAutopilot('true', leaf);
+      assert.equal(bad.ok, false, `${key}: true must never be config-sticky`);
+      assert.ok(bad.errors.some((e) => e.includes(`{{${key}}} is restricted to [false, "prompt"] by stack "orchestration" (configModes)`)), JSON.stringify(bad.errors));
+    }
   });
 
   test('leaving the key unset renders (the lock value is the default), and bare doctor then catches a later true', () => {
@@ -412,13 +470,14 @@ describe('flag tokens and the resolved value thread through render (#486)', () =
     assert.notEqual(lockHash('waffle.local.lock.json'), canonicalHash);
   });
 
-  test('the shipped orchestration consents expose their + tokens as placeholders', () => {
+  test('the shipped orchestration consents expose their tokens as placeholders; only the gates have an off side', () => {
     const stack = loadToolkit(repoRoot).stacks.get('orchestration');
     const resolve = makeResolver(stack, {}, 'claude');
-    for (const [key, token] of [['autopilot.autoMerge', '+automerge'], ['autopilot.reviewLoop', '+review'], ['autopilot.qaLoop', '+qa'], ['autopilot.auditStep', '+audit']]) {
-      assert.ok(stack.declared.has(`${key}.flag.on`), key);
-      assert.ok(!stack.declared.has(`${key}.flag.off`), `${key} declares no off token`);
-      assert.equal(resolve(`${key}.flag.on`), token);
+    assert.equal(resolve('autopilot.autoMerge.flag.on'), '+automerge');
+    assert.ok(!stack.declared.has('autopilot.autoMerge.flag.off'), 'autoMerge declares no off token');
+    for (const [key, word] of [['autopilot.reviewLoop', 'review'], ['autopilot.qaLoop', 'qa'], ['autopilot.auditStep', 'audit']]) {
+      assert.equal(resolve(`${key}.flag.on`), `+${word}`, key);
+      assert.equal(resolve(`${key}.flag.off`), `-${word}`, key);
     }
   });
 });

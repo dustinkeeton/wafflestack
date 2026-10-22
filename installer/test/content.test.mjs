@@ -867,12 +867,12 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.ok(reviewStep.length > 0, 'Step 6 is the review → respond loop');
   });
 
-  test('review-loop consent is a separate per-run opt-in, locked to prompt, +review flag', () => {
+  test('review-loop consent is a separate per-run opt-in, config may say false never true, +review flag', () => {
     assert.match(md, /Review-loop consent/);
-    assert.match(md, /separate from auto-merge, locked to `prompt`/);
+    assert.match(md, /separate from auto-merge, config may say `false`, never `true`/);
     assert.match(md, /\+review/);
     assert.match(md, /Independent of auto-merge consent/);
-    assert.match(md, /\*All four\* consent keys are `lockMode: prompt`: config cannot pre-answer them/);
+    assert.match(md, /Config can never pre-answer a consent \*\*on\*\*/);
   });
 
   test('auto-merge arming is deferred out of the delegate run when the loop is on', () => {
@@ -918,12 +918,12 @@ describe('autopilot skill: opt-in /audit gate after the review loop (#221)', () 
     md = readSkill('autopilot');
   });
 
-  test('audit-step consent is a separate per-run opt-in, locked to prompt, +audit flag, any combination', () => {
+  test('audit-step consent is a separate per-run opt-in, config may say false never true, +audit flag, any combination', () => {
     assert.match(md, /Audit-step consent/);
-    assert.match(md, /separate from auto-merge and the review loop, locked to `prompt`/);
+    assert.match(md, /separate from auto-merge and the review loop, config may say `false`, never `true`/);
     assert.match(md, /\+audit/);
     assert.match(md, /any combination may be on/);
-    assert.match(md, /\*All four\* consent keys are `lockMode: prompt`: config cannot pre-answer them/);
+    assert.match(md, /Config can never pre-answer a consent \*\*on\*\*/);
   });
 
   test('auto-merge arming is deferred past the audit gate — armed only once it passes green', () => {
@@ -968,12 +968,12 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     assert.ok(qaStep.length > 0, 'Step 5 is the QA → respond loop');
   });
 
-  test('QA-gate consent is a FIFTH per-run opt-in, locked to prompt, +qa flag, any combination', () => {
+  test('QA-gate consent is a FIFTH per-run opt-in, config may say false never true, +qa flag, any combination', () => {
     assert.match(md, /QA-gate consent/);
-    assert.match(md, /separate from the other consents, locked to `prompt`/);
+    assert.match(md, /separate from the other consents, config may say `false`, never `true`/);
     assert.match(md, /\+qa/);
     assert.match(md, /QA gate \(Step 5\) → review loop \(Step 6\) → audit gate \(Step 7\)/);
-    assert.match(md, /\*All four\* consent keys are `lockMode: prompt`: config cannot pre-answer them/);
+    assert.match(md, /Config can never pre-answer a consent \*\*on\*\*/);
   });
 
   test('auto-merge arming is deferred out of the delegate run when the QA gate is on', () => {
@@ -1017,17 +1017,29 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     md = readSkill('autopilot');
   });
 
-  test('argument-hint advertises the optional colon-count forms', () => {
+  test('argument-hint advertises the optional colon-count forms and the off tokens', () => {
     assert.match(md, /\+qa\[:N\]/);
     assert.match(md, /\+review\[:N\]/);
+    assert.match(md, /argument-hint: .*\[\+qa\[:N\] \| -qa\] \[\+review\[:N\] \| -review\] \[\+audit \| -audit\]/);
+  });
+
+  test('gate tokens are stripped as whole arguments before scope; contradictions stop the run (#626)', () => {
+    assert.match(md, /\*\*Consent tokens are not scope\.\*\*/);
+    assert.match(md, /Match whole arguments only: `-qa-blocked` is a label, not `-qa`/);
+    assert.match(md, /\*\*Contradictory tokens for one gate stop the run\.\*\*/);
+    assert.match(md, /report it and \*\*stop\*\* before any work starts/);
+    assert.match(md, /\| The off token, or `<on>:0` \| Off for this run — no question\. \| Off for this run\. \|/);
+    assert.match(md, /\| No token, rendered gate `false` \| Off — config pre-answered it; no question\. \| Off\. \|/);
+    assert.match(md, /A token always beats config/);
   });
 
   test('the colon form does double duty: consent AND cap in one flag', () => {
     assert.match(md, /consents to the loop AND caps it at/);
   });
 
-  test('N is validated: positive integer only; malformed/zero reverts to unspecified + ask', () => {
-    assert.match(md, /`N` must be a positive integer \(`N >= 1`\)/);
+  test('N is validated: :0 means off; negative/non-numeric reverts to unspecified + ask (#626)', () => {
+    assert.match(md, /`N` must be a non-negative integer\. `\+review:0` means \*\*off\*\*, exactly like `-review`/);
+    assert.match(md, /A negative or non-numeric count \(`\+review:-1`, `\+qa:deep`\) is malformed/);
     assert.match(md, /treat that flag as \*\*unspecified\*\*/);
     assert.match(md, /never start a zero-round loop and never guess a cap/);
   });
@@ -2122,7 +2134,7 @@ describe('auto-merge and delegate switches are flag-less behavioral keys — hyg
   });
 });
 
-describe('autopilot consents are prompt-locked keys — config cannot pre-answer them, the + token is the only on-switch (#489, part of #478)', () => {
+describe('autopilot consents — config can never pre-answer one on; only the gates may be pre-answered off (#489, #626)', () => {
   // key → [token, section heading]  (#494 rows 9–12)
   const CONSENTS = {
     'autopilot.autoMerge': ['+automerge', 'Auto-merge consent — per-run, explicit'],
@@ -2138,20 +2150,25 @@ describe('autopilot consents are prompt-locked keys — config cannot pre-answer
     src = fs.readFileSync(SOURCE, 'utf8');
   });
 
-  test('each key defaults to prompt AND is locked to prompt; nonInteractive and the on token are as PR #493 left them', () => {
+  test('each key defaults to prompt; auto-merge is locked, the three gates are configModes [false, prompt] with an off token (#626)', () => {
     for (const [key, [token]] of Object.entries(CONSENTS)) {
       const spec = config[key];
       assert.equal(spec.default, 'prompt', `${key} default`);
-      assert.equal(spec.lockMode, 'prompt', `${key} lockMode`);
-      assert.equal(spec.default, spec.lockMode, `${key}: default must equal lockMode`);
       assert.deepEqual(spec.modes, [true, false, 'prompt'], `${key} modes`);
       assert.equal(spec.nonInteractive, false, `${key}: an unattended run without the token is off`);
-      assert.deepEqual(spec.flag, { on: token }, `${key}: bare on token only, no off token`);
-      assert.doesNotMatch(spec.description, /sticky/i, `${key}: the never-sticky rule is the lock, not description prose`);
+      assert.doesNotMatch(spec.description, /sticky/i, `${key}: the never-sticky rule is the declaration, not description prose`);
+      if (key === 'autopilot.autoMerge') {
+        assert.equal(spec.lockMode, 'prompt', `${key} lockMode`);
+        assert.deepEqual(spec.flag, { on: token }, `${key}: bare on token only, no off token`);
+      } else {
+        assert.equal(spec.lockMode, undefined, `${key}: no lock`);
+        assert.deepEqual(spec.configModes, [false, 'prompt'], `${key} configModes`);
+        assert.deepEqual(spec.flag, { on: token, off: token.replace('+', '-') }, `${key}: two-sided tokens`);
+      }
     }
   });
 
-  test('the never-sticky prose is gone from source and render; the lock is stated where each consent is read', () => {
+  test('the never-sticky prose is gone from source and render; the declaration is stated where each consent is read', () => {
     const md = readSkill('autopilot');
     for (const text of [src, md]) {
       assert.doesNotMatch(text, /never sticky|never-sticky|NEVER sticky/);
@@ -2159,29 +2176,36 @@ describe('autopilot consents are prompt-locked keys — config cannot pre-answer
       assert.doesNotMatch(text, /There is no config setting/);
     }
     assert.match(md, /a `true` or `false` in either config file fails `render` and bare `doctor`/);
-    assert.match(md, /Consent is per-run by declaration\.\*\* \*All four\* consent keys are `lockMode: prompt`/);
+    assert.match(md, /a `true` in either config file fails `render` and bare `doctor`/);
+    assert.match(md, /Consent is per-run by declaration\.\*\* Config can never pre-answer a consent \*\*on\*\*\. `autopilot\.autoMerge` is `lockMode: prompt`/);
+    assert.match(md, /The three gates — QA, review, audit — are `configModes: \[false, prompt\]`/);
     assert.match(md, /never read a prior run's answer back/);
     for (const [key, [token, heading]] of Object.entries(CONSENTS)) {
-      assert.match(md, new RegExp(`### \\d\\. ${heading}, locked to \`prompt\``), `${key} heading names the lock`);
-      assert.match(md, new RegExp(`Rendered gate for this repo: \`prompt\`\\*\\* — (the value after|same \`lockMode: prompt\` declaration)`), `${key} renders the resolved mode`);
-      assert.ok(md.includes(`\`${token}\` in the arguments`), `${key}: ${token} is named as the per-run on-switch`);
+      const tail = key === 'autopilot.autoMerge' ? 'locked to `prompt`' : 'config may say `false`, never `true`';
+      assert.match(md, new RegExp(`### \\d\\. ${heading}, ${tail}`), `${key} heading names the declaration`);
+      assert.ok(md.includes(`\`${token}\``), `${key}: ${token} is named as the per-run on-switch`);
     }
+    assert.match(md, /Rendered gate for this repo: `prompt`\*\* — the value after/);
+    assert.match(md, /Rendered gate for this repo: `prompt`\*\* — same `configModes: \[false, prompt\]` declaration/);
+    assert.ok(md.includes('`+automerge` in the arguments'));
     assert.match(md, /\| No token \| Ask with `AskUserQuestion` — never assume\. \| Off — the key's `nonInteractive: false` fallback/);
   });
 
-  test('the source reads the mode and the token as placeholders; no literal + token survives', () => {
+  test('the source reads the mode and the tokens as placeholders; no literal token survives', () => {
     for (const [key, [token]] of Object.entries(CONSENTS)) {
       assert.ok(src.includes(`{{${key}}}`), `autopilot renders ${key}`);
       assert.ok(src.includes(`{{${key}.flag.on}}`), `autopilot renders ${key}.flag.on`);
-      assert.doesNotMatch(src, new RegExp(`\\{\\{${key.replace('.', '\\.')}\\.flag\\.off`), `${key} declares no off token to reference`);
+      const offRef = src.includes(`{{${key}.flag.off}}`);
+      assert.equal(offRef, key !== 'autopilot.autoMerge', `${key}: the off token is referenced iff declared`);
       assert.ok(!src.includes(token), `${key}: literal ${token} still hardcoded in the source`);
+      if (offRef) assert.ok(!new RegExp(`\`${token.replace('+', '-')}[\`:]`).test(src), `${key}: literal off token hardcoded in the source`);
     }
     assert.doesNotMatch(readSkill('autopilot'), /\{\{autopilot\.[a-zA-Z.]+\}\}/, 'an unresolved autopilot placeholder survived the render');
   });
 
   test('the :N cap suffix stays skill-parsed: it overrides the value keys, and is not part of the flag declaration', () => {
     const md = readSkill('autopilot');
-    assert.match(md, /\+qa\[:N\]\] \[\+review\[:N\]\]/, 'the argument hint still advertises the colon forms');
+    assert.match(md, /\+qa\[:N\] \| -qa\] \[\+review\[:N\] \| -review\]/, 'the argument hint still advertises the colon forms');
     assert.match(md, /The `:N` suffix is parsed here, by this skill: it overrides the \*value\* key `autopilot\.maxReviewRounds` for the run and is no part of the consent key's `flag:` declaration/);
     assert.match(md, /the suffix is likewise skill-parsed, overriding the value key `autopilot\.maxQaRounds` for the run/);
     assert.match(md, /`\+review:3` consents to the loop AND caps it at 3 rounds/);
@@ -2194,7 +2218,7 @@ describe('autopilot consents are prompt-locked keys — config cannot pre-answer
     }
   });
 
-  test('a consumer setting any consent to a non-prompt value fails render with an error naming the key; prompt itself is admitted', () => {
+  test('config true fails render for every consent, false only for auto-merge; prompt is admitted (#626)', () => {
     const cfg = (key, mode) => [
       'targets: [claude]',
       'include: [orchestration/skills/autopilot]',
@@ -2222,11 +2246,18 @@ describe('autopilot consents are prompt-locked keys — config cannot pre-answer
     try {
       fs.mkdirSync(path.join(cwd, '.waffle'));
       for (const key of Object.keys(CONSENTS)) {
-        for (const mode of ['true', 'false']) {
+        const locked = key === 'autopilot.autoMerge';
+        for (const mode of locked ? ['true', 'false'] : ['true']) {
           fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg(key, mode));
           const bad = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
           assert.equal(bad.ok, false, `${key}: ${mode} must not render`);
-          assert.ok(bad.errors.some((e) => e.includes(`{{${key}}} is locked to "prompt"`)), `${key}: ${JSON.stringify(bad.errors)}`);
+          const why = locked ? `{{${key}}} is locked to "prompt"` : `{{${key}}} is restricted to [false, "prompt"]`;
+          assert.ok(bad.errors.some((e) => e.includes(why)), `${key}: ${JSON.stringify(bad.errors)}`);
+        }
+        if (!locked) {
+          fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg(key, 'false'));
+          const off = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
+          assert.ok(off.ok, `${key}: false is a config mode — ${JSON.stringify(off.errors)}`);
         }
         fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), cfg(key, 'prompt'));
         const ok = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
@@ -4682,7 +4713,8 @@ describe('SETUP.md documents the three-mode behavioral config contract for the s
       assert.equal(row.modes, spec.modes.map((m) => `\`${m}\``).join(', '), `${key} modes`);
       assert.equal(row.tokens, spec.flag ? `${cell(spec.flag.on)} / ${cell(spec.flag.off)}` : '—', `${key} tokens`);
       assert.equal(row.nonInteractive, cell(spec.nonInteractive), `${key} nonInteractive`);
-      assert.equal(row.locked, cell(spec.lockMode), `${key} lockMode`);
+      const locked = spec.configModes ? spec.configModes.map((m) => `\`${m}\``).join(', ') : cell(spec.lockMode);
+      assert.equal(row.locked, locked, `${key} lockMode / configModes`);
     }
   });
 

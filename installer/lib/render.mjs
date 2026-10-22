@@ -883,11 +883,12 @@ function compileGuards(toolkit, errors) {
           errors.push(`stack "${stackName}" config key ${key} has an invalid entryPattern for ${leaf}: ${err.message}`);
         }
       }
-      // Behavioral keys (#478): a closed `modes:` list and/or a `lockMode:` travel with the key too.
+      // Behavioral keys (#478): a closed `modes:` list, `lockMode:`, and `configModes:` travel with the key too.
       const modeList = Array.isArray(spec?.modes) && spec.modes.every(isModeScalar) ? spec.modes : null;
       const lockMode = isModeScalar(spec?.lockMode) ? spec.lockMode : undefined;
-      if (modeList || lockMode !== undefined) {
-        const guard = { modes: modeList, lockMode, source };
+      const configModes = Array.isArray(spec?.configModes) && spec.configModes.every(isModeScalar) ? spec.configModes : null;
+      if (modeList || lockMode !== undefined || configModes) {
+        const guard = { modes: modeList, lockMode, configModes, source };
         const existing = modes.get(key);
         if (existing) existing.push(guard);
         else modes.set(key, [guard]);
@@ -942,7 +943,7 @@ function* guardFailures(toolkit, project, nodes, guards) {
 
 /**
  * Keys a set of items would use whose resolved value fails a guard render enforces (#578), split by
- * guard: `modes` when only the `modes:`/`lockMode:` check fails, else `pattern`. `config.`-prefixed, sorted.
+ * guard: `modes` when only the `modes:`/`lockMode:`/`configModes:` check fails, else `pattern`. `config.`-prefixed, sorted.
  *
  * @param {import('./toolkit.mjs').Toolkit} toolkit
  * @param {import('./project.mjs').ProjectConfig} project

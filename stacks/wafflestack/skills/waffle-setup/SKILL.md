@@ -38,7 +38,8 @@ Do not just dump the output — read it and help the user decide:
   inventory shows it like any other defaulted key. Tell the user which ones their selection pulls
   in and how to set one: a value from the key's modes under `config:` in `.waffle/waffle.yaml`
   (shared) or `.waffle/waffle.local.yaml` (this machine), overridden per run by the skill's own
-  token (`--yes`, `+automerge`, …), never by editing the rendered skill. Flag the locked ones: the
-  four `autopilot.*` consents are `lockMode: prompt`, so config may not pre-answer them. The
+  token (`--yes`, `+automerge`, …), never by editing the rendered skill. Flag the locked ones: `autopilot.autoMerge` is
+  `lockMode: prompt`, so config may not pre-answer it, and the three autopilot gates are
+  `configModes: [false, prompt]`, so config may turn them off but never on. The
   playbook's step 3 subsection **"Behavioral keys — the three modes, precedence, `lockMode`"**
   has the precedence order, the error text, and the full key table.
