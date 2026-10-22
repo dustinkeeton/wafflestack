@@ -28,8 +28,10 @@ the issue came from, either.
 - **Provenance is upstream-only.** `waffle:consumer-report` lives in the toolkit's tracker and is
   never a consumer prerequisite. `doctor` never checks for it.
 - **One tolerant call per label.** `gh issue create` applies the form label. Each fixed label is
-  then added in its own `gh issue edit --add-label` call. If one is missing (a fork's tracker may
-  lack it), the skill warns. The filing still counts, because the issue already exists.
+  then added in its own `gh issue edit --add-label` call. If one fails, the skill warns. The
+  usual cause is a filer without triage rights; a fork's tracker may also lack the label. The
+  filing still counts, because the issue already exists. The hold is therefore best-effort, and
+  the final report tells the filer to ask the maintainer for any label that didn't apply.
 - **The no-`gh` fallback URL carries both labels** in `labels=`. GitHub drops that for a user
   without triage rights, so the skill tells the user the maintainer may need to add them.
 

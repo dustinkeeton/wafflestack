@@ -437,9 +437,11 @@ and its redaction is **structural**: it never opens `waffle.local.yaml` or the l
 it emits config *key paths*, never values. A scrub pass then replaces your repo path, home
 directory, emails and git remotes with placeholders. The `/waffle-report` skill does the filing:
 it resolves the target repo from `waffle.toolkitRef` (a fork's consumer reports to the fork),
-shows you the post-redaction text, and files only on your yes. Each filing lands **on hold**
-(`waffle:reassess`, so no automation implements an unreproduced report) with a
-`waffle:consumer-report` provenance label.
+shows you the post-redaction text, and files only on your yes. Each filing *asks* to land **on
+hold** (`waffle:reassess`, so no automation implements an unreproduced report) with a
+`waffle:consumer-report` provenance label. Adding labels takes triage access on the toolkit repo.
+Without it, the skill reports which labels didn't apply and tells you to ask the maintainer. In
+that case the issue is **not** held.
 
 Why each is shaped this way:
 [`toggle`](DECISIONS.md#2026-09-16-toggle-makes-agent-invocation-a-per-project-config-input-not-a-hand-edit-476) ·

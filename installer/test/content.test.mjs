@@ -699,6 +699,8 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /gh issue edit <issue url> --repo OWNER\/REPO --add-label "waffle:consumer-report" \|\| echo "warn: waffle:consumer-report not applied"/);
     assert.match(md, /--label "<form label>"/, 'the issue is created with the form label only');
     assert.match(md, /is a \*\*warning, never a failed\s+filing\*\*/);
+    assert.match(md, /\*\*triage or\s+write access\*\*/, 'the permissions limit on adding labels is named on the CLI path');
+    assert.match(md, /\*\*hold is best-effort\*\*/, 'the skill must not promise the hold always applies');
     assert.match(md, /\*\*Form \/ labels\*\*:[\s\S]{0,120}`waffle:needs-inference` \+ `waffle:reassess` \+ `waffle:consumer-report`/);
     assert.match(md, /labels=waffle%3Areassess%2Cwaffle%3Aconsumer-report/, 'the fallback URL carries both fixed labels');
     assert.match(md, /never removes it — only the\s+upstream human clears it/);
