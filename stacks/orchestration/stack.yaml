@@ -90,7 +90,7 @@ prerequisites:
     level: recommend
     check: "gh label list --limit 500 2>/dev/null | grep -q 'waffle:reassess'"
     items: [skills/delegate, skills/autopilot]
-    description: Human-applied reassess hold (default issue.reassessLabel, shared with the github-workflow stack); delegate and autopilot exclude reassess-labeled issues from automatic scope, so this must pre-exist.
+    description: Human-applied reassess hold, or applied by /waffle-report at filing upstream (default issue.reassessLabel, shared with the github-workflow stack); delegate and autopilot exclude reassess-labeled issues from automatic scope, so this must pre-exist.
   - kind: setting
     name: allow-auto-merge
     level: recommend
@@ -127,9 +127,9 @@ setup: |-
   autopilot exclude it from every automatic scope form (all-open / a label / a milestone / the
   Todo column); naming it explicitly by number runs a reassessment — re-verify the premises,
   comment on the issue, pause — never an implementation. Removing the label is the
-  reconfirmed signal — nothing in the toolkit applies or removes it. The key is declared by the
-  github-workflow stack too (same default), the way both stacks share `autoMerge.label`; it
-  must pre-exist —
+  reconfirmed signal — only /waffle-report applies it (at filing, upstream), and nothing
+  removes it. The key is declared by the github-workflow stack too (same default), the way
+  both stacks share `autoMerge.label`; it must pre-exist —
     gh label create "waffle:reassess" --color AC3AC7 --description "Needs re-evaluation/reconfirmation before further action"
 config:
   project.name:
@@ -647,8 +647,8 @@ config:
       automatic scope form (all-open, a label, a milestone, the Todo column); naming it
       explicitly by #N runs delegate's reassessment gate — re-verify the premises against
       main, post the result as an issue comment, pause for the human — never an
-      implementation. Nothing in the toolkit applies or removes it — a human removing it is
-      the "reconfirmed" signal. Owned by the github-workflow stack
+      implementation. Only /waffle-report applies it (at filing, upstream); nothing removes
+      it — a human removing it is the "reconfirmed" signal. Owned by the github-workflow stack
       (issue.reassessLabel) and re-declared here with the same default, exactly as both stacks
       declare autoMerge.label. Must pre-exist in the repo.
   delegate.batchMode:

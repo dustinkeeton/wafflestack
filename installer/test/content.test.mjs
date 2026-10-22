@@ -616,7 +616,7 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
     assert.match(
       setupMd,
-      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot` \| harness-owned/m,
+      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot`; wafflestack · `waffle-report` \(applies it upstream\) \| harness-owned/m,
     );
     assert.match(
       setupMd,
@@ -659,9 +659,10 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     const issue = readSkill('issue');
     assert.match(issue, /`waffle:reassess` is a \*\*human-owned hold\*\*/);
     assert.match(issue, /\*\*never add or remove\*\* the label yourself/);
+    assert.match(issue, /`\/waffle-report` applies the hold when it files a consumer report/, 'issue skill must state the waffle-report carve-out');
   });
 
-  test('nothing in the toolkit applies or removes the label — removing it is the human\'s reconfirmed signal', () => {
+  test('only /waffle-report applies the label; nothing removes it — removing it is the human\'s reconfirmed signal', () => {
     const walk = (dir, out = []) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -670,16 +671,52 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
       }
       return out;
     };
+    const ADD = /--add-label\s+["']?(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)/;
     const mutators = [
-      /--add-label\s+["']?(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)/,
+      ADD,
       /--remove-label\s+["']?(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)/,
       /label\.name == '(?:\{\{issue\.reassessLabel\}\}|waffle:reassess)'/,
     ];
+    // The upstream filing entry point (#609) may ADD the hold; removing or dispatching stays banned there too.
+    const ADDERS = new Set([
+      path.join(STACKS, 'wafflestack', 'skills', 'waffle-report', 'SKILL.md'),
+      path.join(CLAUDE, 'skills', 'waffle-report', 'SKILL.md'),
+      path.join(STACKS, 'wafflestack', 'evals', 'waffle-report-files-with-hold-labels.eval.yaml'),
+    ]);
     for (const file of [...walk(STACKS), ...walk(path.join(CLAUDE, 'skills'))]) {
       const body = fs.readFileSync(file, 'utf8');
       for (const re of mutators) {
+        if (re === ADD && ADDERS.has(file)) continue;
         assert.ok(!re.test(body), `${path.relative(REPO_ROOT, file)} applies, removes, or dispatches on the reassess label (${re})`);
       }
+    }
+    for (const file of ADDERS) assert.match(fs.readFileSync(file, 'utf8'), ADD, `${path.relative(REPO_ROOT, file)} lost the reassess add`);
+  });
+
+  test('/waffle-report files with the hold and the provenance label, tolerating each independently (#609)', () => {
+    const md = readSkill('waffle-report');
+    assert.match(md, /gh issue edit <issue url> --repo OWNER\/REPO --add-label "waffle:reassess"\s+\|\| echo "warn: waffle:reassess not applied"/);
+    assert.match(md, /gh issue edit <issue url> --repo OWNER\/REPO --add-label "waffle:consumer-report" \|\| echo "warn: waffle:consumer-report not applied"/);
+    assert.match(md, /--label "<form label>"/, 'the issue is created with the form label only');
+    assert.match(md, /is a \*\*warning, never a failed\s+filing\*\*/);
+    assert.match(md, /\*\*Form \/ labels\*\*:[\s\S]{0,120}`waffle:needs-inference` \+ `waffle:reassess` \+ `waffle:consumer-report`/);
+    assert.match(md, /labels=waffle%3Areassess%2Cwaffle%3Aconsumer-report/, 'the fallback URL carries both fixed labels');
+    assert.match(md, /never removes it — only the\s+upstream human clears it/);
+    assert.ok(!md.includes('issue.reassessLabel}}'), 'the upstream label is a literal, never the consumer config key');
+    assert.match(md, /Never apply a `priority: \*`\s+label/);
+  });
+
+  test('waffle:consumer-report is never a consumer prerequisite — doctor must not check for it (#609)', () => {
+    for (const [name, stack] of loadToolkit(REPO_ROOT).stacks) {
+      for (const pre of stack.prerequisites ?? []) {
+        assert.ok(!JSON.stringify(pre).includes('waffle:consumer-report'), `${name} declares waffle:consumer-report as a prerequisite`);
+      }
+    }
+    for (const name of fs.readdirSync(STACKS)) {
+      const file = path.join(STACKS, name, 'stack.yaml');
+      if (!fs.existsSync(file)) continue;
+      const yaml = fs.readFileSync(file, 'utf8');
+      assert.doesNotMatch(yaml, /name: "?waffle:consumer-report/, `${name}/stack.yaml names waffle:consumer-report as a prerequisite`);
     }
   });
 });

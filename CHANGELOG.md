@@ -41,6 +41,19 @@ is what you reach for across a breaking one.
   **Consumer impact:** additive — re-render. The three gate keys now also accept `false` in config.
 
 ### Changed
+- **`/waffle-report` files consumer reports on hold, labeled by provenance (#609).** Every report
+  it files upstream now carries `waffle:reassess` (so delegate, autopilot, and the label-hook
+  implement path skip it until the maintainer reconfirms) and the new `waffle:consumer-report`
+  label, on top of the form's own label. The issue is created with the form label, then each fixed
+  label is added in its own call; a tracker that lacks one (a fork) gets a warning, and the report
+  still files. The fallback prefilled URL carries `labels=` too. The `issue` skill and the
+  github-workflow / orchestration prose now name `/waffle-report` as the hold's one automated entry
+  point; nothing removes it but the human. `schema/SETUP.md` documents the label as an
+  upstream-tracker label.
+
+  **Consumer impact:** re-render to pick up the skill text. No config change, and consumer repos
+  need no new label — `waffle:consumer-report` lives only in the toolkit's tracker, and `doctor`
+  does not check for it.
 - **`init` and `setup` are one onboarding command (#611).** `setup` now writes the starter
   `.waffle/waffle.yaml` when no config exists at any generation, then prints the playbook and
   inventory. It never overwrites a config; on a configured repo it prints update mode as before.
