@@ -11369,12 +11369,13 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
   ]);
 
   // Run a rendered `run:` script under bash with the fake gh first on PATH.
-  const runScript = (script, env) => {
+  const runScript = (script, env, { cwd: runCwd } = {}) => {
     const bin = installFakeGh();
     const sf = path.join(cwd, 'script.sh');
     fs.writeFileSync(sf, script);
     const res = spawnSync('bash', [sf], {
       encoding: 'utf8',
+      cwd: runCwd,
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
@@ -11893,6 +11894,49 @@ describe('github-workflow: waffle-pr-response-hook payload (#195)', () => {
     assert.match(runGate(doc, { statuses: MANY, page2: MANY }).outputs, /^should_respond=false$/m, 'two pages, no review ⇒ skip');
     assert.equal(runGuard(doc, RESULT([B('git push')]), { statuses: MANY, page2: RESPONDED }).code, 0, 'page-2 delivery is seen');
     assert.equal(runGuard(doc, RESULT([B('git push')]), { statuses: MANY, page2: MANY }).code, 1, 'two pages, no delivery ⇒ red');
+  });
+
+  // #623: checkout is by branch, so a push after the gate must not reach install or the harness.
+  test('R13 the checked-out HEAD is re-verified against the reviewed SHA before install (#623)', (t) => {
+    const doc = renderHook();
+    const NAME = 'Verify the checked-out HEAD is the reviewed commit';
+    const names = doc.jobs['pr-response'].steps.map((s) => s.name);
+    const at = names.indexOf(NAME);
+    assert.ok(at > names.indexOf('Check out the PR head branch'), 'verify runs after checkout');
+    assert.ok(at < names.indexOf('Install project dependencies'), 'verify runs before install lifecycle scripts');
+    assert.ok(at < names.findIndex((n) => /^Dispatch harness/.test(n)), 'verify runs before the paid harness');
+    const step = stepNamed(doc, NAME);
+    assert.equal(step.if, "steps.gate.outputs.should_respond == 'true'");
+    assert.equal(step.env.HEAD_SHA, '${{ steps.gate.outputs.head_sha }}', 'the reviewed SHA arrives through env');
+    assert.ok(!/\$\{\{/.test(step.run), 'no ${{ }} expansion is spliced into the script');
+    assert.match(codeOf(step.run), /git rev-parse HEAD/);
+
+    if (!hasShell) return t.skip('jq/bash unavailable');
+    if (spawnSync('git', ['--version']).status !== 0) return t.skip('git unavailable');
+    const repo = path.join(cwd, 'repo');
+    fs.mkdirSync(repo);
+    const git = (...a) => spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+    assert.equal(git('init', '-q').status, 0);
+    const sumFile = path.join(cwd, 'gh_summary');
+    const verify = (sha, dir = repo) => { fs.writeFileSync(sumFile, ''); return runScript(step.run, { HEAD_SHA: sha, GITHUB_STEP_SUMMARY: sumFile }, { cwd: dir }); };
+
+    const empty = verify('a'.repeat(40));
+    assert.equal(empty.code, 1, 'a checkout with no commits fails closed');
+    assert.match(empty.out, /::error/);
+
+    assert.equal(git('commit', '-q', '--allow-empty', '-m', 'reviewed').status, 0);
+    const reviewed = git('rev-parse', 'HEAD').stdout.trim();
+    const ok = verify(reviewed);
+    assert.equal(ok.code, 0, ok.out);
+    assert.match(ok.out, /matches the reviewed/);
+
+    const moved = verify('d'.repeat(40));
+    assert.equal(moved.code, 1, 'a head that moved after the gate reds the job');
+    assert.match(moved.out, /::error.*not the reviewed/);
+
+    for (const bad of ['', 'abc', reviewed.toUpperCase(), `${reviewed}; true`]) {
+      assert.equal(verify(bad).code, 1, `malformed SHA ${JSON.stringify(bad)} fails closed`);
+    }
   });
 });
 

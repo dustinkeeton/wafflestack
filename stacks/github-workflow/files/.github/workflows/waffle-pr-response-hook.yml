@@ -162,6 +162,24 @@ jobs:
         with:
           ref: ${{ steps.gate.outputs.head_ref }}
           token: ${{ secrets.WAFFLE_HYGIENE_TOKEN || github.token }}
+      # Checkout is by branch, so a push after the gate would hand the harness (and the install
+      # lifecycle scripts below) an unreviewed commit. Fail closed before either runs (#623).
+      - name: Verify the checked-out HEAD is the reviewed commit
+        if: steps.gate.outputs.should_respond == 'true'
+        env:
+          HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          case "$HEAD_SHA" in
+            *[!0-9a-f]*|'') echo "::error title=waffle-pr-response-hook::The gate's reviewed SHA is malformed — refusing to dispatch (fail-closed)."; exit 1 ;;
+          esac
+          if [ "${#HEAD_SHA}" -ne 40 ]; then echo "::error title=waffle-pr-response-hook::The gate's reviewed SHA is not a full 40-hex SHA — refusing to dispatch (fail-closed)."; exit 1; fi
+          actual="$(git rev-parse HEAD 2>/dev/null || true)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "::error title=waffle-pr-response-hook::Checked-out HEAD ${actual:-<none>} is not the reviewed ${HEAD_SHA} — the branch moved after the gate. Refusing to dispatch the paid harness on an unreviewed commit. The response label is already claimed: remove it and run /pr-response by hand on the new head once it is reviewed."
+            exit 1
+          fi
+          echo "🧇 waffle-pr-response-hook: checked-out HEAD matches the reviewed ${HEAD_SHA}." | tee -a "$GITHUB_STEP_SUMMARY"
       # Deterministic bootstrap BEFORE the paid harness runs, so the allowlist needs no install
       # permission. Override via project.installCmd. See the setup note.
       - name: Install project dependencies
