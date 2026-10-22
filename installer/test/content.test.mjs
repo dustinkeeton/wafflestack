@@ -4802,4 +4802,11 @@ describe('init and setup are one onboarding command (#611)', () => {
     assert.doesNotMatch(md, /`init` refuses to overwrite|Skip step 1/);
     assert.doesNotMatch(md, /Run `wafflestack init`/);
   });
+
+  test('SETUP.md keys update mode on the printed section, not on the config file setup just wrote', () => {
+    const md = setupMd();
+    assert.match(md, /If the CLI printed a \*\*"Current configuration — update mode"\*\* section/);
+    assert.doesNotMatch(md, /If `\.waffle\/waffle\.yaml` already exists, this is an \*\*update\*\*/);
+    assert.doesNotMatch(md, /Add `--gitignore` to that run/);
+  });
 });

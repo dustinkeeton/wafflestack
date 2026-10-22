@@ -19,11 +19,12 @@ so the whole install uses one toolkit version.
 
 - Work from the project root (where `.git` lives) — the renderer writes files relative
   to the cwd. Node >= 18 is required.
-- If `.waffle/waffle.yaml` already exists, this is an **update**, not a first install. The
-  CLI injects a **"Current configuration — update mode"** section between this playbook and
-  the inventory: your live targets, enabled stacks, individual includes, ejects, effective
-  config values (current vs. default), any unset required keys, unmet prerequisites, and opt-in
-  syrup items — read from the repo, so you do not have to open the file yourself. Step 1 is
+- If the CLI printed a **"Current configuration — update mode"** section between this
+  playbook and the inventory, this is an **update**, not a first install. Do not key on
+  `.waffle/waffle.yaml` existing: on a first install the `setup` that printed this guide has
+  just written a starter there, and it prints no update-mode section. That section lists
+  your live targets, enabled stacks, individual includes, ejects, effective config values
+  (current vs. default), any unset required keys, unmet prerequisites, and opt-in syrup items — read from the repo, so you do not have to open the file yourself. Step 1 is
   already done (`setup` never overwrites an existing config), so revisit only the steps the
   change calls for (new stack → steps 2–7; config change → steps 3, 5, 7).
 - If instead a legacy root `.waffle.yaml` (pre-0.8.0) or `.wafflestack.yaml` (pre-0.6.0)
@@ -44,8 +45,8 @@ so the whole install uses one toolkit version.
 
 Already done: the `setup` that printed this guide wrote a starter `.waffle/waffle.yaml`
 if no config existed (it said `wrote …` on stderr), and it never overwrites an existing
-one. `init` is an alias of `setup`, the same command. Add `--gitignore` to that run to
-also seed the baseline `.gitignore` entries.
+one. `init` is an alias of `setup`, the same command. To also seed the baseline `.gitignore`
+entries, re-run `setup --gitignore` (idempotent).
 
 ## 2. Choose stacks (or individual items)
 
