@@ -3,9 +3,8 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.17.2 (2026-10-11; pre-1.0 — the file contract can still change
-  between minor releases).
-- **Last updated**: 2026-10-19
+- **Version**: v0.17.2 (2026-10-11; pre-1.0 — the file contract can still change between minor releases).
+- **Last updated**: 2026-10-22
 - **Health**: 🟢 tests 1696 in 228 suites (1694 pass, 2 skipped by design, #445) · `validate` clean · CI green on `main` at `0e674a0` (PR #589's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
@@ -35,6 +34,7 @@ All 16 commands work (plus `bake`, a pure alias for `render`), over 27 pipeline 
 
 | Change | What it gives you | State |
 |--------|-------------------|-------|
+| `/waffle-report` files on hold (#609) | Every filing carries the form label plus `waffle:reassess` (keeps `delegate`, `autopilot`, and `label-hook` off an unreproduced report; only the upstream human removes it) and `waffle:consumer-report` (provenance, upstream tracker only). Each label is its own call, so a missing one warns instead of failing the filing. [Why](DECISIONS.md#2026-10-22-waffle-report-is-the-reassess-holds-one-automated-entry-point-609) | 🔄 In review (PR #639) — re-render |
 | Config can turn autopilot's gates off (#626) | `qaLoop`, `reviewLoop`, and `auditStep` accept `false` or `prompt` in config (new `configModes:` field); config `true` still fails `render` and `doctor`. New off tokens `-qa` / `-review` / `-audit`; `+qa:0` / `+review:0` mean off. `autoMerge` stays locked to `prompt`. [Why](DECISIONS.md#2026-10-22-config-may-turn-autopilots-gates-off-never-on-626) | 🔄 In review (PR #635) — re-render |
 | Manual-review queue service level (#511) | A cap-reached QA/review loop files a follow-up only for should-fix and blocker findings; a nit-only pass files nothing and lists its nits in the run report as "reported, not filed". The audit gate still files every unresolved Critical/High. Every run report ends with the open hold queue (number, title, age). No cron — hygiene is a paid dispatch. One-time triage done: the queue is now empty. [Why](DECISIONS.md#2026-10-19-the-manual-review-queue-gets-a-severity-floor-on-filing-and-every-run-report-burns-it-down-511) | 🔄 In review (PR #618) — re-render |
 | Autopilot gate loops converge on a cold round (#510, #357) | The QA and review loops stop only when a **cold** reviewer (no history of the PR) implements 0 findings; an anchored "clean" triggers one fresh certification round. Bound: cap + 1 reviewer passes per loop, 10 gate passes per PR per run with both loops on at the default caps. The cap stays per-run. [Why](DECISIONS.md#2026-10-19-autopilots-gate-loops-converge-only-on-a-cold-round-the-cap-stays-per-run-510-357) | ✅ Merged (PR #617) — re-render |
