@@ -12149,13 +12149,15 @@ describe('CLI: setup/init alias (#611)', () => {
     }
   });
 
-  test('a legacy root .waffle.yaml counts as existing — no .waffle/waffle.yaml is scaffolded', () => {
-    const cwd = fresh();
-    write(cwd, '.waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
-    const r = run(['init'], cwd);
-    assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.equal(fs.existsSync(cfg(cwd)), false);
-    assert.match(r.stdout, UPDATE);
+  test('a legacy root config of either generation counts as existing — no .waffle/waffle.yaml is scaffolded', () => {
+    for (const legacy of ['.waffle.yaml', '.wafflestack.yaml']) {
+      const cwd = fresh();
+      write(cwd, legacy, 'targets: [claude]\nstacks: []\nconfig: {}\n');
+      const r = run(['init'], cwd);
+      assert.equal(r.status, 0, `${legacy}: ${r.stdout}${r.stderr}`);
+      assert.equal(fs.existsSync(cfg(cwd)), false, `${legacy} must suppress the scaffold`);
+      assert.match(r.stdout, UPDATE);
+    }
   });
 
   test('--gitignore seeds the baseline on a fresh AND an existing config, idempotently, off stdout', () => {
@@ -12182,6 +12184,7 @@ describe('CLI: setup/init alias (#611)', () => {
     const r = runCli(['help'], fresh());
     assert.match(r.stdout, /^\s+init\s+alias for setup/m);
     assert.ok(r.stdout.indexOf('  setup ') < r.stdout.indexOf('  init '));
+    assert.match(r.stdout, /usage: wafflestack <setup\|init\|/, 'the usage line agrees with the list order');
   });
 });
 

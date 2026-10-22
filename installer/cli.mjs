@@ -45,7 +45,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.

@@ -144,7 +144,7 @@ project.mjs  → util, model-invocation, template (parseFlagPlaceholder only; bo
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Usage:
-`wafflestack <init|setup|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
+`wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
 (`USAGE`, `cli.mjs:47`).
 
 Dispatch and exit contract: `help`/`--help`/`-h` print the full help to stdout, exit 0 —
