@@ -41,4 +41,15 @@ Single machine-doc registry for the toolkit. Contains:
 6. Keep the file's prose under 300 lines — the stack registry summarizes, and
    per-stack detail stays in each `stack.yaml`
 
+## Protected docs — flag drift, don't rewrite
+
+Docs passes don't rewrite these paths (globs allowed). If one has drifted
+from reality, flag the drift in your report instead:
+
+- `CHANGELOG.md`
+- `.waffle/**`
+
+This list does not cover the agent-managed docs — a single root `AGENTS.md` registry;
+and `DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root — which the doc writers update as usual.
+
 
