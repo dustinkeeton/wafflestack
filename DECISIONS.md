@@ -20,18 +20,21 @@ up an unreproduced claim.
 `issues: opened`. Its one job runs only when the body contains the report block's `<summary>`
 line (`REPORT_SUMMARY` in `installer/lib/report.mjs`), and adds both labels with the repo token.
 The skill keeps its client-side adds (privileged filers, forks) and tells the filer the
-server-side hold may land a moment after its read-back.
+server-side hold may land a moment after its read-back. Since #653 the job also skips issues
+filed by an `OWNER`, `MEMBER`, or `COLLABORATOR` (`author_association`, a fixed GitHub enum),
+whose own client-side adds already apply the labels.
 
 **Security**: the workflow runs for anyone's issue with a write token, so it is pinned by
-`report.test.mjs`: `issues: write` only, `opened` only, no `uses:` steps, and the body is read
-only inside the job `if:` — never in `run:` or `env:`, which get only the token, repo, and issue
-number. A forged marker can at most hold its forger's own new issue. Stripping the marker gives
+`report.test.mjs`, which deep-equals the whole parsed workflow (#653): `issues: write` only,
+`opened` only, no `uses:` steps, and the body is read only inside the job `if:` — never in
+`run:` or `env:`, which get only the token, repo, and issue number. A forged marker can at most hold its forger's own new issue. Stripping the marker gives
 the pre-#640 behavior. The workflow cannot remove labels, touch another issue, or dispatch
 anything (events from `GITHUB_TOKEN` do not trigger workflows).
 
 **Alternatives considered**:
-- **Key on `author_association`** — rejected. It would label every hand-written outside issue as
-  a consumer report, which the provenance label must not claim.
+- **Key on `author_association` as the selector** — rejected. It would label every
+  hand-written outside issue as a consumer report, which the provenance label must not claim.
+  (#653 uses it only as an exclusion.)
 - **A scope filter in delegate/autopilot that skips bodies with the block** — rejected. It would
   hide the hold in each consumer of scope instead of on the issue, where humans and every
   automation already read it.

@@ -1,5 +1,5 @@
 # Project-owned — NOT managed by wafflestack: holds /waffle-report filings with the repo token (#640).
-# The issue body is read ONLY in the job `if:` — never in `run:` or `env:`; a forged marker holds only the forger's own issue.
+# The issue body (and author_association) is read ONLY in the job `if:` — never in `run:` or `env:`; a forged marker holds only the forger's own issue.
 name: consumer-report-hold
 
 on:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   hold:
-    if: contains(github.event.issue.body, '<summary>wafflestack environment (from `wafflestack report`)</summary>')
+    if: contains(github.event.issue.body, '<summary>wafflestack environment (from `wafflestack report`)</summary>') && !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

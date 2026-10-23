@@ -202,51 +202,32 @@ describe('report: scrub + projection helpers (#473)', () => {
   });
 });
 
-describe('report: upstream hold workflow (#640)', () => {
-  const file = path.join(REPO_ROOT, '.github', 'workflows', 'consumer-report-hold.yml');
-  const raw = fs.readFileSync(file, 'utf8');
-  const wf = YAML.parse(raw);
-  const jobs = Object.values(wf.jobs);
-  const steps = jobs.flatMap((j) => j.steps ?? []);
-  const runs = steps.map((s) => s.run).filter(Boolean);
+describe('report: upstream hold workflow (#640, #653)', () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'consumer-report-hold.yml'), 'utf8');
+  const EXEMPT = `!contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)`;
+  const label = (name, l) => ({ name, run: `gh issue edit "$ISSUE" --add-label "${l}"` });
 
-  test('fires on issues: opened only', () => {
-    assert.deepEqual(wf.on, { issues: { types: ['opened'] } });
-  });
-
-  test('requests only issues: write, top-level, with no job-level permissions', () => {
-    assert.deepEqual(wf.permissions, { issues: 'write' });
-    for (const j of jobs) assert.equal(j.permissions, undefined, 'job-level permissions widen the grant');
-  });
-
-  test('the hold job is gated on the report summary marker', () => {
-    assert.equal(jobs.length, 1);
-    assert.equal(jobs[0].if, `contains(github.event.issue.body, '${REPORT_SUMMARY}')`);
-  });
-
-  test('exactly two steps add the hold, then provenance, by issue number', () => {
-    assert.equal(steps.length, 2);
-    assert.deepEqual(runs, [
-      'gh issue edit "$ISSUE" --add-label "waffle:reassess"',
-      'gh issue edit "$ISSUE" --add-label "waffle:consumer-report"',
-    ]);
-    assert.equal(jobs[0].env.ISSUE, '${{ github.event.issue.number }}');
-  });
-
-  test('user-controlled text never reaches a run: block or env: value', () => {
-    for (const r of runs) assert.ok(!r.includes('${{'), `expression inside run: ${r}`);
-    const envs = [wf.env ?? {}, ...jobs.map((j) => j.env ?? {}), ...steps.map((s) => s.env ?? {})];
-    assert.deepEqual(Object.assign({}, ...envs), {
-      GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}', ISSUE: '${{ github.event.issue.number }}',
+  test('the whole parsed workflow is pinned — any added key (container:, defaults:, services:, a step) fails', () => {
+    assert.deepEqual(YAML.parse(raw), {
+      name: 'consumer-report-hold',
+      on: { issues: { types: ['opened'] } },
+      permissions: { issues: 'write' },
+      jobs: {
+        hold: {
+          if: `contains(github.event.issue.body, '${REPORT_SUMMARY}') && ${EXEMPT}`,
+          'runs-on': 'ubuntu-latest',
+          'timeout-minutes': 5,
+          env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}', ISSUE: '${{ github.event.issue.number }}' },
+          steps: [label('Apply the hold label', 'waffle:reassess'), label('Apply the provenance label', 'waffle:consumer-report')],
+        },
+      },
     });
-    const bodyRefs = raw.match(/github\.event\.issue\.(body|title)/g) ?? [];
-    assert.deepEqual(bodyRefs, ['github.event.issue.body'], 'the body appears once, in the if:, and the title never');
-    assert.equal(raw.match(/\$\{\{/g)?.length, 3, 'only the three env values carry ${{ }}');
-    assert.equal(jobs[0]['runs-on'], 'ubuntu-latest');
   });
 
-  test('has no uses: steps — no checkout, no third-party actions', () => {
-    for (const s of steps) assert.equal(s.uses, undefined);
+  test('raw text: issue body/author read once, in the if:; title never; only env carries ${{ }}; no uses:', () => {
+    const refs = raw.match(/github\.event\.issue\.(body|title|author_association)/g) ?? [];
+    assert.deepEqual(refs, ['github.event.issue.body', 'github.event.issue.author_association']);
+    assert.equal(raw.match(/\$\{\{/g)?.length, 3, 'only the three env values carry ${{ }}');
     assert.doesNotMatch(raw, /^\s*-?\s*uses:/m);
   });
 });

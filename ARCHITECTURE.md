@@ -470,7 +470,8 @@ hold** (`waffle:reassess`, so no automation implements an unreproduced report) w
 `waffle:consumer-report` provenance label. Adding labels takes triage access on the toolkit repo, which most
 filers lack, so the toolkit's own tracker applies both labels **server-side**: an `issues: opened`
 workflow (`.github/workflows/consumer-report-hold.yml`) spots the diagnostics block's `<summary>`
-line in the body and adds them with the repo's token. A fork that receives reports has no such
+line in the body and adds them with the repo's token. It skips issues filed by an owner,
+member, or collaborator (#653), whose own label adds already apply. A fork that receives reports has no such
 hold unless it copies that workflow; there the skill reports which labels didn't apply and tells
 you to ask the maintainer, and until then the issue is **not** held.
 
