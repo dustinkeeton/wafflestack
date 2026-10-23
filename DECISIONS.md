@@ -27,9 +27,30 @@ whose own client-side adds already apply the labels.
 **Security**: the workflow runs for anyone's issue with a write token, so it is pinned by
 `report.test.mjs`, which deep-equals the whole parsed workflow (#653): `issues: write` only,
 `opened` only, no `uses:` steps, and the body is read only inside the job `if:` — never in
-`run:` or `env:`, which get only the token, repo, and issue number. A forged marker can at most hold its forger's own new issue. Stripping the marker gives
-the pre-#640 behavior. The workflow cannot remove labels, touch another issue, or dispatch
-anything (events from `GITHUB_TOKEN` do not trigger workflows).
+`run:` or `env:`, which get only the token, repo, and issue number. A forged marker can at
+most hold its forger's own new issue; quoting, below, is the likelier misfire. Stripping the
+marker gives the pre-#640 behavior. The workflow cannot remove labels, touch another issue, or
+dispatch anything (events from `GITHUB_TOKEN` do not trigger workflows).
+
+**False positives**: the realistic trigger is quoting, not forgery. A bug about the report
+block's format, or a draft that pastes `wafflestack report` output, carries the
+`REPORT_SUMMARY` line too. Eight issues filed before #640 already do (#544, #545, #548, #549,
+#604, #605, #614, #615).
+
+| Who files the quoting issue | Held? |
+|---|---|
+| A maintainer, or an agent running on the maintainer's own token (`OWNER`) | No — exempt since #653 |
+| An agent on a GitHub App or bot token (`author_association` `NONE` or `CONTRIBUTOR`), e.g. a CI agent filing a follow-up | **Yes** |
+| Any other filer outside `OWNER`/`MEMBER`/`COLLABORATOR` who quotes the block | **Yes** |
+
+A held issue is mislabeled as a consumer report. `delegate` and `autopilot` drop it from
+automatic scope and show it only in their held-out count; the `label-hook` implement path
+declines it with a comment.
+
+**Remedy**: remove both labels by hand:
+`gh issue edit <N> --remove-label waffle:reassess,waffle:consumer-report`. That is a human
+clearing the hold, which the label model already reserves to humans — nothing automated
+removes either label.
 
 **Alternatives considered**:
 - **Key on `author_association` as the selector** — rejected. It would label every
@@ -38,6 +59,10 @@ anything (events from `GITHUB_TOKEN` do not trigger workflows).
 - **A scope filter in delegate/autopilot that skips bodies with the block** — rejected. It would
   hide the hold in each consumer of scope instead of on the issue, where humans and every
   automation already read it.
+- **An `/issue` warning when a draft body contains `REPORT_SUMMARY`** — not done (#652).
+  `/issue` renders into every consumer, but the hold exists only on the toolkit tracker. And
+  the filers still exposed (agents on bot or App tokens) run `/issue` non-interactively, which
+  skips the confirmation step where a warning would show.
 
 **Impact**: toolkit-repo only — no stack renders the workflow, and consumers see only skill
 wording. A fork that receives reports copies the workflow to get the same hold.
