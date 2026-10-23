@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
-import { collectReport, formatReportMarkdown, keyPaths, scrub, redact } from '../lib/report.mjs';
+import YAML from 'yaml';
+import { collectReport, formatReportMarkdown, keyPaths, scrub, redact, REPORT_SUMMARY } from '../lib/report.mjs';
 
 // `wafflestack report` (#473): a redacted diagnostics bundle for an upstream bug report. The
 // invariants under test — the overlay and local lock are NEVER read, config values never appear,
@@ -48,6 +49,10 @@ describe('report: bundle collection and redaction (#473)', () => {
   afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
 
   const collect = () => collectReport({ cwd, toolkitRoot: REPO_ROOT, toolkitVersion: '0.0.test' });
+
+  test('line 2 of the block is the exact summary the upstream hold workflow keys on (#640)', () => {
+    assert.equal(formatReportMarkdown(collect()).split('\n')[1], REPORT_SUMMARY);
+  });
 
   test('the overlay value and the overlay-only key never reach the bundle; the local lock is never parsed', () => {
     const bundle = collect();
@@ -194,5 +199,48 @@ describe('report: scrub + projection helpers (#473)', () => {
       'flat', 'git.botEmail', 'git.cmd', 'release.versionFiles',
     ]);
     assert.deepEqual(keyPaths(null), []);
+  });
+});
+
+describe('report: upstream hold workflow (#640)', () => {
+  const file = path.join(REPO_ROOT, '.github', 'workflows', 'consumer-report-hold.yml');
+  const raw = fs.readFileSync(file, 'utf8');
+  const wf = YAML.parse(raw);
+  const jobs = Object.values(wf.jobs);
+  const steps = jobs.flatMap((j) => j.steps ?? []);
+  const runs = steps.map((s) => s.run).filter(Boolean);
+
+  test('fires on issues: opened only', () => {
+    assert.deepEqual(wf.on, { issues: { types: ['opened'] } });
+  });
+
+  test('requests only issues: write, top-level, with no job-level permissions', () => {
+    assert.deepEqual(wf.permissions, { issues: 'write' });
+    for (const j of jobs) assert.equal(j.permissions, undefined, 'job-level permissions widen the grant');
+  });
+
+  test('the hold job is gated on the report summary marker', () => {
+    assert.equal(jobs.length, 1);
+    assert.ok(jobs[0].if.includes(`contains(github.event.issue.body, '${REPORT_SUMMARY}')`), jobs[0].if);
+  });
+
+  test('one step adds both labels by issue number', () => {
+    assert.ok(runs.some((r) => /gh issue edit "\$ISSUE"/.test(r) && r.includes('--add-label "waffle:reassess"') && r.includes('--add-label "waffle:consumer-report"')));
+    assert.equal(jobs[0].env.ISSUE, '${{ github.event.issue.number }}');
+  });
+
+  test('user-controlled text never reaches a run: block or env: value', () => {
+    for (const r of runs) assert.ok(!r.includes('${{'), `expression inside run: ${r}`);
+    const envs = [wf.env ?? {}, ...jobs.map((j) => j.env ?? {}), ...steps.map((s) => s.env ?? {})];
+    assert.deepEqual(Object.assign({}, ...envs), {
+      GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}', ISSUE: '${{ github.event.issue.number }}',
+    });
+    const bodyRefs = raw.match(/github\.event\.issue\.(body|title)/g) ?? [];
+    assert.deepEqual(bodyRefs, ['github.event.issue.body'], 'the body appears once, in the if:, and the title never');
+  });
+
+  test('has no uses: steps — no checkout, no third-party actions', () => {
+    for (const s of steps) assert.equal(s.uses, undefined);
+    assert.doesNotMatch(raw, /^\s*-?\s*uses:/m);
   });
 });

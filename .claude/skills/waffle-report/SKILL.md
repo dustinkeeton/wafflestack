@@ -232,15 +232,23 @@ Build the not-applied list from that output, never from which `echo` fired.
 A fixed label that fails to apply is a **warning, never a failed
 filing**: the issue already exists. Expect it for most filers. Adding a label takes **triage or
 write access** on the toolkit repo, and a typical consumer has neither. GitHub may also silently
-drop the form label from `gh issue create`. A fork's tracker can also lack the label. So the
+drop the form label from `gh issue create`.
+
+The canonical toolkit tracker **applies both fixed labels server-side**: a workflow on that repo
+adds them with the repo's own token when an opened issue's body carries the diagnostics block's
+`<summary>` line. So keep the step-1 `<details>` block, `<summary>` line included, **verbatim** in
+the body. That workflow usually lands within a minute, so the read-back above may run ahead of
+it. A fork's tracker may have no such workflow, or lack the labels. So the client-side
 **hold is best-effort**: an issue without `waffle:reassess` is **not on hold**, and the
 maintainer's automation will treat it as ordinary scope.
 
 On success, report the issue URL, each hosted attachment, and one line per placeholder asking the
 user to attach that file by hand. For each label missing from the read-back (fixed or form), say so
-plainly, give the likely cause (no triage rights on `OWNER/REPO`), and tell the user to comment
-on the issue asking the maintainer to add it. Name `waffle:reassess` first. Without it the report
-is not held.
+plainly. For a fixed label on the canonical tracker, say the server-side hold should add it within a
+minute, and re-run the read-back once before going further. If it is still missing, give the likely
+cause (no triage rights on `OWNER/REPO`, or a tracker without the hold workflow) and tell the user
+to comment on the issue asking the maintainer to add it. Name `waffle:reassess` first. Without it
+the report is not held.
 
 **If `gh issue create` fails** — no `gh` auth, no access to the toolkit repo, or the form label does not exist there —
 **say plainly that nothing was submitted**, then hand the user the one-paste path:
@@ -256,8 +264,10 @@ is not held.
    https://github.com/OWNER/REPO/issues/new?template=bug.yml&labels=waffle%3Areassess%2Cwaffle%3Aconsumer-report&title=<title>&problem=<…>&context=<…>
    ```
 
-   GitHub drops `labels=` for a user without triage rights; the form still applies its own label,
-   so tell the user the maintainer may need to add `waffle:reassess` and `waffle:consumer-report`.
+   GitHub drops `labels=` for a user without triage rights; the form still applies its own label.
+   On the canonical tracker the server-side hold adds `waffle:reassess` and
+   `waffle:consumer-report` as long as the pasted Context keeps the `<details>` block verbatim;
+   on any other tracker, tell the user the maintainer may need to add them.
 
    Browsers and GitHub cap URL length around 8 KB; if the body would exceed that, give the
    `template` + `title` URL and tell the user to paste the printed sections in.

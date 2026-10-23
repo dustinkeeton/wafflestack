@@ -379,6 +379,14 @@ config keys. A consumer repo does **not** need this label, and `doctor` does not
 toolkit repo (or a fork that receives reports) creates it. A tracker that lacks it gets a warning from
 `/waffle-report`, and the report still files.
 
+Most filers lack the triage access that adding a label takes, so the toolkit repo applies both
+fixed labels **server-side**: `.github/workflows/consumer-report-hold.yml` runs on `issues: opened`,
+matches the report's `<summary>wafflestack environment (from \`wafflestack report\`)</summary>`
+line in the body, and adds `waffle:reassess` and `waffle:consumer-report` with the repo token. It
+is project-owned, not rendered by any stack. A fork that receives reports should copy it as-is
+(it needs only `issues: write`, has no `uses:` steps, and never passes the body to a shell);
+without it, the hold depends on the filer's own access.
+
 | Label | Config key | Needed by | Kind |
 |---|---|---|---|
 | `waffle:consumer-report` | (none — fixed upstream name) | wafflestack · `waffle-report` (upstream tracker only) | provenance |
