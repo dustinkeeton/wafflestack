@@ -9,6 +9,45 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-23: Protected docs are a list, and the guardrail is generated from it (#612)
+
+**Context**: #472 made the docs guardrail a prose block, `docs.voiceGuardrailSection`, titled
+"Owner-voiced docs — do not rewrite". Three problems followed. Changing *which* files were
+protected meant rewriting the prose. "Owner-voiced", "owner-owned", and "user-voiced" were used
+interchangeably. And the docs on the list went stale first, because docs passes could only flag
+them, and the flags landed in transcripts nobody read. This repo's override still protected
+README/FORMAT/SETUP after the owner had ruled they carry no owner-only rule (2026-07-15).
+
+**Decision**: replace the prose with `docs.protectedDocs`, a list of repo paths (globs allowed).
+A companion key, `docs.protectedDocsSection`, renders the section around the list in neutral
+wording ("Protected docs — flag drift, don't rewrite"). It now renders into docs-agent as well
+as docs-human.
+
+- **Default** reproduces the #472 list, so a consumer without an override sees the same paths.
+- **Override replaces** the list. **`[]` renders no section** — no orphan heading.
+- **No template conditional.** Two generic key-spec fields do the work: `listFormat: code-bullets`
+  formats the list, and `omitWhenEmpty: <key>` makes the section key resolve to `""` while the
+  list is empty.
+- **Removal, not deprecation.** Setting the old key fails `render` with the replacement named.
+  Migration `0.18.0` rewrites the committed `waffle.yaml`: blank → `[]`, and backticked paths in
+  custom prose → the list. Prose without paths, and any overlay value, is reported and left alone.
+- **This repo** protects only `CHANGELOG.md` and `.waffle/**`. README and the `schema/` docs are
+  now normal docs-pass targets.
+
+**Alternatives considered**:
+- *A template conditional* (`{{#if}}`). Rejected: it touches the placeholder regex, `validate`'s
+  key scan, nested expansion, and the `${{` exclusion, all for one section.
+- *Keep the prose key and add a list beside it.* Rejected: two sources for one fact, and the prose
+  would keep the vague name alive.
+- *Plain `, ` join of the list.* Rejected: bare globs like `.waffle/**` read as bold markdown.
+
+**Rationale**: the fact a consumer controls is *which paths*, so that is what the key holds. The
+wording is the toolkit's job. Both new fields are generic, so the next list-shaped section reuses them.
+
+**Impact**: supersedes #472's prose-block design. Breaking for consumers who set
+`docs.voiceGuardrailSection` (see CHANGELOG, migration `0.18.0`). New exports in `template.mjs`,
+`project.mjs`, `validate.mjs`, and `migrations.mjs`; new FORMAT section "List keys".
+
 ## 2026-10-22: `/waffle-report` is the reassess hold's one automated entry point (#609)
 
 **Context**: a consumer report arrives unreproduced: the maintainer has not seen the bug yet. Until

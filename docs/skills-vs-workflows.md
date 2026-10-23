@@ -621,7 +621,7 @@ async function docsPipeline(changeReport) {
   return agent(
     `The machine docs were just updated:\n\n${machine}\n\n` +
       `Update the human docs to match. Follow the docs-human skill and its guardrails ` +
-      `(owner-voiced docs are flagged, never rewritten).`,
+      `(protected docs are flagged, never rewritten).`,
     { label: 'docs-human' },
   )
 }

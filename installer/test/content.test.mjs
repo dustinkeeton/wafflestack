@@ -2973,9 +2973,6 @@ describe('docs agents: the body-prose grant survives the CODEX render (#224)', (
   });
 });
 
-// A default docs-system install must carry the owner-voiced guardrail, and an override REPLACES
-// it — both promised by the key's `description` (#472). Rendered for real, not read off this
-// repo's `.claude/`, because this repo overrides the key.
 // A proxy skill is worth shipping only if it keeps its three promises when the optional provider is
 // absent: an ordered list with a built-in floor, no self-install, and the provider named in the result.
 describe('diagram proxy skill: archify offered, Mermaid floor, provider named (#471)', () => {
@@ -3072,14 +3069,23 @@ describe('diagram proxy skill: archify offered, Mermaid floor, provider named (#
   });
 });
 
-describe('docs-human: docs.voiceGuardrailSection defaults to the owner-voiced doc list (#472)', () => {
-  const DEFAULT_HEADING = /^## Owner-voiced docs — do not rewrite$/m;
+// The protected-docs guardrail is generated from a list (#612, superseding #472's prose block):
+// the default reproduces the #472 list, an override replaces it, and `[]` renders no section.
+// Rendered for real, not read off this repo's `.claude/`, because this repo overrides the list.
+describe('docs: docs.protectedDocs generates the protected-docs guardrail (#612)', () => {
+  const HEADING = /^## Protected docs — flag drift, don't rewrite$/m;
   const OUTPUTS = [
     path.join('.claude', 'agents', 'docs-human.md'),
     path.join('.claude', 'skills', 'docs-human', 'SKILL.md'),
+    path.join('.claude', 'agents', 'docs-agent.md'),
+    path.join('.claude', 'skills', 'docs-agent', 'SKILL.md'),
   ];
-  const render = (configLines) => {
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-voice-guardrail-'));
+  const DEFAULT_DOCS = [
+    'README.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'SECURITY.md', 'LICENSE',
+    'CHANGELOG.md', '.waffle/waffle.yaml', '.waffle/waffle.local.yaml', '.waffle/extensions/**',
+  ];
+  const renderWith = (configLines) => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-protected-docs-'));
     fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
     fs.writeFileSync(
       path.join(cwd, '.waffle', 'waffle.yaml'),
@@ -3095,45 +3101,43 @@ describe('docs-human: docs.voiceGuardrailSection defaults to the owner-voiced do
       ].join('\n'),
     );
     const result = renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' });
-    assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
-    return { cwd, read: (rel) => fs.readFileSync(path.join(cwd, rel), 'utf8') };
+    return { cwd, result, read: (rel) => fs.readFileSync(path.join(cwd, rel), 'utf8') };
+  };
+  const render = (configLines) => {
+    const r = renderWith(configLines);
+    assert.ok(r.result.ok, `render failed: ${JSON.stringify(r.result.errors)}`);
+    return r;
+  };
+  /** The generated section: heading through the doc-set carve-out. */
+  const section = (md) => {
+    const at = md.search(HEADING);
+    assert.ok(at >= 0, 'the protected-docs heading is present');
+    return md.slice(at, md.indexOf('which the doc writers update as usual', at));
   };
 
+  const fixtures = [];
   let unset;
   let overridden;
+  let empty;
 
   before(() => {
     unset = render([]);
-    overridden = render([
-      '  docs:',
-      '    voiceGuardrailSection: |-',
-      '      ## Project guardrail',
-      '',
-      '      `HANDBOOK.md` is owner-voiced; flag drift, never rewrite it.',
-    ]);
+    overridden = render(['  docs:', '    protectedDocs: [HANDBOOK.md]']);
+    empty = render(['  docs:', '    protectedDocs: []']);
+    fixtures.push(unset, overridden, empty);
   });
 
   after(() => {
-    for (const r of [unset, overridden]) fs.rmSync(r.cwd, { recursive: true, force: true });
+    for (const r of fixtures) fs.rmSync(r.cwd, { recursive: true, force: true });
   });
 
   for (const rel of OUTPUTS) {
-    test(`unset: ${rel} carries the default guardrail`, () => {
+    test(`unset: ${rel} lists every default path as a code bullet, in neutral wording`, () => {
       const md = unset.read(rel);
-      assert.match(md, DEFAULT_HEADING);
-      assert.match(md, /flag the drift in your report instead/);
-      for (const doc of [
-        '`README.md`',
-        '`CLAUDE.md`',
-        '`CONTRIBUTING.md`',
-        '`LICENSE`',
-        '`CHANGELOG.md`',
-        '`.waffle/waffle.yaml`',
-        '`.waffle/waffle.local.yaml`',
-        '`.waffle/extensions/**`',
-      ]) {
-        assert.ok(md.includes(doc), `${rel} must name ${doc} as owner-voiced`);
-      }
+      const body = section(md);
+      assert.match(body, /flag the drift in your report instead/);
+      for (const doc of DEFAULT_DOCS) assert.ok(body.includes(`- \`${doc}\``), `${rel} must list ${doc}`);
+      assert.doesNotMatch(md, /owner-voiced/i);
     });
 
     test(`unset: ${rel} carves out the agent-managed doc sets by nested substitution`, () => {
@@ -3143,14 +3147,49 @@ describe('docs-human: docs.voiceGuardrailSection defaults to the owner-voiced do
       assert.match(md, /`DECISIONS\.md`, `STATUS\.md`, and `ARCHITECTURE\.md` at the repo root — which/);
     });
 
-    test(`set: ${rel} carries the override and none of the default`, () => {
-      const md = overridden.read(rel);
-      assert.match(md, /^## Project guardrail$/m);
-      assert.match(md, /`HANDBOOK\.md` is owner-voiced/);
-      assert.doesNotMatch(md, DEFAULT_HEADING);
-      assert.doesNotMatch(md, /`CLAUDE\.md`/, 'an override replaces the block, it does not extend it');
+    test(`override: ${rel} lists only the consumer's paths`, () => {
+      const body = section(overridden.read(rel));
+      assert.match(body, /^- `HANDBOOK\.md`$/m);
+      for (const doc of DEFAULT_DOCS) assert.ok(!body.includes(`\`${doc}\``), `an override replaces the list — ${doc} must be gone`);
+    });
+
+    test(`[]: ${rel} renders no section — no orphan heading`, () => {
+      const md = empty.read(rel);
+      assert.doesNotMatch(md, HEADING);
+      assert.doesNotMatch(md, /flag the drift in your report instead/);
+      assert.doesNotMatch(md, /\{\{docs\./);
     });
   }
+
+  test('the retired docs.voiceGuardrailSection fails the render, naming its replacement', () => {
+    const r = renderWith(['  docs:', '    voiceGuardrailSection: "## Mine"']);
+    fixtures.push(r);
+    assert.equal(r.result.ok, false);
+    assert.ok(
+      r.result.errors.some((e) => /config\.docs\.voiceGuardrailSection was removed in 0\.18\.0 — set `docs\.protectedDocs`/.test(e)),
+      JSON.stringify(r.result.errors),
+    );
+  });
+
+  test('a list entry that would break the bullets fails the render', () => {
+    const r = renderWith(['  docs:', '    protectedDocs: ["a`b.md"]']);
+    fixtures.push(r);
+    assert.equal(r.result.ok, false);
+    assert.ok(r.result.errors.some((e) => /docs\.protectedDocs.*no backticks/.test(e)), JSON.stringify(r.result.errors));
+  });
+
+  test('no shipped stack source says "owner-voiced"', () => {
+    const hits = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(abs);
+        else if (/\.(md|ya?ml)$/.test(entry.name) && /owner-voiced/i.test(fs.readFileSync(abs, 'utf8'))) hits.push(abs);
+      }
+    };
+    walk(STACKS);
+    assert.deepEqual(hits, []);
+  });
 });
 
 // -----------------------------------------------------------------------------

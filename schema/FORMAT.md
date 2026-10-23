@@ -114,6 +114,18 @@ leaf fails the render, so a typo can't ride along unguarded); each leaf value mu
 fully matching its regex. Same enforcement points as `pattern:` — top-level and nested
 substitution — and the same toolkit-wide union: a leaf guarded by two stacks must satisfy both.
 
+### List keys — `listFormat:`, `omitWhenEmpty:`
+
+A **list-valued** key may declare **`listFormat: code-bullets`**: its value renders as one
+`` - `entry` `` line per entry instead of the default `, ` join. Every entry must be a one-line
+string with no backticks, or the render fails. A **composed** key (a prose section built around
+a list) may declare **`omitWhenEmpty: <key>`**, naming another key in the same stack: while that
+key resolves to `[]`, `""`, or null, the composed key renders as `""` — no orphan heading, and no
+template conditional. `docs.protectedDocs` + `docs.protectedDocsSection` are the worked example:
+consumers override the list, and `[]` renders no guardrail section. `validate` checks that the
+format is known, that a `listFormat:` default is such a list, and that the gate key is declared.
+A key referenced only inside another key's string default counts as referenced.
+
 ### Behavioral keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:`
 
 A key whose value is a **behavior** rather than a string — whether a skill pauses at a
@@ -1194,7 +1206,8 @@ and a worked minimal example — see
 ## Template values
 
 `{{key}}` looks up `key` as a dotted path in the merged `config:` maps. Strings substitute
-verbatim; arrays of strings join with `, `; other structures render as a YAML block.
+verbatim; arrays of strings join with `, ` (unless the key declares `listFormat:`); other
+structures render as a YAML block.
 Missing **required** keys fail the render with a list of what to add. A `$`-prefixed
 `${{ ... }}` (GitHub Actions / shell-template syntax) is **not** a placeholder — it is left
 untouched everywhere, so workflow expressions survive rendering and `validate`.

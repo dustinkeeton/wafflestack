@@ -25,12 +25,12 @@ export function substitute(text, resolve, declared, errors, context, guards) {
       errors.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
-    const typeProblem = scalarTypeProblem(guards, key, v);
+    const typeProblem = scalarTypeProblem(guards, key, v) ?? listFormatProblem(guards, key, v);
     if (typeProblem) {
       errors.push(`${context}: config value for {{${key}}} ${typeProblem}`);
       return match;
     }
-    const value = expandNested(formatValue(v), resolve, 1, guards, errors, context);
+    const value = expandNested(formatValue(v, guards?.listFormats?.get(key)), resolve, 1, guards, errors, context);
     // A declared `pattern:` is checked against the FULLY-EXPANDED value that lands in the output.
     const failing = failingGuards(guards, key, value);
     if (failing.length) {
@@ -204,12 +204,12 @@ function expandNested(text, resolve, depth, guards, errors, context) {
       errors?.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
-    const typeProblem = scalarTypeProblem(guards, key, v);
+    const typeProblem = scalarTypeProblem(guards, key, v) ?? listFormatProblem(guards, key, v);
     if (typeProblem) {
       errors?.push(`${context}: config value for {{${key}}} ${typeProblem}`);
       return match;
     }
-    const value = expandNested(formatValue(v), resolve, depth + 1, guards, errors, context);
+    const value = expandNested(formatValue(v, guards?.listFormats?.get(key)), resolve, depth + 1, guards, errors, context);
     const failing = failingGuards(guards, key, value);
     if (failing.length) {
       errors?.push(patternFailure(context, key, failing));
@@ -224,9 +224,21 @@ function expandNested(text, resolve, depth, guards, errors, context) {
   });
 }
 
+/** The `listFormat:` values a config key may declare (#612); a key without one joins a string list with `, `. */
+export const LIST_FORMATS = ['code-bullets'];
+
+/** A `listFormat:` key must resolve to a list of single-line, backtick-free strings — anything else would break the bullets. */
+function listFormatProblem(guards, key, v) {
+  if (!guards?.listFormats?.has(key)) return null;
+  if (!Array.isArray(v)) return `must be a list of strings (the key declares listFormat: ${guards.listFormats.get(key)})`;
+  const bad = v.find((x) => typeof x !== 'string' || /[`\r\n]/.test(x));
+  return bad === undefined ? null : `entry ${JSON.stringify(bad)} must be a one-line string with no backticks`;
+}
+
 /** String scalars are NFC-normalized here, upstream of every guard, so NFD input (macOS paths, some paste flows) meets the same allowlist and renders the same bytes (#292). */
-export function formatValue(v) {
+export function formatValue(v, listFormat) {
   if (typeof v === 'string') return v.normalize('NFC');
+  if (listFormat === 'code-bullets' && Array.isArray(v)) return v.map((x) => `- \`${String(x).normalize('NFC')}\``).join('\n');
   if (Array.isArray(v) && v.every((x) => typeof x === 'string')) return v.join(', ');
   return YAML.stringify(v, { lineWidth: 0 }).trimEnd();
 }

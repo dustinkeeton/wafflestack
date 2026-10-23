@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches, LIST_FORMATS } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { spawnSync } from 'node:child_process';
 import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
 import { MARKETPLACE_FILE, validateMarketplace } from './marketplace.mjs';
-import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
+import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS, omitWhenEmptyCycle } from './project.mjs';
 import {
   REGISTRY_FILE,
   WAFFLE_KINDS,
@@ -680,6 +680,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
         }
       }
       for (const problem of behavioralKeyProblems(spec)) problems.push(`${ctx}: config key ${key} ${problem}`);
+      for (const problem of listKeyProblems(key, spec, stack.config)) problems.push(`${ctx}: config key ${key} ${problem}`);
     }
 
     for (const skill of stack.skills) {
@@ -718,9 +719,36 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
         problems.push(`${ctx}: ${flagProblem ?? `placeholder {{${key}}} is not declared in stack.yaml config`}`);
       }
     }
+    // A key spliced into another key's string default (#612: `docs.protectedDocs`) is referenced through it.
+    const defaultRefs = new Set();
+    for (const spec of Object.values(stack.config)) {
+      if (typeof spec?.default === 'string') for (const k of placeholderKeys(spec.default)) defaultRefs.add(k);
+    }
     // Only the config keys themselves must be referenced; a `flag:` token placeholder is optional.
     for (const key of Object.keys(stack.config)) {
-      if (!usedKeys.has(key)) problems.push(`${ctx}: declared config key ${key} is never referenced`);
+      if (!usedKeys.has(key) && !defaultRefs.has(key)) problems.push(`${ctx}: declared config key ${key} is never referenced`);
+    }
+  }
+  return problems;
+}
+
+/** Lint the list-key fields of one `config:` spec (#612): `listFormat:` and `omitWhenEmpty:`. */
+export function listKeyProblems(key, spec, config) {
+  const problems = [];
+  if (spec?.listFormat !== undefined) {
+    if (!LIST_FORMATS.includes(spec.listFormat)) {
+      problems.push(`\`listFormat\` must be one of: ${LIST_FORMATS.join(', ')}`);
+    } else if (spec.default !== undefined && !(Array.isArray(spec.default) && spec.default.every((x) => typeof x === 'string' && !/[`\r\n]/.test(x)))) {
+      problems.push('declares `listFormat` but its default is not a list of one-line, backtick-free strings');
+    }
+  }
+  const gate = spec?.omitWhenEmpty;
+  if (gate !== undefined) {
+    if (typeof gate !== 'string' || gate === key) problems.push('`omitWhenEmpty` must name another config key');
+    else if (!Object.hasOwn(config ?? {}, gate)) problems.push(`\`omitWhenEmpty\` names ${gate}, which this stack does not declare`);
+    else {
+      const cycle = omitWhenEmptyCycle(key, config);
+      if (cycle) problems.push(`\`omitWhenEmpty\` chain ${cycle.join(' → ')} is a cycle`);
     }
   }
   return problems;

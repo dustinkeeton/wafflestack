@@ -60,11 +60,15 @@ High-level architecture overview for humans:
 4. Include dates on all log entries
 5. Keep STATUS.md under 100 lines — it's a snapshot, not a history
 
-## Owner-voiced docs — do not rewrite
+## Protected docs — flag drift, don't rewrite
 
-`README.md`, `schema/FORMAT.md`, and `schema/SETUP.md` are owner-voiced
-canonical documents (the schema files ship to consumers via npx). Never
-rewrite them in a docs pass — if they have drifted from reality, flag the
-drift in your report instead.
+Docs passes don't rewrite these paths (globs allowed). If one has drifted
+from reality, flag the drift in your report instead:
+
+- `CHANGELOG.md`
+- `.waffle/**`
+
+This list does not cover the agent-managed docs — a single root `AGENTS.md` registry;
+and `DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root — which the doc writers update as usual.
 
 
