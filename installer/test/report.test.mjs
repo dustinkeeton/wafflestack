@@ -221,7 +221,7 @@ describe('report: upstream hold workflow (#640)', () => {
 
   test('the hold job is gated on the report summary marker', () => {
     assert.equal(jobs.length, 1);
-    assert.ok(jobs[0].if.includes(`contains(github.event.issue.body, '${REPORT_SUMMARY}')`), jobs[0].if);
+    assert.equal(jobs[0].if, `contains(github.event.issue.body, '${REPORT_SUMMARY}')`);
   });
 
   test('one step adds both labels by issue number', () => {
