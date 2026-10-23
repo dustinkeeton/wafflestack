@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderProject } from '../lib/render.mjs';
+import { renderProject, renderItemInMemory, failingConfigFor } from '../lib/render.mjs';
+import { loadToolkit } from '../lib/toolkit.mjs';
+import { loadProjectConfig } from '../lib/project.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { rangeKeyProblems, stackConstraintProblems } from '../lib/validate.mjs';
 import { rangeProblem, toRangeNumber, constraintProblems } from '../lib/template.mjs';
@@ -78,6 +80,24 @@ describe('pr-response rubric thresholds — render and doctor (#630)', () => {
 
   test('a quoted decimal string is a number', () => {
     assert.equal(render(['implement: "10.5"']).ok, true);
+  });
+
+  test('adjacent cutoffs pass: lessThan allows an empty integer Defer band', () => {
+    const r = render(['implement: 11', 'decline: 10']);
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.ok(md().includes('| **> 10 and < 11** | **Defer** |'));
+  });
+
+  test('an inverted config blocks the item in memory and in the list model', () => {
+    render(['implement: 5', 'decline: 12']);
+    const toolkit = loadToolkit(repoRoot);
+    const project = loadProjectConfig(cwd);
+    const item = toolkit.stacks.get('github-workflow').skills.find((s) => s.name === 'pr-response');
+    const node = { stack: 'github-workflow', kind: 'skills', item };
+    assert.equal(renderItemInMemory({ toolkit, project, cwd, node, toolkitVersion: '0.0.test' }), null);
+    const { pattern } = failingConfigFor(toolkit, project, [node]);
+    assert.ok(pattern.includes('config.prResponse.rubric.thresholds.decline'), JSON.stringify(pattern));
+    assert.ok(pattern.includes('config.prResponse.rubric.thresholds.implement'), JSON.stringify(pattern));
   });
 });
 
