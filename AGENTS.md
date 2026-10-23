@@ -31,9 +31,9 @@ installer/cli.mjs          bin entry: dispatches commands, global --cwd flag
 installer/evals.mjs        eval runner entry (`npm run evals`, metered — NOT in npm test)
 installer/lib/*.mjs        render pipeline + eval harness (ES modules)
 installer/test/*.test.mjs  node:test suite
-schema/FORMAT.md           format reference (owner-voiced)
-schema/SETUP.md            agent install playbook (owner-voiced)
-schema/AUTHORING-EXTERNAL-STACKS.md  third-party `source:` stack authoring guide (owner-voiced)
+schema/FORMAT.md           format reference
+schema/SETUP.md            agent install playbook
+schema/AUTHORING-EXTERNAL-STACKS.md  third-party `source:` stack authoring guide
 docs/                      design notes (gitignore.md, skills-vs-workflows.md, upgrades.md)
 assets/                    brand assets + brand guide (assets/README.md)
 ```
@@ -80,20 +80,20 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 |--------|---------|---------|
 | `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317) | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys`, `missingConfigFor`, `summarizeConfigKeys` |
 | `refs.mjs` | Ref grammar, resolution, dependency closure, render selection, target-scope gate (#364) | `itemOutputMatcher`, `legacyModDir`, `normalizeItemRef`, `itemsOfKind`, `findItems`, `selectingStack`, `parseRef`, `isWipWaffle`, `resolveRef`, `resolveDepStrict`, `resolveAgentSkill`, `closureFor`, `closureDeps`, `fileMatchesTargets`, `isTargetScoped`, `includeRefMatches`, `includeEjectOverlaps`, `formatEjectOverlap`, `computeSelection`, `skippedSyrupCompanions`, `unpouredRequiredSyrup`, `disabledStackRequires` |
-| `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:`/`modes:` guard machinery | `substitute`, `PROMPT_MODE`, `FLAG_SIDES`, `parseFlagPlaceholder`, `flagPlaceholders`, `undeclaredFlagProblem`, `isModeScalar`, `modeMatches`, `modeProblems`, `makeGuard`, `entryPatternProblems`, `formatValue`, `placeholderKeys`, `compilePattern` |
+| `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:`/`modes:` guard machinery | `substitute`, `PROMPT_MODE`, `FLAG_SIDES`, `parseFlagPlaceholder`, `flagPlaceholders`, `undeclaredFlagProblem`, `isModeScalar`, `modeMatches`, `modeProblems`, `makeGuard`, `entryPatternProblems`, `LIST_FORMATS`, `formatValue`, `placeholderKeys`, `compilePattern` |
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) | `MOD_MANIFEST`, `MOD_TARGETS`, `MOD_ENGINE_LAID`, `isEngineLaid`, `loadToolkit`, `loadToolkitWithSources`, `missingRequiredKeys` |
-| `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers | `CONFIG_FILE`, `LOCAL_CONFIG_FILE`, `LOCK_FILE`, `LOCAL_LOCK_FILE`, `AVATARS_DIR`, `BASELINE_GITIGNORE_ENTRIES`, `EXTENSIONS_DIR`, `LEGACY_ROOT_CONFIG_FILE`, `LEGACY_ROOT_LOCAL_CONFIG_FILE`, `LEGACY_ROOT_LOCK_FILE`, `LEGACY_CONFIG_FILE`, `LEGACY_LOCAL_CONFIG_FILE`, `LEGACY_LOCK_FILE`, `LEGACY_EXTENSIONS_DIR`, `VALID_TARGETS`, `resolveConfigFile`, `resolveLocalConfigFile`, `resolveLockFile`, `localLockPath`, `migrateLegacyDotfiles`, `staleGitignoreEntries`, `gitignoreMentions`, `GITIGNORE_MARKER`, `ensureGitignoreEntries`, `removeGitignoreEntries`, `recommendedGitignoreEntries`, `renameLegacyStacksKey`, `dropIncludeEntries`, `setScalarIn`, `appendSeqIn`, `removeSeqIn`, `renameKeyIn`, `loadProjectConfig`, `classifyStackSource`, `normalizeStackEntries`, `HARNESS_BUILTINS`, `HARNESS_PATTERNS`, `makeResolver` |
+| `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers | `CONFIG_FILE`, `LOCAL_CONFIG_FILE`, `LOCK_FILE`, `LOCAL_LOCK_FILE`, `AVATARS_DIR`, `BASELINE_GITIGNORE_ENTRIES`, `EXTENSIONS_DIR`, `LEGACY_ROOT_CONFIG_FILE`, `LEGACY_ROOT_LOCAL_CONFIG_FILE`, `LEGACY_ROOT_LOCK_FILE`, `LEGACY_CONFIG_FILE`, `LEGACY_LOCAL_CONFIG_FILE`, `LEGACY_LOCK_FILE`, `LEGACY_EXTENSIONS_DIR`, `VALID_TARGETS`, `resolveConfigFile`, `resolveLocalConfigFile`, `resolveLockFile`, `localLockPath`, `migrateLegacyDotfiles`, `staleGitignoreEntries`, `gitignoreMentions`, `GITIGNORE_MARKER`, `ensureGitignoreEntries`, `removeGitignoreEntries`, `recommendedGitignoreEntries`, `renameLegacyStacksKey`, `dropIncludeEntries`, `setScalarIn`, `appendSeqIn`, `removeSeqIn`, `renameKeyIn`, `loadProjectConfig`, `classifyStackSource`, `normalizeStackEntries`, `HARNESS_BUILTINS`, `HARNESS_PATTERNS`, `makeResolver`, `isEmptyValue`, `RETIRED_CONFIG_KEYS`, `retiredConfigProblems` |
 | `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver, `resolveInside` containment guard | `sha256`, `isBinary`, `readYaml`, `exists`, `writeFileEnsuringDir`, `deepMerge`, `parseVersion`, `compareVersions`, `lookupPath`, `FRONTMATTER_RE`, `parseFrontmatter`, `stringifyFrontmatter`, `resolveInside` |
 | `doctor.mjs` | Drift check vs `readTreeLock`; generated `.waffle/` docs presence-optional (#528); `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129) | `doctor`, `verifyRenderAgainstLock` |
 | `eject.mjs` | `eject` / `installRefs` / `setup`+`init` scaffold | `eject`, `installRefs`, `unejectCollisions`, `init`, `scaffoldConfig` |
-| `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) | `RESERVED_AGENT_KEYS`, `validateToolkit`, `validateModPlugins`, `formatModPluginChecks`, `validateRegistry`, `validateSourceBytes`, `validateHarnessBuiltins`, `validateExternalStacks`, `validateStack`, `behavioralKeyProblems` |
+| `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) | `RESERVED_AGENT_KEYS`, `validateToolkit`, `validateModPlugins`, `formatModPluginChecks`, `validateRegistry`, `validateSourceBytes`, `validateHarnessBuiltins`, `validateExternalStacks`, `validateStack`, `behavioralKeyProblems`, `listKeyProblems` |
 | `setup.mjs` | `setup` output: SETUP.md playbook + inventory (+ update-mode section) | `setupGuide`, `toolkitInventory` |
 | `model-invocation.mjs` | Per-skill model-invocation override (#476): `skills.modelInvocation` normalization (throws on shape errors, like invalid `targets:`) + the pure `disable-model-invocation` frontmatter patch render applies to the `claude` copy | `MODEL_INVOCATION_KEY`, `CONFIG_PATH`, `emptyOverride`, `normalizeModelInvocation`, `overrideFor`, `frontmatterDisablesModelInvocation`, `sourceDisablesModelInvocation`, `applyModelInvocation` |
 | `harness-tools.mjs` | Per-target roster of call-shaped harness tools (#445): `HARNESS_TOOLS` data (`claude` declared; `codex` / `agents-dir` `null` = unverified) + the pure `toolCalls` / `unknownToolCalls` extractor `content.test.mjs` sweeps every source and render with. THE place a harness tool rename or removal is recorded | `HARNESS_TOOLS`, `DEAD_HARNESS_TOOLS`, `toolsForTarget`, `anyTargetTools`, `toolCalls`, `unknownToolCalls` |
 | `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` | `computeToggleModel`, `formatToggleTable`, `toggleChoices`, `interactiveToggle`, `applyToggle` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); `formatReportMarkdown` renders the `<details>` block (`--json` is `JSON.stringify` of the bundle in `cli.mjs:138`, no renderer export); `health` does not surface doctor's `absentDocs` (#528) — only `notes` carries them | `collectReport`, `keyPaths`, `scrub`, `redact`, `formatReportMarkdown` |
 | `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `skills: {}` is reserved for #563 | `STATE_SHAPE_VERSION`, `LAYERS`, `CHECKPOINT_PHASES`, `SKILL_RUN_FILE_KEYS`, `collectState`, `resolveConfig`, `resolveSkills`, `resolveBehavioralKeys`, `formatStateText` |
-| `migrations.mjs` | Ordered, idempotent, version-keyed migration steps | `MIGRATIONS`, `migrationCeiling`, `applicableMigrations`, `runMigrations` |
+| `migrations.mjs` | Ordered, idempotent, version-keyed migration steps | `MIGRATIONS`, `protectedPathsFromProse`, `migrationCeiling`, `applicableMigrations`, `runMigrations` |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) | `REGISTRY_FILE`, `WAFFLE_KINDS`, `WAFFLE_STATUSES`, `LIVE_STATUSES`, `REGISTRY_ENTRY_KEYS`, `refKindOf`, `waffleKindOf`, `canonicalWafflePath`, `loadRegistry`, `waffleStatus`, `isWaffleWip`, `replacementFor` |
 | `upgrade.mjs` | Version diff, changelog delta, migrations, pin reconcile (#372), render + doctor | `upgrade`, `reconcileToolkitRefPins`, `staleTagMentions`, `forwardRenamedWaffleRefs`, `diffSources`, `diffToolkit`, `changelogBetween` |
 | `uninstall.mjs` | `uninstall` / `reinstall` + the pure `planUninstall` they share (#182) | `planUninstall`, `uninstall`, `reinstall` |
@@ -415,8 +415,15 @@ registry entry (a plugin has no path, no render, nothing to prune).
   declared in the stack's `config:` or is `harness.*`. Other braces (bash `${...}`, mustache)
   pass through verbatim; `$`-prefixed `${{ }}` (GitHub Actions) is excluded by negative
   lookbehind, so workflow payloads carry those untouched.
-- Value formatting (`formatValue`, `template.mjs:222`): strings verbatim; string arrays join
-  `, `; other structures render as a YAML block.
+- Value formatting (`formatValue`, `template.mjs`): strings verbatim; string arrays join
+  `, ` unless the key declares `listFormat: code-bullets` (one `` - `entry` `` line each; entries
+  must be one-line and backtick-free, #612); other structures render as a YAML block.
+- List keys (#612) — a composed key may declare `omitWhenEmpty: <key>`: `makeResolver` returns
+  `""` for it while that key resolves to `[]`/`""`/null, so a section renders nothing without a
+  template conditional (`docs.protectedDocsSection` gated on `docs.protectedDocs`). Linted by
+  `listKeyProblems`; a key referenced only inside another key's string default counts as used.
+- Retired config keys (`RETIRED_CONFIG_KEYS`, `project.mjs`) fail `render` with the replacement
+  named: `docs.voiceGuardrailSection` (removed 0.18.0 → `docs.protectedDocs`; migration `0.18.0`).
 - `harness.*` — reserved, always-available namespace resolved per target (`HARNESS_BUILTINS`,
   `project.mjs:730`). Override via `config.harness.<sub>` (scalar → all targets, or per-target
   map). Guarded keys (`HARNESS_PATTERNS`, `project.mjs:754`): `agentsDir`, `skillsDir`, and the
@@ -545,8 +552,8 @@ opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inv
 `stacks/**` `.mjs` plus workflow YAML: comment-ratio ceiling 15% — 20% for `stacks/**/*.mjs`, ≤12
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the
 `GRANDFATHERED` ratchet map is EMPTY as of the sweep, so every in-scope file meets the ceilings),
-`migrations.test.mjs` (#501: the 0.16.0 overlap migration, overlay never edited, upgrade end-to-end,
-and the release guard — a bump cannot skip a pending migration), `config-modes.test.mjs` (#478:
+`migrations.test.mjs` (#501: the 0.16.0 overlap migration, overlay never edited, upgrade end-to-end;
+#612: the 0.18.0 `docs.protectedDocs` migration; and the release guard — a bump cannot skip a pending migration), `list-keys.test.mjs` (#612: `listFormat`/`omitWhenEmpty`, retired keys), `config-modes.test.mjs` (#478:
 behavioral-key validate rules, render + doctor guards, locked autopilot consents),
 `report.test.mjs` (#473: bundle redaction, CLI surface, scrub/projection helpers),
 `sources.test.mjs` (#460: source cache location + checkout verification), `toggle.test.mjs` (#476:
@@ -604,8 +611,8 @@ repo's own PRs in both directions. Toolkit-local CLI calls in this repo's config
 (`delegate.extraPreflight`, `audit.compliancePrompt`) pass `--allow-unreleased` on `render` for
 the same reason.
 
-## Owner-voiced docs — do not rewrite
+## Protected docs
 
-`README.md`, `schema/FORMAT.md`, and `schema/SETUP.md` are owner-voiced canonical documents
-(the schema files ship to consumers via npx). Do not rewrite them in a docs pass — flag any
-drift instead.
+`config.docs.protectedDocs` in `.waffle/waffle.yaml` lists the paths docs passes flag instead of
+rewriting: `CHANGELOG.md` and `.waffle/**`. `README.md` and the `schema/*.md` docs are normal
+docs-pass targets (#612).
