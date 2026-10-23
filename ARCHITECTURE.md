@@ -467,14 +467,18 @@ directory, emails and git remotes with placeholders. The `/waffle-report` skill 
 it resolves the target repo from `waffle.toolkitRef` (a fork's consumer reports to the fork),
 shows you the post-redaction text, and files only on your yes. Each filing *asks* to land **on
 hold** (`waffle:reassess`, so no automation implements an unreproduced report) with a
-`waffle:consumer-report` provenance label. Adding labels takes triage access on the toolkit repo.
-Without it, the skill reports which labels didn't apply and tells you to ask the maintainer. In
-that case the issue is **not** held.
+`waffle:consumer-report` provenance label. Adding labels takes triage access on the toolkit repo, which most
+filers lack, so the toolkit's own tracker applies both labels **server-side**: an `issues: opened`
+workflow (`.github/workflows/consumer-report-hold.yml`) spots the diagnostics block's `<summary>`
+line in the body and adds them with the repo's token. A fork that receives reports has no such
+hold unless it copies that workflow; there the skill reports which labels didn't apply and tells
+you to ask the maintainer, and until then the issue is **not** held.
 
 Why each is shaped this way:
 [`toggle`](DECISIONS.md#2026-09-16-toggle-makes-agent-invocation-a-per-project-config-input-not-a-hand-edit-476) ·
 [`report`](DECISIONS.md#2026-09-15-report-is-a-cli-command-behind-a-thin-skill-wrapper-and-its-redaction-is-structural-473) ·
-[the hold on filings](DECISIONS.md#2026-10-22-waffle-report-is-the-reassess-holds-one-automated-entry-point-609).
+[the hold on filings](DECISIONS.md#2026-10-22-waffle-report-is-the-reassess-holds-one-automated-entry-point-609) ·
+[applied server-side](DECISIONS.md#2026-10-23-the-waffle-report-hold-is-applied-server-side-on-the-toolkit-tracker-640).
 
 ### Which toolkit am I running? (the release gate, since v0.13.0)
 

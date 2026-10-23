@@ -9,6 +9,38 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-23: The `/waffle-report` hold is applied server-side on the toolkit tracker (#640)
+
+**Context**: `/waffle-report` (#609) added `waffle:reassess` and `waffle:consumer-report` from the
+filer's own credentials. Adding a label takes triage or write access, which a typical consumer
+lacks, so most reports landed **unheld** and `delegate`, `autopilot`, or `label-hook` could pick
+up an unreproduced claim.
+
+**Decision**: the toolkit repo runs `.github/workflows/consumer-report-hold.yml` on
+`issues: opened`. Its one job runs only when the body contains the report block's `<summary>`
+line (`REPORT_SUMMARY` in `installer/lib/report.mjs`), and adds both labels with the repo token.
+The skill keeps its client-side adds (privileged filers, forks) and tells the filer the
+server-side hold may land a moment after its read-back.
+
+**Security**: the workflow runs for anyone's issue with a write token, so it is pinned by
+`report.test.mjs`: `issues: write` only, `opened` only, no `uses:` steps, and the body is read
+only inside the job `if:` — never in `run:` or `env:`, which get only the token, repo, and issue
+number. A forged marker can at most hold its forger's own new issue. Stripping the marker gives
+the pre-#640 behavior. The workflow cannot remove labels, touch another issue, or dispatch
+anything (events from `GITHUB_TOKEN` do not trigger workflows).
+
+**Alternatives considered**:
+- **Key on `author_association`** — rejected. It would label every hand-written outside issue as
+  a consumer report, which the provenance label must not claim.
+- **A scope filter in delegate/autopilot that skips bodies with the block** — rejected. It would
+  hide the hold in each consumer of scope instead of on the issue, where humans and every
+  automation already read it.
+
+**Impact**: toolkit-repo only — no stack renders the workflow, and consumers see only skill
+wording. A fork that receives reports copies the workflow to get the same hold.
+
+---
+
 ## 2026-10-23: The pr-response cutoffs are repo policy, guarded by `range:` and `constraints:` (#630)
 
 **Context**: Every number in the pr-response rubric was hard-coded in the skill, so a consumer
@@ -88,8 +120,8 @@ the issue came from, either.
 
 | Label | Role | Who adds it | Who removes it |
 |-------|------|-------------|----------------|
-| `waffle:reassess` | The hold: keeps the issue out of `delegate`, `autopilot`, and the `label-hook` implement path | `/waffle-report`, upstream, at filing only | Only the upstream human |
-| `waffle:consumer-report` | Provenance: the issue came from a consuming repo via `/waffle-report` | `/waffle-report`, at filing | — |
+| `waffle:reassess` | The hold: keeps the issue out of `delegate`, `autopilot`, and the `label-hook` implement path | `/waffle-report`, upstream, at filing only; server-side on the toolkit tracker since #640 | Only the upstream human |
+| `waffle:consumer-report` | Provenance: the issue came from a consuming repo via `/waffle-report` | `/waffle-report`, at filing; server-side since #640 | — |
 
 - **Literal names, not config.** The report lands in the upstream tracker, whose labels are fixed.
   A consumer's own `issue.reassessLabel` does not apply.
@@ -100,6 +132,7 @@ the issue came from, either.
   usual cause is a filer without triage rights; a fork's tracker may also lack the label. The
   filing still counts, because the issue already exists. The hold is therefore best-effort, and
   the final report tells the filer to ask the maintainer for any label that didn't apply.
+  *(Hardened by #640: the toolkit tracker now applies both labels server-side.)*
 - **The no-`gh` fallback URL carries both labels** in `labels=`. GitHub drops that for a user
   without triage rights, so the skill tells the user the maintainer may need to add them.
 
@@ -688,7 +721,7 @@ consumer who follows the documented gitignore advice gets a green `doctor` with 
 can drop it; re-render to pick up the updated `/waffle-init` and `/waffle-doctor` skill text. This
 repo keeps the flag for one reason now — the gitignored `waffle-label-hook.yml` — and says so in
 `.waffle/waffle.yaml`. Known gap: `report`'s health line still prints only modified / missing /
-stale-render (`installer/lib/report.mjs:254`); `absentDocs` reaches it only through `notes`.
+stale-render (`installer/lib/report.mjs:257`); `absentDocs` reaches it only through `notes`.
 
 ---
 

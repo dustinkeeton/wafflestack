@@ -218,6 +218,9 @@ export function redact(value, scope) {
   return value;
 }
 
+/** The block's `<summary>` line — the server-side hold workflow keys on it verbatim (#640). */
+export const REPORT_SUMMARY = '<summary>wafflestack environment (from `wafflestack report`)</summary>';
+
 /**
  * The Markdown environment block — a collapsed `<details>` ready to paste under a report body.
  *
@@ -227,7 +230,7 @@ export function redact(value, scope) {
 export function formatReportMarkdown(b) {
   const list = (/** @type {string[]} */ xs) => (xs.length ? xs.join(', ') : '(none)');
   const short = (/** @type {string|null} */ sha) => (sha ? sha.slice(0, 7) : 'null');
-  const lines = ['<details>', '<summary>wafflestack environment (from `wafflestack report`)</summary>', ''];
+  const lines = ['<details>', REPORT_SUMMARY, ''];
   if (b.lock) {
     const t = b.lock.toolkit;
     lines.push(`- **lock**: rendered by toolkit ${b.lock.toolkitVersion ?? 'unknown'} — source ${t.source ?? 'null'}, ref ${t.ref ?? 'null'}, commit ${short(t.commit)}, status ${t.status ?? 'null'}; ${b.lock.trackedFiles} tracked files`);

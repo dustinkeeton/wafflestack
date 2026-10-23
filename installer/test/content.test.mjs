@@ -702,6 +702,9 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /is a \*\*warning, never a failed\s+filing\*\*/);
     assert.match(md, /\*\*triage or\s+write access\*\*/, 'the permissions limit on adding labels is named on the CLI path');
     assert.match(md, /\*\*hold is best-effort\*\*/, 'the skill must not promise the hold always applies');
+    assert.match(md, /\*\*applies both fixed labels server-side\*\*/, 'the skill names the canonical tracker\'s server-side hold (#640)');
+    assert.match(md, /`<summary>` line included, \*\*verbatim\*\*/, 'the hold workflow keys on the summary line, so it must survive into the body (#640)');
+    assert.match(md, /re-run the read-back once/, 'the read-back may race the server-side hold (#640)');
     assert.match(md, /gh issue view <issue url> --repo OWNER\/REPO --json labels -q '\.labels\[\]\.name'/, 'the labels are read back after the edits');
     assert.match(md, /Build the not-applied list from that output, never from which `echo` fired/);
     assert.match(md, /For each label missing from the read-back \(fixed or form\)/);

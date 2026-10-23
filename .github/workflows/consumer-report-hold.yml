@@ -1,0 +1,25 @@
+# Project-owned — NOT managed by wafflestack: holds /waffle-report filings with the repo token (#640).
+# The issue body is read ONLY in the job `if:` — never in `run:` or `env:`; a forged marker holds only the forger's own issue.
+name: consumer-report-hold
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  hold:
+    if: contains(github.event.issue.body, '<summary>wafflestack environment (from `wafflestack report`)</summary>')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - name: Apply the hold label
+        run: gh issue edit "$ISSUE" --add-label "waffle:reassess"
+      - name: Apply the provenance label
+        run: gh issue edit "$ISSUE" --add-label "waffle:consumer-report"

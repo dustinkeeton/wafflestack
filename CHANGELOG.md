@@ -50,6 +50,14 @@ is what you reach for across a breaking one.
   pass-through (#646) follow.
   **Consumer impact:** additive — re-render. With no config the rubric scores as before; only the
   Defer band and footer wording change.
+- **The `/waffle-report` hold no longer depends on the filer's access (#640).** The toolkit repo
+  gains `.github/workflows/consumer-report-hold.yml`: on `issues: opened`, when the body carries the
+  report block's `<summary>` line, it adds `waffle:reassess` and `waffle:consumer-report` with the
+  repo token. It holds `issues: write` only, has no `uses:` steps, and never hands the body to a
+  shell; a forged marker can only hold the forger's own issue. The skill now says the server-side
+  hold may land just after its read-back, and to keep the block verbatim.
+  **Consumer impact:** none beyond skill wording — re-render. The workflow is toolkit-repo-only; a
+  fork that receives reports can copy it.
 
 ### Changed
 - **Protected docs are a configurable list (#612).** The prose key `docs.voiceGuardrailSection`
