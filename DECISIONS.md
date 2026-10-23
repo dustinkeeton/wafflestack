@@ -92,6 +92,8 @@ as docs-human.
 - **Removal, not deprecation.** Setting the old key fails `render` with the replacement named.
   Migration `0.18.0` rewrites the committed `waffle.yaml`: blank → `[]`, and backticked paths in
   custom prose → the list. Prose without paths, and any overlay value, is reported and left alone.
+  (Refined in #648: `docs.*` config keys and the agent-managed doc set are skipped, and each
+  skipped token is logged with its reason.)
 - **This repo** protects only `CHANGELOG.md` and `.waffle/**`. README and the `schema/` docs are
   now normal docs-pass targets.
 

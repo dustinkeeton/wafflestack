@@ -65,10 +65,45 @@ export const MIGRATIONS = [
 const OLD_GUARDRAIL = ['config', 'docs', 'voiceGuardrailSection'];
 const PROTECTED_DOCS = ['config', 'docs', 'protectedDocs'];
 
-/** Backticked, path-shaped tokens in the retired prose, in order and deduped: the list it named. */
-export function protectedPathsFromProse(text) {
-  const paths = [...String(text).matchAll(/`([^`\s]+)`/g)].map((m) => m[1]).filter((t) => /^[\w.*/-]+$/.test(t) && /[./]|^[A-Z_]+$/.test(t));
-  return [...new Set(paths)];
+// 0.18.0 stack defaults, frozen: a migration is pinned to the version that shipped it.
+const DOC_SET_DEFAULTS_0_18 = {
+  machineDocSet: 'a root `AGENTS.md`, plus a per-feature `AGENTS.md` in each `src/<feature>/` directory where the codebase is organized that way',
+  humanDocSet: '`DECISIONS.md`, `STATUS.md`, and `ARCHITECTURE.md` at the repo root',
+};
+
+/** @param {string} token @returns {string | null} why the token is not a path, or null when it is one */
+function notAPath(token) {
+  if (/^docs\.[a-z]+[A-Z][A-Za-z0-9]*$/.test(token)) return 'config key';
+  if (!/^[\w.*?/@+~{}[\],!-]+$/.test(token)) return 'not a path';
+  return /[./]/.test(token) || /^[A-Z_][\w-]*$/.test(token) ? null : 'not a path';
+}
+
+/**
+ * The backticked paths the retired prose named, in order and deduped, plus every token it skipped.
+ * @param {string} text
+ * @param {{ exclude?: string[] }} [opts] paths to skip as the agent-managed doc set
+ * @returns {{ paths: string[], skipped: { token: string, why: string }[] }}
+ */
+export function protectedPathsFromProse(text, { exclude = [] } = {}) {
+  const paths = [];
+  const skipped = [];
+  const seen = new Set();
+  for (const [, token] of String(text).matchAll(/`([^`]+)`/g)) {
+    if (seen.has(token)) continue;
+    seen.add(token);
+    const why = exclude.includes(token) ? 'agent-managed doc set' : notAPath(token);
+    if (why) skipped.push({ token, why });
+    else paths.push(token);
+  }
+  return { paths, skipped };
+}
+
+/** @param {YAML.Document} doc @returns {string[]} the doc-set paths the generated section carves out */
+function docSetPaths(doc) {
+  return Object.entries(DOC_SET_DEFAULTS_0_18).flatMap(([key, fallback]) => {
+    const phrase = doc.getIn(['config', 'docs', key]);
+    return protectedPathsFromProse(typeof phrase === 'string' ? phrase : fallback).paths;
+  });
 }
 
 /** The 0.18.0 step (#612): COMMITTED config only, like 0.16.0; an overlay still setting the key is reported. */
@@ -96,7 +131,11 @@ function migrateGuardrailIn(doc, file, log) {
     doc.setIn(PROTECTED_DOCS, doc.createNode([]));
     return drop('docs.voiceGuardrailSection was empty → docs.protectedDocs: [] (still no guardrail)');
   }
-  const paths = protectedPathsFromProse(old);
+  const { paths, skipped } = protectedPathsFromProse(old, { exclude: docSetPaths(doc) });
+  if (skipped.length) {
+    const list = skipped.map(({ token, why }) => `\`${token}\` (${why})`).join(', ');
+    log(`  docs.voiceGuardrailSection: not carried — ${list}; add any real path to docs.protectedDocs by hand`);
+  }
   if (!paths.length) {
     log(`  NOT migrated — ${CONFIG_FILE} docs.voiceGuardrailSection names no backticked paths; replace it with a \`docs.protectedDocs\` list by hand`);
     return;
