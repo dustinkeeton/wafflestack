@@ -498,10 +498,14 @@ what stitches them together (see step 3 and the resumption rules).
   with a different cleanup contract; `withTempDir` does not unlink on error.
 
 Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
-each; ≥{{prResponse.rubric.thresholds.implement}} Implement · >{{prResponse.rubric.thresholds.decline}} and <{{prResponse.rubric.thresholds.implement}} Defer · ≤{{prResponse.rubric.thresholds.decline}} Decline).
+each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline).
 
 — posted by the pr-response bot
 ```
+
+The example is scored at the **v3 default cutoffs** (11/4). Your reply maps each composite with
+**this repo's** cutoffs and its footer names them: `≥{{prResponse.rubric.thresholds.implement}} Implement · >{{prResponse.rubric.thresholds.decline}} and <{{prResponse.rubric.thresholds.implement}} Defer · ≤{{prResponse.rubric.thresholds.decline}} Decline`.
+Never copy a verdict from the example.
 
 Always name the **rubric version** in the reply. When the thresholds move, old replies must remain
 interpretable against the rubric that produced them.
@@ -518,8 +522,8 @@ decline) and any finding you could not score confidently.
 **This section is the point of the skill.** The rubric is a guess: five dimensions, equal weight,
 two thresholds. Review quality drifts (a bot gets better or noisier) and the repo's own bar drifts
 (a prototype hardens into a dependency). A fixed rubric therefore goes wrong slowly and quietly.
-The scores in every posted reply are the record that lets you notice, and this file is the one
-place to change it.
+The scores in every posted reply are the record that lets you notice. The cutoffs are config; the
+dimensions and anchors live only in this file (see *How to change it* below).
 
 **Read the drift from the outcomes, not from a feeling:**
 
@@ -527,7 +531,7 @@ place to change it.
 |---|---|---|
 | Deferred/declined findings keep coming back as real bugs | Thresholds too high, or Severity anchors too generous | Lower `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or raise Severity anchors |
 | Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or down-weight Effort/Risk |
-| Everything scores 7–10 and lands on Defer | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
+| Nearly everything lands in the Defer band | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
 | Declines are argued down by the author every time | Alignment is being scored by the responder's taste, not repo intent | Re-anchor Alignment on *documented* decisions only |
 | A dimension's score is being argued *around* rather than *with* — a scorer keeps having to distort dimension A to express something A does not measure | The rubric is missing a dimension, and the missing one is whatever the distortion was standing in for | Add it — and bump the version. **This is how v2 happened; see below.** |
 
