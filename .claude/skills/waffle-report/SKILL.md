@@ -246,8 +246,9 @@ On success, report the issue URL, each hosted attachment, and one line per place
 user to attach that file by hand. For each label missing from the read-back (fixed or form), say so
 plainly. For a fixed label on the canonical tracker (`dustinkeeton/wafflestack`), say the server-side hold
 should add it within a minute, wait about 60 seconds, then re-run the read-back once before going
-further. On any other tracker, wait the same way only if it runs a copy of that hold
-workflow; otherwise skip the wait. If it is still missing, give the likely cause (no triage
+further. On any other tracker, check for a copy of that hold workflow with
+`gh api repos/OWNER/REPO/contents/.github/workflows/consumer-report-hold.yml --silent`: if it
+succeeds, wait the same way; if it fails, skip the wait. If it is still missing, give the likely cause (no triage
 rights on `OWNER/REPO`, or a tracker without the hold workflow) and tell the user to comment on the issue asking the maintainer to add it. Name `waffle:reassess` first. Without it
 the report is not held.
 
