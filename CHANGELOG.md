@@ -67,6 +67,11 @@ is what you reach for across a breaking one.
   workflow, so an added `container:`, `defaults:`, or step fails it. The skill now waits for the
   server-side hold on any tracker that runs a copy of the workflow, not only the canonical one.
   **Consumer impact:** skill wording only — re-render. A fork that copied the workflow can re-copy it.
+- **The consumer-report hold's false-positive path is documented (#652).** The DECISIONS #640
+  entry now names quoting the report block, not forgery, as the likely misfire. An issue that
+  quotes the block and is opened through a bot or App token outside `OWNER`/`MEMBER`/`COLLABORATOR`
+  is still held. Clear it by removing `waffle:reassess` and `waffle:consumer-report` by hand. An
+  `/issue` warning was considered and not added. **Consumer impact:** none — toolkit-repo docs only.
 - **Protected docs are a configurable list (#612).** The prose key `docs.voiceGuardrailSection`
   is removed. Its replacement, `docs.protectedDocs`, is a list of repo paths (globs allowed) that
   docs passes flag instead of rewriting. The guardrail section is generated from that list in
