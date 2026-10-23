@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
 import { PLUGIN_ENTRY_KEYS } from './plugins.mjs';
 import { MARKETPLACE_FILE, validateMarketplace } from './marketplace.mjs';
-import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS } from './project.mjs';
+import { HARNESS_BUILTINS, HARNESS_PATTERNS, VALID_TARGETS, omitWhenEmptyCycle } from './project.mjs';
 import {
   REGISTRY_FILE,
   WAFFLE_KINDS,
@@ -746,6 +746,10 @@ export function listKeyProblems(key, spec, config) {
   if (gate !== undefined) {
     if (typeof gate !== 'string' || gate === key) problems.push('`omitWhenEmpty` must name another config key');
     else if (!Object.hasOwn(config ?? {}, gate)) problems.push(`\`omitWhenEmpty\` names ${gate}, which this stack does not declare`);
+    else {
+      const cycle = omitWhenEmptyCycle(key, config);
+      if (cycle) problems.push(`\`omitWhenEmpty\` chain ${cycle.join(' → ')} is a cycle`);
+    }
   }
   return problems;
 }

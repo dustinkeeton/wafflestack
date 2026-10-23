@@ -801,12 +801,31 @@ export function makeResolver(stack, values, target, runtime = {}) {
     const flag = stack.config[key] === undefined ? parseFlagPlaceholder(key) : null;
     if (flag) return stack.config[flag.key]?.flag?.[flag.side];
     const gate = stack.config[key]?.omitWhenEmpty;
-    if (typeof gate === 'string' && gate !== key && isEmptyValue(resolve(gate))) return '';
+    if (typeof gate === 'string' && gate !== key) {
+      const cycle = omitWhenEmptyCycle(key, stack.config);
+      if (cycle) throw new Error(`stack ${stack.name}: omitWhenEmpty chain ${cycle.join(' → ')} is a cycle`);
+      if (isEmptyValue(resolve(gate))) return '';
+    }
     const v = lookupPath(values, key);
     if (v !== undefined) return v;
     return stack.config[key]?.default;
   };
   return resolve;
+}
+
+/**
+ * The `omitWhenEmpty:` chain from `key` when it loops back on itself (e.g. `[a, b, a]`), else null.
+ * @param {string} key
+ * @param {Record<string, any>} config
+ * @returns {string[]|null}
+ */
+export function omitWhenEmptyCycle(key, config) {
+  const chain = [key];
+  for (let k = config?.[key]?.omitWhenEmpty; typeof k === 'string'; k = config?.[k]?.omitWhenEmpty) {
+    chain.push(k);
+    if (chain.indexOf(k) < chain.length - 1) return chain;
+  }
+  return null;
 }
 
 /** `omitWhenEmpty:` (#612) treats an unset, null, blank, or `[]` gate value as empty. */

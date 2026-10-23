@@ -58,6 +58,12 @@ describe('list keys: listFormat + omitWhenEmpty (#612)', () => {
     assert.match(listKeyProblems('k', { omitWhenEmpty: 'nope' }, {})[0], /names nope, which this stack does not declare/);
   });
 
+  test('an omitWhenEmpty cycle is a named error, not a stack overflow', () => {
+    const config = { a: { omitWhenEmpty: 'b', default: 'x' }, b: { omitWhenEmpty: 'a', default: 'y' } };
+    assert.match(listKeyProblems('a', config.a, config)[0], /chain a → b → a is a cycle/);
+    assert.throws(() => makeResolver({ name: 'cyc', config }, {}, 'claude')('a'), /omitWhenEmpty chain a → b → a is a cycle/);
+  });
+
   test('a retired key is reported only when set', () => {
     assert.deepEqual(retiredConfigProblems({}), []);
     assert.match(retiredConfigProblems({ docs: { voiceGuardrailSection: '' } })[0], /removed in 0\.18\.0/);
