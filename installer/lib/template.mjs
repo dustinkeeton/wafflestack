@@ -272,12 +272,12 @@ export function constraintProblems(stack, resolve, usedKeys = null) {
 /** The `listFormat:` values a config key may declare (#612); a key without one joins a string list with `, `. */
 export const LIST_FORMATS = ['code-bullets'];
 
-/** A `listFormat:` key must resolve to a list of single-line, backtick-free strings — anything else would break the bullets. */
+/** A `listFormat:` key must resolve to a list of non-empty, single-line, backtick-free strings — anything else would break the bullets. */
 function listFormatProblem(guards, key, v) {
   if (!guards?.listFormats?.has(key)) return null;
   if (!Array.isArray(v)) return `must be a list of strings (the key declares listFormat: ${guards.listFormats.get(key)})`;
-  const bad = v.find((x) => typeof x !== 'string' || /[`\r\n]/.test(x));
-  return bad === undefined ? null : `entry ${JSON.stringify(bad)} must be a one-line string with no backticks`;
+  const bad = v.find((x) => typeof x !== 'string' || !x.trim() || /[`\r\n]/.test(x));
+  return bad === undefined ? null : `entry ${JSON.stringify(bad)} must be a non-empty, one-line string with no backticks`;
 }
 
 /** String scalars are NFC-normalized here, upstream of every guard, so NFD input (macOS paths, some paste flows) meets the same allowlist and renders the same bytes (#292). */

@@ -152,6 +152,11 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **A blank `listFormat` entry is now an error, not an empty bullet (#649).** An empty or
+  whitespace-only entry such as `docs.protectedDocs: [""]` used to render a bare `` - `` ``
+  bullet into the guardrail, which protects nothing. Render and `validate` now reject it with
+  the existing "one-line string with no backticks" message, which now also says "non-empty".
+  Consumer impact: none unless your `waffle.yaml` lists a blank entry; remove it and re-render.
 - **Migration `0.18.0` reads custom guardrail prose more carefully (#648).** It used to keep
   every backticked token with a `.` or `/`, so a carve-out sentence ("This list does not cover
   `AGENTS.md`") and config key names (`docs.humanDocSet`) ended up in `docs.protectedDocs`. It also

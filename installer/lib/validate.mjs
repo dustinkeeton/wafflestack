@@ -790,8 +790,8 @@ export function listKeyProblems(key, spec, config) {
   if (spec?.listFormat !== undefined) {
     if (!LIST_FORMATS.includes(spec.listFormat)) {
       problems.push(`\`listFormat\` must be one of: ${LIST_FORMATS.join(', ')}`);
-    } else if (spec.default !== undefined && !(Array.isArray(spec.default) && spec.default.every((x) => typeof x === 'string' && !/[`\r\n]/.test(x)))) {
-      problems.push('declares `listFormat` but its default is not a list of one-line, backtick-free strings');
+    } else if (spec.default !== undefined && !(Array.isArray(spec.default) && spec.default.every((x) => typeof x === 'string' && x.trim() !== '' && !/[`\r\n]/.test(x)))) {
+      problems.push('declares `listFormat` but its default is not a list of non-empty, one-line, backtick-free strings');
     }
   }
   const gate = spec?.omitWhenEmpty;

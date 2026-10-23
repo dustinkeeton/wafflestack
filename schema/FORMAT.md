@@ -125,8 +125,8 @@ substitution — and the same toolkit-wide union: a leaf guarded by two stacks m
 ### List keys — `listFormat:`, `omitWhenEmpty:`
 
 A **list-valued** key may declare **`listFormat: code-bullets`**: its value renders as one
-`` - `entry` `` line per entry instead of the default `, ` join. Every entry must be a one-line
-string with no backticks, or the render fails. A **composed** key (a prose section built around
+`` - `entry` `` line per entry instead of the default `, ` join. Every entry must be a non-empty,
+one-line string with no backticks, or the render fails. A **composed** key (a prose section built around
 a list) may declare **`omitWhenEmpty: <key>`**, naming another key in the same stack: while that
 key resolves to `[]`, `""`, or null, the composed key renders as `""` — no orphan heading, and no
 template conditional. `docs.protectedDocs` + `docs.protectedDocsSection` are the worked example:

@@ -45,6 +45,14 @@ describe('list keys: listFormat + omitWhenEmpty (#612)', () => {
     assert.match(render({ demo: { paths: ['a`b'] } }).errors.join('\n'), /no backticks/);
   });
 
+  for (const blank of ['', '   ']) {
+    test(`a blank entry ${JSON.stringify(blank)} fails instead of rendering an empty code span (#649)`, () => {
+      const errors = render({ demo: { paths: ['A.md', blank] } }).errors.join('\n');
+      assert.match(errors, /must be a non-empty, one-line string with no backticks/);
+      assert.ok(errors.includes(JSON.stringify(blank)), errors);
+    });
+  }
+
   test('the resolver hands state/setup callers the raw list', () => {
     assert.deepEqual(makeResolver(stack, {}, 'claude')('demo.paths'), ['A.md', 'b/**']);
   });
@@ -54,6 +62,9 @@ describe('list keys: listFormat + omitWhenEmpty (#612)', () => {
     assert.deepEqual(listKeyProblems('demo.section', stack.config['demo.section'], stack.config), []);
     assert.match(listKeyProblems('k', { listFormat: 'csv' }, {})[0], /must be one of: code-bullets/);
     assert.match(listKeyProblems('k', { listFormat: 'code-bullets', default: 'A.md' }, {})[0], /default is not a list/);
+    for (const blank of ['', '  ']) {
+      assert.match(listKeyProblems('k', { listFormat: 'code-bullets', default: ['A.md', blank] }, {})[0], /default is not a list of non-empty/);
+    }
     assert.match(listKeyProblems('k', { omitWhenEmpty: 'k' }, {})[0], /must name another config key/);
     assert.match(listKeyProblems('k', { omitWhenEmpty: 'nope' }, {})[0], /names nope, which this stack does not declare/);
   });
