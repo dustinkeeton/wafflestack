@@ -8,8 +8,8 @@ import { renderProject, renderItemInMemory, failingConfigFor } from '../lib/rend
 import { loadToolkit } from '../lib/toolkit.mjs';
 import { loadProjectConfig } from '../lib/project.mjs';
 import { doctor } from '../lib/doctor.mjs';
-import { rangeKeyProblems, stackConstraintProblems } from '../lib/validate.mjs';
-import { rangeProblem, toRangeNumber, constraintProblems } from '../lib/template.mjs';
+import { rangeKeyProblems, stackConstraintProblems, validateStack } from '../lib/validate.mjs';
+import { rangeProblem, toRangeNumber, constraintProblems, substitute } from '../lib/template.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
@@ -82,6 +82,16 @@ describe('pr-response rubric thresholds — render and doctor (#630)', () => {
     assert.equal(render(['implement: "10.5"']).ok, true);
   });
 
+  test('the reply example keeps its default-cutoff footer; the configured footer sits outside the fence', () => {
+    assert.equal(render(['implement: 9', 'decline: 3']).ok, true);
+    const text = md();
+    const fence = text.slice(text.indexOf('### Reply format'), text.indexOf('Never copy a verdict'));
+    const [, example, after] = fence.split(/```(?:markdown)?\n/);
+    assert.ok(example.includes('F3 — Defer (9)') && example.includes('≥11 Implement · >4 and <11 Defer · ≤4 Decline'));
+    assert.ok(!example.includes('≥9 Implement'));
+    assert.ok(after.includes('≥9 Implement · >3 and <9 Defer · ≤3 Decline'));
+  });
+
   test('adjacent cutoffs pass: lessThan allows an empty integer Defer band', () => {
     const r = render(['implement: 11', 'decline: 10']);
     assert.equal(r.ok, true, JSON.stringify(r.errors));
@@ -134,6 +144,24 @@ describe('range: and constraints: — the guard helpers and their lint (#630)', 
     assert.match(rangeKeyProblems({ range: { min: 5, max: 1 } })[0], /greater than/);
     assert.match(rangeKeyProblems({ range: { min: 0 }, pattern: '\\d+' })[0], /both `range` and `pattern`/);
     assert.match(rangeKeyProblems({ default: 20, range: { max: 15 } })[0], /default 20 is 20, outside/);
+  });
+
+  test('validateStack runs both lints', () => {
+    const stack = {
+      name: 'demo', description: 'd', agents: [], skills: [], files: [], mods: [], optIn: [],
+      config: { a: { default: 1, range: { min: 5, max: 1 } }, b: { default: 2, range: { min: 0 } } },
+      constraints: [{ kind: 'lessThan', keys: ['a', 'a'] }],
+    };
+    const problems = validateStack({ stacks: [stack] }, stack);
+    assert.ok(problems.includes('stack demo: config key a `range.min` is greater than `range.max`'), JSON.stringify(problems));
+    assert.ok(problems.some((p) => /constraints\[0\] \(lessThan\) `keys` must name two distinct/.test(p)), JSON.stringify(problems));
+  });
+
+  test('a range key nested inside another config value is still guarded', () => {
+    const errors = [];
+    const vals = { outer: 'x {{k}}', k: 16 };
+    substitute('{{outer}}', (k) => vals[k], new Set(['outer', 'k']), errors, 'ctx', guards);
+    assert.deepEqual(errors, ['ctx: config value for {{k}} is 16, outside its declared range [0, 15] (declared by stack "demo")']);
   });
 
   test('stackConstraintProblems lints kind, keys, and the defaults', () => {
