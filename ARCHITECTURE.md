@@ -393,6 +393,22 @@ off token (`-qa`, `-review`, `-audit`). See
 [DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12)
 and [the #626 entry](DECISIONS.md#2026-10-22-config-may-turn-autopilots-gates-off-never-on-626).
 
+**Some keys hold a list, and a section can disappear when its list is empty (#612).** Two
+generic key-spec fields handle list-shaped content without a template conditional:
+
+| Field | Goes on | Effect |
+|-------|---------|--------|
+| `listFormat: code-bullets` | A list-valued key | Renders one `` - `entry` `` line per entry instead of the default `, ` join (so a glob like `.waffle/**` isn't read as bold markdown) |
+| `omitWhenEmpty: <key>` | A composed prose key | Renders `""` while the named key is `[]`, empty, or null — no orphan heading |
+
+The worked example is the docs guardrail. `docs.protectedDocs` lists the paths docs passes must
+flag rather than rewrite, and `docs.protectedDocsSection` wraps it in a "Protected docs" section
+in both doc writers (docs-agent and docs-human). An override replaces the default list; `[]`
+removes the section. It replaces the prose key `docs.voiceGuardrailSection`. Setting that old
+key now fails `render` with the replacement named, and `upgrade` runs migration `0.18.0` to
+convert a committed value. See [FORMAT, "List keys"](schema/FORMAT.md) and
+[the #612 entry](DECISIONS.md#2026-10-23-protected-docs-are-a-list-and-the-guardrail-is-generated-from-it-612).
+
 ### The installer (render pipeline)
 
 The `wafflestack` CLI lives in `installer/` (plain Node.js ES modules, one
