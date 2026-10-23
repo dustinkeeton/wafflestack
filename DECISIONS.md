@@ -721,7 +721,7 @@ consumer who follows the documented gitignore advice gets a green `doctor` with 
 can drop it; re-render to pick up the updated `/waffle-init` and `/waffle-doctor` skill text. This
 repo keeps the flag for one reason now — the gitignored `waffle-label-hook.yml` — and says so in
 `.waffle/waffle.yaml`. Known gap: `report`'s health line still prints only modified / missing /
-stale-render (`installer/lib/report.mjs:254`); `absentDocs` reaches it only through `notes`.
+stale-render (`installer/lib/report.mjs:257`); `absentDocs` reaches it only through `notes`.
 
 ---
 

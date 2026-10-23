@@ -551,7 +551,7 @@ Test files (19): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
-can-fail fixture, `content.test.mjs:3752`; the #511 block `autopilot skill: the manual-review queue has a service level (#511)` (`content.test.mjs:1201`); and the #445 harness tool allowlist sweep — sources, committed render, temp all-targets render, agent `tools:` frontmatter — with its own can-fail fixtures), `plugins.test.mjs` (#199: `recommendedPlugins:`
+can-fail fixture, `content.test.mjs:3873`; the #511 block `autopilot skill: the manual-review queue has a service level (#511)` (`content.test.mjs:1263`); and the #445 harness tool allowlist sweep — sources, committed render, temp all-targets render, agent `tools:` frontmatter — with its own can-fail fixtures), `plugins.test.mjs` (#199: `recommendedPlugins:`
 normalize/offer/lint over a one-stack fixture),
 `evals.test.mjs` (eval layer 2 harness with the mock model, free inside `npm test`),
 `checkpoint.test.mjs` / `memory.test.mjs` / `identity.test.mjs` (the delegate skill's shipped
@@ -571,7 +571,10 @@ comment lines exempts a small file — plus an 8-line max comment run, typed JSD
 `migrations.test.mjs` (#501: the 0.16.0 overlap migration, overlay never edited, upgrade end-to-end;
 #612: the 0.18.0 `docs.protectedDocs` migration; and the release guard — a bump cannot skip a pending migration), `list-keys.test.mjs` (#612: `listFormat`/`omitWhenEmpty`, retired keys), `config-modes.test.mjs` (#478:
 behavioral-key validate rules, render + doctor guards, locked autopilot consents),
-`report.test.mjs` (#473: bundle redaction, CLI surface, scrub/projection helpers),
+`report.test.mjs` (#473: bundle redaction, CLI surface, scrub/projection helpers; #640: line 2 of the
+`<details>` block equals `REPORT_SUMMARY`, and the `report: upstream hold workflow (#640)` suite over
+`consumer-report-hold.yml` — `issues: opened` only, top-level `issues: write` only, one job gated on
+the summary marker, one `gh issue edit` adding both labels, no `${{ }}` in `run:`, fixed `env:`, no `uses:`),
 `sources.test.mjs` (#460: source cache location + checkout verification), `toggle.test.mjs` (#476:
 config normalization, frontmatter patch, fixture render + toggle, CLI).
 
@@ -626,6 +629,10 @@ workflow renders via `npx github:dustinkeeton/wafflestack` (main's toolkit), wro
 repo's own PRs in both directions. Toolkit-local CLI calls in this repo's config prompts
 (`delegate.extraPreflight`, `audit.compliancePrompt`) pass `--allow-unreleased` on `render` for
 the same reason.
+
+`.github/workflows/consumer-report-hold.yml` (#640) is also project-owned — NOT lock-managed, no
+stack renders it: on `issues: opened` it adds `waffle:reassess` + `waffle:consumer-report` to
+issues whose body carries `REPORT_SUMMARY`; pinned by `report.test.mjs`.
 
 ## Protected docs
 
