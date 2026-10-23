@@ -2093,8 +2093,8 @@ config:
       The pr-response rubric's Implement cutoff (#630): a composite AT OR ABOVE it is fixed in the
       PR. Repo policy, not rubric version — the five dimensions and their anchors stay
       toolkit-owned (v3), so moving a threshold needs no version bump. A number in 0–15, and
-      strictly above `prResponse.rubric.thresholds.decline` so the Defer band is never empty;
-      either violation fails render and doctor. Default 11 (v3).
+      strictly above `prResponse.rubric.thresholds.decline`; either violation fails render and
+      doctor. Adjacent integers (10/11) pass and leave no integer composite to Defer. Default 11 (v3).
   prResponse.rubric.thresholds.decline:
     required: false
     default: 4

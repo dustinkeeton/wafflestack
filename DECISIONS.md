@@ -22,7 +22,9 @@ governing the dimensions and anchors, which stay toolkit-owned; the cutoffs are 
 move without a version bump. Two general guards make that safe: a per-key `range: { min, max }`,
 and a stack-level `constraints:` list of closed kinds (only `lessThan` today), checked at render
 and by bare `doctor`. The Defer band is written as "> decline and < implement" so it stays true
-for decimal cutoffs. The issue is split: this is slice 1; weights (#644), the `--rubric` run
+for decimal cutoffs. `lessThan` keeps the bands ordered but does not guarantee a non-empty
+Defer band: 10/11 passes and Defers nothing, an allowed repo choice. A minimum-gap rule would be
+wrong once #644 makes the composite fractional. The issue is split: this is slice 1; weights (#644), the `--rubric` run
 token (#645), and the autopilot pass-through (#646) are sub-issues.
 
 **Alternatives considered**: Keep the `pattern: ^[0-9]+$` string workaround `evals.maxCalls`

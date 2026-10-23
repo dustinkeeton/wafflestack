@@ -417,7 +417,7 @@ closed list — today only `lessThan`, `keys: [a, b]`, meaning `a` must be stric
 both keys must carry a `range:`. A broken range or constraint fails `render` before anything is
 written and shows up in bare `doctor`. The worked example is the pr-response rubric:
 `prResponse.rubric.thresholds.implement` (default 11) and `.decline` (default 4), each 0–15, with
-`decline < implement` so the Defer band between them is never empty. See
+`decline < implement` (adjacent integers pass and leave the Defer band empty). See
 [FORMAT, "Numeric keys"](schema/FORMAT.md) and
 [the #630 entry](DECISIONS.md#2026-10-23-the-pr-response-cutoffs-are-repo-policy-guarded-by-range-and-constraints-630).
 
