@@ -60,6 +60,13 @@ is what you reach for across a breaking one.
   fork that receives reports can copy it.
 
 ### Changed
+- **The `/waffle-report` hold workflow skips maintainer-filed issues (#653).**
+  `consumer-report-hold.yml` no longer holds issues opened by an `OWNER`, `MEMBER`, or
+  `COLLABORATOR`, such as a maintainer follow-up that quotes a report's Context block. Bot accounts
+  outside those roles are still held (#652). `report.test.mjs` now deep-equals the whole parsed
+  workflow, so an added `container:`, `defaults:`, or step fails it. The skill now waits for the
+  server-side hold on any tracker that runs a copy of the workflow, not only the canonical one.
+  **Consumer impact:** skill wording only — re-render. A fork that copied the workflow can re-copy it.
 - **Protected docs are a configurable list (#612).** The prose key `docs.voiceGuardrailSection`
   is removed. Its replacement, `docs.protectedDocs`, is a list of repo paths (globs allowed) that
   docs passes flag instead of rewriting. The guardrail section is generated from that list in
