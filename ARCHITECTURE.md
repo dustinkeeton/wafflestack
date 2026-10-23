@@ -409,6 +409,18 @@ key now fails `render` with the replacement named, and `upgrade` runs migration 
 convert a committed value. See [FORMAT, "List keys"](schema/FORMAT.md) and
 [the #612 entry](DECISIONS.md#2026-10-23-protected-docs-are-a-list-and-the-guardrail-is-generated-from-it-612).
 
+**Some keys hold a number, and two keys can be checked against each other (#630).** A key
+whose value is a number declares `range: { min, max }` (inclusive; either bound optional) in
+place of `pattern:`. The value must be a YAML number or a decimal string, inside the bounds. For
+rules no single key can state, a stack adds a top-level `constraints:` list. Its kinds are a
+closed list — today only `lessThan`, `keys: [a, b]`, meaning `a` must be strictly below `b`, and
+both keys must carry a `range:`. A broken range or constraint fails `render` before anything is
+written and shows up in bare `doctor`. The worked example is the pr-response rubric:
+`prResponse.rubric.thresholds.implement` (default 11) and `.decline` (default 4), each 0–15, with
+`decline < implement` so the Defer band between them is never empty. See
+[FORMAT, "Numeric keys"](schema/FORMAT.md) and
+[the #630 entry](DECISIONS.md#2026-10-23-the-pr-response-cutoffs-are-repo-policy-guarded-by-range-and-constraints-630).
+
 ### The installer (render pipeline)
 
 The `wafflestack` CLI lives in `installer/` (plain Node.js ES modules, one

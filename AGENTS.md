@@ -21,7 +21,7 @@ Entry points: `installer/cli.mjs` (bin `wafflestack`) · `toolkit.yaml` (stack r
 toolkit.yaml               registry: name + ordered stack list
 stacks/registry.yaml       WAFFLE registry (#335): one entry per agent/skill/mod — name, kind, stack, path, status (stable|wip|deprecated|replaced), replacedBy
 stacks/<name>/
-  stack.yaml               manifest: recommended, recommendedPlugins, agents, skills, files, mods, optIn, requires, prerequisites, config, env, setup
+  stack.yaml               manifest: recommended, recommendedPlugins, agents, skills, files, mods, optIn, requires, prerequisites, config, constraints, env, setup
   agents/<name>.md         neutral agent def (YAML frontmatter + body)
   skills/<name>/SKILL.md   neutral skill def (+ supporting files, copied along)
   files/<repo-rel-path>    neutral syrup payload (CI workflow/script/config), rendered verbatim to that path
@@ -456,7 +456,8 @@ registry entry (a plugin has no path, no render, nothing to prune).
   (`rangeKeyProblems`). A stack-level `constraints:` list adds cross-key checks — closed kinds
   (`CONSTRAINT_KINDS`: `lessThan` over two `range:` keys), evaluated by `constraintProblems` on
   resolved values when a selected item uses either key: `renderProject` bails that stack,
-  `configGuardProblems` (bare `doctor`) and `failingConfigFor` (`pattern` bucket) report it;
+  `renderItemInMemory` returns `null`, `configGuardProblems` (bare `doctor`) and
+  `failingConfigFor` (`pattern` bucket) report it;
   `stackConstraintProblems` lints kind, keys, and defaults. First user:
   `prResponse.rubric.thresholds.{implement,decline}` (0–15, `decline < implement`).
 - Behavioral keys (#478) — a key declares a closed `modes:` list (scalars; `prompt` = ask the
@@ -482,7 +483,7 @@ registry entry (a plugin has no path, no render, nothing to prune).
   no leading/trailing whitespace, non-empty (`"` and `:` allowed). A project with no such check
   sets the shell no-op `true`; `true` must never ship as a `default:` (it passes vacuously).
 - Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered item
-  inside `<!-- BEGIN/END project extension -->` markers (`appendExtension`, `render.mjs:750`).
+  inside `<!-- BEGIN/END project extension -->` markers (`appendExtension`, `render.mjs:757`).
   Agents: appended to body; skills: to `SKILL.md` only.
 - Output conflict — two enabled sources emitting the same path is a hard render error
   (`emit`, `render.mjs:310`). Unmanaged-file overwrite guard — a rendered path already on disk
