@@ -3598,11 +3598,12 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(md, /0–3 on five dimensions/, 'v2 scores five dimensions');
     assert.match(md, /the five scores summed, 0–15/, 'v2 composite is 0–15');
     assert.match(md, /\*\*≥ 11\*\* \| \*\*Implement\*\*/);
-    assert.match(md, /\*\*5–10\*\* \| \*\*Defer\*\*/);
+    assert.match(md, /\*\*> 4 and < 11\*\* \| \*\*Defer\*\*/);
     assert.match(md, /\*\*≤ 4\*\* \| \*\*Decline\*\*/);
     assert.match(md, /Reach ≤ 1 and Severity ≤ 1/, 'v3 must scope comment findings in deterministic files');
     assert.match(md, /rubric \*\*v3\*\* \(Severity · Reach · Validity · Effort\/Risk · Alignment/);
-    assert.match(md, /≥11 Implement · 5–10 Defer · ≤4 Decline/, 'the reply footer must carry the v3 thresholds');
+    assert.match(md, /≥11 Implement · >4 and <11 Defer · ≤4 Decline/, 'the reply footer must carry the v3 thresholds');
+    assert.match(md, /prResponse\.rubric\.thresholds\.implement/, '#630: the thresholds are named as repo config');
     assert.doesNotMatch(md, /## Recalibrating the rubric \(v[12]\)/, 'the recalibration section still names a stale version');
     assert.doesNotMatch(md, /recalibrating-the-rubric-v[12]/, 'the in-page anchor still points at a stale heading — a dead link');
   });

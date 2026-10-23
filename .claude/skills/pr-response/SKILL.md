@@ -166,14 +166,17 @@ markdown and user-visible output (CLI messages, generated docs) are behavior; sc
 | Composite | Verdict | Meaning |
 |---|---|---|
 | **≥ 11** | **Implement** | Fix it in this PR, now. |
-| **5–10** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
+| **> 4 and < 11** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
 | **≤ 4** | **Decline** | Do not do it. Say why, once, and move on. |
+
+The two cutoffs are this repo's policy, read from config (`prResponse.rubric.thresholds.implement`
+and `.decline`); the dimensions and anchors above are the rubric version's.
 
 Three rules that override the arithmetic — apply them **explicitly**, never silently:
 
 - **A confirmed blocker on live code is always Implement.** If `Severity = 3`, `Validity = 3` **and
   `Reach ≥ 2`**, implement it even when Effort/Risk drags the composite below the Implement
-  threshold. Note the override
+  threshold (11). Note the override
   in the reason. (v1 omitted the Reach clause, which would have forced a dormant, unreachable bug
   to be fixed on the spot — see the CHANGELOG note for v2.)
 - **A false positive is always Decline.** If `Validity = 0`, decline regardless of Severity — the
@@ -495,7 +498,7 @@ what stitches them together (see step 3 and the resumption rules).
   with a different cleanup contract; `withTempDir` does not unlink on error.
 
 Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
-each; ≥11 Implement · 5–10 Defer · ≤4 Decline).
+each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline).
 
 — posted by the pr-response bot
 ```
@@ -522,8 +525,8 @@ place to change it.
 
 | Symptom | What it means | Adjustment |
 |---|---|---|
-| Deferred/declined findings keep coming back as real bugs | Thresholds too high, or Severity anchors too generous | Lower the Implement threshold, or raise Severity anchors |
-| Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise the Implement threshold, or down-weight Effort/Risk |
+| Deferred/declined findings keep coming back as real bugs | Thresholds too high, or Severity anchors too generous | Lower `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or raise Severity anchors |
+| Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or down-weight Effort/Risk |
 | Everything scores 7–10 and lands on Defer | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
 | Declines are argued down by the author every time | Alignment is being scored by the responder's taste, not repo intent | Re-anchor Alignment on *documented* decisions only |
 | A dimension's score is being argued *around* rather than *with* — a scorer keeps having to distort dimension A to express something A does not measure | The rubric is missing a dimension, and the missing one is whatever the distortion was standing in for | Add it — and bump the version. **This is how v2 happened; see below.** |
@@ -569,7 +572,10 @@ Threshold-layer only — the five dimensions and their anchors are untouched:
   in deterministic files (see the scoring rule above) is #388's doctrine landing where it bites:
   a wording nit on prose no runtime reads cannot compose to an in-PR fix.
 
-**How to change it:** edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
+**How to change it:** the two thresholds are repo policy — set `prResponse.rubric.thresholds.implement`
+/ `.decline` in `.waffle/waffle.yaml` and re-render; that needs no version bump (render refuses a
+value outside 0–15, or a Decline cutoff not below Implement). A change to the dimensions or their
+anchors is a rubric change: edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
 truth; the rendered copies are generated output. Bump the version (`v3` → `v4`) in the rubric
 heading, the reply footer, and here. Note the change and its motivating evidence in the repo's
 `CHANGELOG.md`, because a rubric change silently reinterprets every future verdict — and **old

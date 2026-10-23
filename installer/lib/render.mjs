@@ -7,7 +7,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS } from './template.mjs';
+import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS, constraintProblems } from './template.mjs';
 import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
 import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
@@ -448,6 +448,12 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
       );
       continue;
     }
+    // Cross-key `constraints:` (#630) bail the stack before any item renders, like a missing key.
+    const broken = constraintProblems(stack, primaryResolver, usedKeys);
+    if (broken.length) {
+      errors.push(...broken.map(({ problem }) => `stack "${stackName}": ${problem}`));
+      continue;
+    }
 
     for (const { kind, item } of items) renderItem({ kind, item, stack, resolvers, primaryResolver, project, cwd, emit, errors, guards });
     checkEnvPrerequisites({ stack, project, cwd, warnings });
@@ -580,6 +586,7 @@ export function renderItemInMemory({ toolkit, project, cwd, node, toolkitVersion
   const { resolvers, primaryResolver } = targetResolvers(stack, project, toolkitVersion);
   const used = collectUsedKeys([node]);
   if (missingRequiredKeys(stack, project.values, (_v, key) => primaryResolver(key), used).length) return null;
+  if (constraintProblems(stack, primaryResolver, used).length) return null;
   const outputs = new Map();
   const emit = (rel, content) => outputs.set(rel, content);
   try {
@@ -844,6 +851,7 @@ function compileGuards(toolkit, errors) {
   const entryPatterns = new Map();
   const modes = new Map();
   const listFormats = new Map();
+  const ranges = new Map();
   const add = (key, guard) => {
     const existing = patterns.get(key);
     if (existing) existing.push(guard);
@@ -886,6 +894,12 @@ function compileGuards(toolkit, errors) {
         }
       }
       if (LIST_FORMATS.includes(spec?.listFormat)) listFormats.set(key, spec.listFormat);
+      const range = spec?.range;
+      if (range && typeof range === 'object' && !Array.isArray(range)) {
+        const bound = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+        const guard = { min: bound(range.min), max: bound(range.max), source };
+        ranges.set(key, [...(ranges.get(key) ?? []), guard]);
+      }
       // Behavioral keys (#478): a closed `modes:` list, `lockMode:`, and `configModes:` travel with the key too.
       const modeList = Array.isArray(spec?.modes) && spec.modes.every(isModeScalar) ? spec.modes : null;
       const lockMode = isModeScalar(spec?.lockMode) ? spec.lockMode : undefined;
@@ -898,7 +912,7 @@ function compileGuards(toolkit, errors) {
       }
     }
   }
-  return { patterns, entryPatterns, modes, listFormats };
+  return { patterns, entryPatterns, modes, listFormats, ranges };
 }
 
 /**
@@ -912,14 +926,12 @@ export function configGuardProblems({ toolkit, project, selection }) {
   const guards = compileGuards(toolkit, problems);
   const nodes = selection.items.map(({ stackName, stack, kind, item }) => ({ stack: stackName, stackDef: stack, kind, item }));
   for (const f of guardFailures(toolkit, project, nodes, guards)) problems.push(...f.problems);
+  for (const f of constraintFailures(toolkit, project, nodes)) problems.push(f.problem);
   return problems;
 }
 
-/**
- * Each used, resolved, guarded key whose value fails a guard, once per key: `{ key, stackName, stack,
- * resolve, problems }`. Runs the real `substitute()` on `{{key}}` with the primary-target resolver.
- */
-function* guardFailures(toolkit, project, nodes, guards) {
+/** Group `{ stack, stackDef?, kind, item }` nodes by stack name, dropping unknown stacks. */
+function groupNodes(toolkit, nodes) {
   const groups = new Map();
   for (const n of nodes) {
     const stack = n.stackDef ?? toolkit.stacks.get(n.stack);
@@ -927,13 +939,33 @@ function* guardFailures(toolkit, project, nodes, guards) {
     if (!groups.has(n.stack)) groups.set(n.stack, { stack, items: [] });
     groups.get(n.stack).items.push({ kind: n.kind, item: n.item });
   }
+  return groups;
+}
+
+/** The cross-key `constraints:` (#630) a render of `nodes` would refuse on: `{ keys, problem }` per violation. */
+function* constraintFailures(toolkit, project, nodes) {
+  const target = project.targets?.[0] ?? 'claude';
+  for (const [stackName, { stack, items }] of groupNodes(toolkit, nodes)) {
+    const resolve = makeResolver(stack, project.values, target);
+    for (const f of constraintProblems(stack, resolve, collectUsedKeys(items))) {
+      yield { keys: f.keys, problem: `stack "${stackName}": ${f.problem}` };
+    }
+  }
+}
+
+/**
+ * Each used, resolved, guarded key whose value fails a guard, once per key: `{ key, stackName, stack,
+ * resolve, problems }`. Runs the real `substitute()` on `{{key}}` with the primary-target resolver.
+ */
+function* guardFailures(toolkit, project, nodes, guards) {
+  const groups = groupNodes(toolkit, nodes);
   const reported = new Set();
   const target = project.targets?.[0] ?? 'claude';
   for (const [stackName, { stack, items }] of groups) {
     const resolve = makeResolver(stack, project.values, target);
     for (const key of collectUsedKeys(items)) {
       if (reported.has(key)) continue;
-      if (![guards.patterns, guards.entryPatterns, guards.modes, guards.listFormats].some((m) => m.has(key))) continue;
+      if (![guards.patterns, guards.entryPatterns, guards.modes, guards.listFormats, guards.ranges].some((m) => m.has(key))) continue;
       if (resolve(key) === undefined) continue; // a missing key is missingConfigFor's to report
       const problems = [];
       substitute(`{{${key}}}`, resolve, stack.declared, problems, `stack "${stackName}"`, guards);
@@ -946,7 +978,7 @@ function* guardFailures(toolkit, project, nodes, guards) {
 
 /**
  * Keys a set of items would use whose resolved value fails a guard render enforces (#578), split by
- * guard: `modes` when only the `modes:`/`lockMode:`/`configModes:` check fails, else `pattern`. `config.`-prefixed, sorted.
+ * guard: `modes` when only the `modes:`/`lockMode:`/`configModes:` check fails, else `pattern` (incl. `range:`/`constraints:`). `config.`-prefixed, sorted.
  *
  * @param {import('./toolkit.mjs').Toolkit} toolkit
  * @param {import('./project.mjs').ProjectConfig} project
@@ -963,6 +995,7 @@ export function failingConfigFor(toolkit, project, nodes) {
     substitute(`{{${key}}}`, resolve, stack.declared, rest, `stack "${stackName}"`, unmoded);
     (rest.length ? pattern : modes).add(`config.${key}`);
   }
+  for (const { keys } of constraintFailures(toolkit, project, nodes)) for (const k of keys) pattern.add(`config.${k}`);
   return { pattern: [...pattern].sort(), modes: [...modes].sort() };
 }
 

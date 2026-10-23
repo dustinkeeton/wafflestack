@@ -69,6 +69,7 @@ import { flagPlaceholders } from './template.mjs';
  * @property {ModItem[]} mods
  * @property {Set<string>} optIn normalized `files/<path>` / `mods/<name>` refs gated out of a default render
  * @property {Record<string, any>} config the declared `config:` block (key → spec)
+ * @property {any} constraints the stack-level cross-key `constraints:` list (#630), as authored — validate lints its shape
  * @property {Set<string>} declared the placeholder names content may reference: the keys of `config`
  *   plus each `<key>.flag.<side>` a key's `flag:` map names (#486)
  * @property {Record<string, string>} env legacy harness `env:` map
@@ -99,6 +100,7 @@ import { flagPlaceholders } from './template.mjs';
  * @property {string[]} [mods] bare mod names (directories under `mods/`)
  * @property {string[]} [optIn] item refs gated out of a default render
  * @property {Record<string, any>} [config] declared template keys (key → spec)
+ * @property {unknown} [constraints] cross-key value constraints (#630); `validate` lints the shape
  * @property {Record<string, string>} [env] legacy harness env map
  * @property {any} [prerequisites] normalized by `normalizePrerequisites`
  * @property {Record<string, string[]>} [requires] item ref → dependency refs
@@ -375,6 +377,7 @@ function loadStack(name, dir) {
     mods,
     optIn,
     config,
+    constraints: manifest.constraints ?? [],
     declared,
     // Legacy `env:` map (#129) — subsumed by the typed `prerequisites:` below; a stack may use
     // either or both.

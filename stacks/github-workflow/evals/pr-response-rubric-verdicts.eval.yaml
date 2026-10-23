@@ -121,4 +121,4 @@ dryRunResponse: |
     exceptions. There is no leak. Declining on correctness, not on cost.
 
   Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
-  each; ≥11 Implement · 5–10 Defer · ≤4 Decline).
+  each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline).

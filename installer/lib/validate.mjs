@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches, LIST_FORMATS } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches, LIST_FORMATS, CONSTRAINT_KINDS, toRangeNumber, rangeProblem } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { spawnSync } from 'node:child_process';
 import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
@@ -681,7 +681,9 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       }
       for (const problem of behavioralKeyProblems(spec)) problems.push(`${ctx}: config key ${key} ${problem}`);
       for (const problem of listKeyProblems(key, spec, stack.config)) problems.push(`${ctx}: config key ${key} ${problem}`);
+      for (const problem of rangeKeyProblems(spec)) problems.push(`${ctx}: config key ${key} ${problem}`);
     }
+    for (const problem of stackConstraintProblems(stack)) problems.push(`${ctx}: ${problem}`);
 
     for (const skill of stack.skills) {
       const { data } = skill;
@@ -729,6 +731,56 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       if (!usedKeys.has(key) && !defaultRefs.has(key)) problems.push(`${ctx}: declared config key ${key} is never referenced`);
     }
   }
+  return problems;
+}
+
+const RANGE_BOUNDS = ['min', 'max'];
+
+/** Lint the `range:` field of one `config:` spec (#630): inclusive numeric bounds, and a numeric default inside them. */
+export function rangeKeyProblems(spec) {
+  if (spec?.range === undefined) return [];
+  const { range } = spec;
+  if (!isPlainObject(range) || !Object.keys(range).length || Object.keys(range).some((k) => !RANGE_BOUNDS.includes(k))) {
+    return ['`range` must be a map of `min` and/or `max`'];
+  }
+  const problems = [];
+  for (const b of RANGE_BOUNDS) {
+    if (range[b] !== undefined && !(typeof range[b] === 'number' && Number.isFinite(range[b]))) problems.push(`\`range.${b}\` must be a number`);
+  }
+  if (problems.length) return problems;
+  if (range.min !== undefined && range.max !== undefined && range.min > range.max) problems.push('`range.min` is greater than `range.max`');
+  const rival = ['pattern', 'entryPatterns', 'modes', 'listFormat'].find((f) => spec[f] !== undefined);
+  if (rival) problems.push(`declares both \`range\` and \`${rival}\` — a numeric key needs only its range`);
+  const literal = spec.default !== undefined && !(typeof spec.default === 'string' && spec.default.includes('{{'));
+  const bad = literal && rangeProblem({ ranges: new Map([['k', [{ ...range, source: 'its own range' }]]]) }, 'k', spec.default);
+  if (bad) problems.push(`default ${JSON.stringify(spec.default)} ${bad}`);
+  return problems;
+}
+
+/** Lint a stack's `constraints:` list (#630): a closed `kind`, two distinct `range:`-declaring keys, defaults that satisfy it. */
+export function stackConstraintProblems(stack) {
+  const list = stack.constraints;
+  if (!Array.isArray(list)) return ['`constraints` must be a list'];
+  const problems = [];
+  list.forEach((c, i) => {
+    const label = `constraints[${i}]`;
+    if (!isPlainObject(c) || !CONSTRAINT_KINDS.includes(c.kind)) {
+      problems.push(`${label} must be a map whose \`kind\` is one of: ${CONSTRAINT_KINDS.join(', ')}`);
+      return;
+    }
+    const keys = c.keys;
+    if (!Array.isArray(keys) || keys.length !== 2 || keys[0] === keys[1] || !keys.every((k) => typeof k === 'string')) {
+      problems.push(`${label} (${c.kind}) \`keys\` must name two distinct config keys`);
+      return;
+    }
+    const undeclaredOrUnranged = keys.filter((k) => stack.config?.[k]?.range === undefined);
+    if (undeclaredOrUnranged.length) {
+      problems.push(`${label} (${c.kind}) names ${undeclaredOrUnranged.join(', ')}, which this stack does not declare with a \`range\``);
+      return;
+    }
+    const [a, b] = keys.map((k) => toRangeNumber(stack.config[k].default));
+    if (a !== null && b !== null && !(a < b)) problems.push(`${label} (${c.kind}) is violated by the defaults: ${keys[0]} ${a} is not less than ${keys[1]} ${b}`);
+  });
   return problems;
 }
 

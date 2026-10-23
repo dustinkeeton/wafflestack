@@ -25,7 +25,7 @@ export function substitute(text, resolve, declared, errors, context, guards) {
       errors.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
-    const typeProblem = scalarTypeProblem(guards, key, v) ?? listFormatProblem(guards, key, v);
+    const typeProblem = scalarTypeProblem(guards, key, v) ?? listFormatProblem(guards, key, v) ?? rangeProblem(guards, key, v);
     if (typeProblem) {
       errors.push(`${context}: config value for {{${key}}} ${typeProblem}`);
       return match;
@@ -204,7 +204,7 @@ function expandNested(text, resolve, depth, guards, errors, context) {
       errors?.push(...entryProblems.map((p) => `${context}: config value for {{${key}}} ${p}`));
       return match;
     }
-    const typeProblem = scalarTypeProblem(guards, key, v) ?? listFormatProblem(guards, key, v);
+    const typeProblem = scalarTypeProblem(guards, key, v) ?? listFormatProblem(guards, key, v) ?? rangeProblem(guards, key, v);
     if (typeProblem) {
       errors?.push(`${context}: config value for {{${key}}} ${typeProblem}`);
       return match;
@@ -222,6 +222,51 @@ function expandNested(text, resolve, depth, guards, errors, context) {
     }
     return value;
   });
+}
+
+/** A `range:` value as a number: a finite YAML number, or a string spelling a decimal; else null (#630). */
+export function toRangeNumber(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  return typeof v === 'string' && /^-?\d+(?:\.\d+)?$/.test(v) ? Number(v) : null;
+}
+
+const describeRange = ({ min, max }) => `[${min ?? '-∞'}, ${max ?? '∞'}]`;
+
+/** Check a RAW value against the key's declared `range:` guards (inclusive bounds); first problem, or null. */
+export function rangeProblem(guards, key, v) {
+  const gs = guards?.ranges?.get(key);
+  if (!gs) return null;
+  const n = toRangeNumber(v);
+  if (n === null) return `must be a number (the key declares range: ${describeRange(gs[0])})`;
+  const bad = gs.find((g) => (g.min !== undefined && n < g.min) || (g.max !== undefined && n > g.max));
+  return bad ? `is ${n}, outside its declared range ${describeRange(bad)} (declared by ${bad.source})` : null;
+}
+
+/** The closed set of stack-level `constraints:` kinds (#630). */
+export const CONSTRAINT_KINDS = ['lessThan'];
+
+/**
+ * A stack's cross-key `constraints:` checked on resolved values; only constraints touching a key in
+ * `usedKeys` (when given) run. A non-numeric value is skipped — the `range:` guard reports it.
+ *
+ * @param {{ name: string, constraints?: any }} stack
+ * @param {(key: string) => any} resolve
+ * @param {Set<string> | null} [usedKeys]
+ * @returns {{ keys: string[], problem: string }[]}
+ */
+export function constraintProblems(stack, resolve, usedKeys = null) {
+  const out = [];
+  for (const c of Array.isArray(stack.constraints) ? stack.constraints : []) {
+    if (c?.kind !== 'lessThan' || !Array.isArray(c.keys) || c.keys.length !== 2) continue;
+    if (usedKeys && !c.keys.some((k) => usedKeys.has(k))) continue;
+    const [a, b] = c.keys.map((k) => toRangeNumber(resolve(k)));
+    if (a === null || b === null || a < b) continue;
+    out.push({
+      keys: c.keys,
+      problem: `config ${c.keys[0]} (${a}) must be less than ${c.keys[1]} (${b}) — a lessThan constraint declared by stack "${stack.name}"`,
+    });
+  }
+  return out;
 }
 
 /** The `listFormat:` values a config key may declare (#612); a key without one joins a string list with `, `. */
