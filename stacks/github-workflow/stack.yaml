@@ -2085,6 +2085,24 @@ config:
       `--yes` skips it — the token the autopilot and delegate loops pass. A non-interactive caller
       (the pr-response hook, an orchestrator's responder agent) skips the gate
       (`nonInteractive: false`), as it always has.
+  prResponse.rubric.thresholds.implement:
+    required: false
+    default: 11
+    range: { min: 0, max: 15 }
+    description: >-
+      The pr-response rubric's Implement cutoff (#630): a composite AT OR ABOVE it is fixed in the
+      PR. Repo policy, not rubric version — the five dimensions and their anchors stay
+      toolkit-owned (v3), so moving a threshold needs no version bump. A number in 0–15, and
+      strictly above `prResponse.rubric.thresholds.decline`; either violation fails render and
+      doctor. Adjacent integers (10/11) pass and leave no integer composite to Defer. Default 11 (v3).
+  prResponse.rubric.thresholds.decline:
+    required: false
+    default: 4
+    range: { min: 0, max: 15 }
+    description: >-
+      The pr-response rubric's Decline cutoff (#630): a composite AT OR BELOW it is declined;
+      Defer is the band strictly between this and the Implement threshold. A number in 0–15,
+      strictly below `prResponse.rubric.thresholds.implement`. Default 4 (v3).
   cleanUp.confirmGate:
     required: false
     default: true
@@ -2164,3 +2182,6 @@ config:
       at your project's own version locations. Consumed by the skill (an agent edits each
       file), not spliced into any workflow, so it needs no injection pattern. Empty by default:
       no extra files to touch.
+constraints:
+  - kind: lessThan
+    keys: [prResponse.rubric.thresholds.decline, prResponse.rubric.thresholds.implement]

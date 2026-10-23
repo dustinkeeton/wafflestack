@@ -73,6 +73,14 @@ config:                              # template keys this stack may reference
     flag: { on: "--confirm", off: "--yes" }   # invocation tokens that override the resolved mode
     nonInteractive: false            # what a CI/agent caller gets in `prompt` mode (a mode, or fail)
     description: Whether /issue pauses at the plan gate before mutating.
+  review.implementAt:                # a NUMERIC key
+    required: false
+    default: 11
+    range: { min: 0, max: 15 }       # inclusive bounds; either side optional
+    description: Composite at or above which a finding is implemented.
+constraints:                         # optional: cross-key checks over `range:` keys
+  - kind: lessThan                   # closed kinds; lessThan = keys[0] < keys[1]
+    keys: [review.declineAt, review.implementAt]
 env:                                 # env vars the stack's content depends on
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 prerequisites:                       # optional: typed external prerequisites, checked by doctor
@@ -125,6 +133,20 @@ template conditional. `docs.protectedDocs` + `docs.protectedDocsSection` are the
 consumers override the list, and `[]` renders no guardrail section. `validate` checks that the
 format is known, that a `listFormat:` default is such a list, and that the gate key is declared.
 A key referenced only inside another key's string default counts as referenced.
+
+### Numeric keys — `range:`, `constraints:`
+
+A key whose value is a number declares **`range: { min, max }`** (inclusive; either bound may be
+omitted). The value must be a YAML number or a string spelling a decimal (`"10.5"`), inside the
+bounds, or the render fails. `range:` replaces `pattern:` for such a key — declaring both (or
+`modes:`, `entryPatterns:`, `listFormat:`) is a `validate` error, as is a default outside the range.
+
+A stack may add top-level **`constraints:`** — cross-key rules no single key can state. The kinds
+are a closed list; today only **`lessThan`**, `keys: [a, b]`, meaning the value of `a` must be
+strictly below `b`. Both keys must be declared with a `range:` in the same stack, and the defaults
+must satisfy the rule. A constraint is checked when a selected item uses either key; a violation
+fails `render` before anything is written and is reported by bare `doctor`. The pr-response
+rubric's `prResponse.rubric.thresholds.{implement,decline}` (#630) is the worked example.
 
 ### Behavioral keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:`
 

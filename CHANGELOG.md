@@ -39,6 +39,17 @@ is what you reach for across a breaking one.
   `waffle.yaml` skips that gate without asking. Config `true` is still rejected, and contradictory
   tokens for one gate stop the run. `autopilot.autoMerge` is unchanged (`lockMode: prompt`).
   **Consumer impact:** additive — re-render. The three gate keys now also accept `false` in config.
+- **The pr-response rubric's cutoffs are config (#630, slice 1).** `prResponse.rubric.thresholds.implement`
+  (default 11) and `prResponse.rubric.thresholds.decline` (default 4) now render the composite
+  table, the reply footer, and the blocker-override reference. They are repo policy: moving one
+  needs no rubric version bump. Two new manifest fields guard them (see FORMAT, "Numeric keys"):
+  a per-key `range: { min, max }`, and a stack-level `constraints:` list whose one kind,
+  `lessThan`, keeps Decline below Implement. Out-of-range, non-numeric, or inverted values fail
+  `render` and bare `doctor`. The Defer band now reads "> 4 and < 11" instead of "5–10", so it stays
+  correct for any cutoff. Weights (#644), a per-run `--rubric` token (#645), and autopilot
+  pass-through (#646) follow.
+  **Consumer impact:** additive — re-render. With no config the rubric scores as before; only the
+  Defer band and footer wording change.
 
 ### Changed
 - **Protected docs are a configurable list (#612).** The prose key `docs.voiceGuardrailSection`
