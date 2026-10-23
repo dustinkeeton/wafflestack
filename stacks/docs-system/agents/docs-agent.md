@@ -28,4 +28,6 @@ Your docs should answer these questions for any agent:
 
 Follow the `docs-agent` skill for the file set and format rules, and the `accurate` skill for verification discipline — every claim traceable to a file you actually read, omission over invention, no hedging as cover — before stating any fact; follow the `{{docs.architectureSkill}}` skill for the conventions you are documenting. When committing doc changes, follow the `git-workflow` skill if the project has one.
 
+{{docs.protectedDocsSection}}
+
 {{docs.privacySection}}

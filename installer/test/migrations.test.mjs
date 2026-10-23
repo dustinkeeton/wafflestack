@@ -238,6 +238,8 @@ describe(`${STEP_VERSION} migration: include:/eject: overlaps are dropped on upg
       const logs = [];
       const result = upgrade({
         toolkitRoot: root, cwd, toolkitVersion: '0.15.0', toolkitIdentity: identity('unreleased'), log: (m) => logs.push(m),
+        // Scoped to the step under test: later pending steps would otherwise run too.
+        migrations: MIGRATIONS.filter((m) => compareVersions(m.version, STEP_VERSION) <= 0),
       });
       assert.equal(result.status, 'current');
       assert.deepEqual(result.migrationsRun.map((m) => m.version), [STEP_VERSION]);
@@ -268,6 +270,85 @@ describe(`${STEP_VERSION} migration: include:/eject: overlaps are dropped on upg
     assert.deepEqual(config().eject, ['skills/git']);
     assert.match(read(cwd, CONFIG), /# why gpm/);
     assert.match(read(cwd, CONFIG), /# pinned/);
+  });
+});
+
+describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#612)', () => {
+  let cwd;
+  beforeEach(() => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-mig612-'));
+  });
+  afterEach(() => fs.rmSync(cwd, { recursive: true, force: true }));
+
+  const step = MIGRATIONS.find((m) => m.version === '0.18.0');
+  const run = () => {
+    const logs = [];
+    step.run(cwd, { log: (m) => logs.push(m) });
+    return logs;
+  };
+  const docs = () => YAML.parse(read(cwd, CONFIG)).config.docs;
+  const withGuardrail = (value) =>
+    `# mine\ntargets: [claude]\nstacks: [docs-system]\nconfig:\n  docs:\n    voiceGuardrailSection: ${value}\n    humanDocSet: H # keep\n`;
+
+  test('the step is registered in the (0.17.x, 0.18.0] window', () => {
+    assert.ok(step);
+    assert.deepEqual(applicableMigrations('0.17.2', '0.18.0').map((s) => s.version), ['0.18.0']);
+  });
+
+  test('an empty guardrail becomes protectedDocs: []; idempotent; comments kept', () => {
+    write(cwd, CONFIG, withGuardrail('""'));
+    assert.equal(run().length, 1);
+    assert.deepEqual(docs(), { humanDocSet: 'H', protectedDocs: [] });
+    const text = read(cwd, CONFIG);
+    assert.match(text, /# mine/);
+    assert.match(text, /# keep/);
+    assert.deepEqual(run(), []);
+    assert.equal(read(cwd, CONFIG), text);
+  });
+
+  test('backticked paths in custom prose become the list, with a review note', () => {
+    write(cwd, CONFIG, withGuardrail('"## Mine\\n\\n`README.md` and `schema/FORMAT.md` (`do not touch`), `LICENSE`, `.waffle/**`."'));
+    const logs = run();
+    assert.deepEqual(docs().protectedDocs, ['README.md', 'schema/FORMAT.md', 'LICENSE', '.waffle/**']);
+    assert.equal('voiceGuardrailSection' in docs(), false);
+    assert.ok(logs.some((l) => /review it: custom wording is not carried/.test(l)), logs.join('\n'));
+  });
+
+  test('prose that names no paths is left alone and reported', () => {
+    write(cwd, CONFIG, withGuardrail('"Be careful with the handbook."'));
+    const before = read(cwd, CONFIG);
+    const logs = run();
+    assert.equal(read(cwd, CONFIG), before);
+    assert.match(logs.join('\n'), /NOT migrated — .*names no backticked paths/);
+  });
+
+  test('an already-set protectedDocs wins; the old key is just dropped', () => {
+    write(cwd, CONFIG, 'config:\n  docs:\n    protectedDocs: [A.md]\n    voiceGuardrailSection: "`B.md`"\n');
+    run();
+    assert.deepEqual(docs(), { protectedDocs: ['A.md'] });
+  });
+
+  test('the local overlay is never edited, only reported', () => {
+    write(cwd, CONFIG, 'targets: [claude]\nstacks: [docs-system]\nconfig: {}\n');
+    const overlay = 'config:\n  docs:\n    voiceGuardrailSection: "`X.md`"\n';
+    write(cwd, OVERLAY, overlay);
+    const logs = run();
+    assert.equal(read(cwd, OVERLAY), overlay);
+    assert.match(logs.join('\n'), /NOT migrated — \.waffle\/waffle\.local\.yaml sets docs\.voiceGuardrailSection/);
+  });
+
+  test('upgrade end-to-end: the retired key migrates and the render is clean', () => {
+    const base = 'targets: [claude]\nstacks: [docs-system]\nconfig:\n  project:\n    name: Fx\n    longName: the Fx project\n';
+    write(cwd, CONFIG, base);
+    assert.equal(renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.17.2' }).ok, true);
+    write(cwd, CONFIG, `${base}  docs:\n    voiceGuardrailSection: "\`HANDBOOK.md\` only"\n`);
+    assert.equal(renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.17.2' }).ok, false, 'the old key fails the render');
+
+    const result = upgrade({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.18.0' });
+    assert.equal(result.ok, true, JSON.stringify(result.render?.errors ?? result.doctor));
+    assert.deepEqual(result.migrationsRun.map((m) => m.version), ['0.18.0']);
+    assert.deepEqual(docs(), { protectedDocs: ['HANDBOOK.md'] });
+    assert.match(read(cwd, '.claude/agents/docs-human.md'), /^- `HANDBOOK\.md`$/m);
   });
 });
 

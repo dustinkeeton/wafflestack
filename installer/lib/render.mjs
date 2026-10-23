@@ -7,7 +7,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys, makeGuard, isModeScalar } from './template.mjs';
+import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS } from './template.mjs';
 import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
 import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
@@ -30,6 +30,7 @@ import { applyModelInvocation, overrideFor } from './model-invocation.mjs';
 import {
   loadProjectConfig,
   makeResolver,
+  retiredConfigProblems,
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   gitignoreMentions,
@@ -319,7 +320,7 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
 
   const enabledStacks = [...project.stacks, ...(project.externalStacks ?? []).map((s) => s.name)];
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
-  errors.push(...selection.errors);
+  errors.push(...selection.errors, ...retiredConfigProblems(project.values));
 
   // The pour the warnings below suggest crosses a trust boundary when the syrup is external.
   const externalNote = (stackName) => {
@@ -842,6 +843,7 @@ function compileGuards(toolkit, errors) {
   const patterns = new Map();
   const entryPatterns = new Map();
   const modes = new Map();
+  const listFormats = new Map();
   const add = (key, guard) => {
     const existing = patterns.get(key);
     if (existing) existing.push(guard);
@@ -883,6 +885,7 @@ function compileGuards(toolkit, errors) {
           errors.push(`stack "${stackName}" config key ${key} has an invalid entryPattern for ${leaf}: ${err.message}`);
         }
       }
+      if (LIST_FORMATS.includes(spec?.listFormat)) listFormats.set(key, spec.listFormat);
       // Behavioral keys (#478): a closed `modes:` list, `lockMode:`, and `configModes:` travel with the key too.
       const modeList = Array.isArray(spec?.modes) && spec.modes.every(isModeScalar) ? spec.modes : null;
       const lockMode = isModeScalar(spec?.lockMode) ? spec.lockMode : undefined;
@@ -895,7 +898,7 @@ function compileGuards(toolkit, errors) {
       }
     }
   }
-  return { patterns, entryPatterns, modes };
+  return { patterns, entryPatterns, modes, listFormats };
 }
 
 /**
@@ -930,7 +933,7 @@ function* guardFailures(toolkit, project, nodes, guards) {
     const resolve = makeResolver(stack, project.values, target);
     for (const key of collectUsedKeys(items)) {
       if (reported.has(key)) continue;
-      if (!guards.patterns.has(key) && !guards.entryPatterns.has(key) && !guards.modes.has(key)) continue;
+      if (![guards.patterns, guards.entryPatterns, guards.modes, guards.listFormats].some((m) => m.has(key))) continue;
       if (resolve(key) === undefined) continue; // a missing key is missingConfigFor's to report
       const problems = [];
       substitute(`{{${key}}}`, resolve, stack.declared, problems, `stack "${stackName}"`, guards);

@@ -24,6 +24,6 @@ Follow the `docs-human` skill for the file set and format rules, the `prose` ski
 
 **Your specifics come from a source, never from memory.** Every path, count, number, and status you state is read off the machine docs or a file you actually opened — never invented. Where the source doesn't carry the fact, omit it rather than guess: a gap is honest, a plausible-sounding number is a defect. This is provenance, not a verification protocol — the machine docs you derive from were already verified, and the specifics `prose` asks you to reach for are exactly the claims that are easiest to invent.
 
-{{docs.voiceGuardrailSection}}
+{{docs.protectedDocsSection}}
 
 {{docs.privacySection}}

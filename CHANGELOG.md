@@ -41,6 +41,20 @@ is what you reach for across a breaking one.
   **Consumer impact:** additive — re-render. The three gate keys now also accept `false` in config.
 
 ### Changed
+- **Protected docs are a configurable list (#612).** The prose key `docs.voiceGuardrailSection`
+  is removed. Its replacement, `docs.protectedDocs`, is a list of repo paths (globs allowed) that
+  docs passes flag instead of rewriting. The guardrail section is generated from that list in
+  neutral wording and now also renders into docs-agent. The default is the #472 list. An override
+  replaces it, and `[]` renders no section. The "owner-voiced" wording is gone from every stack.
+  Two new key-spec fields make this work without template conditionals: `listFormat: code-bullets`
+  and `omitWhenEmpty: <key>` (see FORMAT, "List keys"). In this repo the list is `CHANGELOG.md`
+  and `.waffle/**`, so README and the `schema/` docs are now normal docs-pass targets.
+  **Consumer impact:** breaking for anyone who set `docs.voiceGuardrailSection`: `render` now fails
+  and names the replacement. `wafflestack upgrade` runs migration `0.18.0` on the committed
+  `.waffle/waffle.yaml`. An empty value becomes `protectedDocs: []`. Backticked paths in custom
+  prose become the list, and your wording is not carried over, so review it. Prose that names no
+  backticked paths, and any value in `waffle.local.yaml`, are reported but not edited. Without an
+  override, just re-render: the section heading and wording change, and the paths do not.
 - **`/waffle-report` files consumer reports on hold, labeled by provenance (#609).** Every report
   it files upstream now carries `waffle:reassess` (so delegate, autopilot, and the label-hook
   implement path skip it until the maintainer reconfirms) and the new `waffle:consumer-report`

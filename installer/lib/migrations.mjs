@@ -53,7 +53,57 @@ export const MIGRATIONS = [
       dropIncludeEjectOverlaps(cwd, log);
     },
   },
+  {
+    version: '0.18.0',
+    description: 'replace the prose `docs.voiceGuardrailSection` with the `docs.protectedDocs` path list in .waffle/waffle.yaml (#612)',
+    run(cwd, { log = () => {} } = {}) {
+      migrateProtectedDocs(cwd, log);
+    },
+  },
 ];
+
+const OLD_GUARDRAIL = ['config', 'docs', 'voiceGuardrailSection'];
+const PROTECTED_DOCS = ['config', 'docs', 'protectedDocs'];
+
+/** Backticked, path-shaped tokens in the retired prose, in order and deduped: the list it named. */
+export function protectedPathsFromProse(text) {
+  const paths = [...String(text).matchAll(/`([^`\s]+)`/g)].map((m) => m[1]).filter((t) => /^[\w.*/-]+$/.test(t) && /[./]|^[A-Z_]+$/.test(t));
+  return [...new Set(paths)];
+}
+
+/** The 0.18.0 step (#612): COMMITTED config only, like 0.16.0; an overlay still setting the key is reported. */
+function migrateProtectedDocs(cwd, log) {
+  const { file } = resolveConfigFile(cwd);
+  if (exists(file)) {
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (!doc.errors?.length && doc.hasIn(OLD_GUARDRAIL)) migrateGuardrailIn(doc, file, log);
+  }
+  const overlay = readOverlay(cwd);
+  if (overlay?.config?.docs?.voiceGuardrailSection !== undefined) {
+    log(`  NOT migrated — ${LOCAL_CONFIG_FILE} sets docs.voiceGuardrailSection, and \`upgrade\` never edits it: replace it with \`docs.protectedDocs\` by hand`);
+  }
+}
+
+function migrateGuardrailIn(doc, file, log) {
+  const old = doc.getIn(OLD_GUARDRAIL);
+  const drop = (why) => {
+    doc.deleteIn(OLD_GUARDRAIL);
+    fs.writeFileSync(file, doc.toString());
+    log(`  ${CONFIG_FILE}: ${why}`);
+  };
+  if (doc.hasIn(PROTECTED_DOCS)) return drop('dropped docs.voiceGuardrailSection — docs.protectedDocs is already set');
+  if (typeof old !== 'string' || !old.trim()) {
+    doc.setIn(PROTECTED_DOCS, doc.createNode([]));
+    return drop('docs.voiceGuardrailSection was empty → docs.protectedDocs: [] (still no guardrail)');
+  }
+  const paths = protectedPathsFromProse(old);
+  if (!paths.length) {
+    log(`  NOT migrated — ${CONFIG_FILE} docs.voiceGuardrailSection names no backticked paths; replace it with a \`docs.protectedDocs\` list by hand`);
+    return;
+  }
+  doc.setIn(PROTECTED_DOCS, doc.createNode(paths));
+  drop(`docs.voiceGuardrailSection → docs.protectedDocs [${paths.join(', ')}] — review it: custom wording is not carried, the section is now generated`);
+}
 
 /**
  * The 0.16.0 step (#501): COMMITTED config only. Overlay lists replace the committed ones

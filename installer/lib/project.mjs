@@ -769,6 +769,7 @@ export const HARNESS_PATTERNS = {
  *   falling back to the built-in for `target`, then to a `runtime` value (#461).
  * - `<key>.flag.<on|off>` — the token the stack's `flag:` map names; stack-authored, so no
  *   project value is consulted (#486).
+ * - a key declaring `omitWhenEmpty: <gate>` — `""` while the gate key resolves empty (#612).
  * - anything else — project config value, else the stack-declared default.
  *
  * @param {Stack} stack
@@ -779,7 +780,8 @@ export const HARNESS_PATTERNS = {
  * @returns {(key: string) => any} resolves a template key to its value (undefined when unset)
  */
 export function makeResolver(stack, values, target, runtime = {}) {
-  return (key) => {
+  /** @type {(key: string) => any} */
+  const resolve = (key) => {
     if (key.startsWith('harness.')) {
       const sub = key.slice('harness.'.length);
       const override = lookupPath(values, key);
@@ -798,10 +800,37 @@ export function makeResolver(stack, values, target, runtime = {}) {
     }
     const flag = stack.config[key] === undefined ? parseFlagPlaceholder(key) : null;
     if (flag) return stack.config[flag.key]?.flag?.[flag.side];
+    const gate = stack.config[key]?.omitWhenEmpty;
+    if (typeof gate === 'string' && gate !== key && isEmptyValue(resolve(gate))) return '';
     const v = lookupPath(values, key);
     if (v !== undefined) return v;
     return stack.config[key]?.default;
   };
+  return resolve;
+}
+
+/** `omitWhenEmpty:` (#612) treats an unset, null, blank, or `[]` gate value as empty. */
+export const isEmptyValue = (/** @type {unknown} */ v) =>
+  v === undefined || v === null || (Array.isArray(v) ? v.length === 0 : typeof v === 'string' && !v.trim());
+
+/** Config keys a release removed (#612): render refuses a config still setting one, naming the replacement. */
+export const RETIRED_CONFIG_KEYS = {
+  'docs.voiceGuardrailSection': {
+    version: '0.18.0',
+    remedy:
+      'set `docs.protectedDocs` (a list of repo paths/globs; `[]` renders no guardrail) — `wafflestack upgrade` migrates the committed config',
+  },
+};
+
+/**
+ * One problem per retired key `values` still sets.
+ * @param {Record<string, any>} values
+ * @returns {string[]}
+ */
+export function retiredConfigProblems(values) {
+  return Object.entries(RETIRED_CONFIG_KEYS)
+    .filter(([key]) => lookupPath(values ?? {}, key) !== undefined)
+    .map(([key, { version, remedy }]) => `config.${key} was removed in ${version} — ${remedy}`);
 }
 
 /**

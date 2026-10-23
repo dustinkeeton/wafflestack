@@ -17,4 +17,6 @@ Produce documentation that LLMs and agents can parse efficiently. The machine do
 
 {{docs.machineDocSpec}}
 
+{{docs.protectedDocsSection}}
+
 {{docs.privacySection}}

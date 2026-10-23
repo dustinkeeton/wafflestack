@@ -12,6 +12,6 @@ Produce documentation that humans can quickly scan to understand the project. Th
 
 {{docs.humanDocSpec}}
 
-{{docs.voiceGuardrailSection}}
+{{docs.protectedDocsSection}}
 
 {{docs.privacySection}}
