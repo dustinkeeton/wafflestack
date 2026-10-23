@@ -19,5 +19,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       ISSUE: ${{ github.event.issue.number }}
     steps:
-      - name: Apply the hold and provenance labels
-        run: gh issue edit "$ISSUE" --add-label "waffle:reassess" --add-label "waffle:consumer-report"
+      - name: Apply the hold label
+        run: gh issue edit "$ISSUE" --add-label "waffle:reassess"
+      - name: Apply the provenance label
+        run: gh issue edit "$ISSUE" --add-label "waffle:consumer-report"

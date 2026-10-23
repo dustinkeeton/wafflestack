@@ -224,8 +224,12 @@ describe('report: upstream hold workflow (#640)', () => {
     assert.equal(jobs[0].if, `contains(github.event.issue.body, '${REPORT_SUMMARY}')`);
   });
 
-  test('one step adds both labels by issue number', () => {
-    assert.ok(runs.some((r) => /gh issue edit "\$ISSUE"/.test(r) && r.includes('--add-label "waffle:reassess"') && r.includes('--add-label "waffle:consumer-report"')));
+  test('exactly two steps add the hold, then provenance, by issue number', () => {
+    assert.equal(steps.length, 2);
+    assert.deepEqual(runs, [
+      'gh issue edit "$ISSUE" --add-label "waffle:reassess"',
+      'gh issue edit "$ISSUE" --add-label "waffle:consumer-report"',
+    ]);
     assert.equal(jobs[0].env.ISSUE, '${{ github.event.issue.number }}');
   });
 
@@ -237,6 +241,8 @@ describe('report: upstream hold workflow (#640)', () => {
     });
     const bodyRefs = raw.match(/github\.event\.issue\.(body|title)/g) ?? [];
     assert.deepEqual(bodyRefs, ['github.event.issue.body'], 'the body appears once, in the if:, and the title never');
+    assert.equal(raw.match(/\$\{\{/g)?.length, 3, 'only the three env values carry ${{ }}');
+    assert.equal(jobs[0]['runs-on'], 'ubuntu-latest');
   });
 
   test('has no uses: steps — no checkout, no third-party actions', () => {
