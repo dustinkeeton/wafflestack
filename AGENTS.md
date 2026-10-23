@@ -417,7 +417,7 @@ registry entry (a plugin has no path, no render, nothing to prune).
   lookbehind, so workflow payloads carry those untouched.
 - Value formatting (`formatValue`, `template.mjs`): strings verbatim; string arrays join
   `, ` unless the key declares `listFormat: code-bullets` (one `` - `entry` `` line each; entries
-  must be one-line and backtick-free, #612); other structures render as a YAML block.
+  must be non-empty, one-line, and backtick-free, #612/#649); other structures render as a YAML block.
 - List keys (#612) — a composed key may declare `omitWhenEmpty: <key>`: `makeResolver` returns
   `""` for it while that key resolves to `[]`/`""`/null, so a section renders nothing without a
   template conditional (`docs.protectedDocsSection` gated on `docs.protectedDocs`). Linted by
@@ -573,7 +573,7 @@ opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inv
 comment lines exempts a small file — plus an 8-line max comment run, typed JSDoc excluded; the
 `GRANDFATHERED` ratchet map is EMPTY as of the sweep, so every in-scope file meets the ceilings),
 `migrations.test.mjs` (#501: the 0.16.0 overlap migration, overlay never edited, upgrade end-to-end;
-#612: the 0.18.0 `docs.protectedDocs` migration; and the release guard — a bump cannot skip a pending migration), `list-keys.test.mjs` (#612: `listFormat`/`omitWhenEmpty`, retired keys), `config-modes.test.mjs` (#478:
+#612: the 0.18.0 `docs.protectedDocs` migration; and the release guard — a bump cannot skip a pending migration), `list-keys.test.mjs` (#612: `listFormat`/`omitWhenEmpty`, retired keys; #649: blank entries rejected), `config-modes.test.mjs` (#478:
 behavioral-key validate rules, render + doctor guards, locked autopilot consents),
 `report.test.mjs` (#473: bundle redaction, CLI surface, scrub/projection helpers; #640: line 2 of the
 `<details>` block equals `REPORT_SUMMARY`, and the `report: upstream hold workflow (#640, #653)` suite over
