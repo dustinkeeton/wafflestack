@@ -71,7 +71,8 @@ is what you reach for across a breaking one.
   **Consumer impact:** breaking for anyone who set `docs.voiceGuardrailSection`: `render` now fails
   and names the replacement. `wafflestack upgrade` runs migration `0.18.0` on the committed
   `.waffle/waffle.yaml`. An empty value becomes `protectedDocs: []`. Backticked paths in custom
-  prose become the list, and your wording is not carried over, so review it. Prose that names no
+  prose become the list, and your wording is not carried over, so review it. Any backticked
+  token it skips is logged by name. Prose that names no
   backticked paths, and any value in `waffle.local.yaml`, are reported but not edited. Without an
   override, just re-render: the section heading and wording change, and the paths do not.
 - **`/waffle-report` files consumer reports on hold, labeled by provenance (#609).** Every report
@@ -139,6 +140,16 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Migration `0.18.0` reads custom guardrail prose more carefully (#648).** It used to keep
+  every backticked token with a `.` or `/`, so a carve-out sentence ("This list does not cover
+  `AGENTS.md`") and config key names (`docs.humanDocSet`) ended up in `docs.protectedDocs`. It also
+  dropped real paths like `Makefile`, `Dockerfile`, and `notes/@team.md` without a word. Now it
+  skips `docs.*` key names and the paths of your `docs.machineDocSet` / `docs.humanDocSet` (the
+  generated section already carves those out), keeps extensionless capitalized filenames and paths
+  with `@ + ~`, and logs every token it skips with the reason.
+
+  **Consumer impact:** none unless you upgrade from a custom `docs.voiceGuardrailSection`. Then
+  read the `not carried` line in the upgrade output and add any real path back by hand.
 - **`github-project-management` queries native sub-issues (#633).** "Query sub-issues of a
   parent" read `trackedIssues`, the legacy task-list relation, which returns nothing for children
   linked with `addSubIssue`. It now reads `subIssues` and `subIssuesSummary` with the

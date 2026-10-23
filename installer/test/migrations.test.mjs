@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
-import { MIGRATIONS, applicableMigrations, migrationCeiling } from '../lib/migrations.mjs';
+import { MIGRATIONS, applicableMigrations, migrationCeiling, protectedPathsFromProse } from '../lib/migrations.mjs';
 import { upgrade } from '../lib/upgrade.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { eject } from '../lib/eject.mjs';
@@ -335,6 +335,108 @@ describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#
     const logs = run();
     assert.equal(read(cwd, OVERLAY), overlay);
     assert.match(logs.join('\n'), /NOT migrated — \.waffle\/waffle\.local\.yaml sets docs\.voiceGuardrailSection/);
+  });
+
+  describe('carve-outs, config keys, and odd paths (#648)', () => {
+    const configWith = (lines) => `config:\n  docs:\n${lines.map((l) => `    ${l}\n`).join('')}`;
+    const notCarried = (logs) => logs.find((l) => /not carried —/.test(l));
+
+    test('a carve-out sentence and a docs.* key are not carried, and both are logged', () => {
+      write(cwd, CONFIG, withGuardrail('"`README.md` is owner-authored. This list does not cover `AGENTS.md` or `docs.humanDocSet`, nor `DECISIONS.md`."'));
+      const logs = run();
+      assert.deepEqual(docs().protectedDocs, ['README.md', 'DECISIONS.md']);
+      assert.equal('voiceGuardrailSection' in docs(), false);
+      const line = notCarried(logs);
+      assert.match(line, /`AGENTS\.md` \(agent-managed doc set\)/);
+      assert.match(line, /`docs\.humanDocSet` \(config key\)/);
+    });
+
+    test('the default human doc set is carved out when humanDocSet is unset', () => {
+      write(cwd, CONFIG, configWith(['voiceGuardrailSection: "`CLAUDE.md`; not `STATUS.md` or `ARCHITECTURE.md`"']));
+      const logs = run();
+      assert.deepEqual(docs().protectedDocs, ['CLAUDE.md']);
+      assert.match(notCarried(logs), /`STATUS\.md` \(agent-managed doc set\), `ARCHITECTURE\.md` \(agent-managed doc set\)/);
+    });
+
+    test('an overridden machine doc set is carved out instead of the default', () => {
+      write(cwd, CONFIG, configWith(['machineDocSet: "one `REGISTRY.md`"', 'voiceGuardrailSection: "`AGENTS.md` and `REGISTRY.md`"']));
+      const logs = run();
+      assert.deepEqual(docs().protectedDocs, ['AGENTS.md']);
+      assert.match(notCarried(logs), /`REGISTRY\.md` \(agent-managed doc set\)/);
+    });
+
+    test('extensionless and @/+ paths are kept', () => {
+      write(cwd, CONFIG, withGuardrail('"`Makefile`, `Dockerfile`, `notes/@team.md`, `LICENSE`, `bin/run`, `c++/x.md`"'));
+      const logs = run();
+      assert.deepEqual(docs().protectedDocs, ['Makefile', 'Dockerfile', 'notes/@team.md', 'LICENSE', 'bin/run', 'c++/x.md']);
+      assert.equal(notCarried(logs), undefined, logs.join('\n'));
+    });
+
+    test('commands and bare words are logged as not a path', () => {
+      write(cwd, CONFIG, withGuardrail('"`README.md`, run `npm test`, set `true`"'));
+      const logs = run();
+      assert.deepEqual(docs().protectedDocs, ['README.md']);
+      assert.match(notCarried(logs), /`npm test` \(not a path\).*`true` \(not a path\)/);
+    });
+
+    test('prose naming only skipped tokens is left alone, and the skips are still logged', () => {
+      write(cwd, CONFIG, withGuardrail('"Mind `docs.humanDocSet` and `AGENTS.md`."'));
+      const before = read(cwd, CONFIG);
+      const logs = run();
+      assert.equal(read(cwd, CONFIG), before);
+      assert.match(logs.join('\n'), /NOT migrated — .*names no backticked paths/);
+      assert.match(notCarried(logs), /`docs\.humanDocSet` \(config key\), `AGENTS\.md` \(agent-managed doc set\)/);
+    });
+
+    test('the 0.17 stock prose, carve-outs resolved, migrates to the exact default list', () => {
+      const stock = [
+        '## Owner-voiced docs — do not rewrite',
+        '',
+        'These files are owner-authored. Never rewrite them in a docs pass:',
+        '',
+        '- `README.md` — the project\'s front door',
+        '- `CLAUDE.md` — the owner\'s instructions to the harness',
+        '- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `LICENSE` — governance',
+        '- `CHANGELOG.md` — maintained by the release flow, not by doc writers',
+        '- `.waffle/waffle.yaml`, `.waffle/waffle.local.yaml`, and `.waffle/extensions/**` —',
+        '  consumer config and project-owned extensions',
+        '',
+        'This list does not cover the agent-managed docs — a root `AGENTS.md`, plus a per-feature',
+        '`AGENTS.md` in each `src/<feature>/` directory; and `DECISIONS.md`, `STATUS.md`, and',
+        '`ARCHITECTURE.md` at the repo root — which the doc writers update as usual.',
+      ].join('\n');
+      write(cwd, CONFIG, YAML.stringify({ config: { docs: { voiceGuardrailSection: stock } } }));
+      run();
+      assert.deepEqual(docs().protectedDocs, [
+        'README.md',
+        'CLAUDE.md',
+        'CONTRIBUTING.md',
+        'CODE_OF_CONDUCT.md',
+        'SECURITY.md',
+        'LICENSE',
+        'CHANGELOG.md',
+        '.waffle/waffle.yaml',
+        '.waffle/waffle.local.yaml',
+        '.waffle/extensions/**',
+      ]);
+    });
+
+    test('protectedPathsFromProse keeps docs.* files and drops camelCase keys', () => {
+      assert.deepEqual(protectedPathsFromProse('`docs.md` `docs/x.md` `docs.json` `docs.machineDocSet`'), {
+        paths: ['docs.md', 'docs/x.md', 'docs.json'],
+        skipped: [{ token: 'docs.machineDocSet', why: 'config key' }],
+      });
+    });
+
+    test('protectedPathsFromProse dedupes in order and honors exclude', () => {
+      assert.deepEqual(protectedPathsFromProse('`A.md` `B.md` `A.md` `x y` `x y`', { exclude: ['B.md'] }), {
+        paths: ['A.md'],
+        skipped: [
+          { token: 'B.md', why: 'agent-managed doc set' },
+          { token: 'x y', why: 'not a path' },
+        ],
+      });
+    });
   });
 
   test('upgrade end-to-end: the retired key migrates and the render is clean', () => {

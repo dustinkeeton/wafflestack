@@ -427,7 +427,10 @@ registry entry (a plugin has no path, no render, nothing to prune).
   named: `docs.voiceGuardrailSection` (removed 0.18.0 → `docs.protectedDocs`; migration `0.18.0`).
   Migration `0.18.0` (`migrations.mjs:57`), like 0.16.0, edits COMMITTED config only: an overlay
   setting the old key is reported `NOT migrated`, never edited; prose → list of its backticked
-  path-shaped tokens (`protectedPathsFromProse`), custom wording not carried; empty/non-string →
+  path-shaped tokens (`protectedPathsFromProse(text, { exclude }) → { paths, skipped }`, #648):
+  camelCase `docs.*` keys and the committed (else frozen 0.18.0 default) `docs.machineDocSet` /
+  `docs.humanDocSet` paths are skipped, extensionless capitalized names (`Makefile`) and `@ + ~` are
+  kept, every skipped token is logged with its reason; custom wording not carried; empty/non-string →
   `docs.protectedDocs: []`; `protectedDocs` already set → old key just dropped; prose naming no
   backticked paths is left alone with a `NOT migrated` note.
 - `harness.*` — reserved, always-available namespace resolved per target (`HARNESS_BUILTINS`,
