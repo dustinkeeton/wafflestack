@@ -90,6 +90,9 @@ is what you reach for across a breaking one.
   fork that receives reports can copy it.
 
 ### Changed
+- **The 0.18.0 migration's extensionless-filename list is fully pinned by tests (#660).** One
+  table-driven test checks all 17 frozen names; before, only 4 were checked.
+  **Consumer impact:** none — test-only.
 - **The `/waffle-report` hold workflow skips maintainer-filed issues (#653).**
   `consumer-report-hold.yml` no longer holds issues opened by an `OWNER`, `MEMBER`, or
   `COLLABORATOR`, such as a maintainer follow-up that quotes a report's Context block. Bot accounts
