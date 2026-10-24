@@ -616,8 +616,12 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
     assert.match(
       setupMd,
-      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot`; wafflestack · `waffle-report` \(applies it upstream\) \| harness-owned/m,
+      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot` \| harness-owned/m,
     );
+    // #641: waffle-report uses the literal upstream name, so it is no consumer-side prerequisite.
+    assert.doesNotMatch(setupMd, /^\| `waffle:reassess`.*waffle-report/m);
+    const upstream = setupMd.slice(setupMd.indexOf('#### Upstream-tracker labels'));
+    assert.ok(upstream.includes('`waffle:reassess` is the same hold label'));
     assert.match(
       setupMd,
       /^gh label create "waffle:reassess"\s+--force --color AC3AC7 --description "Needs re-evaluation\/reconfirmation before further action"$/m,
@@ -638,7 +642,7 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(phase1, /re-verify its premises against current `main`/);
     assert.match(phase1, /Post the result as a comment on the issue/);
     assert.match(phase1, /Never spawn an implementer for it in this run/);
-    assert.match(readSkill('autopilot'), /nothing in the toolkit removes it, and only `\/waffle-report` applies it, upstream at filing/, 'autopilot must name the /waffle-report carve-out (#609)');
+    assert.match(readSkill('autopilot'), /applied by a human, or requested by `\/waffle-report` at filing and applied server-side on the toolkit tracker, #640; nothing in the toolkit removes it/, 'autopilot must name the /waffle-report carve-out (#609)');
     assert.match(phase1, /In batch mode there is no one to ask — post the comment, hold the issue, and never implement it/);
     const phase3 = delegate.slice(delegate.indexOf('## Phase 3: Plan & Confirm'), delegate.indexOf('## Phase 4'));
     assert.match(phase3, /Held out: K issues labeled waffle:reassess/, 'the Phase 3 plan must state how many issues were held out');
