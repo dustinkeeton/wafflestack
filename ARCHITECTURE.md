@@ -419,7 +419,10 @@ closed list: `lessThan`, `keys: [a, b]`, meaning `a` must be strictly below `b`;
 written and shows up in bare `doctor`. The worked example is the pr-response rubric:
 `prResponse.rubric.thresholds.implement` (default 11) and `.decline` (default 4), each 0–15, with
 `decline < implement` (adjacent integers pass and leave the Defer band empty), plus five
-`prResponse.rubric.weights.*` (default 1, at least 0) under `anyPositive`. See
+`prResponse.rubric.weights.*` (default 1, at least 0) under `anyPositive`. The github-workflow
+stack owns these seven keys and both constraints. The orchestration stack re-declares them with
+the same defaults and ranges (#646), so `/autopilot --rubric` can check a per-run override
+against the same rendered rubric; a test fails if the two copies drift. See
 [FORMAT, "Numeric keys"](schema/FORMAT.md) and
 [the #630 entry](DECISIONS.md#2026-10-23-the-pr-response-cutoffs-are-repo-policy-guarded-by-range-and-constraints-630).
 
