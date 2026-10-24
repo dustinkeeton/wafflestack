@@ -46,7 +46,7 @@ assert:
   - type: includes
     value: "Decline"
   - type: regex
-    value: "E/R 0|Effort/Risk 0"
+    value: '[Ww]eights(?:[^\n]|\n(?!\n))*(E/R|Effort/Risk) (\*\*)?0(?!\.[0-9]|[0-9])'
   - type: judge
     rubric: >-
       The repo's pr-response weights are Severity 1, Reach 1, Validity 1, Effort/Risk 0,

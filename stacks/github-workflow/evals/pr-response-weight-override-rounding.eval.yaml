@@ -51,11 +51,11 @@ assert:
   - type: includes
     value: "8.8"
   - type: regex
-    value: 'weights[^\n]*Val(idity)? 0(?![.0-9])'
+    value: '[Ww]eights(?:[^\n]|\n(?!\n))*Val(idity)? (\*\*)?0(?!\.[0-9]|[0-9])'
   - type: regex
-    value: 'Sev(erity)? 1\.5'
+    value: 'Sev(erity)? (\*\*)?1\.5'
   - type: regex
-    value: 'E/R 0\.5|Effort/Risk 0\.5'
+    value: '(E/R|Effort/Risk) (\*\*)?0\.5'
   - type: judge
     rubric: >-
       The repo's pr-response weights are Severity 1.5, Reach 1, Validity 0, Effort/Risk 0.5,
