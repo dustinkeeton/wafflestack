@@ -195,6 +195,15 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **`/waffle-report` no longer files a detailed wish as a rough idea (#669).** The rough-idea test
+  now only catches a wish that goes no further than the wish (no problem, symptom, or design of its
+  own; naming its command does not count), or a one-liner that names no command, symptom, or
+  design. An "it'd be nice if…" request that states a problem, symptom, or design routes to
+  `feature.yml` (or `bug.yml`) again, as it did before #666; a bare wish one-liner still goes to
+  `rough-idea.yml`. A new eval case,
+  `waffle-report-routes-detailed-wish-to-feature`, covers it. Also re-anchors two stale
+  `content.test.mjs` refs in AGENTS.md. Consumer impact: re-render to pick up the updated skill;
+  no config change.
 - **`/waffle-report` routes one-liners to rough ideas and stops echoing redacted values (#642).**
   The rough-idea test now runs before the form table, so a wish like "it'd be nice if…" files as
   `rough-idea.yml` with the user's words verbatim instead of a padded feature request. Redaction
