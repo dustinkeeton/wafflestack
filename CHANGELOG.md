@@ -162,8 +162,10 @@ is what you reach for across a breaking one.
   `AGENTS.md`") and config key names (`docs.humanDocSet`) ended up in `docs.protectedDocs`. It also
   dropped real paths like `Makefile`, `Dockerfile`, and `notes/@team.md` without a word. Now it
   skips `docs.*` key names and the paths of your `docs.machineDocSet` / `docs.humanDocSet` (the
-  generated section already carves those out), keeps extensionless capitalized filenames and paths
-  with `@ + ~`, and logs every token it skips with the reason.
+  generated section already carves those out), keeps all-caps names (`LICENSE`, `TODO`), known
+  extensionless filenames (`Makefile`, `Dockerfile`, `Procfile`, …), and paths with `@ + ~`, and
+  logs every token it skips with the reason. Capitalized prose words like `Important` or `Never`
+  are no longer kept as paths; they are logged as `not a path` (#655).
 
   **Consumer impact:** none unless you upgrade from a custom `docs.voiceGuardrailSection`. Then
   read the `not carried` line in the upgrade output and add any real path back by hand.

@@ -429,8 +429,9 @@ registry entry (a plugin has no path, no render, nothing to prune).
   setting the old key is reported `NOT migrated`, never edited; prose → list of its backticked
   path-shaped tokens (`protectedPathsFromProse(text, { exclude }) → { paths, skipped }`, #648):
   camelCase `docs.*` keys and the committed (else frozen 0.18.0 default) `docs.machineDocSet` /
-  `docs.humanDocSet` paths are skipped, extensionless capitalized names (`Makefile`) and
-  `@ + ~ ? {} [] , !` are kept, skipped tokens are logged with reasons on one `not carried` line;
+  `docs.humanDocSet` paths are skipped; all-caps (2+ chars: `LICENSE`, `TODO`), `_`-led, and
+  frozen known extensionless names (`EXTENSIONLESS_FILES_0_18`: `Makefile`, `Dockerfile`, …) and
+  `@ + ~ ? {} [] , !` are kept, other capitalized words (`Never`, #655) are `not a path`; skipped tokens are logged with reasons on one `not carried` line;
   custom wording not carried; empty/non-string → `docs.protectedDocs: []`; `protectedDocs` already
   set → old key just dropped; prose naming no usable paths is left alone with a `NOT migrated` note
   (after the `not carried` line, if any).

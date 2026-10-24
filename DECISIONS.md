@@ -121,7 +121,10 @@ as docs-human.
   Migration `0.18.0` rewrites the committed `waffle.yaml`: blank → `[]`, and backticked paths in
   custom prose → the list. Prose without paths, and any overlay value, is reported and left alone.
   (Refined in #648: `docs.*` config keys and the agent-managed doc set are skipped, and each
-  skipped token is logged with its reason.)
+  skipped token is logged with its reason. Refined again in #655: a token without a `.` or `/`
+  counts as a path only if it is all-caps (`LICENSE`), starts with `_`, or is a known
+  extensionless filename such as `Makefile` or `Dockerfile`. Capitalized prose words like `Never`
+  are logged as `not a path`.)
 - **This repo** protects only `CHANGELOG.md` and `.waffle/**`. README and the `schema/` docs are
   now normal docs-pass targets.
 
