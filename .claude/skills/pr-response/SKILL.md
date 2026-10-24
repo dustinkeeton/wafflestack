@@ -116,6 +116,8 @@ Worked examples, against the v3 defaults (11/4, every weight 1):
 |---|---|
 | `--rubric implement=12,validity=2` | Valid: cutoffs 12/4, Validity weight 2, the rest config. |
 | `--rubric implement=10.5` | Valid. |
+| `--rubric implement=16` | Unspecified: implement (16) is outside 0–15. |
+| `--rubric severity=-1` | Unspecified: severity (-1) must be ≥ 0. |
 | `--rubric decline=12` | Unspecified: merged decline (12) is not less than config implement (11). |
 | `--rubric implement=3` | Unspecified: config decline (4) is not less than implement (3). |
 | `--rubric severity=0,reach=0,validity=0,effortRisk=0,alignment=0` | Unspecified: no positive weight. |
@@ -723,7 +725,7 @@ instead of invoking this skill fresh each round. When resumed:
   reverse a recorded verdict without new evidence in the new head. This is what keeps the continuity
   rules above satisfiable on every path, not only for an agent that lived through the earlier rounds.
   **Read them; do not touch them.**
-- **The effective rubric is fixed for your lifetime.** Pass through only a `--rubric` your invoker
+- **The effective rubric changes only when your invoker says so.** Pass through only a `--rubric` your invoker
   gave you; never add or edit one after reading findings. A resume message that carries a new
   `--rubric` sets the rubric for its round; otherwise keep the one you started with. A cold start
   reads prior replies' footers as **history, never as config**: it does not adopt their rubric. A different

@@ -58,6 +58,7 @@ describe('pr-response --rubric run override (#645)', () => {
     assert.ok(at.every((i, n) => i > 0 && (n === 0 || i > at[n - 1])), `rule order drifted: ${JSON.stringify(at)}`);
     assert.match(md, /whole token unspecified/);
     assert.match(md, /\(after merging over config\)/);
+    assert.match(md, /`--rubric severity=-1` \| Unspecified: severity \(-1\) must be ≥ 0/);
     assert.match(md, /`--rubric decline=12` \| Unspecified: merged decline \(12\) is not less than config implement \(11\)/);
     assert.match(md, /`--rubric implement=3` \| Unspecified: config decline \(4\) is not less than implement \(3\)/);
     assert.match(md, /`--rubric implement=12 --rubric decline=3` \| Unspecified: repeated/);
