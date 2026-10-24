@@ -91,8 +91,8 @@ one shape, so the maintainer's enrichment pass can pick either straight off the 
 order — **the first test wins, before you look at the table**:
 
 1. **Is it a rough idea?** A wish or half-formed thought ("it'd be nice if…", "maybe X could…"),
-   or any one-liner with no command, symptom, or design the user could add, and the user did not or
-   could not say more → `rough-idea.yml` / `waffle:needs-inference`, **whether it reads as a bug or
+   or any one-liner that names no command, symptom, or design, when the user did not or could not
+   say more → `rough-idea.yml` / `waffle:needs-inference`, **whether it reads as a bug or
    a feature**. Stop here. A one-liner is a **rough idea**, not a bug or feature you invent details
    for: keep the user's words **verbatim** as The idea, and do not add a Problem / Motivation,
    Expected / Actual / Repro, or Proposed Solution — the upstream enrichment pass writes those.
