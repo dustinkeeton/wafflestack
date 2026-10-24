@@ -144,12 +144,15 @@ is what you reach for across a breaking one.
   token it skips is logged by name. Prose that names no
   backticked paths, and any value in `waffle.local.yaml`, are reported but not edited. Without an
   override, just re-render: the section heading and wording change, and the paths do not.
-- **`/waffle-report` files consumer reports on hold, labeled by provenance (#609).** Every report
-  it files upstream now carries `waffle:reassess` (so delegate, autopilot, and the label-hook
-  implement path skip it until the maintainer reconfirms) and the new `waffle:consumer-report`
-  label, on top of the form's own label. The issue is created with the form label, then each fixed
-  label is added in its own call; a tracker that lacks one (a fork) gets a warning, and the report
-  still files. The fallback prefilled URL carries `labels=` too. The `issue` skill and the
+- **`/waffle-report` asks for the hold and provenance labels on every consumer report (#609).** It
+  creates the issue with the form's label. It then tries to add `waffle:reassess` (so delegate,
+  autopilot, and the label-hook implement path skip the report until the maintainer reconfirms
+  it) and the new `waffle:consumer-report` label, each in its own call. Adding a label takes triage
+  or write access on the toolkit repo, so for most filers both adds fail. That is a warning, never
+  a failed filing; the report still files, without the hold. A tracker that lacks either label
+  warns the same way. The fallback prefilled URL carries `labels=` too, but GitHub drops it for a
+  user without triage rights. On the toolkit's own tracker the hold is applied server-side (#640,
+  above). The `issue` skill and the
   github-workflow / orchestration prose now name `/waffle-report` as the hold's one automated entry
   point; nothing removes it but the human. `schema/SETUP.md` documents the label as an
   upstream-tracker label.

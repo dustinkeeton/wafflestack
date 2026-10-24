@@ -616,8 +616,12 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     const setupMd = fs.readFileSync(path.join(REPO_ROOT, 'schema', 'SETUP.md'), 'utf8');
     assert.match(
       setupMd,
-      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot`; wafflestack · `waffle-report` \(applies it upstream\) \| harness-owned/m,
+      /^\| `waffle:reassess` \| `issue\.reassessLabel` \| github-workflow · `issue`, `label-hook`; orchestration · `delegate`, `autopilot` \| harness-owned/m,
     );
+    // #641: waffle-report uses the literal upstream name, so it is no consumer-side prerequisite.
+    assert.doesNotMatch(setupMd, /^\| `waffle:reassess`.*waffle-report/m);
+    const upstream = setupMd.slice(setupMd.indexOf('#### Upstream-tracker labels'));
+    assert.ok(upstream.includes('`waffle:reassess` is the same hold label'));
     assert.match(
       setupMd,
       /^gh label create "waffle:reassess"\s+--force --color AC3AC7 --description "Needs re-evaluation\/reconfirmation before further action"$/m,
