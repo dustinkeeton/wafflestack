@@ -72,13 +72,13 @@ const DOC_SET_DEFAULTS_0_18 = {
 };
 
 // Extensionless mixed-case filenames kept as paths (#655); any other capitalized word is prose, like `Never`.
-const EXTENSIONLESS_FILES_0_18 = new Set(['Makefile', 'GNUmakefile', 'Dockerfile', 'Containerfile', 'Procfile', 'Gemfile', 'Rakefile', 'Justfile', 'Vagrantfile', 'Brewfile', 'Podfile', 'Jenkinsfile', 'Caddyfile', 'Guardfile', 'Berksfile', 'Capfile', 'Snakefile']);
+export const EXTENSIONLESS_FILES_0_18 = Object.freeze(['Makefile', 'GNUmakefile', 'Dockerfile', 'Containerfile', 'Procfile', 'Gemfile', 'Rakefile', 'Justfile', 'Vagrantfile', 'Brewfile', 'Podfile', 'Jenkinsfile', 'Caddyfile', 'Guardfile', 'Berksfile', 'Capfile', 'Snakefile']);
 
 /** @param {string} token @returns {string | null} why the token is not a path, or null when it is one */
 function notAPath(token) {
   if (/^docs\.[a-z]+[A-Z][A-Za-z0-9]*$/.test(token)) return 'config key';
   if (!/^[\w.*?/@+~{}[\],!-]+$/.test(token)) return 'not a path';
-  if (/[./]/.test(token) || EXTENSIONLESS_FILES_0_18.has(token)) return null;
+  if (/[./]/.test(token) || EXTENSIONLESS_FILES_0_18.includes(token)) return null;
   return /^[A-Z][A-Z0-9_-]+$/.test(token) || /^_[\w-]+$/.test(token) ? null : 'not a path';
 }
 
