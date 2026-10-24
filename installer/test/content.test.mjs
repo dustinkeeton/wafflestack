@@ -715,6 +715,23 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /Never apply a `priority: \*`\s+label/);
   });
 
+  test('/waffle-report routes a one-liner before the form table and never echoes redacted values (#642)', () => {
+    const md = readSkill('waffle-report');
+    const route = md.indexOf('**Is it a rough idea?**');
+    const table = md.indexOf('| Report is | Upstream form |');
+    assert.ok(route > 0 && route < table, 'the rough-idea test must precede the form table');
+    const firstRow = md.slice(table).split('\n')[2];
+    assert.match(firstRow, /`rough-idea\.yml`/, 'rough-idea is the first table row');
+    assert.match(md, /\*\*whether it reads as a bug or\s+a feature\*\*/);
+    assert.match(md, /not a rough idea — it is a bug/, 'a concrete one-line defect stays a bug');
+    assert.match(md, /## The idea\n<the user's words, verbatim/);
+    assert.match(md, /\*\*including each line of pasted command output\*\*/);
+    assert.match(md, /\*\*Never echo a redacted value anywhere in your reply\*\*/);
+    assert.match(md, /the \*\*whole reply\*\* around it/);
+    assert.match(md, /\*\*except the consuming repo in §4b's hosted attachment links and the gate's\s+hosting line\*\*/, 'never-echo must not forbid the approved attachment links');
+    assert.match(md, /this repo's org\/repo \(outside that attachment carve-out\)/, 'the whole-reply re-read honours the carve-out');
+  });
+
   test('waffle:consumer-report is never a consumer prerequisite — doctor must not check for it (#609)', () => {
     for (const [name, stack] of loadToolkit(REPO_ROOT).stacks) {
       for (const pre of stack.prerequisites ?? []) {
