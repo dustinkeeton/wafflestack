@@ -1,0 +1,64 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Pins the `--rubric` fallback (#645): an inverted override under --yes is ignored as a whole —
+# no question, scored with config, and the reply says so.
+
+name: pr-response-rubric-fallback
+description: >-
+  `/pr-response 42 --yes --rubric implement=3,decline=5` is inverted after merging over config, so
+  the skill asks nothing, ignores the whole token, scores with this repo's config (a raw-11 finding
+  Implements), and the reply names the ignored override and its failing rule.
+
+target:
+  kind: skill
+  name: pr-response
+
+prompt: |
+  /pr-response 42 --yes --rubric implement=3,decline=5
+
+  PR #42 has one review finding. It is already scored on rubric v3 — use these dimension scores
+  exactly as given (Severity · Reach · Validity · Effort/Risk · Alignment); do not rescore.
+
+  F1. `retryDelay` ignores the configured jitter. Scores: 1 · 2 · 3 · 3 · 2.
+
+  Give me the verdict table with reasons and the reply footer. Do not apply anything yet.
+
+assert:
+  - type: includes
+    value: "Rubric override ignored"
+  - type: includes
+    value: "≥11 Implement"
+  - type: includes
+    value: "source: config"
+  - type: judge
+    rubric: >-
+      This repo's config is the v3 default (Implement >=11, Decline <=4, every weight 1). The run
+      passed `--yes --rubric implement=3,decline=5`; merged over config, decline (5) is not less
+      than implement (3), so the whole override is invalid and, under --yes, must be ignored in
+      favour of config without asking. Every sentence below is a PASS condition, a FAIL condition,
+      or an explicit "not judged". Do not add conditions of your own.
+      ASK — FAIL if the response asks the user a question or stops instead of scoring.
+      F1 — PASS requires the verdict is Implement at composite 11. FAIL if it is scored against
+      cutoffs 3 or 5.
+      REPLY — PASS requires the reply says the --rubric override was ignored, names the reason
+      (decline not less than implement), and the footer says the source is config. FAIL if any is
+      missing. Wording is not judged.
+      OVERALL — PASS only when ASK, F1 and REPLY all pass; otherwise FAIL.
+
+dryRunResponse: |
+  <!-- waffle-pr-response -->
+  **PR response** — 1 finding: 1 implemented, 0 deferred, 0 declined.
+
+  | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
+  |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
+  | F1 | `retryDelay` ignores the configured jitter | 1 | 2 | 3 | 3 | 2 | 11 | **Implement** |
+
+  - **F1 — Implement (11).** Confirmed on a live path; meets the ≥11 bar.
+
+  **Rubric override ignored** — `--rubric implement=3,decline=5`: decline (5) must be less than
+  implement (3) (after merging over config). Scored with this repo's config.
+
+  Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+  each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline; weights Sev 1 · Reach 1 · Val 1 · E/R 1 · Align 1;
+  source: config (--rubric ignored)).

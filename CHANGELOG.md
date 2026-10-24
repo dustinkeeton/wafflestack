@@ -60,6 +60,16 @@ is what you reach for across a breaking one.
   now name the keys to edit.
   **Consumer impact:** additive — re-render. With no config the rubric scores as before; only the
   composite wording and the footer change.
+- **`/pr-response --rubric` overrides the rubric for one run (#645, #630 slice 3).**
+  `--rubric implement=12,decline=3,validity=2` sets any subset of the two cutoffs and five weights
+  for that run only. It is resolved in step 1, before any finding is read, merged over the rendered
+  config, and checked against the same rules render applies (ranges, `decline < implement`, at
+  least one positive weight, known keys). A malformed, out-of-range, inverted, unknown-key, or
+  repeated token is ignored as a whole: an attended run asks; `--yes` and non-interactive callers
+  fall back to config and say so in the reply. The reply footer now names its source (`config` or
+  `run override`). Autopilot pass-through (#646) follows.
+  **Consumer impact:** additive — re-render. Runs without `--rubric` score as before; the footer
+  gains a `source:` clause when the rubric is not the v3 default.
 - **The `/waffle-report` hold no longer depends on the filer's access (#640).** The toolkit repo
   gains `.github/workflows/consumer-report-hold.yml`: on `issues: opened`, when the body carries the
   report block's `<summary>` line, it adds `waffle:reassess` and `waffle:consumer-report` with the
