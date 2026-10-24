@@ -88,6 +88,12 @@ is what you reach for across a breaking one.
   hold may land just after its read-back, and to keep the block verbatim.
   **Consumer impact:** none beyond skill wording — re-render. The workflow is toolkit-repo-only; a
   fork that receives reports can copy it.
+- **Eval case `pr-response-weight-override-rounding` (#662, follow-up to #644/#661).** With
+  Validity weighted 0 and fractional weights (Severity 1.5, Effort/Risk 0.5), it pins three
+  things. A Validity-0 false positive still Declines although its composite is 13.8. An 11.25
+  composite rounds half up to 11.3 (Implement). Fractional weights apply: 8.75 → 8.8 (Defer).
+  **Consumer impact:** none — eval cases are inert to `render`, `validate`, and the lock; the case
+  only changes what `npm run evals` measures.
 
 ### Changed
 - **The 0.18.0 migration's extensionless-filename list is fully pinned by tests (#660).** One

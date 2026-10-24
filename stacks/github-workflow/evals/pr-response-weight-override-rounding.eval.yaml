@@ -1,0 +1,97 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Companion to pr-response-weight-flip (#662): Validity weighted 0 plus fractional weights.
+# Σw = 4, so composite = 1.25 × weighted sum; F2 lands on 11.25 to pin half-up rounding.
+
+name: pr-response-weight-override-rounding
+description: >-
+  With `prResponse.rubric.weights` at Severity 1.5, Validity 0 and Effort/Risk 0.5, the
+  pr-response skill still Declines a Validity-0 false positive whose weighted composite clears
+  the Implement bar, rounds an 11.25 composite half up to 11.3 (Implement), applies the
+  fractional weights (8.75 → 8.8, Defer), and names the effective weights in the reply.
+
+target:
+  kind: skill
+  name: pr-response
+
+config:
+  prResponse:
+    rubric:
+      weights:
+        severity: 1.5
+        validity: 0
+        effortRisk: 0.5
+
+prompt: |
+  /pr-response 42
+
+  PR #42 has three review findings. They are already scored on rubric v3 — use these dimension
+  scores exactly as given (Severity · Reach · Validity · Effort/Risk · Alignment); do not rescore.
+
+  F1. `flush()` never closes the file handle. Scores: 3 · 2 · 0 · 3 · 3. (You read `flush()`: a
+      `with` block closes the handle on every path. The finding is wrong.)
+  F2. `retryDelay` ignores the configured jitter. Scores: 2 · 2 · 2 · 2 · 3.
+  F3. `parseRange` accepts a reversed range without warning. Scores: 3 · 1 · 2 · 1 · 1.
+
+  Compute each composite with this repo's weights, give me the verdict table with reasons and the
+  reply footer. Do not apply anything yet.
+
+assert:
+  - type: includes
+    value: "Weighted"
+  - type: includes
+    value: "Decline"
+  - type: includes
+    value: "Implement"
+  - type: includes
+    value: "Defer"
+  - type: includes
+    value: "11.3"
+  - type: includes
+    value: "8.8"
+  - type: regex
+    value: 'weights[^\n]*Val(idity)? 0(?![.0-9])'
+  - type: regex
+    value: 'Sev(erity)? 1\.5'
+  - type: regex
+    value: 'E/R 0\.5|Effort/Risk 0\.5'
+  - type: judge
+    rubric: >-
+      The repo's pr-response weights are Severity 1.5, Reach 1, Validity 0, Effort/Risk 0.5,
+      Alignment 1, and the composite is 15 x (weighted sum) / (3 x sum of weights), rounded to one
+      decimal half up (11.25 becomes 11.3), with bands >=11 Implement / >4 and <11 Defer / <=4
+      Decline. The overrides read raw scores: Validity 0 is always Decline, even with the Validity
+      weight at 0; Severity 3, Validity 3 and Reach >= 2 is always Implement. Every sentence below
+      is a PASS condition, a FAIL condition, or an explicit "not judged". Do not add conditions of
+      your own.
+      F1 — PASS requires the verdict is Decline and the reason cites the false-positive (Validity
+      0) override. FAIL if the verdict is Implement — that means the override was skipped because
+      Validity carries no weight. F1's composite value is not judged.
+      F2 — PASS requires the verdict is Implement and its weighted composite is exactly 11.3. FAIL
+      if the composite is 11.2, 11 or 11.0, or if the verdict is not Implement.
+      F3 — PASS requires the verdict is Defer and its weighted composite is 8.8. FAIL if the
+      composite is 7.5 (fractional weights ignored) or the verdict is not Defer.
+      REPLY — PASS requires a verdict table with a Weighted column (alongside the raw Score) and a
+      footer that names the weights with Severity 1.5, Validity 0 and Effort/Risk 0.5. FAIL if
+      either is missing. Wording, column order and the reasons' length are not judged.
+      OVERALL — PASS only when F1, F2, F3 and REPLY all pass; otherwise FAIL.
+
+dryRunResponse: |
+  <!-- waffle-pr-response -->
+  **PR response** — 3 findings: 1 implemented, 1 deferred, 1 declined.
+
+  | # | Finding | Sev | Reach | Val | E/R | Align | Score | Weighted | Verdict |
+  |---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
+  | F1 | `flush()` leaks the file handle | 3 | 2 | 0 | 3 | 3 | 11 | 13.8 | **Decline** (override) |
+  | F2 | `retryDelay` ignores the configured jitter | 2 | 2 | 2 | 2 | 3 | 11 | 11.3 | **Implement** |
+  | F3 | `parseRange` accepts a reversed range | 3 | 1 | 2 | 1 | 1 | 8 | 8.8 | **Defer** |
+
+  - **F1 — Decline (13.8, false-positive override).** Validity 0 → auto-decline even though
+    Validity is weighted 0: the `with` block closes the handle on every path.
+  - **F2 — Implement (11.3).** 15 × 9 / 12 = 11.25, rounded half up to 11.3, clears ≥11.
+  - **F3 — Defer (8.8).** 15 × 7 / 12 = 8.75 → 8.8, under the ≥11 bar. Tracked in a follow-up
+    issue.
+
+  Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+  each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline; weights Sev 1.5 · Reach 1 · Val 0 · E/R 0.5 · Align 1; source: config).
