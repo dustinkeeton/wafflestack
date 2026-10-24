@@ -447,6 +447,16 @@ describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#
       });
     });
 
+    test('protectedPathsFromProse keeps every frozen 0.18.0 extensionless filename (#660)', () => {
+      // A literal list, never derived from the set: dropping an entry must fail here.
+      const frozen = ['Makefile', 'GNUmakefile', 'Dockerfile', 'Containerfile', 'Procfile', 'Gemfile',
+        'Rakefile', 'Justfile', 'Vagrantfile', 'Brewfile', 'Podfile', 'Jenkinsfile', 'Caddyfile',
+        'Guardfile', 'Berksfile', 'Capfile', 'Snakefile'];
+      for (const name of frozen) {
+        assert.deepEqual(protectedPathsFromProse(`\`${name}\``), { paths: [name], skipped: [] }, name);
+      }
+    });
+
     test('protectedPathsFromProse dedupes in order and honors exclude', () => {
       assert.deepEqual(protectedPathsFromProse('`A.md` `B.md` `A.md` `x y` `x y`', { exclude: ['B.md'] }), {
         paths: ['A.md'],

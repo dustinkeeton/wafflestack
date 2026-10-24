@@ -87,17 +87,25 @@ back to `dustinkeeton/wafflestack`. State the resolved target at the gate.
 ### 3. Classify and draft
 
 Match the upstream issue forms exactly — a skill-filed report and a hand-filed one must converge on
-one shape, so the maintainer's enrichment pass can pick either straight off the queue:
+one shape, so the maintainer's enrichment pass can pick either straight off the queue. Route in this
+order — **the first test wins, before you look at the table**:
+
+1. **Is it a rough idea?** A wish or half-formed thought ("it'd be nice if…", "maybe X could…"),
+   or any one-liner that names no command, symptom, or design, when the user did not or could not
+   say more → `rough-idea.yml` / `waffle:needs-inference`, **whether it reads as a bug or
+   a feature**. Stop here. A one-liner is a **rough idea**, not a bug or feature you invent details
+   for: keep the user's words **verbatim** as The idea, and do not add a Problem / Motivation,
+   Expected / Actual / Repro, or Proposed Solution — the upstream enrichment pass writes those.
+   The `waffle:needs-inference` label is the enrichment queue; padding a one-liner defeats it.
+   A one-line **defect** that names a concrete command and symptom ("doctor flags drift right after
+   a clean render") is not a rough idea — it is a bug.
+2. **Otherwise**, pick from the table.
 
 | Report is | Upstream form | Label to apply | Body sections |
 |---|---|---|---|
+| a wish or half-formed one-liner of **any** kind (bug- or feature-shaped) — step 1 | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
 | a defect, regression, or behavior that contradicts the docs | `bug.yml` | `bug` | Problem / Motivation (Expected / Actual / Repro), Proposed Solution (optional), Context |
-| a missing capability or a change to how something works | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
-| a half-formed one-liner — the user could not or did not say more | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
-
-Route honestly: a one-liner is a **rough idea**, not a bug you invent details for. The
-`waffle:needs-inference` label is the enrichment queue — filing there is the low-friction path, and
-padding a one-liner into a fake bug report defeats it.
+| a missing capability or a change to how something works, with enough detail to state the problem | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
 
 Apply the form's own label **plus two fixed labels** on every filing:
 
@@ -113,7 +121,7 @@ label (that is the maintainer's triage call), never touch the upstream project b
 milestones, and never guess at labels beyond the form label and these two.
 
 Draft with `##` headings matching the form field labels, a title under 70 characters, and the
-diagnostics block appended under the last section:
+diagnostics block appended under the last section. A bug or feature:
 
 ```markdown
 ## Problem / Motivation
@@ -128,6 +136,16 @@ Repro: the exact command, and the last lines of its output
 <the collapsed <details> block from step 1, verbatim>
 ```
 
+A rough idea — two sections, nothing invented:
+
+```markdown
+## The idea
+<the user's words, verbatim — step-4 redaction is the only change>
+
+## Context
+<the collapsed <details> block from step 1, verbatim>
+```
+
 ### 4. Redact — the named deny-list
 
 The CLI already scrubbed its own output. Apply the same deny-list to **everything else** in the
@@ -135,16 +153,27 @@ draft — the user's prose, pasted command output, file names:
 
 - **Never read** `.waffle/waffle.local.yaml` or `.waffle/waffle.local.lock.json`. Not to "check
   what is in there", not to explain a value. Their purpose is to not propagate.
-- **Absolute paths** → repo-relative, or `~/…` when outside the repo. `/Users/<name>/…` and
-  `/home/<name>/…` carry the OS username.
+- **Absolute paths**, anywhere in the draft — **including each line of pasted command output** —
+  → `<repo>/…` when under the repo, else `~/…` when under home. `/Users/<name>/…` and
+  `/home/<name>/…` carry the OS username: `/Users/<name>/dev/<repo-dir>/.claude/x` becomes
+  `<repo>/.claude/x`.
 - **Git remotes, org/repo names, and remote URLs** of *this* repo → `<git-remote>` /
-  `<org>/<repo>`. The toolkit's own `github:OWNER/REPO` spec is the report's destination and stays.
+  `<org>/<repo>`. That includes the bare `owner/repo` inside an SSH or HTTPS remote: the pair never
+  appears on its own either. The toolkit's own `github:OWNER/REPO` spec is the report's destination
+  and stays.
 - **Email addresses** (authors, bots) → `<email>`.
 - **Config values** → dropped. Keep the **key** (`git.botEmail is set` is the diagnostic
   signal; the value is the consumer's). Tokens, hostnames, and anything that looks like a
   credential are values.
+- **Never echo a redacted value anywhere in your reply** — not in a "what I redacted" list, not as
+  `X → Y`, not in prose around the gate. Describe removals by category only ("a home path, the
+  remote, an email, and an overlay value were removed"). The original strings must not appear once
+  in your output — **except the consuming repo in §4b's hosted attachment links and the gate's
+  hosting line**, which the user approves explicitly.
 
-Re-read the whole draft once after redacting. What you show at the gate is what gets published.
+Re-read the whole draft once after redacting — and the **whole reply** around it: search it for
+`/Users/`, `/home/`, `@`, and this repo's org/repo (outside that attachment carve-out) before
+showing the gate. What you show at the gate is what gets published.
 
 ### 4b. Attachments
 
@@ -197,7 +226,8 @@ Present, and gate on an explicit yes:
 - **Form / labels**: the form label plus the two fixed ones — `rough-idea.yml` →
   `waffle:needs-inference` + `waffle:reassess` + `waffle:consumer-report`, etc.
 - **Title**
-- **The full body, post-redaction** — the exact bytes, not a summary or a promise about them
+- **The full body, post-redaction** — the exact bytes, not a summary or a promise about them. Any
+  note on what was redacted names categories, never values (step 4)
 - **Attachments** — each file (new name, size), where it will be hosted (`<consumer>` on the public
   `issue-assets` branch — which publishes the consuming repo's name) or why it falls back to a
   placeholder. The user approves the exact set of files that leaves this machine and may drop any.

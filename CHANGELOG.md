@@ -96,6 +96,9 @@ is what you reach for across a breaking one.
   only changes what `npm run evals` measures.
 
 ### Changed
+- **The 0.18.0 migration's extensionless-filename list is fully pinned by tests (#660).** One
+  table-driven test checks all 17 frozen names; before, only 4 were checked.
+  **Consumer impact:** none — test-only.
 - **The `/waffle-report` hold workflow skips maintainer-filed issues (#653).**
   `consumer-report-hold.yml` no longer holds issues opened by an `OWNER`, `MEMBER`, or
   `COLLABORATOR`, such as a maintainer follow-up that quotes a report's Context block. Bot accounts
@@ -188,6 +191,12 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **`/waffle-report` routes one-liners to rough ideas and stops echoing redacted values (#642).**
+  The rough-idea test now runs before the form table, so a wish like "it'd be nice if…" files as
+  `rough-idea.yml` with the user's words verbatim instead of a padded feature request. Redaction
+  now covers every line of pasted command output and the bare `owner/repo` of a remote, and the
+  reply never quotes a removed value (no "X → Y" redaction log). Consumer impact: re-render to
+  pick up the updated skill; no config change.
 - **A blank `listFormat` entry is now an error, not an empty bullet (#649).** An empty or
   whitespace-only entry such as `docs.protectedDocs: [""]` used to render a bare `` - `` ``
   bullet into the guardrail, which protects nothing. Render and `validate` now reject it with
