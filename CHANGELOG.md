@@ -216,13 +216,14 @@ is what you reach for across a breaking one.
   `rough-idea.yml`. A new eval case,
   `waffle-report-routes-detailed-wish-to-feature`, covers it. Also re-anchors two stale
   `content.test.mjs` refs in AGENTS.md. Consumer impact: re-render to pick up the updated skill;
-  no config change.
+  no config change. Superseded by #674: the form is now picked by structure, and that eval is gone.
 - **`/waffle-report` routes one-liners to rough ideas and stops echoing redacted values (#642).**
   The rough-idea test now runs before the form table, so a wish like "it'd be nice if…" files as
   `rough-idea.yml` with the user's words verbatim instead of a padded feature request. Redaction
   now covers every line of pasted command output and the bare `owner/repo` of a remote, and the
   reply never quotes a removed value (no "X → Y" redaction log). Consumer impact: re-render to
-  pick up the updated skill; no config change.
+  pick up the updated skill; no config change. The routing half is superseded by #674; the
+  redaction half stands.
 - **A blank `listFormat` entry is now an error, not an empty bullet (#649).** An empty or
   whitespace-only entry such as `docs.protectedDocs: [""]` used to render a bare `` - `` ``
   bullet into the guardrail, which protects nothing. Render and `validate` now reject it with
