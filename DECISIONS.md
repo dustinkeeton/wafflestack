@@ -32,7 +32,7 @@ rejected: the CI hook's `Bash(gh …)` allowlist can't run it, and autopilot's `
 prose-parsed. Short aliases (`sev`, `val`) — rejected: more surface, and a typo that resolves to a
 real key is worse than one that fails.
 
-**Impact**: `pr-response` SKILL.md (argument hint, §1, §3, §6, §7, Recalibration, agent rules);
+**Impact**: `pr-response` SKILL.md (argument hint, §1, §3, §4, §6, §7, Recalibration, agent rules);
 new evals `pr-response-rubric-override` and `pr-response-rubric-fallback`; test
 `rubric-override.test.mjs`. Consumers re-render; runs without the token are unchanged.
 
