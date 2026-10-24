@@ -51,7 +51,7 @@ assert:
   - type: includes
     value: "8.8"
   - type: regex
-    value: 'Val(idity)? 0(?![.0-9])'
+    value: 'weights[^\n]*Val(idity)? 0(?![.0-9])'
   - type: regex
     value: 'Sev(erity)? 1\.5'
   - type: regex
