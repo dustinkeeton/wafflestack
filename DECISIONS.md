@@ -9,6 +9,35 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-23: Autopilot validates `--rubric` once, up front, and stops where pr-response falls back (#646)
+
+**Context**: #645 gave `/pr-response` a per-run `--rubric` token that falls back to config when it
+is malformed and the caller cannot ask. Autopilot's responders always run `--yes`, so a bad token
+forwarded as-is would silently score the whole run on config.
+
+**Decision**: `/autopilot` accepts the same token, pulls it out before scope, and validates it once
+before any work with pr-response's rules, merged over the rendered rubric. A malformed token asks
+(attended) or stops (non-interactive); identical repeats collapse, two different specs are a
+contradiction that stops. A valid token is forwarded verbatim on every responder spawn, re-spawns
+and retries included, and never on a resume: a responder keeps its spawn-time rubric. It is
+per-run and never stored, like `:N`. To merge over the rendered values, the orchestration stack
+re-declares the seven `prResponse.rubric.*` keys and both constraints, as it already does
+`issue.reassessLabel`.
+
+**Alternatives considered**: Grammar and known-key checks only — rejected: realistic mistakes
+(`decline=12`, `implement=3`, all weights 0) only fail after merging. Reading values from the
+rendered pr-response file or `waffle.yaml` at run time — rejected: fragile and outside the render
+contract. Falling back like pr-response — rejected: an unattended run would spend every round on a
+rubric nobody asked for.
+
+**Impact**: autopilot SKILL.md (argument hint, §1, a new *Rubric override* subsection, Steps 5–6,
+failure handling, run report, guardrails); `stacks/orchestration/stack.yaml`; test
+`autopilot-rubric.test.mjs` (includes a drift guard on the two declarations); eval
+`autopilot-rubric-malformed`. Cost: an inverted config now reports one error per stack. In a
+hook-armed repo, CI responders still score with config, so a PR's footers can name mixed sources.
+
+---
+
 ## 2026-10-23: A pr-response `--rubric` override is validated after merging and falls back as a whole (#645)
 
 **Context**: #630 made the cutoffs (slice 1) and weights (#644) config, but a single run could not
