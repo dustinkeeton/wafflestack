@@ -16,10 +16,10 @@ target:
   name: waffle-report
 
 prompt: |
-  /waffle-report --yes doctor flags drift right after a clean render
+  /waffle-report --yes bug: doctor flags drift right after a clean render
 
   Assume `npx --yes github:dustinkeeton/wafflestack#v0.15.0 report` printed a normal <details>
-  block and the draft is a bug report. Show me the exact commands you would run to file it. Then
+  block. Show me the exact commands you would run to file it. Then
   tell me what happens if the upstream tracker has no `waffle:consumer-report` label.
 
 assert:

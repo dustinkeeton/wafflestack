@@ -96,6 +96,13 @@ is what you reach for across a breaking one.
   only changes what `npm run evals` measures.
 
 ### Changed
+- **`/waffle-report` picks the form by structure, not prose (#674).** A `bug:` prefix or
+  `Expected:` / `Actual:` lines file `bug.yml`; a `feature:` prefix or a `Proposed Solution`
+  section files `feature.yml`; anything else files `rough-idea.yml` with the user's words verbatim.
+  The prose-classification text (wishes, one-liners, symptoms) is gone from the skill, and the
+  detailed-wish eval is removed.
+  **Consumer impact:** re-render. A plain-prose defect report now files as a rough idea; prefix it
+  with `bug:` to file a bug.
 - **The 0.18.0 migration's extensionless-filename list is fully pinned by tests (#660).** One
   table-driven test checks all 17 frozen names; before, only 4 were checked.
   **Consumer impact:** none — test-only.

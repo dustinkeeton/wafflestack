@@ -715,15 +715,8 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /Never apply a `priority: \*`\s+label/);
   });
 
-  test('/waffle-report routes a one-liner before the form table and never echoes redacted values (#642)', () => {
+  test('/waffle-report keeps a rough idea verbatim and never echoes redacted values (#642)', () => {
     const md = readSkill('waffle-report');
-    const route = md.indexOf('**Is it a rough idea?**');
-    const table = md.indexOf('| Report is | Upstream form |');
-    assert.ok(route > 0 && route < table, 'the rough-idea test must precede the form table');
-    const firstRow = md.slice(table).split('\n')[2];
-    assert.match(firstRow, /`rough-idea\.yml`/, 'rough-idea is the first table row');
-    assert.match(md, /\*\*whether it reads as a bug or\s+a feature\*\*/);
-    assert.match(md, /not a rough idea — it is a bug/, 'a concrete one-line defect stays a bug');
     assert.match(md, /## The idea\n<the user's words, verbatim/);
     assert.match(md, /\*\*including each line of pasted command output\*\*/);
     assert.match(md, /\*\*Never echo a redacted value anywhere in your reply\*\*/);
@@ -732,19 +725,18 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /this repo's org\/repo \(outside that attachment carve-out\)/, 'the whole-reply re-read honours the carve-out');
   });
 
-  test('/waffle-report: a detailed wish is a feature, not a rough idea (#669)', () => {
+  test('/waffle-report picks the form by structure, not prose (#674)', () => {
     const md = readSkill('waffle-report');
-    const wishBound = /no further than the wish[^|]*?no problem, symptom, or design of its own/;
-    assert.match(md, /\*\*that goes no further than the wish — no problem, symptom, or design of its own\*\*/, 'step 1 bounds the wish by detail');
-    assert.match(md, /naming the\s+command it is about does not count/, 'a bare wish naming its command stays a rough idea');
-    assert.match(md, /any one-liner that names no command, symptom, or design/, 'one-liners keep the no-command/symptom/design test');
-    assert.match(md, /\*\*state a problem, a\s+symptom, or a design of its own\*\* is not a rough idea either/, 'the carve-out uses the same bound: problem-only and design-only wishes leave step 1');
-    const rows = md.slice(md.indexOf('| Report is | Upstream form |')).split('\n');
-    assert.match(rows[2], wishBound, 'the rough-idea row carries the wish bound');
-    assert.match(rows[2], /naming its command does not count/, 'the rough-idea row keeps the bare wish');
-    assert.match(rows[2], /names no command, symptom, or design/, 'the rough-idea row carries the one-liner bound');
-    assert.match(rows[4], /enough detail to state the problem or a proposed design/, 'the feature row admits every wish step 1 lets through');
-    assert.doesNotMatch(md, /state both a problem and a proposed design/, 'the problem-AND-design bar is gone');
+    const rows = md.slice(md.indexOf('| The description | Upstream form |')).split('\n');
+    assert.match(rows[2], /starts with `bug:`/);
+    assert.match(rows[2], /`bug\.yml`/);
+    assert.match(rows[3], /starts with `feature:`/);
+    assert.match(rows[3], /`feature\.yml`/);
+    assert.match(rows[4], /anything else/);
+    assert.match(rows[4], /`rough-idea\.yml`/);
+    assert.match(rows[4], /`waffle:needs-inference`/);
+    assert.match(md, /\*\*structure, never by wording\*\*/);
+    assert.doesNotMatch(md, /wish|half-formed|Is it a rough idea|names no command, symptom, or design/, 'no prose classification survives');
   });
 
   test('waffle:consumer-report is never a consumer prerequisite — doctor must not check for it (#609)', () => {
