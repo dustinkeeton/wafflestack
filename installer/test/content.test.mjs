@@ -738,6 +738,7 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(rows[4], /`rough-idea\.yml`/);
     assert.match(rows[4], /`waffle:needs-inference`/);
     assert.match(md, /\*\*structure, never by wording\*\*/);
+    assert.match(md, /Drop a `bug:` \/ `feature:` prefix from the draft/);
     assert.doesNotMatch(md, /wish|half-formed|Is it a rough idea|names no command, symptom, or design/, 'no prose classification survives');
   });
 

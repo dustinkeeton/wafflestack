@@ -33,6 +33,8 @@ assert:
     value: "waffle:consumer-report"
   - type: excludes
     value: "priority:"
+  - type: excludes
+    value: '--title "bug:'
   - type: judge
     rubric: >-
       The response files into the upstream toolkit repo (dustinkeeton/wafflestack): it creates
