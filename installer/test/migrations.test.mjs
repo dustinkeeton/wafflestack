@@ -372,6 +372,13 @@ describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#
       assert.equal(notCarried(logs), undefined, logs.join('\n'));
     });
 
+    test('capitalized prose words are logged as not a path; all-caps and known filenames are kept (#655)', () => {
+      write(cwd, CONFIG, withGuardrail('"`README.md`, `Important`: `Never` edit `TODO`, `Procfile`, `Justfile`"'));
+      const logs = run();
+      assert.deepEqual(docs().protectedDocs, ['README.md', 'TODO', 'Procfile', 'Justfile']);
+      assert.match(notCarried(logs), /`Important` \(not a path\), `Never` \(not a path\)/);
+    });
+
     test('commands and bare words are logged as not a path', () => {
       write(cwd, CONFIG, withGuardrail('"`README.md`, run `npm test`, set `true`"'));
       const logs = run();
@@ -425,6 +432,18 @@ describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#
       assert.deepEqual(protectedPathsFromProse('`docs.md` `docs/x.md` `docs.json` `docs.machineDocSet`'), {
         paths: ['docs.md', 'docs/x.md', 'docs.json'],
         skipped: [{ token: 'docs.machineDocSet', why: 'config key' }],
+      });
+    });
+
+    test('protectedPathsFromProse drops capitalized words and single letters, keeps all-caps and _names (#655)', () => {
+      assert.deepEqual(protectedPathsFromProse('`Never` `TODO` `Important` `A` `CODE_OF_CONDUCT` `_redirects` `Taskfile`'), {
+        paths: ['TODO', 'CODE_OF_CONDUCT', '_redirects'],
+        skipped: [
+          { token: 'Never', why: 'not a path' },
+          { token: 'Important', why: 'not a path' },
+          { token: 'A', why: 'not a path' },
+          { token: 'Taskfile', why: 'not a path' },
+        ],
       });
     });
 
