@@ -196,7 +196,8 @@ is what you reach for across a breaking one.
 ### Fixed
 
 - **`/waffle-report` no longer files a detailed wish as a rough idea (#669).** The rough-idea test
-  now only catches a wish that names no command, symptom, or design. An "it'd be nice if…" request
+  now only catches a wish that does not state both a problem and a proposed design, or a one-liner
+  that names no command, symptom, or design. An "it'd be nice if…" request
   that states the problem and a proposed design routes to `feature.yml` again, as it did before
   #666; a bare wish one-liner still goes to `rough-idea.yml`. A new eval case,
   `waffle-report-routes-detailed-wish-to-feature`, covers it. Also re-anchors two stale

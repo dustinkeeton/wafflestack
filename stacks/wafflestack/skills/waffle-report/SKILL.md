@@ -91,8 +91,8 @@ one shape, so the maintainer's enrichment pass can pick either straight off the 
 order — **the first test wins, before you look at the table**:
 
 1. **Is it a rough idea?** A wish or half-formed thought ("it'd be nice if…", "maybe X could…")
-   **that names no command, symptom, or design**, or any one-liner that names none of them, when
-   the user did not or could not say more → `rough-idea.yml` / `waffle:needs-inference`,
+   **that does not state both a problem and a proposed design**, or any one-liner that names no
+   command, symptom, or design, when the user did not or could not say more → `rough-idea.yml` / `waffle:needs-inference`,
    **whether it reads as a bug or a feature**. Stop here. A one-liner is a **rough idea**, not a bug or feature you invent details
    for: keep the user's words **verbatim** as The idea, and do not add a Problem / Motivation,
    Expected / Actual / Repro, or Proposed Solution — the upstream enrichment pass writes those.
@@ -104,7 +104,7 @@ order — **the first test wins, before you look at the table**:
 
 | Report is | Upstream form | Label to apply | Body sections |
 |---|---|---|---|
-| a wish or half-formed one-liner of **any** kind (bug- or feature-shaped) that names no command, symptom, or design — step 1 | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
+| a wish that does not state both a problem and a proposed design, or a half-formed one-liner of **any** kind (bug- or feature-shaped) that names no command, symptom, or design — step 1 | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
 | a defect, regression, or behavior that contradicts the docs | `bug.yml` | `bug` | Problem / Motivation (Expected / Actual / Repro), Proposed Solution (optional), Context |
 | a missing capability or a change to how something works, with enough detail to state the problem | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
 
