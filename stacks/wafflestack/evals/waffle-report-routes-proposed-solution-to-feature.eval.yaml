@@ -1,0 +1,61 @@
+# Layer 2 eval case (harness: #109). Scoped to the wafflestack stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (waffle-report skill, "Pick the form and draft", #674): an unprefixed
+# description with a `Proposed Solution:` line routes to `feature.yml`, and no bug field is invented.
+
+name: waffle-report-routes-proposed-solution-to-feature
+description: >-
+  An unprefixed report with a `Proposed Solution:` line routes to `feature.yml` with the
+  `enhancement` label, by structure rather than wording, and the draft invents no Expected / Actual
+  / Repro.
+
+target:
+  kind: skill
+  name: waffle-report
+
+prompt: |
+  /waffle-report doctor output lists drifted paths only
+  Proposed Solution: add a stack column to the doctor table
+
+  Assume `npx --yes github:dustinkeeton/wafflestack#v0.15.0 report` printed a normal <details>
+  block. Show me what you would present at the confirmation gate.
+
+assert:
+  - type: includes
+    value: "feature.yml"
+  - type: includes
+    value: "enhancement"
+  - type: excludes
+    value: "rough-idea.yml"
+  - type: excludes
+    value: "waffle:needs-inference"
+  - type: excludes
+    value: "priority:"
+  - type: judge
+    rubric: >-
+      The response routes the report to the feature form (`feature.yml`) with the `enhancement`
+      label plus the two fixed labels `waffle:reassess` and `waffle:consumer-report`, because the
+      description has a Proposed Solution line — not to the bug or rough-idea form. The drafted body
+      carries the user's proposed solution, and invents no Expected, Actual, or Repro content the
+      user did not give. It applies no priority label. A pass requires all of these.
+
+dryRunResponse: |
+  The description has a `Proposed Solution:` line, so it routes to the feature form.
+
+  **Target**: `dustinkeeton/wafflestack` (from `github:dustinkeeton/wafflestack#v0.15.0`)
+  **Form / labels**: `feature.yml` → `enhancement` + `waffle:reassess` + `waffle:consumer-report`
+  **Title**: doctor output lists drifted paths only
+
+  **Body (post-redaction)**:
+
+  ## Problem / Motivation
+  doctor output lists drifted paths only
+
+  ## Proposed Solution
+  add a stack column to the doctor table
+
+  ## Context
+  <details> … the `wafflestack report` block, verbatim … </details>
+
+  File it? (yes / no)

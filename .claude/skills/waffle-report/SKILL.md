@@ -2,7 +2,7 @@
 name: waffle-report
 description: File a wafflestack toolkit bug, feature request, or rough idea UPSTREAM — in the toolkit's own tracker, not this repo — with redacted diagnostics attached. Use when a render, upgrade, doctor, or skill behaves wrongly and the fault is the toolkit's; drafts read-only, shows the exact redacted payload, files only on an explicit yes. `--yes` skips the gate.
 user-invocable: true
-argument-hint: "<what went wrong, in a sentence or two — a one-liner is enough> [--yes]"
+argument-hint: "[bug: | feature:] <what went wrong, in a sentence or two — a one-liner is enough> [--yes]"
 ---
 
 # Report a toolkit problem upstream
@@ -54,7 +54,7 @@ in config, never by editing this rendered file.
 
 ## Plan first, then act
 
-1. **Plan phase — read-only.** Run the CLI, classify, draft, redact, plan attachments. Nothing on GitHub changes.
+1. **Plan phase — read-only.** Run the CLI, pick the form, draft, redact, plan attachments. Nothing on GitHub changes.
 2. **Act phase — mutating.** Any approved attachment uploads (step 4b), then `gh issue create`. Nothing runs before the gate.
 
 Declining the gate leaves GitHub untouched — nothing filed, nothing uploaded; there is nothing to roll back.
@@ -84,31 +84,19 @@ the fork. If the spec is not `github:`-shaped (a local checkout path), use the l
 `toolkit.source` from the diagnostics block (`source github:OWNER/REPO`); if that is null too, fall
 back to `dustinkeeton/wafflestack`. State the resolved target at the gate.
 
-### 3. Classify and draft
+### 3. Pick the form and draft
 
-Match the upstream issue forms exactly — a skill-filed report and a hand-filed one must converge on
-one shape, so the maintainer's enrichment pass can pick either straight off the queue. Route in this
-order — **the first test wins, before you look at the table**:
+Match the upstream issue forms exactly. Pick the form by **structure, never by wording**: a `bug:` /
+`feature:` prefix wins outright, else the first row whose fields match:
 
-1. **Is it a rough idea?** A wish or half-formed thought ("it'd be nice if…", "maybe X could…")
-   **that goes no further than the wish — no problem, symptom, or design of its own** (naming the
-   command it is about does not count), or any one-liner that names no command, symptom, or design,
-   when the user did not or could not say more → `rough-idea.yml` / `waffle:needs-inference`,
-   **whether it reads as a bug or a feature**. Stop here. A one-liner is a **rough idea**, not a bug or feature you invent details
-   for: keep the user's words **verbatim** as The idea, and do not add a Problem / Motivation,
-   Expected / Actual / Repro, or Proposed Solution — the upstream enrichment pass writes those.
-   The `waffle:needs-inference` label is the enrichment queue; padding a one-liner defeats it.
-   A one-line **defect** that names a concrete command and symptom ("doctor flags drift right after
-   a clean render") is not a rough idea — it is a bug. A wish that goes on to **state a problem, a
-   symptom, or a design of its own** is not a rough idea either — it is a feature (or, if it
-   describes a defect, a bug), whatever its opening words.
-2. **Otherwise**, pick from the table.
-
-| Report is | Upstream form | Label to apply | Body sections |
+| The description | Upstream form | Label to apply | Body sections |
 |---|---|---|---|
-| a wish that goes no further than the wish (no problem, symptom, or design of its own; naming its command does not count), or a half-formed one-liner of **any** kind (bug- or feature-shaped) that names no command, symptom, or design — step 1 | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
-| a defect, regression, or behavior that contradicts the docs | `bug.yml` | `bug` | Problem / Motivation (Expected / Actual / Repro), Proposed Solution (optional), Context |
-| a missing capability or a change to how something works, with enough detail to state the problem or a proposed design | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
+| starts with `bug:`, or has an `Expected:` or `Actual:` line | `bug.yml` | `bug` | Problem / Motivation (Expected / Actual / Repro), Proposed Solution (optional), Context |
+| starts with `feature:`, or has a `Proposed Solution:` line or heading | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
+| anything else | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
+
+Drop a `bug:` / `feature:` prefix from the draft. **Invent nothing**, in any form: omit a field the
+user did not give. A rough idea gets no Problem, Expected / Actual / Repro, or Proposed Solution.
 
 Apply the form's own label **plus two fixed labels** on every filing:
 
@@ -313,7 +301,7 @@ Do not retry with a different account, a different repo, or by dropping the reda
 
 ### A bug with a screenshot, from a public consuming repo
 ```
-/waffle-report doctor flags drift right after a clean render ~/Desktop/Screenshot\ 2026-10-07.png
+/waffle-report bug: doctor flags drift right after a clean render ~/Desktop/Screenshot\ 2026-10-07.png
 ```
 Collects redacted diagnostics, drafts a `bug.yml` report from the text minus the path, and opens the
 screenshot to check it for leaked values. The gate shows the body plus `attachment-1.png` (380 KB) →

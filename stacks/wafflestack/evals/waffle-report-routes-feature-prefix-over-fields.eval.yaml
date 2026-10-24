@@ -1,0 +1,57 @@
+# Layer 2 eval case (harness: #109). Scoped to the wafflestack stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (waffle-report skill, "Pick the form and draft", #674): a `feature:` prefix
+# wins outright, even when the description also has `Expected:` / `Actual:` lines.
+
+name: waffle-report-routes-feature-prefix-over-fields
+description: >-
+  A `feature:`-prefixed report that also has `Expected:` / `Actual:` lines routes to `feature.yml`
+  with the `enhancement` label — the named form beats the bug fields.
+
+target:
+  kind: skill
+  name: waffle-report
+
+prompt: |
+  /waffle-report feature: doctor should name the stack
+  Expected: a stack column in the doctor table
+  Actual: only drifted paths
+
+  Assume `npx --yes github:dustinkeeton/wafflestack#v0.15.0 report` printed a normal <details>
+  block. Show me what you would present at the confirmation gate.
+
+assert:
+  - type: includes
+    value: "feature.yml"
+  - type: includes
+    value: "enhancement"
+  - type: excludes
+    value: "rough-idea.yml"
+  - type: excludes
+    value: "priority:"
+  - type: judge
+    rubric: >-
+      The response routes the report to the feature form (`feature.yml`) with the `enhancement`
+      label plus the two fixed labels `waffle:reassess` and `waffle:consumer-report`, because the
+      description starts with `feature:` — not to the bug form, even though it has Expected and
+      Actual lines, and not to the rough-idea form. The drafted title drops the `feature:` prefix.
+      It applies no priority label. A pass requires all of these.
+
+dryRunResponse: |
+  The description starts with `feature:`, so it routes to the feature form.
+
+  **Target**: `dustinkeeton/wafflestack` (from `github:dustinkeeton/wafflestack#v0.15.0`)
+  **Form / labels**: `feature.yml` → `enhancement` + `waffle:reassess` + `waffle:consumer-report`
+  **Title**: doctor should name the stack
+
+  **Body (post-redaction)**:
+
+  ## Problem / Motivation
+  Expected: a stack column in the doctor table
+  Actual: only drifted paths
+
+  ## Context
+  <details> … the `wafflestack report` block, verbatim … </details>
+
+  File it? (yes / no)

@@ -9,6 +9,37 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-24: `/waffle-report` picks the form by structure, never by wording (#674)
+
+**Context**: `/waffle-report` guessed the upstream form (bug, feature, or rough idea) by reading the
+user's prose for wishes, half-formed thoughts, or named symptoms. The guess was unreliable, and
+each fix made the rules longer (#642, then #669).
+
+**Decision**: The form comes from structure alone. A `bug:` / `feature:` prefix wins outright, else
+the first row whose fields match:
+
+| The description | Files as |
+|---|---|
+| Starts with `bug:`, or has an `Expected:` or `Actual:` line | `bug.yml` |
+| Starts with `feature:`, or has a `Proposed Solution:` line or heading | `feature.yml` |
+| Anything else | `rough-idea.yml`, with the user's words verbatim |
+
+The skill drops the `bug:` / `feature:` prefix from the draft. No form invents a field the user
+did not give; for a rough idea the upstream enrichment pass writes the missing sections.
+
+**Alternatives considered**: Keep tuning the prose rules — rejected: #642 and #669 each added
+wording tests, and the routing still misfired.
+
+**Rationale**: Owner ruling: route on structure, never on phrasing. A filled-in form or a named
+form is a signal the skill can check; "does this read like a wish" is not.
+
+**Impact**: `stacks/wafflestack/skills/waffle-report/SKILL.md` (step 3 and its form table); the
+#642 and #669 content pins in `installer/test/content.test.mjs` become one #674 structural pin;
+the `waffle-report-routes-detailed-wish-to-feature` eval is removed. Consumers re-render. A
+plain-prose defect report now files as a rough idea; prefix it with `bug:` to file a bug.
+
+---
+
 ## 2026-10-23: Autopilot validates `--rubric` once, up front, and stops where pr-response falls back (#646)
 
 **Context**: #645 gave `/pr-response` a per-run `--rubric` token that falls back to config when it

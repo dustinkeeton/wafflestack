@@ -96,6 +96,14 @@ is what you reach for across a breaking one.
   only changes what `npm run evals` measures.
 
 ### Changed
+- **`/waffle-report` picks the form by structure, not prose (#674).** A `bug:` / `feature:`
+  prefix wins outright; else an `Expected:` or `Actual:` line files `bug.yml`, a `Proposed Solution:`
+  line or heading files `feature.yml`, and anything else files `rough-idea.yml` with the user's
+  words verbatim. No form invents a field the user did not give.
+  The prose-classification text (wishes, one-liners, symptoms) is gone from the skill, and the
+  detailed-wish eval is removed.
+  **Consumer impact:** re-render. A plain-prose defect report now files as a rough idea; prefix it
+  with `bug:` to file a bug.
 - **The pr-response weight evals' footer regexes tolerate wording drift (#671).** In
   `pr-response-weight-override-rounding` and `pr-response-weight-flip` the footer-weight regexes now
   accept `**bold**` numbers, a capital-W `Weights`, at most one soft wrap inside the footer, and
@@ -209,13 +217,14 @@ is what you reach for across a breaking one.
   `rough-idea.yml`. A new eval case,
   `waffle-report-routes-detailed-wish-to-feature`, covers it. Also re-anchors two stale
   `content.test.mjs` refs in AGENTS.md. Consumer impact: re-render to pick up the updated skill;
-  no config change.
+  no config change. Superseded by #674: the form is now picked by structure, and that eval is gone.
 - **`/waffle-report` routes one-liners to rough ideas and stops echoing redacted values (#642).**
   The rough-idea test now runs before the form table, so a wish like "it'd be nice if…" files as
   `rough-idea.yml` with the user's words verbatim instead of a padded feature request. Redaction
   now covers every line of pasted command output and the bare `owner/repo` of a remote, and the
   reply never quotes a removed value (no "X → Y" redaction log). Consumer impact: re-render to
-  pick up the updated skill; no config change.
+  pick up the updated skill; no config change. The routing half is superseded by #674; the
+  redaction half stands.
 - **A blank `listFormat` entry is now an error, not an empty bullet (#649).** An empty or
   whitespace-only entry such as `docs.protectedDocs: [""]` used to render a bare `` - `` ``
   bullet into the guardrail, which protects nothing. Render and `validate` now reject it with
