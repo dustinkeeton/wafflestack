@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
-import { MIGRATIONS, applicableMigrations, migrationCeiling, protectedPathsFromProse } from '../lib/migrations.mjs';
+import { MIGRATIONS, EXTENSIONLESS_FILES_0_18, applicableMigrations, migrationCeiling, protectedPathsFromProse } from '../lib/migrations.mjs';
 import { upgrade } from '../lib/upgrade.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { eject } from '../lib/eject.mjs';
@@ -447,7 +447,7 @@ describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#
       });
     });
 
-    test('protectedPathsFromProse keeps every frozen 0.18.0 extensionless filename (#660)', () => {
+    test('protectedPathsFromProse keeps every frozen 0.18.0 extensionless filename, no more and no fewer (#660, #670)', () => {
       // A literal list, never derived from the set: dropping an entry must fail here.
       const frozen = ['Makefile', 'GNUmakefile', 'Dockerfile', 'Containerfile', 'Procfile', 'Gemfile',
         'Rakefile', 'Justfile', 'Vagrantfile', 'Brewfile', 'Podfile', 'Jenkinsfile', 'Caddyfile',
@@ -455,6 +455,8 @@ describe('0.18.0 migration: docs.voiceGuardrailSection → docs.protectedDocs (#
       for (const name of frozen) {
         assert.deepEqual(protectedPathsFromProse(`\`${name}\``), { paths: [name], skipped: [] }, name);
       }
+      assert.ok(Object.isFrozen(EXTENSIONLESS_FILES_0_18));
+      assert.deepEqual([...EXTENSIONLESS_FILES_0_18].sort(), [...frozen].sort(), 'the 0.18.0 set is frozen: no additions or removals');
     });
 
     test('protectedPathsFromProse dedupes in order and honors exclude', () => {
