@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
-import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches, LIST_FORMATS, CONSTRAINT_KINDS, toRangeNumber, rangeProblem } from './template.mjs';
+import { placeholderKeys, compilePattern, makeGuard, entryPatternProblems, undeclaredFlagProblem, PROMPT_MODE, FLAG_SIDES, isModeScalar, modeMatches, LIST_FORMATS, CONSTRAINT_KINDS, constraintViolation, rangeProblem } from './template.mjs';
 import { findItems, itemsOfKind, parseRef, resolveDepStrict } from './refs.mjs';
 import { spawnSync } from 'node:child_process';
 import { PREREQ_KINDS, PREREQ_LEVELS, claudeCli } from './prerequisites.mjs';
@@ -757,7 +757,7 @@ export function rangeKeyProblems(spec) {
   return problems;
 }
 
-/** Lint a stack's `constraints:` list (#630): a closed `kind`, two distinct `range:`-declaring keys, defaults that satisfy it. */
+/** Lint a stack's `constraints:` list (#630, #644): a closed `kind`, distinct `range:`-declaring keys of the kind's arity, defaults that satisfy it. */
 export function stackConstraintProblems(stack) {
   const list = stack.constraints;
   if (!Array.isArray(list)) return ['`constraints` must be a list'];
@@ -769,8 +769,9 @@ export function stackConstraintProblems(stack) {
       return;
     }
     const keys = c.keys;
-    if (!Array.isArray(keys) || keys.length !== 2 || keys[0] === keys[1] || !keys.every((k) => typeof k === 'string')) {
-      problems.push(`${label} (${c.kind}) \`keys\` must name two distinct config keys`);
+    const pair = c.kind === 'lessThan';
+    if (!Array.isArray(keys) || (pair ? keys.length !== 2 : keys.length < 1) || new Set(keys).size !== keys.length || !keys.every((k) => typeof k === 'string')) {
+      problems.push(`${label} (${c.kind}) \`keys\` must name ${pair ? 'two' : 'one or more'} distinct config keys`);
       return;
     }
     const undeclaredOrUnranged = keys.filter((k) => stack.config?.[k]?.range === undefined);
@@ -778,8 +779,8 @@ export function stackConstraintProblems(stack) {
       problems.push(`${label} (${c.kind}) names ${undeclaredOrUnranged.join(', ')}, which this stack does not declare with a \`range\``);
       return;
     }
-    const [a, b] = keys.map((k) => toRangeNumber(stack.config[k].default));
-    if (a !== null && b !== null && !(a < b)) problems.push(`${label} (${c.kind}) is violated by the defaults: ${keys[0]} ${a} is not less than ${keys[1]} ${b}`);
+    const bad = constraintViolation(c, (k) => stack.config[k].default);
+    if (bad) problems.push(`${label} (${c.kind}) is violated by the defaults: ${bad}`);
   });
   return problems;
 }
