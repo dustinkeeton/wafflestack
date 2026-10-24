@@ -1,0 +1,68 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Pins the per-run `--rubric` override (#645): the token beats config for this run, so a finding
+# that Implements under config Defers under the raised bar and reweighted Validity.
+
+name: pr-response-rubric-override
+description: >-
+  `/pr-response 42 --rubric implement=12,validity=2` scores with the merged rubric (cutoffs 12/4,
+  Validity weight 2): a raw-11 finding lands at weighted 11.7 and Defers, a raw-15 finding still
+  Implements, and the footer names the effective rubric and its run-override source.
+
+target:
+  kind: skill
+  name: pr-response
+
+prompt: |
+  /pr-response 42 --rubric implement=12,validity=2
+
+  PR #42 has two review findings. They are already scored on rubric v3 — use these dimension
+  scores exactly as given (Severity · Reach · Validity · Effort/Risk · Alignment); do not rescore.
+
+  F1. `retryDelay` ignores the configured jitter. Scores: 1 · 2 · 3 · 3 · 2.
+  F2. `parseRange("")` returns `[0, -1]` on the path every `report` run executes, confirmed.
+      Scores: 3 · 3 · 3 · 3 · 3.
+
+  Compute each composite with this run's effective rubric, give me the verdict table with reasons
+  and the reply footer. Do not apply anything yet.
+
+assert:
+  - type: includes
+    value: "Weighted"
+  - type: includes
+    value: "run override"
+  - type: includes
+    value: "≥12 Implement"
+  - type: judge
+    rubric: >-
+      This repo's config is the v3 default (cutoffs Implement >=11, Decline <=4, every weight 1).
+      The run passed `--rubric implement=12,validity=2`, so the effective rubric is Implement >=12,
+      Decline <=4, weights Severity 1, Reach 1, Validity 2, Effort/Risk 1, Alignment 1. The
+      composite is 15 x (weighted sum) / (3 x sum of weights), rounded to one decimal. Every
+      sentence below is a PASS condition, a FAIL condition, or an explicit "not judged". Do not
+      add conditions of your own.
+      F1 — PASS requires the verdict is Defer and its weighted composite is 11.7. FAIL if the
+      verdict is Implement — that means the config rubric was used instead of the override.
+      F2 — PASS requires the verdict is Implement. Its composite value is not judged.
+      REPLY — PASS requires a Weighted column and a footer naming the effective cutoffs (12 and 4),
+      the Validity weight 2, and that the source is a run override. FAIL if any is missing.
+      Wording, column order and the reasons' length are not judged.
+      OVERALL — PASS only when F1, F2 and REPLY all pass; otherwise FAIL.
+
+dryRunResponse: |
+  <!-- waffle-pr-response -->
+  **PR response** — 2 findings: 1 implemented, 1 deferred, 0 declined.
+
+  | # | Finding | Sev | Reach | Val | E/R | Align | Score | Weighted | Verdict |
+  |---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
+  | F1 | `retryDelay` ignores the configured jitter | 1 | 2 | 3 | 3 | 2 | 11 | 11.7 | **Defer** |
+  | F2 | `parseRange("")` returns `[0, -1]` | 3 | 3 | 3 | 3 | 3 | 15 | 15.0 | **Implement** |
+
+  - **F1 — Defer (11.7).** Real, but 15 × 14 / 18 = 11.7 is under this run's ≥12 bar. Tracked in a
+    follow-up issue.
+  - **F2 — Implement (15.0).** Confirmed on the live `report` path.
+
+  Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+  each; ≥12 Implement · >4 and <12 Defer · ≤4 Decline; weights Sev 1 · Reach 1 · Val 2 · E/R 1 · Align 1;
+  source: run override (--rubric implement=12,validity=2) over config).

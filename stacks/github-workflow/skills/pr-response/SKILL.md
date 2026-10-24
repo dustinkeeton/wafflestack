@@ -2,7 +2,7 @@
 name: pr-response
 description: Triage the review findings on a pull request — read every review and review comment (from the adversarial-review bot or a human), score each finding on a five-dimension rubric (severity, reach, validity, effort/risk, alignment), decide Implement / Defer / Decline with a recorded score and one-line reason, apply the accepted fixes, and post one reply per round summarizing the verdicts. Use when a PR has review feedback to answer, when the user says "respond to the review", "address the findings", or "triage the PR comments". Invokable by users and agents.
 user-invocable: true
-argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [{{prResponse.confirmGate.flag.off}} | {{prResponse.confirmGate.flag.on}}]"
+argument-hint: "<PR#, number, or PR URL> (omit for the current branch's PR)  [{{prResponse.confirmGate.flag.off}} | {{prResponse.confirmGate.flag.on}}]  [--rubric <key>=<n>,…]"
 ---
 
 # PR Response
@@ -39,6 +39,7 @@ Inspect `$ARGUMENTS`:
 | empty / omitted | Respond to the **current branch's** open PR: `gh pr view --json number,url` (fails if the branch has no PR — report that and stop). |
 | `{{prResponse.confirmGate.flag.off}}` (with or without a PR ref) | Skip the confirmation gate before applying fixes — see [The gate convention](#the-gate-convention). |
 | `{{prResponse.confirmGate.flag.on}}` (with or without a PR ref) | Force the confirmation gate for this run, even when the rendered gate is off. Both tokens at once is a contradiction — say so and stop. |
+| `--rubric <spec>` (with or without a PR ref or gate token) | Override this repo's rubric cutoffs and weights for this run only — see [The rubric run override](#the-rubric-run-override). |
 
 Resolve the repo coordinates and the PR's state up front:
 
@@ -53,6 +54,78 @@ gh pr view "$N" --json number,title,state,isDraft,headRefName,headRefOid,url,aut
 - If the PR is **closed**, report and stop.
 - If the PR's head branch is not checked out locally, check it out before applying anything
   (`gh pr checkout "$N"`). Never apply fixes to the wrong branch.
+
+### The rubric run override
+
+`--rubric <spec>` (or `--rubric=<spec>`) replaces any subset of the two cutoffs and five weights
+(step 3) **for this run only**; every key it does not name keeps this repo's rendered config value.
+It may sit anywhere among the other arguments. Resolve it **here, in step 1, before step 2 reads
+any finding** — the effective rubric is fixed before you know what it will decide.
+
+**Grammar.** `spec` is one whitespace-free word: `key=value` pairs joined by `,`, e.g.
+`--rubric implement=12,decline=3,validity=2`. `value` must match `-?[0-9]+(\.[0-9]+)?` — no
+exponent, no leading `.` or `+`, no `Infinity`/`NaN`. An empty pair, a pair without exactly one
+`=`, or an empty value is malformed. The argument after a bare `--rubric` is its spec **only if it
+contains `=`**; otherwise `--rubric` is missing its spec (malformed) and that argument resolves as
+usual — `--rubric 42` is a malformed override on PR 42. Keys are the seven names below,
+case-insensitive. There are no aliases: `sev`, `val`, `er`, or a dotted config key is an unknown
+key.
+
+| Token key | Config key | Range | This repo (rendered) | v3 default |
+|---|---|---|---|---|
+| `implement` | `prResponse.rubric.thresholds.implement` | 0–15 | {{prResponse.rubric.thresholds.implement}} | 11 |
+| `decline` | `prResponse.rubric.thresholds.decline` | 0–15 | {{prResponse.rubric.thresholds.decline}} | 4 |
+| `severity` | `prResponse.rubric.weights.severity` | ≥ 0 | {{prResponse.rubric.weights.severity}} | 1 |
+| `reach` | `prResponse.rubric.weights.reach` | ≥ 0 | {{prResponse.rubric.weights.reach}} | 1 |
+| `validity` | `prResponse.rubric.weights.validity` | ≥ 0 | {{prResponse.rubric.weights.validity}} | 1 |
+| `effortRisk` | `prResponse.rubric.weights.effortRisk` | ≥ 0 | {{prResponse.rubric.weights.effortRisk}} | 1 |
+| `alignment` | `prResponse.rubric.weights.alignment` | ≥ 0 | {{prResponse.rubric.weights.alignment}} | 1 |
+
+**Validate in this order, and stop at the first failure:**
+
+1. At most one `--rubric` argument. Two are **repeated**, even when identical.
+2. The spec is present.
+3. Every pair is well-formed (grammar above).
+4. Every key is one of the seven.
+5. No key appears twice in the spec.
+6. Every value is a number by the grammar.
+7. **Merge the token over this repo's rendered config.** The remaining checks read the merged set,
+   never the token alone.
+8. Each merged value is in range (inclusive bounds; thresholds 0–15, weights ≥ 0).
+9. `decline < implement`, strictly. Adjacent values pass.
+10. At least one merged weight is greater than 0.
+
+Any failure leaves the **whole token unspecified**, never a per-key partial. Name the first
+failing rule in render's words, e.g. `` `--rubric` decline (5) must be less than implement (3)
+(after merging over config) `` or `` `--rubric` severity (0), reach (0), validity (0), effortRisk
+(0), alignment (0): at least one must be greater than 0 ``. Then:
+
+| Situation | What to do |
+|---|---|
+| Valid | The effective rubric is the token merged over config, for this run only. |
+| Unspecified, human-attended run, no `{{prResponse.confirmGate.flag.off}}` | Ask with `AskUserQuestion` before step 2, naming the failing rule: score with this repo's config (show its values), enter a corrected spec (validate it again), or stop. Never guess what was meant. |
+| Unspecified, with `{{prResponse.confirmGate.flag.off}}` or any non-interactive caller | Fall back to the rendered config and keep going. Say so in the reply (step 6) and the report (step 7). |
+
+This deliberately departs from autopilot, which stops on contradictory tokens: an override
+authorizes no spend and config is always a safe rubric, so a run that cannot ask falls back
+rather than wasting the round.
+
+Worked examples, against the v3 defaults (11/4, every weight 1):
+
+| Invocation | Result |
+|---|---|
+| `--rubric implement=12,validity=2` | Valid: cutoffs 12/4, Validity weight 2, the rest config. |
+| `--rubric implement=10.5` | Valid. |
+| `--rubric implement=16` | Unspecified: implement (16) is outside 0–15. |
+| `--rubric severity=-1` | Unspecified: severity (-1) must be ≥ 0. |
+| `--rubric decline=12` | Unspecified: merged decline (12) is not less than config implement (11). |
+| `--rubric implement=3` | Unspecified: config decline (4) is not less than implement (3). |
+| `--rubric severity=0,reach=0,validity=0,effortRisk=0,alignment=0` | Unspecified: no positive weight. |
+| `--rubric validity=0` | Valid. A false positive still Declines: the overrides read raw scores (step 3). |
+| `--rubric implement=12 --rubric decline=3` | Unspecified: repeated. |
+| `--rubric implement=12, decline=3` | Unspecified: the spec is `implement=12,`, which has an empty pair. |
+| `--rubric sev=2` | Unspecified: unknown key `sev`. |
+| `--rubric 42` | Unspecified: missing spec. `42` is the PR. |
 
 ## 2. Read every finding
 
@@ -179,8 +252,10 @@ Effort/Risk weight of 0 it is `15 × 8 / 12 = 10.0` (Defer). Map the **rounded**
 | **≤ {{prResponse.rubric.thresholds.decline}}** | **Decline** | Do not do it. Say why, once, and move on. |
 
 The two cutoffs and the five weights are this repo's policy, read from config
-(`prResponse.rubric.thresholds.*`, `prResponse.rubric.weights.*`); the dimensions and anchors above
-are the rubric version's.
+(`prResponse.rubric.thresholds.*`, `prResponse.rubric.weights.*`) unless a `--rubric` token
+overrides them for this run (step 1); the dimensions and anchors above are the rubric version's.
+**Wherever this file names a cutoff or a weight, use this run's effective value.** The numbers
+rendered here are the config values.
 
 Three rules that override the arithmetic — apply them **explicitly**, never silently. They test the
 **raw** dimension scores, never the weighted composite: `Validity = 0` still Declines when the
@@ -205,8 +280,9 @@ replace.
 
 ## 4. Confirm the plan
 
-Present the verdict table (the [reply format](#5-post-one-reply)) **before** touching code, and
-gate on a yes — unless the gate resolves off (below).
+Present the verdict table (the [reply format](#5-post-one-reply)), with its footer naming the
+effective rubric and its source, **before** touching code, and gate on a yes — unless the gate
+resolves off (below).
 
 ### The gate convention
 
@@ -517,7 +593,13 @@ each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline).
 
 The example is scored at the **v3 defaults** (cutoffs 11/4, every weight 1). Your reply maps each
 composite with **this repo's** cutoffs and weights, and its footer names both: `≥{{prResponse.rubric.thresholds.implement}} Implement · >{{prResponse.rubric.thresholds.decline}} and <{{prResponse.rubric.thresholds.implement}} Defer · ≤{{prResponse.rubric.thresholds.decline}} Decline; weights Sev {{prResponse.rubric.weights.severity}} · Reach {{prResponse.rubric.weights.reach}} · Val {{prResponse.rubric.weights.validity}} · E/R {{prResponse.rubric.weights.effortRisk}} · Align {{prResponse.rubric.weights.alignment}}`.
-When any weight is not 1, add a `Weighted` column after `Score`: `Score` stays the raw sum (an
+Append the source: `; source: config`, or `; source: run override (--rubric <spec as given>) over
+config` when a valid token set any value. The source clause is required whenever any effective
+value differs from the v3 defaults or a `--rubric` was passed; omit it only at full defaults with no
+token. When a token was ignored, put a bold-led line above the footer — ``**Rubric override
+ignored** — `--rubric <spec>`: <first failing rule>. Scored with this repo's config.`` — and end
+the footer `; source: config (--rubric ignored)`.
+When any **effective** weight is not 1, add a `Weighted` column after `Score`: `Score` stays the raw sum (an
 integer), `Weighted` is the composite to one decimal, and the verdict maps from `Weighted`. At
 all-1 weights the two are equal, so the column is omitted.
 Never copy a verdict from the example.
@@ -530,7 +612,9 @@ interpretable against the rubric that produced them.
 Return a concise summary to the caller: the PR URL, the finding count by verdict
 (implemented / deferred / declined), the commits pushed, the follow-up issues filed, and the URL
 of the posted reply. Call out any rule-override you applied (blocker-implement, false-positive
-decline) and any finding you could not score confidently.
+decline) and any finding you could not score confidently. Report the effective thresholds and
+weights and their source (config or run override), and any ignored `--rubric` with its failing
+rule.
 
 ## Recalibrating the rubric (v3)
 
@@ -593,7 +677,7 @@ Threshold-layer only — the five dimensions and their anchors are untouched:
 
 **How to change it:** the two thresholds and the five weights are repo policy — set
 `prResponse.rubric.thresholds.implement` / `.decline` or `prResponse.rubric.weights.*` in
-`.waffle/waffle.yaml` and re-render; that needs no version bump (render refuses a threshold outside
+`.waffle/waffle.yaml` and re-render, or, for one run, pass `--rubric` (step 1); that needs no version bump (render refuses a threshold outside
 0–15, a Decline cutoff not below Implement, a negative weight, or all five weights at 0). A change to the dimensions or their
 anchors is a rubric change: edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
 truth; the rendered copies are generated output. Bump the version (`v3` → `v4`) in the rubric
@@ -603,7 +687,9 @@ replies stay scored against the rubric that produced them**, which is why every 
 version. A v1 reply's four numbers are not comparable to a v2 reply's five; do not restate them.
 
 **Do not** tune per-PR. A rubric adjusted to make one uncomfortable finding go away is not a rubric.
-Change it on a pattern across runs, never on a single verdict you dislike. v2 cleared that bar only
+Change it on a pattern across runs, never on a single verdict you dislike. `--rubric` is not an
+exception: it is a deliberate per-run policy fixed in step 1, before any finding is read, never a
+lever to move one verdict — the durable fix is config. v2 cleared that bar only
 because the distortion was structural — the rubric had no dimension for the thing being decided —
 and not because anyone disliked the verdict, which v1 and v2 in fact agree on.
 
@@ -639,6 +725,11 @@ instead of invoking this skill fresh each round. When resumed:
   reverse a recorded verdict without new evidence in the new head. This is what keeps the continuity
   rules above satisfiable on every path, not only for an agent that lived through the earlier rounds.
   **Read them; do not touch them.**
+- **The effective rubric changes only when your invoker says so.** Pass through only a `--rubric` your invoker
+  gave you; never add or edit one after reading findings. A resume message that carries a new
+  `--rubric` sets the rubric for its round; otherwise keep the one you started with. A cold start
+  reads prior replies' footers as **history, never as config**: it does not adopt their rubric. A different
+  rubric is not new evidence — do not re-score a settled verdict because the cutoffs moved.
 - **The reply and the return are unchanged.** Step 6 posts a **new** comment for this round (never
   editing an earlier one), and the per-verdict + implemented counts (step 7) are your reply
   each round — the implemented count is the loop's convergence signal, so report it honestly: 0

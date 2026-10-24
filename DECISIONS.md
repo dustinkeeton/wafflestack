@@ -9,6 +9,35 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-23: A pr-response `--rubric` override is validated after merging and falls back as a whole (#645)
+
+**Context**: #630 made the cutoffs (slice 1) and weights (#644) config, but a single run could not
+set its own bar. Render validates config; a per-run token is parsed by the model, so nothing
+mechanical checks it.
+
+**Decision**: `/pr-response --rubric <spec>` takes `key=value` pairs over the seven leaf names
+(`implement`, `decline`, `severity`, `reach`, `validity`, `effortRisk`, `alignment`). The skill
+resolves it in step 1, before any finding is read, so the rubric is fixed before the model knows
+what it will decide. Validation follows a fixed order, and the range and constraint checks run on
+the token *merged over* config, because `decline=12` is only wrong against the configured
+implement. Any failure discards the whole token. An attended run asks; `--yes` or a
+non-interactive caller falls back to config and says so. This departs from autopilot, which stops
+on contradictory tokens: an override authorizes no spend and config is always a safe rubric, so
+stopping would only waste the round. The footer records the source, and a cold start reads prior
+footers as history, never as config.
+
+**Alternatives considered**: Per-key partial acceptance — rejected: a half-applied rubric is one
+nobody asked for. Stopping on a malformed token — rejected for the reason above. A node parser —
+rejected: the CI hook's `Bash(gh …)` allowlist can't run it, and autopilot's `:N` count is also
+prose-parsed. Short aliases (`sev`, `val`) — rejected: more surface, and a typo that resolves to a
+real key is worse than one that fails.
+
+**Impact**: `pr-response` SKILL.md (argument hint, §1, §3, §4, §6, §7, Recalibration, agent rules);
+new evals `pr-response-rubric-override` and `pr-response-rubric-fallback`; test
+`rubric-override.test.mjs`. Consumers re-render; runs without the token are unchanged.
+
+---
+
 ## 2026-10-23: The pr-response composite is weighted and normalized to 0–15 (#644)
 
 **Context**: After #630 slice 1 the cutoffs were config, but the composite was still an unweighted
