@@ -96,9 +96,10 @@ is what you reach for across a breaking one.
   only changes what `npm run evals` measures.
 
 ### Changed
-- **`/waffle-report` picks the form by structure, not prose (#674).** A `bug:` prefix or
-  `Expected:` / `Actual:` lines file `bug.yml`; a `feature:` prefix or a `Proposed Solution`
-  section files `feature.yml`; anything else files `rough-idea.yml` with the user's words verbatim.
+- **`/waffle-report` picks the form by structure, not prose (#674).** A `bug:` / `feature:`
+  prefix wins outright; else an `Expected:` or `Actual:` line files `bug.yml`, a `Proposed Solution:`
+  line or heading files `feature.yml`, and anything else files `rough-idea.yml` with the user's
+  words verbatim. No form invents a field the user did not give.
   The prose-classification text (wishes, one-liners, symptoms) is gone from the skill, and the
   detailed-wish eval is removed.
   **Consumer impact:** re-render. A plain-prose defect report now files as a rough idea; prefix it

@@ -15,16 +15,17 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 user's prose for wishes, half-formed thoughts, or named symptoms. The guess was unreliable, and
 each fix made the rules longer (#642, then #669).
 
-**Decision**: The form comes from structure alone. The first matching row wins:
+**Decision**: The form comes from structure alone. A `bug:` / `feature:` prefix wins outright, else
+the first row whose fields match:
 
 | The description | Files as |
 |---|---|
-| Starts with `bug:`, or has `Expected:` / `Actual:` lines | `bug.yml` |
-| Starts with `feature:`, or has a `Proposed Solution` section | `feature.yml` |
+| Starts with `bug:`, or has an `Expected:` or `Actual:` line | `bug.yml` |
+| Starts with `feature:`, or has a `Proposed Solution:` line or heading | `feature.yml` |
 | Anything else | `rough-idea.yml`, with the user's words verbatim |
 
-The skill drops the `bug:` / `feature:` prefix from the draft. A rough idea gets nothing invented
-for it; the upstream enrichment pass writes the missing sections.
+The skill drops the `bug:` / `feature:` prefix from the draft. No form invents a field the user
+did not give; for a rough idea the upstream enrichment pass writes the missing sections.
 
 **Alternatives considered**: Keep tuning the prose rules — rejected: #642 and #669 each added
 wording tests, and the routing still misfired.
