@@ -2094,7 +2094,9 @@ config:
       PR. Repo policy, not rubric version — the five dimensions and their anchors stay
       toolkit-owned (v3), so moving a threshold needs no version bump. A number in 0–15, and
       strictly above `prResponse.rubric.thresholds.decline`; either violation fails render and
-      doctor. Adjacent integers (10/11) pass and leave no integer composite to Defer. Default 11 (v3).
+      doctor. Adjacent integers (10/11) pass and leave no integer composite to Defer — though a
+      weighted composite (`prResponse.rubric.weights.*`) can be fractional, so 10.5 still
+      Defers. Default 11 (v3).
   prResponse.rubric.thresholds.decline:
     required: false
     default: 4
@@ -2103,6 +2105,56 @@ config:
       The pr-response rubric's Decline cutoff (#630): a composite AT OR BELOW it is declined;
       Defer is the band strictly between this and the Implement threshold. A number in 0–15,
       strictly below `prResponse.rubric.thresholds.implement`. Default 4 (v3).
+  prResponse.rubric.weights.severity:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      The multiplier on Severity in the pr-response composite (#644). A non-negative number; 0
+      drops Severity from the composite (it is still scored, recorded, and read by the override
+      rules). The composite is normalized to 0–15 whatever the weights, so the thresholds keep
+      their meaning; at least one weight must be above 0 (an `anyPositive` constraint). Default
+      1 (v3).
+  prResponse.rubric.weights.reach:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      The multiplier on Reach in the pr-response composite (#644). A non-negative number; 0
+      drops Reach from the composite (it is still scored, recorded, and read by the override
+      rules). The composite is normalized to 0–15 whatever the weights, so the thresholds keep
+      their meaning; at least one weight must be above 0 (an `anyPositive` constraint). Default
+      1 (v3).
+  prResponse.rubric.weights.validity:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      The multiplier on Validity in the pr-response composite (#644). A non-negative number; 0
+      drops Validity from the composite (it is still scored, recorded, and read by the override
+      rules). The composite is normalized to 0–15 whatever the weights, so the thresholds keep
+      their meaning; at least one weight must be above 0 (an `anyPositive` constraint). Default
+      1 (v3).
+  prResponse.rubric.weights.effortRisk:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      The multiplier on Effort/Risk in the pr-response composite (#644). A non-negative number; 0
+      drops Effort/Risk from the composite (it is still scored, recorded, and read by the override
+      rules). The composite is normalized to 0–15 whatever the weights, so the thresholds keep
+      their meaning; at least one weight must be above 0 (an `anyPositive` constraint). Default
+      1 (v3).
+  prResponse.rubric.weights.alignment:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      The multiplier on Alignment in the pr-response composite (#644). A non-negative number; 0
+      drops Alignment from the composite (it is still scored, recorded, and read by the override
+      rules). The composite is normalized to 0–15 whatever the weights, so the thresholds keep
+      their meaning; at least one weight must be above 0 (an `anyPositive` constraint). Default
+      1 (v3).
   cleanUp.confirmGate:
     required: false
     default: true
@@ -2185,3 +2237,10 @@ config:
 constraints:
   - kind: lessThan
     keys: [prResponse.rubric.thresholds.decline, prResponse.rubric.thresholds.implement]
+  - kind: anyPositive
+    keys:
+      - prResponse.rubric.weights.severity
+      - prResponse.rubric.weights.reach
+      - prResponse.rubric.weights.validity
+      - prResponse.rubric.weights.effortRisk
+      - prResponse.rubric.weights.alignment

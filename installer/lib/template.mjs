@@ -242,8 +242,28 @@ export function rangeProblem(guards, key, v) {
   return bad ? `is ${n}, outside its declared range ${describeRange(bad)} (declared by ${bad.source})` : null;
 }
 
-/** The closed set of stack-level `constraints:` kinds (#630). */
-export const CONSTRAINT_KINDS = ['lessThan'];
+/** The closed set of stack-level `constraints:` kinds (#630, #644). */
+export const CONSTRAINT_KINDS = ['lessThan', 'anyPositive'];
+
+/** Per kind: whether `keys` has a legal arity, and the violation message for numeric values (null = satisfied). */
+const CONSTRAINT_RULES = {
+  lessThan: {
+    arity: (keys) => keys.length === 2,
+    check: (keys, [a, b]) => (a < b ? null : `config ${keys[0]} (${a}) must be less than ${keys[1]} (${b})`),
+  },
+  anyPositive: {
+    arity: (keys) => keys.length >= 1,
+    check: (keys, vals) => (vals.some((v) => v > 0) ? null : `config ${keys.map((k, i) => `${k} (${vals[i]})`).join(', ')}: at least one must be greater than 0`),
+  },
+};
+
+/** One constraint's violation message on resolved values, or null when satisfied, malformed, or non-numeric. */
+export function constraintViolation(c, resolve) {
+  const rule = Object.hasOwn(CONSTRAINT_RULES, c?.kind) ? CONSTRAINT_RULES[c.kind] : null;
+  if (!rule || !Array.isArray(c.keys) || !rule.arity(c.keys)) return null;
+  const vals = c.keys.map((k) => toRangeNumber(resolve(k)));
+  return vals.includes(null) ? null : rule.check(c.keys, vals);
+}
 
 /**
  * A stack's cross-key `constraints:` checked on resolved values; only constraints touching a key in
@@ -257,14 +277,9 @@ export const CONSTRAINT_KINDS = ['lessThan'];
 export function constraintProblems(stack, resolve, usedKeys = null) {
   const out = [];
   for (const c of Array.isArray(stack.constraints) ? stack.constraints : []) {
-    if (c?.kind !== 'lessThan' || !Array.isArray(c.keys) || c.keys.length !== 2) continue;
-    if (usedKeys && !c.keys.some((k) => usedKeys.has(k))) continue;
-    const [a, b] = c.keys.map((k) => toRangeNumber(resolve(k)));
-    if (a === null || b === null || a < b) continue;
-    out.push({
-      keys: c.keys,
-      problem: `config ${c.keys[0]} (${a}) must be less than ${c.keys[1]} (${b}) — a lessThan constraint declared by stack "${stack.name}"`,
-    });
+    if (usedKeys && Array.isArray(c?.keys) && !c.keys.some((k) => usedKeys.has(k))) continue;
+    const problem = constraintViolation(c, resolve);
+    if (problem) out.push({ keys: c.keys, problem: `${problem} — the ${c.kind} constraint declared by stack "${stack.name}"` });
   }
   return out;
 }

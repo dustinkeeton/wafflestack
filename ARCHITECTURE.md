@@ -413,11 +413,13 @@ convert a committed value. See [FORMAT, "List keys"](schema/FORMAT.md) and
 whose value is a number declares `range: { min, max }` (inclusive; either bound optional) in
 place of `pattern:`. The value must be a YAML number or a decimal string, inside the bounds. For
 rules no single key can state, a stack adds a top-level `constraints:` list. Its kinds are a
-closed list — today only `lessThan`, `keys: [a, b]`, meaning `a` must be strictly below `b`, and
-both keys must carry a `range:`. A broken range or constraint fails `render` before anything is
+closed list: `lessThan`, `keys: [a, b]`, meaning `a` must be strictly below `b`; and
+`anyPositive` (#644), meaning at least one of its keys is above 0. Every key must carry a
+`range:`. A broken range or constraint fails `render` before anything is
 written and shows up in bare `doctor`. The worked example is the pr-response rubric:
 `prResponse.rubric.thresholds.implement` (default 11) and `.decline` (default 4), each 0–15, with
-`decline < implement` (adjacent integers pass and leave the Defer band empty). See
+`decline < implement` (adjacent integers pass and leave the Defer band empty), plus five
+`prResponse.rubric.weights.*` (default 1, at least 0) under `anyPositive`. See
 [FORMAT, "Numeric keys"](schema/FORMAT.md) and
 [the #630 entry](DECISIONS.md#2026-10-23-the-pr-response-cutoffs-are-repo-policy-guarded-by-range-and-constraints-630).
 

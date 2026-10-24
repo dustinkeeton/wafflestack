@@ -161,7 +161,16 @@ about live behavior, which is exactly when it stops being "just a comment". The 
 fix for a wrong comment is a deletion or a one-line correction, never an expansion. Skill/agent
 markdown and user-visible output (CLI messages, generated docs) are behavior; score them normally.
 
-**Composite** = the five scores summed, 0–15:
+**Composite** = `15 × Σ(wᵢ·sᵢ) / Σ(wᵢ·3)` over the five dimensions (score `sᵢ`, weight `wᵢ`),
+**rounded to one decimal place** (half up: 11.25 → 11.3). It is a 0–15 scale whatever the weights,
+so the cutoffs below keep their meaning. This repo's weights (`prResponse.rubric.weights.*`):
+
+Severity **1** · Reach **1** · Validity **1** · Effort/Risk **1** · Alignment **1**
+
+With every weight 1 (the v3 default) the composite is exactly the five scores summed, 0–15. A
+weight of 0 drops that dimension from the composite; it is still scored and recorded. Worked
+example: Sev 1 · Reach 2 · Val 3 · E/R 3 · Align 2 sums to 11 (Implement at the defaults); with an
+Effort/Risk weight of 0 it is `15 × 8 / 12 = 10.0` (Defer). Map the **rounded** composite to a verdict:
 
 | Composite | Verdict | Meaning |
 |---|---|---|
@@ -169,10 +178,13 @@ markdown and user-visible output (CLI messages, generated docs) are behavior; sc
 | **> 4 and < 11** | **Defer** | Real enough to keep, not worth blocking this PR. File a follow-up issue. |
 | **≤ 4** | **Decline** | Do not do it. Say why, once, and move on. |
 
-The two cutoffs are this repo's policy, read from config (`prResponse.rubric.thresholds.implement`
-and `.decline`); the dimensions and anchors above are the rubric version's.
+The two cutoffs and the five weights are this repo's policy, read from config
+(`prResponse.rubric.thresholds.*`, `prResponse.rubric.weights.*`); the dimensions and anchors above
+are the rubric version's.
 
-Three rules that override the arithmetic — apply them **explicitly**, never silently:
+Three rules that override the arithmetic — apply them **explicitly**, never silently. They test the
+**raw** dimension scores, never the weighted composite: `Validity = 0` still Declines when the
+Validity weight is 0.
 
 - **A confirmed blocker on live code is always Implement.** If `Severity = 3`, `Validity = 3` **and
   `Reach ≥ 2`**, implement it even when Effort/Risk drags the composite below the Implement
@@ -503,8 +515,11 @@ each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline).
 — posted by the pr-response bot
 ```
 
-The example is scored at the **v3 default cutoffs** (11/4). Your reply maps each composite with
-**this repo's** cutoffs and its footer names them: `≥11 Implement · >4 and <11 Defer · ≤4 Decline`.
+The example is scored at the **v3 defaults** (cutoffs 11/4, every weight 1). Your reply maps each
+composite with **this repo's** cutoffs and weights, and its footer names both: `≥11 Implement · >4 and <11 Defer · ≤4 Decline; weights Sev 1 · Reach 1 · Val 1 · E/R 1 · Align 1`.
+When any weight is not 1, add a `Weighted` column after `Score`: `Score` stays the raw sum (an
+integer), `Weighted` is the composite to one decimal, and the verdict maps from `Weighted`. At
+all-1 weights the two are equal, so the column is omitted.
 Never copy a verdict from the example.
 
 Always name the **rubric version** in the reply. When the thresholds move, old replies must remain
@@ -519,19 +534,19 @@ decline) and any finding you could not score confidently.
 
 ## Recalibrating the rubric (v3)
 
-**This section is the point of the skill.** The rubric is a guess: five dimensions, equal weight,
-two thresholds. Review quality drifts (a bot gets better or noisier) and the repo's own bar drifts
-(a prototype hardens into a dependency). A fixed rubric therefore goes wrong slowly and quietly.
-The scores in every posted reply are the record that lets you notice. The cutoffs are config; the
-dimensions and anchors live only in this file (see *How to change it* below).
+**This section is the point of the skill.** The rubric is a guess: five dimensions, configurable
+weights (default equal), two thresholds. Review quality drifts (a bot gets better or noisier) and
+the repo's own bar drifts (a prototype hardens into a dependency). A fixed rubric therefore goes
+wrong slowly and quietly. The scores in every posted reply are the record that lets you notice.
+The cutoffs and weights are config; the dimensions and anchors live only in this file (see *How to change it* below).
 
 **Read the drift from the outcomes, not from a feeling:**
 
 | Symptom | What it means | Adjustment |
 |---|---|---|
 | Deferred/declined findings keep coming back as real bugs | Thresholds too high, or Severity anchors too generous | Lower `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or raise Severity anchors |
-| Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or down-weight Effort/Risk |
-| Nearly everything lands in the Defer band | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors; consider weighting Validity |
+| Implemented findings are churn — nits, no behavior change | Threshold too low; Effort/Risk 3 is over-rewarding trivial changes | Raise `prResponse.rubric.thresholds.implement` in `.waffle/waffle.yaml`, or lower `prResponse.rubric.weights.effortRisk` (e.g. `0.5`) in `.waffle/waffle.yaml` |
+| Nearly everything lands in the Defer band | Dimensions are not discriminating; the anchors collapse | Sharpen the 1-vs-2 anchors, or raise `prResponse.rubric.weights.validity` (e.g. `2`) in `.waffle/waffle.yaml` |
 | Declines are argued down by the author every time | Alignment is being scored by the responder's taste, not repo intent | Re-anchor Alignment on *documented* decisions only |
 | A dimension's score is being argued *around* rather than *with* — a scorer keeps having to distort dimension A to express something A does not measure | The rubric is missing a dimension, and the missing one is whatever the distortion was standing in for | Add it — and bump the version. **This is how v2 happened; see below.** |
 
@@ -576,9 +591,10 @@ Threshold-layer only — the five dimensions and their anchors are untouched:
   in deterministic files (see the scoring rule above) is #388's doctrine landing where it bites:
   a wording nit on prose no runtime reads cannot compose to an in-PR fix.
 
-**How to change it:** the two thresholds are repo policy — set `prResponse.rubric.thresholds.implement`
-/ `.decline` in `.waffle/waffle.yaml` and re-render; that needs no version bump (render refuses a
-value outside 0–15, or a Decline cutoff not below Implement). A change to the dimensions or their
+**How to change it:** the two thresholds and the five weights are repo policy — set
+`prResponse.rubric.thresholds.implement` / `.decline` or `prResponse.rubric.weights.*` in
+`.waffle/waffle.yaml` and re-render; that needs no version bump (render refuses a threshold outside
+0–15, a Decline cutoff not below Implement, a negative weight, or all five weights at 0). A change to the dimensions or their
 anchors is a rubric change: edit this file (`skills/pr-response/SKILL.md`) — it is the single source of
 truth; the rendered copies are generated output. Bump the version (`v3` → `v4`) in the rubric
 heading, the reply footer, and here. Note the change and its motivating evidence in the repo's

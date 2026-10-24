@@ -9,6 +9,32 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-23: The pr-response composite is weighted and normalized to 0–15 (#644)
+
+**Context**: After #630 slice 1 the cutoffs were config, but the composite was still an unweighted
+sum. The drift table advised "down-weight Effort/Risk" and "consider weighting Validity" — advice
+no repo could act on.
+
+**Decision**: Five keys, `prResponse.rubric.weights.{severity,reach,validity,effortRisk,alignment}`,
+default 1, `range: { min: 0 }`. The composite becomes `15 × Σ(wᵢ·sᵢ) / Σ(wᵢ·3)`, rounded to one
+decimal (half up) — always a 0–15 scale, and exactly the plain sum at default weights, so the
+thresholds and every past v3 reply keep their meaning. A weight of 0 drops a dimension from the
+composite; it is still scored and recorded. A new constraint kind, `anyPositive`, rejects all
+five at 0 (the formula would divide by zero). The override rules read raw dimension scores, never
+the weighted composite, so a 0 Validity weight cannot hide a false positive. Weights, like
+cutoffs, are repo policy: they move without a rubric version bump, and the reply footer names
+them so a reply stays interpretable.
+
+**Alternatives considered**: A raw weighted sum — rejected: it changes the scale (weights of 2
+give a 0–30 composite), silently breaking the 0–15 cutoffs. A per-key `min > 0` — rejected: 0 is a
+legitimate "ignore this dimension" setting; only all-zero is meaningless.
+
+**Impact**: `github-workflow` stack config and `pr-response` SKILL.md; `template.mjs`
+(`anyPositive`, `constraintViolation`) and `validate.mjs` (per-kind arity); FORMAT "Numeric
+keys". Consumers re-render; with no config the verdicts are unchanged.
+
+---
+
 ## 2026-10-23: The `/waffle-report` hold is applied server-side on the toolkit tracker (#640)
 
 **Context**: `/waffle-report` (#609) added `waffle:reassess` and `waffle:consumer-report` from the

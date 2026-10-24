@@ -3607,6 +3607,11 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(md, /rubric \*\*v3\*\* \(Severity · Reach · Validity · Effort\/Risk · Alignment/);
     assert.match(md, /≥11 Implement · >4 and <11 Defer · ≤4 Decline/, 'the reply footer must carry the v3 thresholds');
     assert.match(md, /prResponse\.rubric\.thresholds\.implement/, '#630: the thresholds are named as repo config');
+    assert.ok(md.includes('`15 × Σ(wᵢ·sᵢ) / Σ(wᵢ·3)`'), '#644: the composite is the normalized weighted sum');
+    assert.match(md, /They test the\s+\*\*raw\*\* dimension scores, never the weighted composite/, '#644: overrides read raw scores');
+    assert.match(md, /lower `prResponse\.rubric\.weights\.effortRisk`/, '#644: the drift table names the weight key');
+    assert.match(md, /raise `prResponse\.rubric\.weights\.validity`/, '#644: the drift table names the weight key');
+    assert.match(md, /add a `Weighted` column after `Score`/, '#644: the reply gains a Weighted column off default weights');
     assert.doesNotMatch(md, /## Recalibrating the rubric \(v[12]\)/, 'the recalibration section still names a stale version');
     assert.doesNotMatch(md, /recalibrating-the-rubric-v[12]/, 'the in-page anchor still points at a stale heading — a dead link');
   });

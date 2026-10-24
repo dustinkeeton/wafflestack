@@ -50,6 +50,16 @@ is what you reach for across a breaking one.
   pass-through (#646) follow.
   **Consumer impact:** additive — re-render. With no config the rubric scores as before; only the
   Defer band and footer wording change.
+- **The pr-response composite is weighted (#644, #630 slice 2).**
+  `prResponse.rubric.weights.{severity,reach,validity,effortRisk,alignment}` (default 1,
+  `range: { min: 0 }`) scale each dimension. The composite is `15 × Σ(wᵢ·sᵢ) / Σ(wᵢ·3)` rounded to
+  one decimal, so the cutoffs keep their 0–15 meaning and default weights score exactly as before.
+  A new `constraints:` kind, `anyPositive`, fails `render` and bare `doctor` when every weight is
+  0. The override rules still read the raw dimension scores. Replies gain a `Weighted` column when
+  a weight is not 1, and the footer names the effective weights. The drift table's weighting rows
+  now name the keys to edit.
+  **Consumer impact:** additive — re-render. With no config the rubric scores as before; only the
+  composite wording and the footer change.
 - **The `/waffle-report` hold no longer depends on the filer's access (#640).** The toolkit repo
   gains `.github/workflows/consumer-report-hold.yml`: on `issues: opened`, when the body carries the
   report block's `<summary>` line, it adds `waffle:reassess` and `waffle:consumer-report` with the

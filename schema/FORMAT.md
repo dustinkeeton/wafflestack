@@ -81,6 +81,8 @@ config:                              # template keys this stack may reference
 constraints:                         # optional: cross-key checks over `range:` keys
   - kind: lessThan                   # closed kinds; lessThan = keys[0] < keys[1]
     keys: [review.declineAt, review.implementAt]
+  - kind: anyPositive                # at least one of keys is > 0
+    keys: [review.weights.severity, review.weights.validity]
 env:                                 # env vars the stack's content depends on
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 prerequisites:                       # optional: typed external prerequisites, checked by doctor
@@ -142,11 +144,16 @@ bounds, or the render fails. `range:` replaces `pattern:` for such a key — dec
 `modes:`, `entryPatterns:`, `listFormat:`) is a `validate` error, as is a default outside the range.
 
 A stack may add top-level **`constraints:`** — cross-key rules no single key can state. The kinds
-are a closed list; today only **`lessThan`**, `keys: [a, b]`, meaning the value of `a` must be
-strictly below `b`. Both keys must be declared with a `range:` in the same stack, and the defaults
-must satisfy the rule. A constraint is checked when a selected item uses either key; a violation
-fails `render` before anything is written and is reported by bare `doctor`. The pr-response
-rubric's `prResponse.rubric.thresholds.{implement,decline}` (#630) is the worked example.
+are a closed list:
+
+- **`lessThan`**, `keys: [a, b]` — the value of `a` must be strictly below `b`.
+- **`anyPositive`**, `keys: [a, …]` (one or more, distinct) — at least one value must be above 0.
+
+Every key must be declared with a `range:` in the same stack, and the defaults must satisfy the
+rule. A constraint is checked when a selected item uses any of its keys; a violation fails `render`
+before anything is written and is reported by bare `doctor`. The pr-response rubric is the worked
+example: `prResponse.rubric.thresholds.{implement,decline}` under `lessThan` (#630), and the five
+`prResponse.rubric.weights.*` (default 1, `range: { min: 0 }`) under `anyPositive` (#644).
 
 ### Behavioral keys — `modes:`, `flag:`, `lockMode:`, `nonInteractive:`
 

@@ -1,0 +1,88 @@
+# Layer 2 eval case (harness: #109). Scoped to the github-workflow stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Pins the weighted composite (#644): with Effort/Risk weighted 0, a raw-11 finding flips to
+# Defer, and both overrides still read the raw dimension scores.
+
+name: pr-response-weight-flip
+description: >-
+  With `prResponse.rubric.weights.effortRisk: 0`, the pr-response skill computes the normalized
+  weighted composite, so a finding whose plain sum is 11 lands at 10.0 and Defers; the
+  false-positive and confirmed-blocker overrides still fire on raw scores; the reply carries a
+  Weighted column and names the effective weights in its footer.
+
+target:
+  kind: skill
+  name: pr-response
+
+config:
+  prResponse:
+    rubric:
+      weights:
+        effortRisk: 0
+
+prompt: |
+  /pr-response 42
+
+  PR #42 has three review findings. They are already scored on rubric v3 — use these dimension
+  scores exactly as given (Severity · Reach · Validity · Effort/Risk · Alignment); do not rescore.
+
+  F1. `retryDelay` ignores the configured jitter. Scores: 1 · 2 · 3 · 3 · 2.
+  F2. `flush()` never closes the file handle. Scores: 3 · 2 · 0 · 3 · 1. (You read `flush()`: a
+      `with` block closes the handle on every path. The finding is wrong.)
+  F3. `parseRange("")` returns `[0, -1]` on the path every `report` run executes, confirmed.
+      Scores: 3 · 2 · 3 · 0 · 0.
+
+  Compute each composite with this repo's weights, give me the verdict table with reasons and the
+  reply footer. Do not apply anything yet.
+
+assert:
+  - type: includes
+    value: "Weighted"
+  - type: includes
+    value: "Implement"
+  - type: includes
+    value: "Defer"
+  - type: includes
+    value: "Decline"
+  - type: regex
+    value: "E/R 0|Effort/Risk 0"
+  - type: judge
+    rubric: >-
+      The repo's pr-response weights are Severity 1, Reach 1, Validity 1, Effort/Risk 0,
+      Alignment 1, and the composite is 15 x (weighted sum) / (3 x sum of weights), rounded to one
+      decimal, with bands >=11 Implement / >4 and <11 Defer / <=4 Decline. The overrides read raw
+      scores: Validity 0 is always Decline; Severity 3, Validity 3 and Reach >= 2 is always
+      Implement. Every sentence below is a PASS condition, a FAIL condition, or an explicit "not
+      judged". Do not add conditions of your own.
+      F1 — PASS requires the verdict is Defer and its weighted composite is 10 (10.0). FAIL if the
+      verdict is Implement — that means the plain sum 11 was used instead of the weighted
+      composite.
+      F2 — PASS requires the verdict is Decline and the reason cites the false-positive (Validity
+      0) override. FAIL otherwise. F2's composite value is not judged.
+      F3 — PASS requires the verdict is Implement and the reason cites the confirmed-blocker
+      override. FAIL otherwise. F3's composite value is not judged.
+      REPLY — PASS requires a verdict table with a Weighted column (alongside the raw Score) and a
+      footer that names the weights with Effort/Risk at 0. FAIL if either is missing. Wording,
+      column order and the reasons' length are not judged.
+      OVERALL — PASS only when F1, F2, F3 and REPLY all pass; otherwise FAIL.
+
+dryRunResponse: |
+  <!-- waffle-pr-response -->
+  **PR response** — 3 findings: 1 implemented, 1 deferred, 1 declined.
+
+  | # | Finding | Sev | Reach | Val | E/R | Align | Score | Weighted | Verdict |
+  |---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
+  | F1 | `retryDelay` ignores the configured jitter | 1 | 2 | 3 | 3 | 2 | 11 | 10.0 | **Defer** |
+  | F2 | `flush()` leaks the file handle | 3 | 2 | 0 | 3 | 1 | 9 | 7.5 | **Decline** |
+  | F3 | `parseRange("")` returns `[0, -1]` | 3 | 2 | 3 | 0 | 0 | 8 | 10.0 | **Implement** (override) |
+
+  - **F1 — Defer (10.0).** Real, but with Effort/Risk weighted 0 the composite is
+    15 × 8 / 12 = 10.0, under the ≥11 bar. Tracked in a follow-up issue.
+  - **F2 — Decline (7.5).** False positive (Validity 0 → auto-decline): the `with` block closes
+    the handle on every path.
+  - **F3 — Implement (10.0, confirmed-blocker override).** Severity 3 · Validity 3 · Reach 2 lifts
+    it to Implement whatever the weighted composite says.
+
+  Scored with pr-response rubric **v3** (Severity · Reach · Validity · Effort/Risk · Alignment, 0–3
+  each; ≥11 Implement · >4 and <11 Defer · ≤4 Decline; weights Sev 1 · Reach 1 · Val 1 · E/R 0 · Align 1).
