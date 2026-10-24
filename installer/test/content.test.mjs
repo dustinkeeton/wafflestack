@@ -730,15 +730,17 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     const rows = md.slice(md.indexOf('| The description | Upstream form |')).split('\n');
     assert.match(rows[2], /starts with `bug:`/);
     assert.match(rows[2], /`bug\.yml`/);
-    assert.match(rows[2], /`Expected:` \/ `Actual:`/);
+    assert.match(rows[2], /an `Expected:` or `Actual:` line/);
     assert.match(rows[3], /starts with `feature:`/);
     assert.match(rows[3], /`feature\.yml`/);
-    assert.match(rows[3], /`Proposed Solution` section/);
+    assert.match(rows[3], /a `Proposed Solution:` line or heading/);
     assert.match(rows[4], /anything else/);
     assert.match(rows[4], /`rough-idea\.yml`/);
     assert.match(rows[4], /`waffle:needs-inference`/);
     assert.match(md, /\*\*structure, never by wording\*\*/);
     assert.match(md, /Drop a `bug:` \/ `feature:` prefix from the draft/);
+    assert.match(md, /`bug:` \/\s+`feature:` prefix wins outright, else the first row whose fields match/, 'a named form beats inferred fields');
+    assert.match(md, /\*\*Invent nothing\*\*, in any form: omit a field the\s+user did not give/);
     assert.doesNotMatch(md, /wish|half-formed|Is it a rough idea|names no command, symptom, or design/, 'no prose classification survives');
   });
 

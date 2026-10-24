@@ -2,7 +2,7 @@
 name: waffle-report
 description: File a wafflestack toolkit bug, feature request, or rough idea UPSTREAM — in the toolkit's own tracker, not this repo — with redacted diagnostics attached. Use when a render, upgrade, doctor, or skill behaves wrongly and the fault is the toolkit's; drafts read-only, shows the exact redacted payload, files only on an explicit yes. `--yes` skips the gate.
 user-invocable: true
-argument-hint: "<what went wrong, in a sentence or two — a one-liner is enough> [--yes]"
+argument-hint: "[bug: | feature:] <what went wrong, in a sentence or two — a one-liner is enough> [--yes]"
 ---
 
 # Report a toolkit problem upstream
@@ -86,17 +86,17 @@ back to `dustinkeeton/wafflestack`. State the resolved target at the gate.
 
 ### 3. Pick the form and draft
 
-Match the upstream issue forms exactly — a skill-filed report and a hand-filed one must converge on
-one shape. Pick the form by **structure, never by wording** — the first row that matches wins:
+Match the upstream issue forms exactly. Pick the form by **structure, never by wording**: a `bug:` /
+`feature:` prefix wins outright, else the first row whose fields match:
 
 | The description | Upstream form | Label to apply | Body sections |
 |---|---|---|---|
-| starts with `bug:`, or fills the bug form's fields (`Expected:` / `Actual:` lines) | `bug.yml` | `bug` | Problem / Motivation (Expected / Actual / Repro), Proposed Solution (optional), Context |
-| starts with `feature:`, or fills a `Proposed Solution` section | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
+| starts with `bug:`, or has an `Expected:` or `Actual:` line | `bug.yml` | `bug` | Problem / Motivation (Expected / Actual / Repro), Proposed Solution (optional), Context |
+| starts with `feature:`, or has a `Proposed Solution:` line or heading | `feature.yml` | `enhancement` | Problem / Motivation, Proposed Solution, Sub-issues (optional), Context |
 | anything else | `rough-idea.yml` | `waffle:needs-inference` | The idea (the user's words, **verbatim**), Context |
 
-Drop a `bug:` / `feature:` prefix from the draft. For a rough idea, invent nothing: no Problem,
-Expected / Actual / Repro, or Proposed Solution — the upstream enrichment pass writes those.
+Drop a `bug:` / `feature:` prefix from the draft. **Invent nothing**, in any form: omit a field the
+user did not give. A rough idea gets no Problem, Expected / Actual / Repro, or Proposed Solution.
 
 Apply the form's own label **plus two fixed labels** on every filing:
 
