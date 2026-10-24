@@ -732,6 +732,14 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /this repo's org\/repo \(outside that attachment carve-out\)/, 'the whole-reply re-read honours the carve-out');
   });
 
+  test('/waffle-report: a detailed wish is a feature, not a rough idea (#669)', () => {
+    const md = readSkill('waffle-report');
+    assert.match(md, /\*\*that names no command, symptom, or design\*\*/, 'the wish branch is bounded, not just the one-liner branch');
+    assert.match(md, /not a rough idea either — it is a feature/, 'a wish stating problem and design stays a feature');
+    const firstRow = md.slice(md.indexOf('| Report is | Upstream form |')).split('\n')[2];
+    assert.match(firstRow, /names no command, symptom, or design/, 'the table row carries the same bound');
+  });
+
   test('waffle:consumer-report is never a consumer prerequisite — doctor must not check for it (#609)', () => {
     for (const [name, stack] of loadToolkit(REPO_ROOT).stacks) {
       for (const pre of stack.prerequisites ?? []) {
