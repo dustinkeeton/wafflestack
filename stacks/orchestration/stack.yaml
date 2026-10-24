@@ -651,6 +651,48 @@ config:
       it — a human removing it is the "reconfirmed" signal. Owned by the github-workflow stack
       (issue.reassessLabel) and re-declared here with the same default, exactly as both stacks
       declare autoMerge.label. Must pre-exist in the repo.
+  prResponse.rubric.thresholds.implement:
+    required: false
+    default: 11
+    range: { min: 0, max: 15 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
+  prResponse.rubric.thresholds.decline:
+    required: false
+    default: 4
+    range: { min: 0, max: 15 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
+  prResponse.rubric.weights.severity:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
+  prResponse.rubric.weights.reach:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
+  prResponse.rubric.weights.validity:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
+  prResponse.rubric.weights.effortRisk:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
+  prResponse.rubric.weights.alignment:
+    required: false
+    default: 1
+    range: { min: 0 }
+    description: >-
+      Re-declared from github-workflow, which owns it, so autopilot can validate a per-run `--rubric` merged over the same rendered rubric before any work (#646). Same default and range; see the github-workflow declaration.
   delegate.batchMode:
     required: false
     default: false
@@ -896,5 +938,15 @@ config:
   audit.compliancePrompt:
     required: true
     description: Full detailed prompt for the project-specific compliance step, including its "### … (Task 3)" heading.
+constraints:
+  - kind: lessThan
+    keys: [prResponse.rubric.thresholds.decline, prResponse.rubric.thresholds.implement]
+  - kind: anyPositive
+    keys:
+      - prResponse.rubric.weights.severity
+      - prResponse.rubric.weights.reach
+      - prResponse.rubric.weights.validity
+      - prResponse.rubric.weights.effortRisk
+      - prResponse.rubric.weights.alignment
 env:
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"

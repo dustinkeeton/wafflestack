@@ -47,7 +47,7 @@ is what you reach for across a breaking one.
   `lessThan`, keeps Decline below Implement. Out-of-range, non-numeric, or inverted values fail
   `render` and bare `doctor`. The Defer band now reads "> 4 and < 11" instead of "5–10", so it stays
   correct for any cutoff. Weights (#644), a per-run `--rubric` token (#645), and autopilot
-  pass-through (#646) follow.
+  pass-through (#646) followed.
   **Consumer impact:** additive — re-render. With no config the rubric scores as before; only the
   Defer band and footer wording change.
 - **The pr-response composite is weighted (#644, #630 slice 2).**
@@ -67,9 +67,19 @@ is what you reach for across a breaking one.
   least one positive weight, known keys). A malformed, out-of-range, inverted, unknown-key, or
   repeated token is ignored as a whole: an attended run asks; `--yes` and non-interactive callers
   fall back to config and say so in the reply. The reply footer now names its source (`config` or
-  `run override`). Autopilot pass-through (#646) follows.
+  `run override`). Autopilot pass-through (#646) followed.
   **Consumer impact:** additive — re-render. Runs without `--rubric` score as before; the footer
   gains a `source:` clause when the rubric is not the v3 default.
+- **`/autopilot --rubric` passes a per-run rubric to its responders (#646, #630 slice 4).**
+  `/autopilot … --rubric implement=12,validity=2` is pulled out before scope, validated once before
+  any work with pr-response's rules merged over the rendered rubric, and forwarded verbatim as
+  `pr-response <pr> --yes --rubric <spec>` on every QA-gate and review-loop responder spawn
+  (re-spawns and retries included, never on a resume). Unlike pr-response, a malformed token never
+  falls back: an attended run asks, a non-interactive one stops. Two different specs stop the run.
+  The run report names the effective rubric. The orchestration stack re-declares the seven
+  `prResponse.rubric.*` keys and both constraints, as it does `issue.reassessLabel`, so an inverted
+  config now also fails render under `stack "orchestration"`.
+  **Consumer impact:** additive — re-render. Runs without `--rubric` are unchanged.
 - **The `/waffle-report` hold no longer depends on the filer's access (#640).** The toolkit repo
   gains `.github/workflows/consumer-report-hold.yml`: on `issues: opened`, when the body carries the
   report block's `<summary>` line, it adds `waffle:reassess` and `waffle:consumer-report` with the

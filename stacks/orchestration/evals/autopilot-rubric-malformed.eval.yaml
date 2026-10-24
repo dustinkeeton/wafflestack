@@ -1,0 +1,66 @@
+# Layer 2 eval case (harness: #109). Scoped to the orchestration stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Under test (#646): autopilot validates a per-run `--rubric` once, merged over the rendered
+# rubric, before any work. `decline=12` is well-formed and in range alone, but not less than the
+# default implement (11) once merged — the check pr-response would fall back on under `--yes`.
+
+name: autopilot-rubric-malformed-stops-before-work
+description: >-
+  A merged-invalid `--rubric decline=12` makes autopilot ask (or stop) before any planning,
+  naming the failing rule; it never forwards the token or silently drops it.
+
+target:
+  kind: skill
+  name: autopilot
+
+prompt: |
+  /autopilot #198 +review --rubric decline=12
+
+config:
+  roster:
+    classificationTable: |-
+      | Keyword / path | Agent |
+      |----------------|-------|
+      | `uploader/`, upload, retry | backend |
+      | `reports/`, export, csv | backend |
+      | `docs/`, README | docs |
+    labelFallback: |-
+      | Label | Agent |
+      |-------|-------|
+      | `bug` | backend |
+      | `documentation` | docs |
+    rootFiles: "`package.json`, `tsconfig.json`"
+    sharedModule: "`shared/`"
+    moduleDependencies: "Any issue touching `core/` must run before issues that depend on it."
+  audit:
+    complianceLabel: "API compliance"
+    complianceFrontmatterLabel: "API compliance"
+    complianceTaskLabel: "API compliance review"
+    complianceAgentName: "audit-compliance"
+    complianceDescription: "Public API surface matches the documented contract."
+    compliancePrompt: |-
+      ### API compliance (Task 3)
+      Verify the public API surface matches the documented contract; report mismatches.
+
+assert:
+  - type: regex
+    value: "decline \\(12\\)|12.*less than.*11|not less than"
+  - type: judge
+    rubric: >-
+      Before planning or implementing anything, the assistant rejects the `--rubric decline=12`
+      override as malformed because, merged over the rendered rubric, decline (12) is not less
+      than implement (11). It either asks the user (run with the repo's rubric, enter a corrected
+      spec, or stop) or stops the run. A pass requires naming that failing rule AND starting no
+      work. Forwarding the token to pr-response, silently dropping it, or guessing a corrected
+      value fails.
+
+dryRunResponse: |
+  Before any work: the `--rubric decline=12` override is malformed. Merged over this repo's
+  rubric (Implement ≥ 11, Decline ≤ 4), `--rubric` decline (12) must be less than implement (11)
+  (after merging over config). The whole token is rejected — I won't forward it or guess.
+
+  How should this run score findings?
+  - Run with this repo's rubric (11 / 4, every weight 1)
+  - Enter a corrected spec
+  - Stop
