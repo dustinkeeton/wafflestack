@@ -266,6 +266,10 @@ the issue came from, either.
 
 **Decision**: every filing carries the form label plus two fixed labels.
 
+*(Amended by #640: the filing only **requests** the two fixed labels. Adding a label needs triage
+or write access, so for most filers the adds fail with a warning. The toolkit tracker applies the
+hold server-side instead — see [#640](#2026-10-23-the-waffle-report-hold-is-applied-server-side-on-the-toolkit-tracker-640) above.)*
+
 | Label | Role | Who adds it | Who removes it |
 |-------|------|-------------|----------------|
 | `waffle:reassess` | The hold: keeps the issue out of `delegate`, `autopilot`, and the `label-hook` implement path | `/waffle-report`, upstream, at filing only; server-side on the toolkit tracker since #640 | Only the upstream human |
@@ -1215,7 +1219,7 @@ skill stays a thin wrapper**.
   (a fork's consumer reports to the fork). The report routes onto the upstream `bug.yml` /
   `feature.yml` / `rough-idea.yml` forms with only the form's own label — never `priority: *`,
   never the board. The gate shows the **post-redaction** payload, so you approve the bytes that
-  get published. *(Superseded by #609: filings now also carry `waffle:reassess` and `waffle:consumer-report`.)*
+  get published. *(Superseded by #609: filings now also request `waffle:reassess` and `waffle:consumer-report`; since #640 the toolkit tracker applies them server-side.)*
 
 **Alternatives considered**: Widening the one-skill-per-subcommand rule for a skill-only
 implementation — rejected on the issue in favour of growing the CLI. Prefilling the no-`gh`-auth

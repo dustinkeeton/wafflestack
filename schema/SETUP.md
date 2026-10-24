@@ -373,12 +373,13 @@ the token, so renaming a trigger label via config changes nothing in the skill.
 
 #### Upstream-tracker labels
 
-`/waffle-report` files a consumer's report into the **toolkit's** tracker, not this repo, and applies
-the form's label plus `waffle:reassess` and the label below there. These are fixed upstream names, not
-config keys. `waffle:reassess` is the same hold label the Required-labels table lists. Upstream it
-is used under that literal name, not via `issue.reassessLabel`, and a consumer that installs only
-the wafflestack stack does not need it in its own repo. A consumer repo does **not** need this label, and `doctor` does not check for it; only the
-toolkit repo (or a fork that receives reports) creates it. A tracker that lacks it gets a warning from
+`/waffle-report` files a consumer's report into the **toolkit's** tracker, not this repo, with the
+form's label, then tries to add `waffle:reassess` and the label below there. These are fixed upstream
+names, not config keys. `waffle:reassess` is the same hold label the Required-labels table lists.
+Upstream it is used under that literal name, not via `issue.reassessLabel`, and a consumer that
+installs only the wafflestack stack does not need it in its own repo. A consumer repo does **not**
+need `waffle:consumer-report` either, and `doctor` does not check for it; only the toolkit repo (or a
+fork that receives reports) creates it. A tracker that lacks it gets a warning from
 `/waffle-report`, and the report still files.
 
 Most filers lack the triage access that adding a label takes, so the toolkit repo applies both
