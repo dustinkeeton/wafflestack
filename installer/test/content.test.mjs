@@ -734,12 +734,17 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
 
   test('/waffle-report: a detailed wish is a feature, not a rough idea (#669)', () => {
     const md = readSkill('waffle-report');
-    assert.match(md, /\*\*that does not state both a problem and a proposed design\*\*/, 'the wish branch is bounded by the carve-out\'s own test');
-    assert.match(md, /any one-liner that names no\s+command, symptom, or design/, 'one-liners keep the no-command/symptom/design test');
-    assert.match(md, /state the problem\s+and a proposed design\*\* is not a rough idea either — it is a feature/, 'a wish stating problem and design stays a feature');
-    const firstRow = md.slice(md.indexOf('| Report is | Upstream form |')).split('\n')[2];
-    assert.match(firstRow, /a wish that does not state both a problem and a proposed design/, 'the table row carries the wish bound');
-    assert.match(firstRow, /names no command, symptom, or design/, 'the table row carries the one-liner bound');
+    const wishBound = /no further than the wish[^|]*?no problem, symptom, or design of its own/;
+    assert.match(md, /\*\*that goes no further than the wish — no problem, symptom, or design of its own\*\*/, 'step 1 bounds the wish by detail');
+    assert.match(md, /naming the\s+command it is about does not count/, 'a bare wish naming its command stays a rough idea');
+    assert.match(md, /any one-liner that names no command, symptom, or design/, 'one-liners keep the no-command/symptom/design test');
+    assert.match(md, /\*\*state a problem, a\s+symptom, or a design of its own\*\* is not a rough idea either/, 'the carve-out uses the same bound: problem-only and design-only wishes leave step 1');
+    const rows = md.slice(md.indexOf('| Report is | Upstream form |')).split('\n');
+    assert.match(rows[2], wishBound, 'the rough-idea row carries the wish bound');
+    assert.match(rows[2], /naming its command does not count/, 'the rough-idea row keeps the bare wish');
+    assert.match(rows[2], /names no command, symptom, or design/, 'the rough-idea row carries the one-liner bound');
+    assert.match(rows[4], /enough detail to state the problem or a proposed design/, 'the feature row admits every wish step 1 lets through');
+    assert.doesNotMatch(md, /state both a problem and a proposed design/, 'the problem-AND-design bar is gone');
   });
 
   test('waffle:consumer-report is never a consumer prerequisite — doctor must not check for it (#609)', () => {

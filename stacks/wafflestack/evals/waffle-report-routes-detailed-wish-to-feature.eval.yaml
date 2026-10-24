@@ -1,9 +1,8 @@
 # Layer 2 eval case (harness: #109). Scoped to the wafflestack stack by location.
 # See schema/FORMAT.md → "Layer 2 eval cases".
 #
-# Guardrail under test (waffle-report skill, "Classify and draft", #669): a wish that states the
-# problem and a proposed design is a feature, whatever its opening words — the rough-idea test
-# only catches a wish that names no command, symptom, or design.
+# Guardrail under test (waffle-report skill, "Classify and draft", #669): a wish that states a
+# problem, symptom, or design of its own is a feature, whatever its opening words.
 
 name: waffle-report-routes-detailed-wish-to-feature
 description: >-
