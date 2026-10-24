@@ -728,6 +728,8 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     assert.match(md, /\*\*including each line of pasted command output\*\*/);
     assert.match(md, /\*\*Never echo a redacted value anywhere in your reply\*\*/);
     assert.match(md, /the \*\*whole reply\*\* around it/);
+    assert.match(md, /\*\*except the consuming repo in §4b's hosted attachment links and the gate's\s+hosting line\*\*/, 'never-echo must not forbid the approved attachment links');
+    assert.match(md, /this repo's org\/repo \(outside that attachment carve-out\)/, 'the whole-reply re-read honours the carve-out');
   });
 
   test('waffle:consumer-report is never a consumer prerequisite — doctor must not check for it (#609)', () => {

@@ -168,11 +168,12 @@ draft — the user's prose, pasted command output, file names:
 - **Never echo a redacted value anywhere in your reply** — not in a "what I redacted" list, not as
   `X → Y`, not in prose around the gate. Describe removals by category only ("a home path, the
   remote, an email, and an overlay value were removed"). The original strings must not appear once
-  in your output.
+  in your output — **except the consuming repo in §4b's hosted attachment links and the gate's
+  hosting line**, which the user approves explicitly.
 
 Re-read the whole draft once after redacting — and the **whole reply** around it: search it for
-`/Users/`, `/home/`, `@`, and this repo's org/repo before showing the gate. What you show at the
-gate is what gets published.
+`/Users/`, `/home/`, `@`, and this repo's org/repo (outside that attachment carve-out) before
+showing the gate. What you show at the gate is what gets published.
 
 ### 4b. Attachments
 
