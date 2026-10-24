@@ -730,8 +730,10 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
     const rows = md.slice(md.indexOf('| The description | Upstream form |')).split('\n');
     assert.match(rows[2], /starts with `bug:`/);
     assert.match(rows[2], /`bug\.yml`/);
+    assert.match(rows[2], /`Expected:` \/ `Actual:`/);
     assert.match(rows[3], /starts with `feature:`/);
     assert.match(rows[3], /`feature\.yml`/);
+    assert.match(rows[3], /`Proposed Solution` section/);
     assert.match(rows[4], /anything else/);
     assert.match(rows[4], /`rough-idea\.yml`/);
     assert.match(rows[4], /`waffle:needs-inference`/);

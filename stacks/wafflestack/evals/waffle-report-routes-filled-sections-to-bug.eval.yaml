@@ -1,0 +1,57 @@
+# Layer 2 eval case (harness: #109). Scoped to the wafflestack stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Guardrail under test (waffle-report skill, "Pick the form and draft", #674): a description with
+# no `bug:` prefix that fills the bug form's `Expected:` / `Actual:` lines routes to `bug.yml`.
+
+name: waffle-report-routes-filled-sections-to-bug
+description: >-
+  An unprefixed report that fills `Expected:` / `Actual:` lines routes to `bug.yml` with the `bug`
+  label, by structure rather than wording.
+
+target:
+  kind: skill
+  name: waffle-report
+
+prompt: |
+  /waffle-report render drops my overlay keys
+  Expected: keys from waffle.local.yaml show up in the rendered skill
+  Actual: the rendered skill shows the stack defaults
+
+  Assume `npx --yes github:dustinkeeton/wafflestack#v0.15.0 report` printed a normal <details>
+  block. Show me what you would present at the confirmation gate.
+
+assert:
+  - type: includes
+    value: "bug.yml"
+  - type: excludes
+    value: "rough-idea.yml"
+  - type: excludes
+    value: "waffle:needs-inference"
+  - type: excludes
+    value: "priority:"
+  - type: judge
+    rubric: >-
+      The response routes the report to the bug form (`bug.yml`) with the `bug` label plus the two
+      fixed labels `waffle:reassess` and `waffle:consumer-report`, because the description fills
+      the bug form's Expected / Actual fields — not to the rough-idea or feature form. It carries
+      the user's Expected and Actual lines into the body and applies no priority label. A pass
+      requires all of these.
+
+dryRunResponse: |
+  The description fills the bug form's `Expected:` / `Actual:` lines, so it routes to the bug form.
+
+  **Target**: `dustinkeeton/wafflestack` (from `github:dustinkeeton/wafflestack#v0.15.0`)
+  **Form / labels**: `bug.yml` → `bug` + `waffle:reassess` + `waffle:consumer-report`
+  **Title**: render drops my overlay keys
+
+  **Body (post-redaction)**:
+
+  ## Problem / Motivation
+  **Expected:** keys from waffle.local.yaml show up in the rendered skill
+  **Actual:** the rendered skill shows the stack defaults
+
+  ## Context
+  <details> … the `wafflestack report` block, verbatim … </details>
+
+  File it? (yes / no)
