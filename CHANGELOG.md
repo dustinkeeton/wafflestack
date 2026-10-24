@@ -96,6 +96,12 @@ is what you reach for across a breaking one.
   only changes what `npm run evals` measures.
 
 ### Changed
+- **The pr-response weight evals' footer regexes tolerate wording drift (#671).** In
+  `pr-response-weight-override-rounding` and `pr-response-weight-flip` the footer-weight regexes now
+  accept `**bold**` numbers, a capital-W `Weights`, at most one soft wrap inside the footer, and
+  a sentence-final `0.`. They still reject `Val 1`, `Val 0.5`, and a footer with no Val entry. The
+  flip case's regex is now tied to the `weights` footer and rejects `E/R 0.5`, which it used to
+  accept. **Consumer impact:** none. Eval cases are inert to `render`, `validate`, and the lock.
 - **The 0.18.0 migration's extensionless-filename list is fully pinned by tests (#660).** One
   table-driven test checks all 17 frozen names; before, only 4 were checked.
   **Consumer impact:** none — test-only.
