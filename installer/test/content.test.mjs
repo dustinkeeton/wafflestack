@@ -3657,6 +3657,16 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(md, /A false positive is always Decline/);
   });
 
+  test('#682: the outcome test caps wording-only findings in every gate, whatever the file', () => {
+    const pr = readSkill('pr-response');
+    assert.match(pr, /the outcome test\.\*\* A finding scores above\s+Severity 1 or Reach 1 only if it names a \*\*wrong outcome\*\*/);
+    assert.match(pr, /\*\*A wording-only finding is always Decline\.\*\*/, 'a wording-only finding must not reach Implement or file a follow-up');
+    assert.doesNotMatch(pr, /score them normally/, 'the skill/agent-markdown exemption is back');
+    for (const name of ['adversarial-review', 'qa']) {
+      assert.match(readSkill(name), /\*\*The outcome test \(#682\)\.\*\* A finding rises above nit only if it names a wrong outcome/, `${name} lost the outcome test`);
+    }
+  });
+
   test('rubric v3: the REVIEW_TEMPLATE tracks the skill — five columns and the v3 pointer', () => {
     assert.match(templates.review, /rubric v3/, 'the template must point at the v3 section');
     assert.doesNotMatch(templates.review, /rubric v[12]\b/, 'the template still points at a stale rubric version');

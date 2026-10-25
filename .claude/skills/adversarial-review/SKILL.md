@@ -105,6 +105,11 @@ Assign each finding a severity and let that drive whether it blocks:
 - **nit** — style, naming, or a minor simplification. Label it as optional. Comment wording in
   a deterministic file is at most a nit, and usually not a finding at all.
 
+**The outcome test (#682).** A finding rises above nit only if it names a wrong outcome: wrong
+behavior, a wrong command, path or label, or a failing or missing test for changed behavior. A
+finding that only sharpens wording or adds edge-case rules to skill, agent or doc text is a nit,
+whatever file it is in.
+
 Do **not** pad the list. If the only honest finding is one nit, post one nit. If there are
 none, say so (step 6).
 
