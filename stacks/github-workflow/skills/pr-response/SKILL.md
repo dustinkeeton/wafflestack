@@ -229,10 +229,11 @@ Severity, and let Reach carry the dormancy.
 
 **Scoring comment and prose findings (#388, #682) — the outcome test.** A finding scores above
 Severity 1 or Reach 1 only if it names a **wrong outcome**: wrong behavior, a wrong command, path
-or label, or a failing or missing test for changed behavior. Anything else — comment text in a
-deterministic file, or a finding that only sharpens wording or adds edge-case rules to skill, agent
-or doc text — is **Reach ≤ 1 and Severity ≤ 1**, whatever file it is in. The fix for a wrong comment
-is a deletion or a one-line correction, never an expansion.
+or label, a failing or missing test for changed behavior, or skill, agent or doc text that would
+lead its reader to do the wrong thing. Anything else — comment text in a deterministic file, or a
+finding that only polishes wording or adds edge-case rules nobody has hit — is a **nit**:
+**Reach ≤ 1 and Severity ≤ 1**, whatever file it is in. The fix for a wrong comment is a deletion
+or a one-line correction, never an expansion.
 
 **Composite** = `15 × Σ(wᵢ·sᵢ) / Σ(wᵢ·3)` over the five dimensions (score `sᵢ`, weight `wᵢ`),
 **rounded to one decimal place** (half up: 11.25 → 11.3). It is a 0–15 scale whatever the weights,
@@ -266,9 +267,9 @@ Validity weight is 0.
   threshold ({{prResponse.rubric.thresholds.implement}}). Note the override
   in the reason. (v1 omitted the Reach clause, which would have forced a dormant, unreachable bug
   to be fixed on the spot — see the CHANGELOG note for v2.)
-- **A wording-only finding is always Decline.** If it fails the outcome test above, decline it
-  with `wording-only` in the reason — never Implement, never a follow-up issue. The arithmetic
-  alone would not stop it: Severity 1 · Reach 1 · 3 · 3 · 3 still sums to 11.
+- **A nit is never a Defer.** If a finding fails the outcome test above, use judgment, not the
+  arithmetic: Implement it when it is a small edit worth making, otherwise Decline it, and say
+  which in the reason. Never file a follow-up issue for a nit.
 - **A false positive is always Decline.** If `Validity = 0`, decline regardless of Severity — the
   cost of a bug that does not exist is zero. Note the override in the reason.
 - **A real defect in dead code is a Defer, never a Decline.** If `Validity ≥ 2` and `Reach = 0`, the
@@ -676,7 +677,7 @@ Threshold-layer only — the five dimensions and their anchors are untouched:
   implements in-PR only by bringing real Severity or Reach; the marginal ones defer with an issue.
 - **Comment findings score what comments are.** The Reach ≤ 1 / Severity ≤ 1 rule for comment text
   in deterministic files (see the scoring rule above) is #388's doctrine landing where it bites.
-  #682 widened it to wording-only findings in any file and added the Decline override.
+  #682 widened it to wording-only findings in any file, and a nit is never Deferred.
 
 **How to change it:** the two thresholds and the five weights are repo policy — set
 `prResponse.rubric.thresholds.implement` / `.decline` or `prResponse.rubric.weights.*` in

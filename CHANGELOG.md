@@ -98,11 +98,12 @@ is what you reach for across a breaking one.
 ### Changed
 - **Gates score wording-only findings as nits, wherever the text lives (#682).** The pr-response
   rubric, `adversarial-review` and `qa` share one outcome test: a finding rises above nit (Severity 1 /
-  Reach 1) only if it names wrong behavior, a wrong command, path or label, or a failing or missing
-  test for changed behavior. The rubric's "skill/agent markdown … score them normally" exemption is
-  gone, and a new override declines any wording-only finding, since 1 · 1 · 3 · 3 · 3 still sums to the
-  Implement cutoff of 11. The cutoff is unchanged. **Consumer impact:** re-render; review loops stop
-  implementing or filing follow-ups for wording-only findings.
+  Reach 1) only if it names wrong behavior, a wrong command, path or label, a failing or missing
+  test for changed behavior, or skill/doc text that would lead its reader to do the wrong thing. The
+  rubric's "skill/agent markdown … score them normally" exemption is gone, and a new override says a
+  nit is never Deferred: the triager implements it if it's a small edit, otherwise declines it. The
+  Implement cutoff is unchanged. **Consumer impact:** re-render; review loops stop filing follow-ups
+  for wording-only findings.
 - **`/waffle-report` picks the form by structure, not prose (#674).** A `bug:` / `feature:`
   prefix wins outright; else an `Expected:` or `Actual:` line files `bug.yml`, a `Proposed Solution:`
   line or heading files `feature.yml`, and anything else files `rough-idea.yml` with the user's

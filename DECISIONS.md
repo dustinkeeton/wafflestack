@@ -9,6 +9,29 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-24: Wording-only review findings are nits, and a nit never files a follow-up (#682)
+
+**Context**: Review loops kept turning wording findings on skill and doc text into follow-up
+issues (#677–#681). The #388 rule let skill/agent markdown "score normally", so none were capped.
+
+**Decision**: One outcome test in `pr-response`, `adversarial-review`, and `qa`: a finding rises
+above nit only if it names a wrong outcome. Prose that would lead its reader to do the wrong thing
+counts. Polish doesn't. In `pr-response` a nit is never Deferred: the triager implements it if it's
+a small edit, otherwise declines it.
+
+**Alternatives considered**:
+
+- **Always Decline wording-only findings** — rejected: it would also throw away prose fixes that
+  matter.
+- **Raise the Implement cutoff above 11** — rejected: it would move every finding.
+
+**Rationale**: The churn came from follow-up issues, not from small in-PR fixes, so the rule
+blocks the follow-up and leaves the fix to judgment.
+
+**Impact**: Narrows #388's skill/agent markdown exemption. The cutoff stays 11. Consumers re-render.
+
+---
+
 ## 2026-10-24: `/waffle-report` picks the form by structure, never by wording (#674)
 
 **Context**: `/waffle-report` guessed the upstream form (bug, feature, or rough idea) by reading the

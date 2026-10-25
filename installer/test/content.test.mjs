@@ -3660,7 +3660,8 @@ describe('issue / PR / review templates (#337)', () => {
   test('#682: the outcome test caps wording-only findings in every gate, whatever the file', () => {
     const pr = readSkill('pr-response');
     assert.match(pr, /the outcome test\.\*\* A finding scores above\s+Severity 1 or Reach 1 only if it names a \*\*wrong outcome\*\*/);
-    assert.match(pr, /\*\*A wording-only finding is always Decline\.\*\*/, 'a wording-only finding must not reach Implement or file a follow-up');
+    assert.match(pr, /\*\*A nit is never a Defer\.\*\*/, 'a nit must never file a follow-up issue');
+    assert.match(pr, /would\s+lead its reader to do the wrong thing/, 'prose that misdirects its reader must still score as an outcome');
     assert.doesNotMatch(pr, /score them normally/, 'the skill/agent-markdown exemption is back');
     for (const name of ['adversarial-review', 'qa']) {
       assert.match(readSkill(name), /\*\*The outcome test \(#682\)\.\*\* A finding rises above nit only if it names a wrong outcome/, `${name} lost the outcome test`);
