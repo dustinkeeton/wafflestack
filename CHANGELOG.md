@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-25
+
 ### Added
 - **Autopilot's gates can be turned off — per run or in config (#626).** The QA, review, and audit
   gates gain off-tokens (`-qa`, `-review`, `-audit`), and `+qa:0` / `+review:0` now mean off instead of
