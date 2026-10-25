@@ -449,7 +449,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. Then runs `claude plugin validate` over each mod source when the `claude` CLI is on PATH, and prints a visible `skipped:` line — never a pass — when it is not (#564). |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 27 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 29 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
 the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
 own identity, build the `state` document, etc.). The full function-level registry is in the root `AGENTS.md`.
