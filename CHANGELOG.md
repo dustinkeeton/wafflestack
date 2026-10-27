@@ -43,6 +43,12 @@ is what you reach for across a breaking one.
   with a positive control that flags the stack and asserts them present. Dropping either the
   `hasRecommended` or `hasOptIn` guard in `toolkitInventory` now fails. **Consumer impact:** none —
   test-only.
+- **Autopilot's `--rubric` evals are stricter, and pass-through has its own case (#665).** The
+  `autopilot-rubric-malformed` regex no longer accepts a bare `decline (12)` echo, which a reply
+  could print while still forwarding the token; it now needs the failing rule. The new
+  `autopilot-rubric-passthrough` case checks that a valid `--rubric implement=12` rides verbatim on
+  the `respond-rev-pr<N>` spawn and never on a resume message. **Consumer impact:** none — toolkit
+  eval suite only.
 
 ### Fixed
 
