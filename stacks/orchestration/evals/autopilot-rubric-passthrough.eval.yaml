@@ -1,0 +1,74 @@
+# Layer 2 eval case (harness: #109). Scoped to the orchestration stack by location.
+# See schema/FORMAT.md → "Layer 2 eval cases".
+#
+# Under test (#646, #665): a valid per-run `--rubric` rides verbatim, as one argument, on the
+# responder's spawn prompt and never on a resume message — the responder keeps its spawn rubric.
+
+name: autopilot-rubric-passthrough-on-spawn-not-resume
+description: >-
+  A valid `--rubric implement=12` is forwarded verbatim on the round-1 `respond-rev-pr<N>` spawn
+  (`pr-response <pr> --yes --rubric implement=12`) and never on a resume message.
+
+target:
+  kind: skill
+  name: autopilot
+
+prompt: |
+  /autopilot #198 +review -qa -audit --rubric implement=12
+
+  No auto-merge this run. Status: issue #198's PR is #212 and it just went green. Step 6 round 1
+  is opening. Show me exactly what you send to start the responder for round 1, and the exact
+  message you send that same responder in round 2, after `review-pr212` posts new findings on
+  head `abc1234`.
+
+config:
+  roster:
+    classificationTable: |-
+      | Keyword / path | Agent |
+      |----------------|-------|
+      | `uploader/`, upload, retry | backend |
+      | `reports/`, export, csv | backend |
+      | `docs/`, README | docs |
+    labelFallback: |-
+      | Label | Agent |
+      |-------|-------|
+      | `bug` | backend |
+      | `documentation` | docs |
+    rootFiles: "`package.json`, `tsconfig.json`"
+    sharedModule: "`shared/`"
+    moduleDependencies: "Any issue touching `core/` must run before issues that depend on it."
+  audit:
+    complianceLabel: "API compliance"
+    complianceFrontmatterLabel: "API compliance"
+    complianceTaskLabel: "API compliance review"
+    complianceAgentName: "audit-compliance"
+    complianceDescription: "Public API surface matches the documented contract."
+    compliancePrompt: |-
+      ### API compliance (Task 3)
+      Verify the public API surface matches the documented contract; report mismatches.
+
+assert:
+  # Cheap positive guard on the spawn line; the judge owns verbatim placement and the resume check
+  # (an `excludes` on `--rubric` would also hit the spawn line).
+  - type: regex
+    value: "pr-response #?212 --yes --rubric implement=12"
+  - type: judge
+    rubric: >-
+      The round-1 responder is spawned as a named agent `respond-rev-pr212` (or
+      `respond-*-pr212`) whose prompt invokes `pr-response 212 --yes --rubric implement=12`: the
+      spec `implement=12` exactly as given, as ONE argument after `pr-response <pr> --yes` — not
+      reworded, split, merged with config values, or moved before `--yes`. The round-2 message is
+      a resume (SendMessage to the same `respond-rev-pr212`) that does NOT carry `--rubric` or any
+      rubric spec, because a resumed responder keeps the rubric it was spawned with. A pass
+      requires BOTH. Dropping the flag from the spawn, altering the spec, putting `--rubric` in the
+      resume, or spawning a fresh responder for round 2 instead of resuming fails.
+
+dryRunResponse: |
+  `--rubric implement=12` validates: merged over this repo's rubric, decline (4) < implement (12).
+  Round 1 spawns the responder:
+
+      Agent(name: "respond-rev-pr212", prompt: "pr-response 212 --yes --rubric implement=12")
+
+  Round 2 resumes it. The rubric is fixed at spawn, so it never rides on a resume:
+
+      SendMessage(to: "respond-rev-pr212", message: "new review(s) posted on head `abc1234` — triage them")
