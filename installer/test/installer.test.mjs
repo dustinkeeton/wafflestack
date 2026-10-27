@@ -1020,6 +1020,55 @@ describe('files/ payload', () => {
   });
 });
 
+describe('setup inventory without recommended or opt-in stacks (#427)', () => {
+  let toolkitRoot;
+  const manifest = ['name: plain', 'description: Plain fixture.', 'files: [notes.txt]', ''];
+
+  beforeEach(() => {
+    toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-inv-'));
+    write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: inventory\nstacks: [plain]\n');
+    write(toolkitRoot, 'stacks/plain/stack.yaml', manifest.join('\n'));
+    write(toolkitRoot, 'stacks/plain/files/notes.txt', 'notes\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+  });
+
+  const inventory = () => toolkitInventory(loadToolkit(toolkitRoot), '0.0.test');
+
+  test('the fixture is a valid toolkit', () => {
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+  });
+
+  test('omits the recommended intro and per-stack marker', () => {
+    const inv = inventory();
+    assert.match(inv, /^## stack: plain$/m);
+    assert.doesNotMatch(inv, /A \*\*recommended\*\* stack/);
+    assert.doesNotMatch(inv, /include it unless the user opts out/);
+    assert.doesNotMatch(inv, /recommended \(default-selected\)/);
+    assert.doesNotMatch(inv, /A \*\*recommended plugin\*\*/);
+  });
+
+  test('omits the opt-in syrup intro and files line', () => {
+    const inv = inventory();
+    assert.match(inv, /^- files: files\/notes\.txt$/m);
+    assert.doesNotMatch(inv, /An \*\*opt-in syrup\*\* item/);
+    assert.doesNotMatch(inv, /opt-in syrup —/);
+  });
+
+  test('positive control: flagging the stack emits both intros and markers', () => {
+    write(toolkitRoot, 'stacks/plain/stack.yaml', [...manifest.slice(0, -1), 'recommended: true', 'optIn: [files/notes.txt]', ''].join('\n'));
+    const inv = inventory();
+    assert.match(inv, /A \*\*recommended\*\* stack/);
+    assert.match(inv, /include it unless the user opts out/);
+    assert.match(inv, /^## stack: plain — \*\*recommended \(default-selected\)\*\*$/m);
+    assert.match(inv, /An \*\*opt-in syrup\*\* item/);
+    assert.match(inv, /^- files \(opt-in syrup — sensitive, do NOT install by default\): files\/notes\.txt$/m);
+    assert.doesNotMatch(inv, /^- files: /m);
+  });
+});
+
 // The real github-workflow stack ships a doctor CI workflow as a files/ payload (#14).
 // These render THAT actual payload (not a fixture) to prove the shipped artifact is correct.
 describe('github-workflow: waffle-doctor CI payload (#14)', () => {
