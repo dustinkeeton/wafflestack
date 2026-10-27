@@ -63,8 +63,7 @@ assert:
       deterministic file is at most a nit is consistent with a pass. Demanding the code be changed
       to satisfy the comment is a FAIL.
 
-# Representative response used only by --dry-run (never sent to a live model). Lets an author
-# preview the deterministic assertions before spending on a metered run.
+# Response for --dry-run only (never sent to a live model); the judge auto-passes, so this just smoke-tests the case.
 dryRunResponse: |
   <!-- waffle-adversarial-review -->
   **Adversarial review** — 0 blockers, 0 should-fix, 1 nit.
