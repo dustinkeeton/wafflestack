@@ -53,6 +53,12 @@ is what you reach for across a breaking one.
   `setup --force` and `init --yes` fail. AGENTS.md no longer says the two commands silently ignore
   unknown flags, and a test pins the refusal. **Consumer impact:** none — no re-render or config
   change. Scripts that pass extra arguments to `setup`/`init` must drop them.
+- **Autopilot's gate table now has a row for malformed counts (#636).** The skill says one table
+  resolves all three gates, but a malformed count (`+qa:deep`, `+review:-1`) or a count on a token
+  that takes none (`-qa:2`, `+audit:3`) had no row, so a model reading only the table could skip a
+  gate config set to `false` even though the invoker typed a token for it. The new row says ask,
+  whatever the rendered gate says; a non-interactive caller resolves to off. **Consumer impact:**
+  autopilot skill text only — `render` picks it up.
 
 ## [0.18.0] - 2026-10-25
 

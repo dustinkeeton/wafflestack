@@ -1112,6 +1112,7 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     assert.match(md, /a malformed count beside any other token for the same gate \(`\+qa:deep` with `\+qa`\) are a contradiction/);
     assert.match(md, /\| The off token, or `<on>:0` \| Off for this run — no question\. \| Off for this run\. \|/);
     assert.match(md, /\| No token, rendered gate `false` \| Off — config pre-answered it; no question\. \| Off\. \|/);
+    assert.match(md, /\| A malformed count \(`\+qa:deep`, `\+review:-1`\) or a count on a token that takes none \(`-qa:2`, `\+audit:3`\) \| Ask with `AskUserQuestion`, whatever the rendered gate says\. \| Off\. \|/);
     assert.match(md, /A token always beats config/);
   });
 
@@ -1124,6 +1125,8 @@ describe('autopilot skill: per-run round caps +qa:N / +review:N (#230)', () => {
     assert.match(md, /A negative or non-numeric count \(`\+review:-1`, `\+qa:deep`\) is malformed/);
     assert.match(md, /treat that flag as \*\*unspecified\*\*/);
     assert.match(md, /\*\*whatever the rendered gate says\*\*: a `false` in config does not silence it/);
+    assert.match(md, /the invoker typed a token for that gate and config cannot say what it meant/);
+    assert.doesNotMatch(md, /visibly tried to turn the gate on/);
     assert.match(md, /never start a zero-round loop and never guess a cap/);
   });
 
