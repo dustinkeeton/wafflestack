@@ -37,6 +37,12 @@ is what you reach for across a breaking one.
   loads probe stacks with `"yes"`, `1`, `"false"`, `"true"`, and `[true]` and asserts each is
   `false`, so a refactor to `Boolean(...)` (which turns `"false"` into `true`) now fails.
   **Consumer impact:** none — test-only.
+- **The setup inventory's no-recommended and no-opt-in output is pinned by tests (#427).** A
+  synthetic toolkit with one plain stack asserts the recommended intro, the
+  `recommended (default-selected)` marker, and the opt-in syrup intro and files line are all absent,
+  with a positive control that flags the stack and asserts them present. Dropping either the
+  `hasRecommended` or `hasOptIn` guard in `toolkitInventory` now fails. **Consumer impact:** none —
+  test-only.
 
 ## [0.18.0] - 2026-10-25
 
