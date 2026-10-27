@@ -12239,6 +12239,19 @@ describe('CLI: setup/init alias (#611)', () => {
     }
   });
 
+  test('unknown flags are refused before anything is written — both names (#638)', () => {
+    for (const argv of [['setup', '--force'], ['init', '--yes'], ['setup', '--gitignore', '--bogus']]) {
+      const [cmd, ...rest] = argv;
+      const flag = rest[rest.length - 1];
+      const cwd = fresh();
+      const r = run(argv, cwd);
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, new RegExp(`${cmd} takes no refs \\(got ${flag}\\)`));
+      assert.equal(fs.existsSync(cfg(cwd)), false, `${argv.join(' ')} must not scaffold`);
+      assert.equal(fs.existsSync(path.join(cwd, '.gitignore')), false, `${argv.join(' ')} must not touch .gitignore`);
+    }
+  });
+
   test('help lists setup first and names init as its alias', () => {
     const r = runCli(['help'], fresh());
     assert.match(r.stdout, /^\s+init\s+alias for setup/m);

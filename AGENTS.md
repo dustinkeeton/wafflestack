@@ -152,9 +152,10 @@ intercepted before the switch (`cli.mjs:52`), so `uninstall --help` explains rat
 there is no per-command help page (#187, `helpText` `cli.mjs:378`). An unknown command, and bare
 `wafflestack`, print banner + usage to stderr, exit 1. Flags are spliced out by name
 (`extractFlag` `cli.mjs:517`, `extractCwd` `cli.mjs:508`), so an unrecognized flag survives as a
-positional: `render`/`bake`/`upgrade`/`list`/`toggle`/`state`/`report`/`uninstall`/`reinstall` reject it (takes-no-refs
-guard), `install`/`eject` fail resolving it as a ref, `avatars` rejects a non-`sync`/`status`
-first arg, `init`/`setup`/`doctor`/`validate` silently ignore it.
+positional: `setup`/`init`/`render`/`bake`/`upgrade`/`list`/`toggle`/`state`/`report`/`uninstall`/`reinstall` reject it
+(takes-no-refs guard, exit 1 — `setup --force` / `init --yes` fail; `setup`/`init` refuse before
+scaffolding, so nothing is written), `install`/`eject` fail resolving it as a ref, `avatars` rejects a
+non-`sync`/`status` first arg, `doctor`/`validate` silently ignore it.
 
 | Flag | Commands | Effect |
 |------|----------|--------|

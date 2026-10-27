@@ -44,6 +44,16 @@ is what you reach for across a breaking one.
   `hasRecommended` or `hasOptIn` guard in `toolkitInventory` now fails. **Consumer impact:** none —
   test-only.
 
+### Fixed
+
+- **`setup` / `init` reject unknown flags, and this is now documented and tested (#638).** 0.18.0
+  (#611) made both commands refuse any extra argument before scaffolding, including an unknown flag,
+  but its notes left that out. `setup <arg>` and `init <arg>` used to exit 0, and `init` wrote a
+  starter config. Since 0.18.0 they exit 1 with `takes no refs (got …)` and write nothing, so
+  `setup --force` and `init --yes` fail. AGENTS.md no longer says the two commands silently ignore
+  unknown flags, and a test pins the refusal. **Consumer impact:** none — no re-render or config
+  change. Scripts that pass extra arguments to `setup`/`init` must drop them.
+
 ## [0.18.0] - 2026-10-25
 
 ### Added
