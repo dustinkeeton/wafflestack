@@ -17,7 +17,7 @@ prompt: |
   /autopilot #198 +review -qa -audit --rubric implement=12
 
   No auto-merge this run. Status: issue #198's PR is #212 and it just went green. Step 6 round 1
-  is opening. Show me exactly what you send to start the responder for round 1, and the exact
+  is opening, and `review-pr212` has posted 2 findings on the round-1 head. Show me exactly what you send to start the responder for round 1, and the exact
   message you send that same responder in round 2, after `review-pr212` posts new findings on
   head `abc1234`.
 
