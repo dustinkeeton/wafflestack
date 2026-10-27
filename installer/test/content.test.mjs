@@ -2759,6 +2759,25 @@ describe('recommended-stacks flag: default-selected in setup (#201)', () => {
     assert.deepEqual(flagged, ['orchestration', 'engineering-team']);
   });
 
+  test('a malformed (non-boolean) recommended: value coerces to false (#426)', () => {
+    const probe = (scalar) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-recommended-'));
+      try {
+        fs.writeFileSync(path.join(root, 'toolkit.yaml'), 'name: fixture\ndescription: x\nstacks: [probe]\n');
+        fs.mkdirSync(path.join(root, 'stacks', 'probe'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'stacks', 'probe', 'stack.yaml'), `name: probe\ndescription: Probe.\nrecommended: ${scalar}\n`);
+        return loadToolkit(root).stacks.get('probe').recommended;
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    };
+    // `"false"` is the trap: Boolean("false") === true.
+    for (const scalar of ['"yes"', '1', '"false"', '"true"', '[true]']) {
+      assert.equal(probe(scalar), false, `recommended: ${scalar}`);
+    }
+    assert.equal(probe('true'), true);
+  });
+
   test('the generated inventory marks the recommended stack and explains the behavior', () => {
     const inventory = toolkitInventory(toolkit);
     assert.match(inventory, /## stack: orchestration — \*\*recommended \(default-selected\)\*\*/);

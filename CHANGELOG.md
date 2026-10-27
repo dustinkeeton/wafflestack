@@ -31,6 +31,13 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+
+- **A malformed `recommended:` stack-manifest value is pinned to coerce to false (#426).** A test
+  loads probe stacks with `"yes"`, `1`, `"false"`, `"true"`, and `[true]` and asserts each is
+  `false`, so a refactor to `Boolean(...)` (which turns `"false"` into `true`) now fails.
+  **Consumer impact:** none — test-only.
+
 ## [0.18.0] - 2026-10-25
 
 ### Added
