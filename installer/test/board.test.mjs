@@ -38,6 +38,15 @@ const FOCUS_DATA = {
       { number: 9, title: '[Epic] First', subIssuesSummary: { total: 2, completed: 2 } },
     ],
   },
+  repository: {
+    issues: {
+      nodes: [
+        { number: 30, title: 'parent without the prefix', subIssuesSummary: { total: 3, completed: 0 } },
+        { number: 20, title: '[epic] Second', subIssuesSummary: { total: 4, completed: 1 } },
+        { number: 31, title: 'a plain issue', subIssuesSummary: { total: 0, completed: 0 } },
+      ],
+    },
+  },
   repositoryOwner: {
     projectV2: {
       items: {
@@ -79,7 +88,7 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe('readBoard (#697)', () => {
-  test('reads milestones, [epic]-titled epics, and In Progress / In Review items from the matched board', () => {
+  test('reads milestones, epics (sub-issue parents or [epic] titles), and In Progress / In Review items from the matched board', () => {
     const gh = fakeGh(REPO_DATA, FOCUS_DATA);
     const b = readBoard({ cwd: dir, projectName: 'wafflestack', gh, cacheFile, now: () => T0 });
     assert.equal(b.error, null);
@@ -90,6 +99,7 @@ describe('readBoard (#697)', () => {
     assert.deepEqual(b.epics, [
       { number: 9, title: '[Epic] First', done: 2, total: 2 },
       { number: 20, title: '[epic] Second', done: 1, total: 4 },
+      { number: 30, title: 'parent without the prefix', done: 0, total: 3 },
     ]);
     assert.deepEqual(b.inProgress, [{ number: 5, title: 'doing', kind: 'issue' }, { number: null, title: 'a draft', kind: 'draft' }]);
     assert.deepEqual(b.inReview, [{ number: 6, title: 'reviewing', kind: 'pr' }]);
@@ -98,6 +108,7 @@ describe('readBoard (#697)', () => {
     assert.ok(gh.calls.every((c) => c.cwd === dir && c.args[0] === 'api' && c.args[1] === 'graphql'));
     assert.ok(gh.calls[0].args.includes('owner={owner}') && gh.calls[0].args.includes('name={repo}'), 'gh resolves the repo from cwd');
     assert.ok(gh.calls[1].args.includes('q=repo:o/r is:issue is:open "[epic]" in:title'));
+    assert.ok(gh.calls[1].args.includes('owner=o') && gh.calls[1].args.includes('name=r'));
     assert.ok(gh.calls[1].args.includes('login=o') && gh.calls[1].args.includes('number=7'));
     assert.equal(gh.calls[0].timeoutMs, BOARD_CALL_TIMEOUT_MS);
   });
@@ -126,7 +137,7 @@ describe('readBoard (#697)', () => {
     const hit = readBoard({ cwd: dir, projectName: 'wafflestack', gh: forbidGh, cacheFile, now: () => T0 + BOARD_CACHE_TTL_MS - 1 });
     assert.equal(hit.source, 'cache');
     assert.equal(hit.checkedAt, new Date(T0).toISOString());
-    assert.equal(hit.epics.length, 2);
+    assert.equal(hit.epics.length, 3);
 
     const gh = fakeGh(REPO_DATA, FOCUS_DATA);
     const again = readBoard({ cwd: dir, projectName: 'wafflestack', gh, cacheFile, now: () => T0 + BOARD_CACHE_TTL_MS });
@@ -182,7 +193,7 @@ describe('readBoard (#697)', () => {
     const b = readBoard({ cwd: dir, projectName: 'wafflestack', gh: spent, cacheFile: path.join(dir, 'b.json'), now: () => t });
     assert.equal(spent.calls.length, 1);
     assert.equal(b.error, BOARD_ERRORS.budget);
-    assert.equal(b.milestones.length, 2, 'what the first call read is kept');
+    assert.deepEqual([b.milestones, b.epics, b.project], [[], [], null], 'every error means empty lists');
   });
 
   test('an unwritable cache costs nothing but the next read', () => {

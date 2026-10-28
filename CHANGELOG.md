@@ -34,9 +34,9 @@ is what you reach for across a breaking one.
 ### Added
 
 - **`wafflestack state --board` reads what the team is working on (#697, part of #610).** It adds a
-  `board` block to `state` (and `state --json`): open milestones with due dates, open `[epic]` issues
-  with `n of m` sub-issue progress, and the In Progress / In Review items of the Projects v2 board
-  whose title matches `project.name`. It reads through `gh`, capped at 5 s per call and 8 s overall,
+  `board` block to `state` (and `state --json`): open milestones with due dates, open epics (issues
+  with native sub-issues, or an `[epic]` title) with `n of m` sub-issue progress, and the In Progress /
+  In Review items of the Projects v2 board whose title matches `project.name`. It reads through `gh`, capped at 5 s per call and 8 s overall,
   and caches the answer for 60 s in your user cache dir (`board.json`, next to `latest-release.json`).
   A failure sets `board.error` and never changes the exit code. `--offline` or `WAFFLESTACK_OFFLINE=1`
   skips the read. Plain `state` is unchanged and still never calls `gh`.

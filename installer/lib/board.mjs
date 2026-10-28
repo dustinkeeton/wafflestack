@@ -25,7 +25,7 @@ export const BOARD_ERRORS = /** @type {const} */ ({
  *
  * @typedef {object} BoardBlock the `board` block of `state --json`
  * @property {{ title: string, dueOn: string|null }[]} milestones open, soonest due first
- * @property {{ number: number, title: string, done: number, total: number }[]} epics open `[epic]` issues, native sub-issue progress
+ * @property {{ number: number, title: string, done: number, total: number }[]} epics open issues with sub-issues or an `[epic]` title, native sub-issue progress
  * @property {BoardItem[]} inProgress
  * @property {BoardItem[]} inReview
  * @property {{ number: number, title: string }|null} project the Projects v2 board matched to `project.name`
@@ -44,9 +44,14 @@ const REPO_QUERY = `query($owner: String!, $name: String!) {
   }
 }`;
 
-const EPICS_FIELDS = `search(query: $q, type: ISSUE, first: 50) {
-    nodes { ... on Issue { number title subIssuesSummary { total completed } } }
+// An epic is an open issue with native sub-issues, or an `[epic]` title (so a childless epic shows).
+// Search has no sub-issue qualifier, so parents come from the newest 100 open issues.
+const EPICS_FIELDS = `search(query: $q, type: ISSUE, first: 50) { nodes { ...Epic } }
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: 100, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ...Epic } }
   }`;
+const EPIC_FRAGMENT = 'fragment Epic on Issue { number title subIssuesSummary { total completed } }';
+const EPIC_TITLE = /^\s*\[epic\]/i;
 
 const ITEMS_FIELDS = `repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) {
     items(first: 100, query: "status:\\"In Progress\\",\\"In Review\\" is:open") { nodes {
@@ -122,20 +127,25 @@ function fetchBoard({ cwd, projectName, gh, now }) {
   const milestones = (repo.milestones?.nodes ?? []).map((/** @type {any} */ m) => ({ title: m.title, dueOn: m.dueOn ?? null }));
 
   const remaining = BOARD_BUDGET_MS - (now() - start);
-  if (remaining <= 0) return emptyBoard(BOARD_ERRORS.budget, { milestones, project });
+  if (remaining <= 0) return emptyBoard(BOARD_ERRORS.budget);
 
-  const vars = ['-f', `q=repo:${repo.nameWithOwner} is:issue is:open "[epic]" in:title`];
-  let query = `query($q: String!) { ${EPICS_FIELDS} }`;
+  const [owner, name] = repo.nameWithOwner.split('/');
+  const vars = ['-f', `q=repo:${repo.nameWithOwner} is:issue is:open "[epic]" in:title`, '-f', `owner=${owner}`, '-f', `name=${name}`];
+  let query = `query($q: String!, $owner: String!, $name: String!) { ${EPICS_FIELDS} } ${EPIC_FRAGMENT}`;
   if (project) {
-    query = `query($q: String!, $login: String!, $number: Int!) { ${EPICS_FIELDS} ${ITEMS_FIELDS} }`;
+    query = `query($q: String!, $owner: String!, $name: String!, $login: String!, $number: Int!) { ${EPICS_FIELDS} ${ITEMS_FIELDS} } ${EPIC_FRAGMENT}`;
     vars.push('-f', `login=${repo.owner.login}`, '-F', `number=${project.number}`);
   }
   const data = graphql(gh, cwd, Math.min(BOARD_CALL_TIMEOUT_MS, remaining), query, vars);
 
-  const epics = (data?.search?.nodes ?? [])
-    .filter((/** @type {any} */ n) => typeof n?.title === 'string' && /^\s*\[epic\]/i.test(n.title))
-    .map((/** @type {any} */ n) => ({ number: n.number, title: n.title, done: n.subIssuesSummary?.completed ?? 0, total: n.subIssuesSummary?.total ?? 0 }))
-    .sort((/** @type {any} */ a, /** @type {any} */ b) => a.number - b.number);
+  /** @type {Map<number, { number: number, title: string, done: number, total: number }>} */
+  const epicsByNumber = new Map();
+  for (const n of [...(data?.search?.nodes ?? []), ...(data?.repository?.issues?.nodes ?? [])]) {
+    if (typeof n?.number !== 'number' || typeof n.title !== 'string') continue;
+    const total = n.subIssuesSummary?.total ?? 0;
+    if (total > 0 || EPIC_TITLE.test(n.title)) epicsByNumber.set(n.number, { number: n.number, title: n.title, done: n.subIssuesSummary?.completed ?? 0, total });
+  }
+  const epics = [...epicsByNumber.values()].sort((a, b) => a.number - b.number);
   const items = data?.repositoryOwner?.projectV2?.items?.nodes ?? [];
   return emptyBoard(null, {
     milestones,
