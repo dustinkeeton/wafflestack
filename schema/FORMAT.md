@@ -1121,9 +1121,9 @@ has, not the whole toolkit:
   conflicting defaults are comments pointing at `wafflestack config <key>`. It is built from
   stack declarations only, never from config values, so no `waffle.yaml` or
   `waffle.local.yaml` value appears in it. `harness.*` built-ins are not listed (see *The
-  `harness.*` namespace*). Like the docs above, it is skipped when the render fails, so a repo
-  missing a required key gets no copy until the key is set (`wafflestack config` and `setup`
-  still list the keys).
+  `harness.*` namespace*). Like the docs above, it is not written or refreshed when the render
+  fails, so a repo missing a required key keeps any earlier copy, stale, until the key is set
+  (`wafflestack config` and `setup` still list the keys).
 
 The docs are assembled from item **frontmatter** (no extra manifest surface), and every
 `description` / `argument-hint` is substituted with the same resolver the rendered item uses,
