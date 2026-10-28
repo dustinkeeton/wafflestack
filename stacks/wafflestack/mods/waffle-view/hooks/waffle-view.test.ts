@@ -1143,7 +1143,7 @@ describe('live wave (#699)', () => {
     expect(waveMarker('failed')).toEqual({ glyph: '✗', tone: { color: 'error' } })
   })
 
-  const stubCore = (on: Parameters<Parameters<typeof test>[1]>[1]) => {
+  const stubCore = (on: Parameters<Parameters<typeof test>[1]>[1], denied: () => boolean = () => false) => {
     on('fs.exists', () => ({ value: false }))
     on('process.run', () => ({ value: exited(0, JSON.stringify(DOC)) }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -1151,7 +1151,7 @@ describe('live wave (#699)', () => {
     on('command.run', () => ({ text: '' }))
     on('prompt.submit', (_$, e) => ({ text: e.text }))
     on('ui.panes', () => ({ value: [{ id: PANE, title: 'Waffle view', isShown: true, isFocused: false, isPlaced: true }] }))
-    on('agent.spawn', (_$, e) => ({ model: 'sonnet', agentId: `id-${e.subagentType}` }))
+    on('agent.spawn', (_$, e) => (denied() ? { deny: 'no' } : { model: 'sonnet', agentId: `id-${e.subagentType}` }))
     on('turn.complete', (_$, e) => ({ text: e.answer }))
   }
   type Mounted = Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>
@@ -1202,6 +1202,20 @@ describe('live wave (#699)', () => {
     await $.turn.complete(turn('id-docs-agent'))
     await $.turn.complete(turn(undefined))
     const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('a nested or denied spawn leaves its row pending', async ($, on) => {
+    let deny = false
+    stubCore(on, () => deny)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent', parentAgentId: 'x' })
+    deny = true
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
     expect(await markers(ui)).toEqual(['○', '○'])
     await ui.unmount()
   })
