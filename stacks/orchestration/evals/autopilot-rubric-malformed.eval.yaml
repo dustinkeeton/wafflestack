@@ -45,7 +45,7 @@ config:
 
 assert:
   - type: regex
-    value: "12[\\s\\S]*less than[\\s\\S]*11|not less than"
+    value: "not\\s+less\\s+than|decline\\s*<\\s*implement|12[\\s\\S]{0,80}(less\\s+than|lower\\s+than|below|<)[\\s\\S]{0,80}11"
   - type: judge
     rubric: >-
       Before planning or implementing anything, the assistant rejects the `--rubric decline=12`
