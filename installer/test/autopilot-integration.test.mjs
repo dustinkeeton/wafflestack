@@ -317,7 +317,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
     assert.match(md, /Without the consent, or if arming fails, hold/);
     const step6 = section(md, '6. **Merge it.**', '7. ');
-    assert.ok(step6.indexOf('autoMergeRequest != null') < step6.indexOf('--add-label'));
+    assert.match(step6, /`gh pr merge --auto --merge <S>`, verify `gh pr view <S> --json autoMergeRequest -q '\.autoMergeRequest != null'` prints `true`, and only then label it `gh pr edit <S> --add-label/);
     assert.doesNotMatch(step6, /<S>`, then label it/);
     assert.match(md, /require `git diff --quiet <syncHead> origin\/<integ>`/);
     assert.match(md, /4\. \*\*Checks\.\*\* Stage 1's mechanical checks run here, in `<gate>`, before anything is pushed\./);
