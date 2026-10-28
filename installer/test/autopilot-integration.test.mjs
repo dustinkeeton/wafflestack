@@ -496,7 +496,14 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     const md = arm();
     assert.match(md, /\*\*Stage 2's review landed\.\*\* When stage 2 passed, that head carries a `waffle\/adversarial-review` success status/);
     assert.match(md, /gh api "repos\/\$OWNER\/\$REPO\/commits\/<head>\/statuses" --paginate/);
-    assert.match(md, /A count of 0, or a query that errors, means the review never posted/);
+    assert.match(md, /A count of 0, or a query that errors, is reported as \*\*not armed — no `waffle\/adversarial-review` success status on `<head>`\*\*/);
+    assert.doesNotMatch(md, /means the review never posted/);
+  });
+
+  test('stage 2 writes a denied reviewer status itself, only after reading the review back', () => {
+    const md = section(read(SKILL), '### Integration gate — stage 2', '### Integration gate — stage 3');
+    assert.match(md, /It returns its review id and whether its `waffle\/adversarial-review` status write succeeded/);
+    assert.match(md, /when its `commit_id` is `<sha>` and its body begins with the adversarial-review marker, write that status on `<sha>` yourself/);
   });
 
   test('after MERGED: Step 9 for every closed issue, then a probe-verified branch delete', () => {
