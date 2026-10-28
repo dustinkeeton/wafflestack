@@ -225,6 +225,10 @@ that can draw a live pane inside a session. A stack lists it under `mods:` and c
   agents-dir-only project never receives one, and disabling `claude` prunes it.
 - **Managed like everything else.** The entries are lock-tracked, doctor-checked, and ejectable
   (`wafflestack eject mods/<name>` removes them).
+- **Kept current by Claude Code.** The marketplace entry sets `autoUpdate: true`. If an install is
+  still older than the version the toolkit ships, `doctor` and `upgrade` print a note with the
+  `claude plugin update <id> --scope <scope>` command. The note never fails `doctor`, because
+  install records are per-machine state (#730).
 
 The first mod is **`waffle-view`** in the `wafflestack` stack. `/waffle-view` toggles a pane that
 shows the repo's resolved state, and narrows it to the skill you last invoked by `/name` (#562,
