@@ -240,6 +240,8 @@ describe('autopilot Step 8 red-check rerun and retry (#745)', () => {
     assert.ok(md.indexOf('gh pr merge <pr> --disable-auto') < md.indexOf('gh pr close <pr>'));
     assert.match(md, /If the disarm fails or the PR is still armed, do not retry/);
     assert.match(md, /If `state` reads `MERGED`, the PR merged after all: run Step 9 and do not retry/);
+    assert.match(md, /read `gh pr view <pr> --json state,autoMergeRequest` even if that command errored/);
+    assert.ok(md.indexOf('the PR merged after all') < md.indexOf('If the disarm fails'));
     assert.match(md, /without `--delete-branch`/);
     assert.doesNotMatch(md, /`gh pr close[^`]*--delete-branch/);
   });
