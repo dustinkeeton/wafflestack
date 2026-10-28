@@ -115,6 +115,7 @@ export const SKILL_RUN_FILE_KEYS = {
  * @property {Record<string, SkillContext>} skills per selected skill: the declared keys its files reference and the run files it writes (#563)
  * @property {AgentEntry[]} agents the roster `/standup` rounds up (#610), sorted by name
  * @property {import('./update-check.mjs').UpdateVerdict} update whether a newer toolkit release exists (#608); all-null when unknown
+ * @property {import('./board.mjs').BoardBlock} [board] the team-focus read, present only under `state --board` (#697)
  *
  * @typedef {object} ConfigValue one declared config key, resolved
  * @property {any} value the effective value, nested `{{…}}` expanded (overlay included); null when unset
@@ -539,5 +540,18 @@ export function formatStateText(s) {
   const u = s.update;
   const newer = u?.available ? ` · ${u.latestTag} available${u.command ? ` — run ${u.command}` : ''}` : '';
   lines.push(`cli: ${s.cli.version} (${s.cli.status})${newer}`);
+  if (s.board) lines.push(...formatBoardLines(s.board));
   return `${lines.join('\n')}\n`;
+}
+
+/** @param {import('./board.mjs').BoardBlock} b @returns {string[]} */
+function formatBoardLines(b) {
+  if (b.error) return ['', `board: unavailable — ${b.error}`];
+  const item = (/** @type {import('./board.mjs').BoardItem} */ i) => (i.number === null ? i.title : `#${i.number} ${i.title}`);
+  const lines = ['', `board: ${b.project ? `${b.project.title} (#${b.project.number})` : 'no Projects v2 board matched'}${b.source === 'cache' ? ' (cached)' : ''}`];
+  for (const m of b.milestones) lines.push(`  milestone: ${m.title}${m.dueOn ? ` — due ${m.dueOn.slice(0, 10)}` : ''}`);
+  for (const e of b.epics) lines.push(`  epic: #${e.number} ${e.title} — ${e.done} of ${e.total}`);
+  for (const i of b.inProgress) lines.push(`  in progress: ${item(i)}`);
+  for (const i of b.inReview) lines.push(`  in review: ${item(i)}`);
+  return lines;
 }
