@@ -443,7 +443,7 @@ content is already byte-identical to the render is adopted silently, no flag nee
   - `.waffle/avatars/` — **always**. The per-agent avatar SVGs are regenerated on every
     render and are reading material, not agent behavior; keeping them out of git spares a
     diff on every roster change. `doctor` treats an absent generated `.waffle/` doc
-    (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/`) as a note — a present
+    (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/`, `waffle.reference.yaml`) as a note — a present
     copy is still hash-checked — so ignoring them needs no `--allow-missing`.
   - the configured `git.worktreesDir` when an enabled stack declares one (throwaway
     working state). `setup --gitignore` (or its alias `init`) seeds the overlay, its local lock and `.waffle/avatars/`,

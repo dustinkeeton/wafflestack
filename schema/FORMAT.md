@@ -769,8 +769,8 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `render`'s prune and overwrite bookkeeping — read it in preference to the committed
   lock, so a hand-edit is still caught locally while the committed lock stays canonical
   and your private overlay values never reach a teammate or CI through it.
-- `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.html`, `.waffle/team.html`
-  (generated) — overview docs describing the installed selection (see *Generated overview
+- `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.html`, `.waffle/team.html`,
+  `.waffle/waffle.reference.yaml` (generated) — overview docs describing the installed selection (see *Generated overview
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and
   pruned by `render`. Commit them; never hand-edit them.
 
@@ -1111,6 +1111,18 @@ has, not the whole toolkit:
   so the page renders correctly fully offline; those font links are the only external
   reference (no external images, scripts, or stylesheets). The Markdown is the agent-readable
   source of truth; the HTML pages are the visual one-pagers.
+- **`.waffle/waffle.reference.yaml`** — every config key the selection references, for copying
+  into `waffle.yaml`. Lines starting `## ` are notes; lines starting `# ` are YAML, so copy the
+  `# config:` line plus any block and strip one leading `# ` from each line to get valid config.
+  Keys that are required with no default are listed under `## Must set`, never shown as values.
+  `lockMode:` keys are listed under `## Locked`. A `configModes:` key shows only a value
+  `doctor` accepts. Templated defaults show the raw `{{…}}` template. Multi-line, long or
+  conflicting defaults are comments pointing at `wafflestack config <key>`. It is built from
+  stack declarations only, never from config values, so no `waffle.yaml` or
+  `waffle.local.yaml` value appears in it. `harness.*` built-ins are not listed (see *The
+  `harness.*` namespace*). Like the docs above, it is skipped when the render fails, so a repo
+  missing a required key gets no copy until the key is set (`wafflestack config` and `setup`
+  still list the keys).
 
 The docs are assembled from item **frontmatter** (no extra manifest surface), and every
 `description` / `argument-hint` is substituted with the same resolver the rendered item uses,

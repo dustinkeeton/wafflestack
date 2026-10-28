@@ -30,6 +30,8 @@ node_modules/
 # …and the per-agent avatar files + their Gravatar registration manifest (#157).
 .waffle/AVATARS.md
 .waffle/avatars/
+# …and the config-key catalog (#703).
+.waffle/waffle.reference.yaml
 
 # Files the Claude Code engine lays into a mod's source dir when a toolkit developer loads it from
 # disk (`claude --plugin-dir` / `claude plugin test`). Per machine, never shipped (#562, #564).

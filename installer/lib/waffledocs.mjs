@@ -1,6 +1,7 @@
 /**
- * Generate the default `.waffle/` overview docs — CHEATSHEET.md, TEAM.md, AVATARS.md and the
- * branded cheatsheet.html / team.html pages — from the computed render selection. All of it is
+ * Generate the default `.waffle/` overview docs — CHEATSHEET.md, TEAM.md, AVATARS.md, the
+ * branded cheatsheet.html / team.html pages and the waffle.reference.yaml config catalog — from
+ * the computed render selection. All of it is
  * emitted through render's `emit()` choke point, so it is lock-tracked, drift-checked and pruned
  * by the render lifecycle, and all of it is assembled from item frontmatter substituted with the
  * same resolver render uses. Brand chrome per `assets/README.md`.
@@ -10,6 +11,7 @@ import { lookupPath } from './util.mjs';
 import { substitute } from './template.mjs';
 import { makeResolver, AVATARS_DIR } from './project.mjs';
 import { resolveAgentSkill } from './refs.mjs';
+import { CONFIG_REFERENCE, generateConfigReference } from './config-reference.mjs';
 
 const CHEATSHEET_MD = path.join('.waffle', 'CHEATSHEET.md');
 const CHEATSHEET_HTML = path.join('.waffle', 'cheatsheet.html');
@@ -21,7 +23,7 @@ const AVATARS_MD = path.join('.waffle', 'AVATARS.md');
  * The generated-docs class (#528): reading material, not agent behavior, so `doctor` treats an
  * ABSENT member as a note (consumers may gitignore them) while a present one is still hash-checked.
  */
-export const GENERATED_DOCS = Object.freeze([CHEATSHEET_MD, CHEATSHEET_HTML, TEAM_MD, TEAM_HTML, AVATARS_MD, AVATARS_DIR]);
+export const GENERATED_DOCS = Object.freeze([CHEATSHEET_MD, CHEATSHEET_HTML, TEAM_MD, TEAM_HTML, AVATARS_MD, AVATARS_DIR, CONFIG_REFERENCE]);
 
 const slashes = (rel) => String(rel).replace(/\\/g, '/');
 const GENERATED_DOC_FILES = new Set(GENERATED_DOCS.filter((rel) => rel !== AVATARS_DIR).map(slashes));
@@ -215,6 +217,8 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [], t
     }
     docs.push({ rel: AVATARS_MD, content: avatarsMarkdown(agents, toolkit.name, resolveGitIdentity({ project, selection, resolverFor })) });
   }
+  const reference = generateConfigReference({ selection, target: project.targets?.[0] ?? 'claude' });
+  if (reference) docs.push({ rel: CONFIG_REFERENCE, content: reference });
   return docs;
 }
 

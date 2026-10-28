@@ -11,7 +11,7 @@ import { lockKeys } from './settings.mjs';
 import { loadProjectConfig, resolveLocalConfigFile } from './project.mjs';
 import { exists, readYaml } from './util.mjs';
 import { expandKey } from './state.mjs';
-import { configCatalog, mergeCatalog, firstSentence } from './config-catalog.mjs';
+import { configCatalog, mergeCatalog, specFacts, summaryOf } from './config-catalog.mjs';
 
 export { configCatalog, mergeCatalog };
 
@@ -138,8 +138,6 @@ export function queryConfig(model, arg) {
   return { error: `unknown config key or prefix \`${query}\`${hint ? ` — did you mean \`${hint}\`?` : ''}` };
 }
 
-const SUMMARY_MAX = 110;
-
 /**
  * A value on one line; multi-line and long values point at the exact-key lookup.
  * @param {string} key
@@ -162,12 +160,6 @@ function fullValue(v) {
   return typeof v === 'string' ? v : JSON.stringify(v, null, 2);
 }
 
-/** @param {{ min?: number, max?: number }} range */
-function formatRange(range) {
-  if (range.min !== undefined && range.max !== undefined) return `${range.min}–${range.max}`;
-  return range.min !== undefined ? `≥ ${range.min}` : `≤ ${range.max}`;
-}
-
 /**
  * The stack-level `constraints:` touching `key`, phrased relative to it.
  * @param {MergedKey} k
@@ -185,24 +177,6 @@ function constraintsOf(k) {
     }
   }
   return [...seen];
-}
-
-/**
- * The present constraint facts of one declaration, as `label: value` pairs.
- * @param {any} spec
- * @returns {[string, string][]}
- */
-function specFacts(spec) {
-  /** @type {[string, string][]} */
-  const facts = [];
-  if (spec?.range) facts.push(['range', formatRange(spec.range)]);
-  // configModes, when present, is what doctor accepts in config — `modes` would overstate it.
-  if (Array.isArray(spec?.configModes)) facts.push(['config may set', spec.configModes.join('|')]);
-  else if (Array.isArray(spec?.modes)) facts.push(['modes', spec.modes.join('|')]);
-  if (spec?.flag && typeof spec.flag === 'object') {
-    facts.push(['flag', [spec.flag.on, spec.flag.off].filter((t) => t !== undefined).join(' / ')]);
-  }
-  return facts;
 }
 
 /** @param {MergedKey} k */
@@ -244,8 +218,7 @@ function wrap(text, width) {
 /** @param {MergedKey} k */
 function listBlock(k) {
   const spec = k.decls[0].spec;
-  let summary = firstSentence(spec?.description);
-  if (summary.length > SUMMARY_MAX) summary = `${summary.slice(0, SUMMARY_MAX - 1)}…`;
+  const summary = summaryOf(spec?.description);
   /** @type {string[]} */
   const meta = [];
   if (spec?.default !== undefined) meta.push(`default: ${inlineValue(k.key, spec.default)}`);

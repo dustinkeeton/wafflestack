@@ -7087,8 +7087,8 @@ describe('doctor: the generated-docs class is presence-optional (#528)', () => {
   const docs = () => Object.keys(JSON.parse(read(cwd, LOCK)).files).filter((rel) => isGeneratedDoc(rel));
   const removeDocs = () => { for (const rel of docs()) fs.rmSync(path.join(cwd, rel)); };
 
-  test('isGeneratedDoc: the five docs and anything under avatars/, on either separator; nothing else', () => {
-    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html', '.waffle/AVATARS.md', '.waffle/avatars/helper.svg', '.waffle\\avatars\\helper.svg']) {
+  test('isGeneratedDoc: the six docs and anything under avatars/, on either separator; nothing else', () => {
+    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html', '.waffle/AVATARS.md', '.waffle/waffle.reference.yaml', '.waffle/avatars/helper.svg', '.waffle\\avatars\\helper.svg']) {
       assert.equal(isGeneratedDoc(rel), true, rel);
     }
     for (const rel of ['.claude/agents/helper.md', '.waffle/waffle.lock.json', '.waffle/avatars', '.waffle/avatarsx/y.svg', 'docs/.waffle/TEAM.md']) {
@@ -7099,7 +7099,7 @@ describe('doctor: the generated-docs class is presence-optional (#528)', () => {
   test('the fixture tracks the whole class, so the branches below exercise every member', () => {
     assert.equal(render().ok, true);
     const tracked = docs();
-    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html', '.waffle/AVATARS.md', '.waffle/avatars/helper.svg']) {
+    for (const rel of ['.waffle/CHEATSHEET.md', '.waffle/cheatsheet.html', '.waffle/TEAM.md', '.waffle/team.html', '.waffle/AVATARS.md', '.waffle/waffle.reference.yaml', '.waffle/avatars/helper.svg']) {
       assert.ok(tracked.includes(rel), `${rel} is lock-tracked`);
     }
   });
@@ -7114,7 +7114,7 @@ describe('doctor: the generated-docs class is presence-optional (#528)', () => {
     assert.deepEqual(strict.missing, [], 'an absent generated doc is never `missing`');
     assert.deepEqual(strict.absentDocs.sort(), expected);
     assert.equal(strict.nothingPresent, false);
-    assert.ok(strict.notes.some((n) => /6 generated \.waffle\/ doc\(s\) absent/.test(n)), JSON.stringify(strict.notes));
+    assert.ok(strict.notes.some((n) => /7 generated \.waffle\/ doc\(s\) absent/.test(n)), JSON.stringify(strict.notes));
     assert.ok(!strict.notes.some((n) => /tolerated/.test(n)), 'no flag was involved, so nothing was "tolerated"');
   });
 
@@ -7174,7 +7174,7 @@ describe('doctor: the generated-docs class is presence-optional (#528)', () => {
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.match(run.stdout, /^absent \(generated doc, optional\): \.waffle\/TEAM\.md$/m);
     assert.doesNotMatch(run.stdout, /^missing/m);
-    assert.match(run.stdout, /all present managed files match the lock manifest \(6 absent, tolerated\)/);
+    assert.match(run.stdout, /all present managed files match the lock manifest \(7 absent, tolerated\)/);
   });
 });
 

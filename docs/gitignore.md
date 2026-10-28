@@ -152,7 +152,7 @@ Everything above depends on the drift gate, so be precise about what it does.
 | --- | --- | --- |
 | Lock file absent | **fail** | **fail** — the flag is never even consulted |
 | Managed file absent | fail (`missing: <f>`) | pass (`missing (tolerated): <f>`) |
-| A generated `.waffle/` doc absent — `CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/` | pass (`absent (generated doc, optional): <f>`) | pass (same) |
+| A generated `.waffle/` doc absent — `CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/`, `waffle.reference.yaml` | pass (`absent (generated doc, optional): <f>`) | pass (same) |
 | Managed file edited by hand — a generated doc included | **fail** (`modified: <f>`) | **fail** (`modified: <f>`) |
 | **Every** managed file absent | fail — all of them missing | **fail** — a repo with no render is a repo that never rendered ([Posture 2b](#posture-2b-commit-the-lock-only)) |
 | Config edited, never re-rendered | **pass** — see below | **pass** — see below |
@@ -356,7 +356,8 @@ one of the costs above is actively hurting you.
 Commit the lock, and gitignore the parts of the render you do not want in the tree.
 
 The usual consumer version of this: commit `.claude/`, but gitignore the generated `.waffle/`
-overview docs — `CHEATSHEET.md`, `TEAM.md`, their branded HTML, `AVATARS.md`, and `avatars/`.
+overview docs — `CHEATSHEET.md`, `TEAM.md`, their branded HTML, `AVATARS.md`, `avatars/`, and
+`waffle.reference.yaml`.
 They are generated reading material, not agent behavior; nothing breaks if they are absent,
 and they add diff noise on every render. **This version needs no flag**: `doctor` treats that
 class as presence-optional — an absent one is a note, a present one is still hash-checked —

@@ -33,6 +33,20 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **`render` writes `.waffle/waffle.reference.yaml`, a catalog of every config key you can set (#703,
+  slice 3 of #701).** Each key appears commented out under `config:`, with its one-line description,
+  its stacks and its constraints. To use one, copy the `# config:` line and the block you want into
+  `.waffle/waffle.yaml`, then remove one leading `# ` from each line. Required keys with no default
+  are listed under "Must set". `lockMode:` keys are listed under "Locked". A `configModes:` key shows
+  only a value `doctor` accepts. Multi-line, long or conflicting defaults point at
+  `wafflestack config <key>`. The file is built only from stack declarations, so no `waffle.yaml` or
+  `waffle.local.yaml` value can appear in it. `harness.*` built-ins are not listed. The file is one of
+  the generated `.waffle/` docs: if it is absent, `doctor` prints a note instead of failing, so you
+  can gitignore it.
+
+  **Consumer impact:** re-render only. The next `render` adds the file and its lock entry. Commit it,
+  or add `.waffle/waffle.reference.yaml` to `.gitignore`.
+
 - **`wafflestack state --board` reads what the team is working on (#697, part of #610).** It adds a
   `board` block to `state` (and `state --json`): open milestones with due dates, open epics (issues
   with native sub-issues, or an `[epic]` title) with `n of m` sub-issue progress, and the In Progress /

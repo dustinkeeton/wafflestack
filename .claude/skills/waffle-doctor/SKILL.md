@@ -58,7 +58,8 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
   restore) or the repo intentionally gitignores that render (then `--allow-missing` is the
   right posture, matching the CI workflow's `doctor.flags`).
 - **`absent (generated doc, optional): <path>`** — a generated `.waffle/` overview doc
-  (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/*.svg`) isn't on disk.
+  (`CHEATSHEET.md`, `TEAM.md`, their HTML, `AVATARS.md`, `avatars/*.svg`, `waffle.reference.yaml`)
+  isn't on disk.
   Informational only: that class is presence-optional, so a repo that gitignores it passes
   plain `doctor` with no flag. A *present* copy is still hash-checked, so a hand-edit to one
   reads as `modified:` above.

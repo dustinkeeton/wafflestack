@@ -179,3 +179,39 @@ export function mergeCatalog(stacks) {
   }
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
+
+/** Longest one-line summary `config`, and the reference file, print before truncating. */
+export const SUMMARY_MAX = 110;
+
+/**
+ * A description's first sentence, cut to `SUMMARY_MAX`.
+ * @param {unknown} text
+ */
+export function summaryOf(text) {
+  const s = firstSentence(text);
+  return s.length > SUMMARY_MAX ? `${s.slice(0, SUMMARY_MAX - 1)}…` : s;
+}
+
+/** @param {{ min?: number, max?: number }} range */
+function formatRange(range) {
+  if (range.min !== undefined && range.max !== undefined) return `${range.min}–${range.max}`;
+  return range.min !== undefined ? `≥ ${range.min}` : `≤ ${range.max}`;
+}
+
+/**
+ * The present constraint facts of one declaration, as `label: value` pairs.
+ * @param {any} spec
+ * @returns {[string, string][]}
+ */
+export function specFacts(spec) {
+  /** @type {[string, string][]} */
+  const facts = [];
+  if (spec?.range) facts.push(['range', formatRange(spec.range)]);
+  // configModes, when present, is what doctor accepts in config — `modes` would overstate it.
+  if (Array.isArray(spec?.configModes)) facts.push(['config may set', spec.configModes.join('|')]);
+  else if (Array.isArray(spec?.modes)) facts.push(['modes', spec.modes.join('|')]);
+  if (spec?.flag && typeof spec.flag === 'object') {
+    facts.push(['flag', [spec.flag.on, spec.flag.off].filter((t) => t !== undefined).join(' / ')]);
+  }
+  return facts;
+}
