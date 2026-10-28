@@ -474,9 +474,11 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.match(md, /Without `\+automerge`, leave it for a human/);
     assert.match(md, /A stage not run because its consent is off does not block; a held stage does/);
     assert.match(md, /`gh pr view <F> --json headRefOid -q \.headRefOid` must equal `origin\/<integ>`, and both must equal `<stage1Head>`, the head stage 1 passed on/);
+    assert.match(md, /`git merge-base --is-ancestor origin\/main <stage1Head>` must succeed; otherwise report \*\*not armed — `main` moved since the sync/);
+    assert.match(close(), /If its merged `headRefOid` is not `<stage1Head>`, report `<F>` \*\*merged past the gate\*\*/);
     assert.match(read(SKILL), /Record the head stage 1 passed on as `<stage1Head>`: `origin\/<integ>` as step 6 fetched it, or `<gateHead>` when no sync was needed/);
     assert.match(md, /`gh pr list --base <integ> --state open` must print nothing/);
-    assert.match(md, /`gh pr merge --auto --merge <F>`, on a successful arm `gh pr edit <F> --add-label "waffle:auto-merged"`/);
+    assert.match(md, /`gh pr merge --auto --merge --match-head-commit <stage1Head> <F>`, on a successful arm `gh pr edit <F> --add-label "waffle:auto-merged"`/);
     assert.match(md, /\.autoMergeRequest != null/);
     assert.match(md, /never `--admin`, never an immediate merge/);
     assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
@@ -485,7 +487,7 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
 
   test('a merged stage 2 or stage 3 fix PR leaves the final PR for a human', () => {
     const md = arm();
-    assert.match(md, /\*\*No fix PR merged\.\*\* No stage 2 fix PR \(`autopilot\/stage2\/<ts>-r<k>`\) and no stage 3 fix PR \(`autopilot\/stage3\/<ts>`\) merged into `<integ>`/);
+    assert.match(md, /\*\*No fix PR merged\.\*\* No stage 2 fix PR \(`autopilot\/stage2\/<ts>-r<k>`\) and no stage 3 fix PR \(`autopilot\/stage3\/<ts>\[-r2\]`\) merged into `<integ>`/);
     assert.match(md, /\*\*not armed — fix PR #P merged unreviewed\*\*/);
     assert.match(md, /The sync PR is exempt/);
     const guard = section(read(SKILL), '## Guardrails', '## Failure handling');
