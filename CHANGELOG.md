@@ -226,6 +226,18 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's integration sync commit, toolkit command and fix-PR labels (#750).** The sync
+  commit after a resolved lock conflict now uses `--cleanup=strip`, so git's `# Conflicts:` block
+  no longer lands in the message after the co-author trailer. `autopilot.waffleCmd` now defaults
+  to `npx --yes {{waffle.toolkitRef}}`, through a `waffle.toolkitRef` re-declared in the
+  orchestration stack with the wafflestack stack's default. A fork set in `toolkitRef` now runs
+  the sync re-render, where before it got upstream's CLI. The sync PR and the stage 2 and stage 3
+  fix PRs get the `autoMerge.label` only after `autoMergeRequest` reads non-null, so a failed arm
+  no longer leaves a held PR labelled auto-merged.
+
+  **Consumer impact:** re-render only. A fork `waffle.toolkitRef` now drives autopilot's sync
+  re-render and its default integration check. An explicit `autopilot.waffleCmd` is unchanged.
+
 - **Autopilot's Step 8 red check no longer leaves an armed PR beside its retry or spends the retry
   on infra (#745).** A red required check started a fresh retry while the original PR stayed open
   and armed, so a re-run check could merge both. A cancelled or timed-out run also spent the only

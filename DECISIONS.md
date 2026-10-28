@@ -9,6 +9,29 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: `autopilot.waffleCmd` follows `waffle.toolkitRef` through a re-declared twin (#750)
+
+**Context**: `autopilot.waffleCmd` (#747) copied `waffle.toolkitRef`'s *default*, so a consumer
+whose `toolkitRef` names a fork still re-rendered the sync with upstream's CLI. When the fork's
+version number matches upstream's, neither the `toolkitVersion` guard nor doctor CI catches it. The
+resolver falls back only to the declaring stack's own default. A `{{waffle.toolkitRef}}` that
+orchestration does not declare renders literally when the key is unset.
+
+**Decision**: The orchestration stack re-declares `waffle.toolkitRef` with the wafflestack stack's
+`required`/`default`, the same pattern as `project.installCmd`, and `waffleCmd` defaults to
+`npx --yes {{waffle.toolkitRef}}`. A test pins the twin's fields to the wafflestack stack's.
+
+**Alternatives**:
+- *Keep copying the default.* Rejected: it ignores forks, which is the bug.
+- *Reference the key without a twin.* Rejected: an unset key renders as a literal placeholder.
+- *Let the resolver fall back to another stack's default.* Rejected: a broader installer change.
+
+**Affects**: `orchestration` stack. The chain `integrationChecks` → `waffleCmd` → `toolkitRef` →
+`harness.toolkitVersion` now uses all four levels of nested expansion, so any deeper nesting
+passes through unexpanded. The render pins catch that.
+
+---
+
 ## 2026-10-28: The integration → main PR arms on a green integration gate, never after an unreviewed fix PR (#735, part of #720)
 
 **Context**: #731 left the final PR unarmed until an integration gate existed. Stages 1–3 now gate

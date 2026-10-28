@@ -920,14 +920,14 @@ config:
       the integration branch through an `autopilot/sync/<timestamp>` PR (integration gate stage 1).
   autopilot.waffleCmd:
     required: false
-    default: npx --yes github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
+    default: npx --yes {{waffle.toolkitRef}}
     pattern: '^[^\r\n]*$'
     description: >-
       Command prefix autopilot uses to run the wafflestack CLI, e.g. `<waffleCmd> render` when
       the integration gate's sync merge resolves a `.waffle/waffle.lock.json` conflict. The
-      default is `npx --yes` plus the same pinned spec as `waffle.toolkitRef`, so it runs the
-      toolkit release that produced your render. Override it for a fork, or in the toolkit's
-      own repo, where the working tree is the toolkit (`node installer/cli.mjs`, with
+      default is `npx --yes` plus the value of `waffle.toolkitRef`, so it runs the toolkit that
+      produced your render, a fork's included. Override it only for a non-npx runner, or in the
+      toolkit's own repo, where the working tree is the toolkit (`node installer/cli.mjs`, with
       WAFFLESTACK_ALLOW_UNRELEASED=1 so render runs off a release tag).
   autopilot.integrationChecks:
     required: false
@@ -939,6 +939,12 @@ config:
       head, after `project.installCmd` and the overwrite check, before the sync PR is pushed or
       the final PR opens. One command per entry; each must exit 0, or the final PR is held for a
       human. Overriding REPLACES the list. Default: `autopilot.waffleCmd doctor --allow-missing`.
+  waffle.toolkitRef:
+    required: false
+    default: github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
+    description: >-
+      npx spec of the toolkit. The wafflestack stack declares the same key with the same default;
+      here it feeds `autopilot.waffleCmd`'s default, so a fork set here drives the sync re-render.
   project.installCmd:
     required: false
     default: npm install
