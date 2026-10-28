@@ -69,9 +69,9 @@ export function writeUpdateCache(file, repo, entry) {
 }
 
 /**
- * The latest release tag worth comparing against. A checkout answers from its local tags; an
- * install reads a fresh cache entry, else (online, repo known) asks `lsRemote` once, else falls back
- * to the identity's shipped-CHANGELOG value. A remote answer of zero tags stays null, never the
+ * The latest release tag worth comparing against. A checkout answers from its local tags (else its
+ * CHANGELOG, labelled so); an install reads a fresh cache entry, else (online, repo known) asks
+ * `lsRemote` once, else falls back to the identity's shipped-CHANGELOG value. A remote answer of zero tags stays null, never the
  * CHANGELOG value (as in `resolveToolkitIdentity`). Offline reads the cache but never asks or writes.
  *
  * @param {object} opts
@@ -100,7 +100,7 @@ export function resolveLatestRelease({
   });
   try {
     if (!identity) return fallback;
-    if (identity.origin === 'checkout') return { ...fallback, source: fallback.latestTag ? 'local-tags' : null };
+    if (identity.origin === 'checkout') return { ...fallback, source: fallback.latestTag ? (identity.latestTagSource ?? 'local-tags') : null };
     const repo = identity.repo;
     const slug = parseRepoSlug(repo);
     if (!repo || !slug) return fallback;

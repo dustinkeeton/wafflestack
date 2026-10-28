@@ -138,6 +138,12 @@ describe('resolveLatestRelease (#608)', () => {
     assert.equal(fs.existsSync(path.dirname(cacheFile)), false);
   });
 
+  test('a checkout with no local tags labels its CHANGELOG fallback `changelog` (#694)', () => {
+    const identity = install({ origin: 'checkout', latestTag: 'v0.17.2', latestTagSource: 'changelog' });
+    assert.deepEqual(resolve({ identity, lsRemote: forbidNetwork }), { latestTag: 'v0.17.2', source: 'changelog', checkedAt: null });
+    assert.equal(fs.existsSync(path.dirname(cacheFile)), false);
+  });
+
   test('no repo, no identity, or an unwritable cache never throws', () => {
     assert.equal(resolve({ identity: install({ repo: null }), lsRemote: forbidNetwork }).source, 'changelog');
     assert.deepEqual(resolve({ identity: null, lsRemote: forbidNetwork }), { latestTag: null, source: null, checkedAt: null });

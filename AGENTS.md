@@ -239,7 +239,8 @@ frontmatter `name` or unparseable YAML skipped, sorted by `name`; `description` 
 repo-relative; `[]` when the directory is absent. Local reads only, no `gh`. `update` (#608) is
 always present: `latestTag`, `available` (newer than `cli.version`), `command` (the pinned remedy, null
 with no repo), `checkedAt` (ISO time of the remote answer, else null), `source` (`remote`/`cache`/
-`local-tags`/`changelog`/null); all-null/false when there is no verdict.
+`local-tags`/`changelog`/null — a checkout with no local `v*` tags reports `changelog`, #694);
+all-null/false when there is no verdict.
 
 ```json
 {

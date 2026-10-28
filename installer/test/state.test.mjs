@@ -298,7 +298,7 @@ describe('state: CLI surface (#561)', () => {
     assert.equal(r.status, 0, r.stderr);
     const doc = JSON.parse(r.stdout);
     assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'config', 'skills', 'agents', 'update']);
-    assert.ok(['local-tags', null].includes(doc.update.source), 'a checkout answers from its local tags — no network, no cache');
+    assert.ok(['local-tags', 'changelog', null].includes(doc.update.source), 'a checkout answers from its local tags or CHANGELOG — no network, no cache');
     assert.deepEqual(doc.skills.issue.keys, ['issue.confirmGate', 'issue.inferenceLabel', 'issue.priorityLabels', 'issue.reassessLabel', 'issue.typeLabels', 'project.name']);
     assert.deepEqual(doc.skills.issue.files, []);
     assert.equal(doc.config['project.name'].value, 'StateFixture');

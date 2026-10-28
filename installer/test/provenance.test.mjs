@@ -350,7 +350,17 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.ref, null, 'ref is non-null ONLY for a release — this is what #374 writes into the lock');
     assert.equal(id.commit, head());
     assert.equal(id.latestTag, 'v0.9.0');
+    assert.equal(id.latestTagSource, 'local-tags');
     assert.match(formatProvenanceWarning(id) ?? '', /NOT a release/);
+  });
+
+  test('a checkout with no local `v*` tags names its CHANGELOG release, labelled `changelog` (#694)', () => {
+    advance('unreleased work');
+    git('tag', '-d', 'v0.9.0'); // as `actions/checkout` leaves it: depth 1, no tags
+    const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+    assert.equal(id.status, 'unreleased');
+    assert.equal(id.latestTag, 'v0.9.0');
+    assert.equal(id.latestTagSource, 'changelog');
   });
 
   test('the remedy names the latest tag by SEMVER, not the most recently created one', () => {
@@ -419,6 +429,7 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.status, 'unreleased');
     assert.equal(id.origin, 'checkout');
     assert.equal(id.latestTag, null, 'nothing can name a tag: no local v* tags, no version headings');
+    assert.equal(id.latestTagSource, null);
     assert.equal(id.lookupError, null, 'and nothing FAILED — which is exactly why `lookupError` cannot discriminate this');
 
     const msg = formatUnreleasedRefusal(id, 'render');
