@@ -360,6 +360,26 @@ describe('overwrites.mjs --rebase (#752)', () => {
     assert.match(r.out, /^rebase: none dropped \(1 line\(s\) upstream added since [0-9a-f]{7}\)$/m);
   });
 
+  test('a branch that merged the earlier PR in, then drops its line resolving the rebase, exits 1', () => {
+    pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('switch', '-q', '-c', 'late', base);
+    write({ 'a.txt': 'one\ntwo\nTHREE\n' });
+    git('commit', '-qam', 'late');
+    assert.equal(tryGit('merge', '-q', 'main'), false);
+    write({ 'a.txt': 'one\ntwo\nthree\nTHREE\n' });
+    git('commit', '-qam', 'catch up');
+    rebased = { before: git('rev-parse', 'HEAD'), onto: git('rev-parse', 'main') };
+    assert.equal(tryGit('rebase', '-q', 'main'), false);
+    write({ 'a.txt': 'one\ntwo\nTHREE\n' });
+    git('add', '-A');
+    git('-c', 'core.editor=true', 'rebase', '--continue');
+    rebased.after = git('rev-parse', 'HEAD');
+    const r = runRebase();
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^REBASE: a\.txt: upstream added "three"; dropped resolving the rebase$/m);
+    assert.match(r.out, /^rebase: 1 of 1 upstream line\(s\) dropped, in 1 file\(s\)$/m);
+  });
+
   test('a modify/delete resolved by git rm is one DELETED line', () => {
     pr({ 'a.txt': 'one\ntwo\nthree\n' });
     pr({ 'a.txt': null }, { from: base, rebase: true, resolve: { 'a.txt': null } });

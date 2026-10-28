@@ -10,7 +10,8 @@ const USAGE = [
   'Usage: node overwrites.mjs --head <sha> --pr <label>=<sha> [--pr <label>=<sha> …] [--ignore <path> …]',
   '       node overwrites.mjs --rebase --before <sha> --after <sha> --onto <sha> [--ignore <path> …]',
   "  --pr: a run PR's merge commit on --head's first-parent history, any order; a numeric label prints as #N.",
-  '  --rebase: lines --onto added since --before forked that --after lacks were dropped resolving the rebase.',
+  '  --rebase: lines --onto added since --before forked, or both --before and --onto held, that --after lacks',
+  '            were dropped resolving the rebase.',
 ].join('\n');
 const DEFAULT_IGNORES = ['.waffle/waffle.lock.json'];
 const SHOW_PER_GROUP = 5;
@@ -276,7 +277,8 @@ function report({ findings, notes, checked, prs }) {
 /**
  * A clean patch replays only removals of lines its pre-image held, so an upstream line missing after the
  * rebase was dropped by a conflict resolution, unless the branch removed identical text before the rebase
- * (a line upstream moved). A file gone after the rebase is always a finding.
+ * (a line upstream moved). A file gone after the rebase is always a finding. A line both --before and
+ * --onto held is checked too: a branch that merged upstream in before the rebase forks after it.
  * @param {object} args `before`, `after`, `onto` and `ignores` from the command line
  */
 function checkRebase(args) {
@@ -305,6 +307,19 @@ function checkRebase(args) {
     for (const line of added) {
       if (!lines.has(line)) (mine?.removed.includes(line) ? notes : findings).push({ kind: 'REBASE', path: now, line });
     }
+  }
+  const seen = new Set(findings.map((f) => `${f.path}\0${f.line ?? ''}`));
+  for (const f of changes(before, after)) {
+    if (!f.from || args.ignores.includes(f.from)) continue;
+    const upstream = linesAt(onto, f.from, cache);
+    const kept = f.to ? linesAt(after, f.to, cache) : null;
+    if (!(upstream instanceof Set) || kept === 'binary') continue;
+    const key = (l) => (kept === null ? `${f.from}\0` : `${f.to}\0${l}`);
+    const dropped = [...new Set(f.removed)].filter((l) => l.trim() !== '' && upstream.has(l) && !kept?.has(l) && !seen.has(key(l)));
+    if (!dropped.length) continue;
+    checked += dropped.length;
+    if (kept === null) findings.push({ kind: 'DELETED', path: f.from, count: dropped.length });
+    else for (const line of dropped) findings.push({ kind: 'REBASE', path: f.to, line });
   }
   return { findings, notes, checked, fork };
 }
