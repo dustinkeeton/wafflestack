@@ -1253,6 +1253,16 @@ describe('live wave (#699)', () => {
     await ui.unmount()
   })
 
+  test('a /standup queued over a running turn survives that turn ending before its spawns', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED, wait: true, turnId: 't-main' })
+    await $.turn.complete(turn(undefined))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['◐', '○'])
+    await ui.unmount()
+  })
+
   test('a peer\'s /standup neither resets the wave nor arms it', async ($, on) => {
     stubCore(on)
     await $.prompt.submit({ text: '/standup', ...TYPED })

@@ -281,6 +281,7 @@ export const waveSpawned = (wave: Wave, type: string, agentId: string): Wave =>
     : { ...wave, byType: { ...wave.byType, [type]: 'running' }, byId: { ...wave.byId, [agentId]: type } }
 
 // The main loop's turn ends a wave that has spawned; later spawns stay out, completions still land.
+// An unspawned wave stays open: a /standup typed over a running turn sees that turn end first.
 export const waveClosed = (wave: Wave): Wave =>
   wave.closed || Object.keys(wave.byId).length === 0 ? wave : { ...wave, closed: true }
 
