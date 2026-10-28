@@ -20,6 +20,7 @@ import { computeSelection, includeEjectOverlaps, formatEjectOverlap } from './re
 import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, formatCheckGate, unacknowledgedStacks } from './prerequisites.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { settingsDrift, lockKeys } from './settings.mjs';
+import { staleMods as findStaleMods, formatStaleMod } from './installed-mods.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
@@ -36,12 +37,12 @@ function noVerify() {
  * `canonical: true` (#473) reads the committed lock and config ONLY: neither the local overlay nor
  * the local lock is opened, so the result carries nothing from either.
  */
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null }) {
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null }) {
   const lock = readLock(cwd);
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
     const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
-    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify() };
+    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [] };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
   const tree = canonical ? lock : readTreeLock(cwd);
@@ -116,6 +117,10 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     );
   }
 
+  // Informational only (#730): install records are per-machine state, so a stale mod never flips `ok`.
+  const staleMods = findStaleMods({ cwd, settings: tree.settings, toolkitRoot, pluginsDir });
+  for (const m of staleMods) notes.push(formatStaleMod(m));
+
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
   }
@@ -183,7 +188,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
 
   const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
   const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
-  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance };
+  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */

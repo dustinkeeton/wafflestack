@@ -582,8 +582,13 @@ optionally `types/index.d.ts`, and whatever else the plugin needs. Each name in 
 `mods:` list is a directory under the stack's `mods/`. A mod is delivered through the toolkit's
 plugin marketplace, so it renders **no files**: selecting it merges two project-scope entries into
 the consumer's `.claude/settings.json` — `extraKnownMarketplaces.<toolkit name>` (the marketplace
-source, `{ "source": "github", "repo": "<owner>/<repo>", "ref": "<tag>" }`, the repo read from the
-toolkit's `package.json` `repository`) and `enabledPlugins["<name>@<toolkit name>"]: true`. The
+source, `{ "source": { "source": "github", "repo": "<owner>/<repo>", "ref": "<tag>" }, "autoUpdate": true }`,
+the repo read from the toolkit's `package.json` `repository`) and `enabledPlugins["<name>@<toolkit name>"]: true`.
+`autoUpdate: true` (#730) lets Claude Code's background auto-update move an installed mod forward;
+third-party marketplaces default to off. `doctor` also notes any enabled mod whose install record
+(`installed_plugins.json` under the Claude Code plugins root) is older than the mod's `plugin.json`
+`version` in the running toolkit, with the `claude plugin update` command to run. The note never
+fails the check. The
 `ref` is the `#fragment` of `waffle.toolkitRef` as the stack resolves it (by default the rendering
 release, `v<version>`), so the mod and the `/waffle-*` CLI are the same toolkit version; an unpinned
 or non-GitHub `waffle.toolkitRef` omits `ref` and tracks the marketplace's default branch (#595).

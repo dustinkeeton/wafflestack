@@ -148,6 +148,17 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Enabled mods no longer stay pinned at their first-installed version (#730).** The rendered
+  `extraKnownMarketplaces` entry now sets `autoUpdate: true`, so Claude Code's background
+  auto-update moves an installed mod forward. Third-party marketplaces default to off. `doctor` and
+  `upgrade` also print a note for each enabled mod whose install record in Claude Code's
+  `installed_plugins.json` is older than the toolkit's version, with the exact
+  `claude plugin update <mod>@<toolkit> --scope <scope>` command. The note never fails the check.
+  **Consumer impact:** a re-render changes the managed marketplace entry in `.claude/settings.json`;
+  commit it with the lock. If you added the marketplace entry by hand (not through a render), it lacks
+  `autoUpdate`, so `render` reports it as a collision. Remove your copy or re-render with `--force`. Turning auto-update off in
+  `/plugin` edits the managed entry, so `doctor` reports it as modified.
+
 - **The `/waffle-view` "Open in editor" button waits for the first state read (#696).** Until a
   `state --json` read succeeded, the button read "Open in Cursor" and launched `cursor` even when
   `waffleView.editor` named another editor. On the `npx --yes` path that wait can last up to

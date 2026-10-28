@@ -12,7 +12,8 @@
       "source": {
         "source": "github",
         "repo": "dustinkeeton/wafflestack"
-      }
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {

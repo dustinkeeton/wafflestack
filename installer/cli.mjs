@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
+import { defaultPluginsDir } from './lib/installed-mods.mjs';
 import { eject, scaffoldConfig, installRefs, unejectCollisions } from './lib/eject.mjs';
 import { validateToolkit, validateModPlugins, formatModPluginChecks } from './lib/validate.mjs';
 import { setupGuide } from './lib/setup.mjs';
@@ -87,7 +88,7 @@ try {
       // Plain doctor is NOT gated — it reads no toolkit content, and gating it would red the
       // unpinned waffle-doctor.yml for every consumer; `--verify-render` renders, so it is (#373).
       const toolkitIdentity = verifyRender ? requireRelease('doctor --verify-render') : offlineIdentity();
-      const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot, update: newerReleaseCheck() });
+      const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot, update: newerReleaseCheck(), pluginsDir: defaultPluginsDir() });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
       const tolerated = allowMissing && (!result.nothingPresent || result.render.evaluated);
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
@@ -158,7 +159,7 @@ try {
     case 'upgrade': {
       if (args.length) fail('upgrade takes no refs — it re-renders the current selection, moving it across toolkit versions');
       const toolkitIdentity = requireRelease('upgrade');
-      const result = upgrade({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, log: console.log });
+      const result = upgrade({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, pluginsDir: defaultPluginsDir(), log: console.log });
       for (const w of result.render.warnings) console.warn(`warning: ${w}`);
       if (!result.render.ok) {
         for (const e of result.render.errors) console.error(`error: ${e}`);

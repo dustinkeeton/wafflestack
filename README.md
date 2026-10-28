@@ -117,7 +117,8 @@ new-issue URL instead.
 marketplace, pinned to your `waffle.toolkitRef` release, plus `enabledPlugins["waffle-view@wafflestack"]`,
 beside your own keys); Claude Code offers the install the next time you trust the repo, or run
 `/plugin install waffle-view@wafflestack` (outside a rendered repo: `claude plugin marketplace add
-dustinkeeton/wafflestack` first).
+dustinkeeton/wafflestack` first). The marketplace entry turns on auto-update, and if your install
+still falls behind, `wafflestack doctor` prints the `claude plugin update` command that catches it up.
 Then type `/waffle-view` to toggle a pane showing every
 behavioral key's effective value and source layer, the delegate run files, lock status, and doctor
 drift — all read through `wafflestack state --json`, refreshed as you work. The pane narrows to the

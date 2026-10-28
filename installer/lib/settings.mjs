@@ -22,6 +22,10 @@ export function parseSettingsKey(key) {
 export const marketplaceKey = (marketplace) => settingsKey(['extraKnownMarketplaces', marketplace]);
 export const pluginKey = (pluginId) => settingsKey(['enabledPlugins', pluginId]);
 const PLUGIN_PREFIX = settingsKey(['enabledPlugins', '']);
+
+/** The plugin ids (`<name>@<marketplace>`) a lock `settings` map enables. */
+export const enabledPluginIds = (settings) =>
+  Object.keys(settings ?? {}).filter((k) => k.startsWith(PLUGIN_PREFIX)).map((k) => parseSettingsKey(k).segments[1]);
 const MARKETPLACE_PREFIX = settingsKey(['extraKnownMarketplaces', '']);
 
 /** Does `key` enable mod `name` (`<name>@<any marketplace>`)? */
@@ -33,6 +37,7 @@ export const lockKeys = (lock) => [...Object.keys(lock?.files ?? {}), ...Object.
 /**
  * The entries a mod selection renders: the marketplace once, each plugin id (`<name>@<marketplace>`)
  * enabled under it. A `ref` pins the source to the toolkit release (#595); null tracks the default branch.
+ * `autoUpdate: true` (#730): third-party marketplaces default to off, which left installs pinned forever.
  *
  * @param {{ pluginIds: string[], marketplace: string, repo: string, ref?: string | null }} opts
  * @returns {Map<string, unknown>}
@@ -40,7 +45,7 @@ export const lockKeys = (lock) => [...Object.keys(lock?.files ?? {}), ...Object.
 export function modSettingsEntries({ pluginIds, marketplace, repo, ref = null }) {
   const entries = new Map();
   if (!pluginIds.length) return entries;
-  entries.set(marketplaceKey(marketplace), { source: { source: 'github', repo, ...(ref ? { ref } : {}) } });
+  entries.set(marketplaceKey(marketplace), { source: { source: 'github', repo, ...(ref ? { ref } : {}) }, autoUpdate: true });
   for (const id of pluginIds) entries.set(pluginKey(id), true);
   return entries;
 }

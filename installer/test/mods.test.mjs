@@ -30,7 +30,7 @@ const MOD_FILES = {
 const LEGACY_OUT = Object.keys(MOD_FILES).map((rel) => path.join('.claude', 'mods', 'viewer', rel)).sort();
 const MARKET = marketplaceKey('fixture');
 const PLUGIN = pluginKey('viewer@fixture');
-const ENTRIES = { [MARKET]: { source: { source: 'github', repo: 'acme/fixture' } }, [PLUGIN]: true };
+const ENTRIES = { [MARKET]: { source: { source: 'github', repo: 'acme/fixture' }, autoUpdate: true }, [PLUGIN]: true };
 const OUT = Object.keys(ENTRIES).sort();
 
 function write(root, rel, content) {
@@ -126,7 +126,7 @@ describe('mods/ render kind (#560)', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     noModsDir();
     assert.deepEqual(settings(), {
-      extraKnownMarketplaces: { fixture: { source: { source: 'github', repo: 'acme/fixture' } } },
+      extraKnownMarketplaces: { fixture: { source: { source: 'github', repo: 'acme/fixture' }, autoUpdate: true } },
       enabledPlugins: { 'viewer@fixture': true },
     });
     assert.deepEqual(lock().settings, ENTRIES);
@@ -145,7 +145,8 @@ describe('mods/ render kind (#560)', () => {
     pinned('github:acme/fixture#v1.2.3');
     assert.equal(render().ok, true);
     assert.deepEqual(marketSource(), { source: 'github', repo: 'acme/fixture', ref: 'v1.2.3' });
-    assert.deepEqual(lock().settings[MARKET], { source: { source: 'github', repo: 'acme/fixture', ref: 'v1.2.3' } });
+    assert.deepEqual(lock().settings[MARKET], { source: { source: 'github', repo: 'acme/fixture', ref: 'v1.2.3' }, autoUpdate: true });
+    assert.equal(settings().extraKnownMarketplaces.fixture.autoUpdate, true, 'autoUpdate sits beside source, ref inside it (#730)');
     for (const unpinned of ['github:acme/fixture', './local/toolkit']) {
       pinned(unpinned);
       assert.equal(render().ok, true);
@@ -156,7 +157,7 @@ describe('mods/ render kind (#560)', () => {
   test('a pin that disagrees with the rendered ref is drift; a re-render rolls it forward (#595)', () => {
     pinned('github:acme/fixture#v1.2.3');
     render();
-    write(cwd, SETTINGS_FILE, JSON.stringify({ ...settings(), extraKnownMarketplaces: { fixture: { source: { ...marketSource(), ref: 'v9.9.9' } } } }));
+    write(cwd, SETTINGS_FILE, JSON.stringify({ ...settings(), extraKnownMarketplaces: { fixture: { source: { ...marketSource(), ref: 'v9.9.9' }, autoUpdate: true } } }));
     assert.deepEqual(doctor({ cwd, toolkitVersion: '0.0.test' }).modified, [MARKET], 'a hand-edited ref is an edit');
     render();
 
@@ -614,7 +615,7 @@ describe('built-in mod: wafflestack/mods/waffle-view (#562)', () => {
       assert.equal(lock.settings[pluginKey(id)], true);
       assert.deepEqual(
         lock.settings[marketplaceKey('wafflestack')],
-        { source: { source: 'github', repo: 'dustinkeeton/wafflestack', ref: 'v0.0.test' } },
+        { source: { source: 'github', repo: 'dustinkeeton/wafflestack', ref: 'v0.0.test' }, autoUpdate: true },
         'the stack default pins waffle.toolkitRef to the rendering release',
       );
       assert.equal(JSON.parse(read(consumer, SETTINGS_FILE)).enabledPlugins[id], true);

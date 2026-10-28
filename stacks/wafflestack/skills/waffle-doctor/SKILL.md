@@ -88,6 +88,10 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
   failure, and distinct from version skew: skew compares the lock with the CLI, this compares the
   CLI with the newest release. The answer is cached for a day and skipped under `--offline`, so it
   may lag a fresh tag. To move, run **`/waffle-upgrade`** or the command doctor printed under it.
+- **`mod <name>@<toolkit> is installed at A.B.C (<scope> scope) but this toolkit ships X.Y.Z`** —
+  informational, never a failure (#730). Claude Code is still loading an old copy of the mod. Run
+  the `claude plugin update` command doctor printed (from this repo for `project`/`local` scope),
+  then `/reload-plugins` or restart the session.
 - **toolkit provenance note** — doctor names *which toolkit* produced the render, read from the
   lock's `toolkit` block (its ref and commit SHA, not just a version number). **Every form of this
   note is a warning: none of them fails the check.** Read it as the explanation for a red
