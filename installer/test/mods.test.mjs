@@ -420,7 +420,9 @@ describe('mods/ render kind (#560)', () => {
     write(toolkitRoot, 'stacks/mb/mods/viewer/hooks/state.ts', "export const EDITOR_KEY = 'viewer.editor'\n");
     assert.deepEqual(validateToolkit(toolkitRoot), []);
     write(toolkitRoot, 'stacks/mb/mods/viewer/hooks/state.ts', 'export const EDITOR_KEY = viewerEditor\n');
-    assert.ok(validateToolkit(toolkitRoot).some((p) => /declared config key viewer\.editor is never referenced/.test(p)));
+    write(toolkitRoot, 'stacks/mb/mods/viewer/hooks/viewer.test.ts', "expect(EDITOR_KEY).toBe('viewer.editor')\n");
+    write(toolkitRoot, 'stacks/mb/mods/viewer/types/index.d.ts', "export type Key = 'viewer.editor'\n");
+    assert.ok(validateToolkit(toolkitRoot).some((p) => /declared config key viewer\.editor is never referenced/.test(p)), 'a test or .d.ts literal is not a read');
   });
 
   test('setup inventory offers the mod as a claude-only plugin', () => {

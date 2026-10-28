@@ -698,10 +698,11 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
     // is a hard load error in `loadToolkit`, which is a gate a forked toolkit cannot skip.
 
     // A mod contributes no placeholders, but a declared key it reads off `state --json` is used: its
-    // quoted literal in mod source counts as the reference (#616). Its manifest must parse, and its
-    // `name` IS the mod name — the `enabledPlugins` key a render writes is `<dir name>@<marketplace>` (#594).
+    // quoted literal in mod source counts as the reference (#616); tests and `.d.ts` read nothing.
+    // Its manifest must parse, and its `name` IS the mod name — the `enabledPlugins` key a render
+    // writes is `<dir name>@<marketplace>` (#594).
     for (const mod of stack.mods) {
-      for (const rel of mod.files.filter((f) => MOD_SOURCE_EXT.test(f))) {
+      for (const rel of mod.files.filter((f) => MOD_SOURCE_EXT.test(f) && !MOD_NON_READER.test(f))) {
         const text = fs.readFileSync(path.join(mod.dir, rel), 'utf8');
         for (const key of Object.keys(stack.config)) {
           if (['\'', '"', '`'].some((q) => text.includes(`${q}${key}${q}`))) usedKeys.add(key);
@@ -742,6 +743,7 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
 }
 
 const MOD_SOURCE_EXT = /\.(ts|tsx|js|mjs|jsx)$/;
+const MOD_NON_READER = /\.test\.[^/]+$|\.d\.ts$/;
 
 const RANGE_BOUNDS = ['min', 'max'];
 

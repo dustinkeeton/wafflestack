@@ -606,7 +606,7 @@ stacks/<stack>/mods/waffle-view/
   must read project configuration reads it at runtime (`wafflestack state --json`'s `config` map),
   never from the toolkit's template values. A declared key that only a mod reads is referenced by
   its quoted literal in the mod's `.ts`/`.tsx`/`.js`/`.mjs`/`.jsx` source (`'waffleView.editor'`,
-  #616), so `validate` does not report it as never referenced.
+  #616; `*.test.*` and `.d.ts` files do not count), so `validate` does not report it as never referenced.
 - **Registered.** A mod is a waffle: it has an entry in `stacks/registry.yaml` (`kind: mod`,
   `path: stacks/<stack>/mods/<name>`), is reconciled by `validate` like an agent or skill, and
   honours the same `status:` lifecycle — a `wip` mod is skipped by stack expansion and refused as a
