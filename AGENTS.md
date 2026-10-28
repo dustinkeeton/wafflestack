@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-10-25
+last-updated: 2026-10-27
 ---
 
 # AGENTS.md — wafflestack
@@ -84,7 +84,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) | `MOD_MANIFEST`, `MOD_TARGETS`, `MOD_ENGINE_LAID`, `isEngineLaid`, `loadToolkit`, `loadToolkitWithSources`, `missingRequiredKeys` |
 | `project.mjs` | Consuming-project config + overlay, targets, `harness.*` built-ins/guards, `.gitignore` + YAML splice helpers | `CONFIG_FILE`, `LOCAL_CONFIG_FILE`, `LOCK_FILE`, `LOCAL_LOCK_FILE`, `AVATARS_DIR`, `BASELINE_GITIGNORE_ENTRIES`, `EXTENSIONS_DIR`, `LEGACY_ROOT_CONFIG_FILE`, `LEGACY_ROOT_LOCAL_CONFIG_FILE`, `LEGACY_ROOT_LOCK_FILE`, `LEGACY_CONFIG_FILE`, `LEGACY_LOCAL_CONFIG_FILE`, `LEGACY_LOCK_FILE`, `LEGACY_EXTENSIONS_DIR`, `VALID_TARGETS`, `resolveConfigFile`, `resolveLocalConfigFile`, `resolveLockFile`, `localLockPath`, `migrateLegacyDotfiles`, `staleGitignoreEntries`, `gitignoreMentions`, `GITIGNORE_MARKER`, `ensureGitignoreEntries`, `removeGitignoreEntries`, `recommendedGitignoreEntries`, `renameLegacyStacksKey`, `dropIncludeEntries`, `setScalarIn`, `appendSeqIn`, `removeSeqIn`, `renameKeyIn`, `loadProjectConfig`, `classifyStackSource`, `normalizeStackEntries`, `HARNESS_BUILTINS`, `HARNESS_PATTERNS`, `makeResolver`, `isEmptyValue`, `omitWhenEmptyCycle`, `RETIRED_CONFIG_KEYS`, `retiredConfigProblems` |
 | `util.mjs` | sha256, YAML, deep-merge, dotted lookup, frontmatter, fs, semver, `resolveInside` containment guard | `sha256`, `isBinary`, `readYaml`, `exists`, `writeFileEnsuringDir`, `deepMerge`, `parseVersion`, `compareVersions`, `lookupPath`, `FRONTMATTER_RE`, `parseFrontmatter`, `stringifyFrontmatter`, `resolveInside` |
-| `doctor.mjs` | Drift check vs `readTreeLock`; generated `.waffle/` docs presence-optional (#528); `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129) | `doctor`, `verifyRenderAgainstLock` |
+| `doctor.mjs` | Drift check vs `readTreeLock`; generated `.waffle/` docs presence-optional (#528); `--verify-render` temp-dir reproduction (#314); prerequisite checks (#129); `update` verdict param → informational newer-release note, never flips `ok` (#608, `doctor.mjs:110-117`) | `doctor`, `verifyRenderAgainstLock` |
 | `eject.mjs` | `eject` / `installRefs` / `setup`+`init` scaffold | `eject`, `installRefs`, `unejectCollisions`, `init`, `scaffoldConfig` |
 | `validate.mjs` | Toolkit-developer lint (consumers never run it over built-ins; render imports only `validateExternalStacks`) | `RESERVED_AGENT_KEYS`, `validateToolkit`, `validateModPlugins`, `formatModPluginChecks`, `validateRegistry`, `validateSourceBytes`, `validateHarnessBuiltins`, `validateExternalStacks`, `validateStack`, `behavioralKeyProblems`, `listKeyProblems`, `rangeKeyProblems`, `stackConstraintProblems` |
 | `setup.mjs` | `setup` output: SETUP.md playbook + inventory (+ update-mode section) | `setupGuide`, `toolkitInventory` |
@@ -92,7 +92,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `harness-tools.mjs` | Per-target roster of call-shaped harness tools (#445): `HARNESS_TOOLS` data (`claude` declared; `codex` / `agents-dir` `null` = unverified) + the pure `toolCalls` / `unknownToolCalls` extractor `content.test.mjs` sweeps every source and render with. THE place a harness tool rename or removal is recorded | `HARNESS_TOOLS`, `DEAD_HARNESS_TOOLS`, `toolsForTarget`, `anyTargetTools`, `toolCalls`, `unknownToolCalls` |
 | `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` | `computeToggleModel`, `formatToggleTable`, `toggleChoices`, `interactiveToggle`, `applyToggle` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); `formatReportMarkdown` renders the `<details>` block (`--json` is `JSON.stringify` of the bundle in `cli.mjs:138`, no renderer export); `health` does not surface doctor's `absentDocs` (#528) — only `notes` carries them | `collectReport`, `keyPaths`, `scrub`, `redact`, `formatReportMarkdown`, `REPORT_SUMMARY` |
-| `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `skills: {}` is reserved for #563 | `STATE_SHAPE_VERSION`, `LAYERS`, `CHECKPOINT_PHASES`, `SKILL_RUN_FILE_KEYS`, `collectState`, `resolveConfig`, `resolveSkills`, `resolveBehavioralKeys`, `formatStateText` |
+| `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `skills: {}` is reserved for #563; `collectState`'s `update` param → the `update` block (null → `NO_UPDATE_VERDICT`, `state.mjs:175`) and a ` · vX.Y.Z available` suffix on the text `cli:` line (#608, `state.mjs:495-497`) | `STATE_SHAPE_VERSION`, `LAYERS`, `CHECKPOINT_PHASES`, `SKILL_RUN_FILE_KEYS`, `collectState`, `resolveConfig`, `resolveSkills`, `resolveBehavioralKeys`, `formatStateText` |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps | `MIGRATIONS`, `EXTENSIONLESS_FILES_0_18`, `protectedPathsFromProse`, `migrationCeiling`, `applicableMigrations`, `runMigrations` |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) | `REGISTRY_FILE`, `WAFFLE_KINDS`, `WAFFLE_STATUSES`, `LIVE_STATUSES`, `REGISTRY_ENTRY_KEYS`, `refKindOf`, `waffleKindOf`, `canonicalWafflePath`, `loadRegistry`, `waffleStatus`, `isWaffleWip`, `replacementFor` |
 | `upgrade.mjs` | Version diff, changelog delta, migrations, pin reconcile (#372), render + doctor | `upgrade`, `reconcileToolkitRefPins`, `staleTagMentions`, `forwardRenamedWaffleRefs`, `diffSources`, `diffToolkit`, `changelogBetween` |
@@ -555,7 +555,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1830 tests, 241 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 1853 tests, 247 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
@@ -563,7 +563,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
 | evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 28 cases: `code-quality` (2) + `github-workflow` (15) + `orchestration` (5) + `wafflestack` (6). NOT in `npm test` |
 
-Test files (19): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
+Test files (29): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
@@ -594,7 +594,8 @@ behavioral-key validate rules, render + doctor guards, locked autopilot consents
 `gh issue edit` steps hold-then-provenance) plus a raw-text check (`github.event.issue.*` refs are exactly `body` then
 `author_association`, never `title`; exactly three `${{` — the `env:` values; no `uses:`)),
 `sources.test.mjs` (#460: source cache location + checkout verification), `toggle.test.mjs` (#476:
-config normalization, frontmatter patch, fixture render + toggle, CLI).
+config normalization, frontmatter patch, fixture render + toggle, CLI), `update-check.test.mjs` (#608:
+`newerRelease`, cached/offline/failed `resolveLatestRelease`, `updateVerdict`, doctor's note keeps `ok`, checkout CLI writes no cache).
 
 ### Harness tool roster (#445)
 
