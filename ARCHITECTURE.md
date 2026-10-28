@@ -229,11 +229,17 @@ that can draw a live pane inside a session. A stack lists it under `mods:` and c
 The first mod is **`waffle-view`** in the `wafflestack` stack. `/waffle-view` toggles a pane that
 shows the repo's resolved state, and narrows it to the skill you last invoked by `/name` (#562,
 #563). It reads only one data source: **`wafflestack state --json`**, a CLI command that never
-changes the repo (#561). Since #608 it may make one cached, 2-second check for a newer toolkit
-release, and the pane shows a `· vX.Y.Z available` badge when one exists. That keeps the mod thin,
-and the same document is useful on its own.
-Narrowed to `/standup`, the pane lists the installed agents as an **Agents (n)** section, in
-the same order the skill spawns them (#610).
+changes the repo (#561); the `/standup` view adds `--board` (below). Since #608 it may make one
+cached, 2-second check for a newer toolkit release, and the pane shows a `· vX.Y.Z available`
+badge when one exists. That keeps the mod thin, and the same document is useful on its own.
+Narrowed to `/standup`, the pane shows two sections:
+
+- **Current focus** — open milestones with due dates, open epics with `n of m` sub-issue
+  progress, and the board's In Progress / In Review items (#698). Only this view adds `--board`
+  to the `state --json` call. An older CLI that rejects the flag gets one re-run without it, and a
+  missing or errored board shows a dim `board unavailable` line.
+- **Agents (n)** — the installed agents, in the same order the skill spawns them (#610).
+
 Both views end in an **Open in \<editor\>** button. It runs the
 launcher named by the optional `waffleView.editor` key (default `cursor`) on the repo, and shows a
 failure inline instead of breaking the pane (#616).

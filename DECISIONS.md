@@ -34,7 +34,8 @@ board status. That needs `gh` and the network, but plain `state` is offline by d
 
 **Rationale**: Opt-in keeps every existing caller offline; a fixed shape keeps the pane simple.
 
-**Impact**: Additive — no consumer change. The pane does not pass `--board` yet (#698).
+**Impact**: Additive — no consumer change. The `/waffle-view` pane passes `--board` only while
+narrowed to `/standup`, and re-runs once without it if an older CLI rejects the flag (#698).
 
 ---
 
