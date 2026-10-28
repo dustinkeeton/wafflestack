@@ -478,7 +478,10 @@ content is already byte-identical to the render is adopted silently, no flag nee
   — merged beside the project's own keys. Claude Code offers to install them the next time the
   user trusts the repo; `wafflestack setup` in update mode prints the `/plugin install` fallback
   per mod. The marketplace entry's `ref` follows `waffle.toolkitRef`'s `#tag`, so repinning
-  means a re-render. Commit `.claude/settings.json` with the render.
+  means a re-render. Commit `.claude/settings.json` with the render. The entry sets
+  `autoUpdate: true`, so Claude Code updates an installed mod in the background once the user
+  has sent a message. If an install is still behind the toolkit's version, `wafflestack doctor` prints the
+  `claude plugin update <name>@<toolkit> --scope <scope>` command; run it, then `/reload-plugins`.
 - Report back: targets and stacks enabled; every config value chosen and where it
   lives (committed vs. local overlay); external resources created, verified, or
   skipped (with reasons); the both/one/neither call for each opt-in syrup pairing

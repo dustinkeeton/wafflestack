@@ -88,6 +88,11 @@ It only ever moves a pin you already chose:
 - **Can't prove it's a release** (`--allow-unreleased`, a `dlx` install, an unanswerable lookup) →
   no pin written.
 
+**Mods** (Claude Code plugins such as `waffle-view`) update through Claude Code, not the render.
+The rendered marketplace entry sets `autoUpdate: true`. If an install is still older than the
+toolkit's version, `upgrade` and `doctor` print the `claude plugin update <mod> --scope <scope>`
+command to run. Then run `/reload-plugins` or start a new session.
+
 > **Pinned to an old tag and puzzled why `upgrade` says "already on toolkit X"?** That pin fetched
 > the *old* CLI, which can only render itself. It prints the way out —
 > `a newer toolkit release exists: v0.14.0 —` and the exact command to run. Run that (or let

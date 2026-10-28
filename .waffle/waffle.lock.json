@@ -61,7 +61,7 @@
     ".claude/skills/qa/SKILL.md": "081c42548df0d8d2225d3fea741ad4c503d8a08ea3581f20d1402c773c1f5971",
     ".claude/skills/release/SKILL.md": "9dcfc4caa0af96ecb6da04fbbabd8bb201624dad5676e895d57f241ba441ea06",
     ".claude/skills/standup/SKILL.md": "ce895493c85f5861a4fda350cb9f4def2890887fbb8f09fe7e50279cebbd62a8",
-    ".claude/skills/waffle-doctor/SKILL.md": "8571b511134aab20eea781000986f41de026e8376ec1b6535270f48cc560eab0",
+    ".claude/skills/waffle-doctor/SKILL.md": "355982e56324490479f022166bb6bfdba4b55f81e132165a36f30733772b1a12",
     ".claude/skills/waffle-eject/SKILL.md": "ce36ac44fbe9c58bb0338611cb41e59102dc19ce555ea8c4dcbdadeb0440c001",
     ".claude/skills/waffle-init/SKILL.md": "3f7347fd6a5f2126fbf4ef9b81bec86d88be0f8af36c60f29c05a02fb116abf7",
     ".claude/skills/waffle-install/SKILL.md": "48c67aa80f70a26426f3a63744d9ee6e4c7fa93d5e66fee3921d1d74c61de2f1",
@@ -103,7 +103,8 @@
       "source": {
         "source": "github",
         "repo": "dustinkeeton/wafflestack"
-      }
+      },
+      "autoUpdate": true
     }
   }
 }

@@ -9,6 +9,37 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: Mods auto-update, and doctor names a stale install (#730)
+
+**Context**: The rendered marketplace entry had only a `source`. Claude Code leaves auto-update off
+for third-party marketplaces, so an installed mod stayed at its first version. On the owner's
+machine every `waffle-view` install was still on 0.2.1 while the source was at 0.8.1. Nothing told
+the consumer to run `claude plugin update`.
+
+**Decision**: The rendered `extraKnownMarketplaces` entry sets `autoUpdate: true`. Claude Code's
+docs list a settings entry's `autoUpdate` as the first thing it checks. `doctor`, and `upgrade` through
+it, also read Claude Code's `installed_plugins.json` and add a note for each enabled mod whose
+install record is older than the mod's `plugin.json` `version` in the running toolkit. The note
+gives the `claude plugin update <id> --scope <scope>` command. It counts user-scope records and
+project or local records for this repo.
+
+**Alternatives**:
+- *Set `autoUpdate` only through managed settings.* Rejected. Most consumers don't have managed
+  settings, and the docs accept the key in any settings file.
+- *Make a stale mod fail `doctor`.* Rejected. Install records are per-machine state, so CI and a
+  fresh clone have none. A failure would turn CI red on something it can't see.
+- *Compare against the marketplace clone under the plugins root.* Rejected. That clone is the copy
+  that may itself be stale. The running toolkit's version is the one the consumer chose.
+
+**Impact**: A consumer with a mod sees the marketplace entry change on re-render. The library
+`doctor()` reads the plugins root only when the caller passes `pluginsDir`, so tests never read the
+real home directory. The CLI passes it, but a CI runner has no install records, so the check stays
+silent there. Not yet verified by a manual test: that a project-scope
+`autoUpdate: true` takes effect at runtime. The doctor note meets the issue's acceptance whether
+or not it does.
+
+---
+
 ## 2026-10-28: `render` writes a commented-out catalog of every config key (#703)
 
 **Context**: A consumer had no single place to see every config key their stacks can set.

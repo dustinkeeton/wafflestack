@@ -33,6 +33,7 @@ export function upgrade({
   migrations = MIGRATIONS,
   changelog, // optional raw markdown override; defaults to reading toolkitRoot/CHANGELOG.md
   sourceCacheDir, // optional cache dir override (threaded to render); default keeps prod behavior
+  pluginsDir = null, // Claude Code plugins root for doctor's stale-mod note (#730); null skips it
   log = () => {},
 }) {
   const notes = [];
@@ -131,7 +132,7 @@ export function upgrade({
   const moveNote = toolkitMove ? describeToolkitMove(toolkitMove) : null;
   if (moveNote) log(moveNote);
 
-  const dr = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot });
+  const dr = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot, pluginsDir });
 
   return {
     ok: render.ok && dr.ok,
