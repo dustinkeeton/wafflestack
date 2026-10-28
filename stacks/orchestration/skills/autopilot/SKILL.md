@@ -24,7 +24,7 @@ Cross-referenced, never duplicated:
 
 ## Instantiation contract
 
-Capture **all five** of these **before any work starts** — they are the run's entire mandate. If any is missing from the invocation arguments — and, for the three gates, config has not pre-answered it `false` (§3) — ask for it with `AskUserQuestion`; never guess. One optional run parameter rides with them, the **rubric override** (see *Rubric override* below). Its absence is never asked about. **Integration mode** (see *Integration mode* below) resolves from its token or config and is never asked about either.
+Capture **all five** of these **before any work starts** — they are the run's entire mandate. If any is missing from the invocation arguments — and, for the three gates, config has not pre-answered it `false` (§3) — ask for it with `AskUserQuestion`; never guess. One optional run parameter rides with them, the **rubric override** (see *Rubric override* below). Its absence is never asked about. **Integration mode** (see *Integration mode* below) resolves from its token or config; its absence is never asked about either.
 
 ### 1. Issue scope — REQUIRED
 
