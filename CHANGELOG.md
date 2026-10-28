@@ -226,6 +226,14 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's Step 8 red check reads required checks only (#744).** The merge wait ended as red
+  check on `BLOCKED` plus any red `statusCheckRollup` item, but `BLOCKED` also covers required
+  checks still pending, so a fast optional check failing first spent the issue's one retry on a PR
+  that could still merge. Red-ness now comes from `gh pr checks <pr> --required` (bucket `fail` or
+  `cancel`); gh's checks list covers both check runs and commit statuses, and `--required` follows
+  GitHub's own required flag. It is decided from its output, not its exit code; `mergeStateStatus`
+  still catches `DIRTY` and `BEHIND`. **Consumer impact:** autopilot skill text only — `render` picks it up.
+
 - **Autopilot's green waits read a commit status's `state` (PR #755).** The Step 5, 6 and 7 polls
   read only `conclusion`, which a `waffle/*` commit status leaves null, so once a gate wrote one the
   wait never read green. They now read `.conclusion // .state`, and a status `ERROR` is red.
@@ -240,10 +248,10 @@ is what you reach for across a breaking one.
   **merge-blocked**. **Consumer impact:** autopilot skill text only — `render` picks it up.
 - **Autopilot's serial merge wait ends on a conflicting, behind or stalled PR (#742).** Step 8
   polled only `state` until `MERGED`, so an armed PR that turned `DIRTY` or `BEHIND` hung the run.
-  It now polls `state,mergeStateStatus,statusCheckRollup` and ends the wait as blocked on a red
+  It now polls `state,mergeStateStatus` and ends the wait as blocked on a red
   check while `BLOCKED`, `DIRTY`, `BEHIND`, a closed PR, or no merge within two hours of arming. The
   PR stays open and the run report lists it **merge-blocked** with the reason. Only a red check
-  counts as a failed attempt; a red optional check (`UNSTABLE`) keeps waiting (#744 tracks one edge).
+  counts as a failed attempt.
   **Consumer impact:** autopilot skill text only — `render` picks it up.
 - **Enabled mods no longer stay pinned at their first-installed version (#730).** The rendered
   `extraKnownMarketplaces` entry now sets `autoUpdate: true`, so Claude Code's background
