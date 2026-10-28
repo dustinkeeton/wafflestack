@@ -149,6 +149,8 @@ describe('config: lookup of keys, values and sources (#701)', () => {
     assert.match(unset, /declarations disagree/);
     assert.match(unset, /^ {2}a: required, no default → \(unset\)$/m);
     assert.match(unset, /^ {2}b: optional, default fallback → fallback$/m);
+    assert.match(unset, /^required: yes ⚠ \(unset — render blocker\)$/m, 'a cannot render it');
+    assert.match(run().out, /^shared\.name = fallback {3}\[required ⚠\]$/m);
     write(cwd, '.waffle/waffle.yaml', `${WAFFLE}config:\n  shared:\n    name: Mine\n`);
     const set = run().out;
     assert.match(set, /^shared\.name = Mine {3}\[waffle\.yaml\]$/m);

@@ -37,6 +37,7 @@ import { layerOf, firstSentence, expandKey } from './state.mjs';
  * @property {boolean} set
  * @property {Source} source
  * @property {boolean} required some declaring stack requires it
+ * @property {boolean} blocked some declaring stack requires it and resolves no value
  * @property {{ stackName: string, stack: Stack, spec: any, value: any }[]} decls
  * @property {boolean} conflict the declarations disagree on requiredness/default/constraints
  * @property {string|null} [expanded] a templated value, fully expanded
@@ -108,14 +109,17 @@ export function mergeCatalog(stacks) {
       const decl = { stackName, stack, spec: e.spec, value: e.value };
       const m = byKey.get(e.key);
       if (!m) {
-        byKey.set(e.key, { key: e.key, value: e.value, set: e.set, source: e.source, required: !!e.spec?.required, decls: [decl], conflict: false });
+        byKey.set(e.key, { key: e.key, value: e.value, set: e.set, source: e.source, required: false, blocked: false, decls: [decl], conflict: false });
         continue;
       }
       m.decls.push(decl);
-      m.required ||= !!e.spec?.required;
       if (m.value === undefined) m.value = e.value;
       if (declSignature(e.spec) !== declSignature(m.decls[0].spec)) m.conflict = true;
     }
+  }
+  for (const m of byKey.values()) {
+    m.required = m.decls.some((d) => !!d.spec?.required);
+    m.blocked = m.decls.some((d) => !!d.spec?.required && d.value === undefined);
   }
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
@@ -299,7 +303,7 @@ function specFacts(spec) {
 
 /** @param {MergedKey} k */
 function tag(k) {
-  if (k.value === undefined && k.required) return 'required ⚠';
+  if (k.blocked) return 'required ⚠';
   return k.set ? k.source : 'default';
 }
 
@@ -361,7 +365,7 @@ function detailBlock(k) {
   if (k.expanded && k.expanded !== k.value) lines.push(...field('expands to', k.expanded));
   lines.push(`source: ${k.set ? k.source : 'default'}`);
   lines.push(...field('default', spec?.default === undefined ? '(none)' : fullValue(spec.default)));
-  lines.push(`required: ${k.required ? (k.value === undefined ? 'yes ⚠ (unset — render blocker)' : 'yes') : 'no'}`);
+  lines.push(`required: ${k.required ? (k.blocked ? 'yes ⚠ (unset — render blocker)' : 'yes') : 'no'}`);
   for (const [label, v] of specFacts(spec)) lines.push(`${label}: ${v}`);
   for (const c of constraintsOf(k)) lines.push(`constraint: ${c}`);
   lines.push(`${k.decls.length > 1 ? 'stacks' : 'stack'}: ${k.decls.map((d) => d.stackName).join(', ')}`);
