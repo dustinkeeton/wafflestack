@@ -84,9 +84,16 @@ export function staleMods({ cwd, settings, toolkitRoot, pluginsDir }) {
   return stale;
 }
 
-/** The doctor note for one stale record; `cliAhead` (CLI newer than the render) means the pinned marketplace can't reach `source` until a re-render. */
-export function formatStaleMod(m, { cliAhead = false } = {}) {
+/**
+ * The doctor note for one stale record. `cliAhead` (CLI newer than the render): the pinned
+ * marketplace can't reach `source` until a re-render. `unreleased` (same version, not a release
+ * build): the pin may serve an older version than `source`, so the update may not clear the note.
+ */
+export function formatStaleMod(m, { cliAhead = false, unreleased = false } = {}) {
   const where = m.scope === 'user' ? '' : ' (from this repo)';
   const first = cliAhead ? '`wafflestack upgrade` (the render pins an older release), then ' : '';
-  return `mod ${m.id} is installed at ${m.installed} (${m.scope} scope) but this toolkit ships ${m.source} — run${where}: ${first}${m.command}, then /reload-plugins or restart the session`;
+  const caveat = unreleased && !cliAhead
+    ? ` (this CLI is unreleased: the pinned release may ship an older ${m.id.slice(0, m.id.lastIndexOf('@'))}, so this note can persist until the next release)`
+    : '';
+  return `mod ${m.id} is installed at ${m.installed} (${m.scope} scope) but this toolkit ships ${m.source} — run${where}: ${first}${m.command}, then /reload-plugins or restart the session${caveat}`;
 }

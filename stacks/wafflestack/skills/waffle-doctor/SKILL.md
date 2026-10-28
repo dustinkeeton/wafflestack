@@ -91,7 +91,9 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
 - **`mod <name>@<toolkit> is installed at A.B.C (<scope> scope) but this toolkit ships X.Y.Z`** —
   informational, never a failure (#730). Claude Code is still loading an old copy of the mod. Run
   the `claude plugin update` command doctor printed (from this repo for `project`/`local` scope),
-  then `/reload-plugins` or restart the session.
+  then `/reload-plugins` or restart the session. If the note says *this CLI is unreleased* and
+  comes back after the update, the pinned release has no newer copy yet; it clears at the next
+  release, so do not re-run the update.
 - **toolkit provenance note** — doctor names *which toolkit* produced the render, read from the
   lock's `toolkit` block (its ref and commit SHA, not just a version number). **Every form of this
   note is a warning: none of them fails the check.** Read it as the explanation for a red

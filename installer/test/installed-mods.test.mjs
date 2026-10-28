@@ -103,6 +103,10 @@ describe('stale installed mods (#730)', () => {
     const skewed = doctor({ cwd, toolkitVersion: '0.6.0', toolkitRoot, pluginsDir });
     assert.ok(skewed.notes.some((n) => n.includes(`run: \`wafflestack upgrade\` (the render pins an older release), then claude plugin update ${ID} --scope user`)), 'CLI newer than the render: re-render first');
     assert.ok(!dr.notes.some((n) => n.includes('wafflestack upgrade')), 'no skew, no upgrade step');
+    const unreleased = doctor({ cwd, toolkitVersion: '0.5.0', toolkitIdentity: { status: 'unreleased' }, toolkitRoot, pluginsDir });
+    assert.ok(unreleased.notes.some((n) => n.includes(`claude plugin update ${ID} --scope user`) && n.includes('this CLI is unreleased: the pinned release may ship an older viewer')), 'unreleased CLI at the render version: the pin may lag');
+    const released = doctor({ cwd, toolkitVersion: '0.5.0', toolkitIdentity: { status: 'release' }, toolkitRoot, pluginsDir });
+    assert.ok(!released.notes.some((n) => n.includes('this CLI is unreleased')), 'release CLI: no caveat');
     const behind = doctor({ cwd, toolkitVersion: '0.4.0', toolkitRoot, pluginsDir });
     assert.ok(behind.notes.some((n) => n.includes(`run: claude plugin update ${ID} --scope user`)), 'CLI older than the render: update alone');
 

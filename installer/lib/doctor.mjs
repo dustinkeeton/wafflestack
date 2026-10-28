@@ -122,7 +122,9 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   const staleMods = findStaleMods({ cwd, settings: tree.settings, toolkitRoot, pluginsDir });
   // Only a CLI NEWER than the render ships mod versions the pinned marketplace cannot reach.
   const cliAhead = Boolean(parseVersion(toolkitVersion) && parseVersion(lock.toolkitVersion)) && compareVersions(toolkitVersion, lock.toolkitVersion) > 0;
-  for (const m of staleMods) notes.push(formatStaleMod(m, { cliAhead }));
+  // An unreleased CLI ships mod versions the release-pinned marketplace may not serve yet.
+  const unreleased = toolkitIdentity?.status === 'unreleased';
+  for (const m of staleMods) notes.push(formatStaleMod(m, { cliAhead, unreleased }));
 
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
