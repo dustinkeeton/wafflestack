@@ -64,6 +64,10 @@ function fixtureToolkit() {
     '      line two',
     '      line three',
     `    description: "${LONG_DESC}"`,
+    '  a.tmpl:',
+    '    required: false',
+    '    default: "x-{{a.num}}"',
+    '    description: A templated value.',
     '  a.only2:',
     '    required: false',
     '    default: two',
@@ -73,7 +77,7 @@ function fixtureToolkit() {
     '    keys: [a.low, a.num]',
     '',
   ].join('\n'));
-  write(root, 'stacks/a/skills/a1/SKILL.md', skill('a1', '{{shared.name}} {{a.num}} {{a.low}} {{a.gate}} {{a.long}}'));
+  write(root, 'stacks/a/skills/a1/SKILL.md', skill('a1', '{{shared.name}} {{a.num}} {{a.low}} {{a.gate}} {{a.long}} {{a.tmpl}}'));
   write(root, 'stacks/a/skills/a2/SKILL.md', skill('a2', '{{a.only2}}'));
   write(root, 'stacks/b/stack.yaml', [
     'name: b',
@@ -114,7 +118,7 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('lists exactly the keys setup scopes for the selection', () => {
     const keys = collect().keys.map((k) => k.key);
-    assert.deepEqual(keys, ['a.gate', 'a.long', 'a.low', 'a.num', 'shared.name']);
+    assert.deepEqual(keys, ['a.gate', 'a.long', 'a.low', 'a.num', 'a.tmpl', 'shared.name']);
     const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
     const section = guide.slice(guide.indexOf('## Config values'), guide.indexOf('## Required keys still unset'));
     const setupKeys = [...section.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]);
@@ -168,7 +172,7 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('a prefix filters at segment boundaries; a near miss gets a hint', () => {
     const out = run('a').out;
-    assert.match(out, /^4 config key\(s\) under `a`/);
+    assert.match(out, /^5 config key\(s\) under `a`/);
     assert.doesNotMatch(out, /shared\.name/);
     assert.equal(run('a.n').error, 'unknown config key or prefix `a.n` — did you mean `a.num`?');
     assert.equal(nearestKey('zzzzzz', ['a.num']), null);
@@ -179,6 +183,10 @@ describe('config: lookup of keys, values and sources (#701)', () => {
     assert.match(run('a.only2').error, /declared by stack\(s\) a but nothing in this selection references it/);
     assert.match(run('harness.agentsDir').error, /The `harness\.\*` namespace/);
     assert.match(run('config.a.num').out, /^a\.num\n/);
+  });
+
+  test('a templated value shows its expansion', () => {
+    assert.match(run('a.tmpl').out, /^expands to: x-11$/m);
   });
 
   test('long text: a one-line summary in the list, the full text on an exact lookup', () => {
