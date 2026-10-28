@@ -133,6 +133,7 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     const md = read(SKILL);
     assert.match(section(md, '### Step 3', '### Step 4'), /\*\*With integration mode on\*\*, `delegate\.autoMerge` is off for the delegate run even with every gate off/);
     assert.match(section(md, '### Step 4', '### Step 5'), /`gh pr view <pr> --json baseRefName -q \.baseRefName` must equal `<integ>`; if not, `gh pr edit <pr> --base <integ>`/);
+    assert.match(section(md, '### Step 4', '### Step 5'), /arm here — `gh pr merge --auto --merge <pr>`, then on a successful arm label it `gh pr edit <pr> --add-label "waffle:auto-merged"`/);
     assert.match(section(md, '### Step 8', '### Step 9'), /`MERGED` means merged into `<integ>`/);
     assert.match(section(md, '### Step 9', '## End-of-run'), /\*\*Integration mode on:\*\* skip items 1 and 2/);
     const guard = section(md, '## Guardrails', '## Failure handling');

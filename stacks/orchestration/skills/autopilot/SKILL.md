@@ -221,7 +221,7 @@ After the implementer(s) for the issue/group finish, **verify each PR directly**
 gh pr list --head <branch-name> --json number,url,state
 ```
 
-- **Integration mode on → verify the base first.** `gh pr view <pr> --json baseRefName -q .baseRefName` must equal `<integ>`; if not, `gh pr edit <pr> --base <integ>` and re-check before any gate or arming. With every gate off and auto-merge consented, arm here (`gh pr merge --auto --merge`) and verify it exactly as below.
+- **Integration mode on → verify the base first.** `gh pr view <pr> --json baseRefName -q .baseRefName` must equal `<integ>`; if not, `gh pr edit <pr> --base <integ>` and re-check before any gate or arming. With every gate off and auto-merge consented, arm here — `gh pr merge --auto --merge <pr>`, then on a successful arm label it `gh pr edit <pr> --add-label "{{autoMerge.label}}"` — and verify it with the `autoMergeRequest != null` check below (in this mode the arm happened here, not in Step 3).
 - **No PR** → the implementer did not land the work. Treat it as a failed attempt for this issue (see [Failure handling](#failure-handling)); do **not** proceed to merge-wait or housekeeping for a PR that does not exist.
 - **Auto-merge consented AND the QA gate, the review loop, and the audit step are all off** → arming happened inline in Step 3, so also verify the PR is actually **armed**; don't assume `gh pr merge --auto` succeeded:
 
