@@ -178,6 +178,11 @@ config:
   autopilot:
     # The working tree is the toolkit here; the npx default would fetch a release instead.
     waffleCmd: env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs
+    # --verify-render catches a sync merge that left the committed render stale; the comment
+    # gate exists only in this repo.
+    integrationChecks:
+      - "{{autopilot.waffleCmd}} doctor --allow-missing --verify-render"
+      - node --test installer/test/comment-gate.test.mjs
   audit:
     complianceAgentType: general-purpose
     complianceLabel: Toolkit integrity

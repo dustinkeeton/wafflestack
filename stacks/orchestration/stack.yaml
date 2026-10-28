@@ -928,6 +928,16 @@ config:
       toolkit release that produced your render. Override it for a fork, or in the toolkit's
       own repo, where the working tree is the toolkit (`node installer/cli.mjs`, with
       WAFFLESTACK_ALLOW_UNRELEASED=1 so render runs off a release tag).
+  autopilot.integrationChecks:
+    required: false
+    listFormat: code-bullets
+    default:
+      - "{{autopilot.waffleCmd}} doctor --allow-missing"
+    description: >-
+      Commands the integration gate's stage 1 runs in its worktree on the synced integration
+      head, after `project.installCmd` and the overwrite check, before the sync PR is pushed or
+      the final PR opens. One command per entry; each must exit 0, or the final PR is held for a
+      human. Overriding REPLACES the list. Default: `autopilot.waffleCmd doctor --allow-missing`.
   project.installCmd:
     required: false
     default: npm install

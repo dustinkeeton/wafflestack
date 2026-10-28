@@ -61,6 +61,19 @@ is what you reach for across a breaking one.
   **Consumer impact:** re-render only. Integration mode is off by default. A fork of the toolkit
   should set `autopilot.waffleCmd`.
 
+- **Autopilot checks the synced integration head before the final PR (#748, slice B of #732).**
+  Stage 1 of the integration gate now runs mechanical checks in its worktree before the sync PR is
+  pushed. A new dependency-free `overwrites.mjs` helper, shipped with the autopilot skill, takes
+  every PR merged into the integration branch and flags any line one PR added that a later PR (or
+  the sync) removed blindly, naming both. A blind removal comes from a branch that forked before
+  the earlier PR merged, usually in a conflict resolution. A PR built on the earlier one, as in a
+  serial chain, rewrites its lines knowingly, so the detector prints that as a note. Then each command in the new `autopilot.integrationChecks` list
+  runs; it defaults to `<waffleCmd> doctor --allow-missing`. Any finding or failed command holds
+  the final PR as **integration-held**, with the output in the follow-up.
+
+  **Consumer impact:** re-render only. Integration mode is off by default. To run your own checks
+  on the synced head, override `autopilot.integrationChecks`. An override replaces the default list.
+
 - **`render` writes `.waffle/waffle.reference.yaml`, a catalog of every config key you can set (#703,
   slice 3 of #701).** Each key appears commented out under `config:`, with its one-line description,
   its stacks and its constraints. To use one, copy the `# config:` line and the block you want into
