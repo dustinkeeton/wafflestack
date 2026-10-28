@@ -9,6 +9,26 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: The `/standup` pane tracks each agent's live status from the session's own events (#699)
+
+**Context**: While a typed `/standup` runs its wave, the pane's Agents rows should show which
+agents are pending, running, done or failed.
+
+**Decision**: The mod watches the session's own `agent.spawn` and subagent `turn.complete`
+events. Only top-level spawns count, and the status is keyed by subagent type, so two spawns of
+the same agent share one row. The next typed `/standup` clears every marker.
+
+**Alternatives considered**:
+
+- **Read status through `state --json`** — rejected: the session already sees every spawn and
+  finish, so another `state` read would add work and no information.
+
+**Rationale**: The events are the live source; the pane only observes them and never changes a spawn.
+
+**Impact**: Mod-only (plugin 0.8.0), so nothing re-renders for consumers.
+
+---
+
 ## 2026-10-27: The board read is an opt-in `state --board` flag that always returns a full block (#697)
 
 **Context**: The `/standup` pane should show what the team is working on — milestones, epics and

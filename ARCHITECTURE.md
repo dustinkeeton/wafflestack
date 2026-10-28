@@ -238,7 +238,9 @@ Narrowed to `/standup`, the pane shows two sections:
   progress, and the board's In Progress / In Review items (#698). Only this view adds `--board`
   to the `state --json` call. An older CLI that rejects the flag gets one re-run without it, and a
   missing or errored board shows a dim `board unavailable` line.
-- **Agents (n)** — the installed agents, in the same order the skill spawns them (#610).
+- **Agents (n)** — the installed agents, in the same order the skill spawns them (#610). While a
+  typed `/standup` runs, each row carries a live marker (`○` pending, `◐` running, `●` done, `✗`
+  failed) built from the session's own spawn and finish events; the next `/standup` resets it (#699).
 
 Both views end in an **Open in \<editor\>** button. It runs the
 launcher named by the optional `waffleView.editor` key (default `cursor`) on the repo, and shows a
