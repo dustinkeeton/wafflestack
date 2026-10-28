@@ -127,7 +127,6 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(md, /## Base branch/);
     assert.match(md, /First wait out every \*\*armed\*\* run PR, including the last serial one and each parallel-group PR/);
     assert.match(md, /Do not wait on unarmed PRs/);
-    assert.match(md, /`mergeStateStatus` turns `DIRTY`/);
     assert.match(md, /\*\*no run PR is still open against `<integ>`\*\*/);
     assert.match(md, /Delete the branch only when \*\*no run PR is open against `<integ>`\*\*/);
     assert.doesNotMatch(md, /If none merged and `origin\/<integ>` still equals the cut SHA, delete/);
@@ -182,5 +181,26 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
     assert.match(section(md, '## Failure handling', '- **A QA round'), /conflicts with or falls behind its base, closes, or stalls in Step 8's wait/);
     const report = section(md, '## End-of-run housekeeping', '## Guardrails');
     assert.equal(report.match(/\*\*merge-blocked\*\*/g)?.length, 2);
+  });
+});
+
+// #741: the final PR runs non-interactively, and the end-of-run wait stops where Step 8's does.
+describe('autopilot integration final PR and end-of-run wait (#741)', () => {
+  const branch = () => section(read(SKILL), '## Integration branch', '## Per-issue loop');
+
+  test('the end-of-run wait polls like Step 8 and ends by its blocked rule, BEHIND included', () => {
+    const md = branch();
+    assert.match(md, /poll each with Step 8's `gh pr view <pr> --json state,mergeStateStatus,statusCheckRollup` until `state` is `MERGED`/);
+    assert.match(md, /ending the wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule \(red check, `DIRTY`, `BEHIND`, closed, or stalled\)/);
+    assert.match(md, /a blocked PR stays open and is reported \*\*merge-blocked\*\*/);
+    assert.doesNotMatch(md, /turns `DIRTY`/);
+  });
+
+  test('the final PR command carries --title, and so does every main-bound gh pr create', () => {
+    const md = read(SKILL);
+    assert.match(branch(), /gh pr create --base main --head <integ> --title "autopilot: integrate <integ> into main" --body-file <scratch-file>/);
+    const creates = md.match(/gh pr create --base main[^\n`]*/g) ?? [];
+    assert.ok(creates.length > 0);
+    for (const c of creates) assert.match(c, /--title /, c);
   });
 });

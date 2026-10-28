@@ -145,10 +145,10 @@ Skip this section when integration mode is off.
    "based on origin/main" or "targeting main" wording below.
    ```
 
-3. **Open the final PR after the last issue.** First wait out every **armed** run PR, including the last serial one and each parallel-group PR, since Step 8 waits only before a *next* issue: poll `gh pr view <pr> --json state,mergeStateStatus` until `state` is `MERGED`, and treat one whose required check goes red, or whose `mergeStateStatus` turns `DIRTY` (a conflict with `<integ>` after a sibling merged), as Step 8's blocked path, so it stays open. Do not wait on unarmed PRs (no consent, audit-blocked, failed arm). Then open the final PR only when **no run PR is still open against `<integ>`** and **at least one run PR merged into it**:
+3. **Open the final PR after the last issue.** First wait out every **armed** run PR, including the last serial one and each parallel-group PR, since Step 8 waits only before a *next* issue: poll each with Step 8's `gh pr view <pr> --json state,mergeStateStatus,statusCheckRollup` until `state` is `MERGED`, ending the wait by Step 8's **The wait also ends, as blocked,** rule (red check, `DIRTY`, `BEHIND`, closed, or stalled), so a blocked PR stays open and is reported **merge-blocked**. `BEHIND` is the usual case here: once a sibling merges, an armed parallel-group PR falls behind `<integ>` when its ruleset requires up-to-date branches. Do not wait on unarmed PRs (no consent, audit-blocked, failed arm). Then open the final PR only when **no run PR is still open against `<integ>`** and **at least one run PR merged into it**:
 
    ```bash
-   gh pr create --base main --head <integ> --body-file <scratch-file>
+   gh pr create --base main --head <integ> --title "autopilot: integrate <integ> into main" --body-file <scratch-file>
    ```
 
    The body lists `Closes #N` for every issue whose PR merged into `<integ>` (closing keywords fire only on default-branch merges), the merged PRs, the mandate, and "integration gate not yet implemented — review the combined change". **Never arm it** in this release. Report its URL with `mergeable` / `mergeStateStatus`; a conflict with `main` is left for the human. If a run PR is still open, do not open it: report the branch, the open PRs, and the exact `gh pr create` command. Delete the branch only when **no run PR is open against `<integ>`** (`gh pr list --base <integ> --state open` is empty — deleting a base branch closes its open PRs), none merged, and `origin/<integ>` still equals the cut SHA: `git push origin --delete <integ>`.

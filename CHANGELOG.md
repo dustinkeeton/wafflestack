@@ -162,6 +162,12 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot integration mode opens its final PR and no longer waits forever on a behind run PR
+  (#741).** The final `gh pr create --base main` now passes `--title`; without it gh refuses to run
+  non-interactively, so the final PR never opened and the not-opened report handed out the same
+  broken command. The end-of-run wait over armed run PRs now ends by Step 8's blocked rule, so an
+  armed parallel-group PR that goes `BEHIND` after a sibling merges is left open and reported
+  **merge-blocked**. **Consumer impact:** autopilot skill text only — `render` picks it up.
 - **Autopilot's serial merge wait ends on a conflicting, behind or stalled PR (#742).** Step 8
   polled only `state` until `MERGED`, so an armed PR that turned `DIRTY` or `BEHIND` hung the run.
   It now polls `state,mergeStateStatus,statusCheckRollup` and ends the wait as blocked on a red
