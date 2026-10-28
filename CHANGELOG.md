@@ -33,6 +33,20 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **Autopilot integration mode (#731, slice 1 of #720).** A new `autopilot.integration` key
+  (default `false`, per-run `+integration` / `-integration`) makes a run cut a per-run
+  `autopilot/integration/<UTC timestamp>` branch from `origin/main`. Every PR the run opens targets
+  and merges into that branch under the run's usual gates. The run ends with one integration →
+  `main` PR that lists `Closes #N` for each issue merged in, or a report saying why none was opened.
+  That final PR is never armed in this release, even with `+automerge`. A new `recommend`
+  prerequisite, `integration-required-status-check`, checks for a ruleset on
+  `autopilot/integration/**` that requires status checks. Without it, run PRs into the branch are
+  left open-but-not-armed.
+
+  **Consumer impact:** re-render only. Off by default, so runs are unchanged. To use auto-merge in
+  integration mode, add a repository ruleset on `autopilot/integration/**` that requires the same
+  checks as your default branch.
+
 - **`render` writes `.waffle/waffle.reference.yaml`, a catalog of every config key you can set (#703,
   slice 3 of #701).** Each key appears commented out under `config:`, with its one-line description,
   its stacks and its constraints. To use one, copy the `# config:` line and the block you want into
