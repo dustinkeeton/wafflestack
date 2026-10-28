@@ -442,7 +442,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
 
   test('convergence: pass on a 0-implemented round, hold when the cap ends on fixes, tear down the responder', () => {
     const md = stage2();
-    assert.match(md, /\*\*Passed\?\*\* The responder implemented 0/);
+    assert.match(md, /\*\*Passed\?\*\* Both must hold\. The responder implemented 0/);
     assert.match(md, /\*\*Cap reached\.\*\* If the last round still implemented fixes, hold/);
     assert.match(md, /`TaskStop` `respond-int-pr<F>`/);
     assert.match(md, /\*\*No fix PR\?\*\* The responder implemented 0, but a review on `<sha>` still reads untriaged/);
@@ -455,12 +455,47 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
   test('fixes arrive through a fix PR into <integ>, never a push; stage 2 never arms the final PR', () => {
     const md = stage2();
     assert.match(md, /## Fix branch/);
-    assert.match(md, /gh pr create --base <integ> --head autopilot\/stage2\/<ts>-r<k> --title /);
+    assert.match(md, /gh pr create --base <integ> --head <b2> --title /);
     assert.doesNotMatch(md, /git push[^\n]*<integ>/);
     assert.match(md, /\*\*Do not arm `<F>` here\*\*; item 4 decides/);
     assert.match(md, /\*\*integration-held\*\*/);
     assert.match(md, /`gh pr merge --auto --merge <P>`, verify `gh pr view <P> --json autoMergeRequest -q '\.autoMergeRequest != null'` prints `true`, and only then label it `gh pr edit <P> --add-label/);
-    assert.match(read('.claude/skills/pr-response/SKILL.md'), /\*\*A `## Fix branch` block in your invocation overrides items 1 and 6\.\*\*/);
+    const pr = read('.claude/skills/pr-response/SKILL.md');
+    assert.match(pr, /\*\*A `## Fix branch` block in your invocation overrides §1's checkout and items 1 and 6\.\*\*/);
+    assert.match(section(pr, '## 1.', '### The rubric run override'), /unless a `## Fix branch` block names your working tree: then skip the\s+checkout/);
+  });
+
+  // #754
+  test('the green wait ends on Step 8\'s blocked exits, never reviewing a red PR', () => {
+    const md = stage2();
+    assert.match(md, /Step 8's blocked exits end the wait as a hold/);
+    assert.match(md, /`DIRTY` \(a final PR that conflicts with `main` gets no CI/);
+    assert.match(md, /no green two hours after the wait began/);
+    assert.match(md, /Never review a red PR/);
+  });
+
+  test('passing needs a clean summary or triaged reviews, plus a success status on <sha>', () => {
+    const md = stage2();
+    assert.match(md, /\*\*Passed\?\*\* Both must hold\./);
+    assert.match(md, /never needed because this round's reviewer returned its clean summary/);
+    assert.match(md, /gh api "repos\/\$OWNER\/\$REPO\/commits\/<sha>\/statuses" --paginate/);
+    assert.match(md, /select\(\.context=="waffle\/adversarial-review" and \.state=="success"\)/);
+    assert.match(md, /holds with the reason \*\*no `waffle\/adversarial-review` success status on `<sha>`\*\*/);
+    assert.doesNotMatch(md, /or it was never needed, and every review/);
+  });
+
+  test('the responder works in its own worktree, and leftovers are cleaned up', () => {
+    const md = stage2();
+    assert.match(md, /`<a2>` is round `<k>`'s responder worktree, `\.claude\/worktrees\/autopilot-stage2-<ts>`/);
+    assert.match(md, /`autopilot\/stage2\/<ts>-r<k>-retry` on an errored round's retry/);
+    assert.match(md, /`git worktree add -b <b2> <a2> origin\/<integ>`/);
+    assert.match(md, /Work only in <a2>/);
+    assert.match(md, /never run\s+gh pr checkout/);
+    assert.match(md, /it worked outside `<a2>`/);
+    assert.match(md, /keep `<a2>` and `<b2>` \(skip item 5's removal\)/);
+    assert.match(md, /`git branch --list 'autopilot\/stage2\/<ts>-\*'`/);
+    assert.match(md, /retry on a fresh spawn with the full prompt on the `-r<k>-retry` branch in a fresh `<a2>`/);
+    assert.match(section(md, '**Stage 2 hold.**', '### Integration gate — stage 3'), /Clean up as item 5 does/);
   });
 
   test('guardrails, failure handling and the run report carry stage 2', () => {
@@ -591,7 +626,7 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
 
   test('a merged stage 2 or stage 3 fix PR leaves the final PR for a human', () => {
     const md = arm();
-    assert.match(md, /\*\*No fix PR merged\.\*\* No stage 2 fix PR \(`autopilot\/stage2\/<ts>-r<k>`\) and no stage 3 fix PR \(`autopilot\/stage3\/<ts>\[-r2\]`\) merged into `<integ>`/);
+    assert.match(md, /\*\*No fix PR merged\.\*\* No stage 2 fix PR \(`autopilot\/stage2\/<ts>-r<k>\[-retry\]`\) and no stage 3 fix PR \(`autopilot\/stage3\/<ts>\[-r2\]`\) merged into `<integ>`/);
     assert.match(md, /\*\*not armed — fix PR #P merged unreviewed\*\*/);
     assert.match(md, /The sync PR is exempt/);
     const guard = section(read(SKILL), '## Guardrails', '## Failure handling');
