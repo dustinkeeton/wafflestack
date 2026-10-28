@@ -44,6 +44,7 @@ import {
   valueLines,
   valueTone,
   wantsBoard,
+  waveClosed,
   waveCompleted,
   waveMarker,
   waveSpawned,
@@ -152,9 +153,10 @@ export const register: Register = on => {
 
   // Observes only: the spawn always goes through, and only the main loop's spawns join the wave.
   on('agent.spawn', async ($, e, next) => {
+    const inWave = e.parentAgentId === undefined && (await read($, skill)) === STANDUP_SKILL
     const started = await next(e)
     const { agentId } = started
-    if (agentId !== undefined && e.parentAgentId === undefined && (await read($, skill)) === STANDUP_SKILL) {
+    if (agentId !== undefined && inWave) {
       await update($, wave, w => waveSpawned(w, e.subagentType, agentId))
     }
 
@@ -165,7 +167,10 @@ export const register: Register = on => {
     const done = await next(e)
     const { agentId } = e
     if (agentId !== undefined) await update($, wave, w => waveCompleted(w, agentId, e.reason))
-    else if (await isOpen($)) void refresh($)
+    else {
+      await update($, wave, waveClosed)
+      if (await isOpen($)) void refresh($)
+    }
 
     return done
   }).catch(($, e, next) => next(e))

@@ -16,7 +16,8 @@ agents are pending, running, done or failed.
 
 **Decision**: The mod watches the session's own `agent.spawn` and subagent `turn.complete`
 events. Only top-level spawns count, and the status is keyed by subagent type, so two spawns of
-the same agent share one row. The next typed `/standup` clears every marker.
+the same agent share one row. The main loop's turn ending closes the wave, so a later spawn (from a
+teammate message, say) leaves its row alone. The next typed `/standup` clears every marker.
 
 **Alternatives considered**:
 

@@ -273,12 +273,16 @@ export function statusTone(ok: boolean | null, failure: 'error' | 'warning' = 'e
 export const FOCUS_MAX_ROWS = 8
 
 // A /standup wave's per-agent status (#699).
-export const EMPTY_WAVE: Wave = { byType: {}, byId: {} }
+export const EMPTY_WAVE: Wave = { byType: {}, byId: {}, closed: false }
 
-export const waveSpawned = (wave: Wave, type: string, agentId: string): Wave => ({
-  byType: { ...wave.byType, [type]: 'running' },
-  byId: { ...wave.byId, [agentId]: type },
-})
+export const waveSpawned = (wave: Wave, type: string, agentId: string): Wave =>
+  wave.closed
+    ? wave
+    : { ...wave, byType: { ...wave.byType, [type]: 'running' }, byId: { ...wave.byId, [agentId]: type } }
+
+// The main loop's turn ends a wave that has spawned; later spawns stay out, completions still land.
+export const waveClosed = (wave: Wave): Wave =>
+  wave.closed || Object.keys(wave.byId).length === 0 ? wave : { ...wave, closed: true }
 
 export function waveCompleted(wave: Wave, agentId: string, reason: string): Wave {
   const type = wave.byId[agentId]
