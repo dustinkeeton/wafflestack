@@ -335,6 +335,13 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /`triaged-through`/);
   });
 
+  test('convergence: pass on a 0-implemented round, hold when the cap ends on fixes, tear down the responder', () => {
+    const md = stage2();
+    assert.match(md, /\*\*Passed\?\*\* The responder implemented 0/);
+    assert.match(md, /\*\*Cap reached\.\*\* If the last round still implemented fixes, hold/);
+    assert.match(md, /`TaskStop` `respond-int-pr<F>`/);
+  });
+
   test('fixes arrive through a fix PR into <integ>, never a push; the final PR is never armed', () => {
     const md = stage2();
     assert.match(md, /## Fix branch/);
