@@ -121,7 +121,6 @@ const EDITOR_NAMES: Record<string, string> = {
   idea: 'IntelliJ IDEA',
   webstorm: 'WebStorm',
   subl: 'Sublime Text',
-  nvim: 'Neovim',
 }
 
 export function editorLabel(launcher: string): string {
