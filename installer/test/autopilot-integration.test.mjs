@@ -159,18 +159,18 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('polls state and mergeStateStatus, not state alone', () => {
     const md = step8();
-    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus   # poll until state is MERGED/);
+    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus,autoMergeRequest   # poll until state is MERGED/);
     assert.doesNotMatch(md, /--json state -q \.state/);
   });
 
   test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
     const md = step8();
-    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when the required-checks read prints `true`: a required check is in bucket `fail` or `cancel` \(\*\*red check\*\*/);
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when the required-checks read prints `true`: a required check is in bucket `fail` or `cancel`, or in state `STARTUP_FAILURE` \(\*\*red check\*\*/);
     assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
     assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
     assert.match(md, /`state` is `CLOSED`/);
     assert.match(md, /has not merged two hours after arming \(\*\*stalled\*\*\)/);
-    assert.match(md, /A red check is one failed attempt per \[Failure handling\]\(#failure-handling\); `DIRTY`, `BEHIND`, `CLOSED` and stalled are not, so they never enter the one-retry loop/);
+    assert.match(md, /A red check is one failed attempt per \[Failure handling\]\(#failure-handling\), which disarms and closes the PR before the retry; `DIRTY`, `BEHIND`, `CLOSED`, disarmed and stalled are not, so they never enter the one-retry loop/);
     assert.match(md, /never merges by hand or with `--admin`/);
   });
 
@@ -183,7 +183,7 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('failure handling and the run report carry the blocked PR', () => {
     const md = read(SKILL);
-    assert.match(section(md, '## Failure handling', '- **A QA round'), /conflicts with or falls behind its base, closes, or stalls in Step 8's wait/);
+    assert.match(section(md, '## Failure handling', '- **A QA round'), /conflicts with or falls behind its base, closes, is disarmed, or stalls in Step 8's wait/);
     const report = section(md, '## End-of-run housekeeping', '## Guardrails');
     assert.equal(report.match(/\*\*merge-blocked\*\*/g)?.length, 2);
   });
@@ -195,7 +195,7 @@ describe('autopilot Step 8 red check reads required checks only (#744)', () => {
 
   test('red-ness comes from gh pr checks --required, not the rollup', () => {
     const md = step8();
-    assert.ok(md.includes(`gh pr checks <pr> --required --json name,bucket -q 'any(.[]; .bucket == "fail" or .bucket == "cancel")'`));
+    assert.ok(md.includes(`gh pr checks <pr> --required --json name,bucket,state -q 'any(.[]; .bucket == "fail" or .bucket == "cancel" or .state == "STARTUP_FAILURE")'`));
     assert.doesNotMatch(md, /statusCheckRollup/);
     assert.doesNotMatch(md, /red optional check/);
   });
@@ -215,6 +215,49 @@ describe('autopilot Step 8 red check reads required checks only (#744)', () => {
   });
 });
 
+// #745: an infra-red required run is rerun once, and a red-check retry disarms and closes the PR first.
+describe('autopilot Step 8 red-check rerun and retry (#745)', () => {
+  const step8 = () => section(read(SKILL), '### Step 8', '### Step 9');
+  const retry = () => section(read(SKILL), '- **A Step 8 red check with a retry left**', '- **Same issue fails twice');
+
+  test('infra-red runs are rerun once by run id; failures and commit statuses are not', () => {
+    const md = step8();
+    assert.ok(md.includes(`gh pr checks <pr> --required --json bucket,state,link -q '.[] | select(.bucket == "fail" or .bucket == "cancel" or .state == "STARTUP_FAILURE") | "\\(.state) \\(.link)"'`));
+    assert.match(md, /every line's state is `CANCELLED`, `TIMED_OUT` or `STARTUP_FAILURE` and every link holds an Actions run id/);
+    assert.match(md, /run `gh run rerun <run-id>` once per distinct id and keep polling\. This happens once per PR, and the rerun does not reset the two-hour stall clock/);
+    assert.match(md, /a `FAILURE`, `ERROR` or `ACTION_REQUIRED` line/);
+    assert.match(md, /a line with no run id \(a commit status\), a rerun that errors, or a second red check after the rerun/);
+    assert.match(md, /keep polling until `gh run view <run-id> --json status -q \.status` reads `completed` for each distinct id \(GitHub refuses to rerun a run whose other jobs are still going\), then run `gh run rerun <run-id>`/);
+    assert.match(md, /a second red check after the rerun, counted only once `gh run view <run-id> --json status,attempt` reads `completed` at a higher `attempt` than the one rerun/);
+  });
+
+  test('a switched-off auto-merge ends the wait as disarmed, not a failed attempt', () => {
+    const md = step8();
+    assert.match(md, /`state` is `OPEN` with `autoMergeRequest` null \(\*\*disarmed\*\*/);
+    assert.match(read(SKILL), /merge-blocked\*\* with its reason \(`DIRTY`, `BEHIND`, closed, disarmed, red check, or stalled\) \/ \*\*superseded\*\* by a retry PR/);
+  });
+
+  test('the retry disarms, then closes without deleting the branch', () => {
+    const md = retry();
+    assert.ok(md.indexOf('gh pr merge <pr> --disable-auto') < md.indexOf('gh pr close <pr>'));
+    assert.match(md, /If the disarm fails or the PR is still armed, do not retry/);
+    assert.match(md, /If `state` reads `MERGED`, the PR merged after all: run Step 9 and do not retry/);
+    assert.match(md, /read `gh pr view <pr> --json state,autoMergeRequest` even if that command errored/);
+    assert.ok(md.indexOf('the PR merged after all') < md.indexOf('If the disarm fails'));
+    assert.match(md, /without `--delete-branch`/);
+    assert.doesNotMatch(md, /`gh pr close[^`]*--delete-branch/);
+  });
+
+  test('the retry cuts a fresh branch from the current base and pauses dependents', () => {
+    const md = retry();
+    assert.match(md, /`<old-branch>-retry`, cut from the current base \(`origin\/main`, or `origin\/<integ>` in integration mode\)/);
+    assert.match(md, /Never reuse the closed branch/);
+    assert.match(md, /Record `<old-branch>-retry` as the issue's assignment `branch` in delegate's `plan` checkpoint/);
+    assert.match(md, /they continue if its PR merges and stop if it fails/);
+    assert.match(md, /`git push origin --delete <branch>`/);
+  });
+});
+
 // #741: the final PR runs non-interactively, and the end-of-run wait stops where Step 8's does.
 describe('autopilot integration final PR and end-of-run wait (#741)', () => {
   const branch = () => section(read(SKILL), '## Integration branch', '## Per-issue loop');
@@ -223,7 +266,7 @@ describe('autopilot integration final PR and end-of-run wait (#741)', () => {
     const md = branch();
     assert.match(md, /poll each with Step 8's two reads until `state` is `MERGED`/);
     assert.doesNotMatch(md, /statusCheckRollup` until/);
-    assert.match(md, /ending the wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule \(red check, `DIRTY`, `BEHIND`, closed, or stalled\)/);
+    assert.match(md, /ending the wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule \(red check after its one infra rerun, `DIRTY`, `BEHIND`, closed, disarmed, or stalled\)/);
     assert.match(md, /a blocked PR stays open and is reported \*\*merge-blocked\*\*/);
     assert.doesNotMatch(md, /turns `DIRTY`/);
   });
