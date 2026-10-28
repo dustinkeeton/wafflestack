@@ -159,13 +159,13 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('polls state and mergeStateStatus, not state alone', () => {
     const md = step8();
-    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus,statusCheckRollup   # poll until state is MERGED/);
+    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus   # poll until state is MERGED/);
     assert.doesNotMatch(md, /--json state -q \.state/);
   });
 
   test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
     const md = step8();
-    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when `mergeStateStatus` is `BLOCKED` and a `statusCheckRollup` item reads `FAILURE`, `ERROR`, .*\(its `conclusion`, or a commit status's `state`\) \(\*\*red check\*\*; a red optional check reads `UNSTABLE` instead, and auto-merge still merges it\)/);
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when the required-checks read prints `true`: a required check run or commit status is in bucket `fail` or `cancel` \(\*\*red check\*\*/);
     assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
     assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
     assert.match(md, /`state` is `CLOSED`/);
@@ -176,8 +176,8 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('pending states keep polling and are absent from the stop clause', () => {
     const md = step8();
-    assert.match(md, /Any other `mergeStateStatus` keeps the wait polling: `BLOCKED` with no red check \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
-    const stop = section(md, '**The wait also ends, as blocked,**', 'Any other `mergeStateStatus`');
+    assert.match(md, /so does any other `mergeStateStatus`: `BLOCKED` \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
+    const stop = section(md, '**The wait also ends, as blocked,**', 'Decide from the read');
     for (const s of ['HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
   });
 
@@ -189,13 +189,39 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
   });
 });
 
+// #744: red check comes from required checks only, so a failing optional check never spends the retry.
+describe('autopilot Step 8 red check reads required checks only (#744)', () => {
+  const step8 = () => section(read(SKILL), '### Step 8', '### Step 9');
+
+  test('red-ness comes from gh pr checks --required, not the rollup', () => {
+    const md = step8();
+    assert.ok(md.includes(`gh pr checks <pr> --required --json name,bucket -q 'any(.[]; .bucket == "fail" or .bucket == "cancel")'`));
+    assert.doesNotMatch(md, /statusCheckRollup/);
+    assert.doesNotMatch(md, /red optional check/);
+  });
+
+  test('optional checks never end the wait; required check runs and commit statuses do', () => {
+    const md = step8();
+    assert.match(md, /optional checks never count, whether required checks are pending or done/);
+    assert.match(md, /a required check run or commit status is in bucket `fail` or `cancel`/);
+  });
+
+  test('state is read first, and empty or error output keeps polling under the stall bound', () => {
+    const md = step8();
+    assert.match(md, /Read `state` first: once it reads `MERGED`, run Step 9, whatever the checks read/);
+    assert.ok(md.indexOf('Read `state` first') < md.indexOf('the required-checks read prints `true`'));
+    assert.match(md, /Decide from the read's output, never its exit code\. Output `false` or nothing \(no required checks reported, or a `gh` error\) keeps the wait polling, bounded by the stall rule/);
+  });
+});
+
 // #741: the final PR runs non-interactively, and the end-of-run wait stops where Step 8's does.
 describe('autopilot integration final PR and end-of-run wait (#741)', () => {
   const branch = () => section(read(SKILL), '## Integration branch', '## Per-issue loop');
 
   test('the end-of-run wait polls like Step 8 and ends by its blocked rule, BEHIND included', () => {
     const md = branch();
-    assert.match(md, /poll each with Step 8's `gh pr view <pr> --json state,mergeStateStatus,statusCheckRollup` until `state` is `MERGED`/);
+    assert.match(md, /poll each with Step 8's two reads until `state` is `MERGED`/);
+    assert.doesNotMatch(md, /statusCheckRollup` until/);
     assert.match(md, /ending the wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule \(red check, `DIRTY`, `BEHIND`, closed, or stalled\)/);
     assert.match(md, /a blocked PR stays open and is reported \*\*merge-blocked\*\*/);
     assert.doesNotMatch(md, /turns `DIRTY`/);
