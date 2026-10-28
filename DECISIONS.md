@@ -9,6 +9,28 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-27: A key a mod spells as a quoted literal counts as "referenced" (#616)
+
+**Context**: The `/waffle-view` pane's new **Open in \<editor\>** button reads `waffleView.editor`
+from `state --json`. No skill reads that key, so the validator flagged it "never referenced".
+
+**Decision**: In `installer/lib/validate.mjs`, a declared key that the same stack's mod source
+(`.ts`, `.tsx`, `.js`, `.mjs`, `.jsx`) spells as a quoted literal (`'waffleView.editor'`) counts
+as referenced. The value is a launcher string (one executable, never split on spaces) or an argv
+array for a launcher that needs flags (`[code, --new-window]`).
+
+**Alternatives considered**:
+
+- **Mention `{{waffleView.editor}}` in a skill** — rejected: it would change the render and the lock.
+- **A per-key exemption flag** — rejected: it adds new schema for one case.
+- **Split a launcher string on spaces** — rejected: a string stays one executable, and a launcher
+  that needs flags uses the argv array instead.
+
+**Impact**: Mods can own config keys with no skill involved. Deleting the literal from the mod
+brings the "never referenced" error back.
+
+---
+
 ## 2026-10-27: `doctor` and `state` say when a newer release exists, through a cached 2 s lookup (#608)
 
 **Context**: Only `upgrade` said "a newer toolkit release exists", and you run it only once you
