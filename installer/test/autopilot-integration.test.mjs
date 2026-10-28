@@ -155,26 +155,26 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('polls state and mergeStateStatus, not state alone', () => {
     const md = step8();
-    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus   # poll until state is MERGED/);
+    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus,statusCheckRollup   # poll until state is MERGED/);
     assert.doesNotMatch(md, /--json state -q \.state/);
   });
 
   test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
     const md = step8();
-    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when a required check goes red/);
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when a check in `statusCheckRollup` concludes `FAILURE`.*\(\*\*red check\*\*; `mergeStateStatus` still reads `BLOCKED`\)/);
     assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
     assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
     assert.match(md, /`state` is `CLOSED`/);
     assert.match(md, /has not merged two hours after arming \(\*\*stalled\*\*\)/);
-    assert.match(md, /never enters the one-retry loop/);
+    assert.match(md, /A red check is one failed attempt per \[Failure handling\]\(#failure-handling\); `DIRTY`, `BEHIND`, `CLOSED` and stalled are not, so they never enter the one-retry loop/);
     assert.match(md, /never merges by hand or with `--admin`/);
   });
 
   test('pending states keep polling and are absent from the stop clause', () => {
     const md = step8();
-    assert.match(md, /Any other `mergeStateStatus` keeps the wait polling: `BLOCKED` \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
+    assert.match(md, /Any other `mergeStateStatus` keeps the wait polling: `BLOCKED` with no red check \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
     const stop = section(md, '**The wait also ends, as blocked,**', 'Any other `mergeStateStatus`');
-    for (const s of ['BLOCKED', 'UNSTABLE', 'HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
+    for (const s of ['UNSTABLE', 'HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
   });
 
   test('failure handling and the run report carry the blocked PR', () => {
