@@ -67,7 +67,7 @@ know you are behind. Plain `doctor` and `state` stay offline on purpose (#373, #
 | **Where it caches** | `$XDG_CACHE_HOME/wafflestack/latest-release.json` (else `~/.cache/wafflestack/…`), one map keyed by toolkit repo. Nothing is written in the consumer repo. |
 | **How fresh** | A good answer lasts 24 h. A failed lookup is cached for 1 h, so an air-gapped pane does not wait on every turn. |
 | **How long it waits** | One `git ls-remote`, capped at 2 s. Any failure means "no verdict" — never an error, never a new exit code. |
-| **Checkouts** | A toolkit checkout answers from its local tags and never touches the network or the cache. |
+| **Checkouts** | A toolkit checkout answers from its local tags (with none, from its CHANGELOG — and `state --json` says `changelog`, #694) and never touches the network or the cache. |
 | **`--offline` / `WAFFLESTACK_OFFLINE=1`** | Reads a fresh cache entry, but never asks the network or writes. |
 | **Where it shows** | An informational `doctor` note (never flips `ok`), an additive `update` block in `state --json` (shape version stays 1), and a `· vX.Y.Z available` badge plus remedy line in the pane. |
 
