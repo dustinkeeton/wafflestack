@@ -148,3 +148,39 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(guard, /Integration mode is a routing mode, not a consent, so config may set it\./);
   });
 });
+
+// #742: Step 8's serial wait ends as blocked on a conflicting, behind, closed or stalled PR.
+describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
+  const step8 = () => section(read(SKILL), '### Step 8', '### Step 9');
+
+  test('polls state and mergeStateStatus, not state alone', () => {
+    const md = step8();
+    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus   # poll until state is MERGED/);
+    assert.doesNotMatch(md, /--json state -q \.state/);
+  });
+
+  test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
+    const md = step8();
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when a required check goes red/);
+    assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
+    assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
+    assert.match(md, /`state` is `CLOSED`/);
+    assert.match(md, /has not merged two hours after arming \(\*\*stalled\*\*\)/);
+    assert.match(md, /never enters the one-retry loop/);
+    assert.match(md, /never merges by hand or with `--admin`/);
+  });
+
+  test('pending states keep polling and are absent from the stop clause', () => {
+    const md = step8();
+    assert.match(md, /Any other `mergeStateStatus` keeps the wait polling: `BLOCKED` \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
+    const stop = section(md, '**The wait also ends, as blocked,**', 'Any other `mergeStateStatus`');
+    for (const s of ['BLOCKED', 'UNSTABLE', 'HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
+  });
+
+  test('failure handling and the run report carry the blocked PR', () => {
+    const md = read(SKILL);
+    assert.match(section(md, '## Failure handling', '- **A QA round'), /conflicts with or falls behind its base, closes, or stalls in Step 8's wait/);
+    const report = section(md, '## End-of-run housekeeping', '## Guardrails');
+    assert.equal(report.match(/\*\*merge-blocked\*\*/g)?.length, 2);
+  });
+});
