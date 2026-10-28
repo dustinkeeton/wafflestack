@@ -1,4 +1,14 @@
-import type { WaffleViewAgent, WaffleViewContext, WaffleViewDoc, WaffleViewKey, WaffleViewLayer, WaffleViewSlice } from '../types'
+import type {
+  WaffleViewAgent,
+  WaffleViewBoard,
+  WaffleViewBoardItem,
+  WaffleViewEpic,
+  WaffleViewContext,
+  WaffleViewDoc,
+  WaffleViewKey,
+  WaffleViewLayer,
+  WaffleViewSlice,
+} from '../types'
 
 export const PANE = 'waffle-view'
 export const TITLE = 'Waffle view'
@@ -9,18 +19,25 @@ export const TOOLKIT_SPEC = 'github:dustinkeeton/wafflestack'
 // cached newer-release check. `WAFFLESTACK_OFFLINE=1` in the session env still forces it.
 const STATE_ARGS = ['state', '--json']
 
-export type Probe = { hasLocalCli: boolean; hasLocalBin: boolean }
+export const BOARD_FLAG = '--board'
+
+export type Probe = { hasLocalCli: boolean; hasLocalBin: boolean; board?: boolean }
 export type ProcessOutput = { exitCode: number; stdout: string; stderr: string }
 export type Parsed = { doc: WaffleViewDoc; error: null } | { doc: null; error: string }
 
 // The toolkit's own checkout first (dogfooding), then an installed dependency, then npx over
 // the toolkit's default branch: `state` is read-only, so the unpinned spec `render` refuses
 // (#373) is safe here.
-export function resolveArgv({ hasLocalCli, hasLocalBin }: Probe): string[] {
-  if (hasLocalCli) return ['node', LOCAL_CLI, ...STATE_ARGS]
-  if (hasLocalBin) return [LOCAL_BIN, ...STATE_ARGS]
-  return ['npx', '--yes', TOOLKIT_SPEC, ...STATE_ARGS]
+export function resolveArgv({ hasLocalCli, hasLocalBin, board = false }: Probe): string[] {
+  const args = board ? [...STATE_ARGS, BOARD_FLAG] : STATE_ARGS
+  if (hasLocalCli) return ['node', LOCAL_CLI, ...args]
+  if (hasLocalBin) return [LOCAL_BIN, ...args]
+  return ['npx', '--yes', TOOLKIT_SPEC, ...args]
 }
+
+// A CLI older than #697 exits non-zero on `--board`; the pane retries without it (#698).
+export const boardFlagRejected = ({ exitCode, stderr }: ProcessOutput): boolean =>
+  exitCode !== 0 && stderr.includes(BOARD_FLAG)
 
 const stderrTail = (stderr: string): string => stderr.trim().split('\n').filter(Boolean).slice(-3).join(' · ')
 
@@ -72,6 +89,39 @@ export const STANDUP_SKILL = 'standup'
 export function selectAgents(doc: WaffleViewDoc, slice: WaffleViewSlice | null): WaffleViewAgent[] | null | undefined {
   if (slice?.skill !== STANDUP_SKILL) return null
   return doc.agents
+}
+
+// The `/standup` Current focus (#698). Reads the `skill` atom, not the slice: the first read after
+// `/standup` has no document to slice yet.
+export const wantsBoard = (skill: string | null): boolean => skill === STANDUP_SKILL
+
+// Like selectAgents: null outside `/standup`, undefined when the CLI printed no board.
+export function selectBoard(doc: WaffleViewDoc, slice: WaffleViewSlice | null): WaffleViewBoard | null | undefined {
+  if (slice?.skill !== STANDUP_SKILL) return null
+  return doc.board
+}
+
+export const boardUnavailable = (board: WaffleViewBoard | undefined): boolean => board === undefined || board.error !== null
+
+export const formatDue = (dueOn: string | null): string => (dueOn ? `due ${dueOn.slice(0, 10)}` : 'no due date')
+
+export const formatProgress = ({ done, total }: Pick<WaffleViewEpic, 'done' | 'total'>): string => `${done} of ${total}`
+
+export const KIND_GLYPH: Record<WaffleViewBoardItem['kind'], string> = { issue: '○', pr: '⇄', draft: '◌' }
+
+export function itemRef({ number, kind }: Pick<WaffleViewBoardItem, 'number' | 'kind'>): string {
+  if (number === null) return 'draft'
+  return kind === 'pr' ? `PR #${number}` : `#${number}`
+}
+
+// Why the In Progress / In Review lists are empty when the board itself read fine; null otherwise.
+export function boardHint({ projectName, project, projectError }: WaffleViewBoard): string | null {
+  if (projectName === null) return "set project.name to read the board's In Progress / In Review"
+  if (projectError !== null) {
+    return `board lookup failed: ${projectError}${/scope/i.test(projectError) ? ' — run gh auth refresh -s project' : ''}`
+  }
+  if (project === null) return `no board titled "${projectName}"`
+  return null
 }
 
 // What a prompt invoked: `/issue 12` → `issue`; a plain prompt → null.
@@ -216,3 +266,6 @@ export function statusTone(ok: boolean | null, failure: 'error' | 'warning' = 'e
   if (ok === null) return {}
   return { color: ok ? 'success' : failure }
 }
+
+// Each Current focus list shows this many rows, then a count (#698).
+export const FOCUS_MAX_ROWS = 8

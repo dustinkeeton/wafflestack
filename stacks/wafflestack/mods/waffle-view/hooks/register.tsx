@@ -1,29 +1,38 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
-import type { WaffleViewAgent, WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
+import type { WaffleViewAgent, WaffleViewBoard, WaffleViewBoardItem, WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
 import {
   BRAND,
   CAPTION_TONE,
   EDITOR_TIMEOUT_MS,
+  FOCUS_MAX_ROWS,
   HEADING_TONE,
+  KIND_GLYPH,
   LOCAL_BIN,
   LOCAL_CLI,
   PANE,
   TAGLINE,
   TITLE,
   WAFFLE_GLYPH,
+  boardFlagRejected,
+  boardHint,
+  boardUnavailable,
   editorArgv,
   editorLabel,
   editorLaunchError,
+  formatDue,
   formatMode,
+  formatProgress,
   isOverridden,
   isPersonsPrompt,
+  itemRef,
   keyTone,
   parseStateOutput,
   promptSkill,
   resolveArgv,
   selectAgents,
+  selectBoard,
   selectKeys,
   selectSlice,
   sourceTone,
@@ -32,7 +41,9 @@ import {
   updateBadge,
   valueLines,
   valueTone,
+  wantsBoard,
 } from './state'
+import type { Tone } from './state'
 
 const doc = atom({ plugin: 'waffle-view', key: 'doc' } as const, null)
 const error = atom({ plugin: 'waffle-view', key: 'error' } as const, null)
@@ -50,13 +61,17 @@ async function refresh($: Dollar): Promise<void> {
   if (await read($, isRefreshing)) return
   await update($, isRefreshing, () => true)
   try {
-    const argv = resolveArgv({
-      hasLocalCli: await $.fs.exists(LOCAL_CLI),
-      hasLocalBin: await $.fs.exists(LOCAL_BIN),
-    })
-    const parsed = parseStateOutput(await $.process.run(argv, { timeoutMs: 120_000 }))
-    if (parsed.doc) await update($, doc, () => parsed.doc)
-    await update($, error, () => parsed.error)
+    // A refresh dropped above may have switched to or from /standup: read again until --board matches.
+    let board: boolean
+    do {
+      board = wantsBoard(await read($, skill))
+      const probe = { hasLocalCli: await $.fs.exists(LOCAL_CLI), hasLocalBin: await $.fs.exists(LOCAL_BIN) }
+      let output = await $.process.run(resolveArgv({ ...probe, board }), { timeoutMs: 120_000 })
+      if (board && boardFlagRejected(output)) output = await $.process.run(resolveArgv(probe), { timeoutMs: 120_000 })
+      const parsed = parseStateOutput(output)
+      if (parsed.doc) await update($, doc, () => parsed.doc)
+      await update($, error, () => parsed.error)
+    } while (wantsBoard(await read($, skill)) !== board)
   } catch (err) {
     await update($, error, () => (err instanceof Error ? err.message : String(err)))
   } finally {
@@ -138,6 +153,7 @@ export const register: Register = on => {
     const context = { skill: await read($, skill) }
     const slice = state ? selectSlice(state, context) : null
     const agents = state ? selectAgents(state, slice) : null
+    const board = state ? selectBoard(state, slice) : null
     // The roster replaces an empty keys list; a /standup that reads keys shows both.
     const showKeys = agents === null || (slice?.keys.length ?? 0) > 0
     const wide = e.props.bodyColumns >= 100
@@ -200,6 +216,52 @@ export const register: Register = on => {
           : keys.map(keyRow)
 
       return section(`Keys (${keys.length})`, header ? [header, ...rows] : rows)
+    }
+
+    // A short lead (ref, progress, milestone) and its detail: a column when wide, one row when narrow.
+    const focusRow = (lead: string, tone: Tone, detail: string) =>
+      wide ? (
+        <Box>
+          <Box width={24}>
+            <Text wrap="truncate-end" {...tone}>{lead}</Text>
+          </Box>
+          <Text wrap="truncate-end" {...CAPTION_TONE}>{detail}</Text>
+        </Box>
+      ) : (
+        <Box>
+          <Text {...tone}>{lead}</Text>
+          <Text wrap="truncate-end" {...CAPTION_TONE}>{`  ${detail}`}</Text>
+        </Box>
+      )
+    const focusBlock = <T,>(label: string, items: T[], row: (item: T) => RenderNode): RenderNode[] => {
+      const shown = items.slice(0, FOCUS_MAX_ROWS).map(row)
+      const more = items.length - FOCUS_MAX_ROWS
+      return [caption(label), ...(items.length === 0 ? [dim('none')] : shown), ...(more > 0 ? [dim(`… ${more} more`)] : [])]
+    }
+    const LEAD: Tone = { color: BRAND.cream, bold: true }
+    const itemRow = (item: WaffleViewBoardItem) => focusRow(`${KIND_GLYPH[item.kind]} ${itemRef(item)}`, LEAD, item.title)
+
+    // What the team is working on (#698), from `state --board`.
+    const focusSection = (board: WaffleViewBoard | undefined) => {
+      if (board === undefined && busy) return section('Current focus', [dim('reading board…')])
+      if (boardUnavailable(board)) return section('Current focus', [dim(`board unavailable${board?.error ? `: ${board.error}` : ''}`)])
+      const { milestones, epics, inProgress, inReview } = board!
+      const hint = boardHint(board!)
+      const rows: RenderNode[] = [
+        ...focusBlock('milestones', milestones, m => focusRow(formatDue(m.dueOn), LEAD, m.title)),
+        ...focusBlock('epics', epics, epic =>
+          focusRow(
+            `#${epic.number} · ${formatProgress(epic)}`,
+            epic.total > 0 && epic.done === epic.total ? { ...statusTone(true), bold: true } : LEAD,
+            epic.title,
+          ),
+        ),
+        ...(hint
+          ? [caption('in progress · in review'), dim(hint)]
+          : [...focusBlock('in progress', inProgress, itemRow), ...focusBlock('in review', inReview, itemRow)]),
+      ]
+
+      return section('Current focus', rows)
     }
 
     // The `/standup` roster (#610), in the order the skill spawns it.
@@ -348,6 +410,7 @@ export const register: Register = on => {
         {heading}
         {failure && <Text color="error">{`last refresh failed: ${failure}`}</Text>}
         {state && !slice && projectSection(state)}
+        {board !== null && focusSection(board)}
         {agents !== null && agentsSection(agents)}
         {state && showKeys && keysSection(state)}
         {slice && configSection(slice)}

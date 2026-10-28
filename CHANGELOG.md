@@ -45,6 +45,17 @@ is what you reach for across a breaking one.
   **Consumer impact:** none. The flag is opt-in and the block is additive. A later waffle-view
   release (#698) passes it while the pane shows `/standup`.
 
+- **The `/waffle-view` pane shows a Current focus section during `/standup` (#698, part of #610).**
+  While the last thing you invoked is `/standup`, the pane runs `state --json --board` and shows, above
+  the agent roster, the open milestones with their due dates, the open epics with `n of m` sub-issue
+  progress, and the board's In Progress / In Review items (`○ #697`, `⇄ PR #704`, `◌ draft`). Each
+  list shows up to 8 rows and then a count. If `project.name` is unset, no board has that title, or
+  the board lookup failed, a dim hint says why (for a missing token scope, `run gh auth refresh -s
+  project`), and milestones and epics still show. A `board.error`, or a CLI without the block, shows a
+  dim `board unavailable` line. A CLI older than #697 rejects `--board`, so the pane re-runs `state`
+  once without the flag. Other views never pass the flag. The mod's plugin version is now 0.7.0.
+  **Consumer impact:** none. This changes only the mod, so nothing re-renders. A `/standup` refresh
+  can take up to 8 s longer while the board is read; the CLI caches the board for 60 s.
 - **`wafflestack config [key-prefix]` looks up the config keys your selection can set (#701).**
   Each key prints its effective value, where it comes from (`default`, `waffle.yaml`, or the
   gitignored `waffle.local.yaml`), a one-line summary, its default, and its constraints (`range`,
