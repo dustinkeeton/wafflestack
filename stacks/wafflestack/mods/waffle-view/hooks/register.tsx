@@ -5,6 +5,7 @@ import type { WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
 import {
   BRAND,
   CAPTION_TONE,
+  EDITOR_TIMEOUT_MS,
   HEADING_TONE,
   LOCAL_BIN,
   LOCAL_CLI,
@@ -66,11 +67,14 @@ async function refresh($: Dollar): Promise<void> {
 // launcher that is missing or exits non-zero lands inline, beside the pane it leaves working.
 async function openEditor($: Dollar): Promise<void> {
   const argv = editorArgv(await read($, doc), await $.session.cwd())
+  // `process.run` rejects both for a launcher that cannot start and one still running at the
+  // timeout; only the elapsed time tells them apart.
+  const started = Date.now()
   let failure: string | null
   try {
-    failure = editorLaunchError(argv[0]!, { output: await $.process.run(argv, { timeoutMs: 15_000 }) })
+    failure = editorLaunchError(argv[0]!, { output: await $.process.run(argv, { timeoutMs: EDITOR_TIMEOUT_MS }) })
   } catch (err) {
-    failure = editorLaunchError(argv[0]!, { thrown: err })
+    failure = editorLaunchError(argv[0]!, { thrown: err, timedOut: Date.now() - started >= EDITOR_TIMEOUT_MS })
   }
   await update($, launchError, () => failure)
 }

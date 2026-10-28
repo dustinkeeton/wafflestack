@@ -277,6 +277,7 @@ describe('open in editor (#616)', () => {
     expect(editorArgv(withEditor('code'), '/repo')).toEqual(['code', '/repo'])
     expect(editorArgv(withEditor(' /Applications/My Editor/bin/ed '), '/repo')).toEqual(['/Applications/My Editor/bin/ed', '/repo'])
     expect(editorArgv(withEditor(['code', '--new-window']), '/repo')).toEqual(['code', '--new-window', '/repo'])
+    expect(editorArgv(withEditor([' code ', ' --new-window']), '/repo')).toEqual(['code', '--new-window', '/repo'])
     for (const junk of ['', '  ', [], [1], ['code', ''], {}, 7, null]) {
       expect(editorArgv(withEditor(junk), '/repo')).toEqual(['cursor', '/repo'])
     }
@@ -298,6 +299,10 @@ describe('open in editor (#616)', () => {
     expect(editorLaunchError('cursor', { thrown: new Error('spawn cursor ENOENT') })).toBe(
       'cursor could not start: spawn cursor ENOENT — is it on PATH? Set waffleView.editor to your editor\'s launcher',
     )
+    expect(editorLaunchError('idea', { thrown: new Error('timed out'), timedOut: true })).toBe(
+      'idea was still running after 15 s — set waffleView.editor to a launcher that hands off and exits',
+    )
+    expect(editorLaunchError('idea', { thrown: new Error('spawn idea ENOENT'), timedOut: false })).toMatch(/^idea could not start: .* is it on PATH\?/)
   })
 
   test('the Button reads Open in Cursor by default, even before a read, and launches on the session directory', async ($, on) => {
