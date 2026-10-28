@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { defaultPluginsDir, readInstalledPlugins, staleMods, formatStaleMod } from '../lib/installed-mods.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
@@ -114,5 +116,32 @@ describe('stale installed mods (#730)', () => {
 
     const up = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.5.0', pluginsDir });
     assert.equal(up.doctor.staleMods.length, 1);
+  });
+});
+
+// The CLI is the only caller that turns the check on (library `pluginsDir` defaults to null).
+describe('CLI: doctor reads Claude Code\'s plugins root (#730)', () => {
+  const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+  const cli = path.join(REPO_ROOT, 'installer', 'cli.mjs');
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+
+  test('a stale waffle-view install prints its update command from doctor and upgrade, exiting 0', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-cli-mods-'));
+    const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-cli-'));
+    try {
+      write(cwd, '.waffle/waffle.yaml', 'config: {}\ntargets: [claude]\nstacks: [wafflestack]\n');
+      assert.equal(renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: pkg.version }).ok, true);
+      const id = 'waffle-view@wafflestack';
+      write(pluginsDir, 'installed_plugins.json', JSON.stringify({ version: 2, plugins: { [id]: [{ scope: 'user', version: '0.0.1' }] } }));
+      const env = { ...process.env, CLAUDE_CODE_PLUGIN_CACHE_DIR: pluginsDir };
+      const note = new RegExp(`mod ${id} is installed at 0\\.0\\.1 \\(user scope\\).*claude plugin update ${id} --scope user`);
+      for (const cmd of [['doctor'], ['upgrade', '--allow-unreleased', '--offline']]) {
+        const run = spawnSync(process.execPath, [cli, ...cmd, '--cwd', cwd], { encoding: 'utf8', env });
+        assert.equal(run.status, 0, `${cmd[0]}: ${run.stdout}${run.stderr}`);
+        assert.match(run.stdout, note, cmd[0]);
+      }
+    } finally {
+      for (const d of [cwd, pluginsDir]) fs.rmSync(d, { recursive: true, force: true });
+    }
   });
 });
