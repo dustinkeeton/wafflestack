@@ -9,6 +9,37 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: Autopilot integration mode is a routing mode, not a consent (#731, part of #720)
+
+**Context**: Autopilot merged each run PR straight into `main`, so a multi-issue feature landed in
+pieces, with no point where a human saw the whole change before it reached `main`.
+
+**Decision**: A new `autopilot.integration` key (`modes: [true, false]`, default `false`,
+`+integration` / `-integration`) cuts a per-run `autopilot/integration/<UTC timestamp>` branch from
+`origin/main`. Every run PR targets it and merges into it under the existing gates. The run ends with
+one integration → `main` PR. Config may set the key to `true` because it routes work and authorizes
+nothing: it adds no merge into `main` and no gate spend. The token beats config. In this slice the
+final PR is never armed, even with `+automerge`. Step 9 defers the issue close and the Done move to
+that PR's merge, because closing keywords only fire on default-branch merges.
+
+**Alternatives**:
+- *Make it a consent like the gates (`configModes: [false, prompt]`).* Rejected. A consent guards
+  spend or a merge into `main`, and this key does neither.
+- *Arm the final PR when `+automerge` is given.* Deferred to #735. No integration gate checks the
+  combined change yet, so a human is the whole-feature checkpoint.
+- *Merge `main` into the integration branch automatically before the final PR.* Deferred to #732. A
+  conflict there is left for the human for now.
+- *Let delegate's agents arm inline into the integration branch.* Rejected. Autopilot arms in Step 4,
+  after it has checked the PR's base, so a PR that went to `main` by mistake is never armed.
+
+**Impact**: Off by default, so existing runs are unchanged. Auto-merge into the integration branch
+needs a ruleset that requires status checks on `autopilot/integration/**`. The new
+`integration-required-status-check` prerequisite reports when that ruleset is missing. The
+`waffle-pr-green-hook` workflow only acts on PRs whose base is the default branch, so it ignores run
+PRs into the integration branch.
+
+---
+
 ## 2026-10-28: Mods auto-update, and doctor names a stale install (#730)
 
 **Context**: The rendered marketplace entry had only a `source`. Claude Code leaves auto-update off

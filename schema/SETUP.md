@@ -249,7 +249,8 @@ What config **cannot** set:
 - **The tokens.** `flag:` tokens are stack-authored; no config value renames them, and a skill
   references only the sides its key declares — `waffle.reportConfirmGate` has `--yes` and no
   `--confirm`; `autopilot.autoMerge` has `+automerge` and no off-token, while the three autopilot
-  gates have both (`+qa` / `-qa`, `+review` / `-review`, `+audit` / `-audit`).
+  gates have both (`+qa` / `-qa`, `+review` / `-review`, `+audit` / `-audit`), as does the
+  `autopilot.integration` routing mode (`+integration` / `-integration`).
 - **The non-interactive fallback.** `nonInteractive:` is declared by the stack and stated in the
   skill's mode table (its "Non-interactive caller" column); it is not a config key. The test is *no
   human on the turn*, not *an agent is running*.
@@ -290,6 +291,7 @@ version you installed:
 | `autopilot.reviewLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+review` / `-review` | `false` | `false`, `prompt` |
 | `autopilot.qaLoop` | orchestration | `prompt` | `true`, `false`, `prompt` | `+qa` / `-qa` | `false` | `false`, `prompt` |
 | `autopilot.auditStep` | orchestration | `prompt` | `true`, `false`, `prompt` | `+audit` / `-audit` | `false` | `false`, `prompt` |
+| `autopilot.integration` | orchestration | `false` | `true`, `false` | `+integration` / `-integration` | — | — |
 | `waffle.reportConfirmGate` | wafflestack | `true` | `true`, `false`, `prompt` | — / `--yes` | `fail` | — |
 
 A row with no tokens and no `prompt` (`hygiene.autoMerge`, the four `delegate.*` keys) is
