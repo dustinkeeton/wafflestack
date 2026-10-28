@@ -77,6 +77,29 @@ export type WaffleViewDoc = {
   agents?: WaffleViewAgent[]
   /** Optional: a CLI older than #608 prints no `update` block. */
   update?: WaffleViewUpdate
+  /** Optional: only with `--board` (#697/#698); absent from an older CLI. */
+  board?: WaffleViewBoard
+}
+
+export type WaffleViewMilestone = { title: string; dueOn: string | null }
+
+export type WaffleViewEpic = { number: number; title: string; done: number; total: number }
+
+/** A Projects v2 item; a draft has no number. */
+export type WaffleViewBoardItem = { number: number | null; title: string; kind: 'issue' | 'pr' | 'draft' }
+
+/** What the team is working on (`board` in the document, #697); every list is empty when `error` is set. */
+export type WaffleViewBoard = {
+  milestones: WaffleViewMilestone[]
+  epics: WaffleViewEpic[]
+  inProgress: WaffleViewBoardItem[]
+  inReview: WaffleViewBoardItem[]
+  projectName: string | null
+  project: { number: number; title: string } | null
+  projectError: string | null
+  error: string | null
+  checkedAt: string | null
+  source: 'remote' | 'cache' | null
 }
 
 /** One rendered agent `/standup` rounds up (`agents` in the document, #610), in roster order. */

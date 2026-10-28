@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import type { WaffleViewDoc } from '../types'
+import type { WaffleViewBoard, WaffleViewDoc } from '../types'
 import {
   BRAND,
   DEFAULT_EDITOR,
@@ -9,15 +9,22 @@ import {
   LOCAL_CLI,
   PANE,
   WAFFLE_GLYPH,
+  boardFlagRejected,
+  boardHint,
+  boardUnavailable,
   editorArgv,
   editorLabel,
   editorLaunchError,
+  formatDue,
+  formatProgress,
   isPersonsPrompt,
+  itemRef,
   keyTone,
   parseStateOutput,
   promptSkill,
   resolveArgv,
   selectAgents,
+  selectBoard,
   selectKeys,
   selectSlice,
   sourceTone,
@@ -26,6 +33,7 @@ import {
   updateBadge,
   valueLines,
   valueTone,
+  wantsBoard,
 } from './state'
 
 const STATE_ARGS = ['state', '--json']
@@ -136,6 +144,28 @@ const exited = (exitCode: number, stdout: string, stderr = '') => ({
   isStdoutTruncated: false,
   isStderrTruncated: false,
 })
+
+const BOARD: WaffleViewBoard = {
+  milestones: [
+    { title: 'v1.0', dueOn: '2026-11-01T00:00:00Z' },
+    { title: 'Someday', dueOn: null },
+  ],
+  epics: [
+    { number: 610, title: '[epic] /standup', done: 2, total: 5 },
+    { number: 552, title: '[epic] mods', done: 3, total: 3 },
+  ],
+  inProgress: [
+    { number: 697, title: 'state --board', kind: 'issue' },
+    { number: null, title: 'sketch the focus pane', kind: 'draft' },
+  ],
+  inReview: [{ number: 704, title: 'feat: read the board', kind: 'pr' }],
+  projectName: 'WaffleStack',
+  project: { number: 7, title: 'WaffleStack' },
+  projectError: null,
+  error: null,
+  checkedAt: '2026-10-27T00:00:00.000Z',
+  source: 'cache',
+}
 
 const UPDATE = {
   latestTag: 'v0.18.0',
@@ -760,6 +790,212 @@ describe('the pane', () => {
     expect(await ui.find({ type: 'Text', text: 'no state read yet' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: WAFFLE_GLYPH[1] })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'one batter, every repo' })).toBeDefined()
+    await ui.unmount()
+  })
+})
+
+describe('current focus (#698)', () => {
+  test('resolveArgv appends --board on every path only when asked; wantsBoard reads /standup alone', () => {
+    expect(resolveArgv({ hasLocalCli: true, hasLocalBin: false, board: true })).toEqual(['node', LOCAL_CLI, ...STATE_ARGS, '--board'])
+    expect(resolveArgv({ hasLocalCli: false, hasLocalBin: true, board: true })).toEqual([LOCAL_BIN, ...STATE_ARGS, '--board'])
+    expect(resolveArgv({ hasLocalCli: false, hasLocalBin: false, board: true }).slice(-3)).toEqual([...STATE_ARGS, '--board'])
+    expect(resolveArgv({ hasLocalCli: true, hasLocalBin: false, board: false })).toEqual(['node', LOCAL_CLI, ...STATE_ARGS])
+    expect(wantsBoard('standup')).toBe(true)
+    expect(wantsBoard('issue')).toBe(false)
+    expect(wantsBoard(null)).toBe(false)
+  })
+
+  test('selectBoard answers only for /standup; boardUnavailable covers absent and errored', () => {
+    const withBoard = { ...DOC, board: BOARD }
+    expect(selectBoard(withBoard, selectSlice(withBoard, { skill: 'standup' }))).toBe(BOARD)
+    expect(selectBoard(withBoard, selectSlice(withBoard, { skill: 'issue' }))).toBeNull()
+    expect(selectBoard(withBoard, null)).toBeNull()
+    expect(selectBoard(DOC, selectSlice(DOC, { skill: 'standup' }))).toBeUndefined()
+    expect(boardUnavailable(undefined)).toBe(true)
+    expect(boardUnavailable({ ...BOARD, error: 'offline' })).toBe(true)
+    expect(boardUnavailable(BOARD)).toBe(false)
+  })
+
+  test('formatDue, formatProgress and itemRef', () => {
+    expect(formatDue('2026-11-01T00:00:00Z')).toBe('due 2026-11-01')
+    expect(formatDue(null)).toBe('no due date')
+    expect(formatProgress({ done: 2, total: 5 })).toBe('2 of 5')
+    expect(itemRef({ number: 697, kind: 'issue' })).toBe('#697')
+    expect(itemRef({ number: 704, kind: 'pr' })).toBe('PR #704')
+    expect(itemRef({ number: null, kind: 'draft' })).toBe('draft')
+  })
+
+  test('boardHint names why the board lists are empty, or nothing', () => {
+    expect(boardHint(BOARD)).toBeNull()
+    expect(boardHint({ ...BOARD, projectName: null, project: null })).toMatch(/^set project\.name/)
+    expect(boardHint({ ...BOARD, project: null, projectError: 'gh failed: missing required scopes [read:project]' })).toBe(
+      'board lookup failed: gh failed: missing required scopes [read:project] — run gh auth refresh -s project',
+    )
+    expect(boardHint({ ...BOARD, project: null, projectError: 'timed out' })).toBe('board lookup failed: timed out')
+    expect(boardHint({ ...BOARD, project: null })).toBe('no board titled "WaffleStack"')
+  })
+
+  test('boardFlagRejected spots an older CLI refusing the flag, nothing else', () => {
+    expect(boardFlagRejected(exited(1, '', 'error: state takes no refs (got --board)\n'))).toBe(true)
+    expect(boardFlagRejected(exited(1, '', 'error: no .waffle/waffle.yaml\n'))).toBe(false)
+    expect(boardFlagRejected(exited(0, '{}', 'note: --board read from cache\n'))).toBe(false)
+  })
+
+  test('only a /standup read passes --board', async ($, on) => {
+    const argvs: (readonly string[])[] = []
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', (_$, e) => {
+      argvs.push(e.argv)
+      return { value: exited(0, JSON.stringify({ ...DOC, board: BOARD })) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    for (const text of ['plain', '/standup', '/issue 12', '/standup']) {
+      await $.prompt.submit({ text, ...TYPED })
+      await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    }
+    expect(argvs.map(argv => argv.includes('--board'))).toEqual([false, true, false, true])
+  })
+
+  test('/standup shows milestones, epics and board items, wide and narrow', async ($, on) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', (_$, e) => ({ value: exited(0, JSON.stringify(e.argv.includes('--board') ? { ...DOC, board: BOARD } : DOC)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    const headings = (await ui.findAll({ type: 'Text', text: /^(Current focus|Agents \(2\))$/ })).map(node => node.text)
+    expect(headings).toEqual(['Current focus', 'Agents (2)'])
+    for (const label of ['milestones', 'epics', 'in progress', 'in review']) {
+      expect((await ui.find({ type: 'Text', text: label }))?.props).toMatchObject({ color: BRAND.caption })
+    }
+    expect((await ui.find({ type: 'Text', text: 'v1.0' }))?.props).toMatchObject({ color: BRAND.cream, bold: true })
+    expect(await ui.find({ type: 'Text', text: 'due 2026-11-01' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'no due date' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: '#610 · 2 of 5' }))?.props.color).toBe(BRAND.cream)
+    expect((await ui.find({ type: 'Text', text: '#552 · 3 of 3' }))?.props.color).toBe('success')
+    expect(await ui.find({ type: 'Text', text: '[epic] /standup' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '○ #697' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '◌ draft' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '⇄ PR #704' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'feat: read the board' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /board unavailable/ })).toBeUndefined()
+    await ui.unmount()
+
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
+    expect(await ui.find({ type: 'Text', text: '  due 2026-11-01' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '  state --board' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a long list shows eight rows and a count', async ($, on) => {
+    const many = Array.from({ length: 11 }, (_, i) => ({ number: 800 + i, title: `item ${i}`, kind: 'issue' as const }))
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify({ ...DOC, board: { ...BOARD, inProgress: many } })) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.findAll({ type: 'Text', text: /^○ #8\d\d$/ })).toHaveLength(8)
+    expect((await ui.find({ type: 'Text', text: '… 3 more' }))?.props).toMatchObject({ dimColor: true })
+    await ui.unmount()
+  })
+
+  test('an errored board, an absent one and a CLI that rejects --board each read as board unavailable', async ($, on) => {
+    const argvs: (readonly string[])[] = []
+    let mode: 'error' | 'absent' | 'rejected' = 'error'
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', (_$, e) => {
+      argvs.push(e.argv)
+      if (mode === 'rejected' && e.argv.includes('--board')) return { value: exited(1, '', 'error: state takes no refs (got --board)\n') }
+      const errored = { ...BOARD, milestones: [], epics: [], inProgress: [], inReview: [], project: null, error: 'offline', source: null }
+      return { value: exited(0, JSON.stringify(mode === 'error' ? { ...DOC, board: errored } : DOC)) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: 'board unavailable: offline' }))?.props).toMatchObject({ dimColor: true })
+    expect(await ui.find({ type: 'Text', text: 'milestones' })).toBeUndefined()
+    await ui.unmount()
+
+    mode = 'absent'
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: 'board unavailable' }))?.props).toMatchObject({ dimColor: true })
+    await ui.unmount()
+
+    mode = 'rejected'
+    argvs.length = 0
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    expect(argvs.map(argv => argv.includes('--board'))).toEqual([true, false])
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'board unavailable' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Agents (2)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /last refresh failed/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a failed or unconfigured board lookup keeps milestones and epics and hints the fix', async ($, on) => {
+    let board: WaffleViewBoard = { ...BOARD, project: null, inProgress: [], inReview: [], projectError: 'gh failed: missing required scopes [read:project]' }
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify({ ...DOC, board })) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'v1.0' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '#610 · 2 of 5' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /gh auth refresh -s project$/ }))?.props).toMatchObject({ dimColor: true })
+    expect(await ui.find({ type: 'Text', text: /board unavailable/ })).toBeUndefined()
+    await ui.unmount()
+
+    board = { ...BOARD, projectName: null, project: null, inProgress: [], inReview: [] }
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /^set project\.name/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('no Current focus outside /standup, even when the document carries a board', async ($, on) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify({ ...DOC, board: BOARD })) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/issue 12', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'Current focus' })).toBeUndefined()
+    await ui.unmount()
+
+    await $.prompt.submit({ text: 'plain', ...TYPED })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'Current focus' })).toBeUndefined()
     await ui.unmount()
   })
 })
