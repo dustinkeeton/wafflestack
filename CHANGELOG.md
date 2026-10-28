@@ -183,6 +183,18 @@ is what you reach for across a breaking one.
 
 ### Changed
 
+- **Autopilot: a line an earlier PR added that a pre-gate rebase drops stops auto-merge (#752).**
+  Owner ruling. Before re-pushing an implement-ahead branch it rebased onto the newly merged base,
+  autopilot runs the new `overwrites.mjs --rebase --before <pre> --after <post> --onto <onto>`. It
+  lists every line the base gained since the branch forked that the rebased branch lacks. Only a
+  conflict resolution can drop such a line. On a finding or an error, the PR is marked
+  **rebase-held** with an `<!-- autopilot:rebase-drop -->` comment that carries the evidence and the
+  conflicted paths. It is never armed, and is first disarmed if it was armed inline. With
+  `+integration`, the run PR still merges into the integration branch, and the integration → `main`
+  PR is left for a human instead.
+
+  **Consumer impact:** re-render only. It affects only autopilot's implement-ahead path.
+
 - **Autopilot arms the integration → `main` PR on a green integration gate (#735, part of #720).**
   With `+integration` and `+automerge`, the final PR is armed only after every enabled stage passed
   (stage 1 always, stage 2 with `+review`, stage 3 with `+audit`) on the head that will merge, and,
@@ -225,6 +237,24 @@ is what you reach for across a breaking one.
   eval suite only.
 
 ### Fixed
+
+- **Autopilot's overwrite detector judges the commit that removed a line (#752).** Integration
+  stage 1 read only where the remover's branch first forked, so an intentional edit made after a
+  clean catch-up merge (the normal `pr-docs` flow) held the final PR as an OVERWRITE. It now walks
+  the remover's branch to the commit that dropped the line. An ordinary commit whose parent already
+  held both the line and the earlier PR is a `NOTE:`. A removal inside a merge commit (a conflict
+  resolution or a hand-edited merge) stays a finding. `--pr` order no longer matters: a `--pr` that
+  is not on `--head`'s first-parent history exits 2, which fixes misattribution on a `mergedAt` tie.
+
+  **Consumer impact:** re-render only.
+
+- **An autopilot step-4 check hold keeps its work and says how to resume (#752).** A failed stage 1
+  check used to delete the gate worktree and the local sync branch before anything was pushed,
+  losing any lock-conflict resolution. It also pointed at a sync PR that did not exist. A check hold
+  now keeps both, and its follow-up carries the push, `gh pr create` and clean-up commands that
+  finish the run, or the path for landing a fix in the integration branch first.
+
+  **Consumer impact:** re-render only.
 
 - **Autopilot's integration sync commit, toolkit command and fix-PR labels (#750).** The sync
   commit after a resolved lock conflict now uses `--cleanup=strip`, so git's `# Conflicts:` block

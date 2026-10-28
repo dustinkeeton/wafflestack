@@ -303,7 +303,8 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /-C <gate> commit --no-edit --cleanup=strip`/);
     assert.match(md, /`git -C <gate> merge --abort`/);
     assert.match(md, /Stop with a hold if `git ls-remote --heads origin autopilot\/sync\/<ts>` already shows the branch/);
-    assert.match(md, /Remove `<gate>` if it still exists \(`git worktree remove --force <gate>`\) and any local sync branch; leave `<integ>`, the pushed sync branch and any sync PR open/);
+    assert.match(md, /Leave `<integ>`, any pushed sync branch and any sync PR open/);
+    assert.match(section(md, '- **Steps 2–3**', '- **Step 4, a check hold.**'), /Remove `<gate>` if it still exists \(`git worktree remove --force <gate>`\) and any local sync branch/);
     assert.match(md, /The run \*\*never picks a winner\*\*/);
     assert.match(md, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
   });
@@ -322,6 +323,16 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /require `git diff --quiet <syncHead> origin\/<integ>`/);
     assert.match(md, /4\. \*\*Checks\.\*\* Stage 1's mechanical checks run here, in `<gate>`, before anything is pushed\./);
     assert.ok(md.indexOf('4. **Checks.**') < md.indexOf('5. **Open the sync PR.**'));
+  });
+
+  test('#752: a step-4 check hold keeps <gate> and the sync branch and names the resume commands', () => {
+    const hold = section(gate(), '- **Step 4, a check hold.**', '- **Steps 5–6**');
+    assert.match(hold, /Nothing is pushed yet, so \*\*keep\*\* `<gate>` and the local `autopilot\/sync\/<ts>` branch/);
+    assert.match(hold, /`git -C <gate> push -u origin autopilot\/sync\/<ts>`, step 5's `gh pr create`, and merge that PR/);
+    assert.match(hold, /`git worktree remove --force <gate>`, `git branch -D autopilot\/sync\/<ts>` if it exists, and item 3's `gh pr create`/);
+    assert.match(hold, /land it as a PR into `<integ>`, remove `<gate>` and the local sync branch the same way, and re-run stage 1 from step 1/);
+    assert.doesNotMatch(gate(), /resolve or merge the sync, then item 3/);
+    assert.match(section(read(SKILL), '## Failure handling', 'At the end, the report'), /A check hold keeps `<gate>` and the local sync branch/);
   });
 
   test('item 3 runs the gate before the final PR; the body and report carry the sync and the hold', () => {

@@ -9,6 +9,34 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: A line an earlier PR added that a rebase conflict drops stops auto-merge (#752)
+
+**Context**: Autopilot's overwrite detector (#748) reads merged history. A conflict resolved during
+the implement-ahead pre-gate rebase rewrites that history, so the resolved commit looks like a
+deliberate rewrite built on the earlier PR and prints only a `NOTE:`. Local history cannot tell
+the two apart after the rebase.
+
+**Decision**: Owner ruling: such a drop must stop auto-merge. Autopilot checks each pre-gate
+rebase before its re-push with `overwrites.mjs --rebase`. Any line the new base gained since the
+branch forked that the rebased branch lacks can only come from a conflict resolution. A finding,
+or a detector error, marks the PR rebase-held. The PR is disarmed if it was armed inline. A
+`<!-- autopilot:rebase-drop -->` PR comment records the drop. With integration mode off the run PR
+is never armed. With it on, the run PR merges into the integration branch, and item 4 leaves the
+integration → `main` PR for a human when any merged run PR carries the marker.
+
+**Alternatives**:
+- *Keep the NOTE.* Rejected by the owner: a clobbered line would merge with nobody looking.
+- *Hold in integration stage 1.* Rejected: by then history has no signal left to read.
+- *Record the hold in a local file or run memory.* Rejected: it does not survive a restart or
+  `clean-up`, and a human reviewing the PR cannot see it. A spoofed marker only causes a false hold.
+- *Also hold the run PR in integration mode.* Rejected: the final PR is the human checkpoint, and
+  holding the run PR would stall a serial chain for no extra safety.
+
+**Affects**: `orchestration` stack, autopilot Step 3, Steps 5–8 arming, integration item 4, and
+`overwrites.mjs`.
+
+---
+
 ## 2026-10-28: `autopilot.waffleCmd` follows `waffle.toolkitRef` through a re-declared twin (#750)
 
 **Context**: `autopilot.waffleCmd` (#747) copied `waffle.toolkitRef`'s *default*, so a consumer
