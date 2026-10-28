@@ -631,6 +631,26 @@ describe('the pane', () => {
     await ui.unmount()
   })
 
+  test('a /standup that also reads a behavioral key shows both the roster and the keys (#610)', async ($, on) => {
+    const reading: WaffleViewDoc = { ...DOC, skills: { ...DOC.skills, standup: { keys: ['issue.confirmGate'], files: [] } } }
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(reading)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'Agents (2)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Keys (1)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'issue.confirmGate' })).toBeDefined()
+    await ui.unmount()
+  })
+
   test('/standup degrades: an empty roster and an older CLI each say so dim (#610)', async ($, on) => {
     const { agents: _omitted, ...older } = DOC
     let served: WaffleViewDoc = { ...DOC, agents: [] }
