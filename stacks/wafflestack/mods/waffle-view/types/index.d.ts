@@ -103,6 +103,13 @@ export type WaffleViewSlice = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'waffle-view': { doc: WaffleViewDoc | null; error: string | null; isRefreshing: boolean; skill: string | null }
+    'waffle-view': {
+      doc: WaffleViewDoc | null
+      error: string | null
+      isRefreshing: boolean
+      skill: string | null
+      /** The last "Open in editor" failure (#616); a refresh leaves it, a good launch clears it. */
+      launchError: string | null
+    }
   }
 }

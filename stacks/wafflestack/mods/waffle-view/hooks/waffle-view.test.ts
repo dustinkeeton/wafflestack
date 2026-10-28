@@ -3,10 +3,15 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { WaffleViewDoc } from '../types'
 import {
   BRAND,
+  DEFAULT_EDITOR,
+  EDITOR_KEY,
   LOCAL_BIN,
   LOCAL_CLI,
   PANE,
   WAFFLE_GLYPH,
+  editorArgv,
+  editorLabel,
+  editorLaunchError,
   isPersonsPrompt,
   keyTone,
   parseStateOutput,
@@ -255,6 +260,142 @@ describe('state helpers', () => {
     expect(statusTone(null)).toEqual({})
     expect(WAFFLE_GLYPH).toEqual(['┏━┳━┳━┓', '┗━┻━┻━┛'])
     expect(Object.values(BRAND).every(hex => /^#[0-9A-F]{6}$/.test(hex))).toBe(true)
+  })
+})
+
+const withEditor = (value: unknown): WaffleViewDoc => ({
+  ...DOC,
+  config: { ...DOC.config, [EDITOR_KEY]: { value, source: 'waffle.yaml', stacks: ['wafflestack'] } },
+})
+
+describe('open in editor (#616)', () => {
+  test('editorArgv runs the configured launcher on the root, Cursor when unset or malformed', () => {
+    expect(EDITOR_KEY).toBe('waffleView.editor')
+    expect(DEFAULT_EDITOR).toBe('cursor')
+    expect(editorArgv(null, '/repo')).toEqual(['cursor', '/repo'])
+    expect(editorArgv(DOC, '/repo')).toEqual(['cursor', '/repo'])
+    expect(editorArgv(withEditor('code'), '/repo')).toEqual(['code', '/repo'])
+    expect(editorArgv(withEditor(' /Applications/My Editor/bin/ed '), '/repo')).toEqual(['/Applications/My Editor/bin/ed', '/repo'])
+    expect(editorArgv(withEditor(['code', '--new-window']), '/repo')).toEqual(['code', '--new-window', '/repo'])
+    for (const junk of ['', '  ', [], [1], ['code', ''], {}, 7, null]) {
+      expect(editorArgv(withEditor(junk), '/repo')).toEqual(['cursor', '/repo'])
+    }
+  })
+
+  test('editorLabel names the editor, by table or by the launcher\'s own name', () => {
+    expect(editorLabel('cursor')).toBe('Open in Cursor')
+    expect(editorLabel('code')).toBe('Open in VS Code')
+    expect(editorLabel('/usr/local/bin/zed')).toBe('Open in Zed')
+    expect(editorLabel('C:\\Tools\\subl.exe')).toBe('Open in Sublime Text')
+    expect(editorLabel('idea')).toBe('Open in IntelliJ IDEA')
+    expect(editorLabel('helix')).toBe('Open in Helix')
+  })
+
+  test('editorLaunchError names a non-zero exit and a launcher that cannot start; exit 0 is no error', () => {
+    expect(editorLaunchError('code', { output: exited(0, '') })).toBeNull()
+    expect(editorLaunchError('code', { output: exited(1, '', 'no such workspace\n') })).toBe('code exited 1: no such workspace')
+    expect(editorLaunchError('code', { output: exited(2, '') })).toBe('code exited 2')
+    expect(editorLaunchError('cursor', { thrown: new Error('spawn cursor ENOENT') })).toBe(
+      'cursor could not start: spawn cursor ENOENT — is it on PATH? Set waffleView.editor to your editor\'s launcher',
+    )
+  })
+
+  test('the Button reads Open in Cursor by default, even before a read, and launches on the session directory', async ($, on) => {
+    const launched: (readonly string[])[] = []
+    on('fs.exists', () => ({ value: false }))
+    on('session.cwd', () => ({ value: '/repo' }))
+    on('process.run', (_$, e) => {
+      if (e.argv[0] !== 'npx') launched.push(e.argv)
+      return { value: exited(0, JSON.stringify(DOC)) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Button', key: 'open-editor' }))?.props.label).toBe('Open in Cursor')
+    await ui.unmount()
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Button', key: 'open-editor' }))?.props.label).toBe('Open in Cursor')
+    await ui.press({ key: 'open-editor' })
+    expect(launched).toEqual([['cursor', '/repo']])
+    expect(await ui.find({ type: 'Text', text: /open in editor failed/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('waffleView.editor: code switches the label and the launch, and the sliced view keeps the Button', async ($, on) => {
+    const launched: (readonly string[])[] = []
+    on('fs.exists', () => ({ value: false }))
+    on('session.cwd', () => ({ value: '/repo' }))
+    on('process.run', (_$, e) => {
+      if (e.argv[0] !== 'npx') launched.push(e.argv)
+      return { value: exited(0, JSON.stringify(withEditor('code'))) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+
+    await $.command.run({ command: 'issue', args: '12', ...COMPOSER })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: ' · /issue' })).toBeDefined()
+    expect((await ui.find({ type: 'Button', key: 'open-editor' }))?.props.label).toBe('Open in VS Code')
+    await ui.press({ key: 'open-editor' })
+    expect(launched).toEqual([['code', '/repo']])
+    await ui.unmount()
+  })
+
+  test('a missing launcher fails inline, the pane keeps working, a refresh keeps the error and a good launch clears it', async ($, on) => {
+    let launcherExists = false
+    on('fs.exists', () => ({ value: false }))
+    on('session.cwd', () => ({ value: '/repo' }))
+    on('process.run', (_$, e) => {
+      if (e.argv[0] === 'npx') return { value: exited(0, JSON.stringify(DOC)) }
+      return launcherExists ? { value: exited(0, '') } : { deny: 'spawn cursor ENOENT' }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    await ui.press({ key: 'open-editor' })
+    await ui.unmount()
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: /^open in editor failed: cursor could not start: .*ENOENT.* is it on PATH\?/ }))?.props.color).toBe('error')
+    expect(await ui.find({ type: 'Text', text: 'Keys (2)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /last refresh failed/ })).toBeUndefined()
+
+    launcherExists = true
+    await ui.press({ key: 'open-editor' })
+    await ui.unmount()
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /open in editor failed/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a launcher that exits non-zero shows its exit code and stderr inline', async ($, on) => {
+    on('fs.exists', () => ({ value: false }))
+    on('session.cwd', () => ({ value: '/repo' }))
+    on('process.run', (_$, e) => ({
+      value: e.argv[0] === 'npx' ? exited(0, JSON.stringify(DOC)) : exited(3, '', 'cursor: workspace locked\n'),
+    }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    await ui.press({ key: 'open-editor' })
+    await ui.unmount()
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'open in editor failed: cursor exited 3: cursor: workspace locked' })).toBeDefined()
+    await ui.unmount()
   })
 })
 

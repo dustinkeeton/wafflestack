@@ -60,6 +60,18 @@ config:
       case where unreleased content is the point. The toolkit's OWN repo is also the one place an
       unpinned value is right: its default branch IS the tree under test, and a version-tag pin
       would name a tag that does not exist yet on every release-bump PR.
+  waffleView.editor:
+    required: false
+    default: cursor
+    description: >-
+      The editor the `/waffle-view` pane's "Open in <editor>" button opens this repo in (#616): a
+      GUI launcher on PATH, run as `<launcher> <repo>` with no shell (`cursor`, `code`, `zed`,
+      `idea`, `subl`), or an argv array for one that needs flags (`[code, --new-window]`). A string
+      is ONE executable, never split on spaces. Pick a launcher that hands off and exits — the
+      press waits 15 seconds for it. A missing launcher or a non-zero exit shows inline in the pane
+      and the pane keeps working. Read by `mods/waffle-view` from `wafflestack state --json`'s
+      `config` map, not by any skill; set it nested (`config: { waffleView: { editor: code } }`),
+      in `waffle.local.yaml` when the choice is yours rather than the team's.
   waffle.reportConfirmGate:
     required: false
     default: true
