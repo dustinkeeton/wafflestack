@@ -232,7 +232,7 @@ Runs from item 3, right after the final PR opens; `<F>` is its number. Per-PR qu
 5. **Teardown.** At every exit, `shutdown_request` then `TaskStop` `respond-int-pr<F>`, if it was spawned. An errored round follows Step 6's one-retry rule: tear the responder down, retry on a fresh spawn with the full prompt, and hold if it errors again.
 6. **Never arm `<F>`**, never `--admin`, and never push to `<integ>`: stage 2's fixes arrive only through a fix PR.
 
-**Stage 2 hold.** Leave `<F>` open and unarmed, never close it, and leave any fix PR open. File one `waffle:manual-review` follow-up as stage 1's **Hold** does, with the reason, the unresolved findings with their citations, and any open fix PR. Report `<F>` as **integration-held** with the reason, the follow-up number, and the commands that finish the job: merge the fix PR if it is still open, then re-run `adversarial-review <F> --integration`.
+**Stage 2 hold.** Leave `<F>` open and unarmed, never close it, and leave any fix PR open. File one `waffle:manual-review` follow-up as stage 1's **Hold** does, with the reason, the unresolved findings with their citations, and any open fix PR. Report `<F>` as **integration-held** with the reason, the follow-up number, and the commands that finish the job: merge the fix PR if it is still open, then re-run `adversarial-review <F> --integration`, and, with audit-step consent on, run `/audit` with `git diff --name-only origin/main...origin/<integ>` as its focus, since stage 3 never ran.
 
 ### Integration gate — stage 3 (audit)
 
@@ -255,8 +255,8 @@ Runs from item 3, after stage 2, on `<F>`. It is Step 7's `/audit` gate, run onc
    switch branches, and never push. Autopilot commits and pushes your fixes.
    ```
 
-   Its `docs` invocation is the run's one docs refresh, over the combined diff. **Own the teardown:** `shutdown_request` each audit agent and then `TaskStop` each one, even if a pass errors. An errored chain follows Step 7's one-retry rule: tear down, remove `<a3>` and `<b3>`, retry once on the `-r2` branch in a fresh `<a3>`, and hold if it errors again.
-5. **Check where the fixes went.** If the main checkout's `git status --porcelain` differs from item 3's record, hold: an agent edited outside `<a3>`.
+   Its `docs` invocation is the run's one docs refresh, over the combined diff. **Own the teardown:** `shutdown_request` each audit agent and then `TaskStop` each one, even if a pass errors. An errored chain follows Step 7's one-retry rule: tear down, `git worktree remove --force <a3>` and `git branch -D <b3>`, retry once on the `-r2` branch in a fresh `<a3>`, and hold if it errors again.
+5. **Check where the fixes went.** If the main checkout's `git status --porcelain` differs from item 3's record, hold: an agent edited outside `<a3>`. On this hold, keep `<a3>` and `<b3>` (skip the Stage 3 hold's removal) so the audit's fixes are not lost, and list the newly changed main-checkout paths in the follow-up.
 6. **Open the fix PR.** Only when `git -C <a3> status --porcelain` prints anything:
 
    ```bash

@@ -397,6 +397,13 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
     assert.match(md, /`shutdown_request` each audit agent and then `TaskStop` each one, even if a pass errors/);
     assert.match(md, /Its `docs` invocation is the run's one docs refresh, over the combined diff/);
     assert.match(md, /next to the focus in each prompt that skill spawns/);
+    assert.match(md, /keep `<a3>` and `<b3>` \(skip the Stage 3 hold's removal\)/);
+    assert.match(md, /`git worktree remove --force <a3>` and `git branch -D <b3>`, retry once/);
+  });
+
+  test('a stage 2 hold hands over the audit stage 3 never ran', () => {
+    const hold = section(read(SKILL), '**Stage 2 hold.**', '### Integration gate — stage 3');
+    assert.match(hold, /with audit-step consent on, run `\/audit` with `git diff --name-only origin\/main\.\.\.origin\/<integ>` as its focus/);
   });
 
   test('every green wait reads a commit status by its state, so stage 2 statuses can go green', () => {
