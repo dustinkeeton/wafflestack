@@ -61,8 +61,9 @@ is what you reach for across a breaking one.
   started yet, `◐` (Syrup) means it is running, `●` (success) means it answered, and `✗` (error)
   means it ended in an error, an abort or a refusal. The pane follows the session's own `agent.spawn`
   and `turn.complete` events, so no extra `state` read is needed. Only top-level spawns made after a
-  typed `/standup` count, until the main loop finishes that turn; the next `/standup` you type clears
-  every marker. The mod's plugin
+  typed `/standup` count, until the main loop finishes that turn. A `/standup` typed while another
+  turn runs waits for that turn to end, so its spawns never join the wave. The next `/standup` you
+  type clears every marker. The mod's plugin
   version is now 0.8.0. **Consumer impact:** none. This changes only the mod, so nothing re-renders.
 - **`wafflestack config [key-prefix]` looks up the config keys your selection can set (#701).**
   Each key prints its effective value, where it comes from (`default`, `waffle.yaml`, or the

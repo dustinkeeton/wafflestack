@@ -131,8 +131,16 @@ export type WaffleViewSlice = {
 
 /** A subagent's place in a running `/standup` wave (#699); absent is pending. */
 export type WaffleViewWaveStatus = 'running' | 'done' | 'failed'
-/** The wave by subagent type, each spawn's `agentId` back to its type, and whether the main loop has finished it. */
-export type WaffleViewWave = { byType: Record<string, WaffleViewWaveStatus>; byId: Record<string, string>; closed: boolean }
+/**
+ * The wave by subagent type, each spawn's `agentId` back to its type, whether the main loop has
+ * finished it, and whether its `/standup` is still queued behind the turn it was typed over.
+ */
+export type WaffleViewWave = {
+  byType: Record<string, WaffleViewWaveStatus>
+  byId: Record<string, string>
+  closed: boolean
+  queued: boolean
+}
 
 declare module 'claude-code' {
   interface PluginState {

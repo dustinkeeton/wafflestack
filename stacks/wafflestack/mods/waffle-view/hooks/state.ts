@@ -273,17 +273,19 @@ export function statusTone(ok: boolean | null, failure: 'error' | 'warning' = 'e
 export const FOCUS_MAX_ROWS = 8
 
 // A /standup wave's per-agent status (#699).
-export const EMPTY_WAVE: Wave = { byType: {}, byId: {}, closed: false }
+export const EMPTY_WAVE: Wave = { byType: {}, byId: {}, closed: false, queued: false }
+
+// A typed /standup with a running turn waits behind it (the engine queues it), so it arms only once that turn ends.
+export const waveReset = (queued: boolean): Wave => ({ ...EMPTY_WAVE, queued })
 
 export const waveSpawned = (wave: Wave, type: string, agentId: string): Wave =>
-  wave.closed
+  wave.closed || wave.queued
     ? wave
     : { ...wave, byType: { ...wave.byType, [type]: 'running' }, byId: { ...wave.byId, [agentId]: type } }
 
-// The main loop's turn ends a wave that has spawned; later spawns stay out, completions still land.
-// An unspawned wave stays open: a /standup typed over a running turn sees that turn end first.
+// A main-loop turn ending arms a queued wave, else closes it: later spawns stay out, completions still land.
 export const waveClosed = (wave: Wave): Wave =>
-  wave.closed || Object.keys(wave.byId).length === 0 ? wave : { ...wave, closed: true }
+  wave.queued ? EMPTY_WAVE : wave.closed ? wave : { ...wave, closed: true }
 
 export function waveCompleted(wave: Wave, agentId: string, reason: string): Wave {
   const type = wave.byId[agentId]

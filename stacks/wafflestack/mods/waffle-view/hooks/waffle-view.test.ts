@@ -38,6 +38,7 @@ import {
   waveClosed,
   waveCompleted,
   waveMarker,
+  waveReset,
   waveSpawned,
 } from './state'
 
@@ -1138,12 +1139,19 @@ describe('live wave (#699)', () => {
     expect(EMPTY_WAVE.byType).toEqual({})
   })
 
-  test('closing ends a started wave: later spawns stay out, completions still land', () => {
-    expect(waveClosed(EMPTY_WAVE)).toBe(EMPTY_WAVE)
+  test('closing ends a wave: later spawns stay out, completions still land', () => {
+    expect(waveClosed(EMPTY_WAVE).closed).toBe(true)
     const closed = waveClosed(waveSpawned(EMPTY_WAVE, 'docs-agent', 'a1'))
     expect(closed.closed).toBe(true)
     expect(waveSpawned(closed, 'harness-architect', 'a2')).toBe(closed)
     expect(waveCompleted(closed, 'a1', 'answer').byType).toEqual({ 'docs-agent': 'done' })
+  })
+
+  test('a queued wave ignores spawns until the turn it waits behind ends, which arms it', () => {
+    const queued = waveReset(true)
+    expect(waveSpawned(queued, 'docs-agent', 'a1')).toBe(queued)
+    expect(waveClosed(queued)).toEqual(EMPTY_WAVE)
+    expect(waveReset(false)).toEqual(EMPTY_WAVE)
   })
 
   test('each status wears its own glyph and tone; pending is dim', () => {
@@ -1253,13 +1261,28 @@ describe('live wave (#699)', () => {
     await ui.unmount()
   })
 
-  test('a /standup queued over a running turn survives that turn ending before its spawns', async ($, on) => {
+  test('a /standup queued over a running turn arms only once that turn ends', async ($, on) => {
     stubCore(on)
+    await $.prompt.submit({ text: '/delegate', ...TYPED })
     await $.prompt.submit({ text: '/standup', ...TYPED, wait: true, turnId: 't-main' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    await $.turn.complete(turn('id-harness-architect'))
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await $.command.run({ command: 'standup', args: '', ...COMPOSER })
     await $.turn.complete(turn(undefined))
     await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
-    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
     expect(await markers(ui)).toEqual(['◐', '○'])
+    await ui.unmount()
+  })
+
+  test('a /standup turn that ends before spawning closes the wave', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.turn.complete(turn(undefined, 'aborted'))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
     await ui.unmount()
   })
 

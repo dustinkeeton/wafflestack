@@ -47,6 +47,7 @@ import {
   waveClosed,
   waveCompleted,
   waveMarker,
+  waveReset,
   waveSpawned,
 } from './state'
 import type { Tone } from './state'
@@ -131,7 +132,7 @@ export const register: Register = on => {
   on('command.run', async ($, e, next) => {
     if (e.command !== PANE && isPersonsPrompt(e.origin)) {
       await update($, skill, () => e.command)
-      if (e.command === STANDUP_SKILL) await update($, wave, () => EMPTY_WAVE)
+      if (e.command === STANDUP_SKILL) await update($, wave, w => waveReset(w.queued))
     }
     const ran = await next(e)
     if (e.command !== PANE && (await isOpen($))) void refresh($)
@@ -143,7 +144,7 @@ export const register: Register = on => {
     const invoked = promptSkill(e.text)
     if (invoked !== PANE && isPersonsPrompt(e.origin)) {
       await update($, skill, () => invoked)
-      if (invoked === STANDUP_SKILL) await update($, wave, () => EMPTY_WAVE)
+      if (invoked === STANDUP_SKILL) await update($, wave, () => waveReset(e.turnId !== undefined))
     }
     const entered = await next(e)
     if (await isOpen($)) void refresh($)
