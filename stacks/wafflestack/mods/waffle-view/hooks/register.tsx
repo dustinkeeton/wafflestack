@@ -5,6 +5,7 @@ import type { WaffleViewAgent, WaffleViewBoard, WaffleViewBoardItem, WaffleViewD
 import {
   BRAND,
   CAPTION_TONE,
+  EMPTY_WAVE,
   EDITOR_TIMEOUT_MS,
   FOCUS_MAX_ROWS,
   HEADING_TONE,
@@ -38,10 +39,16 @@ import {
   sourceTone,
   statusTone,
   tokensOf,
+  STANDUP_SKILL,
   updateBadge,
   valueLines,
   valueTone,
   wantsBoard,
+  waveClosed,
+  waveCompleted,
+  waveMarker,
+  waveReset,
+  waveSpawned,
 } from './state'
 import type { Tone } from './state'
 
@@ -52,6 +59,8 @@ const isRefreshing = atom({ plugin: 'waffle-view', key: 'isRefreshing' } as cons
 // Tracked whether or not the pane is open, so opening it after `/issue` already slices.
 const skill = atom({ plugin: 'waffle-view', key: 'skill' } as const, null)
 const launchError = atom({ plugin: 'waffle-view', key: 'launchError' } as const, null)
+// The running /standup wave (#699): emptied by each typed /standup, filled by its spawns.
+const wave = atom({ plugin: 'waffle-view', key: 'wave' } as const, EMPTY_WAVE)
 
 type Dollar = Pick<EngineInterface, 'state' | 'process' | 'fs' | 'ui' | 'session'>
 
@@ -121,7 +130,10 @@ export const register: Register = on => {
   })
 
   on('command.run', async ($, e, next) => {
-    if (e.command !== PANE && isPersonsPrompt(e.origin)) await update($, skill, () => e.command)
+    if (e.command !== PANE && isPersonsPrompt(e.origin)) {
+      await update($, skill, () => e.command)
+      if (e.command === STANDUP_SKILL) await update($, wave, w => waveReset(w.queued))
+    }
     const ran = await next(e)
     if (e.command !== PANE && (await isOpen($))) void refresh($)
 
@@ -130,16 +142,36 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     const invoked = promptSkill(e.text)
-    if (invoked !== PANE && isPersonsPrompt(e.origin)) await update($, skill, () => invoked)
+    if (invoked !== PANE && isPersonsPrompt(e.origin)) {
+      await update($, skill, () => invoked)
+      if (invoked === STANDUP_SKILL) await update($, wave, () => waveReset(e.turnId !== undefined))
+    }
     const entered = await next(e)
     if (await isOpen($)) void refresh($)
 
     return entered
   }).catch(($, e, next) => next(e))
 
+  // Observes only: the spawn always goes through, and only the main loop's spawns join the wave.
+  on('agent.spawn', async ($, e, next) => {
+    const inWave = e.parentAgentId === undefined && (await read($, skill)) === STANDUP_SKILL
+    const started = await next(e)
+    const { agentId } = started
+    if (agentId !== undefined && inWave) {
+      await update($, wave, w => waveSpawned(w, e.subagentType, agentId))
+    }
+
+    return started
+  }).catch(($, e, next) => next(e))
+
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (e.agentId === undefined && (await isOpen($))) void refresh($)
+    const { agentId } = e
+    if (agentId !== undefined) await update($, wave, w => waveCompleted(w, agentId, e.reason))
+    else {
+      await update($, wave, waveClosed)
+      if (await isOpen($)) void refresh($)
+    }
 
     return done
   }).catch(($, e, next) => next(e))
@@ -151,6 +183,7 @@ export const register: Register = on => {
     const launchFailure = await read($, launchError)
     const busy = await read($, isRefreshing)
     const context = { skill: await read($, skill) }
+    const running = await read($, wave)
     const slice = state ? selectSlice(state, context) : null
     const agents = state ? selectAgents(state, slice) : null
     const board = state ? selectBoard(state, slice) : null
@@ -268,16 +301,22 @@ export const register: Register = on => {
     const agentsSection = (roster: WaffleViewAgent[] | undefined) => {
       if (roster === undefined) return section('Agents', [dim('this CLI predates the agent roster — upgrade wafflestack')])
       if (roster.length === 0) return section('Agents (0)', [dim('no installed agents to round up')])
+      const marker = (agent: WaffleViewAgent) => {
+        const { glyph, tone } = waveMarker(running.byType[agent.name])
+        return <Text {...tone}>{`${glyph} `}</Text>
+      }
       const rows: RenderNode[] = roster.map(agent =>
         wide ? (
           <Box>
-            <Box width={24}>
+            {marker(agent)}
+            <Box width={22}>
               <Text bold wrap="truncate-end" color={BRAND.cream}>{agent.name}</Text>
             </Box>
             <Text wrap="truncate-end" {...CAPTION_TONE}>{agent.description}</Text>
           </Box>
         ) : (
           <Box>
+            {marker(agent)}
             <Text bold color={BRAND.cream}>{agent.name}</Text>
             <Text wrap="truncate-end" {...CAPTION_TONE}>{`  ${agent.description}`}</Text>
           </Box>

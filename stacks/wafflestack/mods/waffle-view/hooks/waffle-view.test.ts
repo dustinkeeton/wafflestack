@@ -4,6 +4,7 @@ import type { WaffleViewBoard, WaffleViewDoc } from '../types'
 import {
   BRAND,
   DEFAULT_EDITOR,
+  EMPTY_WAVE,
   EDITOR_KEY,
   LOCAL_BIN,
   LOCAL_CLI,
@@ -34,6 +35,11 @@ import {
   valueLines,
   valueTone,
   wantsBoard,
+  waveClosed,
+  waveCompleted,
+  waveMarker,
+  waveReset,
+  waveSpawned,
 } from './state'
 
 const STATE_ARGS = ['state', '--json']
@@ -1108,6 +1114,185 @@ describe('current focus (#698)', () => {
     await $.prompt.submit({ text: 'plain', ...TYPED })
     ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: 'Current focus' })).toBeUndefined()
+    await ui.unmount()
+  })
+})
+
+describe('live wave (#699)', () => {
+  const turn = (agentId: string | undefined, reason: 'answer' | 'error' | 'aborted' | 'refusal' = 'answer') => ({
+    answer: 'ok',
+    durationMs: 1,
+    isAborted: reason === 'aborted',
+    turnId: `t-${agentId ?? 'main'}`,
+    ...(agentId === undefined ? {} : { agentId }),
+    reason,
+  })
+
+  test('a spawn runs, its answer is done, an error or abort failed; an unknown id changes nothing', () => {
+    const running = waveSpawned(EMPTY_WAVE, 'docs-agent', 'a1')
+    expect(running.byType).toEqual({ 'docs-agent': 'running' })
+    expect(waveCompleted(running, 'a1', 'answer').byType).toEqual({ 'docs-agent': 'done' })
+    expect(waveCompleted(running, 'a1', 'error').byType).toEqual({ 'docs-agent': 'failed' })
+    expect(waveCompleted(running, 'a1', 'aborted').byType).toEqual({ 'docs-agent': 'failed' })
+    expect(waveCompleted(running, 'a1', 'refusal').byType).toEqual({ 'docs-agent': 'failed' })
+    expect(waveCompleted(running, 'other', 'answer')).toBe(running)
+    expect(EMPTY_WAVE.byType).toEqual({})
+  })
+
+  test('closing ends a wave: later spawns stay out, completions still land', () => {
+    expect(waveClosed(EMPTY_WAVE).closed).toBe(true)
+    const closed = waveClosed(waveSpawned(EMPTY_WAVE, 'docs-agent', 'a1'))
+    expect(closed.closed).toBe(true)
+    expect(waveSpawned(closed, 'harness-architect', 'a2')).toBe(closed)
+    expect(waveCompleted(closed, 'a1', 'answer').byType).toEqual({ 'docs-agent': 'done' })
+  })
+
+  test('a queued wave ignores spawns until the turn it waits behind ends, which arms it', () => {
+    const queued = waveReset(true)
+    expect(waveSpawned(queued, 'docs-agent', 'a1')).toBe(queued)
+    expect(waveClosed(queued)).toEqual(EMPTY_WAVE)
+    expect(waveReset(false)).toEqual(EMPTY_WAVE)
+  })
+
+  test('each status wears its own glyph and tone; pending is dim', () => {
+    expect(waveMarker(undefined)).toEqual({ glyph: '○', tone: { dimColor: true } })
+    expect(waveMarker('running')).toEqual({ glyph: '◐', tone: { color: BRAND.syrup, bold: true } })
+    expect(waveMarker('done')).toEqual({ glyph: '●', tone: { color: 'success' } })
+    expect(waveMarker('failed')).toEqual({ glyph: '✗', tone: { color: 'error' } })
+  })
+
+  const stubCore = (on: Parameters<Parameters<typeof test>[1]>[1], denied: () => boolean = () => false) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(DOC)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [{ id: PANE, title: 'Waffle view', isShown: true, isFocused: false, isPlaced: true }] }))
+    on('agent.spawn', (_$, e) => (denied() ? { deny: 'no' } : { model: 'sonnet', agentId: `id-${e.subagentType}` }))
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+  }
+  type Mounted = Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>
+  const markers = async (ui: Mounted) =>
+    (await ui.findAll({ type: 'Text', text: /^[○◐●✗] $/ })).map(node => node.text.trim())
+
+  test('an open pane follows the wave live: pending, running, done, and the next /standup resets it', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    expect((await ui.find({ type: 'Text', text: '○ ' }))?.props).toMatchObject({ dimColor: true })
+
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    expect(await markers(ui)).toEqual(['◐', '○'])
+    expect((await ui.find({ type: 'Text', text: '◐ ' }))?.props.color).toBe(BRAND.syrup)
+
+    await $.turn.complete(turn('id-docs-agent'))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    await $.turn.complete(turn('id-harness-architect', 'error'))
+    expect(await markers(ui)).toEqual(['●', '✗'])
+    expect((await ui.find({ type: 'Text', text: '● ' }))?.props.color).toBe('success')
+    expect((await ui.find({ type: 'Text', text: '✗ ' }))?.props.color).toBe('error')
+
+    await $.command.run({ command: 'standup', args: '', ...COMPOSER })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('the marker sits beside the name, wide and narrow, leaving the name its own Text', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    for (const bodyColumns of [PANE_PROPS.bodyColumns, 60]) {
+      const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns } })
+      expect(await markers(ui)).toEqual(['◐', '○'])
+      const names = (await ui.findAll({ type: 'Text', text: /^(docs-agent|harness-architect)$/ })).map(node => node.text)
+      expect(names).toEqual(['docs-agent', 'harness-architect'])
+      await ui.unmount()
+    }
+  })
+
+  test('a spawn before /standup and a main-loop turn leave the wave pending', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/issue 12', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.turn.complete(turn('id-docs-agent'))
+    await $.turn.complete(turn(undefined))
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('a nested or denied spawn leaves its row pending', async ($, on) => {
+    let deny = false
+    stubCore(on, () => deny)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent', parentAgentId: 'x' })
+    deny = true
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('a typed /standup prompt resets a running wave', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['◐', '○'])
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('once the main loop finishes the wave, a later spawn leaves its row alone', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    await $.turn.complete(turn(undefined))
+    await $.turn.complete(turn('id-docs-agent'))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['●', '○'])
+    await ui.unmount()
+  })
+
+  test('a /standup queued over a running turn arms only once that turn ends', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/delegate', ...TYPED })
+    await $.prompt.submit({ text: '/standup', ...TYPED, wait: true, turnId: 't-main' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    await $.turn.complete(turn('id-harness-architect'))
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await $.command.run({ command: 'standup', args: '', ...COMPOSER })
+    await $.turn.complete(turn(undefined))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    expect(await markers(ui)).toEqual(['◐', '○'])
+    await ui.unmount()
+  })
+
+  test('a /standup turn that ends before spawning closes the wave', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.turn.complete(turn(undefined, 'aborted'))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('a peer\'s /standup neither resets the wave nor arms it', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    await $.prompt.submit({ text: '/standup', ...PEER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['◐', '○'])
     await ui.unmount()
   })
 })

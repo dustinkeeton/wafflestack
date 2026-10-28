@@ -8,6 +8,8 @@ import type {
   WaffleViewKey,
   WaffleViewLayer,
   WaffleViewSlice,
+  WaffleViewWave as Wave,
+  WaffleViewWaveStatus as WaveStatus,
 } from '../types'
 
 export const PANE = 'waffle-view'
@@ -269,3 +271,32 @@ export function statusTone(ok: boolean | null, failure: 'error' | 'warning' = 'e
 
 // Each Current focus list shows this many rows, then a count (#698).
 export const FOCUS_MAX_ROWS = 8
+
+// A /standup wave's per-agent status (#699).
+export const EMPTY_WAVE: Wave = { byType: {}, byId: {}, closed: false, queued: false }
+
+// A typed /standup with a running turn waits behind it (the engine queues it), so it arms only once that turn ends.
+export const waveReset = (queued: boolean): Wave => ({ ...EMPTY_WAVE, queued })
+
+export const waveSpawned = (wave: Wave, type: string, agentId: string): Wave =>
+  wave.closed || wave.queued
+    ? wave
+    : { ...wave, byType: { ...wave.byType, [type]: 'running' }, byId: { ...wave.byId, [agentId]: type } }
+
+// A main-loop turn ending arms a queued wave, else closes it: later spawns stay out, completions still land.
+export const waveClosed = (wave: Wave): Wave =>
+  wave.queued ? EMPTY_WAVE : wave.closed ? wave : { ...wave, closed: true }
+
+export function waveCompleted(wave: Wave, agentId: string, reason: string): Wave {
+  const type = wave.byId[agentId]
+  if (type === undefined) return wave
+  return { ...wave, byType: { ...wave.byType, [type]: reason === 'answer' ? 'done' : 'failed' } }
+}
+
+// Pending reads as an absent status: an agent the wave has not reached yet.
+export function waveMarker(status: WaveStatus | undefined): { glyph: string; tone: Tone } {
+  if (status === 'running') return { glyph: '◐', tone: { color: BRAND.syrup, bold: true } }
+  if (status === 'done') return { glyph: '●', tone: statusTone(true) }
+  if (status === 'failed') return { glyph: '✗', tone: statusTone(false) }
+  return { glyph: '○', tone: { dimColor: true } }
+}
