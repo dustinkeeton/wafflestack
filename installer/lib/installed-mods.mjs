@@ -84,8 +84,9 @@ export function staleMods({ cwd, settings, toolkitRoot, pluginsDir }) {
   return stale;
 }
 
-/** The doctor note for one stale record. */
-export function formatStaleMod(m) {
+/** The doctor note for one stale record; `skew` (CLI ≠ render) means the pinned marketplace can't reach `source` until a re-render. */
+export function formatStaleMod(m, { skew = false } = {}) {
   const where = m.scope === 'user' ? '' : ' (from this repo)';
-  return `mod ${m.id} is installed at ${m.installed} (${m.scope} scope) but this toolkit ships ${m.source} — run${where}: ${m.command}, then /reload-plugins or restart the session`;
+  const first = skew ? '`wafflestack upgrade` (the render pins an older release), then ' : '';
+  return `mod ${m.id} is installed at ${m.installed} (${m.scope} scope) but this toolkit ships ${m.source} — run${where}: ${first}${m.command}, then /reload-plugins or restart the session`;
 }

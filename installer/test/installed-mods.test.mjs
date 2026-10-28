@@ -100,6 +100,10 @@ describe('stale installed mods (#730)', () => {
     assert.equal(dr.staleMods.length, 1);
     assert.ok(dr.notes.some((n) => n.includes(`claude plugin update ${ID} --scope user`)));
 
+    const skewed = doctor({ cwd, toolkitVersion: '0.0.newer', toolkitRoot, pluginsDir });
+    assert.ok(skewed.notes.some((n) => n.includes(`run: \`wafflestack upgrade\` (the render pins an older release), then claude plugin update ${ID} --scope user`)), 'CLI newer than the render: re-render first');
+    assert.ok(!dr.notes.some((n) => n.includes('wafflestack upgrade')), 'no skew, no upgrade step');
+
     const up = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.0.test', pluginsDir });
     assert.equal(up.doctor.staleMods.length, 1);
   });

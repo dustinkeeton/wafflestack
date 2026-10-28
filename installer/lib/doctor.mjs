@@ -93,7 +93,8 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
       ? `rendered by toolkit ${rendered}; installed CLI is ${toolkitVersion}`
       : `rendered by toolkit ${rendered}`,
   );
-  if (toolkitVersion && lock.toolkitVersion && toolkitVersion !== lock.toolkitVersion) {
+  const skew = Boolean(toolkitVersion && lock.toolkitVersion && toolkitVersion !== lock.toolkitVersion);
+  if (skew) {
     notes.push(
       toolkitIdentity && toolkitIdentity.status !== 'release' && toolkitIdentity.latestTag && toolkitIdentity.repo
         ? `version skew — run \`npx --yes github:${toolkitIdentity.repo}#${toolkitIdentity.latestTag} upgrade\` to apply migrations and re-render (this CLI is ${toolkitIdentity.status}; a bare \`upgrade\` re-fetches the default branch)`
@@ -119,7 +120,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
 
   // Informational only (#730): install records are per-machine state, so a stale mod never flips `ok`.
   const staleMods = findStaleMods({ cwd, settings: tree.settings, toolkitRoot, pluginsDir });
-  for (const m of staleMods) notes.push(formatStaleMod(m));
+  for (const m of staleMods) notes.push(formatStaleMod(m, { skew }));
 
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
