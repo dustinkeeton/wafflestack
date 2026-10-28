@@ -1113,7 +1113,8 @@ has, not the whole toolkit:
   source of truth; the HTML pages are the visual one-pagers.
 - **`.waffle/waffle.reference.yaml`** — every config key the selection references, for copying
   into `waffle.yaml`. Lines starting `## ` are notes; lines starting `# ` are YAML, so copy the
-  `# config:` line plus any block and strip one leading `# ` from each line to get valid config.
+  `# config:` line plus any block (merging under an existing `config:` if there is one) and strip
+  one leading `# ` from each line to get valid config.
   Keys that are required with no default are listed under `## Must set`, never shown as values.
   `lockMode:` keys are listed under `## Locked`. A `configModes:` key shows only a value
   `doctor` accepts. Templated defaults show the raw `{{…}}` template. Multi-line, long or

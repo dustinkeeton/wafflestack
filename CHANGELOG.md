@@ -36,7 +36,7 @@ is what you reach for across a breaking one.
 - **`render` writes `.waffle/waffle.reference.yaml`, a catalog of every config key you can set (#703,
   slice 3 of #701).** Each key appears commented out under `config:`, with its one-line description,
   its stacks and its constraints. To use one, copy the `# config:` line and the block you want into
-  `.waffle/waffle.yaml`, then remove one leading `# ` from each line. Required keys with no default
+  `.waffle/waffle.yaml` (merge under an existing `config:` if there is one), then remove one leading `# ` from each line. Required keys with no default
   are listed under "Must set". `lockMode:` keys are listed under "Locked". A `configModes:` key shows
   only a value `doctor` accepts. Multi-line, long or conflicting defaults point at
   `wafflestack config <key>`. The file is built only from stack declarations, so no `waffle.yaml` or

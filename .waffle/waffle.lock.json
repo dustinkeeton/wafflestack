@@ -95,7 +95,7 @@
     ".waffle/CHEATSHEET.md": "df789e9ccaf683ccdf0924fa749f38416ae7c63d392942373a0d4f76dd8c6990",
     ".waffle/team.html": "dda7d4d1dd06eafe2baa1a535c86b95de4baeeb118506e09705c58d5426f5da7",
     ".waffle/TEAM.md": "75d5ea58098143db27b23a399cbbd5ed1a54f9e3a32370be01f0a136f396efbc",
-    ".waffle/waffle.reference.yaml": "b2b78bf97fe44bb9dae4ec006f96e84f1a31d080778ae186ee6f769a647fc6ab"
+    ".waffle/waffle.reference.yaml": "9854a2888d69a87773840f6cf512ecd665c30eb3a2c993b0506507df835a3c7f"
   },
   "settings": {
     ".claude/settings.json#/enabledPlugins/waffle-view@wafflestack": true,

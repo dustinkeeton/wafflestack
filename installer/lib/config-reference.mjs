@@ -108,7 +108,8 @@ export function configReferenceYaml(merged) {
     '## waffle.local.yaml values. Do not edit: re-render instead.',
     '##',
     '## Lines starting `## ` are notes; lines starting `# ` are YAML. Copy the `# config:` line and',
-    '## any block below it into .waffle/waffle.yaml, then strip one leading `# ` from each line.',
+    '## any block below it into .waffle/waffle.yaml (merge under an existing `config:` if there is',
+    '## one), then strip one leading `# ` from each line.',
     '## Full detail on a key: wafflestack config <key>',
     '## `harness.*` keys are built-ins, not config — see schema/FORMAT.md, "The `harness.*` namespace".',
   ];
