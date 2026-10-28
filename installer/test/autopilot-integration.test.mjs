@@ -248,6 +248,7 @@ describe('autopilot Step 8 red-check rerun and retry (#745)', () => {
     const md = retry();
     assert.match(md, /`<old-branch>-retry`, cut from the current base \(`origin\/main`, or `origin\/<integ>` in integration mode\)/);
     assert.match(md, /Never reuse the closed branch/);
+    assert.match(md, /Record `<old-branch>-retry` as the issue's assignment `branch` in delegate's `plan` checkpoint/);
     assert.match(md, /they continue if its PR merges and stop if it fails/);
     assert.match(md, /`git push origin --delete <branch>`/);
   });
