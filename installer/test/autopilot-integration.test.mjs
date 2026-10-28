@@ -161,7 +161,7 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
     const md = step8();
-    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when a check in `statusCheckRollup` concludes `FAILURE`.*\(\*\*red check\*\*; `mergeStateStatus` still reads `BLOCKED`\)/);
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when `mergeStateStatus` is `BLOCKED` and a `statusCheckRollup` item reads `FAILURE`, `ERROR`, .*\(its `conclusion`, or a commit status's `state`\) \(\*\*red check\*\*; a red optional check reads `UNSTABLE` instead, and auto-merge still merges it\)/);
     assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
     assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
     assert.match(md, /`state` is `CLOSED`/);
@@ -174,7 +174,7 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
     const md = step8();
     assert.match(md, /Any other `mergeStateStatus` keeps the wait polling: `BLOCKED` with no red check \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
     const stop = section(md, '**The wait also ends, as blocked,**', 'Any other `mergeStateStatus`');
-    for (const s of ['UNSTABLE', 'HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
+    for (const s of ['HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
   });
 
   test('failure handling and the run report carry the blocked PR', () => {
