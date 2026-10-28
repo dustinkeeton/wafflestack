@@ -61,14 +61,17 @@ async function refresh($: Dollar): Promise<void> {
   if (await read($, isRefreshing)) return
   await update($, isRefreshing, () => true)
   try {
-    // A /standup refresh that starts mid-read is dropped above; the next turn.complete catches up.
-    const board = wantsBoard(await read($, skill))
-    const probe = { hasLocalCli: await $.fs.exists(LOCAL_CLI), hasLocalBin: await $.fs.exists(LOCAL_BIN) }
-    let output = await $.process.run(resolveArgv({ ...probe, board }), { timeoutMs: 120_000 })
-    if (board && boardFlagRejected(output)) output = await $.process.run(resolveArgv(probe), { timeoutMs: 120_000 })
-    const parsed = parseStateOutput(output)
-    if (parsed.doc) await update($, doc, () => parsed.doc)
-    await update($, error, () => parsed.error)
+    // A refresh dropped above may have switched to or from /standup: read again until --board matches.
+    let board: boolean
+    do {
+      board = wantsBoard(await read($, skill))
+      const probe = { hasLocalCli: await $.fs.exists(LOCAL_CLI), hasLocalBin: await $.fs.exists(LOCAL_BIN) }
+      let output = await $.process.run(resolveArgv({ ...probe, board }), { timeoutMs: 120_000 })
+      if (board && boardFlagRejected(output)) output = await $.process.run(resolveArgv(probe), { timeoutMs: 120_000 })
+      const parsed = parseStateOutput(output)
+      if (parsed.doc) await update($, doc, () => parsed.doc)
+      await update($, error, () => parsed.error)
+    } while (wantsBoard(await read($, skill)) !== board)
   } catch (err) {
     await update($, error, () => (err instanceof Error ? err.message : String(err)))
   } finally {

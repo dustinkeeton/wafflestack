@@ -932,6 +932,55 @@ describe('current focus (#698)', () => {
     await ui.unmount()
   })
 
+  test('/standup submitted mid-read reads the board again, never board unavailable', async ($, on) => {
+    const argvs: (readonly string[])[] = []
+    let release: (() => void) | undefined
+    let open = false
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', async (_$, e) => {
+      argvs.push(e.argv)
+      if (e.argv.includes('--board')) return { value: exited(0, JSON.stringify({ ...DOC, board: BOARD })) }
+      await new Promise<void>(resolve => (release = resolve))
+      return { value: exited(0, JSON.stringify(DOC)) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: open ? [{ id: PANE, title: 'Waffle view', isShown: true, isFocused: false, isPlaced: true }] : [] }))
+
+    await $.prompt.submit({ text: 'plain', ...TYPED })
+    const pending = $.command.run({ command: PANE, args: '', ...COMPOSER })
+    for (let i = 0; i < 50 && !release; i++) await new Promise(resolve => setTimeout(resolve, 0))
+    expect(release).toBeDefined()
+    open = true
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    release!()
+    await pending
+
+    expect(argvs.map(argv => argv.includes('--board'))).toEqual([false, true])
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /board unavailable/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'v1.0' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('an empty board list shows a dim none', async ($, on) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify({ ...DOC, board: { ...BOARD, inReview: [] } })) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: '⇄ PR #704' })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: 'none' }))?.props).toMatchObject({ dimColor: true })
+    await ui.unmount()
+  })
+
   test('a long list shows eight rows and a count', async ($, on) => {
     const many = Array.from({ length: 11 }, (_, i) => ({ number: 800 + i, title: `item ${i}`, kind: 'issue' as const }))
     on('fs.exists', () => ({ value: false }))
