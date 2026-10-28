@@ -102,6 +102,11 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **A toolkit checkout with no local release tags reports `update.source: changelog` (#694).**
+  `state --json` labelled every checkout's latest release `local-tags`, even when the checkout had
+  no `v*` tags (as `actions/checkout` leaves it) and the value came from `CHANGELOG.md`. The
+  identity now records where `latestTag` came from (`latestTagSource`), and `update.source` reports
+  it. The verdict and the command are unchanged. **Consumer impact:** none — one JSON field's label.
 - **`setup` / `init` reject unknown flags, and this is now documented and tested (#638).** 0.18.0
   (#611) made both commands refuse any extra argument before scaffolding, including an unknown flag,
   but its notes left that out. `setup <arg>` and `init <arg>` used to exit 0, and `init` wrote a

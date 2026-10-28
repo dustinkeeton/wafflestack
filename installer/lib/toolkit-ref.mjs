@@ -26,6 +26,7 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  * @property {string|null} lockRepo     "owner/repo" for the committed lock (`lockRepoSlug`) — pin-derived,
  *                                      never `origin`, so two clones of one commit match (#384 F2/F11, #317).
  * @property {string|null} latestTag    the release to pin to, for the remedy message
+ * @property {'local-tags'|'changelog'|null} [latestTagSource]  where a checkout's `latestTag` came from (#694)
  * @property {string|null} lookupError  diagnostic prose for why this is not called a release; never branch on
  *                                      its text. "lookup ran and succeeded" ≙ npm-install && lookupError null.
  *
@@ -84,7 +85,7 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
   if (exists(path.join(toolkitRoot, '.git'))) {
     const commit = runGit(toolkitRoot, ['rev-parse', 'HEAD']);
     if (!commit) {
-      return { ...base, origin: 'checkout', lookupError: 'the toolkit is a git checkout but `git rev-parse HEAD` did not run — is git installed?' };
+      return { ...base, origin: 'checkout', latestTagSource: base.latestTag ? 'changelog' : null, lookupError: 'the toolkit is a git checkout but `git rev-parse HEAD` did not run — is git installed?' };
     }
     // `--dirty`, no HEAD arg: `describe` answers about the COMMIT, so a tag with uncommitted tracked
     // edits would classify `release` and render content the ref does not reproduce; `--dirty` re-adds
@@ -95,8 +96,10 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
     const onReleaseTag = exact !== null && RELEASE_TAG.test(exact);
     const localLatest = latestReleaseTag(splitLines(runGit(toolkitRoot, ['tag', '--list', 'v*']) ?? ''));
     const latestTag = localLatest ?? base.latestTag;
+    /** @type {ToolkitIdentity['latestTagSource']} */
+    const latestTagSource = localLatest ? 'local-tags' : (base.latestTag ? 'changelog' : null);
     if (onReleaseTag && !dirty) {
-      return { ...base, status: 'release', origin: 'checkout', commit, tag: exact, ref: toolkitRef(slug, exact), latestTag: latestTag ?? exact };
+      return { ...base, status: 'release', origin: 'checkout', commit, tag: exact, ref: toolkitRef(slug, exact), latestTag: latestTag ?? exact, latestTagSource: latestTagSource ?? 'local-tags' };
     }
     return {
       ...base,
@@ -104,6 +107,7 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
       origin: 'checkout',
       commit,
       latestTag,
+      latestTagSource,
       // Say WHY when it is not the obvious "no tag here" — a dirty tree sitting exactly on a tag.
       lookupError: onReleaseTag && dirty
         ? `HEAD is ${exact}, but the working tree has uncommitted changes to tracked files — the tag no longer describes what would render`

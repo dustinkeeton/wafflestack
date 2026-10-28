@@ -290,6 +290,29 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('a checkout where `git rev-parse HEAD` fails labels its CHANGELOG release `changelog` (#694)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-nogit-'));
+    try {
+      fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'wafflestack', version: '0.12.0' }));
+      const noGit = () => null;
+
+      write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-01-01\n');
+      const id = resolveToolkitIdentity({ toolkitRoot: root, runGit: noGit, lsRemote: forbidNetwork });
+      assert.equal(id.origin, 'checkout');
+      assert.equal(id.latestTag, 'v0.12.0');
+      assert.equal(id.latestTagSource, 'changelog');
+      assert.match(id.lookupError ?? '', /rev-parse HEAD/);
+
+      write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n');
+      const bare = resolveToolkitIdentity({ toolkitRoot: root, runGit: noGit, lsRemote: forbidNetwork });
+      assert.equal(bare.latestTag, null);
+      assert.equal(bare.latestTagSource, null);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -337,6 +360,7 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.version, '0.9.0');
     assert.equal(id.repo, 'acme/toolkit');
     assert.equal(id.ref, 'github:acme/toolkit#v0.9.0');
+    assert.equal(id.latestTagSource, 'local-tags');
     assert.equal(id.lookupError, null);
     assert.equal(formatProvenanceWarning(id), null);
   });
@@ -350,7 +374,17 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.ref, null, 'ref is non-null ONLY for a release — this is what #374 writes into the lock');
     assert.equal(id.commit, head());
     assert.equal(id.latestTag, 'v0.9.0');
+    assert.equal(id.latestTagSource, 'local-tags');
     assert.match(formatProvenanceWarning(id) ?? '', /NOT a release/);
+  });
+
+  test('a checkout with no local `v*` tags names its CHANGELOG release, labelled `changelog` (#694)', () => {
+    advance('unreleased work');
+    git('tag', '-d', 'v0.9.0'); // as `actions/checkout` leaves it: depth 1, no tags
+    const id = resolveToolkitIdentity({ toolkitRoot: work, lsRemote: forbidNetwork });
+    assert.equal(id.status, 'unreleased');
+    assert.equal(id.latestTag, 'v0.9.0');
+    assert.equal(id.latestTagSource, 'changelog');
   });
 
   test('the remedy names the latest tag by SEMVER, not the most recently created one', () => {
@@ -419,6 +453,7 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.status, 'unreleased');
     assert.equal(id.origin, 'checkout');
     assert.equal(id.latestTag, null, 'nothing can name a tag: no local v* tags, no version headings');
+    assert.equal(id.latestTagSource, null);
     assert.equal(id.lookupError, null, 'and nothing FAILED — which is exactly why `lookupError` cannot discriminate this');
 
     const msg = formatUnreleasedRefusal(id, 'render');
