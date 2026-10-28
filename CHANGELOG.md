@@ -74,6 +74,19 @@ is what you reach for across a breaking one.
   **Consumer impact:** re-render only. Integration mode is off by default. To run your own checks
   on the synced head, override `autopilot.integrationChecks`. An override replaces the default list.
 
+- **Integration gate stage 2: a decision-preservation review of the final PR (#733, part of
+  #720).** `adversarial-review <PR> --integration` reviews an integration → `main` PR against the
+  run's merged PRs, their linked issues and `DECISIONS.md`. It asks one question: does the combined
+  change contradict a recorded decision, or does one PR undo another's intent? A finding counts only
+  if it cites a decision or a PR and its issue. With integration mode and the review loop both on,
+  autopilot runs it on the final PR for up to `min(2, review cap)` cold rounds, and
+  `pr-response --yes` triages it (with the run's `--rubric`) under the same `triaged-through` gate.
+  Fixes land through a PR into the integration branch, never a direct push. A failure leaves the
+  final PR open, unarmed and **integration-held**.
+
+  **Consumer impact:** re-render only. Nothing changes unless both integration mode and the review
+  loop are on.
+
 - **`render` writes `.waffle/waffle.reference.yaml`, a catalog of every config key you can set (#703,
   slice 3 of #701).** Each key appears commented out under `config:`, with its one-line description,
   its stacks and its constraints. To use one, copy the `# config:` line and the block you want into

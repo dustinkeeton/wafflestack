@@ -100,7 +100,7 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     for (const k of ['autopilot.integration', 'autopilot.integration.flag.on', 'autopilot.integration.flag.off']) {
       assert.ok(src.includes(`{{${k}}}`), k);
     }
-    assert.doesNotMatch(src, /[+-]integration\b/);
+    assert.doesNotMatch(src, /(?<!-)[+-]integration\b/);
     assert.doesNotMatch(read(SKILL), /\{\{autopilot\.integration/);
   });
 
@@ -209,7 +209,7 @@ describe('autopilot integration final PR and end-of-run wait (#741)', () => {
 
 // #747 (slice A of #732): stage 1 syncs main into <integ> through a sync PR before the final PR opens.
 describe('autopilot integration gate stage 1: sync PR (#747)', () => {
-  const gate = () => section(read(SKILL), '### Integration gate — stage 1', '## Per-issue loop');
+  const gate = () => section(read(SKILL), '### Integration gate — stage 1', '### Integration gate — stage 2');
 
   test('the sync merges origin/main into a sync branch off <integ>, in a gate worktree', () => {
     const md = gate();
@@ -252,7 +252,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
     assert.match(branch, /run \[Integration gate — stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\) below, and open the final PR only when it passes/);
     assert.match(branch, /`Synced with main at <M> via #S`/);
-    assert.match(branch, /integration gate stages 2–3 not yet implemented — review the combined change/);
+    assert.match(branch, /integration gate stage 3 not yet implemented — review the combined change/);
     assert.doesNotMatch(md, /"integration gate not yet implemented/);
     assert.match(gate(), /Do not open it, not even as a draft/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 1 held\*\*.*\*\*integration-held\*\*/);
@@ -290,5 +290,66 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+// #733 (part of #720): stage 2 is adversarial-review's integration mode, run on the final PR.
+describe('integration gate stage 2: decision-preservation review (#733)', () => {
+  const AR = '.claude/skills/adversarial-review/SKILL.md';
+  const mode = () => section(read(AR), '## Integration mode', '## 2. Read the full diff');
+  const stage2 = () => section(read(SKILL), '### Integration gate — stage 2', '## Per-issue loop');
+
+  test('adversarial-review advertises --integration and resolves it before the PR', () => {
+    const md = read(AR);
+    assert.match(md, /argument-hint: "<PR#, number, or PR URL> \[--integration\]/);
+    assert.match(section(md, '## 1. Resolve the target PR', '## Integration mode'), /If one whole argument is `--integration`, remove it/);
+  });
+
+  test('the mode reads three inputs, asks one question, and posts only cited findings', () => {
+    const md = mode();
+    assert.match(md, /gh pr list --base <integ> --state merged/);
+    assert.match(md, /gh issue view <N> --json number,title,body/);
+    assert.match(md, /contents\/DECISIONS\.md\?ref=\$HEAD_SHA/);
+    assert.match(md, /\*Does the combined change contradict a recorded decision, or does one PR in the\s+run undo another's stated intent\?\*/);
+    assert.match(md, /\*\*A finding counts only if it cites\*\*/);
+    assert.match(md, /\*\*No nit tier\.\*\*/);
+    assert.match(md, /Never seed history from the PR/);
+    assert.match(md, /Sections 5–7 still apply/);
+  });
+
+  test('stage 2 sits between stage 1 and the per-issue loop, and item 3 runs it', () => {
+    const md = read(SKILL);
+    const at = md.indexOf('### Integration gate — stage 2');
+    assert.ok(at > md.indexOf('### Integration gate — stage 1') && at < md.indexOf('## Per-issue loop'));
+    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /run \[Integration gate — stage 2\]\(#integration-gate--stage-2-decision-preservation-review\) on it/);
+  });
+
+  test('stage 2 rides review-loop consent and runs cold, capped rounds', () => {
+    const md = stage2();
+    assert.match(md, /It rides the review loop's consent \(§3\)/);
+    assert.match(md, /`stage 2: not run \(review loop off\)`/);
+    assert.match(md, /`min\(2, the run's effective review cap\)`/);
+    assert.match(md, /`adversarial-review <F> --integration`/);
+    assert.match(md, /\*\*this pass is deliberately cold — do not seed history from the PR\*\*/);
+    assert.match(md, /`pr-response <F> --yes --rubric <spec>`/);
+    assert.match(md, /`triaged-through`/);
+  });
+
+  test('fixes arrive through a fix PR into <integ>, never a push; the final PR is never armed', () => {
+    const md = stage2();
+    assert.match(md, /## Fix branch/);
+    assert.match(md, /gh pr create --base <integ> --head autopilot\/stage2\/<ts>-r<k> --title /);
+    assert.doesNotMatch(md, /git push[^\n]*<integ>/);
+    assert.match(md, /\*\*Never arm `<F>`\*\*/);
+    assert.match(md, /\*\*integration-held\*\*/);
+    assert.match(read('.claude/skills/pr-response/SKILL.md'), /\*\*A `## Fix branch` block in your invocation overrides items 1 and 6\.\*\*/);
+  });
+
+  test('guardrails, failure handling and the run report carry stage 2', () => {
+    const md = read(SKILL);
+    assert.match(section(md, '## Guardrails', '## Failure handling'), /\*\*Stage 2 never pushes to `<integ>`\.\*\*/);
+    assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 2 held\*\*/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /the stage 2 outcome \(passed \/ \*\*integration-held\*\*/);
+    assert.match(section(md, '### Rubric override', '### Integration mode'), /integration stage 2's `respond-int-pr<N>`/);
   });
 });

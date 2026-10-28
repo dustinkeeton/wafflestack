@@ -9,6 +9,32 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: Integration gate stage 2 is an adversarial-review mode that rides review-loop consent (#733, part of #720)
+
+**Context**: Each run PR passes its own gates, but nothing checks the combined change. One PR can
+undo what another decided, or the run as a whole can contradict a recorded decision.
+
+**Decision**: `adversarial-review --integration` reviews the final integration → `main` PR with one
+question: does the combined change contradict a `DECISIONS.md` entry, or does one run PR undo
+another's stated intent? A finding counts only if it cites the entry or a PR and its issue.
+Autopilot runs it as stage 2 when the review loop is on, for at most `min(2, review cap)` rounds,
+each with a fresh, cold reviewer. `pr-response --yes` triages it under the same `triaged-through`
+gate as Steps 5–6. Its fixes land through a fix PR into the integration branch, because the final
+PR's head is that branch. A failure leaves the final PR open, unarmed and **integration-held**.
+
+**Alternatives**:
+- *A new skill.* Rejected (#720): the posting, staging and status mechanics are adversarial-review's.
+- *An `autopilot.maxIntegrationRounds` key.* Rejected: two cold rounds bound the spend, and the
+  review cap already lets a run go lower.
+- *Push fixes straight to the integration branch.* Rejected: a ruleset can refuse it, and it skips CI.
+- *Reuse a pr-green hook review, like Step 6's cap hatch.* Rejected: the hook's review asks the
+  per-PR questions, not this one.
+
+**Affects**: `adversarial-review`, `autopilot` and `pr-response` skills. Nothing changes unless a
+run turns on both integration mode and the review loop.
+
+---
+
 ## 2026-10-28: Main reaches the integration branch only through a sync PR (#747, part of #732)
 
 **Context**: The final integration → `main` PR can conflict with `main`, or pass on a stale base.
