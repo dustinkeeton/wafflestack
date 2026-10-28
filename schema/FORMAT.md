@@ -174,7 +174,8 @@ resolves in one of three ways:
 `.waffle/waffle.yaml` → the stack's `default:`. A consumer changes a skill's behavior by setting
 the key in config — never by editing the rendered skill, which the `doctor` drift gate reverts.
 `wafflestack state --json` reports every such key with its effective value, the layer it resolved
-from, and its tokens (the document shape is in `AGENTS.md`).
+from, and its tokens (the document shape is in `AGENTS.md`); `wafflestack config <key>` prints
+any one config key — behavioral or not — with its value, source file and default.
 
 The four fields, and what `validate` holds them to:
 
@@ -739,6 +740,8 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   override (see *Per-skill model invocation* below).
 - `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
+  `wafflestack config [key-prefix]` lists every key the selection can set and says which of
+  the two files (or the stack default) each value comes from.
 - `.waffle/extensions/agents/<name>.md`, `.waffle/extensions/skills/<name>.md`
   (committed, optional) — appended to the rendered item inside marked
   `<!-- BEGIN/END project extension -->` comments. This is the supported way to add
@@ -861,7 +864,7 @@ not a release — enough to tighten `unverified` to `unreleased`.
 | Gated (refuses when `unreleased`) | Not gated |
 |---|---|
 | `render` / `bake`, `install`, `upgrade`, `reinstall` | plain `doctor` — pure hash-vs-lock; it reads no toolkit content, so it is correct from *any* toolkit. Gating it would red `waffle-doctor.yml` for every consumer that pins CI to something other than a release (the toolkit's own repo runs it unpinned). |
-| `doctor --verify-render` — it *renders* | `list`, `setup` (alias `init`) — reports (`setup` writes only the static starter config): they **warn**, naming the tag to pin |
+| `doctor --verify-render` — it *renders* | `list`, `setup` (alias `init`), `config` — reports (`setup` writes only the static starter config): they **warn**, naming the tag to pin |
 | `list --interactive`, once a selection is applied | `eject`, `uninstall`, `validate`, `help` — never read toolkit content |
 
 **Escape hatch:** `--allow-unreleased`, or `WAFFLESTACK_ALLOW_UNRELEASED=1`. It suppresses the

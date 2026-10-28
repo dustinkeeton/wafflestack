@@ -33,6 +33,17 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **`wafflestack config [key-prefix]` looks up the config keys your selection can set (#701).**
+  Each key prints its effective value, where it comes from (`default`, `waffle.yaml`, or the
+  gitignored `waffle.local.yaml`), a one-line summary, its default, and its constraints (`range`,
+  cross-key `constraints:`, the values config may set, `flag:` tokens). A prefix filters
+  (`wafflestack config prResponse.rubric`); an exact key prints the full value, default and
+  description. A key declared by several selected stacks that disagree on requiredness, default or
+  constraints says so and shows each stack's value — e.g. `project.longName`. An unknown key exits 1
+  with a `did you mean` hint. `setup`'s "Config values" section is now built by the same function,
+  so the two lists match; its output is unchanged. The starter `.waffle/waffle.yaml` gains one
+  comment line pointing at the command.
+  **Consumer impact:** none — a new read-only command; nothing re-renders.
 - **`doctor`, `state`, and the `/waffle-view` pane now say when a newer toolkit release exists
   (#608).** `doctor` prints `a newer toolkit release exists: vX.Y.Z — this CLI is A.B.C` with the
   pinned `npx --yes github:<repo>#<tag> upgrade` command under it. The note is informational and
