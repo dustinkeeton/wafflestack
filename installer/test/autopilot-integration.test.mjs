@@ -252,7 +252,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
     assert.match(branch, /run \[Integration gate — stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\) below, and open the final PR only when it passes/);
     assert.match(branch, /`Synced with main at <M> via #S`/);
-    assert.match(branch, /integration gate stage 3 not yet implemented — review the combined change/);
+    assert.match(branch, /integration gate stages 2–3 run on this PR; their outcomes are in the run report — review the combined change/);
     assert.doesNotMatch(md, /"integration gate not yet implemented/);
     assert.match(gate(), /Do not open it, not even as a draft/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 1 held\*\*.*\*\*integration-held\*\*/);
@@ -297,7 +297,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
 describe('integration gate stage 2: decision-preservation review (#733)', () => {
   const AR = '.claude/skills/adversarial-review/SKILL.md';
   const mode = () => section(read(AR), '## Integration mode', '## 2. Read the full diff');
-  const stage2 = () => section(read(SKILL), '### Integration gate — stage 2', '## Per-issue loop');
+  const stage2 = () => section(read(SKILL), '### Integration gate — stage 2', '### Integration gate — stage 3');
 
   test('adversarial-review advertises --integration and resolves it before the PR', () => {
     const md = read(AR);
@@ -362,5 +362,92 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 2 held\*\*/);
     assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /the stage 2 outcome \(passed \/ \*\*integration-held\*\*/);
     assert.match(section(md, '### Rubric override', '### Integration mode'), /integration stage 2's `respond-int-pr<N>`/);
+  });
+});
+
+// #734 (part of #720): with integration mode, the audit gate runs once, as stage 3 on the final PR.
+describe('integration gate stage 3: the audit moves to the final PR (#734)', () => {
+  const stage3 = () => section(read(SKILL), '### Integration gate — stage 3', '## Per-issue loop');
+
+  test('stage 3 follows stage 2, item 3 runs it, and the body no longer says it is missing', () => {
+    const md = read(SKILL);
+    const at = md.indexOf('### Integration gate — stage 3 (audit)');
+    assert.ok(at > md.indexOf('### Integration gate — stage 2') && at < md.indexOf('## Per-issue loop'));
+    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /on it, then \[stage 3\]\(#integration-gate--stage-3-audit\)/);
+    assert.doesNotMatch(md, /[Ss]tage 3 (is )?not yet implemented/);
+  });
+
+  test('it rides audit-step consent, skips after a stage 2 hold, and waits with Step 8 exits', () => {
+    const md = stage3();
+    assert.match(md, /It rides audit-step consent \(§4\)/);
+    assert.match(md, /`stage 3: not run \(audit step off\)`/);
+    assert.match(md, /`stage 3: not run \(stage 2 held\)`/);
+    assert.match(md, /Step 8's blocked exits end the wait as a hold/);
+    assert.match(md, /`DIRTY`/);
+    assert.match(md, /no green two hours after the wait began/);
+  });
+
+  test('the chain runs in its own worktree over the combined diff, with an owned teardown', () => {
+    const md = stage3();
+    assert.match(md, /git diff --name-only origin\/main\.\.\.origin\/<integ>/);
+    assert.match(md, /`git worktree add -b <b3> <a3> origin\/<integ>`/);
+    assert.match(md, /`<b3>` is its branch, `autopilot\/stage3\/<ts>`/);
+    assert.match(md, /## Working tree/);
+    assert.match(md, /an agent edited outside `<a3>`/);
+    assert.match(md, /`shutdown_request` each audit agent and then `TaskStop` each one, even if a pass errors/);
+    assert.match(md, /Its `docs` invocation is the run's one docs refresh, over the combined diff/);
+    assert.match(md, /next to the focus in each prompt that skill spawns/);
+    assert.match(md, /keep `<a3>` and `<b3>` \(skip the Stage 3 hold's removal\)/);
+    assert.match(md, /`git worktree remove --force <a3>` and `git branch -D <b3>`, retry once/);
+  });
+
+  test('a stage 2 hold hands over the audit stage 3 never ran', () => {
+    const hold = section(read(SKILL), '**Stage 2 hold.**', '### Integration gate — stage 3');
+    assert.match(hold, /with audit-step consent on, run `\/audit` with `git diff --name-only origin\/main\.\.\.origin\/<integ>` as its focus/);
+  });
+
+  test('every green wait reads a commit status by its state, so stage 2 statuses can go green', () => {
+    const md = read(SKILL);
+    const polls = md.match(/gh pr view <pr> --json statusCheckRollup -q '[^']*'/g);
+    assert.equal(polls.length, 3);
+    for (const poll of polls) {
+      assert.doesNotMatch(poll, /\[\.statusCheckRollup\[\]\.conclusion\]/);
+      assert.equal(poll.match(/\[\.statusCheckRollup\[\] \| \.conclusion \/\/ \.state\]/g).length, 2);
+    }
+    assert.equal(md.match(/a `waffle\/\*` commit status has no `conclusion`, so the poll reads its `state`; `ERROR` is red/g).length, 3);
+  });
+
+  test('fixes land through a fix PR into <integ>; a hard block holds with a manual-review follow-up', () => {
+    const md = stage3();
+    assert.match(md, /gh pr create --base <integ> --head <b3> --title "autopilot: stage-3 audit fixes for <integ>" --body-file <scratch-file>/);
+    assert.match(md, /require `git diff --quiet <fixHead> origin\/<integ>`/);
+    assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
+    assert.match(md, /triage unresolved audit findings on integration PR #<F>/);
+    assert.match(md, /--add-label "waffle:manual-review"/);
+    assert.match(md, /\*\*audit-blocked\*\*/);
+    assert.match(md, /\*\*integration-held\*\*/);
+    assert.match(md, /\*\*Never arm `<F>`\*\*/);
+    assert.doesNotMatch(md, /git push[^\n]*<integ>/);
+    assert.doesNotMatch(md, /severity floor/);
+  });
+
+  test('per PR, the audit gate is off in integration mode; docsRefresh reads consent', () => {
+    const md = read(SKILL);
+    assert.match(section(md, '### 4. Audit-step consent', '### 5. QA-gate consent'), /\*\*With integration mode on, the audit gate moves to the final PR\.\*\*.*\*\*per-PR audit gate\*\*/);
+    assert.match(section(md, '### 4. Audit-step consent', '### 5. QA-gate consent'), /Wherever §3, §5 and Steps 3–8 say "the audit step is on" or "off"/);
+    assert.match(section(md, '### Step 7', '### Step 8'), /\*\*only when audit-step consent is on\*\* \(§4\) \*\*and integration mode is off\*\*/);
+    const step3 = section(md, '### Step 3', '### Step 4');
+    assert.match(step3, /This rule reads audit-step \*\*consent\*\*, not the per-PR gate/);
+    assert.match(step3, /In integration mode the audit step is off per PR \(§4\)/);
+    assert.match(section(md, '### Step 4', '### Step 5'), /With every per-PR gate off \(the audit gate is not one in this mode, §4\)/);
+  });
+
+  test('guardrails, failure handling and the run report carry stage 3', () => {
+    const md = read(SKILL);
+    const guard = section(md, '## Guardrails', '## Failure handling');
+    assert.match(guard, /\*\*Stage 3 never pushes to `<integ>`\.\*\*/);
+    assert.match(guard, /pushing its own `autopilot\/sync\/<ts>` branch and its own `autopilot\/stage3\/<ts>` branch/);
+    assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 3 held\*\*/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /the stage 3 outcome \(passed \/ \*\*integration-held\*\*/);
   });
 });

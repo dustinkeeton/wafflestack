@@ -183,6 +183,17 @@ is what you reach for across a breaking one.
 
 ### Changed
 
+- **Autopilot: with `+integration`, the `+audit` gate runs once, on the final PR (#734, part of
+  #720).** The audit no longer runs on each run PR. It runs once as integration gate stage 3 on the
+  integration → `main` PR, after stage 2, scoped to the combined diff, and it is still the last
+  gate. `delegate.docsRefresh` stays off per PR, so one docs refresh replaces N that would collide
+  on the root docs. Per-PR arming moves to the last per-PR gate still on. The chain runs in its own
+  worktree, and its fixes land through an `autopilot/stage3/<ts>` PR into the integration branch,
+  never a direct push. An unresolved Critical/High holds the whole run's merge as
+  **integration-held** with a `waffle:manual-review` follow-up. The final PR is still never armed.
+
+  **Consumer impact:** re-render only. `+audit` without `+integration` is unchanged.
+
 - **A malformed `recommended:` stack-manifest value is pinned to coerce to false (#426).** A test
   loads probe stacks with `"yes"`, `1`, `"false"`, `"true"`, and `[true]` and asserts each is
   `false`, so a refactor to `Boolean(...)` (which turns `"false"` into `true`) now fails.
@@ -201,6 +212,12 @@ is what you reach for across a breaking one.
   eval suite only.
 
 ### Fixed
+
+- **Autopilot's green waits read a commit status's `state` (PR #755).** The Step 5, 6 and 7 polls
+  read only `conclusion`, which a `waffle/*` commit status leaves null, so once a gate wrote one the
+  wait never read green. They now read `.conclusion // .state`, and a status `ERROR` is red.
+
+  **Consumer impact:** re-render only.
 
 - **Autopilot integration mode opens its final PR and no longer waits forever on a behind run PR
   (#741).** The final `gh pr create --base main` now passes `--title`; without it gh refuses to run
