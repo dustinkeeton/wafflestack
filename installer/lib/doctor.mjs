@@ -36,7 +36,7 @@ function noVerify() {
  * `canonical: true` (#473) reads the committed lock and config ONLY: neither the local overlay nor
  * the local lock is opened, so the result carries nothing from either.
  */
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false }) {
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null }) {
   const lock = readLock(cwd);
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
@@ -107,6 +107,14 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     identity: toolkitIdentity,
   });
   notes.push(...toolkitProvenance.notes);
+  // Informational only (#608): never flips `ok`, and distinct from the lock-vs-CLI skew note above.
+  if (update?.available && update.latestTag) {
+    notes.push(
+      update.command
+        ? `a newer toolkit release exists: ${update.latestTag} — this CLI is ${toolkitVersion}. To move to it, run:\n  ${update.command}`
+        : `a newer toolkit release exists: ${update.latestTag} — this CLI is ${toolkitVersion}. Run \`upgrade\` from a toolkit pinned to ${update.latestTag} to move to it.`,
+    );
+  }
 
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');

@@ -31,6 +31,24 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **`doctor`, `state`, and the `/waffle-view` pane now say when a newer toolkit release exists
+  (#608).** `doctor` prints `a newer toolkit release exists: vX.Y.Z — this CLI is A.B.C` with the
+  pinned `npx --yes github:<repo>#<tag> upgrade` command under it. The note is informational and
+  never changes the exit code. `state --json` gains an additive `update` block (`latestTag`,
+  `available`, `command`, `checkedAt`, `source`; the shape stays version 1), and its text form
+  appends `· vX.Y.Z available` to the `cli:` line. The pane shows `· vX.Y.Z available` in its
+  headline and the remedy command under it, and now runs `state --json` without `--offline` so the
+  cached check can run. The verdict comes from `newerRelease` in `toolkit-ref.mjs`, which `upgrade`
+  now uses too, with unchanged output. The lookup is one `git ls-remote` capped at 2 s, cached in
+  `$XDG_CACHE_HOME/wafflestack/latest-release.json` (or `~/.cache/…`) for 24 h, or for 1 h after a
+  failure. Any failure means no verdict. A toolkit checkout answers from its local tags.
+  **Consumer impact:** `doctor` and `state` from an `npx` install make at most one ≤2 s network
+  call a day; an ephemeral CI runner makes one per job. Pass `--offline` or set
+  `WAFFLESTACK_OFFLINE=1` to skip it (a fresh cached answer is still read). Nothing is written
+  into the repo.
+
 ### Changed
 
 - **A malformed `recommended:` stack-manifest value is pinned to coerce to false (#426).** A test

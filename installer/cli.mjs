@@ -17,6 +17,7 @@ import { formatPrereq } from './lib/prerequisites.mjs';
 import { computeListModel, formatListTable, interactiveSelect } from './lib/list.mjs';
 import { computeToggleModel, formatToggleTable, interactiveToggle, applyToggle } from './lib/toggle.mjs';
 import { resolveToolkitIdentity, formatUnreleasedRefusal, formatProvenanceWarning } from './lib/toolkit-ref.mjs';
+import { resolveLatestRelease, updateVerdict } from './lib/update-check.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -84,7 +85,7 @@ try {
       // Plain doctor is NOT gated — it reads no toolkit content, and gating it would red the
       // unpinned waffle-doctor.yml for every consumer; `--verify-render` renders, so it is (#373).
       const toolkitIdentity = verifyRender ? requireRelease('doctor --verify-render') : offlineIdentity();
-      const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot });
+      const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot, update: newerReleaseCheck() });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
       const tolerated = allowMissing && (!result.nothingPresent || result.render.evaluated);
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
@@ -121,10 +122,10 @@ try {
     case 'state': {
       const json = extractFlag(args, '--json');
       if (args.length) fail(`state takes no refs (got ${args.join(', ')}) — it prints this repo's resolved behavioral keys, run files and lock status`);
-      // Read-only and offline (#561): the tree is read through the tree lock, drift is the
-      // subject rather than the exit code, and nothing is written.
+      // Read-only (#561): the tree is read through the tree lock, drift is the subject rather than
+      // the exit code, and nothing in the repo is written — only the user-cache newer-release check (#608).
       const toolkitIdentity = warnProvenance(offlineIdentity());
-      const state = collectState({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity });
+      const state = collectState({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity, update: newerReleaseCheck() });
       process.stdout.write(json ? `${JSON.stringify(state, null, 2)}\n` : formatStateText(state));
       break;
     }
@@ -330,6 +331,12 @@ function offlineIdentity() {
   return offlineIdentityCache;
 }
 
+/** Best-effort "is there a newer release?" (#608) — cached, time-boxed, never throws; `--offline` only reads the cache. */
+function newerReleaseCheck() {
+  const id = offlineIdentity();
+  return updateVerdict(id, pkg.version, resolveLatestRelease({ identity: id, offline }));
+}
+
 /** The gate: refuses a write command from a provably-unreleased toolkit; `unverified` fails OPEN. */
 function requireRelease(cmd) {
   const id = identity();
@@ -424,6 +431,7 @@ function helpText() {
     '                    consumer should pin the ref instead. Env: WAFFLESTACK_ALLOW_UNRELEASED=1',
     '  --offline         skip the network release lookup (git ls-remote). For an air-gapped run that',
     '                    would otherwise stall on a doomed lookup; identity degrades to unverified.',
+    '                    doctor/state: also skips the newer-release check (a cached answer is still read)',
     '                    Env: WAFFLESTACK_OFFLINE=1',
     '',
   ].join('\n');

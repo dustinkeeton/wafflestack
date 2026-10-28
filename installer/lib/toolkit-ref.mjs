@@ -258,6 +258,23 @@ export function toolkitRef(slug, tag) {
 }
 
 /**
+ * The release newer than `runningVersion` that `identity.latestTag` names, plus the pinned remedy —
+ * or null when this CLI is the latest known. The ONE comparison `upgrade`, `doctor` and `state` share.
+ * With no repo, `command` is null: a remedy naming an unresolvable spec is worse than none.
+ *
+ * @param {Pick<ToolkitIdentity, 'latestTag'|'repo'|'lockRepo'>|null|undefined} identity
+ * @param {string|null|undefined} runningVersion
+ * @returns {{tag: string, command: string|null}|null}
+ */
+export function newerRelease(identity, runningVersion) {
+  const tag = identity?.latestTag ?? null;
+  if (!tag || !runningVersion || compareVersions(tag, runningVersion) <= 0) return null;
+  const repo = identity?.repo ?? identity?.lockRepo ?? null;
+  // #540: a same-major move names `update` here once that command lands.
+  return { tag, command: repo ? `npx --yes github:${repo}#${tag} upgrade` : null };
+}
+
+/**
  * The npx spec BASE — `"owner/repo"` → `"github:owner/repo"`, the lock's `toolkit.source` (no `#tag`;
  * `toolkitRef` adds it, `toolkitPinFromLock` reassembles, a test pins the three together).
  *
@@ -593,14 +610,15 @@ export function httpsUrl(slug) {
  * tag's commit needs (see `parseLsRemoteTags`). A non-zero exit throws, becoming `unverified`, not an outage.
  *
  * @param {string} url
+ * @param {{timeoutMs?: number}} [opts] the newer-release check passes a short one (#608)
  * @returns {string} raw stdout
  */
-export function gitLsRemoteTags(url) {
+export function gitLsRemoteTags(url, { timeoutMs = 15_000 } = {}) {
   try {
     return execFileSync('git', ['ls-remote', '--tags', '--', url], {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
-      timeout: 15_000,
+      timeout: timeoutMs,
       // No credential prompt may block a render; a repo that prompts is one we cannot classify.
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo', GCM_INTERACTIVE: 'never' },
     });

@@ -9,6 +9,39 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-27: `doctor` and `state` say when a newer release exists, through a cached 2 s lookup (#608)
+
+**Context**: Only `upgrade` said "a newer toolkit release exists", and you run it only once you
+know you are behind. Plain `doctor` and `state` stay offline on purpose (#373, #561), and the
+`/waffle-view` pane ran `state --json --offline`. Offline, an npm install can never see a newer tag.
+
+**Decision**: One shared, best-effort check in `installer/lib/update-check.mjs`.
+
+| Choice | What it is |
+| --- | --- |
+| **Where it caches** | `$XDG_CACHE_HOME/wafflestack/latest-release.json` (else `~/.cache/wafflestack/…`), one map keyed by toolkit repo. Nothing is written in the consumer repo. |
+| **How fresh** | A good answer lasts 24 h. A failed lookup is cached for 1 h, so an air-gapped pane does not wait on every turn. |
+| **How long it waits** | One `git ls-remote`, capped at 2 s. Any failure means "no verdict" — never an error, never a new exit code. |
+| **Checkouts** | A toolkit checkout answers from its local tags and never touches the network or the cache. |
+| **`--offline` / `WAFFLESTACK_OFFLINE=1`** | Reads a fresh cache entry, but never asks the network or writes. |
+| **Where it shows** | An informational `doctor` note (never flips `ok`), an additive `update` block in `state --json` (shape version stays 1), and a `· vX.Y.Z available` badge plus remedy line in the pane. |
+
+**Alternatives considered**:
+
+- **A `state --check-updates` flag for the pane** — rejected: `state`'s identity is offline
+  whatever the flag says, so dropping `--offline` from the pane turns on only the cached check
+  and adds no new flag.
+- **A cache file inside the consumer repo** — rejected: the latest tag belongs to the toolkit, not
+  the consumer, and a user-cache file needs no new `.gitignore`/`.stignore` entry.
+
+**Rationale**: The cache keeps the pane's per-turn refresh to one small file read, and the 2 s cap
+plus fail-silent fallback keep `doctor` and `state` green with no network, exactly as before.
+
+**Impact**: An `npx` install makes at most one short lookup per day; a cold CI runner makes one per
+job. `state` is still read-only in the repo but may write its user-cache file.
+
+---
+
 ## 2026-10-24: Wording-only review findings are nits, and a nit never files a follow-up (#682)
 
 **Context**: Review loops kept turning wording findings on skill and doc text into follow-up
@@ -844,9 +877,11 @@ files exist — was scattered across the config, the overlay, two locks, and del
 - **One read-only data source (#561, #563).** `wafflestack state [--json]` prints the resolved
   state: each behavioral key's value, the layer it came from, and its tokens; delegate's run files;
   committed vs local lock; and doctor drift. It writes nothing and runs offline.
+  *(Since #608 it may make one cached, 2 s release lookup — see the 2026-10-27 entry.)*
 - **The first mod, `waffle-view` (#562, #563).** Shipped by the `wafflestack` stack, `/waffle-view`
   toggles a pane that reads only `state --json --offline`. It narrows to the skill you last
   invoked by `/name` and falls back to the full view.
+  *(Since #608 the pane drops `--offline` so the cached release check runs.)*
 - **Loading and lint (#564).** `setup` prints how each rendered mod loads. `validate` runs
   `claude plugin validate` over each mod source when the CLI is present, and prints a visible
   `skipped:` line — never a pass — when it is not. The loader skips the files a

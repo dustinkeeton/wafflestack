@@ -6,7 +6,7 @@ import { readLock, renderProject } from './render.mjs';
 import { doctor } from './doctor.mjs';
 import { MIGRATIONS, migrationCeiling, runMigrations } from './migrations.mjs';
 import { CONFIG_FILE, LOCK_FILE, resolveConfigFile, setScalarIn } from './project.mjs';
-import { classifyToolkitRefValue, toolkitPinFromIdentity, parseRepoSlug } from './toolkit-ref.mjs';
+import { classifyToolkitRefValue, toolkitPinFromIdentity, parseRepoSlug, newerRelease } from './toolkit-ref.mjs';
 import { loadRegistry, replacementFor } from './registry.mjs';
 import { parseRef } from './refs.mjs';
 
@@ -374,11 +374,9 @@ function unpinnableReason(identity) {
  * @returns {{note: string, result: {tag: string, command: string|null}}|null}
  */
 function describeNewerRelease(identity, toVersion) {
-  const tag = identity?.latestTag ?? null;
-  if (!tag || !toVersion || compareVersions(tag, toVersion) <= 0) return null;
-  // A remedy that names a command which cannot resolve is worse than none: with no repo, name the tag.
-  const repo = identity?.repo ?? identity?.lockRepo ?? null;
-  const command = repo ? `npx --yes github:${repo}#${tag} upgrade` : null;
+  const newer = newerRelease(identity, toVersion);
+  if (!newer) return null;
+  const { tag, command } = newer;
   const note = command
     ? `a newer toolkit release exists: ${tag} — this CLI is ${toVersion} and renders only its own content. To move to ${tag}, run:\n  ${command}`
     : `a newer toolkit release exists: ${tag} — this CLI is ${toVersion} and renders only its own content. Re-run \`upgrade\` from a toolkit pinned to ${tag} to move to it.`;

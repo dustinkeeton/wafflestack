@@ -23,6 +23,7 @@ import {
   CONFIG_FILE,
 } from './project.mjs';
 import { exists, readYaml, lookupPath } from './util.mjs';
+import { NO_UPDATE_VERDICT } from './update-check.mjs';
 
 /** @import { Stack, Toolkit } from './toolkit.mjs' */
 /** @import { ProjectConfig, Target } from './project.mjs' */
@@ -112,6 +113,7 @@ export const SKILL_RUN_FILE_KEYS = {
  * @property {{ ok: boolean, modified: string[], missing: string[], absentDocs: string[], notes: string[] }} drift the plain `doctor` verdict against the tree lock
  * @property {Record<string, ConfigValue>} config every declared key across the selected stacks, resolved (#563); `keys` is the behavioral subset with its mode machinery
  * @property {Record<string, SkillContext>} skills per selected skill: the declared keys its files reference and the run files it writes (#563)
+ * @property {import('./update-check.mjs').UpdateVerdict} update whether a newer toolkit release exists (#608); all-null when unknown
  *
  * @typedef {object} ConfigValue one declared config key, resolved
  * @property {any} value the effective value, nested `{{…}}` expanded (overlay included); null when unset
@@ -126,10 +128,10 @@ export const SKILL_RUN_FILE_KEYS = {
 /**
  * Collect the state. Throws when `.waffle/waffle.yaml` is absent — with no config there is no state.
  *
- * @param {{ cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: import('./toolkit-ref.mjs').ToolkitIdentity|null, sourceCacheDir?: string }} opts
+ * @param {{ cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: import('./toolkit-ref.mjs').ToolkitIdentity|null, sourceCacheDir?: string, update?: import('./update-check.mjs').UpdateVerdict|null }} opts
  * @returns {StateBundle}
  */
-export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir = defaultSourceCacheDir() }) {
+export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, sourceCacheDir = defaultSourceCacheDir(), update = null }) {
   const project = loadProjectConfig(cwd);
   const overlayFile = resolveLocalConfigFile(cwd).file;
   const localOverlay = exists(overlayFile);
@@ -170,6 +172,7 @@ export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity
     drift: driftFacts(cwd, toolkitVersion, toolkitIdentity),
     config: resolveConfig(stacks, { project, overlayValues, canonical, target }),
     skills: resolveSkills(selection.items, { project, target, delegate }),
+    update: update ?? { ...NO_UPDATE_VERDICT },
   };
 }
 
@@ -489,6 +492,8 @@ export function formatStateText(s) {
   lines.push('', `drift: ${s.drift.ok ? 'clean' : 'RED'} — ${s.drift.modified.length} modified, ${s.drift.missing.length} missing, ${s.drift.absentDocs.length} absent generated docs`);
   for (const f of s.drift.modified) lines.push(`  modified: ${f}`);
   for (const f of s.drift.missing) lines.push(`  missing:  ${f}`);
-  lines.push(`cli: ${s.cli.version} (${s.cli.status})`);
+  const u = s.update;
+  const newer = u?.available ? ` · ${u.latestTag} available${u.command ? ` — run ${u.command}` : ''}` : '';
+  lines.push(`cli: ${s.cli.version} (${s.cli.status})${newer}`);
   return `${lines.join('\n')}\n`;
 }
