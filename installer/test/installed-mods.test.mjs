@@ -90,21 +90,23 @@ describe('stale installed mods (#730)', () => {
 
   test('doctor and upgrade report the stale mod as a note without flipping ok', () => {
     write(cwd, '.waffle/waffle.yaml', 'config: {}\ntargets: [claude]\nstacks: [mb]\n');
-    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' }).ok, true);
+    assert.equal(renderProject({ toolkitRoot, cwd, toolkitVersion: '0.5.0' }).ok, true);
     installed([{ scope: 'user', version: '0.2.1' }]);
 
-    const plain = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot });
+    const plain = doctor({ cwd, toolkitVersion: '0.5.0', toolkitRoot });
     assert.deepEqual(plain.staleMods, [], 'no pluginsDir, no lookup');
-    const dr = doctor({ cwd, toolkitVersion: '0.0.test', toolkitRoot, pluginsDir });
+    const dr = doctor({ cwd, toolkitVersion: '0.5.0', toolkitRoot, pluginsDir });
     assert.equal(dr.ok, true);
     assert.equal(dr.staleMods.length, 1);
     assert.ok(dr.notes.some((n) => n.includes(`claude plugin update ${ID} --scope user`)));
 
-    const skewed = doctor({ cwd, toolkitVersion: '0.0.newer', toolkitRoot, pluginsDir });
+    const skewed = doctor({ cwd, toolkitVersion: '0.6.0', toolkitRoot, pluginsDir });
     assert.ok(skewed.notes.some((n) => n.includes(`run: \`wafflestack upgrade\` (the render pins an older release), then claude plugin update ${ID} --scope user`)), 'CLI newer than the render: re-render first');
     assert.ok(!dr.notes.some((n) => n.includes('wafflestack upgrade')), 'no skew, no upgrade step');
+    const behind = doctor({ cwd, toolkitVersion: '0.4.0', toolkitRoot, pluginsDir });
+    assert.ok(behind.notes.some((n) => n.includes(`run: claude plugin update ${ID} --scope user`)), 'CLI older than the render: update alone');
 
-    const up = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.0.test', pluginsDir });
+    const up = upgrade({ toolkitRoot, cwd, toolkitVersion: '0.5.0', pluginsDir });
     assert.equal(up.doctor.staleMods.length, 1);
   });
 });

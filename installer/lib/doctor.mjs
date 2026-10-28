@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { sha256, exists } from './util.mjs';
+import { sha256, exists, compareVersions, parseVersion } from './util.mjs';
 import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems } from './render.mjs';
 import {
   LOCK_FILE,
@@ -120,7 +120,9 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
 
   // Informational only (#730): install records are per-machine state, so a stale mod never flips `ok`.
   const staleMods = findStaleMods({ cwd, settings: tree.settings, toolkitRoot, pluginsDir });
-  for (const m of staleMods) notes.push(formatStaleMod(m, { skew }));
+  // Only a CLI NEWER than the render ships mod versions the pinned marketplace cannot reach.
+  const cliAhead = Boolean(parseVersion(toolkitVersion) && parseVersion(lock.toolkitVersion)) && compareVersions(toolkitVersion, lock.toolkitVersion) > 0;
+  for (const m of staleMods) notes.push(formatStaleMod(m, { cliAhead }));
 
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');
