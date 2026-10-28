@@ -473,7 +473,8 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     const md = arm();
     assert.match(md, /Without `\+automerge`, leave it for a human/);
     assert.match(md, /A stage not run because its consent is off does not block; a held stage does/);
-    assert.match(md, /`gh pr view <F> --json headRefOid -q \.headRefOid` must equal `origin\/<integ>`, and both must equal the head stage 1 passed on/);
+    assert.match(md, /`gh pr view <F> --json headRefOid -q \.headRefOid` must equal `origin\/<integ>`, and both must equal `<stage1Head>`, the head stage 1 passed on/);
+    assert.match(read(SKILL), /Record the head stage 1 passed on as `<stage1Head>`: `origin\/<integ>` as step 6 fetched it, or `<gateHead>` when no sync was needed/);
     assert.match(md, /`gh pr list --base <integ> --state open` must print nothing/);
     assert.match(md, /`gh pr merge --auto --merge <F>`, on a successful arm `gh pr edit <F> --add-label "waffle:auto-merged"`/);
     assert.match(md, /\.autoMergeRequest != null/);
