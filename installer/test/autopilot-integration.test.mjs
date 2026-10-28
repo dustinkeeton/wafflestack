@@ -165,7 +165,7 @@ describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
 
   test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
     const md = step8();
-    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when the required-checks read prints `true`: a required check run or commit status is in bucket `fail` or `cancel` \(\*\*red check\*\*/);
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when the required-checks read prints `true`: a required check is in bucket `fail` or `cancel` \(\*\*red check\*\*/);
     assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
     assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
     assert.match(md, /`state` is `CLOSED`/);
@@ -203,7 +203,8 @@ describe('autopilot Step 8 red check reads required checks only (#744)', () => {
   test('optional checks never end the wait; required check runs and commit statuses do', () => {
     const md = step8();
     assert.match(md, /optional checks never count, whether required checks are pending or done/);
-    assert.match(md, /a required check run or commit status is in bucket `fail` or `cancel`/);
+    assert.match(md, /a required check is in bucket `fail` or `cancel`/);
+    assert.match(md, /gh's checks list covers both check runs and commit statuses, `--required` follows GitHub's own required flag/);
   });
 
   test('state is read first, and empty or error output keeps polling under the stall bound', () => {

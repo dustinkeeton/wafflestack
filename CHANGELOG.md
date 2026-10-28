@@ -230,8 +230,9 @@ is what you reach for across a breaking one.
   check on `BLOCKED` plus any red `statusCheckRollup` item, but `BLOCKED` also covers required
   checks still pending, so a fast optional check failing first spent the issue's one retry on a PR
   that could still merge. Red-ness now comes from `gh pr checks <pr> --required` (bucket `fail` or
-  `cancel`), decided from its output, not its exit code; `mergeStateStatus` still catches `DIRTY`
-  and `BEHIND`. **Consumer impact:** autopilot skill text only — `render` picks it up.
+  `cancel`); gh's checks list covers both check runs and commit statuses, and `--required` follows
+  GitHub's own required flag. It is decided from its output, not its exit code; `mergeStateStatus`
+  still catches `DIRTY` and `BEHIND`. **Consumer impact:** autopilot skill text only — `render` picks it up.
 
 - **Autopilot's green waits read a commit status's `state` (PR #755).** The Step 5, 6 and 7 polls
   read only `conclusion`, which a `waffle/*` commit status leaves null, so once a gate wrote one the
