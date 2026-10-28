@@ -631,7 +631,7 @@ behavioral-key validate rules, render + doctor guards, locked autopilot consents
 multi-stack conflicts, prefix/near-miss/out-of-scope errors, long text; CLI guards and the starter-config pointer), `toggle.test.mjs` (#476:
 config normalization, frontmatter patch, fixture render + toggle, CLI), `update-check.test.mjs` (#608:
 `newerRelease`, cached/offline/failed `resolveLatestRelease`, `updateVerdict`, doctor's note keeps `ok`, checkout CLI writes no cache),
-`autopilot-integration.test.mjs` (#731: `autopilot.integration` declaration/resolution and its SKILL.md wiring; #742: Step 8's merge wait polls `state` + `mergeStateStatus` and ends as blocked on DIRTY/BEHIND/CLOSED or a two-hour stall),
+`autopilot-integration.test.mjs` (#731: `autopilot.integration` declaration/resolution and its SKILL.md wiring; #742: Step 8's merge wait polls `state` + `mergeStateStatus` + `statusCheckRollup` and ends as blocked on a red check, DIRTY/BEHIND/CLOSED or a two-hour stall; #741: the end-of-run integration wait reuses Step 8's rule and every final `gh pr create --base main` carries `--title`),
 `autopilot-rubric.test.mjs` (#646: autopilot `--rubric` pass-through and rubric base line render), `rubric-override.test.mjs` (#645: pr-response `--rubric` run override),
 `rubric-thresholds.test.mjs` (#630: pr-response rubric thresholds render/doctor, `range:`/`constraints:` guards and lint), `rubric-weights.test.mjs` (#644: rubric weights render/doctor, `anyPositive` constraint kind),
 `blockers.test.mjs` (#549/#579: picker blockers, prerequisite and external-source trust hints, upgrade names stale tag mentions), `board.test.mjs` (#697: `readBoard`, state text board block, CLI flag),
