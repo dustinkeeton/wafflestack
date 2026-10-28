@@ -360,6 +360,7 @@ describe('identity from a git checkout (#373)', { skip: gitOk ? false : 'git not
     assert.equal(id.version, '0.9.0');
     assert.equal(id.repo, 'acme/toolkit');
     assert.equal(id.ref, 'github:acme/toolkit#v0.9.0');
+    assert.equal(id.latestTagSource, 'local-tags');
     assert.equal(id.lookupError, null);
     assert.equal(formatProvenanceWarning(id), null);
   });
