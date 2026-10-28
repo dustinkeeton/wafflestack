@@ -213,6 +213,12 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's green waits read a commit status's `state` (PR #755).** The Step 5, 6 and 7 polls
+  read only `conclusion`, which a `waffle/*` commit status leaves null, so once a gate wrote one the
+  wait never read green. They now read `.conclusion // .state`, and a status `ERROR` is red.
+
+  **Consumer impact:** re-render only.
+
 - **Autopilot integration mode opens its final PR and no longer waits forever on a behind run PR
   (#741).** The final `gh pr create --base main` now passes `--title`; without it gh refuses to run
   non-interactively, so the final PR never opened and the not-opened report handed out the same

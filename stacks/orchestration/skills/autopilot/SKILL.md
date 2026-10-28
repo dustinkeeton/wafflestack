@@ -88,7 +88,7 @@ Whether this run runs the **`/audit` gate** (Step 7) on each PR as the **final**
 - **Independent of auto-merge consent and of review-loop consent.** The opt-ins are captured separately and none implies another — **any combination may be on.** The audit gate can run on a PR that will then be **armed** (auto-merge also on) or one **left for a human** (auto-merge off), and with or without the QA gate (§5) or the review loop (§3) ahead of it. `{{autopilot.auditStep.flag.on}}` alone is a valid, useful mandate.
 - **Consent off** → no audit gate runs; the per-issue flow is exactly as #220 left it, and arming happens wherever Step 3 / Step 5 / Step 6 put it. This change is invisible unless you opt in.
 - **Consent on** → autopilot defers auto-merge arming **past the QA gate and the review loop too**, out to the audit gate (Step 7): it waits for the PR to go green, composes `/audit` scoped to the diff, lands the fixes and re-waits for green, then **hard-gates on unresolved Critical/High findings** — blocking the merge (and filing a `{{autopilot.holdLabel}}` follow-up) **even if auto-merge was consented** — and only arms auto-merge, if consented, once the gate passes green. The audit gate is always the last gate.
-- **With integration mode on, the audit gate moves to the final PR.** It does not run per PR. Wherever Steps 3–8 say "the audit step is on" or "off", read the **per-PR audit gate**: on only when audit-step consent is on and integration mode is off. The audit runs once instead, as [Integration gate — stage 3](#integration-gate--stage-3-audit) on the integration → `main` PR, scoped to the combined diff, and it is still the last gate. One rule reads consent, not the per-PR gate: `delegate.docsRefresh` stays off per PR (Step 3). Without integration mode, nothing changes.
+- **With integration mode on, the audit gate moves to the final PR.** It does not run per PR. Wherever §3, §5 and Steps 3–8 say "the audit step is on" or "off", read the **per-PR audit gate**: on only when audit-step consent is on and integration mode is off. The audit runs once instead, as [Integration gate — stage 3](#integration-gate--stage-3-audit) on the integration → `main` PR, scoped to the combined diff, and it is still the last gate. One rule reads consent, not the per-PR gate: `delegate.docsRefresh` stays off per PR (Step 3). Without integration mode, nothing changes.
 
 ### 5. QA-gate consent — per-run, separate from the other consents, config may say `false`, never `true`
 
@@ -245,7 +245,7 @@ Runs from item 3, after stage 2, on `<F>`. It is Step 7's `/audit` gate, run onc
    git diff --name-only origin/main...origin/<integ>
    ```
 
-4. **Run the chain** as Step 7 items 2–3 do, with that focus: compose the `audit` playbook, run its passes in order with its `docs` invocation, and answer pass 1's human gate with "no human here". Put this block in every audit agent's prompt and in the `docs` invocation, so every fix lands in `<a3>`:
+4. **Run the chain** as Step 7 items 2–3 do, with that focus: compose the `audit` playbook, run its passes in order with its `docs` invocation, and answer pass 1's human gate with "no human here". Put this block in every audit agent's prompt and, because autopilot runs the `docs` skill itself, next to the focus in each prompt that skill spawns, so every fix lands in `<a3>`:
 
    ```
    ## Working tree
@@ -404,10 +404,10 @@ Run this per PR (each PR in a parallel group independently):
 1. **Wait for green.** `qa` is a *post-green* gate, so first poll until the PR's required checks pass:
 
    ```bash
-   gh pr view <pr> --json statusCheckRollup -q '([.statusCheckRollup[].conclusion] | length > 0) and ([.statusCheckRollup[].conclusion] | all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL"))'
+   gh pr view <pr> --json statusCheckRollup -q '([.statusCheckRollup[] | .conclusion // .state] | length > 0) and ([.statusCheckRollup[] | .conclusion // .state] | all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL"))'
    ```
 
-   If a required check goes **red** (never green), the PR is blocked — stop its loop and report per [Failure handling](#failure-handling); never run `qa` on a red PR and never arm one. Once the wait reads green, read the head it just certified — `gh pr view <pr> --json headRefOid -q .headRefOid` — that **fresh** value is the `<sha>` every resume message in this loop carries; never reuse a SHA cached from before the wait.
+   If a required check goes **red** (never green) (a `waffle/*` commit status has no `conclusion`, so the poll reads its `state`; `ERROR` is red), the PR is blocked — stop its loop and report per [Failure handling](#failure-handling); never run `qa` on a red PR and never arm one. Once the wait reads green, read the head it just certified — `gh pr view <pr> --json headRefOid -q .headRefOid` — that **fresh** value is the `<sha>` every resume message in this loop carries; never reuse a SHA cached from before the wait.
 
 2. **Loop up to the run's effective QA cap** (`{{autopilot.qaLoop.flag.on}}:N` when given, else the rendered default of `{{autopilot.maxQaRounds}}` rounds). **Only a cold round can end the loop, and every round, cold or anchored, counts toward the cap** (#510). A round is **cold** when its reviewer carries no history of this PR:
    - **Round 1 is always cold.** `qa-pr<N>` is spawned that round with nothing to remember, and its round-1 prompt carries no seed sentence.
@@ -478,10 +478,10 @@ Run this per PR (each PR in a parallel group independently):
 1. **Wait for green.** `adversarial-review` is a *post-green* gate, so first poll until the PR's required checks pass:
 
    ```bash
-   gh pr view <pr> --json statusCheckRollup -q '([.statusCheckRollup[].conclusion] | length > 0) and ([.statusCheckRollup[].conclusion] | all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL"))'
+   gh pr view <pr> --json statusCheckRollup -q '([.statusCheckRollup[] | .conclusion // .state] | length > 0) and ([.statusCheckRollup[] | .conclusion // .state] | all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL"))'
    ```
 
-   If a required check goes **red** (never green), the PR is blocked — stop its loop and report per [Failure handling](#failure-handling); never run `adversarial-review` on a red PR and never arm one. Once the wait reads green, read the head it just certified — `gh pr view <pr> --json headRefOid -q .headRefOid` — that **fresh** value is the `<sha>` every resume message in this loop carries; never reuse a SHA cached from before the wait.
+   If a required check goes **red** (never green) (a `waffle/*` commit status has no `conclusion`, so the poll reads its `state`; `ERROR` is red), the PR is blocked — stop its loop and report per [Failure handling](#failure-handling); never run `adversarial-review` on a red PR and never arm one. Once the wait reads green, read the head it just certified — `gh pr view <pr> --json headRefOid -q .headRefOid` — that **fresh** value is the `<sha>` every resume message in this loop carries; never reuse a SHA cached from before the wait.
 
 2. **Loop up to the run's effective review cap** (`{{autopilot.reviewLoop.flag.on}}:N` when given, else the rendered default of `{{autopilot.maxReviewRounds}}` rounds). **Only a cold round can end the loop, and every round, cold or anchored, counts toward the cap** — the same rule as Step 5 (#510). Round 1 is always cold, because `review-pr<N>` is spawned with nothing to remember. A **cold certification round** follows every **anchored-clean** round. Every other round is anchored. Each round:
    - **Review** — run `adversarial-review <pr>`. In round 1 and every anchored round this is the `review-pr<N>` agent: spawned in round 1, **resumed on the new head** in every anchored round after. It posts its findings as one PR review (or a "no holes found" summary) and returns a per-severity count. A resumed round re-reads the diff fresh from the new head — the branch moved — while keeping the finding history that tells it what it already raised. **In a cold certification round, spawn the reviewer fresh and unnamed instead.** It is a bare `Agent(…)` with no `name:`, it runs once and is never resumed, and `review-pr<N>` stays standing. Its prompt carries **this pass is deliberately cold — do not seed history from the PR**.
@@ -538,10 +538,10 @@ Auto-merge is **not yet armed** on this PR — Step 3 (and Steps 5–6, when the
 1. **Wait for green.** The audit runs on the **post-review, post-fix** state, so first poll until the PR's required checks pass — the same green-wait as Steps 5 and 6:
 
    ```bash
-   gh pr view <pr> --json statusCheckRollup -q '([.statusCheckRollup[].conclusion] | length > 0) and ([.statusCheckRollup[].conclusion] | all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL"))'
+   gh pr view <pr> --json statusCheckRollup -q '([.statusCheckRollup[] | .conclusion // .state] | length > 0) and ([.statusCheckRollup[] | .conclusion // .state] | all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL"))'
    ```
 
-   If a required check is **red** (never green), the PR is blocked — stop its gate and report per [Failure handling](#failure-handling); never run the audit on a red PR and never arm one.
+   If a required check is **red** (never green) (a `waffle/*` commit status has no `conclusion`, so the poll reads its `state`; `ERROR` is red), the PR is blocked — stop its gate and report per [Failure handling](#failure-handling); never run the audit on a red PR and never arm one.
 
 2. **Run `/audit`, scoped to the PR's diff.** Autopilot **composes the `audit` playbook itself** — the skill is `disable-model-invocation: true`, so it is never auto-invoked; autopilot drives its steps the way it drives the delegate and clean-up playbooks — and it **owns the audit agents' lifecycle end to end**:
    - **Scope the focus to the changed area.** Compute the PR's changed modules/paths and pass them as `/audit`'s focus argument so every pass — the `docs` invocation included — concentrates on the diff — the architecture pass is constrained to the PR's files, **not** a whole-repo refactor:

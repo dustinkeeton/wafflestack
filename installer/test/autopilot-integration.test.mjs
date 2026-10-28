@@ -396,6 +396,18 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
     assert.match(md, /an agent edited outside `<a3>`/);
     assert.match(md, /`shutdown_request` each audit agent and then `TaskStop` each one, even if a pass errors/);
     assert.match(md, /Its `docs` invocation is the run's one docs refresh, over the combined diff/);
+    assert.match(md, /next to the focus in each prompt that skill spawns/);
+  });
+
+  test('every green wait reads a commit status by its state, so stage 2 statuses can go green', () => {
+    const md = read(SKILL);
+    const polls = md.match(/gh pr view <pr> --json statusCheckRollup -q '[^']*'/g);
+    assert.equal(polls.length, 3);
+    for (const poll of polls) {
+      assert.doesNotMatch(poll, /\[\.statusCheckRollup\[\]\.conclusion\]/);
+      assert.equal(poll.match(/\[\.statusCheckRollup\[\] \| \.conclusion \/\/ \.state\]/g).length, 2);
+    }
+    assert.equal(md.match(/a `waffle\/\*` commit status has no `conclusion`, so the poll reads its `state`; `ERROR` is red/g).length, 3);
   });
 
   test('fixes land through a fix PR into <integ>; a hard block holds with a manual-review follow-up', () => {
@@ -415,6 +427,7 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
   test('per PR, the audit gate is off in integration mode; docsRefresh reads consent', () => {
     const md = read(SKILL);
     assert.match(section(md, '### 4. Audit-step consent', '### 5. QA-gate consent'), /\*\*With integration mode on, the audit gate moves to the final PR\.\*\*.*\*\*per-PR audit gate\*\*/);
+    assert.match(section(md, '### 4. Audit-step consent', '### 5. QA-gate consent'), /Wherever §3, §5 and Steps 3–8 say "the audit step is on" or "off"/);
     assert.match(section(md, '### Step 7', '### Step 8'), /\*\*only when audit-step consent is on\*\* \(§4\) \*\*and integration mode is off\*\*/);
     const step3 = section(md, '### Step 3', '### Step 4');
     assert.match(step3, /This rule reads audit-step \*\*consent\*\*, not the per-PR gate/);
