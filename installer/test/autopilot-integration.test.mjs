@@ -148,3 +148,39 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(guard, /Integration mode is a routing mode, not a consent, so config may set it\./);
   });
 });
+
+// #742: Step 8's serial wait ends as blocked on a conflicting, behind, closed or stalled PR.
+describe('autopilot Step 8 merge wait ends on a blocked PR (#742)', () => {
+  const step8 = () => section(read(SKILL), '### Step 8', '### Step 9');
+
+  test('polls state and mergeStateStatus, not state alone', () => {
+    const md = step8();
+    assert.match(md, /gh pr view <pr> --json state,mergeStateStatus,statusCheckRollup   # poll until state is MERGED/);
+    assert.doesNotMatch(md, /--json state -q \.state/);
+  });
+
+  test('DIRTY, BEHIND, CLOSED and a two-hour stall end the wait as blocked', () => {
+    const md = step8();
+    assert.match(md, /\*\*The wait also ends, as blocked,\*\* when `mergeStateStatus` is `BLOCKED` and a `statusCheckRollup` item reads `FAILURE`, `ERROR`, .*\(its `conclusion`, or a commit status's `state`\) \(\*\*red check\*\*; a red optional check reads `UNSTABLE` instead, and auto-merge still merges it\)/);
+    assert.match(md, /`mergeStateStatus` is `DIRTY` \(a conflict with its base/);
+    assert.match(md, /`mergeStateStatus` is `BEHIND` \(the base requires up-to-date branches/);
+    assert.match(md, /`state` is `CLOSED`/);
+    assert.match(md, /has not merged two hours after arming \(\*\*stalled\*\*\)/);
+    assert.match(md, /A red check is one failed attempt per \[Failure handling\]\(#failure-handling\); `DIRTY`, `BEHIND`, `CLOSED` and stalled are not, so they never enter the one-retry loop/);
+    assert.match(md, /never merges by hand or with `--admin`/);
+  });
+
+  test('pending states keep polling and are absent from the stop clause', () => {
+    const md = step8();
+    assert.match(md, /Any other `mergeStateStatus` keeps the wait polling: `BLOCKED` with no red check \(checks or reviews pending\), `UNSTABLE`, `HAS_HOOKS`, `CLEAN`, or `UNKNOWN`/);
+    const stop = section(md, '**The wait also ends, as blocked,**', 'Any other `mergeStateStatus`');
+    for (const s of ['HAS_HOOKS', 'CLEAN', 'UNKNOWN']) assert.ok(!stop.includes(`\`${s}\``), s);
+  });
+
+  test('failure handling and the run report carry the blocked PR', () => {
+    const md = read(SKILL);
+    assert.match(section(md, '## Failure handling', '- **A QA round'), /conflicts with or falls behind its base, closes, or stalls in Step 8's wait/);
+    const report = section(md, '## End-of-run housekeeping', '## Guardrails');
+    assert.equal(report.match(/\*\*merge-blocked\*\*/g)?.length, 2);
+  });
+});

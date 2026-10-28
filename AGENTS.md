@@ -596,7 +596,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
 | evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 28 cases: `code-quality` (2) + `github-workflow` (15) + `orchestration` (5) + `wafflestack` (6). NOT in `npm test` |
 
-Test files (30): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
+Test files (34): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
@@ -630,7 +630,13 @@ behavioral-key validate rules, render + doctor guards, locked autopilot consents
 `config` lookup on a two-stack fixture — setup parity, source attribution incl. the overlay, constraints,
 multi-stack conflicts, prefix/near-miss/out-of-scope errors, long text; CLI guards and the starter-config pointer), `toggle.test.mjs` (#476:
 config normalization, frontmatter patch, fixture render + toggle, CLI), `update-check.test.mjs` (#608:
-`newerRelease`, cached/offline/failed `resolveLatestRelease`, `updateVerdict`, doctor's note keeps `ok`, checkout CLI writes no cache).
+`newerRelease`, cached/offline/failed `resolveLatestRelease`, `updateVerdict`, doctor's note keeps `ok`, checkout CLI writes no cache),
+`autopilot-integration.test.mjs` (#731: `autopilot.integration` declaration/resolution and its SKILL.md wiring; #742: Step 8's merge wait polls `state` + `mergeStateStatus` and ends as blocked on DIRTY/BEHIND/CLOSED or a two-hour stall),
+`autopilot-rubric.test.mjs` (#646: autopilot `--rubric` pass-through and rubric base line render), `rubric-override.test.mjs` (#645: pr-response `--rubric` run override),
+`rubric-thresholds.test.mjs` (#630: pr-response rubric thresholds render/doctor, `range:`/`constraints:` guards and lint), `rubric-weights.test.mjs` (#644: rubric weights render/doctor, `anyPositive` constraint kind),
+`blockers.test.mjs` (#549/#579: picker blockers, prerequisite and external-source trust hints, upgrade names stale tag mentions), `board.test.mjs` (#697: `readBoard`, state text board block, CLI flag),
+`config-reference.test.mjs` (#703: `configReferenceYaml` formatter, the real toolkit reference, uncommented tree passes render + doctor, #317 no config value leaks), `installed-mods.test.mjs` (#730: doctor names the `claude plugin update` for a stale installed mod),
+`post-merge-delete.test.mjs` (#212: post-merge hook branch-delete probe — confirmed 404 vs failed check; skipped without bash).
 
 ### Harness tool roster (#445)
 

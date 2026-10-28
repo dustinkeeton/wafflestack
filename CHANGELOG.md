@@ -162,6 +162,13 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's serial merge wait ends on a conflicting, behind or stalled PR (#742).** Step 8
+  polled only `state` until `MERGED`, so an armed PR that turned `DIRTY` or `BEHIND` hung the run.
+  It now polls `state,mergeStateStatus,statusCheckRollup` and ends the wait as blocked on a red
+  check while `BLOCKED`, `DIRTY`, `BEHIND`, a closed PR, or no merge within two hours of arming. The
+  PR stays open and the run report lists it **merge-blocked** with the reason. Only a red check
+  counts as a failed attempt; a red optional check (`UNSTABLE`) keeps waiting (#744 tracks one edge).
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
 - **Enabled mods no longer stay pinned at their first-installed version (#730).** The rendered
   `extraKnownMarketplaces` entry now sets `autoUpdate: true`, so Claude Code's background
   auto-update moves an installed mod forward. Third-party marketplaces default to off. `doctor` and
