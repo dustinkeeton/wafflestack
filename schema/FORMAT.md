@@ -134,7 +134,8 @@ key resolves to `[]`, `""`, or null, the composed key renders as `""` — no orp
 template conditional. `docs.protectedDocs` + `docs.protectedDocsSection` are the worked example:
 consumers override the list, and `[]` renders no guardrail section. `validate` checks that the
 format is known, that a `listFormat:` default is such a list, and that the gate key is declared.
-A key referenced only inside another key's string default counts as referenced.
+A key referenced only inside another key's string default counts as referenced, and so does a
+key a mod in the same stack spells as a quoted literal (see Mods, #616).
 
 ### Numeric keys — `range:`, `constraints:`
 
@@ -602,8 +603,10 @@ stacks/<stack>/mods/waffle-view/
 - **No substitution.** A `.tsx` hook file is code, not a template: nothing under a mod dir gets
   `{{key}}` substitution (it is fetched from the marketplace as authored), and
   `validate` collects no placeholders from it. Project extensions do not apply either. A mod that
-  must read project configuration reads it at runtime from the rendered harness, never from the
-  toolkit's template values.
+  must read project configuration reads it at runtime (`wafflestack state --json`'s `config` map),
+  never from the toolkit's template values. A declared key that only a mod reads is referenced by
+  its quoted literal in the mod's `.ts`/`.tsx`/`.js`/`.mjs`/`.jsx` source (`'waffleView.editor'`,
+  #616; `*.test.*` and `.d.ts` files do not count), so `validate` does not report it as never referenced.
 - **Registered.** A mod is a waffle: it has an entry in `stacks/registry.yaml` (`kind: mod`,
   `path: stacks/<stack>/mods/<name>`), is reconciled by `validate` like an agent or skill, and
   honours the same `status:` lifecycle — a `wip` mod is skipped by stack expansion and refused as a

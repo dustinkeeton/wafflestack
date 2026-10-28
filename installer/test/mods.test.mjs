@@ -17,6 +17,7 @@ import { resolveRef, parseRef, normalizeItemRef, itemOutputMatcher, legacyModDir
 import { computeListModel, STATUS } from '../lib/list.mjs';
 import { WAFFLE_KINDS, refKindOf, waffleKindOf, canonicalWafflePath } from '../lib/registry.mjs';
 import { MARKETPLACE_FILE, validateMarketplace, marketplacePluginId } from '../lib/marketplace.mjs';
+import { collectState } from '../lib/state.mjs';
 import { SETTINGS_FILE, settingsKey, parseSettingsKey, marketplaceKey, pluginKey } from '../lib/settings.mjs';
 
 const MOD_FILES = {
@@ -414,6 +415,16 @@ describe('mods/ render kind (#560)', () => {
     assert.ok(validateToolkit(toolkitRoot).some((p) => /mod viewer .*plugin\.json names it "renamed" — it must equal the directory name/.test(p)));
   });
 
+  test('a declared key a mod spells as a quoted literal is referenced; the literal gone, it reads as unused (#616)', () => {
+    writeStack(toolkitRoot, 'mb', ['config:', '  viewer.editor:', '    required: false', '    default: cursor', '    description: Read by the mod.']);
+    write(toolkitRoot, 'stacks/mb/mods/viewer/hooks/state.ts', "export const EDITOR_KEY = 'viewer.editor'\n");
+    assert.deepEqual(validateToolkit(toolkitRoot), []);
+    write(toolkitRoot, 'stacks/mb/mods/viewer/hooks/state.ts', 'export const EDITOR_KEY = viewerEditor\n');
+    write(toolkitRoot, 'stacks/mb/mods/viewer/hooks/viewer.test.ts', "expect(EDITOR_KEY).toBe('viewer.editor')\n");
+    write(toolkitRoot, 'stacks/mb/mods/viewer/types/index.d.ts', "export type Key = 'viewer.editor'\n");
+    assert.ok(validateToolkit(toolkitRoot).some((p) => /declared config key viewer\.editor is never referenced/.test(p)), 'a test or .d.ts literal is not a read');
+  });
+
   test('setup inventory offers the mod as a claude-only plugin', () => {
     assert.match(toolkitInventory(loadToolkit(toolkitRoot), '0.0.test'), /- mods \(Claude Code plugins[^)]*\): mods\/viewer/);
   });
@@ -569,6 +580,26 @@ describe('built-in mod: wafflestack/mods/waffle-view (#562)', () => {
     assert.match(register, /\$\.process\.run\(/);
     assert.doesNotMatch(register, /\$\.fs\.read\(/, 'no direct file parsing: the state CLI is the one read path');
     assert.match(state, /export function selectKeys\(/, 'the #563 context seam is one named function');
+  });
+
+  test('declares waffleView.editor (default cursor), which the mod reads by literal and state --json resolves (#616)', () => {
+    const spec = loadToolkit(REPO_ROOT).stacks.get('wafflestack').config['waffleView.editor'];
+    assert.equal(spec.default, 'cursor');
+    assert.equal(spec.required, false);
+    assert.equal(spec.modes, undefined, 'a plain config key, not a behavioral one');
+    assert.match(fs.readFileSync(path.join(MOD_DIR, 'hooks', 'state.ts'), 'utf8'), /export const EDITOR_KEY = 'waffleView\.editor'/);
+
+    const consumer = fs.mkdtempSync(path.join(os.tmpdir(), 'project-waffle-view-editor-'));
+    try {
+      write(consumer, '.waffle/waffle.yaml', project(['targets: [claude]', 'stacks: [wafflestack]']));
+      const state = () => collectState({ cwd: consumer, toolkitRoot: REPO_ROOT, toolkitVersion: '0.0.test' });
+      assert.deepEqual(state().config['waffleView.editor'], { value: 'cursor', source: 'stack-default', stacks: ['wafflestack'] });
+      write(consumer, '.waffle/waffle.yaml', ['config: { waffleView: { editor: [code, --new-window] } }', 'targets: [claude]', 'stacks: [wafflestack]', ''].join('\n'));
+      assert.deepEqual(state().config['waffleView.editor'], { value: ['code', '--new-window'], source: 'waffle.yaml', stacks: ['wafflestack'] });
+      assert.equal(state().keys.some((k) => k.key === 'waffleView.editor'), false);
+    } finally {
+      fs.rmSync(consumer, { recursive: true, force: true });
+    }
   });
 
   test('renders as wafflestack marketplace entries in a claude consumer and lands in its lock', () => {

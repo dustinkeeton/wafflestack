@@ -48,6 +48,18 @@ is what you reach for across a breaking one.
   call a day; an ephemeral CI runner makes one per job. Pass `--offline` or set
   `WAFFLESTACK_OFFLINE=1` to skip it (a fresh cached answer is still read). Nothing is written
   into the repo.
+- **The `/waffle-view` pane has an "Open in <editor>" button (#616).** It sits at the bottom of the
+  full and the sliced view and opens the repo in the editor named by the new `waffleView.editor`
+  key in the `wafflestack` stack (default `cursor`). The value is one launcher on PATH (`code`,
+  `zed`, `idea`, `subl`; a string is never split on spaces) or an argv array for flags
+  (`[code, --new-window]`), and the button names it (`Open in VS Code`). A missing launcher or a
+  non-zero exit shows inline (`open in editor failed: …`) and the pane keeps working; a launcher
+  still running at the 15 s timeout is reported as that, not as missing. `validate`
+  now counts a declared key's quoted literal in a stack's mod source as a reference, so a key only
+  a mod reads is not reported as never referenced. The mod's plugin version is now 0.5.0.
+  **Consumer impact:** none required — the button opens Cursor until you set
+  `config: { waffleView: { editor: <launcher> } }` in `.waffle/waffle.yaml` or
+  `waffle.local.yaml`. The render and lock do not change.
 
 ### Changed
 

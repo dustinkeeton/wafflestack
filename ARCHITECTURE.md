@@ -232,6 +232,9 @@ shows the repo's resolved state, and narrows it to the skill you last invoked by
 changes the repo (#561). Since #608 it may make one cached, 2-second check for a newer toolkit
 release, and the pane shows a `· vX.Y.Z available` badge when one exists. That keeps the mod thin,
 and the same document is useful on its own.
+Both views end in an **Open in \<editor\>** button. It runs the
+launcher named by the optional `waffleView.editor` key (default `cursor`) on the repo, and shows a
+failure inline instead of breaking the pane (#616).
 See [DECISIONS.md](DECISIONS.md#2026-10-06-stacks-can-ship-claude-code-mods-rendered-verbatim-and-read-through-state---json-552-560564).
 
 ### Orchestrators are skills; workflow scripts only sequence them

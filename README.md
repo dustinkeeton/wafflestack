@@ -122,7 +122,9 @@ behavioral key's effective value and source layer, the delegate run files, lock 
 drift — all read through `wafflestack state --json`, refreshed as you work. The pane narrows to the
 last `/skill` *you* typed (a Skill-tool call the model makes does not move it; a `/name` that is not
 a toolkit skill reads as the full view), and the values it shows include your gitignored
-`waffle.local.yaml` overlay.
+`waffle.local.yaml` overlay. An **Open in Cursor** button at the bottom opens the repo in your
+editor; set `config: { waffleView: { editor: code } }` (or `zed`, `idea`, `subl`, or an argv array
+like `[code, --new-window]`) to pick another, and a launcher that is missing shows an inline error.
 
 ## Updating
 

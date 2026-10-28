@@ -22,8 +22,10 @@ export function resolveArgv({ hasLocalCli, hasLocalBin }: Probe): string[] {
   return ['npx', '--yes', TOOLKIT_SPEC, ...STATE_ARGS]
 }
 
+const stderrTail = (stderr: string): string => stderr.trim().split('\n').filter(Boolean).slice(-3).join(' · ')
+
 export function parseStateOutput({ exitCode, stdout, stderr }: ProcessOutput): Parsed {
-  const tail = stderr.trim().split('\n').filter(Boolean).slice(-3).join(' · ')
+  const tail = stderrTail(stderr)
   if (exitCode !== 0) {
     return { doc: null, error: `wafflestack state exited ${exitCode}${tail ? `: ${tail}` : ''}` }
   }
@@ -93,6 +95,57 @@ export function updateBadge(doc: WaffleViewDoc): { label: string; command: strin
   const update = doc.update
   if (!update?.available || !update.latestTag) return null
   return { label: ` · ${update.latestTag} available`, command: update.command }
+}
+
+// The editor the bottom Button opens (#616). The key is spelled as a literal: validate counts a
+// mod's quoted literal as the reference that keeps a declared key from reading as unused.
+export const EDITOR_KEY = 'waffleView.editor'
+export const DEFAULT_EDITOR = 'cursor'
+export const EDITOR_TIMEOUT_MS = 15_000
+
+// A string is one executable, never split on spaces; an argv array carries flags. Anything else —
+// no document, a stack without the key, an empty or malformed value — falls back to Cursor.
+export function editorArgv(doc: WaffleViewDoc | null, root: string): string[] {
+  const value: unknown = doc?.config[EDITOR_KEY]?.value
+  if (typeof value === 'string' && value.trim()) return [value.trim(), root]
+  if (Array.isArray(value) && value.length > 0 && value.every(part => typeof part === 'string' && part.trim())) {
+    return [...(value as string[]).map(part => part.trim()), root]
+  }
+  return [DEFAULT_EDITOR, root]
+}
+
+const EDITOR_NAMES: Record<string, string> = {
+  cursor: 'Cursor',
+  code: 'VS Code',
+  'code-insiders': 'VS Code Insiders',
+  zed: 'Zed',
+  idea: 'IntelliJ IDEA',
+  webstorm: 'WebStorm',
+  subl: 'Sublime Text',
+}
+
+export function editorLabel(launcher: string): string {
+  const base = launcher.split(/[\\/]/).pop()!.replace(/\.(exe|cmd)$/i, '')
+  const name = EDITOR_NAMES[base.toLowerCase()] ?? (base ? base[0]!.toUpperCase() + base.slice(1) : DEFAULT_EDITOR)
+  return `Open in ${name}`
+}
+
+// What a launch came to, as the pane's inline error; null when it exited 0.
+export function editorLaunchError(
+  launcher: string,
+  outcome: { output: ProcessOutput } | { thrown: unknown; timedOut?: boolean },
+): string | null {
+  if ('thrown' in outcome && outcome.timedOut) {
+    return `${launcher} was still running after ${EDITOR_TIMEOUT_MS / 1000} s — set ${EDITOR_KEY} to a launcher that hands off and exits`
+  }
+  if ('thrown' in outcome) {
+    const message = outcome.thrown instanceof Error ? outcome.thrown.message : String(outcome.thrown)
+    return `${launcher} could not start: ${message} — is it on PATH? Set ${EDITOR_KEY} to your editor's launcher`
+  }
+  const { exitCode, stderr } = outcome.output
+  if (exitCode === 0) return null
+  const tail = stderrTail(stderr)
+  return `${launcher} exited ${exitCode}${tail ? `: ${tail}` : ''}`
 }
 
 export function formatMode(value: unknown): string {

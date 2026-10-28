@@ -5,6 +5,7 @@ import type { WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
 import {
   BRAND,
   CAPTION_TONE,
+  EDITOR_TIMEOUT_MS,
   HEADING_TONE,
   LOCAL_BIN,
   LOCAL_CLI,
@@ -12,6 +13,9 @@ import {
   TAGLINE,
   TITLE,
   WAFFLE_GLYPH,
+  editorArgv,
+  editorLabel,
+  editorLaunchError,
   formatMode,
   isOverridden,
   isPersonsPrompt,
@@ -35,8 +39,9 @@ const isRefreshing = atom({ plugin: 'waffle-view', key: 'isRefreshing' } as cons
 // The last thing the person invoked (#563): `issue` after `/issue`, null after a plain prompt.
 // Tracked whether or not the pane is open, so opening it after `/issue` already slices.
 const skill = atom({ plugin: 'waffle-view', key: 'skill' } as const, null)
+const launchError = atom({ plugin: 'waffle-view', key: 'launchError' } as const, null)
 
-type Dollar = Pick<EngineInterface, 'state' | 'process' | 'fs' | 'ui'>
+type Dollar = Pick<EngineInterface, 'state' | 'process' | 'fs' | 'ui' | 'session'>
 
 // The only read path: `wafflestack state --json` through `$.process`. The last good
 // document survives a failed refresh; the failure is shown beside it.
@@ -56,6 +61,22 @@ async function refresh($: Dollar): Promise<void> {
   } finally {
     await update($, isRefreshing, () => false)
   }
+}
+
+// The bottom Button (#616): the configured launcher on the session's directory. Never throws — a
+// launcher that is missing or exits non-zero lands inline, beside the pane it leaves working.
+async function openEditor($: Dollar): Promise<void> {
+  const argv = editorArgv(await read($, doc), await $.session.cwd())
+  // `process.run` rejects both for a launcher that cannot start and one still running at the
+  // timeout; only the elapsed time tells them apart.
+  const started = Date.now()
+  let failure: string | null
+  try {
+    failure = editorLaunchError(argv[0]!, { output: await $.process.run(argv, { timeoutMs: EDITOR_TIMEOUT_MS }) })
+  } catch (err) {
+    failure = editorLaunchError(argv[0]!, { thrown: err, timedOut: Date.now() - started >= EDITOR_TIMEOUT_MS })
+  }
+  await update($, launchError, () => failure)
 }
 
 const isOpen = async ($: Dollar) => (await $.ui.panes()).some(pane => pane.id === PANE)
@@ -108,9 +129,10 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
     const state = await read($, doc)
     const failure = await read($, error)
+    const launchFailure = await read($, launchError)
     const busy = await read($, isRefreshing)
     const context = { skill: await read($, skill) }
     const slice = state ? selectSlice(state, context) : null
@@ -305,6 +327,8 @@ export const register: Register = on => {
         {state && !slice && locksSection(state)}
         {state && !slice && driftSection(state)}
         {slice && caption(`sliced to what /${slice.skill} reads — a plain prompt restores the full view`)}
+        <Button key="open-editor" label={editorLabel(editorArgv(state, '')[0]!)} onPress={() => openEditor($)} />
+        {launchFailure && <Text color="error">{`open in editor failed: ${launchFailure}`}</Text>}
       </Box>
     )
   })
