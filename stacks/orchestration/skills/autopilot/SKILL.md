@@ -223,8 +223,9 @@ Runs from item 3, right after the final PR opens; `<F>` is its number. Per-PR qu
 
      A later round resumes it with "new review(s) posted on head `<sha>` — triage them, using the `## Fix branch` block with round `<k>`", never with `--rubric`.
    - **Passed?** The responder implemented 0, or it was never needed, and every review with findings on `<F>`'s current head reads triaged by Step 5's `triaged-through` test. Stage 2 has **passed**; stop.
+   - **No fix PR?** The responder implemented 0, but a review on `<sha>` still reads untriaged (it landed after the responder's cutoff, or its status write failed). Run the next round from **Respond** on the same `<sha>`; it counts toward the cap.
    - **Otherwise, land the fix PR** `<P>` the responder reported, the way stage 1 step 6 lands the sync PR: it carries no issue, so the per-PR gates skip it. With `{{autopilot.autoMerge.flag.on}}`, arm it, `gh pr merge --auto --merge <P>`, then label it `gh pr edit <P> --add-label "{{autoMerge.label}}"`, and wait by Step 8's **The wait also ends, as blocked,** rule. Without the consent, if arming fails, or on a blocked exit, hold. Once it reads `MERGED`, `git fetch origin <integ>`, create `<gate>` again with `git worktree add --detach <gate> origin/<integ>`, run `{{project.installCmd}}` and then each [integration check](#integration-checks) in it, and remove it. A failed check holds. Then go back to item 2 for the next round.
-4. **Cap reached.** If the last round still implemented fixes, hold: they merged without a cold review.
+4. **Cap reached.** If the last round still implemented fixes, hold: they merged without a cold review. If it left a review untriaged, hold with that reason.
 5. **Teardown.** At every exit, `shutdown_request` then `TaskStop` `respond-int-pr<F>`, if it was spawned. An errored round follows Step 6's one-retry rule: tear the responder down, retry on a fresh spawn with the full prompt, and hold if it errors again.
 6. **Never arm `<F>`**, never `--admin`, and never push to `<integ>`: stage 2's fixes arrive only through a fix PR.
 
