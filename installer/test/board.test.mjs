@@ -106,6 +106,7 @@ describe('readBoard (#697)', () => {
     const b = readBoard({ cwd: dir, projectName: 'wafflestack', gh, cacheFile, now: () => T0 });
     assert.equal(b.error, null);
     assert.equal(b.projectError, null);
+    assert.equal(b.projectName, 'wafflestack');
     assert.equal(b.source, 'remote');
     assert.equal(b.checkedAt, new Date(T0).toISOString());
     assert.deepEqual(b.project, { number: 7, title: 'WaffleStack' });
@@ -136,6 +137,9 @@ describe('readBoard (#697)', () => {
 
     const gh = fakeGh(REPO_DATA, { search: FOCUS_DATA.search }, PROJECT_DATA);
     const nope = readBoard({ cwd: dir, projectName: 'nope', gh, cacheFile: path.join(dir, 'nope.json'), now: () => T0 });
+    assert.deepEqual([b.projectName, nope.projectName], [null, 'nope'], 'the two cases differ in JSON');
+    assert.match(formatStateText(/** @type {any} */ ({ ...TEXT_BASE, board: b })), /\nboard: project\.name unset — no board lookup\n/);
+    assert.match(formatStateText(/** @type {any} */ ({ ...TEXT_BASE, board: nope })), /\nboard: no Projects v2 board titled "nope"\n/);
     for (const r of [b, nope]) {
       assert.deepEqual([r.error, r.projectError, r.project], [null, null, null]);
       assert.equal(r.epics.length, 2);
@@ -157,7 +161,7 @@ describe('readBoard (#697)', () => {
 
   test('offline skips the read and the cache: error "offline", empty arrays', () => {
     const b = readBoard({ cwd: dir, projectName: 'x', offline: true, gh: forbidGh, cacheFile, now: () => T0 });
-    assert.deepEqual(b, emptyBoard('offline'));
+    assert.deepEqual(b, emptyBoard('offline', { projectName: 'x' }));
     assert.equal(fs.existsSync(cacheFile), false);
   });
 

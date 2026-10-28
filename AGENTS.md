@@ -245,7 +245,8 @@ with no repo), `checkedAt` (ISO time of the remote answer, else null), `source` 
 `local-tags`/`changelog`/null — a checkout with no local `v*` tags reports `changelog`, #694);
 all-null/false when there is no verdict. `board` (#697) is present ONLY under `--board` (`board.mjs`):
 `milestones[{title,dueOn}]`, `epics[{number,title,done,total}]`, `inProgress[]`/`inReview[]` of
-`{number,title,kind}` (`kind` `issue`/`pr`/`draft`, `number` null for a draft), `project` (`{number,title}`
+`{number,title,kind}` (`kind` `issue`/`pr`/`draft`, `number` null for a draft), `projectName` (the `project.name`
+searched for; null means it is unset and no board lookup ran — text prints `project.name unset — no board lookup`), `project` (`{number,title}`
 of the matched board, null when none matches — then both item lists are empty, not an error), `projectError`
 (null, or why the board lookup failed — e.g. `gh failed: …required scopes…` without gh's `project` scope, or
 `timed out` when the 8 s budget ran out before it; `project` is null and both item lists empty, but milestones

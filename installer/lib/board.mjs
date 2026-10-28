@@ -2,10 +2,9 @@
 // `state --board` (#697, part of #610): the best-effort team-focus read behind the `/standup`
 // pane. Up to three `gh api graphql` calls, time-boxed, cached briefly in the user cache dir, never thrown.
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { defaultUpdateCacheFile } from './update-check.mjs';
+import { defaultUpdateCacheFile, readUpdateCache, writeUpdateCache } from './update-check.mjs';
 
 export const BOARD_CALL_TIMEOUT_MS = 5_000;
 export const BOARD_BUDGET_MS = 8_000;
@@ -28,6 +27,7 @@ export const BOARD_ERRORS = /** @type {const} */ ({
  * @property {{ number: number, title: string, done: number, total: number }[]} epics open issues with sub-issues or an `[epic]` title, native sub-issue progress
  * @property {BoardItem[]} inProgress
  * @property {BoardItem[]} inReview
+ * @property {string|null} projectName the `project.name` searched for; null means no board lookup ran
  * @property {{ number: number, title: string }|null} project the Projects v2 board matched to `project.name`
  * @property {string|null} projectError why the board lookup failed (e.g. no `project` scope); the other lists still stand
  * @property {string|null} error
@@ -80,7 +80,7 @@ export function ghRun(args, { cwd, timeoutMs }) {
  * @returns {BoardBlock}
  */
 export function emptyBoard(error, over = {}) {
-  return { milestones: [], epics: [], inProgress: [], inReview: [], project: null, projectError: null, error, checkedAt: null, source: null, ...over };
+  return { milestones: [], epics: [], inProgress: [], inReview: [], projectName: null, project: null, projectError: null, error, checkedAt: null, source: null, ...over };
 }
 
 /**
@@ -98,21 +98,25 @@ export function emptyBoard(error, over = {}) {
  * @returns {BoardBlock}
  */
 export function readBoard({ cwd, projectName = null, offline = false, gh = ghRun, cacheFile = defaultBoardCacheFile(), now = Date.now }) {
-  if (offline) return emptyBoard(BOARD_ERRORS.offline);
+  if (offline) return emptyBoard(BOARD_ERRORS.offline, { projectName });
   const key = `${path.resolve(cwd)}#${projectName ?? ''}`;
-  const cached = readCache(cacheFile)[key];
+  const cached = /** @type {BoardBlock|undefined} */ (/** @type {unknown} */ (readUpdateCache(cacheFile)[key]));
   const age = cached ? now() - Date.parse(cached.checkedAt ?? '') : NaN;
-  if (cached && age >= 0 && age < BOARD_CACHE_TTL_MS) return { ...cached, source: 'cache' };
+  if (cached && age >= 0 && age < BOARD_CACHE_TTL_MS) return { ...cached, projectName, source: 'cache' };
 
   const checkedAt = new Date(now()).toISOString();
   /** @type {BoardBlock} */
   let board;
   try {
-    board = { ...fetchBoard({ cwd, projectName, gh, now }), checkedAt, source: 'remote' };
+    board = { ...fetchBoard({ cwd, projectName, gh, now }), projectName, checkedAt, source: 'remote' };
   } catch (err) {
-    board = emptyBoard(describeGhError(err), { checkedAt, source: 'remote' });
+    board = emptyBoard(describeGhError(err), { projectName, checkedAt, source: 'remote' });
   }
-  writeCache(cacheFile, key, board);
+  try {
+    writeUpdateCache(cacheFile, key, /** @type {any} */ (board));
+  } catch {
+    // An unwritable cache costs one more read next time, nothing else.
+  }
   return board;
 }
 
@@ -194,27 +198,4 @@ export function describeGhError(err) {
   if (err instanceof SyntaxError) return BOARD_ERRORS.badResponse;
   const detail = String(err?.stderr || err?.message || '').trim().split('\n')[0];
   return detail ? `${BOARD_ERRORS.ghFailed}: ${detail.slice(0, 200)}` : BOARD_ERRORS.ghFailed;
-}
-
-/** @param {string} file @returns {Record<string, BoardBlock>} */
-function readCache(file) {
-  try {
-    const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc : {};
-  } catch {
-    return {};
-  }
-}
-
-/** @param {string} file @param {string} key @param {BoardBlock} board */
-function writeCache(file, key, board) {
-  try {
-    const doc = { ...readCache(file), [key]: board };
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`);
-    fs.renameSync(tmp, file);
-  } catch {
-    // An unwritable cache costs one more read next time, nothing else.
-  }
 }

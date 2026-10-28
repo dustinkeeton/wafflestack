@@ -548,7 +548,7 @@ export function formatStateText(s) {
 function formatBoardLines(b) {
   if (b.error) return ['', `board: unavailable — ${b.error}`];
   const item = (/** @type {import('./board.mjs').BoardItem} */ i) => (i.number === null ? i.title : `#${i.number} ${i.title}`);
-  const head = b.project ? `${b.project.title} (#${b.project.number})` : b.projectError ? `board lookup failed — ${b.projectError}` : 'no Projects v2 board matched';
+  const head = b.project ? `${b.project.title} (#${b.project.number})` : b.projectError ? `board lookup failed — ${b.projectError}` : b.projectName ? `no Projects v2 board titled "${b.projectName}"` : 'project.name unset — no board lookup';
   const lines = ['', `board: ${head}${b.source === 'cache' ? ' (cached)' : ''}`];
   for (const m of b.milestones) lines.push(`  milestone: ${m.title}${m.dueOn ? ` — due ${m.dueOn.slice(0, 10)}` : ''}`);
   for (const e of b.epics) lines.push(`  epic: #${e.number} ${e.title} — ${e.done} of ${e.total}`);
