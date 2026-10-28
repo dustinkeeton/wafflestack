@@ -224,7 +224,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     const md = gate();
     assert.match(md, /\*\*Exactly `\.waffle\/waffle\.lock\.json`\*\*/);
     assert.match(md, /`git -C <gate> checkout --theirs -- \.waffle\/waffle\.lock\.json` and `git -C <gate> add \.waffle\/waffle\.lock\.json`, then, in `<gate>`, `npm install`\./);
-    assert.match(md, /If `git -C <gate> diff --name-only` is not empty, the install changed tracked files.*abort and hold/);
+    assert.match(md, /If `git -C <gate> diff --name-only` or `git -C <gate> ls-files --others --exclude-standard` prints anything, the install changed or created files.*abort and hold/);
     assert.match(md, /Otherwise run `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`, then `git -C <gate> add -A`/);
     assert.match(md, /If the re-rendered lock's `toolkitVersion` differs from the one in `git -C <gate> show origin\/main:\.waffle\/waffle\.lock\.json`, abort and hold/);
     assert.match(md, /`git -C <gate> merge --abort`/);
