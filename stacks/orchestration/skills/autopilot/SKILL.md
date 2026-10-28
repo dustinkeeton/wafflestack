@@ -145,7 +145,7 @@ Skip this section when integration mode is off.
    "based on origin/main" or "targeting main" wording below.
    ```
 
-3. **Open the final PR after the last issue.** Open it only when **no run PR is still open against `<integ>`** and **at least one run PR merged into it**:
+3. **Open the final PR after the last issue.** First wait out every **armed** run PR, including the last serial one and each parallel-group PR, since Step 8 waits only before a *next* issue: poll `gh pr view <pr> --json state -q .state` until `MERGED`, and treat one whose required check goes red as Step 8's blocked path, so it stays open. Do not wait on unarmed PRs (no consent, audit-blocked, failed arm). Then open the final PR only when **no run PR is still open against `<integ>`** and **at least one run PR merged into it**:
 
    ```bash
    gh pr create --base main --head <integ> --body-file <scratch-file>
