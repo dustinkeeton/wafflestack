@@ -9,6 +9,31 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: With integration mode, the audit gate runs once, on the final PR (#734, part of #720)
+
+**Context**: In integration mode, run PRs merge only into the integration branch, and the final PR
+is the one merge into `main`. A per-PR audit runs N docs refreshes that collide on the root docs,
+and no single audit sees how the PRs interact.
+
+**Decision**: With `+integration` and `+audit` both on, Step 7 does not run per PR. The audit runs
+once, as stage 3 on the final PR, after stage 2, scoped to `git diff origin/main...<integ>`. It
+rides audit-step consent. `delegate.docsRefresh` stays off per PR, and stage 3's `docs` invocation
+is the run's one refresh. The chain runs in its own worktree on `autopilot/stage3/<ts>`, and its
+fixes land through a fix PR into the integration branch. An unresolved Critical/High holds the
+final PR as **integration-held** with a hold-labeled follow-up. Stage 2 does not re-run after
+stage 3's fixes; the integration checks re-run instead.
+
+**Alternatives**:
+- *Audit per PR and on the final PR.* Rejected (#720): it pays twice, and the docs refreshes still collide.
+- *A separate consent key for stage 3.* Rejected: audit-step consent already authorizes the spend.
+- *Push the fixes straight to the integration branch.* Rejected, as for stage 2: a ruleset can refuse it, and it skips CI.
+- *Re-run stage 2 after stage 3's fixes.* Rejected: the audit fixes security and docs, not decisions, and the human reviews the final PR.
+
+**Affects**: `autopilot` skill. Nothing changes unless a run turns on both integration mode and the
+audit step.
+
+---
+
 ## 2026-10-28: Integration gate stage 2 is an adversarial-review mode that rides review-loop consent (#733, part of #720)
 
 **Context**: Each run PR passes its own gates, but nothing checks the combined change. One PR can
