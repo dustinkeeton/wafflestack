@@ -71,7 +71,8 @@ export function writeUpdateCache(file, repo, entry) {
 /**
  * The latest release tag worth comparing against. A checkout answers from its local tags; an
  * install reads a fresh cache entry, else (online, repo known) asks `lsRemote` once, else falls back
- * to the identity's shipped-CHANGELOG value. Offline reads the cache but never asks or writes.
+ * to the identity's shipped-CHANGELOG value. A remote answer of zero tags stays null, never the
+ * CHANGELOG value (as in `resolveToolkitIdentity`). Offline reads the cache but never asks or writes.
  *
  * @param {object} opts
  * @param {ToolkitIdentity|null} opts.identity an OFFLINE identity
@@ -107,21 +108,21 @@ export function resolveLatestRelease({
     const entry = readUpdateCache(cacheFile)[repo];
     const age = entry ? now() - Date.parse(entry.checkedAt) : NaN;
     if (entry && age >= 0 && age < (entry.failed ? failTtlMs : ttlMs)) {
-      return entry.failed || !entry.latestTag ? fallback : { latestTag: entry.latestTag, source: 'cache', checkedAt: entry.checkedAt };
+      return entry.failed ? fallback : { latestTag: entry.latestTag ?? null, source: 'cache', checkedAt: entry.checkedAt };
     }
     if (offline) return fallback;
 
     const checkedAt = new Date(now()).toISOString();
     let latestTag;
     try {
-      latestTag = parseLsRemoteTags(lsRemote(httpsUrl(slug))).latest;
+      latestTag = parseLsRemoteTags(lsRemote(httpsUrl(slug))).latest ?? null;
     } catch {
       // The negative entry keeps an air-gapped pane from paying the timeout on every turn.
       safeWrite(cacheFile, repo, { latestTag: null, checkedAt, failed: true });
       return fallback;
     }
     safeWrite(cacheFile, repo, { latestTag, checkedAt });
-    return latestTag ? { latestTag, source: 'remote', checkedAt } : fallback;
+    return { latestTag, source: 'remote', checkedAt };
   } catch {
     return fallback;
   }

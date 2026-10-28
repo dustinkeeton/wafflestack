@@ -104,6 +104,16 @@ describe('resolveLatestRelease (#608)', () => {
     assert.equal(retry.calls.length, 1);
   });
 
+  test('a remote answer of zero tags is no verdict, fresh or cached — never the CHANGELOG tag', () => {
+    const identity = install({ latestTag: 'v0.18.0' });
+    const fresh = resolve({ identity, lsRemote: fakeLsRemote(tags()) });
+    assert.deepEqual(fresh, { latestTag: null, source: 'remote', checkedAt: '2026-10-11T00:00:00.000Z' });
+    assert.equal(updateVerdict(identity, '0.17.2', fresh).available, false);
+    const cached = resolve({ identity, lsRemote: forbidNetwork });
+    assert.deepEqual(cached, { latestTag: null, source: 'cache', checkedAt: '2026-10-11T00:00:00.000Z' });
+    assert.equal(updateVerdict(identity, '0.17.2', cached).available, false);
+  });
+
   test('offline reads a fresh cache, but a stale or absent one is neither fetched nor written', () => {
     resolve({ lsRemote: fakeLsRemote(tags('v0.18.0')) });
     assert.equal(resolve({ offline: true, lsRemote: forbidNetwork }).source, 'cache');
