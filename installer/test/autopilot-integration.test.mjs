@@ -225,7 +225,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /\*\*Exactly `\.waffle\/waffle\.lock\.json`\*\*/);
     assert.match(md, /`git -C <gate> checkout --theirs -- \.waffle\/waffle\.lock\.json` and `git -C <gate> add \.waffle\/waffle\.lock\.json`, then, in `<gate>`, `npm install`\./);
     assert.match(md, /If `git -C <gate> diff --name-only` or `git -C <gate> ls-files --others --exclude-standard` prints anything, the install changed or created files.*abort and hold/);
-    assert.match(md, /Otherwise run `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`, then `git -C <gate> add -A`/);
+    assert.match(md, /Otherwise, in `<gate>`, run `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`, then `git -C <gate> add -A`/);
     assert.match(md, /If the re-rendered lock's `toolkitVersion` differs from the one in `git -C <gate> show origin\/main:\.waffle\/waffle\.lock\.json`, abort and hold/);
     assert.match(md, /`git -C <gate> merge --abort`/);
     assert.match(md, /Stop with a hold if `git ls-remote --heads origin autopilot\/sync\/<ts>` already shows the branch/);
@@ -236,7 +236,10 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
 
   test('the sync PR arms only with +automerge, waits by Step 8, and must land the synced tree', () => {
     const md = gate();
-    assert.match(md, /With `\+automerge`, arm it, `gh pr merge --auto --merge <S>`/);
+    assert.match(md, /5\. \*\*Open the sync PR\.\*\* Only when step 2 merged\./);
+    assert.match(md, /Record the PR number it prints as `<S>`\./);
+    assert.match(md, /6\. \*\*Merge it\.\*\* Only when step 5 opened a sync PR\. With `\+automerge`, arm it, `gh pr merge --auto --merge <S>`/);
+    assert.match(md, /`git worktree remove <gate>`, and only when step 2 ran, `git branch -D autopilot\/sync\/<ts>`/);
     assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
     assert.match(md, /Without the consent, or if arming fails, hold/);
     assert.match(md, /require `git diff --quiet <syncHead> origin\/<integ>`/);
