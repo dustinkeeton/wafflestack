@@ -223,8 +223,13 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
   test('only a lock conflict is resolved (main\'s lock, then render); anything else aborts and holds', () => {
     const md = gate();
     assert.match(md, /\*\*Exactly `\.waffle\/waffle\.lock\.json`\*\*/);
-    assert.match(md, /`git -C <gate> checkout --theirs -- \.waffle\/waffle\.lock\.json`, then, in `<gate>`, `npm install` and `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`/);
+    assert.match(md, /`git -C <gate> checkout --theirs -- \.waffle\/waffle\.lock\.json` and `git -C <gate> add \.waffle\/waffle\.lock\.json`, then, in `<gate>`, `npm install`\./);
+    assert.match(md, /If `git -C <gate> diff --name-only` is not empty, the install changed tracked files.*abort and hold/);
+    assert.match(md, /Otherwise run `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`, then `git -C <gate> add -A`/);
+    assert.match(md, /If the re-rendered lock's `toolkitVersion` differs from the one in `git -C <gate> show origin\/main:\.waffle\/waffle\.lock\.json`, abort and hold/);
     assert.match(md, /`git -C <gate> merge --abort`/);
+    assert.match(md, /Stop with a hold if `git ls-remote --heads origin autopilot\/sync\/<ts>` already shows the branch/);
+    assert.match(md, /Remove `<gate>` if it still exists \(`git worktree remove --force <gate>`\) and any local sync branch; leave `<integ>`, the pushed sync branch and any sync PR open/);
     assert.match(md, /The run \*\*never picks a winner\*\*/);
     assert.match(md, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
   });
