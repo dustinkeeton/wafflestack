@@ -898,6 +898,40 @@ describe('current focus (#698)', () => {
     await ui.unmount()
   })
 
+  test('switching to /standup reads `reading board…` until the --board read lands, never board unavailable', async ($, on) => {
+    let release: (() => void) | undefined
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', async (_$, e) => {
+      if (!e.argv.includes('--board')) return { value: exited(0, JSON.stringify(DOC)) }
+      await new Promise<void>(resolve => (release = resolve))
+      return { value: exited(0, JSON.stringify({ ...DOC, board: BOARD })) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: 'plain', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    const pending = $.command.run({ command: PANE, args: '', ...COMPOSER })
+    for (let i = 0; i < 50 && !release; i++) await new Promise(resolve => setTimeout(resolve, 0))
+    expect(release).toBeDefined()
+
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: 'reading board…' }))?.props).toMatchObject({ dimColor: true })
+    expect(await ui.find({ type: 'Text', text: /board unavailable/ })).toBeUndefined()
+    await ui.unmount()
+
+    release!()
+    await pending
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'reading board…' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'v1.0' })).toBeDefined()
+    await ui.unmount()
+  })
+
   test('a long list shows eight rows and a count', async ($, on) => {
     const many = Array.from({ length: 11 }, (_, i) => ({ number: 800 + i, title: `item ${i}`, kind: 'issue' as const }))
     on('fs.exists', () => ({ value: false }))
