@@ -53,9 +53,11 @@ describe('stale installed mods (#730)', () => {
 
   test('project/local records count only for this repo, matched through realpath', () => {
     const other = tmp('elsewhere-');
+    const link = path.join(other, 'link-to-project');
+    fs.symlinkSync(cwd, link);
     try {
       installed([
-        { scope: 'project', projectPath: path.join(cwd, '.', ''), version: '0.2.1' },
+        { scope: 'project', projectPath: link, version: '0.2.1' },
         { scope: 'local', projectPath: other, version: '0.2.1' },
       ]);
       const found = stale();
