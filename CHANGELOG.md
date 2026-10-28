@@ -134,6 +134,12 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **The `/waffle-view` "Open in editor" button waits for the first state read (#696).** Until a
+  `state --json` read succeeded, the button read "Open in Cursor" and launched `cursor` even when
+  `waffleView.editor` named another editor. On the `npx --yes` path that wait can last up to
+  120 s. The button now appears once a state document exists. A later failed refresh keeps the
+  last good document, so the configured label stays. **Consumer impact:** none. The mod ships
+  through the marketplace (waffle-view 0.8.1), so there is nothing to re-render.
 - **A toolkit checkout with no local release tags reports `update.source: changelog` (#694).**
   `state --json` labelled every checkout's latest release `local-tags`, even when the checkout had
   no `v*` tags (as `actions/checkout` leaves it) and the value came from `CHANGELOG.md`. The

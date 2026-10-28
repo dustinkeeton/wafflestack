@@ -356,7 +356,7 @@ describe('open in editor (#616)', () => {
     expect(editorLaunchError('idea', { thrown: new Error('spawn idea ENOENT'), timedOut: false })).toMatch(/^idea could not start: .* is it on PATH\?/)
   })
 
-  test('the Button reads Open in Cursor by default, even before a read, and launches on the session directory', async ($, on) => {
+  test('the Button waits for the first read, then reads Open in Cursor by default and launches on the session directory', async ($, on) => {
     const launched: (readonly string[])[] = []
     on('fs.exists', () => ({ value: false }))
     on('session.cwd', () => ({ value: '/repo' }))
@@ -369,7 +369,7 @@ describe('open in editor (#616)', () => {
     on('command.register', (_$, e) => ({ value: { command: e.name } }))
 
     let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-    expect((await ui.find({ type: 'Button', key: 'open-editor' }))?.props.label).toBe('Open in Cursor')
+    expect(await ui.find({ type: 'Button', key: 'open-editor' })).toBeUndefined()
     await ui.unmount()
 
     await $.command.run({ command: PANE, args: '', ...COMPOSER })
@@ -378,6 +378,40 @@ describe('open in editor (#616)', () => {
     await ui.press({ key: 'open-editor' })
     expect(launched).toEqual([['cursor', '/repo']])
     expect(await ui.find({ type: 'Text', text: /open in editor failed/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a failed first read shows no Button; a later good read brings the configured one, and a failed refresh keeps it', async ($, on) => {
+    const launched: (readonly string[])[] = []
+    let mode: 'fail' | 'code' = 'fail'
+    on('fs.exists', () => ({ value: false }))
+    on('session.cwd', () => ({ value: '/repo' }))
+    on('process.run', (_$, e) => {
+      if (e.argv[0] !== 'npx') launched.push(e.argv)
+      return { value: mode === 'fail' ? exited(1, '', 'boom\n') : exited(0, JSON.stringify(withEditor('code'))) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /last refresh failed/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'open-editor' })).toBeUndefined()
+    await ui.unmount()
+
+    mode = 'code'
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Button', key: 'open-editor' }))?.props.label).toBe('Open in VS Code')
+    await ui.unmount()
+
+    mode = 'fail'
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /last refresh failed/ })).toBeDefined()
+    expect((await ui.find({ type: 'Button', key: 'open-editor' }))?.props.label).toBe('Open in VS Code')
+    expect(launched).toEqual([])
     await ui.unmount()
   })
 
