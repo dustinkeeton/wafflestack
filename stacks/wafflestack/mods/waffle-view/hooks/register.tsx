@@ -24,6 +24,7 @@ import {
   sourceTone,
   statusTone,
   tokensOf,
+  updateBadge,
   valueLines,
   valueTone,
 } from './state'
@@ -37,7 +38,7 @@ const skill = atom({ plugin: 'waffle-view', key: 'skill' } as const, null)
 
 type Dollar = Pick<EngineInterface, 'state' | 'process' | 'fs' | 'ui'>
 
-// The only read path: `wafflestack state --json --offline` through `$.process`. The last good
+// The only read path: `wafflestack state --json` through `$.process`. The last good
 // document survives a failed refresh; the failure is shown beside it.
 async function refresh($: Dollar): Promise<void> {
   if (await read($, isRefreshing)) return
@@ -271,6 +272,7 @@ export const register: Register = on => {
       ])
 
     // The splash moment: the brand waffle, Golden, with the toolkit's name and version beside it.
+    const badge = state ? updateBadge(state) : null
     const heading = (
       <Box marginBottom={1}>
         <Box flexDirection="column" marginRight={2}>
@@ -282,9 +284,11 @@ export const register: Register = on => {
             {state
               ? dim(` (${state.cli.status}${state.cli.commit ? ` ${state.cli.commit.slice(0, 7)}` : ''})`)
               : dim(busy ? ' · reading state…' : ' · no state read yet')}
+            {badge && <Text color={BRAND.syrup}>{badge.label}</Text>}
             {slice && <Text color="suggestion">{` · /${slice.skill}`}</Text>}
             {state && busy && dim(' · refreshing…')}
           </Box>
+          {badge?.command && dim(badge.command)}
           {caption(TAGLINE)}
         </Box>
       </Box>

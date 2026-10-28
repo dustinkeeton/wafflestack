@@ -17,11 +17,12 @@ import {
   sourceTone,
   statusTone,
   tokensOf,
+  updateBadge,
   valueLines,
   valueTone,
 } from './state'
 
-const STATE_ARGS = ['state', '--json', '--offline']
+const STATE_ARGS = ['state', '--json']
 
 const DOC: WaffleViewDoc = {
   version: 1,
@@ -125,6 +126,14 @@ const exited = (exitCode: number, stdout: string, stderr = '') => ({
   isStderrTruncated: false,
 })
 
+const UPDATE = {
+  latestTag: 'v0.18.0',
+  available: true,
+  command: 'npx --yes github:dustinkeeton/wafflestack#v0.18.0 upgrade',
+  checkedAt: '2026-10-11T00:00:00.000Z',
+  source: 'cache' as const,
+}
+
 const PANE_PROPS = {
   title: 'Waffle view',
   isFocused: false,
@@ -157,6 +166,17 @@ describe('state helpers', () => {
     )
     expect(parseStateOutput(exited(0, 'not json')).error).toBe('wafflestack state printed no JSON')
     expect(parseStateOutput(exited(0, '{"version":2}')).error).toMatch(/version 2/)
+  })
+
+  test('resolveArgv no longer passes --offline, so the cached newer-release check can run (#608)', () => {
+    expect(resolveArgv({ hasLocalCli: true, hasLocalBin: false })).not.toContain('--offline')
+  })
+
+  test('updateBadge names a newer release and its remedy; no block (an older CLI) or no release reads as none', () => {
+    expect(updateBadge(DOC)).toBeNull()
+    expect(updateBadge({ ...DOC, update: { ...UPDATE, available: false } })).toBeNull()
+    expect(updateBadge({ ...DOC, update: UPDATE })).toEqual({ label: ' · v0.18.0 available', command: UPDATE.command })
+    expect(updateBadge({ ...DOC, update: { ...UPDATE, command: null } })?.command).toBeNull()
   })
 
   // The backstop behind the marketplace ref pin (#595): a mod from another release refuses the doc.
@@ -281,6 +301,7 @@ describe('the pane', () => {
       expect((await ui.find({ type: 'Text', text: '0 modified · 1 missing' }))?.props.color).toBe('error')
       expect(await ui.find({ type: 'Text', text: /stacks: github-workflow, orchestration/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /last refresh failed/ })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: / available$/ })).toBeUndefined()
       await ui.unmount()
     }
   })
@@ -449,6 +470,20 @@ describe('the pane', () => {
     const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
     expect((await ui.find({ type: 'Text', text: 'clean — the render matches the lock' }))?.props.color).toBe('success')
     expect((await ui.find({ type: 'Text', text: /DIVERGED from committed/ }))?.props.color).toBe('warning')
+    await ui.unmount()
+  })
+
+  test('a newer release wears a Syrup badge in the headline and its remedy dim beneath (#608)', async ($, on) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify({ ...DOC, update: UPDATE })) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: ' · v0.18.0 available' }))?.props.color).toBe(BRAND.syrup)
+    expect((await ui.find({ type: 'Text', text: UPDATE.command }))?.props).toMatchObject({ dimColor: true })
     await ui.unmount()
   })
 

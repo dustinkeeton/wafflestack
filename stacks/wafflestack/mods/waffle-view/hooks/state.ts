@@ -5,7 +5,9 @@ export const TITLE = 'Waffle view'
 export const LOCAL_CLI = 'installer/cli.mjs'
 export const LOCAL_BIN = 'node_modules/.bin/wafflestack'
 export const TOOLKIT_SPEC = 'github:dustinkeeton/wafflestack'
-const STATE_ARGS = ['state', '--json', '--offline']
+// No `--offline` (#608): state's identity is offline regardless; the flag would only stop the
+// cached newer-release check. `WAFFLESTACK_OFFLINE=1` in the session env still forces it.
+const STATE_ARGS = ['state', '--json']
 
 export type Probe = { hasLocalCli: boolean; hasLocalBin: boolean }
 export type ProcessOutput = { exitCode: number; stdout: string; stderr: string }
@@ -84,6 +86,13 @@ export function valueLines(value: unknown, max = 8): string[] {
   const lines = value.split('\n')
   if (lines.length <= max) return lines
   return [...lines.slice(0, max), `… ${lines.length - max} more line${lines.length - max === 1 ? '' : 's'}`]
+}
+
+// The headline badge and its remedy line, or null: no newer release, or an older CLI with no `update`.
+export function updateBadge(doc: WaffleViewDoc): { label: string; command: string | null } | null {
+  const update = doc.update
+  if (!update?.available || !update.latestTag) return null
+  return { label: ` · ${update.latestTag} available`, command: update.command }
 }
 
 export function formatMode(value: unknown): string {

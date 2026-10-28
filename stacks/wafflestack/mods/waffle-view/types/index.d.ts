@@ -73,6 +73,17 @@ export type WaffleViewDoc = {
   drift: { ok: boolean; modified: string[]; missing: string[]; absentDocs: string[]; notes: string[] }
   config: Record<string, WaffleViewConfigValue>
   skills: Record<string, WaffleViewSkillContext>
+  /** Optional: a CLI older than #608 prints no `update` block. */
+  update?: WaffleViewUpdate
+}
+
+/** Whether a newer toolkit release exists (`update` in the document, #608). */
+export type WaffleViewUpdate = {
+  latestTag: string | null
+  available: boolean
+  command: string | null
+  checkedAt: string | null
+  source: 'remote' | 'cache' | 'local-tags' | 'changelog' | null
 }
 
 /**

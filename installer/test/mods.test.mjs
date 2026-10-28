@@ -561,10 +561,11 @@ describe('built-in mod: wafflestack/mods/waffle-view (#562)', () => {
     for (const mod of hooks.modules) assert.ok(fs.existsSync(path.join(MOD_DIR, 'hooks', mod)));
   });
 
-  test('the hooks module reads only through `wafflestack state --json --offline`', () => {
+  test('the hooks module reads only through `wafflestack state --json` — no `--offline`, so the cached newer-release check runs (#608)', () => {
     const register = fs.readFileSync(path.join(MOD_DIR, 'hooks', 'register.tsx'), 'utf8');
     const state = fs.readFileSync(path.join(MOD_DIR, 'hooks', 'state.ts'), 'utf8');
-    assert.match(state, /'state', '--json', '--offline'/);
+    assert.match(state, /const STATE_ARGS = \['state', '--json'\]/);
+    assert.doesNotMatch(state, /'--offline'/);
     assert.match(register, /\$\.process\.run\(/);
     assert.doesNotMatch(register, /\$\.fs\.read\(/, 'no direct file parsing: the state CLI is the one read path');
     assert.match(state, /export function selectKeys\(/, 'the #563 context seam is one named function');
