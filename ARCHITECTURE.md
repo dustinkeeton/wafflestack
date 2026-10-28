@@ -413,8 +413,8 @@ only `autopilot.autoMerge` stays locked: the QA, review, and audit gates are
 `configModes: [false, prompt]`, so config may turn a gate off but never on, and each gate gains an
 off token (`-qa`, `-review`, `-audit`). `autopilot.integration` (#731) is a **routing mode, not a
 consent**: it sends a run's PRs into a per-run `autopilot/integration/<timestamp>` branch and ends
-with one unarmed integration → `main` PR. It authorizes no merge into `main`, so config may set it
-either way (`modes: [true, false]`, default `false`, `+integration` / `-integration`). See
+with one integration → `main` PR, armed only with `+automerge` after its integration gate passes
+(#735). It authorizes no merge into `main` itself, so config may set it either way (`modes: [true, false]`, default `false`, `+integration` / `-integration`). See
 [DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12)
 and [the #626 entry](DECISIONS.md#2026-10-22-config-may-turn-autopilots-gates-off-never-on-626),
 and [the #731 entry](DECISIONS.md#2026-10-28-autopilot-integration-mode-is-a-routing-mode-not-a-consent-731-part-of-720).

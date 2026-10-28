@@ -41,7 +41,7 @@ const projectYaml = (extra) => [
   '',
 ].join('\n');
 
-// #731 (slice 1 of #720): integration mode routes run PRs into a per-run branch; the final PR is never armed.
+// #731 (slice 1 of #720): integration mode routes run PRs into a per-run branch.
 describe('autopilot.integration declaration and resolution (#731)', () => {
   let cwd;
   beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-731-')); });
@@ -110,14 +110,15 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(md, /argument-hint:.*\[\+audit \| -audit\] \[--rubric <key>=<n>,…\] — scope is REQUIRED/);
   });
 
-  test('the contract subsection: token beats config, not a consent, final PR never armed', () => {
+  test('the contract subsection: token beats config, not a consent, final PR arms only on a green gate', () => {
     const md = section(read(SKILL), '### Integration mode', '## Integration branch');
     assert.match(md, /per-run token beats config, off by default/);
     assert.match(md, /A routing mode, not a consent/);
     assert.match(md, /\*\*Contradictions stop the run\.\*\*/);
     assert.match(md, /`\+integration` \| On for this run\./);
     assert.match(md, /The rendered value — never asked\./);
-    assert.match(md, /The integration → `main` PR is \*\*never armed\*\*, even with `\+automerge`/);
+    assert.match(md, /\*\*The final PR arms only on a green integration gate\.\*\* The integration → `main` PR is armed only with `\+automerge`, only after every enabled stage passed, and never once a stage 2 or stage 3 fix PR merged/);
+    assert.doesNotMatch(md, /never armed/);
   });
 
   test('the branch section: cut before Step 1, never fall back to main, no final PR while a run PR is open', () => {
@@ -132,7 +133,8 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(md, /\*\*no run PR is still open against `<integ>`\*\*/);
     assert.match(md, /Delete the branch only when \*\*no run PR is open against `<integ>`\*\*/);
     assert.doesNotMatch(md, /If none merged and `origin\/<integ>` still equals the cut SHA, delete/);
-    assert.match(md, /\*\*Never arm it\*\* in this release/);
+    assert.match(md, /Item 4 decides whether it arms\./);
+    assert.doesNotMatch(md, /\*\*Never arm it\*\* in this release/);
   });
 
   test('Steps 3, 4, 8, 9 and the guardrails carry the integration-mode rules', () => {
@@ -145,7 +147,8 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     const guard = section(md, '## Guardrails', '## Failure handling');
     assert.match(guard, /Its only direct pushes are creating its own integration branch/);
     assert.match(guard, /when nothing merged into it and no run PR is open against it, deleting it/);
-    assert.match(guard, /The integration → `main` PR is never armed in this release/);
+    assert.match(guard, /\*\*The integration → `main` PR arms only on a green integration gate\.\*\*/);
+    assert.doesNotMatch(guard, /never armed in this release/);
     assert.match(guard, /Integration mode is a routing mode, not a consent, so config may set it\./);
   });
 });
@@ -343,15 +346,16 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /\*\*No fix PR\?\*\* The responder implemented 0, but a review on `<sha>` still reads untriaged/);
     assert.match(md, /If it left a review untriaged, hold/);
     assert.match(md, /\*\*No fix PR reported\?\*\* The responder implemented fixes but reported no `<P>`, or `origin\/<integ>` no longer equals `<sha>`: hold/);
-    assert.match(md, /merges on CI alone, unreviewed for correctness/);
+    assert.match(md, /merges on CI alone, unreviewed for correctness, so item 4 then leaves `<F>` for a human/);
+    assert.doesNotMatch(md, /is its review/);
   });
 
-  test('fixes arrive through a fix PR into <integ>, never a push; the final PR is never armed', () => {
+  test('fixes arrive through a fix PR into <integ>, never a push; stage 2 never arms the final PR', () => {
     const md = stage2();
     assert.match(md, /## Fix branch/);
     assert.match(md, /gh pr create --base <integ> --head autopilot\/stage2\/<ts>-r<k> --title /);
     assert.doesNotMatch(md, /git push[^\n]*<integ>/);
-    assert.match(md, /\*\*Never arm `<F>`\*\*/);
+    assert.match(md, /\*\*Do not arm `<F>` here\*\*; item 4 decides/);
     assert.match(md, /\*\*integration-held\*\*/);
     assert.match(read('.claude/skills/pr-response/SKILL.md'), /\*\*A `## Fix branch` block in your invocation overrides items 1 and 6\.\*\*/);
   });
@@ -426,7 +430,7 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
     assert.match(md, /--add-label "waffle:manual-review"/);
     assert.match(md, /\*\*audit-blocked\*\*/);
     assert.match(md, /\*\*integration-held\*\*/);
-    assert.match(md, /\*\*Never arm `<F>`\*\*/);
+    assert.match(md, /\*\*Do not arm `<F>` here\*\*; item 4 decides/);
     assert.doesNotMatch(md, /git push[^\n]*<integ>/);
     assert.doesNotMatch(md, /severity floor/);
   });
@@ -449,5 +453,83 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
     assert.match(guard, /pushing its own `autopilot\/sync\/<ts>` branch and its own `autopilot\/stage3\/<ts>` branch/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 3 held\*\*/);
     assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /the stage 3 outcome \(passed \/ \*\*integration-held\*\*/);
+  });
+});
+
+// #735 (last slice of #720): the final PR arms only on a green integration gate, then closes out.
+describe('integration final PR: arm on a green gate, then close out (#735)', () => {
+  const branch = () => section(read(SKILL), '## Integration branch', '### Integration gate — stage 1');
+  const arm = () => section(read(SKILL), '4. **Arm it only on a green gate.**', '5. **After it merges, close out.**');
+  const close = () => section(read(SKILL), '5. **After it merges, close out.**', '### Integration gate — stage 1');
+
+  test('items 4 and 5 follow item 3, inside the branch section', () => {
+    const md = branch();
+    const [i3, i4, i5] = ['3. **Open the final PR', '4. **Arm it only on a green gate.**', '5. **After it merges, close out.**'].map((s) => md.indexOf(s));
+    assert.ok(i3 > -1 && i3 < i4 && i4 < i5, `${i3} ${i4} ${i5}`);
+    assert.doesNotMatch(md, /4\. \*\*Leave the branch\.\*\*/);
+  });
+
+  test('arms only with consent, after every enabled stage, on the passed head', () => {
+    const md = arm();
+    assert.match(md, /Without `\+automerge`, leave it for a human/);
+    assert.match(md, /A stage not run because its consent is off does not block; a held stage does/);
+    assert.match(md, /`gh pr view <F> --json headRefOid -q \.headRefOid` must equal `origin\/<integ>`, and both must equal `<stage1Head>`, the head stage 1 passed on/);
+    assert.match(md, /`git merge-base --is-ancestor origin\/main <stage1Head>` must succeed; otherwise report \*\*not armed — `main` moved since the sync/);
+    assert.match(close(), /If its merged `headRefOid` is not `<stage1Head>`, report `<F>` \*\*merged past the gate\*\*/);
+    assert.match(read(SKILL), /Record the head stage 1 passed on as `<stage1Head>`: `origin\/<integ>` as step 6 fetched it, or `<gateHead>` when no sync was needed/);
+    assert.match(md, /`gh pr list --base <integ> --state open` must print nothing/);
+    assert.match(md, /`gh pr merge --auto --merge --match-head-commit <stage1Head> <F>`, on a successful arm `gh pr edit <F> --add-label "waffle:auto-merged"`/);
+    assert.match(md, /\.autoMergeRequest != null/);
+    assert.match(md, /never `--admin`, never an immediate merge/);
+    assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
+    assert.doesNotMatch(md, /gh pr merge[^`\n]*--admin/);
+  });
+
+  test('a merged stage 2 or stage 3 fix PR leaves the final PR for a human', () => {
+    const md = arm();
+    assert.match(md, /\*\*No fix PR merged\.\*\* No stage 2 fix PR \(`autopilot\/stage2\/<ts>-r<k>`\) and no stage 3 fix PR \(`autopilot\/stage3\/<ts>\[-r2\]`\) merged into `<integ>`/);
+    assert.match(md, /\*\*not armed — fix PR #P merged unreviewed\*\*/);
+    assert.match(md, /The sync PR is exempt/);
+    const guard = section(read(SKILL), '## Guardrails', '## Failure handling');
+    assert.match(guard, /\*\*Never once a stage 2 or stage 3 fix PR merged:\*\*/);
+  });
+
+  test('a stage 2 pass must carry its waffle/adversarial-review success status (#754)', () => {
+    const md = arm();
+    assert.match(md, /\*\*Stage 2's review landed\.\*\* When stage 2 passed, that head carries a `waffle\/adversarial-review` success status/);
+    assert.match(md, /gh api "repos\/\$OWNER\/\$REPO\/commits\/<head>\/statuses" --paginate/);
+    assert.match(md, /A count of 0, or a query that errors, is reported as \*\*not armed — no `waffle\/adversarial-review` success status on `<head>`\*\*/);
+    assert.doesNotMatch(md, /means the review never posted/);
+  });
+
+  test('stage 2 writes a denied reviewer status itself, only after reading the review back', () => {
+    const md = section(read(SKILL), '### Integration gate — stage 2', '### Integration gate — stage 3');
+    assert.match(md, /It returns its review id and whether its `waffle\/adversarial-review` status write succeeded/);
+    assert.match(md, /when its `commit_id` is `<sha>` and its body begins with the adversarial-review marker, write that status on `<sha>` yourself/);
+  });
+
+  test('after MERGED: Step 9 for every closed issue, then a probe-verified branch delete', () => {
+    const md = close();
+    assert.match(md, /Only once `<F>` reads `MERGED`/);
+    assert.match(md, /closingIssuesReferences/);
+    assert.match(md, /`git ls-remote --exit-code --heads origin <integ>`\. Exit 2 means the repo's auto-delete already removed it/);
+    assert.match(md, /`git push origin --delete <integ>`, then probe again and require exit 2/);
+    assert.match(md, /\*\*left open\*\*/);
+    assert.match(md, /`clean-up git --yes`/);
+  });
+
+  test('Steps 8 and 9, the report, guardrails and failure handling carry the arm', () => {
+    const md = read(SKILL);
+    assert.match(section(md, '### Step 8', '### Step 9'), /except in the final PR's wait/);
+    assert.match(section(md, '### Step 9', '## End-of-run'), /items 1 and 2 run once, for every issue that PR closes, after it merges/);
+    const report = section(md, '## End-of-run housekeeping', '## Guardrails');
+    assert.match(report, /the final PR's arm outcome/);
+    assert.match(report, /\*\*left open\*\* with the reason and the command/);
+    const guard = section(md, '## Guardrails', '## Failure handling');
+    assert.match(guard, /or deleting it once the final PR has merged into `main`/);
+    const fail = section(md, '## Failure handling', 'At the end, the report');
+    assert.match(fail, /\*\*The final PR was not armed, or its wait ended blocked\*\*/);
+    assert.match(fail, /\*\*`<integ>` survived the final merge\*\*/);
+    assert.doesNotMatch(read(SOURCE), /one unarmed integration/);
   });
 });

@@ -9,6 +9,39 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: The integration → main PR arms on a green integration gate, never after an unreviewed fix PR (#735, part of #720)
+
+**Context**: #731 left the final PR unarmed until an integration gate existed. Stages 1–3 now gate
+it. But stage 2 and stage 3 land their fixes through fix PRs into the integration branch that merge
+on CI alone, unreviewed for correctness. Until now, the human reviewing the final PR was their
+review. Arming the final PR removes that human. Separately, stage 2's "passed" did not prove the
+reviewer's review landed (#754).
+
+**Decision**: With `+automerge`, autopilot arms the final PR only when every enabled stage passed (a
+stage not run because its consent is off does not block; a held one does), `<F>`'s head equals
+the integration branch and the head stage 1 passed on, no PR is open against the branch, and, after a
+stage 2 pass, that head carries a `waffle/adversarial-review` success status. **If any stage 2 or
+stage 3 fix PR merged into the branch during the run, the final PR is not armed** and is left for a
+human, who reviews those fixes. The sync PR is exempt, since it carries only main's gated commits.
+The arm uses `gh pr merge --auto --merge` and Step 8's blocked rule. After the merge, Step 9's
+close and Done run once for every issue the final PR closes, and the branch is deleted by a
+probe-verified `git push origin --delete`, or reported left open.
+
+**Alternatives**:
+- *Arm after fix PRs when a later cold stage 2 round covered their head.* Rejected: stage 3's fixes
+  land after the last review, stage 2 asks only about decisions, not correctness, and tracking which
+  round covered which head is more rule than the gain is worth.
+- *Keep the final PR unarmed.* Rejected: with every stage clean, a human adds nothing the gates
+  did not check, and #720 asked for an unattended merge.
+- *Extend `clean-up` to delete the remote branch.* Rejected: `clean-up` never deletes remote
+  branches, and this one is autopilot's own.
+- *Rely on the repo's auto-delete alone.* Rejected: not every repo enables it. The probe handles both.
+
+**Affects**: `autopilot` skill. Integration runs with `+automerge` can merge into `main` unattended.
+A run whose gates had to fix something still ends with a human merge.
+
+---
+
 ## 2026-10-28: With integration mode, the audit gate runs once, on the final PR (#734, part of #720)
 
 **Context**: In integration mode, run PRs merge only into the integration branch, and the final PR
