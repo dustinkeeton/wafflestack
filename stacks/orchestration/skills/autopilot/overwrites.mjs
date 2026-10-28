@@ -10,8 +10,8 @@ const USAGE = [
   'Usage: node overwrites.mjs --head <sha> --pr <label>=<sha> [--pr <label>=<sha> …] [--ignore <path> …]',
   '       node overwrites.mjs --rebase --before <sha> --after <sha> --onto <sha> [--ignore <path> …]',
   "  --pr: a run PR's merge commit on --head's first-parent history, any order; a numeric label prints as #N.",
-  '  --rebase: lines --onto added since --before forked, or both --before and --onto held, that --after lacks',
-  '            were dropped resolving the rebase.',
+  '  --rebase: a line --onto holds that --after lacks was dropped resolving the rebase, unless it predates',
+  "            --before's fork and a replayed (non-merge) branch commit removed it.",
 ].join('\n');
 const DEFAULT_IGNORES = ['.waffle/waffle.lock.json'];
 const SHOW_PER_GROUP = 5;
@@ -275,10 +275,9 @@ function report({ findings, notes, checked, prs }) {
 }
 
 /**
- * A clean patch replays only removals of lines its pre-image held, so an upstream line missing after the
- * rebase was dropped by a conflict resolution, even when the branch removed identical text before the
- * rebase (owner ruling, #752). A file gone after the rebase is always a finding. A line both --before and
- * --onto held is checked too: a branch that merged upstream in before the rebase forks after it.
+ * The rebase replays only the branch's non-merge commits, so a line --onto holds that --after lacks was
+ * dropped by a conflict resolution unless one of those commits removed it. Lines added since the fork are
+ * findings even then (owner ruling, #752). Catch-up merges are not replayed, so a line one dropped counts.
  * @param {object} args `before`, `after`, `onto` and `ignores` from the command line
  */
 function checkRebase(args) {
@@ -286,7 +285,6 @@ function checkRebase(args) {
   if (!isAncestor(onto, after)) throw new Fail(`--after ${after} does not descend from --onto ${onto}`);
   const fork = git(['merge-base', before, onto]).trim();
   const atAfter = pathsAtHead(onto, after);
-  const atOnto = pathsAtHead(before, onto);
   const cache = new Map();
   const findings = [];
   let checked = 0;
@@ -307,14 +305,21 @@ function checkRebase(args) {
     }
   }
   const seen = new Set(findings.map((f) => `${f.path}\0${f.line ?? ''}`));
-  for (const f of changes(before, after)) {
-    if (!f.from || args.ignores.includes(f.from)) continue;
-    const up = atOnto(f.from);
-    const upstream = up === null ? null : linesAt(onto, up, cache);
+  const ownRemovals = new Set();
+  for (const c of git(['rev-list', '--no-merges', `${onto}..${before}`]).split('\n').filter(Boolean)) {
+    const atAfterC = pathsAtHead(c, after);
+    for (const f of changes(`${c}^`, c)) {
+      const p = f.to ? atAfterC(f.to) : f.from;
+      for (const l of f.removed) if (!f.added.includes(l)) ownRemovals.add(`${p}\0${l}`);
+    }
+  }
+  for (const f of changes(onto, after)) {
+    if (!f.from || args.ignores.includes(f.from) || args.ignores.includes(f.to)) continue;
     const kept = f.to ? linesAt(after, f.to, cache) : null;
-    if (!(upstream instanceof Set) || kept === 'binary') continue;
+    if (kept === 'binary') continue;
+    const at = f.to ?? f.from;
     const key = (l) => (kept === null ? `${f.from}\0` : `${f.to}\0${l}`);
-    const dropped = [...new Set(f.removed)].filter((l) => l.trim() !== '' && upstream.has(l) && !kept?.has(l) && !seen.has(key(l)));
+    const dropped = [...new Set(f.removed)].filter((l) => l.trim() !== '' && !kept?.has(l) && !seen.has(key(l)) && !ownRemovals.has(`${at}\0${l}`));
     if (!dropped.length) continue;
     checked += dropped.length;
     if (kept === null) findings.push({ kind: 'DELETED', path: f.from, count: dropped.length });

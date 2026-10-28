@@ -437,6 +437,66 @@ describe('overwrites.mjs --rebase (#752)', () => {
     assert.match(r.out, /^rebase: 1 of 1 upstream line\(s\) dropped, in 1 file\(s\)$/m);
   });
 
+  const rebaseLate = (resolve) => {
+    git('switch', '-q', 'late');
+    rebased = { before: git('rev-parse', 'HEAD'), onto: git('rev-parse', 'main') };
+    if (!tryGit('rebase', '-q', 'main')) {
+      write(resolve);
+      git('add', '-A');
+      git('-c', 'core.editor=true', 'rebase', '--continue');
+    }
+    rebased.after = git('rev-parse', 'HEAD');
+    return runRebase();
+  };
+
+  test('a line a catch-up merge dropped, dropped again resolving the rebase, exits 1', () => {
+    pr({ 'a.txt': 'one\nupstream\n' });
+    git('switch', '-q', '-c', 'late', base);
+    write({ 'a.txt': 'one\nmine\n' });
+    git('commit', '-qam', 'late');
+    assert.equal(tryGit('merge', '-q', 'main'), false);
+    write({ 'a.txt': 'one\nmine\n' });
+    git('commit', '-qam', 'catch up');
+    pr({ 'b.txt': 'bee\n' });
+    const r = rebaseLate({ 'a.txt': 'one\nmine\n' });
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^REBASE: a\.txt: upstream added "upstream"; dropped resolving the rebase$/m);
+  });
+
+  test('a deliberate edit after a catch-up, or of a pre-fork line, replayed cleanly exits 0', () => {
+    pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('switch', '-q', '-c', 'late', base);
+    git('merge', '-q', '--no-ff', 'main', '-m', 'catch up');
+    write({ 'a.txt': 'two\nTHREE\n' });
+    git('commit', '-qam', 'rewrite');
+    pr({ 'b.txt': 'bee\n' });
+    const r = rebaseLate({});
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /^rebase: none dropped/m);
+  });
+
+  test('a line the branch only moved is not its own removal; a deletion before a rename is', () => {
+    const six = 'one\ntwo\nthree\nfour\nfive\nsix\n';
+    pr({ 'a.txt': six + 'up\n' });
+    git('switch', '-q', '-c', 'late', base);
+    git('merge', '-q', '--no-ff', 'main', '-m', 'catch up');
+    write({ 'a.txt': 'up\n' + six });
+    git('commit', '-qam', 'move');
+    pr({ 'a.txt': 'one\ntwo\nthree\nfour\nfive\nsix\nup\nmain\n' });
+    const moved = rebaseLate({ 'a.txt': 'one\ntwo\nthree\nfour\nfive\nsix\nmain\n' });
+    assert.equal(moved.code, 1, moved.out + moved.err);
+    assert.match(moved.out, /^REBASE: a\.txt: upstream added "up"; dropped resolving the rebase$/m);
+    git('switch', '-q', '-C', 'late', 'pr-1');
+    git('merge', '-q', '--no-ff', 'main', '-m', 'catch up');
+    write({ 'a.txt': six + 'main\n' });
+    git('commit', '-qam', 'drop up');
+    git('mv', 'a.txt', 'c.txt');
+    git('commit', '-qm', 'rename');
+    pr({ 'b.txt': 'bee\n' });
+    const renamed = rebaseLate({});
+    assert.equal(renamed.code, 0, renamed.out + renamed.err);
+  });
+
   test('an upstream line the branch had also removed is still a finding when the resolution drops it', () => {
     pr({ 'a.txt': 'two\none\n' });
     pr({ 'a.txt': 'TWO\n' }, { from: base, rebase: true });
@@ -512,6 +572,7 @@ describe('autopilot gate step 4 wires the checks (#748)', () => {
     assert.match(step3, /append `git -C <wt> diff --name-only --diff-filter=U` to the run's conflicted-path record/);
     assert.ok(step3.indexOf('gh pr merge --disable-auto <pr>') < step3.indexOf('gh pr comment <pr> --body-file'));
     assert.match(step3, /starts with `<!-- autopilot:rebase-drop -->`/);
+    assert.match(step3, /for each line `<onto>` holds that `<post>` lacks[^\n]*A line a catch-up merge dropped still counts\./);
     assert.match(step3, /a rebase-held PR is \*\*never armed\*\*/);
     assert.match(step3, /With integration mode on and the comment read back, the run PR arms into `<integ>` as usual, and the hold moves to the integration → `main` PR/);
     assert.match(step3, /Read it back with item 4's comments query on `<pr>`\. If that prints no id or errors, the hold is not durable: leave `<pr>` unarmed in either mode/);
