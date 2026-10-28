@@ -63,7 +63,9 @@ const mk = (key, spec, { stacks = ['s'], conflict = false } = {}) => ({
 
 describe('configReferenceYaml (formatter)', () => {
   const merged = [
+    mk('a.auto', { default: true, modes: [true, false, 'prompt'], configModes: [false, 'prompt'], description: 'Outside.' }),
     mk('a.gate', { default: 'prompt', modes: [true, false, 'prompt'], configModes: [false, 'prompt'], description: 'The gate. More.' }),
+    mk('a.long', { default: 'x'.repeat(120), description: 'Long.' }),
     mk('a.lock', { default: 'prompt', modes: [true, false, 'prompt'], lockMode: 'prompt', flag: { on: '+x' }, description: 'Locked.' }),
     mk('a.multi', { default: 'one\ntwo\nthree', description: 'Multi.' }),
     mk('a.need', { required: true, description: 'Needed. Detail.' }, { stacks: ['s', 't'] }),
@@ -73,6 +75,7 @@ describe('configReferenceYaml (formatter)', () => {
     mk('b.c', { default: true, description: 'Child.' }),
     mk('c.list', { default: ['x', 'y'], description: 'List.' }),
     mk('c.none', { description: 'Optional.' }),
+    mk('c.odd', { default: { k: undefined }, description: 'No round-trip.' }),
   ];
   const text = configReferenceYaml(merged);
 
@@ -96,6 +99,16 @@ describe('configReferenceYaml (formatter)', () => {
     assert.match(text, /^# {5}# split: \(declarations disagree — wafflestack config a\.split\)$/m);
     assert.match(text, /^# {5}# none: \(optional, no default — wafflestack config c\.none\)$/m);
     assert.match(text, /^# {3}# b: \(also a prefix of other keys — wafflestack config b\)$/m);
+    assert.match(text, /^# {5}# long: \(default is 122 chars — wafflestack config a\.long\)$/m);
+    assert.match(text, /^# {5}# odd: \(default does not round-trip as YAML — wafflestack config c\.odd\)$/m);
+  });
+
+  test('a default outside configModes is a pointer, never a value doctor would reject', () => {
+    assert.match(text, /^# {5}# auto: \(default is outside configModes — wafflestack config a\.auto\)$/m);
+    const cfg = YAML.parse(uncomment(text.split('\n'))).config;
+    assert.ok(!('auto' in cfg.a));
+    assert.ok(!('long' in cfg.a));
+    assert.ok(!('odd' in cfg.c));
   });
 
   test('templated defaults keep the raw template; configModes keys show an accepted value', () => {
