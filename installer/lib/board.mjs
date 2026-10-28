@@ -1,6 +1,6 @@
 // @ts-check
 // `state --board` (#697, part of #610): the best-effort team-focus read behind the `/standup`
-// pane. Two `gh api graphql` calls, time-boxed, cached briefly in the user cache dir, never thrown.
+// pane. Up to three `gh api graphql` calls, time-boxed, cached briefly in the user cache dir, never thrown.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,6 +29,7 @@ export const BOARD_ERRORS = /** @type {const} */ ({
  * @property {BoardItem[]} inProgress
  * @property {BoardItem[]} inReview
  * @property {{ number: number, title: string }|null} project the Projects v2 board matched to `project.name`
+ * @property {string|null} projectError why the board lookup failed (e.g. no `project` scope); the other lists still stand
  * @property {string|null} error
  * @property {string|null} checkedAt ISO time of the gh read
  * @property {'remote'|'cache'|null} source
@@ -40,7 +41,7 @@ const REPO_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     nameWithOwner
     milestones(states: OPEN, first: 20, orderBy: { field: DUE_DATE, direction: ASC }) { nodes { title dueOn } }
-    owner { login ... on ProjectV2Owner { projectsV2(first: 50) { nodes { number title } } } }
+    owner { login }
   }
 }`;
 
@@ -53,12 +54,15 @@ const EPICS_FIELDS = `search(query: $q, type: ISSUE, first: 50) { nodes { ...Epi
 const EPIC_FRAGMENT = 'fragment Epic on Issue { number title subIssuesSummary { total completed } }';
 const EPIC_TITLE = /^\s*\[epic\]/i;
 
-const ITEMS_FIELDS = `repositoryOwner(login: $login) { ... on ProjectV2Owner { projectV2(number: $number) {
+// Its own call: `projectsV2` needs the opt-in `project` scope, so its failure must not blank the rest.
+const PROJECT_QUERY = `query($login: String!, $title: String!) {
+  repositoryOwner(login: $login) { ... on ProjectV2Owner { projectsV2(first: 20, query: $title) { nodes { number title
     items(first: 100, query: "status:\\"In Progress\\",\\"In Review\\" is:open") { nodes {
       status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       content { __typename ... on Issue { number title } ... on PullRequest { number title } ... on DraftIssue { title } }
     } }
-  } } }`;
+  } } } }
+}`;
 
 /** `latest-release.json`'s sibling (#608). */
 export function defaultBoardCacheFile(env = process.env) {
@@ -76,7 +80,7 @@ export function ghRun(args, { cwd, timeoutMs }) {
  * @returns {BoardBlock}
  */
 export function emptyBoard(error, over = {}) {
-  return { milestones: [], epics: [], inProgress: [], inReview: [], project: null, error, checkedAt: null, source: null, ...over };
+  return { milestones: [], epics: [], inProgress: [], inReview: [], project: null, projectError: null, error, checkedAt: null, source: null, ...over };
 }
 
 /**
@@ -120,23 +124,14 @@ function fetchBoard({ cwd, projectName, gh, now }) {
   const start = now();
   const repo = graphql(gh, cwd, BOARD_CALL_TIMEOUT_MS, REPO_QUERY, ['-F', 'owner={owner}', '-F', 'name={repo}'])?.repository;
   if (!repo?.nameWithOwner) return emptyBoard(BOARD_ERRORS.badResponse);
-
-  const want = projectName?.toLowerCase();
-  const match = want ? (repo.owner?.projectsV2?.nodes ?? []).find((/** @type {any} */ p) => p?.title?.toLowerCase() === want) : null;
-  const project = match ? { number: match.number, title: match.title } : null;
   const milestones = (repo.milestones?.nodes ?? []).map((/** @type {any} */ m) => ({ title: m.title, dueOn: m.dueOn ?? null }));
+  const remaining = () => BOARD_BUDGET_MS - (now() - start);
 
-  const remaining = BOARD_BUDGET_MS - (now() - start);
-  if (remaining <= 0) return emptyBoard(BOARD_ERRORS.budget);
-
+  // Call 1 is capped at 5 s, so at least 3 s of the 8 s budget is left here.
   const [owner, name] = repo.nameWithOwner.split('/');
   const vars = ['-f', `q=repo:${repo.nameWithOwner} is:issue is:open "[epic]" in:title`, '-f', `owner=${owner}`, '-f', `name=${name}`];
-  let query = `query($q: String!, $owner: String!, $name: String!) { ${EPICS_FIELDS} } ${EPIC_FRAGMENT}`;
-  if (project) {
-    query = `query($q: String!, $owner: String!, $name: String!, $login: String!, $number: Int!) { ${EPICS_FIELDS} ${ITEMS_FIELDS} } ${EPIC_FRAGMENT}`;
-    vars.push('-f', `login=${repo.owner.login}`, '-F', `number=${project.number}`);
-  }
-  const data = graphql(gh, cwd, Math.min(BOARD_CALL_TIMEOUT_MS, remaining), query, vars);
+  const query = `query($q: String!, $owner: String!, $name: String!) { ${EPICS_FIELDS} } ${EPIC_FRAGMENT}`;
+  const data = graphql(gh, cwd, Math.min(BOARD_CALL_TIMEOUT_MS, remaining()), query, vars);
 
   /** @type {Map<number, { number: number, title: string, done: number, total: number }>} */
   const epicsByNumber = new Map();
@@ -146,14 +141,25 @@ function fetchBoard({ cwd, projectName, gh, now }) {
     if (total > 0 || EPIC_TITLE.test(n.title)) epicsByNumber.set(n.number, { number: n.number, title: n.title, done: n.subIssuesSummary?.completed ?? 0, total });
   }
   const epics = [...epicsByNumber.values()].sort((a, b) => a.number - b.number);
-  const items = data?.repositoryOwner?.projectV2?.items?.nodes ?? [];
-  return emptyBoard(null, {
-    milestones,
-    epics,
-    project,
-    inProgress: itemsWithStatus(items, BOARD_STATUSES.inProgress),
-    inReview: itemsWithStatus(items, BOARD_STATUSES.inReview),
-  });
+  const board = emptyBoard(null, { milestones, epics });
+  if (!projectName) return board;
+
+  const left = remaining();
+  if (left <= 0) return { ...board, projectError: BOARD_ERRORS.budget };
+  try {
+    const nodes = graphql(gh, cwd, Math.min(BOARD_CALL_TIMEOUT_MS, left), PROJECT_QUERY, ['-f', `login=${repo.owner?.login ?? owner}`, '-f', `title=${projectName}`])?.repositoryOwner?.projectsV2?.nodes ?? [];
+    const match = nodes.find((/** @type {any} */ p) => p?.title?.toLowerCase() === projectName.toLowerCase());
+    if (!match) return board;
+    const items = match.items?.nodes ?? [];
+    return {
+      ...board,
+      project: { number: match.number, title: match.title },
+      inProgress: itemsWithStatus(items, BOARD_STATUSES.inProgress),
+      inReview: itemsWithStatus(items, BOARD_STATUSES.inReview),
+    };
+  } catch (err) {
+    return { ...board, projectError: describeGhError(err) };
+  }
 }
 
 /**

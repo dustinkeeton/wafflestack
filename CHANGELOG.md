@@ -38,7 +38,8 @@ is what you reach for across a breaking one.
   with native sub-issues, or an `[epic]` title) with `n of m` sub-issue progress, and the In Progress /
   In Review items of the Projects v2 board whose title matches `project.name`. It reads through `gh`, capped at 5 s per call and 8 s overall,
   and caches the answer for 60 s in your user cache dir (`board.json`, next to `latest-release.json`).
-  A failure sets `board.error` and never changes the exit code. `--offline` or `WAFFLESTACK_OFFLINE=1`
+  A failure sets `board.error` and never changes the exit code. A failed board lookup (for example, a `gh`
+  token without the `project` scope) sets `board.projectError` instead and keeps milestones and epics. `--offline` or `WAFFLESTACK_OFFLINE=1`
   skips the read. Plain `state` is unchanged and still never calls `gh`.
 
   **Consumer impact:** none. The flag is opt-in and the block is additive. A later waffle-view

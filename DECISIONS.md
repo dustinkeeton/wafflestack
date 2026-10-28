@@ -21,7 +21,8 @@ board status. That needs `gh` and the network, but plain `state` is offline by d
 |---|---|
 | **Time box** | Each `gh` call is capped at 5 s, the whole read at 8 s. |
 | **Cache** | Answers (failures too) are cached for 60 s in the user cache (`board.json`). |
-| **Failure** | The block is always present with an `error` string (`offline`, `gh not found`, `timed out`, …). It never throws and never changes the exit code. |
+| **Failure** | The block is always present with an `error` string (`offline`, `gh not found`, `gh timed out`, …). It never throws and never changes the exit code. |
+| **Board lookup** | Its own `gh` call, run only when `project.name` is set. Reading Projects v2 needs gh's opt-in `project` scope, so a failure there sets `projectError` and keeps milestones and epics. |
 | **Offline** | `--offline` / `WAFFLESTACK_OFFLINE=1` skips the read and returns the full block with `error: 'offline'`. |
 
 **Alternatives considered**:
