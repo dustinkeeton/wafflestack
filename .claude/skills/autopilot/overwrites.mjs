@@ -113,13 +113,13 @@ function linesAt(head, p, cache) {
   return cache.get(key);
 }
 
-/** First later PR that removed `line` from the file, tracking renames along the way. */
+/** First later PR that removed `line` (null: deleted the file), tracking renames along the way. */
 function remover(later, startPath, line) {
   const names = new Set([startPath]);
   for (const pr of later) {
     for (const f of pr.files) {
       if (!names.has(f.from)) continue;
-      if (f.deleted || f.removed.includes(line)) return pr;
+      if (f.deleted || (line !== null && f.removed.includes(line))) return pr;
       if (f.to) names.add(f.to);
     }
   }
@@ -149,7 +149,7 @@ function check(args) {
       if (lines === 'binary') continue;
       checked += added.length;
       if (lines === null) {
-        const r = remover(later, f.to, added[0]);
+        const r = remover(later, f.to, null);
         (informed(pr, r) ? notes : findings).push({ kind: 'DELETED', path: f.to, by: pr.label, count: added.length, removedBy: r?.label });
         continue;
       }

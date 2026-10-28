@@ -163,6 +163,49 @@ describe('overwrites.mjs (#748)', () => {
     assert.match(r.out, /^DELETED: c\.txt: #1 added 2 line\(s\); file deleted by #2$/m);
   });
 
+  test('a built-on edit then a blind delete credits the deleter, not the editor, exit 1', () => {
+    const p1 = pr({ 'c.txt': 'x\ny\n' });
+    const p2 = pr({ 'c.txt': 'y\n' });
+    pr({ 'c.txt': null });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^DELETED: c\.txt: #1 added 2 line\(s\); file deleted outside the run's PRs$/m);
+  });
+
+  test('a clean sync merge as both --head and the last --pr exits 0', () => {
+    git('switch', '-q', '-c', 'integ');
+    git('switch', '-q', '-c', 'f1');
+    write({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('commit', '-qam', 'f1');
+    git('switch', '-q', 'integ');
+    git('merge', '-q', '--no-ff', 'f1', '-m', 'merge f1');
+    const p1 = git('rev-parse', 'HEAD');
+    git('switch', '-q', 'main');
+    write({ 'm.txt': 'main\n' });
+    git('add', '-A');
+    git('commit', '-q', '-m', 'main moves');
+    git('switch', '-q', 'integ');
+    git('merge', '-q', '--no-ff', 'main', '-m', 'sync');
+    const sync = git('rev-parse', 'HEAD');
+    const r = run('--head', sync, '--pr', `1=${p1}`, '--pr', `sync=${sync}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.doesNotMatch(r.out, /OVERWRITE:/);
+  });
+
+  test('a squash-merged PR has no fork point, so its removals are findings, exit 1', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('switch', '-q', '-c', 'sq');
+    write({ 'a.txt': 'one\ntwo\nTHREE\n' });
+    git('commit', '-qam', 'sq');
+    git('switch', '-q', 'main');
+    git('merge', '-q', '--squash', 'sq');
+    git('commit', '-qm', 'squash sq');
+    const p2 = git('rev-parse', 'HEAD');
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^OVERWRITE: a\.txt: #1 added "three"; removed by #2$/m);
+  });
+
   test('renames are followed to the head path', () => {
     const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
     const p2 = pr({}, { mv: ['a.txt', 'moved.txt'] });
