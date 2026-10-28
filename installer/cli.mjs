@@ -19,6 +19,7 @@ import { computeListModel, formatListTable, interactiveSelect } from './lib/list
 import { computeToggleModel, formatToggleTable, interactiveToggle, applyToggle } from './lib/toggle.mjs';
 import { resolveToolkitIdentity, formatUnreleasedRefusal, formatProvenanceWarning } from './lib/toolkit-ref.mjs';
 import { resolveLatestRelease, updateVerdict } from './lib/update-check.mjs';
+import { readBoard } from './lib/board.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -122,11 +123,14 @@ try {
     }
     case 'state': {
       const json = extractFlag(args, '--json');
+      const board = extractFlag(args, '--board');
       if (args.length) fail(`state takes no refs (got ${args.join(', ')}) — it prints this repo's resolved behavioral keys, run files and lock status`);
       // Read-only (#561): the tree is read through the tree lock, drift is the subject rather than
       // the exit code, and nothing in the repo is written — only the user-cache newer-release check (#608).
       const toolkitIdentity = warnProvenance(offlineIdentity());
       const state = collectState({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity, update: newerReleaseCheck() });
+      // #697: opt-in network read; never throws, never moves the exit code.
+      if (board) state.board = readBoard({ cwd, projectName: stringOrNull(state.config['project.name']?.value), offline });
       process.stdout.write(json ? `${JSON.stringify(state, null, 2)}\n` : formatStateText(state));
       break;
     }
@@ -369,6 +373,11 @@ function envAllowUnreleased() {
   return envTruthy('WAFFLESTACK_ALLOW_UNRELEASED');
 }
 
+/** @param {unknown} v */
+function stringOrNull(v) {
+  return typeof v === 'string' && v ? v : null;
+}
+
 /** `WAFFLESTACK_OFFLINE=1` — the env twin of `--offline`, for air-gapped CI. */
 function envOffline() {
   return envTruthy('WAFFLESTACK_OFFLINE');
@@ -434,6 +443,8 @@ function helpText() {
     '  --verify-render   doctor: also check the config still renders what the lock records',
     '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
     '                    state: print the state document as JSON (the shape AGENTS.md documents)',
+    '  --board           state: also read milestones, open epics and In Progress / In Review board',
+    '                    items via gh (5 s per call, 8 s total, cached 60 s); a failure sets board.error',
     '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
     '  --check-prereqs   list: run the hinted prerequisite checks and show only the unmet ones',
     '  --disable SKILL   toggle: render SKILL slash-only (disable-model-invocation: true); repeatable',
@@ -445,6 +456,7 @@ function helpText() {
     '  --offline         skip the network release lookup (git ls-remote). For an air-gapped run that',
     '                    would otherwise stall on a doomed lookup; identity degrades to unverified.',
     '                    doctor/state: also skips the newer-release check (a cached answer is still read)',
+    '                    state --board: skips the board read (board.error = "offline")',
     '                    Env: WAFFLESTACK_OFFLINE=1',
     '',
   ].join('\n');

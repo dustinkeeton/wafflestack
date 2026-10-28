@@ -81,7 +81,7 @@ npx github:dustinkeeton/wafflestack#vX.Y.Z render     # X.Y.Z = latest release t
 | `doctor` | Diff managed files against the lock; report edits, missing files, env gaps. Exit 1 on drift. |
 | `report` | Print redacted diagnostics (lock, config keys, doctor summary) for an upstream toolkit bug report; `--json` for machines. |
 | `config [key-prefix]` | Look up the config keys this selection can set — value, source file (`default` / `waffle.yaml` / `waffle.local.yaml`), default and constraints; an exact key prints the full default and description. Read-only. |
-| `state` | Print the resolved state — every behavioral key with its value, layer and tokens, the delegate run files, lock status and drift; `--json` for the documented document. |
+| `state` | Print the resolved state — every behavioral key with its value, layer and tokens, the delegate run files, lock status and drift; `--json` for the documented document; `--board` adds open milestones, epics and In Progress / In Review items via `gh`. |
 | `eject <item>` | Stop managing an item — its files stay and become project-owned; drops it from `include:`. `install <item>` un-ejects it. |
 | `uninstall` | Remove the whole install (reports until you pass `--yes`; keeps hand-edited files). |
 | `reinstall` | Re-render the same selection from clean; `--clean --yes` for a full reset. |

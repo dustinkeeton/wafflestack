@@ -9,6 +9,35 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-27: The board read is an opt-in `state --board` flag that always returns a full block (#697)
+
+**Context**: The `/standup` pane should show what the team is working on — milestones, epics and
+board status. That needs `gh` and the network, but plain `state` is offline by design (#561).
+
+**Decision**: A `--board` flag adds a `board` block to `state` and `state --json`, read by
+`installer/lib/board.mjs`. The board is the Projects v2 board whose title matches `project.name`.
+
+| Rule | Behavior |
+|---|---|
+| **Time box** | Each `gh` call is capped at 5 s, the whole read at 8 s. |
+| **Cache** | Answers (failures too) are cached for 60 s in the user cache (`board.json`). |
+| **Failure** | The block is always present with an `error` string (`offline`, `gh not found`, `gh timed out`, …). It never throws and never changes the exit code. |
+| **Board lookup** | Its own `gh` call, run only when `project.name` is set. Reading Projects v2 needs gh's opt-in `project` scope, so a failure there sets `projectError` and keeps milestones and epics. |
+| **Offline** | `--offline` / `WAFFLESTACK_OFFLINE=1` skips the read and returns the full block with `error: 'offline'`. |
+
+**Alternatives considered**:
+
+- **Read the board in plain `state`** — rejected: it would end `state`'s offline guarantee.
+- **Return `board: null` when offline or failed** — rejected: a full block with empty lists and
+  an `error` lets a reader handle one shape, and says *why* there is no data.
+- **A new config key for the board** — rejected: `project.name` already names it.
+
+**Rationale**: Opt-in keeps every existing caller offline; a fixed shape keeps the pane simple.
+
+**Impact**: Additive — no consumer change. The pane does not pass `--board` yet (#698).
+
+---
+
 ## 2026-10-27: The `/standup` pane reuses the skill's own agent-finding rule (#610)
 
 **Context**: The `/waffle-view` pane, narrowed to `/standup`, should list the agents the skill
@@ -1024,7 +1053,7 @@ whose required config was missing, and the `list --interactive` apply, left the 
 `upgrade` failed the same way.
 
 **Decision**: **Byte-restore via the existing snapshot, on any refused render.** `runRender`
-(`installer/cli.mjs:425`) calls `installed.rollback()` whenever the render is refused, and
+(`installer/cli.mjs:475`) calls `installed.rollback()` whenever the render is refused, and
 `rollback()` (`installer/lib/eject.mjs:177`) writes back the config text exactly as it was found and
 returns whether it had anything to restore — so a no-op install never claims "restored".
 `unejectCollisions` now only picks the message: a collision on an un-ejected item's project-owned
