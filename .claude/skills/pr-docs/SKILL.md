@@ -72,7 +72,7 @@ git status --porcelain
 - **Changes:** stage only the doc files the pipeline touched (`git add <path>…`, never `git add -A`). Commit them:
 
   ```bash
-  git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "docs: refresh docs for the changes in #<pr>" -m "Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>"
+  git -c commit.gpgsign=false -c tag.gpgSign=false -c user.name="Wafflebot" -c user.email=bot@wafflenet.io commit -m "docs: refresh docs for the changes in #<pr>" -m "Co-authored-by: Dustin Keeton <1530884+dustinkeeton@users.noreply.github.com>"
   ```
 
   Then push with `git push`. A plain push is all you need: Step 1 merged, so the push is a fast-forward. Report **`pr-docs: refreshed — <files changed>`**.
