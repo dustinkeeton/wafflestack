@@ -469,6 +469,28 @@ describe('open in editor (#616)', () => {
     await ui.unmount()
   })
 
+  test('an error before the launch lands inline as its message and launches nothing', async ($, on) => {
+    const launched: (readonly string[])[] = []
+    on('fs.exists', () => ({ value: false }))
+    on('session.cwd', () => ({ deny: 'no cwd' }))
+    on('process.run', (_$, e) => {
+      if (e.argv[0] !== 'npx') launched.push(e.argv)
+      return { value: exited(0, JSON.stringify(DOC)) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    await ui.press({ key: 'open-editor' })
+    await ui.unmount()
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /^open in editor failed: .*no cwd/ })).toBeDefined()
+    expect(launched).toEqual([])
+    await ui.unmount()
+  })
+
   test('a launcher that exits non-zero shows its exit code and stderr inline', async ($, on) => {
     on('fs.exists', () => ({ value: false }))
     on('session.cwd', () => ({ value: '/repo' }))
