@@ -290,6 +290,29 @@ describe('the toolkit ref string is exactly `github:<owner>/<repo>#<tag>` (#373 
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('a checkout where `git rev-parse HEAD` fails labels its CHANGELOG release `changelog` (#694)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-nogit-'));
+    try {
+      fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'wafflestack', version: '0.12.0' }));
+      const noGit = () => null;
+
+      write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-01-01\n');
+      const id = resolveToolkitIdentity({ toolkitRoot: root, runGit: noGit, lsRemote: forbidNetwork });
+      assert.equal(id.origin, 'checkout');
+      assert.equal(id.latestTag, 'v0.12.0');
+      assert.equal(id.latestTagSource, 'changelog');
+      assert.match(id.lookupError ?? '', /rev-parse HEAD/);
+
+      write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n');
+      const bare = resolveToolkitIdentity({ toolkitRoot: root, runGit: noGit, lsRemote: forbidNetwork });
+      assert.equal(bare.latestTag, null);
+      assert.equal(bare.latestTagSource, null);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
