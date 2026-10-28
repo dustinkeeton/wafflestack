@@ -17,6 +17,7 @@ import {
   parseStateOutput,
   promptSkill,
   resolveArgv,
+  selectAgents,
   selectKeys,
   selectSlice,
   sourceTone,
@@ -120,7 +121,12 @@ const DOC: WaffleViewDoc = {
     },
     autopilot: { keys: ['autopilot.autoMerge', 'autopilot.planDir'], files: ['.claude/worktrees/.autopilot'] },
     'git-workflow': { keys: [], files: [] },
+    standup: { keys: [], files: [] },
   },
+  agents: [
+    { name: 'docs-agent', description: 'Agent-optimized documentation writer.', file: '.claude/agents/docs-agent.md' },
+    { name: 'harness-architect', description: 'Expert in designing agent harnesses.', file: '.claude/agents/harness-architect.md' },
+  ],
 }
 
 const exited = (exitCode: number, stdout: string, stderr = '') => ({
@@ -153,6 +159,15 @@ const TYPED = { wait: false, origin: { kind: 'composer' as const } }
 const PEER = { wait: false, origin: { kind: 'peer' as const } }
 
 describe('state helpers', () => {
+  test('selectAgents answers only for /standup, in document order, undefined from an older CLI (#610)', () => {
+    const standup = selectSlice(DOC, { skill: 'standup' })
+    expect(selectAgents(DOC, standup)?.map(agent => agent.name)).toEqual(['docs-agent', 'harness-architect'])
+    expect(selectAgents(DOC, selectSlice(DOC, { skill: 'issue' }))).toBeNull()
+    expect(selectAgents(DOC, null)).toBeNull()
+    const { agents: _omitted, ...older } = DOC
+    expect(selectAgents(older, standup)).toBeUndefined()
+  })
+
   test('resolveArgv prefers the checkout CLI, then the installed bin, then npx', () => {
     expect(resolveArgv({ hasLocalCli: true, hasLocalBin: true })).toEqual(['node', LOCAL_CLI, ...STATE_ARGS])
     expect(resolveArgv({ hasLocalCli: false, hasLocalBin: true })).toEqual([LOCAL_BIN, ...STATE_ARGS])
@@ -578,6 +593,113 @@ describe('the pane', () => {
     ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: ' · /delegate' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: 'issue.confirmGate' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('after /standup the pane shows the agent roster in its order instead of an empty keys list (#610)', async ($, on) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(DOC)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: ' · /standup' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Agents (2)' })).toBeDefined()
+    const names = (await ui.findAll({ type: 'Text', text: /^(docs-agent|harness-architect)$/ })).map(node => node.text)
+    expect(names).toEqual(['docs-agent', 'harness-architect'])
+    expect(await ui.find({ type: 'Text', text: 'Agent-optimized documentation writer.' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /reads no behavioral key/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^Keys / })).toBeUndefined()
+    await ui.unmount()
+
+    await $.prompt.submit({ text: '/issue 12', ...TYPED })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /^Agents/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'issue.confirmGate' })).toBeDefined()
+    await ui.unmount()
+
+    await $.prompt.submit({ text: 'back to normal', ...TYPED })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /^Agents/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'Locks' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a /standup that also reads a behavioral key shows both the roster and the keys (#610)', async ($, on) => {
+    const reading: WaffleViewDoc = { ...DOC, skills: { ...DOC.skills, standup: { keys: ['issue.confirmGate'], files: [] } } }
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(reading)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: 'Agents (2)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Keys (1)' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'issue.confirmGate' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a narrow /standup pane keeps the roster in served order, description on the name row (#610)', async ($, on) => {
+    const unsorted: WaffleViewDoc = { ...DOC, agents: [...DOC.agents!].reverse() }
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(unsorted)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+
+    const ui = await $.ui.mount({
+      plugin: PANE,
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: PANE,
+      props: { ...PANE_PROPS, bodyColumns: 60 },
+    })
+    const names = (await ui.findAll({ type: 'Text', text: /^(docs-agent|harness-architect)$/ })).map(node => node.text)
+    expect(names).toEqual(['harness-architect', 'docs-agent'])
+    expect(await ui.find({ type: 'Text', text: '  Expert in designing agent harnesses.' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Expert in designing/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('/standup degrades: an empty roster and an older CLI each say so dim (#610)', async ($, on) => {
+    const { agents: _omitted, ...older } = DOC
+    let served: WaffleViewDoc = { ...DOC, agents: [] }
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(served)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    let ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: 'no installed agents to round up' }))?.props).toMatchObject({ dimColor: true })
+    await ui.unmount()
+
+    served = older as WaffleViewDoc
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    await $.command.run({ command: PANE, args: '', ...COMPOSER })
+    ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect((await ui.find({ type: 'Text', text: /predates the agent roster/ }))?.props).toMatchObject({ dimColor: true })
     await ui.unmount()
   })
 

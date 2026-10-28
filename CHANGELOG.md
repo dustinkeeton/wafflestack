@@ -60,6 +60,15 @@ is what you reach for across a breaking one.
   **Consumer impact:** none required — the button opens Cursor until you set
   `config: { waffleView: { editor: <launcher> } }` in `.waffle/waffle.yaml` or
   `waffle.local.yaml`. The render and lock do not change.
+- **The `/waffle-view` pane shows the agent roster during `/standup` (part of #610).** `state --json`
+  gains an additive `agents` array (`name`, first-sentence `description`, repo-relative `file`; the
+  shape stays version 1), found the way `/standup` finds its roster: the agents directory beside
+  `harness.skillsDir`, top-level `*.md` with a frontmatter `name`, sorted by name. The text form
+  adds an `agents:` line. After `/standup` the pane shows `Agents (n)` in that order instead of
+  "/standup reads no behavioral key"; other skills' views and the full view are unchanged. The
+  mod's plugin version is now 0.6.0.
+  **Consumer impact:** none required — local file reads only, no network, and the render and lock
+  do not change. An older CLI without `agents` makes the pane say so instead of showing a roster.
 
 ### Changed
 

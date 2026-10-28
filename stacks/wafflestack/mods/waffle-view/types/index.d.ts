@@ -73,9 +73,14 @@ export type WaffleViewDoc = {
   drift: { ok: boolean; modified: string[]; missing: string[]; absentDocs: string[]; notes: string[] }
   config: Record<string, WaffleViewConfigValue>
   skills: Record<string, WaffleViewSkillContext>
+  /** Optional: a CLI older than #610 prints no roster. */
+  agents?: WaffleViewAgent[]
   /** Optional: a CLI older than #608 prints no `update` block. */
   update?: WaffleViewUpdate
 }
+
+/** One rendered agent `/standup` rounds up (`agents` in the document, #610), in roster order. */
+export type WaffleViewAgent = { name: string; description: string; file: string }
 
 /** Whether a newer toolkit release exists (`update` in the document, #608). */
 export type WaffleViewUpdate = {

@@ -9,6 +9,29 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-27: The `/standup` pane reuses the skill's own agent-finding rule (#610)
+
+**Context**: The `/waffle-view` pane, narrowed to `/standup`, should list the agents the skill
+will spawn. `state --json` had no roster.
+
+**Decision**: `agentRoster` in `installer/lib/state.mjs` copies `/standup` Step 1 exactly: take
+`harness.skillsDir`, swap its trailing `skills` for `agents`, read top-level `*.md`, skip files
+with no `name`, sort by name. It fills a new `agents` array in `state --json`.
+
+**Alternatives considered**:
+
+- **Read `harness.agentsDir` instead** — rejected: the pane and the skill could then disagree.
+- **Show the board and current focus in the same PR** — deferred to a `state --board` flag
+  (#697), because that read needs `gh` and the network.
+
+**Rationale**: One rule means one answer. A test in `state.test.mjs` checks the skill's own
+sentences, so rewording Step 1 breaks the build instead of silently splitting the two.
+
+**Impact**: Plain `state` stays offline and the shape version stays 1, since the array is
+additive. An older CLI shows a dim "upgrade wafflestack" line in the pane.
+
+---
+
 ## 2026-10-27: A key a mod spells as a quoted literal counts as "referenced" (#616)
 
 **Context**: The `/waffle-view` pane's new **Open in \<editor\>** button reads `waffleView.editor`
