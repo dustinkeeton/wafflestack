@@ -35,6 +35,7 @@ import {
   valueLines,
   valueTone,
   wantsBoard,
+  waveClosed,
   waveCompleted,
   waveMarker,
   waveSpawned,
@@ -1117,7 +1118,7 @@ describe('current focus (#698)', () => {
 })
 
 describe('live wave (#699)', () => {
-  const turn = (agentId: string | undefined, reason: 'answer' | 'error' | 'aborted' = 'answer') => ({
+  const turn = (agentId: string | undefined, reason: 'answer' | 'error' | 'aborted' | 'refusal' = 'answer') => ({
     answer: 'ok',
     durationMs: 1,
     isAborted: reason === 'aborted',
@@ -1132,8 +1133,17 @@ describe('live wave (#699)', () => {
     expect(waveCompleted(running, 'a1', 'answer').byType).toEqual({ 'docs-agent': 'done' })
     expect(waveCompleted(running, 'a1', 'error').byType).toEqual({ 'docs-agent': 'failed' })
     expect(waveCompleted(running, 'a1', 'aborted').byType).toEqual({ 'docs-agent': 'failed' })
+    expect(waveCompleted(running, 'a1', 'refusal').byType).toEqual({ 'docs-agent': 'failed' })
     expect(waveCompleted(running, 'other', 'answer')).toBe(running)
     expect(EMPTY_WAVE.byType).toEqual({})
+  })
+
+  test('closing ends a started wave: later spawns stay out, completions still land', () => {
+    expect(waveClosed(EMPTY_WAVE)).toBe(EMPTY_WAVE)
+    const closed = waveClosed(waveSpawned(EMPTY_WAVE, 'docs-agent', 'a1'))
+    expect(closed.closed).toBe(true)
+    expect(waveSpawned(closed, 'harness-architect', 'a2')).toBe(closed)
+    expect(waveCompleted(closed, 'a1', 'answer').byType).toEqual({ 'docs-agent': 'done' })
   })
 
   test('each status wears its own glyph and tone; pending is dim', () => {
@@ -1217,6 +1227,29 @@ describe('live wave (#699)', () => {
     deny = true
     await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
     expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('a typed /standup prompt resets a running wave', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['◐', '○'])
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('once the main loop finishes the wave, a later spawn leaves its row alone', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    await $.turn.complete(turn(undefined))
+    await $.turn.complete(turn('id-docs-agent'))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['●', '○'])
     await ui.unmount()
   })
 
