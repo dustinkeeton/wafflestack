@@ -88,18 +88,25 @@ async function refresh($: Dollar): Promise<void> {
   }
 }
 
-// The bottom Button (#616): the configured launcher on the session's directory. Never throws — a
-// launcher that is missing or exits non-zero lands inline, beside the pane it leaves working.
+// The bottom Button (#616): the configured launcher on the session's directory. Inert until a
+// state read lands — no document means no known editor. Never throws: any failure lands inline.
 async function openEditor($: Dollar): Promise<void> {
-  const argv = editorArgv(await read($, doc), await $.session.cwd())
+  let launcher: string | null = null
   // `process.run` rejects both for a launcher that cannot start and one still running at the
   // timeout; only the elapsed time tells them apart.
-  const started = Date.now()
+  let started = 0
   let failure: string | null
   try {
-    failure = editorLaunchError(argv[0]!, { output: await $.process.run(argv, { timeoutMs: EDITOR_TIMEOUT_MS }) })
+    const state = await read($, doc)
+    if (!state) return
+    const argv = editorArgv(state, await $.session.cwd())
+    launcher = argv[0]!
+    started = Date.now()
+    failure = editorLaunchError(launcher, { output: await $.process.run(argv, { timeoutMs: EDITOR_TIMEOUT_MS }) })
   } catch (err) {
-    failure = editorLaunchError(argv[0]!, { thrown: err, timedOut: Date.now() - started >= EDITOR_TIMEOUT_MS })
+    failure = launcher
+      ? editorLaunchError(launcher, { thrown: err, timedOut: Date.now() - started >= EDITOR_TIMEOUT_MS })
+      : err instanceof Error ? err.message : String(err)
   }
   await update($, launchError, () => failure)
 }
@@ -457,7 +464,7 @@ export const register: Register = on => {
         {state && !slice && locksSection(state)}
         {state && !slice && driftSection(state)}
         {slice && caption(`sliced to what /${slice.skill} reads — a plain prompt restores the full view`)}
-        <Button key="open-editor" label={editorLabel(editorArgv(state, '')[0]!)} onPress={() => openEditor($)} />
+        {state && <Button key="open-editor" label={editorLabel(editorArgv(state, '')[0]!)} onPress={() => openEditor($)} />}
         {launchFailure && <Text color="error">{`open in editor failed: ${launchFailure}`}</Text>}
       </Box>
     )

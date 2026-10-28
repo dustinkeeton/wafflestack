@@ -165,7 +165,7 @@ export const DEFAULT_EDITOR = 'cursor'
 export const EDITOR_TIMEOUT_MS = 15_000
 
 // A string is one executable, never split on spaces; an argv array carries flags. Anything else —
-// no document, a stack without the key, an empty or malformed value — falls back to Cursor.
+// a stack without the key, an empty or malformed value — falls back to Cursor.
 export function editorArgv(doc: WaffleViewDoc | null, root: string): string[] {
   const value: unknown = doc?.config[EDITOR_KEY]?.value
   if (typeof value === 'string' && value.trim()) return [value.trim(), root]
