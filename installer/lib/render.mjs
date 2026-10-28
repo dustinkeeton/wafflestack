@@ -26,6 +26,9 @@ import {
   unacknowledgedStacks,
 } from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
+import { collectUsedKeys } from './config-catalog.mjs';
+
+export { collectUsedKeys };
 import { applyModelInvocation, overrideFor } from './model-invocation.mjs';
 import {
   loadProjectConfig,
@@ -997,25 +1000,6 @@ export function failingConfigFor(toolkit, project, nodes) {
   }
   for (const { keys } of constraintFailures(toolkit, project, nodes)) for (const k of keys) pattern.add(`config.${k}`);
   return { pattern: [...pattern].sort(), modes: [...modes].sort() };
-}
-
-/** Placeholder keys referenced by a set of selected items' source content. */
-export function collectUsedKeys(items) {
-  const keys = new Set();
-  for (const { kind, item } of items) {
-    if (kind === 'agents') {
-      for (const k of placeholderKeys(item.body)) keys.add(k);
-      for (const k of placeholderKeys(item.data.description ?? '')) keys.add(k);
-    } else if (kind === 'skills') {
-      for (const rel of item.files) {
-        if (!rel.endsWith('.md')) continue;
-        for (const k of placeholderKeys(fs.readFileSync(path.join(item.dir, rel), 'utf8'))) keys.add(k);
-      }
-    } else if (kind === 'files' && !item.binary) {
-      for (const k of placeholderKeys(fs.readFileSync(item.path, 'utf8'))) keys.add(k);
-    }
-  }
-  return keys;
 }
 
 /**
