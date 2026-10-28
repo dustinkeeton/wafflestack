@@ -47,6 +47,20 @@ is what you reach for across a breaking one.
   integration mode, add a repository ruleset on `autopilot/integration/**` that requires the same
   checks as your default branch.
 
+- **Autopilot syncs `main` into the integration branch through a sync PR (#747, slice A of #732).**
+  Before the final integration → `main` PR opens, the run merges `origin/main` into an
+  `autopilot/sync/<timestamp>` branch off the integration branch and opens a PR into it. A conflict
+  in `.waffle/waffle.lock.json` alone is resolved by taking main's lock and re-rendering. Any other
+  conflict aborts the merge. With `+automerge` the sync PR is armed and waited out; without it, or
+  when anything stops the sync, the final PR is not opened. The run reports it as
+  **integration-held** and files one `autopilot.holdLabel` follow-up. Two keys are new to the
+  orchestration stack: `autopilot.waffleCmd` (how autopilot runs the wafflestack CLI; defaults to
+  `npx --yes` plus the pinned toolkit spec) and `project.installCmd` (same default and pattern as
+  github-workflow's).
+
+  **Consumer impact:** re-render only. Integration mode is off by default. A fork of the toolkit
+  should set `autopilot.waffleCmd`.
+
 - **`render` writes `.waffle/waffle.reference.yaml`, a catalog of every config key you can set (#703,
   slice 3 of #701).** Each key appears commented out under `config:`, with its one-line description,
   its stacks and its constraints. To use one, copy the `# config:` line and the block you want into
