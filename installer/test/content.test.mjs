@@ -1422,7 +1422,7 @@ describe('autopilot skill: gate loops converge only on a cold round (#510, #357)
   test('guardrails state the worst-case passes per PR with the defaults filled in', () => {
     assert.ok(says(guardrails, /Worst-case spend per PR/i), 'no worst-case spend guardrail');
     assert.ok(says(guardrails, /10 gate passes/i), 'the guardrail does not state the default-cap total');
-    assert.ok(says(guardrails, /under 20/i), 'the guardrail does not bound the retry case');
+    assert.ok(says(guardrails, /at most 20/i), 'the guardrail does not bound the retry case');
     assert.match(guardrails, /converges \*\*only on a cold round\*\*/);
   });
 
