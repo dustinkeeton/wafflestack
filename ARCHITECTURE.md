@@ -466,7 +466,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. Then runs `claude plugin validate` over each mod source when the `claude` CLI is on PATH, and prints a visible `skipped:` line — never a pass — when it is not (#564). |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 31 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 34 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
 the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
 own identity, build the `state` document, etc.). The full function-level registry is in the root `AGENTS.md`.
@@ -601,6 +601,7 @@ Everything a consuming project owns:
 | `.waffle/waffle.lock.json` | ✅ committed (generated) | The **canonical** render's hashes — what the committed inputs alone produce, overlay excluded — so it is byte-identical on every machine. Also carries the `toolkit` block: **which toolkit produced the render** (ref + commit SHA), recorded only when it names immutable content — a release. An untagged checkout records explicit nulls, so the block does not churn as `main` moves. `doctor --verify-render` reproduces it (comparing **files only**); `render` rewrites it |
 | `.waffle/waffle.local.lock.json` | 🚫 gitignored (generated) | The render *this machine* actually wrote, overlay values included. Exists only while the overlay changes an output byte; `doctor`, `list`, and `render`'s prune/overwrite checks read it in preference to the committed lock, so a hand-edit is still caught locally |
 | `.waffle/CHEATSHEET.md`, `TEAM.md` + `cheatsheet.html`, `team.html` | generated (usually committed) | Overview docs of your installed selection — a cheat sheet of user-invocable skills and a team intro of agents, in Markdown plus a branded, self-contained HTML page each. Managed like any rendered file (lock-tracked, pruned), except that `doctor` tolerates their absence (#528) — gitignore them if you prefer; a present copy is still hash-checked. `AVATARS.md` and `avatars/` are the same class, and `--gitignore` offers `avatars/` |
+| `.waffle/waffle.reference.yaml` | generated (usually committed) | Every config key your selection can set, commented out under `config:` (#703). Strip one leading `# ` from a line and it becomes valid YAML to paste into `waffle.yaml`. Built from stack declarations only, so no `waffle.yaml` or `waffle.local.yaml` value can reach it (#317). Same class as the overview docs: absence is a `doctor` note, a present copy is hash-checked |
 
 **Rule of thumb:** never edit files under `.claude/` (etc.) — a re-render will
 overwrite them. Change source, config, or an extension instead.
@@ -669,7 +670,7 @@ A few things stay deliberately untracked. `.claude/worktrees/` (throwaway workin
 state), `.codex/` and `.agents/` (non-targets — this repo only renders `claude`), and the
 `waffle-label-hook.yml` workflow (committing it would arm a live label→harness dispatch)
 are why `doctor` runs with `--allow-missing`. The generated `.waffle/` overview docs
-(`CHEATSHEET.md`, `TEAM.md`, both `.html` pages, `AVATARS.md`, and `avatars/`) are
+(`CHEATSHEET.md`, `TEAM.md`, both `.html` pages, `AVATARS.md`, `avatars/`, and `waffle.reference.yaml`) are
 gitignored too, but `doctor` treats that class as presence-optional on its own since
 #528, so they need no flag.
 
