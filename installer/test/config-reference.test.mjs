@@ -143,24 +143,30 @@ describe('the real toolkit reference', () => {
 });
 
 describe('uncommenting the tree passes render and doctor', () => {
-  test('this repo\'s selection, with the whole uncommented tree merged into its config', () => {
+  test('this repo\'s selection, with each top-level block and then the whole tree merged into its config', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-703-'));
     try {
-      write(cwd, '.waffle/waffle.yaml', fs.readFileSync(path.join(REPO_ROOT, '.waffle/waffle.yaml'), 'utf8'));
+      const base = fs.readFileSync(path.join(REPO_ROOT, '.waffle/waffle.yaml'), 'utf8');
+      write(cwd, '.waffle/waffle.yaml', base);
       const opts = { toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.0.test' };
       assert.equal(renderProject(opts).ok, true);
       const ref = fs.readFileSync(path.join(cwd, CONFIG_REFERENCE), 'utf8');
-      const fromRef = YAML.parse(uncomment(ref.split('\n'))).config;
+      const all = blocks(ref);
+      assert.ok(all.length > 5);
 
-      const doc = YAML.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8'));
-      doc.config = deepMerge(doc.config ?? {}, fromRef);
-      write(cwd, '.waffle/waffle.yaml', YAML.stringify(doc));
+      for (const lines of [...all, all.flat()]) {
+        const fromRef = YAML.parse(uncomment(['# config:', ...lines])).config ?? {};
+        const doc = YAML.parse(base);
+        doc.config = deepMerge(doc.config ?? {}, fromRef);
+        write(cwd, '.waffle/waffle.yaml', YAML.stringify(doc));
 
-      const res = renderProject(opts);
-      assert.equal(res.ok, true, JSON.stringify(res.errors));
-      const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
-      assert.equal(dr.ok, true, JSON.stringify(dr));
-      assert.deepEqual([dr.modified, dr.missing, dr.configProblems ?? []], [[], [], []]);
+        const label = lines[0];
+        const res = renderProject(opts);
+        assert.equal(res.ok, true, `${label}: ${JSON.stringify(res.errors)}`);
+        const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+        assert.equal(dr.ok, true, `${label}: ${JSON.stringify(dr)}`);
+        assert.deepEqual([dr.modified, dr.missing, dr.configProblems ?? []], [[], [], []], label);
+      }
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
