@@ -18,6 +18,29 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 const section = (md, from, to) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
 const orchestration = () => loadToolkit(repoRoot).stacks.get('orchestration');
 
+const projectYaml = (extra) => [
+  'targets: [claude]',
+  'include: [orchestration/skills/autopilot]',
+  'config:',
+  '  project:',
+  '    name: Integ731',
+  '  roster:',
+  '    classificationTable: "| Signal | Agent |"',
+  '    labelFallback: "| Label | Agent |"',
+  '    rootFiles: package.json',
+  '    sharedModule: lib/',
+  '    moduleDependencies: none',
+  '  audit:',
+  '    complianceLabel: Integrity',
+  '    complianceFrontmatterLabel: integrity',
+  '    complianceTaskLabel: Integrity check',
+  '    complianceAgentName: integrity',
+  '    complianceDescription: Validates the thing.',
+  '    compliancePrompt: Run the checks.',
+  ...extra,
+  '',
+].join('\n');
+
 // #731 (slice 1 of #720): integration mode routes run PRs into a per-run branch; the final PR is never armed.
 describe('autopilot.integration declaration and resolution (#731)', () => {
   let cwd;
@@ -26,28 +49,7 @@ describe('autopilot.integration declaration and resolution (#731)', () => {
 
   const renderWith = (value) => {
     fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
-    fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), [
-      'targets: [claude]',
-      'include: [orchestration/skills/autopilot]',
-      'config:',
-      '  project:',
-      '    name: Integ731',
-      '  roster:',
-      '    classificationTable: "| Signal | Agent |"',
-      '    labelFallback: "| Label | Agent |"',
-      '    rootFiles: package.json',
-      '    sharedModule: lib/',
-      '    moduleDependencies: none',
-      '  audit:',
-      '    complianceLabel: Integrity',
-      '    complianceFrontmatterLabel: integrity',
-      '    complianceTaskLabel: Integrity check',
-      '    complianceAgentName: integrity',
-      '    complianceDescription: Validates the thing.',
-      '    compliancePrompt: Run the checks.',
-      ...(value === undefined ? [] : ['  autopilot:', `    integration: ${value}`]),
-      '',
-    ].join('\n'));
+    fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), projectYaml(value === undefined ? [] : ['  autopilot:', `    integration: ${value}`]));
     const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
     const md = r.ok ? fs.readFileSync(path.join(cwd, SKILL), 'utf8') : '';
     return { r, md };
@@ -202,5 +204,83 @@ describe('autopilot integration final PR and end-of-run wait (#741)', () => {
     const creates = md.match(/gh pr create --base main[^\n`]*/g) ?? [];
     assert.ok(creates.length > 0);
     for (const c of creates) assert.match(c, /--title /, c);
+  });
+});
+
+// #747 (slice A of #732): stage 1 syncs main into <integ> through a sync PR before the final PR opens.
+describe('autopilot integration gate stage 1: sync PR (#747)', () => {
+  const gate = () => section(read(SKILL), '### Integration gate — stage 1', '## Per-issue loop');
+
+  test('the sync merges origin/main into a sync branch off <integ>, in a gate worktree', () => {
+    const md = gate();
+    assert.match(md, /`git merge-base --is-ancestor origin\/main origin\/<integ>`/);
+    assert.match(md, /`git worktree add --detach <gate> origin\/<integ>`/);
+    assert.match(md, /git -C <gate> switch -c autopilot\/sync\/<ts>/);
+    assert.match(md, /-C <gate> merge --no-ff origin\/main -m "chore\(autopilot\): sync main into <integ>"/);
+    assert.match(md, /gh pr create --base <integ> --head autopilot\/sync\/<ts> --title "autopilot: sync main into <integ>" --body-file <scratch-file>/);
+  });
+
+  test('only a lock conflict is resolved (main\'s lock, then render); anything else aborts and holds', () => {
+    const md = gate();
+    assert.match(md, /\*\*Exactly `\.waffle\/waffle\.lock\.json`\*\*/);
+    assert.match(md, /`git -C <gate> checkout --theirs -- \.waffle\/waffle\.lock\.json`, then, in `<gate>`, `npm install` and `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`/);
+    assert.match(md, /`git -C <gate> merge --abort`/);
+    assert.match(md, /The run \*\*never picks a winner\*\*/);
+    assert.match(md, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
+  });
+
+  test('the sync PR arms only with +automerge, waits by Step 8, and must land the synced tree', () => {
+    const md = gate();
+    assert.match(md, /With `\+automerge`, arm it, `gh pr merge --auto --merge <S>`/);
+    assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
+    assert.match(md, /Without the consent, or if arming fails, hold/);
+    assert.match(md, /require `git diff --quiet <syncHead> origin\/<integ>`/);
+    assert.match(md, /4\. \*\*Checks\.\*\* Stage 1's mechanical checks run here, in `<gate>`, before anything is pushed\./);
+    assert.ok(md.indexOf('4. **Checks.**') < md.indexOf('5. **Open the sync PR.**'));
+  });
+
+  test('item 3 runs the gate before the final PR; the body and report carry the sync and the hold', () => {
+    const md = read(SKILL);
+    const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
+    assert.match(branch, /run \[Integration gate — stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\) below, and open the final PR only when it passes/);
+    assert.match(branch, /`Synced with main at <M> via #S`/);
+    assert.match(branch, /integration gate stages 2–3 not yet implemented — review the combined change/);
+    assert.doesNotMatch(md, /"integration gate not yet implemented/);
+    assert.match(gate(), /Do not open it, not even as a draft/);
+    assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 1 held\*\*.*\*\*integration-held\*\*/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /\*\*integration-held\*\* with the reason, the follow-up, and the exact commands/);
+  });
+
+  test('the contract, mandate and guardrails cover the sync PR', () => {
+    const md = read(SKILL);
+    assert.match(section(md, '### Integration mode', '## Integration branch'), /the run also arms its \*\*sync PR\*\* into `<integ>`.*It carries no issue, so the QA, review and audit gates skip it/);
+    assert.match(md, /whether the run may arm its sync PR into it \(only with auto-merge consented\)/);
+    const guard = section(md, '## Guardrails', '## Failure handling');
+    assert.match(guard, /pushing its own `autopilot\/sync\/<ts>` branch/);
+    assert.match(guard, /\*\*`main` reaches `<integ>` only through the sync PR\.\*\*/);
+  });
+
+  test('waffleCmd defaults to npx over waffle.toolkitRef\'s pinned spec; installCmd matches github-workflow', () => {
+    const stacks = loadToolkit(repoRoot).stacks;
+    const orch = stacks.get('orchestration').config;
+    assert.equal(orch['autopilot.waffleCmd'].default, `npx --yes ${stacks.get('wafflestack').config['waffle.toolkitRef'].default}`);
+    const gw = stacks.get('github-workflow').config['project.installCmd'];
+    for (const field of ['required', 'default', 'pattern']) assert.deepEqual(orch['project.installCmd'][field], gw[field], field);
+    assert.deepEqual(validateToolkit(repoRoot).filter((p) => /waffleCmd|installCmd/.test(p)), []);
+  });
+
+  test('a consumer render resolves the default waffleCmd to the pinned toolkit', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-747-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), projectYaml([]));
+      const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      const md = fs.readFileSync(path.join(cwd, SKILL), 'utf8');
+      assert.ok(md.includes('`npx --yes github:dustinkeeton/wafflestack#v0.0.test render`'));
+      assert.doesNotMatch(md, /\{\{(autopilot\.waffleCmd|project\.installCmd)\}\}/);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

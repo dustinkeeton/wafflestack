@@ -915,7 +915,27 @@ config:
       integration → main PR. A routing mode, not a consent: it authorizes no merge into main and
       no gate spend, so config may set it either way, and the per-run +integration / -integration
       token beats config. In this release the integration → main PR is never armed, even with
-      +automerge — a human reviews the combined change.
+      +automerge — a human reviews the combined change. Before opening it, the run syncs main into
+      the integration branch through an `autopilot/sync/<timestamp>` PR (integration gate stage 1).
+  autopilot.waffleCmd:
+    required: false
+    default: npx --yes github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
+    pattern: '^[^\r\n]*$'
+    description: >-
+      Command prefix autopilot uses to run the wafflestack CLI, e.g. `<waffleCmd> render` when
+      the integration gate's sync merge resolves a `.waffle/waffle.lock.json` conflict. The
+      default is `npx --yes` plus the same pinned spec as `waffle.toolkitRef`, so it runs the
+      toolkit release that produced your render. Override it for a fork, or in the toolkit's
+      own repo, where the working tree is the toolkit (`node installer/cli.mjs`, with
+      WAFFLESTACK_ALLOW_UNRELEASED=1 so render runs off a release tag).
+  project.installCmd:
+    required: false
+    default: npm install
+    pattern: '^(?!.*\$\{\{)[^\r\n]*$'
+    description: >-
+      Dependency-install command. The github-workflow stack declares the same key with the same
+      default and pattern; here autopilot runs it in the fresh worktree of the integration gate's
+      sync merge before `autopilot.waffleCmd render`. Default `npm install`.
   docs.auditChecklist:
     required: false
     description: >-

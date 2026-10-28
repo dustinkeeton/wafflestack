@@ -175,6 +175,9 @@ config:
     extraPreflight: |-
       - `npm run validate` passes after any stack/manifest edit
       - If `stacks/**` changed: re-run `node installer/cli.mjs render --allow-unreleased` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output. The flag is required (#373): `render` refuses from a toolkit that is not at a release tag, and a feature branch never is. It suppresses the refusal, not the truth.
+  autopilot:
+    # The working tree is the toolkit here; the npx default would fetch a release instead.
+    waffleCmd: env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs
   audit:
     complianceAgentType: general-purpose
     complianceLabel: Toolkit integrity

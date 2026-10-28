@@ -9,6 +9,32 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: Main reaches the integration branch only through a sync PR (#747, part of #732)
+
+**Context**: The final integration → `main` PR can conflict with `main`, or pass on a stale base.
+Integration gate stage 1 brings `main` into the integration branch first.
+
+**Decision**: Merge `origin/main` into an `autopilot/sync/<timestamp>` branch cut from the integration
+branch, and land it through a PR into that branch, never a direct push: rulesets may reject a push,
+and every change to the branch should arrive through a PR with CI. Resolve only a conflict in
+`.waffle/waffle.lock.json` (take main's lock, then render). Any other conflict aborts the merge and
+holds the final PR with a `waffle:manual-review` follow-up. With `+automerge` the sync PR is armed;
+it carries no issue, so the per-PR gates skip it. The run needs the CLI to re-render, so the new
+`autopilot.waffleCmd` key names it; `project.installCmd` is re-declared so the gate worktree can
+install first.
+
+**Alternatives**:
+- *Push the merge straight onto the integration branch.* Rejected: a ruleset can refuse it, and it
+  skips CI.
+- *Pick a side on source or doc conflicts.* Rejected: the run cannot judge which change wins.
+- *Hardcode `npx wafflestack`.* Rejected: in the toolkit's own repo the working tree is the toolkit,
+  and a fork needs its own spec.
+
+**Impact**: Integration-mode runs open one extra PR per run when `main` moved. `CHANGELOG.md` will
+often conflict on a sync, which holds the run for a human.
+
+---
+
 ## 2026-10-28: Autopilot integration mode is a routing mode, not a consent (#731, part of #720)
 
 **Context**: Autopilot merged each run PR straight into `main`, so a multi-issue feature landed in
@@ -27,8 +53,8 @@ that PR's merge, because closing keywords only fire on default-branch merges.
   spend or a merge into `main`, and this key does neither.
 - *Arm the final PR when `+automerge` is given.* Deferred to #735. No integration gate checks the
   combined change yet, so a human is the whole-feature checkpoint.
-- *Merge `main` into the integration branch automatically before the final PR.* Deferred to #732. A
-  conflict there is left for the human for now.
+- *Merge `main` into the integration branch automatically before the final PR.* Deferred to #732;
+  slice A (#747) does it through a sync PR.
 - *Let delegate's agents arm inline into the integration branch.* Rejected. Autopilot arms in Step 4,
   after it has checked the PR's base, so a PR that went to `main` by mistake is never armed.
 
