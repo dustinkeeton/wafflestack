@@ -38,7 +38,7 @@ is what you reach for across a breaking one.
   `autopilot/integration/<UTC timestamp>` branch from `origin/main`. Every PR the run opens targets
   and merges into that branch under the run's usual gates. The run ends with one integration →
   `main` PR that lists `Closes #N` for each issue merged in, or a report saying why none was opened.
-  That final PR is never armed in this release, even with `+automerge`. A new `recommend`
+  That final PR arms only on a green integration gate (#735, below). A new `recommend`
   prerequisite, `integration-required-status-check`, checks for a ruleset on
   `autopilot/integration/**` that requires status checks. Without it, run PRs into the branch are
   left open-but-not-armed.
@@ -182,6 +182,19 @@ is what you reach for across a breaking one.
   do not change. An older CLI without `agents` makes the pane say so instead of showing a roster.
 
 ### Changed
+
+- **Autopilot arms the integration → `main` PR on a green integration gate (#735, part of #720).**
+  With `+integration` and `+automerge`, the final PR is armed only after every enabled stage passed
+  (stage 1 always, stage 2 with `+review`, stage 3 with `+audit`) on the head that will merge, and,
+  after a stage 2 pass, only when that head carries a `waffle/adversarial-review` success status. It
+  is never armed once a stage 2 or stage 3 fix PR merged into the integration branch, because those
+  merge on CI alone, unreviewed: that run leaves the final PR for a human. A failed arm is never
+  replaced by `--admin` or an immediate merge. After the merge the run verifies each closed issue,
+  moves it to Done, and deletes the integration branch, or reports it left open.
+
+  **Consumer impact:** re-render only. Integration runs with `+automerge` can now merge into `main`
+  unattended; drop `+automerge` to keep a human on the final merge. A ruleset that restricts
+  deleting `autopilot/integration/**` leaves the branch behind, and the run reports it.
 
 - **Autopilot: with `+integration`, the `+audit` gate runs once, on the final PR (#734, part of
   #720).** The audit no longer runs on each run PR. It runs once as integration gate stage 3 on the

@@ -914,8 +914,9 @@ config:
       into that branch (each still under the run's own gates and consents), and ends with one
       integration → main PR. A routing mode, not a consent: it authorizes no merge into main and
       no gate spend, so config may set it either way, and the per-run +integration / -integration
-      token beats config. In this release the integration → main PR is never armed, even with
-      +automerge — a human reviews the combined change. Before opening it, the run syncs main into
+      token beats config. With +automerge, the integration → main PR is armed only after every
+      enabled integration stage passed and no stage-2/stage-3 fix PR merged into the branch;
+      otherwise a human merges it. Before opening it, the run syncs main into
       the integration branch through an `autopilot/sync/<timestamp>` PR (integration gate stage 1).
   autopilot.waffleCmd:
     required: false
