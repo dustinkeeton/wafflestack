@@ -28,7 +28,7 @@ config:
     botName: Wafflebot
     botEmail: bot@wafflenet.io
     ownerName: Dustin Keeton
-    ownerEmail: dustin.keeton49@gmail.com
+    ownerEmail: 1530884+dustinkeeton@users.noreply.github.com
     # Signing is pinned off (#158, #252): an ambient commit.gpgsign=true would sign bot commits
     # with the developer's key, and a prompting signer hangs a non-interactive commit.
     cmd: git -c commit.gpgsign=false -c tag.gpgSign=false -c

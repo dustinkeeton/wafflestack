@@ -19,7 +19,7 @@ not the machine's: never add or remove signing flags per-invocation. Every agent
 commit must still end with:
 
 ```
-Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
+Co-authored-by: Dustin Keeton <1530884+dustinkeeton@users.noreply.github.com>
 ```
 
 ### Bot identity (config)
@@ -71,7 +71,7 @@ Reference data resolved from config — every agent-made commit ends with the at
 the default branch counts toward their GitHub contribution graph:
 
 - Owner name (`git.ownerName`): `Dustin Keeton`
-- Owner email (`git.ownerEmail`): `dustin.keeton49@gmail.com`
+- Owner email (`git.ownerEmail`): `1530884+dustinkeeton@users.noreply.github.com`
 
 The owner email must be a **verified email on that GitHub account** for the credit to register
 (the `ID+user@users.noreply.github.com` form works and stays private); credit accrues only on
@@ -136,7 +136,7 @@ git checkout -b feat/my-feature
 
 <optional body — why, not what>
 
-Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
+Co-authored-by: Dustin Keeton <1530884+dustinkeeton@users.noreply.github.com>
 ```
 
 **Types:** `feat`, `fix`, `refactor`, `chore`, `test`, `docs`
@@ -171,7 +171,7 @@ feat: add data-export command
 Three-phase flow: collect eligible records, confirm with the user,
 then write the export with cancellation support.
 
-Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
+Co-authored-by: Dustin Keeton <1530884+dustinkeeton@users.noreply.github.com>
 EOF
 )"
 ```
@@ -199,7 +199,7 @@ gh pr create --title "feat: short title" --body "$(cat <<'EOF'
 - [ ] Tests pass (`npm test`)
 - [ ] Build passes (`npm run build`)
 
-Co-authored-by: Dustin Keeton <dustin.keeton49@gmail.com>
+Co-authored-by: Dustin Keeton <1530884+dustinkeeton@users.noreply.github.com>
 EOF
 )"
 ```
