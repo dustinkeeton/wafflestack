@@ -89,7 +89,9 @@ bootstrap list — a copy-paste `gh label create --force` block covering every l
 declare (#452). The `orchestration` stack also probes two repo settings before `delegate` /
 `autopilot` arm auto-merge: **Allow auto-merge** is on, and the default branch has a **required
 status check** — which needs branch protection or a ruleset, and on GitHub Free those exist only
-for public repos (#205). In that stack only the tool probes (`node`, `git`, `gh`) are `require`;
+for public repos (#205). A third probe, `integration-required-status-check` (#731), looks for a
+ruleset requiring status checks on `autopilot/integration/**`, which autopilot's integration mode
+needs to arm run PRs into its per-run branch. In that stack only the tool probes (`node`, `git`, `gh`) are `require`;
 auth, label, and setting checks are `recommend`, so `doctor` reports them but never fails on them.
 
 ### Recommended plugins
@@ -409,9 +411,13 @@ consents were locked to `prompt` (#489); and `schema/SETUP.md` documents the con
 `wafflestack state` shows each key's effective value and the layer it came from (#561). Since #626
 only `autopilot.autoMerge` stays locked: the QA, review, and audit gates are
 `configModes: [false, prompt]`, so config may turn a gate off but never on, and each gate gains an
-off token (`-qa`, `-review`, `-audit`). See
+off token (`-qa`, `-review`, `-audit`). `autopilot.integration` (#731) is a **routing mode, not a
+consent**: it sends a run's PRs into a per-run `autopilot/integration/<timestamp>` branch and ends
+with one unarmed integration → `main` PR. It authorizes no merge into `main`, so config may set it
+either way (`modes: [true, false]`, default `false`, `+integration` / `-integration`). See
 [DECISIONS.md](DECISIONS.md#2026-09-16-behavioral-skill-flags-become-three-mode-config-keys--modes-flag-lockmode-noninteractive-478-slices-12)
-and [the #626 entry](DECISIONS.md#2026-10-22-config-may-turn-autopilots-gates-off-never-on-626).
+and [the #626 entry](DECISIONS.md#2026-10-22-config-may-turn-autopilots-gates-off-never-on-626),
+and [the #731 entry](DECISIONS.md#2026-10-28-autopilot-integration-mode-is-a-routing-mode-not-a-consent-731-part-of-720).
 
 **Some keys hold a list, and a section can disappear when its list is empty (#612).** Two
 generic key-spec fields handle list-shaped content without a template conditional:
