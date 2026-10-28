@@ -146,7 +146,7 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(section(md, '### Step 9', '## End-of-run'), /\*\*Integration mode on:\*\* skip items 1 and 2/);
     const guard = section(md, '## Guardrails', '## Failure handling');
     assert.match(guard, /Its only direct pushes are creating its own integration branch/);
-    assert.match(guard, /when nothing merged into it and no run PR is open against it, deleting it/);
+    assert.match(guard, /deleting the integration branch, either when nothing merged into it and no run PR is open against it/);
     assert.match(guard, /\*\*The integration → `main` PR arms only on a green integration gate\.\*\*/);
     assert.doesNotMatch(guard, /never armed in this release/);
     assert.match(guard, /Integration mode is a routing mode, not a consent, so config may set it\./);
@@ -300,6 +300,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /If `git -C <gate> diff --name-only` or `git -C <gate> ls-files --others --exclude-standard` prints anything, the install changed or created files.*abort and hold/);
     assert.match(md, /Otherwise, in `<gate>`, run `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`, then `git -C <gate> add -A`/);
     assert.match(md, /If the re-rendered lock's `toolkitVersion` differs from the one in `git -C <gate> show origin\/main:\.waffle\/waffle\.lock\.json`, abort and hold/);
+    assert.match(md, /-C <gate> commit --no-edit --cleanup=strip`/);
     assert.match(md, /`git -C <gate> merge --abort`/);
     assert.match(md, /Stop with a hold if `git ls-remote --heads origin autopilot\/sync\/<ts>` already shows the branch/);
     assert.match(md, /Remove `<gate>` if it still exists \(`git worktree remove --force <gate>`\) and any local sync branch; leave `<integ>`, the pushed sync branch and any sync PR open/);
@@ -315,6 +316,9 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /`git worktree remove <gate>`, and only when step 2 ran, `git branch -D autopilot\/sync\/<ts>`/);
     assert.match(md, /Wait by Step 8's \*\*The wait also ends, as blocked,\*\* rule/);
     assert.match(md, /Without the consent, or if arming fails, hold/);
+    const step6 = section(md, '6. **Merge it.**', '7. ');
+    assert.match(step6, /`gh pr merge --auto --merge <S>`, verify `gh pr view <S> --json autoMergeRequest -q '\.autoMergeRequest != null'` prints `true`, and only then label it `gh pr edit <S> --add-label/);
+    assert.doesNotMatch(step6, /<S>`, then label it/);
     assert.match(md, /require `git diff --quiet <syncHead> origin\/<integ>`/);
     assert.match(md, /4\. \*\*Checks\.\*\* Stage 1's mechanical checks run here, in `<gate>`, before anything is pushed\./);
     assert.ok(md.indexOf('4. **Checks.**') < md.indexOf('5. **Open the sync PR.**'));
@@ -341,13 +345,15 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(guard, /\*\*`main` reaches `<integ>` only through the sync PR\.\*\*/);
   });
 
-  test('waffleCmd defaults to npx over waffle.toolkitRef\'s pinned spec; installCmd matches github-workflow', () => {
+  test('waffleCmd defaults to npx over waffle.toolkitRef\'s value; the re-declared twins match their stacks', () => {
     const stacks = loadToolkit(repoRoot).stacks;
     const orch = stacks.get('orchestration').config;
-    assert.equal(orch['autopilot.waffleCmd'].default, `npx --yes ${stacks.get('wafflestack').config['waffle.toolkitRef'].default}`);
+    assert.equal(orch['autopilot.waffleCmd'].default, 'npx --yes {{waffle.toolkitRef}}');
     const gw = stacks.get('github-workflow').config['project.installCmd'];
     for (const field of ['required', 'default', 'pattern']) assert.deepEqual(orch['project.installCmd'][field], gw[field], field);
-    assert.deepEqual(validateToolkit(repoRoot).filter((p) => /waffleCmd|installCmd/.test(p)), []);
+    const ws = stacks.get('wafflestack').config['waffle.toolkitRef'];
+    for (const field of ['required', 'default', 'pattern']) assert.deepEqual(orch['waffle.toolkitRef'][field], ws[field], field);
+    assert.deepEqual(validateToolkit(repoRoot).filter((p) => /waffleCmd|installCmd|toolkitRef/.test(p)), []);
   });
 
   test('a consumer render resolves the default waffleCmd to the pinned toolkit', () => {
@@ -359,7 +365,22 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
       assert.equal(r.ok, true, JSON.stringify(r.errors));
       const md = fs.readFileSync(path.join(cwd, SKILL), 'utf8');
       assert.ok(md.includes('`npx --yes github:dustinkeeton/wafflestack#v0.0.test render`'));
-      assert.doesNotMatch(md, /\{\{(autopilot\.waffleCmd|project\.installCmd)\}\}/);
+      assert.doesNotMatch(md, /\{\{(autopilot\.waffleCmd|project\.installCmd|waffle\.toolkitRef)\}\}/);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test('a fork toolkitRef drives the default waffleCmd (#750)', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-750-'));
+    try {
+      fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+      fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), projectYaml(['  waffle:', '    toolkitRef: github:fork/wafflestack#v9.9.9']));
+      const r = renderProject({ toolkitRoot: repoRoot, cwd, toolkitVersion: '0.0.test' });
+      assert.equal(r.ok, true, JSON.stringify(r.errors));
+      const md = fs.readFileSync(path.join(cwd, SKILL), 'utf8');
+      assert.ok(md.includes('`npx --yes github:fork/wafflestack#v9.9.9 render`'));
+      assert.ok(!md.includes('github:dustinkeeton/wafflestack'));
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
@@ -427,6 +448,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.doesNotMatch(md, /git push[^\n]*<integ>/);
     assert.match(md, /\*\*Do not arm `<F>` here\*\*; item 4 decides/);
     assert.match(md, /\*\*integration-held\*\*/);
+    assert.match(md, /`gh pr merge --auto --merge <P>`, verify `gh pr view <P> --json autoMergeRequest -q '\.autoMergeRequest != null'` prints `true`, and only then label it `gh pr edit <P> --add-label/);
     assert.match(read('.claude/skills/pr-response/SKILL.md'), /\*\*A `## Fix branch` block in your invocation overrides items 1 and 6\.\*\*/);
   });
 
@@ -500,6 +522,7 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
     assert.match(md, /--add-label "waffle:manual-review"/);
     assert.match(md, /\*\*audit-blocked\*\*/);
     assert.match(md, /\*\*integration-held\*\*/);
+    assert.match(md, /`gh pr merge --auto --merge <A>`, verify `gh pr view <A> --json autoMergeRequest -q '\.autoMergeRequest != null'` prints `true`, and only then label it `gh pr edit <A> --add-label/);
     assert.match(md, /\*\*Do not arm `<F>` here\*\*; item 4 decides/);
     assert.doesNotMatch(md, /git push[^\n]*<integ>/);
     assert.doesNotMatch(md, /severity floor/);
@@ -596,7 +619,8 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.match(report, /the final PR's arm outcome/);
     assert.match(report, /\*\*left open\*\* with the reason and the command/);
     const guard = section(md, '## Guardrails', '## Failure handling');
-    assert.match(guard, /or deleting it once the final PR has merged into `main`/);
+    assert.match(guard, /or once the final PR has merged into `main`\./);
+    assert.doesNotMatch(guard, /deleting it/);
     const fail = section(md, '## Failure handling', 'At the end, the report');
     assert.match(fail, /\*\*The final PR was not armed, or its wait ended blocked\*\*/);
     assert.match(fail, /\*\*`<integ>` survived the final merge\*\*/);
