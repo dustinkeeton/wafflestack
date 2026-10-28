@@ -76,6 +76,14 @@ function fixtureToolkit() {
     '    required: false',
     `    default: "${'w'.repeat(120)}"`,
     '    description: A long single-line value.',
+    '  a.inner:',
+    '    required: false',
+    '    default: in',
+    '    description: Reached only through a.outer.',
+    '  a.outer:',
+    '    required: false',
+    '    default: "[{{a.inner}}]"',
+    '    description: Wraps a.inner.',
     '  a.only2:',
     '    required: false',
     '    default: two',
@@ -85,7 +93,7 @@ function fixtureToolkit() {
     '    keys: [a.low, a.num]',
     '',
   ].join('\n'));
-  write(root, 'stacks/a/skills/a1/SKILL.md', skill('a1', '{{shared.name}} {{a.num}} {{a.low}} {{a.gate}} {{a.long}} {{a.tmpl}} {{a.ver}} {{a.wide}}'));
+  write(root, 'stacks/a/skills/a1/SKILL.md', skill('a1', '{{shared.name}} {{a.num}} {{a.low}} {{a.gate}} {{a.long}} {{a.tmpl}} {{a.ver}} {{a.wide}} {{a.outer}}'));
   write(root, 'stacks/a/skills/a2/SKILL.md', skill('a2', '{{a.only2}}'));
   write(root, 'stacks/b/stack.yaml', [
     'name: b',
@@ -126,7 +134,7 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('lists exactly the keys setup scopes for the selection', () => {
     const keys = collect().keys.map((k) => k.key);
-    assert.deepEqual(keys, ['a.gate', 'a.long', 'a.low', 'a.num', 'a.tmpl', 'a.ver', 'a.wide', 'shared.name']);
+    assert.deepEqual(keys, ['a.gate', 'a.inner', 'a.long', 'a.low', 'a.num', 'a.outer', 'a.tmpl', 'a.ver', 'a.wide', 'shared.name']);
     const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
     const section = guide.slice(guide.indexOf('## Config values'), guide.indexOf('## Required keys still unset'));
     const setupKeys = [...section.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]);
@@ -180,7 +188,7 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('a prefix filters at segment boundaries; a near miss gets a hint', () => {
     const out = run('a').out;
-    assert.match(out, /^7 config key\(s\) under `a`/);
+    assert.match(out, /^9 config key\(s\) under `a`/);
     assert.doesNotMatch(out, /shared\.name/);
     assert.equal(run('a.n').error, 'unknown config key or prefix `a.n` — did you mean `a.num`?');
     assert.equal(nearestKey('zzzzzz', ['a.num']), null);
@@ -193,6 +201,7 @@ describe('config: lookup of keys, values and sources (#701)', () => {
     assert.match(run('a.only2').error, /declared by stack\(s\) a but nothing in this selection references it/);
     assert.match(run('harness.agentsDir').error, /The `harness\.\*` namespace/);
     assert.match(run('config.a.num').out, /^a\.num\n/);
+    assert.match(run('a.inner').out, /^a\.inner\n/, 'a key reached only through another default is in scope');
   });
 
   test('a templated value shows its expansion', () => {

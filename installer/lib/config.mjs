@@ -10,6 +10,7 @@ import { readTreeLock, collectUsedKeys } from './render.mjs';
 import { lockKeys } from './settings.mjs';
 import { loadProjectConfig, makeResolver, resolveLocalConfigFile } from './project.mjs';
 import { exists, readYaml, lookupPath } from './util.mjs';
+import { placeholderKeys } from './template.mjs';
 import { layerOf, firstSentence, expandKey } from './state.mjs';
 
 /** @import { Stack } from './toolkit.mjs' */
@@ -55,6 +56,27 @@ import { layerOf, firstSentence, expandKey } from './state.mjs';
 const SOURCE_OF_LAYER = { 'local-overlay': 'waffle.local.yaml', 'waffle.yaml': 'waffle.yaml', 'stack-default': 'default' };
 
 /**
+ * `used` plus every key reachable through a used key's default template or `omitWhenEmpty:` gate.
+ * @param {Set<string>} used
+ * @param {Record<string, any>} config
+ */
+function closeOverDefaults(used, config) {
+  const out = new Set(used);
+  const queue = [...out];
+  while (queue.length) {
+    const spec = config[/** @type {string} */ (queue.pop())];
+    const next = typeof spec?.default === 'string' ? [...placeholderKeys(spec.default)] : [];
+    if (typeof spec?.omitWhenEmpty === 'string') next.push(spec.omitWhenEmpty);
+    for (const k of next) {
+      if (out.has(k)) continue;
+      out.add(k);
+      queue.push(k);
+    }
+  }
+  return out;
+}
+
+/**
  * Every config key the selected items reference, per stack, with its effective value — scoped like
  * the render (#77): each stack resolves through its own resolver.
  *
@@ -72,7 +94,7 @@ export function configCatalog(items, { values, target, toolkitVersion, overlayVa
   /** @type {CatalogStack[]} */
   const out = [];
   for (const [stackName, { stack, items: its }] of groups) {
-    const usedKeys = collectUsedKeys(its);
+    const usedKeys = closeOverDefaults(collectUsedKeys(its), stack.config ?? {});
     const resolve = makeResolver(stack, values, target, toolkitVersion === undefined ? {} : { toolkitVersion });
     const entries = Object.entries(stack.config ?? {})
       .filter(([key]) => usedKeys.has(key))
