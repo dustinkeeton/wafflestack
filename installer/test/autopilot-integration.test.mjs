@@ -227,6 +227,8 @@ describe('autopilot Step 8 red-check rerun and retry (#745)', () => {
     assert.match(md, /run `gh run rerun <run-id>` once per distinct id and keep polling\. This happens once per PR, and the rerun does not reset the two-hour stall clock/);
     assert.match(md, /a `FAILURE`, `ERROR` or `ACTION_REQUIRED` line/);
     assert.match(md, /a line with no run id \(a commit status\), a rerun that errors, or a second red check after the rerun/);
+    assert.match(md, /keep polling until `gh run view <run-id> --json status -q \.status` reads `completed` for each distinct id \(GitHub refuses to rerun a run whose other jobs are still going\), then run `gh run rerun <run-id>`/);
+    assert.match(md, /a second red check after the rerun, counted only once `gh run view <run-id> --json status,attempt` reads `completed` at a higher `attempt` than the one rerun/);
   });
 
   test('a switched-off auto-merge ends the wait as disarmed, not a failed attempt', () => {
