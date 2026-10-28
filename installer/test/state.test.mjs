@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
-import { collectState, formatStateText, STATE_SHAPE_VERSION } from '../lib/state.mjs';
+import { agentRoster, collectState, formatStateText, STATE_SHAPE_VERSION } from '../lib/state.mjs';
 import { sha256 } from '../lib/util.mjs';
 
 // `wafflestack state` (#561): resolved behavioral keys (value, layer, tokens), delegate run files,
@@ -297,7 +297,7 @@ describe('state: CLI surface (#561)', () => {
     const r = runCli(['state', '--json'], cwd);
     assert.equal(r.status, 0, r.stderr);
     const doc = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'config', 'skills', 'update']);
+    assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'config', 'skills', 'agents', 'update']);
     assert.ok(['local-tags', null].includes(doc.update.source), 'a checkout answers from its local tags — no network, no cache');
     assert.deepEqual(doc.skills.issue.keys, ['issue.confirmGate', 'issue.inferenceLabel', 'issue.priorityLabels', 'issue.reassessLabel', 'issue.typeLabels', 'project.name']);
     assert.deepEqual(doc.skills.issue.files, []);
@@ -320,5 +320,60 @@ describe('state: CLI surface (#561)', () => {
     const bad = runCli(['state', 'skills/issue'], cwd);
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /state takes no refs/);
+  });
+});
+
+// The `/standup` roster (#610): state must find the agents the skill's Step 1 spawns, in its order.
+describe('state: agent roster (#610)', () => {
+  let cwd;
+  beforeEach(() => { cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'project-state-agents-')); });
+  afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
+
+  const agent = (name, description) => `---\n${name ? `name: ${name}\n` : ''}description: ${description}\n---\n\nBody.\n`;
+
+  test('top-level *.md with a name, sorted by name, first-sentence descriptions', () => {
+    write(cwd, '.claude/agents/b.md', agent('beta', 'Second agent. More prose.'));
+    write(cwd, '.claude/agents/a.md', agent('alpha', 'First agent.'));
+    write(cwd, '.claude/agents/nameless.md', agent(null, 'No name.'));
+    write(cwd, '.claude/agents/broken.md', '---\nname: [unclosed\n---\n');
+    write(cwd, '.claude/agents/notes.txt', agent('txt', 'Not markdown.'));
+    write(cwd, '.claude/agents/sub/x.md', agent('nested', 'Not top level.'));
+    assert.deepEqual(agentRoster(cwd, { targets: ['claude'], values: {} }), [
+      { name: 'alpha', description: 'First agent.', file: '.claude/agents/a.md' },
+      { name: 'beta', description: 'Second agent.', file: '.claude/agents/b.md' },
+    ]);
+  });
+
+  test('a missing directory is an empty roster', () => {
+    assert.deepEqual(agentRoster(cwd, { targets: ['claude'], values: {} }), []);
+  });
+
+  test('codex reads .agents/agents; [codex, claude] reports the Claude roster', () => {
+    write(cwd, '.agents/agents/c.md', agent('codexer', 'Codex side.'));
+    write(cwd, '.claude/agents/d.md', agent('clauder', 'Claude side.'));
+    assert.deepEqual(agentRoster(cwd, { targets: ['codex'], values: {} }).map((a) => a.name), ['codexer']);
+    assert.deepEqual(agentRoster(cwd, { targets: ['codex', 'claude'], values: {} }).map((a) => a.name), ['clauder']);
+  });
+
+  test('a harness.skillsDir override moves the roster beside it, as the skill swaps the segment', () => {
+    write(cwd, 'custom/agents/e.md', agent('custom', 'Custom dir.'));
+    const roster = agentRoster(cwd, { targets: ['claude'], values: { harness: { skillsDir: 'custom/skills' } } });
+    assert.deepEqual(roster.map((a) => a.file), ['custom/agents/e.md']);
+  });
+
+  test("this repo's own render: every committed agent, in name order, in JSON and text", () => {
+    const state = collectState({ cwd: REPO_ROOT, toolkitRoot: REPO_ROOT, toolkitVersion: '0.0.test' });
+    const dir = path.join(REPO_ROOT, '.claude/agents');
+    const names = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => fs.readFileSync(path.join(dir, f), 'utf8').match(/^name: (.+)$/m)[1]);
+    assert.ok(names.length > 0, 'the self-render commits agents');
+    assert.deepEqual(state.agents.map((a) => a.name), [...names].sort((a, b) => a.localeCompare(b)));
+    assert.match(formatStateText(state), new RegExp(`\\nagents: ${names.length} in \\.claude/agents — `));
+  });
+
+  test('the standup skill still defines the roster the way agentRoster reads it', () => {
+    const skill = fs.readFileSync(path.join(REPO_ROOT, 'stacks/orchestration/skills/standup/SKILL.md'), 'utf8');
+    assert.ok(skill.includes('swap the trailing `skills` segment for `agents`'));
+    assert.ok(skill.includes('Sort the files alphabetically by `name`'));
+    assert.ok(skill.includes('Skip any file whose frontmatter has no `name`'));
   });
 });

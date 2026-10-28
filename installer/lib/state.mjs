@@ -22,7 +22,7 @@ import {
   LOCAL_CONFIG_FILE,
   CONFIG_FILE,
 } from './project.mjs';
-import { exists, readYaml, lookupPath } from './util.mjs';
+import { exists, readYaml, lookupPath, parseFrontmatter } from './util.mjs';
 import { NO_UPDATE_VERDICT } from './update-check.mjs';
 
 /** @import { Stack, Toolkit } from './toolkit.mjs' */
@@ -113,12 +113,18 @@ export const SKILL_RUN_FILE_KEYS = {
  * @property {{ ok: boolean, modified: string[], missing: string[], absentDocs: string[], notes: string[] }} drift the plain `doctor` verdict against the tree lock
  * @property {Record<string, ConfigValue>} config every declared key across the selected stacks, resolved (#563); `keys` is the behavioral subset with its mode machinery
  * @property {Record<string, SkillContext>} skills per selected skill: the declared keys its files reference and the run files it writes (#563)
+ * @property {AgentEntry[]} agents the roster `/standup` rounds up (#610), sorted by name
  * @property {import('./update-check.mjs').UpdateVerdict} update whether a newer toolkit release exists (#608); all-null when unknown
  *
  * @typedef {object} ConfigValue one declared config key, resolved
  * @property {any} value the effective value, nested `{{…}}` expanded (overlay included); null when unset
  * @property {Layer} source the layer `value` came from
  * @property {string[]} stacks the selected stacks declaring it
+ *
+ * @typedef {object} AgentEntry one rendered agent definition
+ * @property {string} name the frontmatter `name`
+ * @property {string} description the first sentence of the frontmatter `description`
+ * @property {string} file repo-relative path
  *
  * @typedef {object} SkillContext what one skill cares about
  * @property {string[]} keys the declared keys the skill's files reference (flag placeholders fold onto their key), sorted
@@ -172,6 +178,7 @@ export function collectState({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity
     drift: driftFacts(cwd, toolkitVersion, toolkitIdentity),
     config: resolveConfig(stacks, { project, overlayValues, canonical, target }),
     skills: resolveSkills(selection.items, { project, target, delegate }),
+    agents: agentRoster(cwd, project),
     update: update ?? { ...NO_UPDATE_VERDICT },
   };
 }
@@ -235,6 +242,38 @@ export function resolveSkills(items, { project, target, delegate }) {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, { keys, files }]) => [name, { keys: [...keys].sort(), files: [...files] }]),
   );
+}
+
+/**
+ * The agents `/standup` spawns, found the way its Step 1 finds them: `harness.skillsDir` with the
+ * trailing `skills` segment swapped for `agents`, `*.md` only, nameless or unparseable files
+ * skipped, sorted by `name`. Under `[codex, claude]` this reports the Claude roster.
+ *
+ * @param {string} cwd
+ * @param {ProjectConfig} project
+ * @returns {AgentEntry[]}
+ */
+export function agentRoster(cwd, project) {
+  const target = project.targets.includes('claude') ? 'claude' : project.targets[0] ?? 'claude';
+  const skillsDir = String(makeResolver(/** @type {Stack} */ ({ config: {} }), project.values, target)('harness.skillsDir') ?? '');
+  const dir = path.posix.join(path.posix.dirname(skillsDir), 'agents');
+  const abs = path.join(cwd, dir);
+  if (!exists(abs) || !fs.statSync(abs).isDirectory()) return [];
+  /** @type {AgentEntry[]} */
+  const roster = [];
+  for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    /** @type {Record<string, any>} */
+    let data;
+    try {
+      data = parseFrontmatter(fs.readFileSync(path.join(abs, entry.name), 'utf8')).data;
+    } catch {
+      continue;
+    }
+    if (typeof data?.name !== 'string' || !data.name) continue;
+    roster.push({ name: data.name, description: firstSentence(data.description), file: path.posix.join(dir, entry.name) });
+  }
+  return roster.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -492,6 +531,10 @@ export function formatStateText(s) {
   lines.push('', `drift: ${s.drift.ok ? 'clean' : 'RED'} — ${s.drift.modified.length} modified, ${s.drift.missing.length} missing, ${s.drift.absentDocs.length} absent generated docs`);
   for (const f of s.drift.modified) lines.push(`  modified: ${f}`);
   for (const f of s.drift.missing) lines.push(`  missing:  ${f}`);
+  const agentsDir = s.agents.length ? path.posix.dirname(s.agents[0].file) : null;
+  lines.push(s.agents.length
+    ? `agents: ${s.agents.length} in ${agentsDir} — ${s.agents.map((a) => a.name).join(', ')}`
+    : 'agents: none installed');
   const u = s.update;
   const newer = u?.available ? ` · ${u.latestTag} available${u.command ? ` — run ${u.command}` : ''}` : '';
   lines.push(`cli: ${s.cli.version} (${s.cli.status})${newer}`);

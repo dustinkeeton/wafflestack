@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
-import type { WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
+import type { WaffleViewAgent, WaffleViewDoc, WaffleViewKey, WaffleViewSlice } from '../types'
 import {
   BRAND,
   CAPTION_TONE,
@@ -23,6 +23,7 @@ import {
   parseStateOutput,
   promptSkill,
   resolveArgv,
+  selectAgents,
   selectKeys,
   selectSlice,
   sourceTone,
@@ -136,6 +137,9 @@ export const register: Register = on => {
     const busy = await read($, isRefreshing)
     const context = { skill: await read($, skill) }
     const slice = state ? selectSlice(state, context) : null
+    const agents = state ? selectAgents(state, slice) : null
+    // The roster replaces an empty keys list; a /standup that reads keys shows both.
+    const showKeys = agents === null || (slice?.keys.length ?? 0) > 0
     const wide = e.props.bodyColumns >= 100
 
     const section = (title: string, rows: RenderNode[]) => (
@@ -196,6 +200,29 @@ export const register: Register = on => {
           : keys.map(keyRow)
 
       return section(`Keys (${keys.length})`, header ? [header, ...rows] : rows)
+    }
+
+    // The `/standup` roster (#610), in the order the skill spawns it.
+    const agentsSection = (roster: WaffleViewAgent[] | undefined) => {
+      if (roster === undefined) return section('Agents', [dim('this CLI predates the agent roster — upgrade wafflestack')])
+      if (roster.length === 0) return section('Agents (0)', [dim('no installed agents to round up')])
+      const rows: RenderNode[] = roster.map(agent =>
+        wide ? (
+          <Box>
+            <Box width={24}>
+              <Text bold wrap="truncate-end" color={BRAND.cream}>{agent.name}</Text>
+            </Box>
+            <Text wrap="truncate-end" {...CAPTION_TONE}>{agent.description}</Text>
+          </Box>
+        ) : (
+          <Box>
+            <Text bold color={BRAND.cream}>{agent.name}</Text>
+            <Text wrap="truncate-end" {...CAPTION_TONE}>{`  ${agent.description}`}</Text>
+          </Box>
+        ),
+      )
+
+      return section(`Agents (${roster.length})`, rows)
     }
 
     // The other config a sliced skill reads: name, layer, and the value's lines.
@@ -321,7 +348,8 @@ export const register: Register = on => {
         {heading}
         {failure && <Text color="error">{`last refresh failed: ${failure}`}</Text>}
         {state && !slice && projectSection(state)}
-        {state && keysSection(state)}
+        {agents !== null && agentsSection(agents)}
+        {state && showKeys && keysSection(state)}
         {slice && configSection(slice)}
         {state && runFilesSection(state)}
         {state && !slice && locksSection(state)}

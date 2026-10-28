@@ -1,4 +1,4 @@
-import type { WaffleViewContext, WaffleViewDoc, WaffleViewKey, WaffleViewLayer, WaffleViewSlice } from '../types'
+import type { WaffleViewAgent, WaffleViewContext, WaffleViewDoc, WaffleViewKey, WaffleViewLayer, WaffleViewSlice } from '../types'
 
 export const PANE = 'waffle-view'
 export const TITLE = 'Waffle view'
@@ -63,6 +63,15 @@ export function selectSlice(doc: WaffleViewDoc, context: WaffleViewContext): Waf
     .map(key => ({ key, value: doc.config[key]!.value, source: doc.config[key]!.source }))
 
   return { skill: context.skill, keys, config, files: skill.files }
+}
+
+// The roster the `/standup` slice shows (#610): null for any other slice, undefined when the CLI
+// predates `agents`, else the document's own (roster) order.
+export const STANDUP_SKILL = 'standup'
+
+export function selectAgents(doc: WaffleViewDoc, slice: WaffleViewSlice | null): WaffleViewAgent[] | null | undefined {
+  if (slice?.skill !== STANDUP_SKILL) return null
+  return doc.agents
 }
 
 // What a prompt invoked: `/issue 12` → `issue`; a plain prompt → null.
