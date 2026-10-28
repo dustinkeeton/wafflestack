@@ -248,7 +248,7 @@ export const register: Register = on => {
       const { milestones, epics, inProgress, inReview } = board!
       const hint = boardHint(board!)
       const rows: RenderNode[] = [
-        ...focusBlock('milestones', milestones, m => focusRow(m.title, LEAD, formatDue(m.dueOn))),
+        ...focusBlock('milestones', milestones, m => focusRow(formatDue(m.dueOn), LEAD, m.title)),
         ...focusBlock('epics', epics, epic =>
           focusRow(
             `#${epic.number} · ${formatProgress(epic)}`,

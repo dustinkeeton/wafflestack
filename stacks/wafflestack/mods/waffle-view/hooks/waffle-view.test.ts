@@ -879,8 +879,8 @@ describe('current focus (#698)', () => {
     for (const label of ['milestones', 'epics', 'in progress', 'in review']) {
       expect((await ui.find({ type: 'Text', text: label }))?.props).toMatchObject({ color: BRAND.caption })
     }
-    expect((await ui.find({ type: 'Text', text: 'v1.0' }))?.props).toMatchObject({ color: BRAND.cream, bold: true })
-    expect(await ui.find({ type: 'Text', text: 'due 2026-11-01' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: 'due 2026-11-01' }))?.props).toMatchObject({ color: BRAND.cream, bold: true })
+    expect((await ui.find({ type: 'Text', text: 'v1.0' }))?.props).toMatchObject({ color: BRAND.caption })
     expect(await ui.find({ type: 'Text', text: 'no due date' })).toBeDefined()
     expect((await ui.find({ type: 'Text', text: '#610 · 2 of 5' }))?.props.color).toBe(BRAND.cream)
     expect((await ui.find({ type: 'Text', text: '#552 · 3 of 3' }))?.props.color).toBe('success')
@@ -893,7 +893,7 @@ describe('current focus (#698)', () => {
     await ui.unmount()
 
     ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
-    expect(await ui.find({ type: 'Text', text: '  due 2026-11-01' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '  v1.0' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '  state --board' })).toBeDefined()
     await ui.unmount()
   })
@@ -963,6 +963,35 @@ describe('current focus (#698)', () => {
     expect(await ui.find({ type: 'Text', text: /board unavailable/ })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: 'v1.0' })).toBeDefined()
     await ui.unmount()
+  })
+
+  test('a plain prompt submitted mid --board read reads again without the flag', async ($, on) => {
+    const argvs: (readonly string[])[] = []
+    let release: (() => void) | undefined
+    let open = false
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', async (_$, e) => {
+      argvs.push(e.argv)
+      if (!e.argv.includes('--board')) return { value: exited(0, JSON.stringify(DOC)) }
+      await new Promise<void>(resolve => (release = resolve))
+      return { value: exited(0, JSON.stringify({ ...DOC, board: BOARD })) }
+    })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: open ? [{ id: PANE, title: 'Waffle view', isShown: true, isFocused: false, isPlaced: true }] : [] }))
+
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    const pending = $.command.run({ command: PANE, args: '', ...COMPOSER })
+    for (let i = 0; i < 50 && !release; i++) await new Promise(resolve => setTimeout(resolve, 0))
+    expect(release).toBeDefined()
+    open = true
+    await $.prompt.submit({ text: 'plain', ...TYPED })
+    release!()
+    await pending
+
+    expect(argvs.map(argv => argv.includes('--board'))).toEqual([true, false])
   })
 
   test('an empty board list shows a dim none', async ($, on) => {
