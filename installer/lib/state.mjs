@@ -324,7 +324,7 @@ export function resolveBehavioralKeys(stacks, { project, canonical, overlayValue
  * The first sentence of a `description:`, whitespace-collapsed — the full prose stays in `stack.yaml`.
  * @param {unknown} text
  */
-function firstSentence(text) {
+export function firstSentence(text) {
   const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
   const m = /^(.+?[.!?])(?:\s|$)/.exec(flat);
   return m ? m[1] : flat;
@@ -341,7 +341,7 @@ function isBehavioral(spec) {
  * @param {Record<string, any>} committedValues
  * @returns {Layer}
  */
-function layerOf(key, overlayValues, committedValues) {
+export function layerOf(key, overlayValues, committedValues) {
   if (lookupPath(overlayValues, key) !== undefined) return 'local-overlay';
   if (lookupPath(committedValues, key) !== undefined) return 'waffle.yaml';
   return 'stack-default';
@@ -357,7 +357,7 @@ function layerOf(key, overlayValues, committedValues) {
  * @param {string} key
  * @returns {string|null}
  */
-function expandKey(stack, project, target, key) {
+export function expandKey(stack, project, target, key) {
   /** @type {string[]} */
   const errors = [];
   const out = substitute(`{{${key}}}`, makeResolver(stack, project.values, target), stack.declared, errors, 'state', undefined);

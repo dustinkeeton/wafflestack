@@ -12123,7 +12123,7 @@ describe('help command (#187)', () => {
       // #187 names these explicitly; the epic adds the rest of the surface.
       for (const cmd of [
         'init', 'setup', 'list', 'install', 'render', 'bake',
-        'upgrade', 'doctor', 'report', 'eject', 'uninstall', 'reinstall', 'avatars', 'validate', 'help',
+        'upgrade', 'doctor', 'config', 'report', 'eject', 'uninstall', 'reinstall', 'avatars', 'validate', 'help',
       ]) {
         assert.match(r.stdout, new RegExp(`^\\s+${cmd}\\s+\\S.*$`, 'm'), `a description line for \`${cmd}\``);
       }
