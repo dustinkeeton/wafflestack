@@ -206,6 +206,16 @@ describe('overwrites.mjs (#748)', () => {
     assert.match(r.out, /^OVERWRITE: a\.txt: #1 added "three"; removed by #2$/m);
   });
 
+  test('a PR that moves a line is not its remover; the later clobber is', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    const p2 = pr({ 'a.txt': 'three\none\ntwo\n' });
+    const p3 = pr({ 'a.txt': 'zero\none\ntwo\n' }, { from: base, conflict: true });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`, '--pr', `3=${p3}`);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^OVERWRITE: a\.txt: #1 added "three"; removed by #3$/m);
+    assert.doesNotMatch(r.out, /^NOTE: a\.txt: #2 rewrote/m);
+  });
+
   test('renames are followed to the head path', () => {
     const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
     const p2 = pr({}, { mv: ['a.txt', 'moved.txt'] });
@@ -256,6 +266,7 @@ describe('autopilot gate step 4 wires the checks (#748)', () => {
     assert.doesNotMatch(read('stacks/orchestration/skills/autopilot/overwrites.mjs'), /\{\{/);
     const step4 = md.slice(md.indexOf('4. **Checks.**'), md.indexOf('5. **Open the sync PR.**'));
     assert.match(step4, /Any nonzero exit stops the gate: \*\*hold\*\*/);
+    assert.match(step4, /run `npm install` in `<gate>`, then apply step 3's check: [^\n]*ls-files --others --exclude-standard` prints anything, \*\*hold\*\*/);
     assert.match(step4, /every `NOTE:` line the detector printed, for the final PR body and the run report/);
     assert.match(md, /`Overwrites: clean across <k> PRs` with the detector's `NOTE:` lines/);
   });

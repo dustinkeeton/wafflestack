@@ -113,13 +113,13 @@ function linesAt(head, p, cache) {
   return cache.get(key);
 }
 
-/** First later PR that removed `line` (null: deleted the file), tracking renames along the way. */
+/** First later PR that removed `line` without re-adding it (null: deleted the file), tracking renames. */
 function remover(later, startPath, line) {
   const names = new Set([startPath]);
   for (const pr of later) {
     for (const f of pr.files) {
       if (!names.has(f.from)) continue;
-      if (f.deleted || (line !== null && f.removed.includes(line))) return pr;
+      if (f.deleted || (line !== null && f.removed.includes(line) && !f.added.includes(line))) return pr;
       if (f.to) names.add(f.to);
     }
   }
