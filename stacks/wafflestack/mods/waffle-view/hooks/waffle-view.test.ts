@@ -4,6 +4,7 @@ import type { WaffleViewBoard, WaffleViewDoc } from '../types'
 import {
   BRAND,
   DEFAULT_EDITOR,
+  EMPTY_WAVE,
   EDITOR_KEY,
   LOCAL_BIN,
   LOCAL_CLI,
@@ -34,6 +35,9 @@ import {
   valueLines,
   valueTone,
   wantsBoard,
+  waveCompleted,
+  waveMarker,
+  waveSpawned,
 } from './state'
 
 const STATE_ARGS = ['state', '--json']
@@ -1108,6 +1112,107 @@ describe('current focus (#698)', () => {
     await $.prompt.submit({ text: 'plain', ...TYPED })
     ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: 'Current focus' })).toBeUndefined()
+    await ui.unmount()
+  })
+})
+
+describe('live wave (#699)', () => {
+  const turn = (agentId: string | undefined, reason: 'answer' | 'error' | 'aborted' = 'answer') => ({
+    answer: 'ok',
+    durationMs: 1,
+    isAborted: reason === 'aborted',
+    turnId: `t-${agentId ?? 'main'}`,
+    ...(agentId === undefined ? {} : { agentId }),
+    reason,
+  })
+
+  test('a spawn runs, its answer is done, an error or abort failed; an unknown id changes nothing', () => {
+    const running = waveSpawned(EMPTY_WAVE, 'docs-agent', 'a1')
+    expect(running.byType).toEqual({ 'docs-agent': 'running' })
+    expect(waveCompleted(running, 'a1', 'answer').byType).toEqual({ 'docs-agent': 'done' })
+    expect(waveCompleted(running, 'a1', 'error').byType).toEqual({ 'docs-agent': 'failed' })
+    expect(waveCompleted(running, 'a1', 'aborted').byType).toEqual({ 'docs-agent': 'failed' })
+    expect(waveCompleted(running, 'other', 'answer')).toBe(running)
+    expect(EMPTY_WAVE.byType).toEqual({})
+  })
+
+  test('each status wears its own glyph and tone; pending is dim', () => {
+    expect(waveMarker(undefined)).toEqual({ glyph: '○', tone: { dimColor: true } })
+    expect(waveMarker('running')).toEqual({ glyph: '◐', tone: { color: BRAND.syrup, bold: true } })
+    expect(waveMarker('done')).toEqual({ glyph: '●', tone: { color: 'success' } })
+    expect(waveMarker('failed')).toEqual({ glyph: '✗', tone: { color: 'error' } })
+  })
+
+  const stubCore = (on: Parameters<Parameters<typeof test>[1]>[1]) => {
+    on('fs.exists', () => ({ value: false }))
+    on('process.run', () => ({ value: exited(0, JSON.stringify(DOC)) }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('command.register', (_$, e) => ({ value: { command: e.name } }))
+    on('command.run', () => ({ text: '' }))
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    on('ui.panes', () => ({ value: [{ id: PANE, title: 'Waffle view', isShown: true, isFocused: false, isPlaced: true }] }))
+    on('agent.spawn', (_$, e) => ({ model: 'sonnet', agentId: `id-${e.subagentType}` }))
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+  }
+  type Mounted = Awaited<ReturnType<Parameters<Parameters<typeof test>[1]>[0]['ui']['mount']>>
+  const markers = async (ui: Mounted) =>
+    (await ui.findAll({ type: 'Text', text: /^[○◐●✗] $/ })).map(node => node.text.trim())
+
+  test('an open pane follows the wave live: pending, running, done, and the next /standup resets it', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    expect((await ui.find({ type: 'Text', text: '○ ' }))?.props).toMatchObject({ dimColor: true })
+
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    expect(await markers(ui)).toEqual(['◐', '○'])
+    expect((await ui.find({ type: 'Text', text: '◐ ' }))?.props.color).toBe(BRAND.syrup)
+
+    await $.turn.complete(turn('id-docs-agent'))
+    await $.agent.spawn({ prompt: 'p', subagentType: 'harness-architect' })
+    await $.turn.complete(turn('id-harness-architect', 'error'))
+    expect(await markers(ui)).toEqual(['●', '✗'])
+    expect((await ui.find({ type: 'Text', text: '● ' }))?.props.color).toBe('success')
+    expect((await ui.find({ type: 'Text', text: '✗ ' }))?.props.color).toBe('error')
+
+    await $.command.run({ command: 'standup', args: '', ...COMPOSER })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('the marker sits beside the name, wide and narrow, leaving the name its own Text', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    for (const bodyColumns of [PANE_PROPS.bodyColumns, 60]) {
+      const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns } })
+      expect(await markers(ui)).toEqual(['◐', '○'])
+      const names = (await ui.findAll({ type: 'Text', text: /^(docs-agent|harness-architect)$/ })).map(node => node.text)
+      expect(names).toEqual(['docs-agent', 'harness-architect'])
+      await ui.unmount()
+    }
+  })
+
+  test('a spawn before /standup and a main-loop turn leave the wave pending', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/issue 12', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.turn.complete(turn('id-docs-agent'))
+    await $.turn.complete(turn(undefined))
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['○', '○'])
+    await ui.unmount()
+  })
+
+  test('a peer\'s /standup neither resets the wave nor arms it', async ($, on) => {
+    stubCore(on)
+    await $.prompt.submit({ text: '/standup', ...TYPED })
+    await $.agent.spawn({ prompt: 'p', subagentType: 'docs-agent' })
+    await $.prompt.submit({ text: '/standup', ...PEER })
+    const ui = await $.ui.mount({ plugin: PANE, surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+    expect(await markers(ui)).toEqual(['◐', '○'])
     await ui.unmount()
   })
 })

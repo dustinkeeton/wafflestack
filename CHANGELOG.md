@@ -56,6 +56,13 @@ is what you reach for across a breaking one.
   once without the flag. Other views never pass the flag. The mod's plugin version is now 0.7.0.
   **Consumer impact:** none. This changes only the mod, so nothing re-renders. A `/standup` refresh
   can take up to 8 s longer while the board is read; the CLI caches the board for 60 s.
+- **The `/waffle-view` Agents section shows each agent's live status while a `/standup` wave runs
+  (#699, part of #610).** Each roster row starts with a marker. `○` (dim) means the agent has not
+  started yet, `◐` (Syrup) means it is running, `●` (success) means it answered, and `✗` (error)
+  means it ended in an error, an abort or a refusal. The pane follows the session's own `agent.spawn`
+  and `turn.complete` events, so no extra `state` read is needed. Only top-level spawns made after a
+  typed `/standup` count, and the next `/standup` you type clears every marker. The mod's plugin
+  version is now 0.8.0. **Consumer impact:** none. This changes only the mod, so nothing re-renders.
 - **`wafflestack config [key-prefix]` looks up the config keys your selection can set (#701).**
   Each key prints its effective value, where it comes from (`default`, `waffle.yaml`, or the
   gitignored `waffle.local.yaml`), a one-line summary, its default, and its constraints (`range`,

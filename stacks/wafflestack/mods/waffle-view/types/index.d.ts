@@ -129,6 +129,11 @@ export type WaffleViewSlice = {
   files: string[]
 }
 
+/** A subagent's place in a running `/standup` wave (#699); absent is pending. */
+export type WaffleViewWaveStatus = 'running' | 'done' | 'failed'
+/** The wave by subagent type, and each spawn's `agentId` back to its type. */
+export type WaffleViewWave = { byType: Record<string, WaffleViewWaveStatus>; byId: Record<string, string> }
+
 declare module 'claude-code' {
   interface PluginState {
     'waffle-view': {
@@ -138,6 +143,7 @@ declare module 'claude-code' {
       skill: string | null
       /** The last "Open in editor" failure (#616); a refresh leaves it, a good launch clears it. */
       launchError: string | null
+      wave: WaffleViewWave
     }
   }
 }
