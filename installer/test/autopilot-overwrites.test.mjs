@@ -214,6 +214,63 @@ describe('overwrites.mjs (#748)', () => {
     assert.match(r.out, /^NOTE: a\.txt: #3 rewrote 1 line\(s\) #1 added, in a commit built on #1$/m);
   });
 
+  test('the walk passes the tip: a rewrite followed by an unrelated commit is a NOTE', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('switch', '-q', '-c', 'late', base);
+    git('merge', '-q', '--no-ff', 'main', '-m', 'catch up');
+    write({ 'a.txt': 'one\ntwo\nTHREE\n' });
+    git('commit', '-qam', 'rewrite');
+    write({ 'b.txt': 'bee\n' });
+    git('add', '-A');
+    git('commit', '-qm', 'unrelated');
+    git('switch', '-q', 'main');
+    git('merge', '-q', '--no-ff', 'late', '-m', 'merge late');
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${git('rev-parse', 'HEAD')}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /^NOTE: a\.txt: #2 rewrote 1 line\(s\) #1 added, in a commit built on #1$/m);
+  });
+
+  test('the walk passes a clean catch-up merge after the rewrite: a NOTE', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('switch', '-q', '-c', 'late', base);
+    git('merge', '-q', '--no-ff', 'main', '-m', 'catch up 1');
+    write({ 'a.txt': 'one\ntwo\nTHREE\n' });
+    git('commit', '-qam', 'rewrite');
+    const p2 = pr({ 'b.txt': 'bee\n' });
+    git('switch', '-q', 'late');
+    git('merge', '-q', '--no-ff', 'main', '-m', 'catch up 2');
+    git('switch', '-q', 'main');
+    git('merge', '-q', '--no-ff', 'late', '-m', 'merge late');
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`, '--pr', `3=${git('rev-parse', 'HEAD')}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /^NOTE: a\.txt: #3 rewrote 1 line\(s\) #1 added, in a commit built on #1$/m);
+  });
+
+  test('a rename plus rewrite in one commit after a catch-up is a NOTE at the new path', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\nfour\nfive\nsix\n' });
+    const p2 = pr({ 'c.txt': 'one\ntwo\nTHREE\nfour\nfive\nsix\n' }, { from: base, catchUp: true, mv: ['a.txt', 'c.txt'] });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /^NOTE: c\.txt: #2 rewrote 1 line\(s\) #1 added, in a commit built on #1$/m);
+  });
+
+  test("identical text the remover's branch added and removed before merging #1 is a finding", () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('switch', '-q', '-c', 'late', base);
+    write({ 'a.txt': 'one\ntwo\nthree\n' });
+    git('commit', '-qam', 'same text');
+    write({ 'a.txt': 'one\ntwo\nTHREE\n' });
+    git('commit', '-qam', 'rewrite');
+    git('switch', '-q', 'main');
+    assert.equal(tryGit('merge', '-q', '--no-ff', 'late', '-m', 'merge late'), false);
+    git('checkout', '--theirs', '--', 'a.txt');
+    git('add', '-A');
+    git('commit', '-q', '--no-edit');
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${git('rev-parse', 'HEAD')}`);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^OVERWRITE: a\.txt: #1 added "three"; removed by #2$/m);
+  });
+
   test("a line dropped by hand-editing the PR's own merge commit is a finding", () => {
     const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
     git('switch', '-q', '-c', 'evil');
@@ -389,6 +446,19 @@ describe('overwrites.mjs --rebase (#752)', () => {
     assert.doesNotMatch(r.out, /^NOTE:/m);
   });
 
+  test('a file the branch renamed before the rebase is still checked on both passes', () => {
+    const body = (mid, extra = []) => [...Array.from({ length: 20 }, (_, i) => `l${i}`), 'EARLIER', mid, ...extra, ...Array.from({ length: 20 }, (_, i) => `m${i}`)].join('\n') + '\n';
+    pr({ 'x.txt': body('a4') });
+    const fork = git('rev-parse', 'HEAD');
+    pr({ 'x.txt': body('a4-main', ['UPSTREAM']) });
+    const kept = body('a4-main', ['a4-branch']).replace('EARLIER\n', '');
+    pr({ 'z.txt': body('a4-branch') }, { from: fork, mv: ['x.txt', 'z.txt'], rebase: true, resolve: { 'z.txt': kept } });
+    const r = runRebase();
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^REBASE: z\.txt: upstream added "UPSTREAM"; dropped resolving the rebase$/m);
+    assert.match(r.out, /^REBASE: z\.txt: upstream added "EARLIER"; dropped resolving the rebase$/m);
+  });
+
   test('a modify/delete resolved by git rm is one DELETED line', () => {
     pr({ 'a.txt': 'one\ntwo\nthree\n' });
     pr({ 'a.txt': null }, { from: base, rebase: true, resolve: { 'a.txt': null } });
@@ -443,7 +513,8 @@ describe('autopilot gate step 4 wires the checks (#748)', () => {
     assert.ok(step3.indexOf('gh pr merge --disable-auto <pr>') < step3.indexOf('gh pr comment <pr> --body-file'));
     assert.match(step3, /starts with `<!-- autopilot:rebase-drop -->`/);
     assert.match(step3, /a rebase-held PR is \*\*never armed\*\*/);
-    assert.match(step3, /With integration mode on, the run PR arms into `<integ>` as usual, and the hold moves to the integration → `main` PR/);
+    assert.match(step3, /With integration mode on and the comment read back, the run PR arms into `<integ>` as usual, and the hold moves to the integration → `main` PR/);
+    assert.match(step3, /Read it back with item 4's comments query on `<pr>`\. If that prints no id or errors, the hold is not durable: leave `<pr>` unarmed in either mode/);
     assert.equal(md.match(/and the PR is not rebase-held \(Step 3\)/g).length, 3);
     assert.match(md, /or Step 3 marked it \*\*rebase-held\*\* with integration mode off, treat it/);
     assert.match(md, /\*\*not armed — #P dropped earlier PRs' lines resolving its pre-gate rebase\*\*/);

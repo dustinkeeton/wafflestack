@@ -286,6 +286,7 @@ function checkRebase(args) {
   if (!isAncestor(onto, after)) throw new Fail(`--after ${after} does not descend from --onto ${onto}`);
   const fork = git(['merge-base', before, onto]).trim();
   const atAfter = pathsAtHead(onto, after);
+  const atOnto = pathsAtHead(before, onto);
   const cache = new Map();
   const findings = [];
   let checked = 0;
@@ -308,7 +309,8 @@ function checkRebase(args) {
   const seen = new Set(findings.map((f) => `${f.path}\0${f.line ?? ''}`));
   for (const f of changes(before, after)) {
     if (!f.from || args.ignores.includes(f.from)) continue;
-    const upstream = linesAt(onto, f.from, cache);
+    const up = atOnto(f.from);
+    const upstream = up === null ? null : linesAt(onto, up, cache);
     const kept = f.to ? linesAt(after, f.to, cache) : null;
     if (!(upstream instanceof Set) || kept === 'binary') continue;
     const key = (l) => (kept === null ? `${f.from}\0` : `${f.to}\0${l}`);
