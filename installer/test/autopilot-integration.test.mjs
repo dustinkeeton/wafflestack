@@ -342,6 +342,8 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /`TaskStop` `respond-int-pr<F>`/);
     assert.match(md, /\*\*No fix PR\?\*\* The responder implemented 0, but a review on `<sha>` still reads untriaged/);
     assert.match(md, /If it left a review untriaged, hold/);
+    assert.match(md, /\*\*No fix PR reported\?\*\* The responder implemented fixes but reported no `<P>`, or `origin\/<integ>` no longer equals `<sha>`: hold/);
+    assert.match(md, /merges on CI alone, unreviewed for correctness/);
   });
 
   test('fixes arrive through a fix PR into <integ>, never a push; the final PR is never armed', () => {
