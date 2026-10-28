@@ -9,6 +9,39 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: `render` writes a commented-out catalog of every config key (#703)
+
+**Context**: A consumer had no single place to see every config key their stacks can set.
+`wafflestack config <key>` explains one key at a time.
+
+**Decision**: `wafflestack render` now generates `.waffle/waffle.reference.yaml`. It has a must-set
+section, a locked section, and a `config:` tree where stripping one `# ` from a line yields valid
+YAML. The owner settled the open questions on 2026-10-27:
+
+- **It joins `GENERATED_DOCS`** (`installer/lib/waffledocs.mjs:26`) — optional when absent,
+  hash-checked when present, so consumers may gitignore it.
+- **`harness.*` keys are excluded** — the catalog covers stack config keys only, matching
+  `wafflestack config`, which refuses `harness.*`. The file carries a one-line pointer to
+  FORMAT.md's "The `harness.*` namespace" instead.
+- **Built from declarations only** — the generator passes `values: {}`
+  (`installer/lib/config-reference.mjs:149-156`), so no `waffle.yaml` or `waffle.local.yaml`
+  value can leak into a committed file (#317).
+- **The catalog code moved to a leaf module**, `installer/lib/config-catalog.mjs`, which imports
+  only `project`, `template` and `util`. That lets `render` and `waffledocs` use the catalog
+  without a `config` → `render` import cycle. `config.mjs`, `render.mjs` and `state.mjs`
+  re-export the moved names, so existing imports still work.
+
+**Alternatives considered**:
+
+- **Include `harness.*` overrides** — rejected by the owner; they are built-ins, not stack config.
+
+**Rationale**: One generated file answers "what can I set?" without exposing any machine's values.
+
+**Impact**: Every render now emits one more generated doc; this repo gitignores it with the other
+overview docs.
+
+---
+
 ## 2026-10-28: The `/standup` pane tracks each agent's live status from the session's own events (#699)
 
 **Context**: While a typed `/standup` runs its wave, the pane's Agents rows should show which
@@ -1012,8 +1045,9 @@ managed file, a deleted skill included. This repo ran that way too.
   overlay, local lock, `.waffle/avatars/` — that `init --gitignore` seeds, that heads
   `recommendedGitignoreEntries` for `install`/`render`, and that `uninstall` strips.
 - **The generated-docs class is presence-optional in every `doctor` mode.** `GENERATED_DOCS` /
-  `isGeneratedDoc` (`installer/lib/waffledocs.mjs:24-34`) name six members: `CHEATSHEET.md`,
-  `cheatsheet.html`, `TEAM.md`, `team.html`, `AVATARS.md`, and anything under `avatars/`. An absent
+  `isGeneratedDoc` (`installer/lib/waffledocs.mjs:26-36`) name seven members: `CHEATSHEET.md`,
+  `cheatsheet.html`, `TEAM.md`, `team.html`, `AVATARS.md`, anything under `avatars/`, and
+  `waffle.reference.yaml` (added by #703). An absent
   member lands in a new `absentDocs` result field plus a note, never in `missing`; a present one is
   still hash-checked, so an edited copy fails plain and `--allow-missing` alike. The all-absent guard
   (#311) counts `absentDocs` too, so a docs-only lock with nothing on disk still refuses to "verify"

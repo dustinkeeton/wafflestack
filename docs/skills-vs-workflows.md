@@ -158,7 +158,7 @@ through it, because the docs also name our exact migration path.
 > **Custom commands have been merged into skills.**
 
 `.claude/commands/x.md` and `.claude/skills/x/SKILL.md` both produce `/x`. wafflestack is already
-aligned — `installer/lib/waffledocs.mjs:59` reads *"A skill is a slash command unless it
+aligned — `installer/lib/waffledocs.mjs:55` reads *"A skill is a slash command unless it
 explicitly opts out with `user-invocable: false`."* **No change needed, and do not introduce
 "slash command" as a separate category in the taxonomy.**
 

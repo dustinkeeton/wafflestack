@@ -70,7 +70,7 @@ unenforced (a fork), a corrupt one = hard error.
 
 Architect seniority rule (#38): `lead-engineer` is the general architect; `plugin-architect`
 and `mobile-architect` take seniority in their domains. The output-conflict guard
-(`render.mjs:313`) errors if two enabled stacks emit the same path.
+(`render.mjs:316`) errors if two enabled stacks emit the same path.
 
 ## Installer module registry
 
@@ -78,7 +78,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 
 | Module | Purpose | Exports |
 |--------|---------|---------|
-| `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317) | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys`, `missingConfigFor`, `summarizeConfigKeys` |
+| `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317) | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys` (re-export of `config-catalog.mjs`), `missingConfigFor`, `summarizeConfigKeys` |
 | `refs.mjs` | Ref grammar, resolution, dependency closure, render selection, target-scope gate (#364) | `itemOutputMatcher`, `legacyModDir`, `normalizeItemRef`, `itemsOfKind`, `findItems`, `selectingStack`, `parseRef`, `isWipWaffle`, `resolveRef`, `resolveDepStrict`, `resolveAgentSkill`, `closureFor`, `closureDeps`, `fileMatchesTargets`, `isTargetScoped`, `includeRefMatches`, `includeEjectOverlaps`, `formatEjectOverlap`, `computeSelection`, `skippedSyrupCompanions`, `unpouredRequiredSyrup`, `disabledStackRequires` |
 | `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:`/`modes:`/`range:` guard machinery + stack `constraints:` (#630, #644) | `substitute`, `PROMPT_MODE`, `FLAG_SIDES`, `parseFlagPlaceholder`, `flagPlaceholders`, `undeclaredFlagProblem`, `isModeScalar`, `modeMatches`, `modeProblems`, `makeGuard`, `entryPatternProblems`, `toRangeNumber`, `rangeProblem`, `CONSTRAINT_KINDS`, `constraintViolation`, `constraintProblems`, `LIST_FORMATS`, `formatValue`, `placeholderKeys`, `compilePattern` |
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) | `MOD_MANIFEST`, `MOD_TARGETS`, `MOD_ENGINE_LAID`, `isEngineLaid`, `loadToolkit`, `loadToolkitWithSources`, `missingRequiredKeys` |
@@ -92,13 +92,15 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `harness-tools.mjs` | Per-target roster of call-shaped harness tools (#445): `HARNESS_TOOLS` data (`claude` declared; `codex` / `agents-dir` `null` = unverified) + the pure `toolCalls` / `unknownToolCalls` extractor `content.test.mjs` sweeps every source and render with. THE place a harness tool rename or removal is recorded | `HARNESS_TOOLS`, `DEAD_HARNESS_TOOLS`, `toolsForTarget`, `anyTargetTools`, `toolCalls`, `unknownToolCalls` |
 | `toggle.mjs` | `toggle` command (#476): per-rendered-skill state model (COMMITTED config, tree lock), plain table, keypress picker over `list.mjs`'s shared loop, comment-preserving minimal write to `waffle.yaml` | `computeToggleModel`, `formatToggleTable`, `toggleChoices`, `interactiveToggle`, `applyToggle` |
 | `report.mjs` | `report` bundle (#473): canonical lock + config KEY paths + `doctor({ canonical: true })` summary, then `scrub`/`redact` (cwd → `<repo>`, home → `~`, emails/remotes → placeholders); `formatReportMarkdown` renders the `<details>` block (`--json` is `JSON.stringify` of the bundle in `cli.mjs:155`, no renderer export); `health` does not surface doctor's `absentDocs` (#528) — only `notes` carries them | `collectReport`, `keyPaths`, `scrub`, `redact`, `formatReportMarkdown`, `REPORT_SUMMARY` |
-| `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `resolveSkills` → the `skills` map (#563, `state.mjs:221`); `collectState`'s `update` param → the `update` block (null → `NO_UPDATE_VERDICT`, `state.mjs:182`) and a ` · vX.Y.Z available` suffix on the text `cli:` line (#608, `state.mjs:538-540`); `agentRoster` → the `agents` array, the `/standup` roster (#610, `state.mjs:256`), and the text line before `cli:` — `agents: N in <dir> — a, b, …` or `agents: none installed` (`state.mjs:534-537`) | `STATE_SHAPE_VERSION`, `LAYERS`, `CHECKPOINT_PHASES`, `SKILL_RUN_FILE_KEYS`, `collectState`, `resolveConfig`, `resolveSkills`, `agentRoster`, `resolveBehavioralKeys`, `firstSentence`, `layerOf`, `expandKey`, `formatStateText` |
-| `config.mjs` | `config [key-prefix]` lookup (#701): `configCatalog` — the per-stack, render-scoped (#77) key catalog `setup`'s "Config values" section ALSO prints (one function, no drift) — with value, `set` and source file (`default`/`waffle.yaml`/`waffle.local.yaml`, via `state.mjs`'s `layerOf`); `mergeCatalog` folds multi-stack keys and flags declarations that disagree on anything but `description`; `collectConfig` loads like `state` (`loadToolkitWithSources`, tree lock); `queryConfig` = all / exact key / dotted prefix / error with a nearest-match hint; plain-text `formatConfig` | `configCatalog`, `mergeCatalog`, `collectConfig`, `nearestKey`, `queryConfig`, `formatConfig` |
+| `state.mjs` | `state` document (#561): every `modes:`/`flag:` key with effective value, source layer (`local-overlay`/`waffle.yaml`/`stack-default`) and tokens; delegate run files (newest checkpoint's last PRESENT phase, memory bytes vs cap); committed vs local lock; plain-`doctor` drift via `readTreeLock` (#317). The overlay is opened ONLY to attribute a layer; `resolveSkills` → the `skills` map (#563, `state.mjs:225`); `collectState`'s `update` param → the `update` block (null → `NO_UPDATE_VERDICT`, `state.mjs:186`) and a ` · vX.Y.Z available` suffix on the text `cli:` line (#608, `state.mjs:521-523`); `agentRoster` → the `agents` array, the `/standup` roster (#610, `state.mjs:260`), and the text line before `cli:` — `agents: N in <dir> — a, b, …` or `agents: none installed` (`state.mjs:517-520`) | `STATE_SHAPE_VERSION`, `LAYERS`, `CHECKPOINT_PHASES`, `SKILL_RUN_FILE_KEYS`, `collectState`, `resolveConfig`, `resolveSkills`, `agentRoster`, `resolveBehavioralKeys`, `firstSentence`, `layerOf` (both re-exports of `config-catalog.mjs`), `expandKey`, `formatStateText` |
+| `config-catalog.mjs` | Leaf config-key catalog (#701, moved out of `config`/`state`/`render` in #703 to break the cycle): `collectUsedKeys` (placeholder keys a selection's sources reference), `configCatalog`, `mergeCatalog`, `layerOf`, `firstSentence`, plus the `summaryOf`/`specFacts` formatters `config` and the reference file share — re-exported from their old modules, so every old import path still works | `firstSentence`, `layerOf`, `collectUsedKeys`, `configCatalog`, `mergeCatalog`, `SUMMARY_MAX`, `summaryOf`, `specFacts` |
+| `config-reference.mjs` | `.waffle/waffle.reference.yaml` (#703): `configReferenceYaml(merged)` reads declarations only. Layout: `## ` lines are notes, `# ` lines are YAML (strip one `# ` → valid config). Header, then `## Must set` (required with no default, never shown as values), `## Locked` (`lockMode:` keys), then the commented `# config:` tree. Multi-line, over-110-char, `null`/no-default, conflicting and leaf-and-prefix keys become comment-only leaves pointing at `wafflestack config <key>`. `generateConfigReference` runs the catalog with `values: {}`. `harness.*` is excluded (a one-line FORMAT.md pointer) | `CONFIG_REFERENCE`, `configReferenceYaml`, `generateConfigReference` |
+| `config.mjs` | `config [key-prefix]` lookup (#701): `configCatalog` — the per-stack, render-scoped (#77) key catalog `setup`'s "Config values" section ALSO prints (one function, no drift) — with value, `set` and source file (`default`/`waffle.yaml`/`waffle.local.yaml`, via `layerOf`) — both defined in `config-catalog.mjs` and re-exported here; `mergeCatalog` folds multi-stack keys and flags declarations that disagree on anything but `description`; `collectConfig` loads like `state` (`loadToolkitWithSources`, tree lock); `queryConfig` = all / exact key / dotted prefix / error with a nearest-match hint; plain-text `formatConfig` | `configCatalog`, `mergeCatalog`, `collectConfig`, `nearestKey`, `queryConfig`, `formatConfig` |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps | `MIGRATIONS`, `EXTENSIONLESS_FILES_0_18`, `protectedPathsFromProse`, `migrationCeiling`, `applicableMigrations`, `runMigrations` |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) | `REGISTRY_FILE`, `WAFFLE_KINDS`, `WAFFLE_STATUSES`, `LIVE_STATUSES`, `REGISTRY_ENTRY_KEYS`, `refKindOf`, `waffleKindOf`, `canonicalWafflePath`, `loadRegistry`, `waffleStatus`, `isWaffleWip`, `replacementFor` |
 | `upgrade.mjs` | Version diff, changelog delta, migrations, pin reconcile (#372), render + doctor | `upgrade`, `reconcileToolkitRefPins`, `staleTagMentions`, `forwardRenamedWaffleRefs`, `diffSources`, `diffToolkit`, `changelogBetween` |
 | `uninstall.mjs` | `uninstall` / `reinstall` + the pure `planUninstall` they share (#182) | `planUninstall`, `uninstall`, `reinstall` |
-| `waffledocs.mjs` | Generated `.waffle/` overview docs + avatars, via render's `emit()` | `GENERATED_DOCS`, `isGeneratedDoc`, `extractBaseEmail`, `deriveAgentEmail`, `withIdentity`, `generateWaffleDocs`, `collectAgentAvatars`, `agentFlavor`, `agentAvatarSvg` |
+| `waffledocs.mjs` | Generated `.waffle/` overview docs + avatars + the config reference, via render's `emit()` | `GENERATED_DOCS` (incl. `CONFIG_REFERENCE`), `isGeneratedDoc`, `extractBaseEmail`, `deriveAgentEmail`, `withIdentity`, `generateWaffleDocs`, `collectAgentAvatars`, `agentFlavor`, `agentAvatarSvg` |
 | `avatars-sync.mjs` | Owner-side Gravatar pipeline behind `avatars sync`/`status` (#285) | `GRAVATAR_BASE`, `TOKEN_ENV`, `emailHash`, `syncAvatars`, `avatarsExitCode`, `enumerateAgentAvatars`, `makeGravatarHttp`, `RASTERIZERS`, `makeShellRasterizer`, `runAvatarsSync` |
 | `evals.mjs` | Layer 2 eval harness (#109; runner entry `installer/evals.mjs`) | `DEFAULT_MODEL`, `DEFAULT_MAX_OUTPUT_TOKENS`, `Budget`, `BudgetExceededError`, `discoverCases`, `loadCase`, `validateCase`, `renderTargetPrompt`, `evaluateAssertion`, `parseVerdict`, `runCase`, `runEvals`, `anthropicClient`, `mockClient` |
 | `list.mjs` | `list` command: per-item state model + table + interactive picker (#119); exports the keypress loop `toggle` reuses (#476) | `STATUS`, `REMOVAL_REASON`, `computeListModel`, `unmanagedOutputs`, `describeBlockers`, `ANSI`, `formatListTable`, `selectableChoices`, `interactiveSelect`, `keypressMultiSelect` |
@@ -116,11 +118,12 @@ Import graph (real `import` statements only; `util.mjs` and `template.mjs` depen
 ```
 cli.mjs      → render, doctor, eject, validate, setup, report, state, config, upgrade, uninstall, toolkit,
                prerequisites, list, toggle, toolkit-ref, update-check, board, project, avatars-sync (dynamic)
-render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, model-invocation, marketplace, settings, project, util
+render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, config-catalog, model-invocation, marketplace, settings, project, util
 doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, settings, util
 report.mjs   → render, doctor, prerequisites, project, util
-state.mjs    → toolkit, sources, refs, render, doctor, template, settings, project, util, update-check (NO_UPDATE_VERDICT)
-config.mjs   → toolkit, sources, refs, render, settings, project, util, state (layerOf, firstSentence, expandKey)
+state.mjs    → toolkit, sources, refs, render, doctor, template, settings, project, util, config-catalog, update-check (NO_UPDATE_VERDICT)
+config.mjs   → toolkit, sources, refs, render, settings, project, util, config-catalog, state (expandKey)
+config-catalog.mjs → project, template, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, settings, project, util
 eject.mjs    → render, toolkit, sources, refs, settings, project, util
@@ -130,7 +133,8 @@ list.mjs     → toolkit, render, refs, settings, project, util
 toggle.mjs   → toolkit, sources, refs, render, settings, project, list, model-invocation
 model-invocation.mjs → util
 harness-tools.mjs → (nothing; test-only consumer: content.test.mjs)
-waffledocs.mjs → template, project, refs, util
+waffledocs.mjs → template, project, refs, util, config-reference
+config-reference.mjs → config-catalog
 avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
 migrations.mjs → project, refs, util
@@ -205,7 +209,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `list` | Per-stack per-item state table (`current`/`outdated`/`not-installed`/`not-installable`/`PENDING REMOVAL` — the last on every deselection path, scope or stack/include, #371); plain aligned table by default (ANSI only on a TTY); `--interactive` multi-select installs + renders. Takes no refs. `list.mjs`, `cli.mjs:241` |
 | `toggle` | Per-skill agent-invocation override (#476): one row per RENDERED skill (`agent-invocable` / `slash-only`, `(source)` / `(override)`), read from the COMMITTED config and the tree lock; externals (#471) never listed. No flags + real TTY on stdin AND stdout → keypress picker (checked = agent-invocable; `enter` writes the FULL desired state, `esc` writes nothing); no flags + non-TTY → the plain table, exit 0, readline never opened; `--disable`/`--enable` → write without a prompt. A write persists a MINIMAL `skills.modelInvocation` block (a skill lands in `disabled:`/`enabled:` only where it differs from its source; empty block removed) to `waffle.yaml` comment-preservingly, then runs a full render so the lock records the patched skill. `no change` when every named skill is already in that state. Takes no refs. `toggle.mjs`, `cli.mjs:268` |
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. An EJECTED item ref is un-ejected, loudly (#497). ANY refused render rolls the config back to the text as found (#548, `cli.mjs:475`); when the refusal is an un-ejected item's differing project-owned copy the error names `--force` and the item stays ejected. Bare `install` = `render`. `eject.mjs:118` |
-| `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:190`). `render.mjs:55` |
+| `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:193`). `render.mjs:58` |
 | `bake` | Pure alias for `render` — a fall-through case sharing its body and guards (#176). |
 | `upgrade` | Lock-vs-CLI version diff, CHANGELOG delta, migrations in `(from, to]` (an unreleased toolkit also runs the steps keyed past its version, #501), pin reconcile (#372), render (`refreshSources: true`, reporting source + built-in toolkit commit moves, #374) + doctor. Missing lock degrades to render + doctor; a lock recording no `toolkitVersion` skips migrations and the changelog delta (`upgrade.mjs:51`). Exit follows doctor. `upgrade.mjs:28` |
 | `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only) + a newer-release note (#608, informational, never flips `ok`; `update-check.mjs`); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. An absent generated `.waffle/` doc (`isGeneratedDoc`) is a note in every mode, never drift (#528); the all-absent guard (#311) stays flag-independent. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. `doctor.mjs:39` |
@@ -525,11 +529,11 @@ registry entry (a plugin has no path, no render, nothing to prune).
   no leading/trailing whitespace, non-empty (`"` and `:` allowed). A project with no such check
   sets the shell no-op `true`; `true` must never ship as a `default:` (it passes vacuously).
 - Extensions — `.waffle/extensions/{agents,skills}/<name>.md` appended to the rendered item
-  inside `<!-- BEGIN/END project extension -->` markers (`appendExtension`, `render.mjs:757`).
+  inside `<!-- BEGIN/END project extension -->` markers (`appendExtension`, `render.mjs:760`).
   Agents: appended to body; skills: to `SKILL.md` only.
 - Output conflict — two enabled sources emitting the same path is a hard render error
-  (`emit`, `render.mjs:313`). Unmanaged-file overwrite guard — a rendered path already on disk
-  but not lock-tracked refuses the render pre-write (`render.mjs:190`); byte-identical is
+  (`emit`, `render.mjs:316`). Unmanaged-file overwrite guard — a rendered path already on disk
+  but not lock-tracked refuses the render pre-write (`render.mjs:193`); byte-identical is
   adopted silently; `--force` overwrites.
 
 | `harness.*` key | claude | codex | agents-dir |
@@ -574,6 +578,7 @@ pre-0.6.0 `.wafflestack.*` names still read with a deprecation note, migrated in
 | `.waffle/waffle.local.lock.json` | gitignored | the render this machine actually wrote; written only when the overlay changes an output byte. `readTreeLock` prefers it |
 | `.waffle/{CHEATSHEET,TEAM}.md` + `{cheatsheet,team}.html` | generated (committed or gitignored by consumers) | overview of the installed selection; emitted via `emit()` so lock-tracked, pruned, hash-checked when present — absence is a doctor note, not drift (#528) |
 | `.waffle/AVATARS.md` + `.waffle/avatars/<agent>.svg` | generated (committed or gitignored by consumers) | deterministic per-agent avatar SVGs + Gravatar-registration manifest with derived commit emails (#157). Same `emit()` lifecycle; `--gitignore` offers `.waffle/avatars/` (#528) |
+| `.waffle/waffle.reference.yaml` | generated (committed or gitignored by consumers) | every config key the selection can set, commented out under `config:` (#703). Built from declarations only (`values: {}`), so no `waffle.yaml`/`waffle.local.yaml` value reaches it (#317); same `emit()` lifecycle, absence is a doctor note |
 
 ## Build / test / verify
 
@@ -662,7 +667,7 @@ COMMITTED, like a consuming project — the doctor drift gate (required check on
 tolerated by doctor's `--allow-missing`: `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
 `.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the
 generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, both `.html`, `AVATARS.md`,
-`avatars/`).
+`avatars/`, `waffle.reference.yaml`).
 
 CI render gate (#314/#316): `.github/workflows/tests.yml` (project-owned — NOT lock-managed) runs
 `npm test` + `npm run validate` + `npm run typecheck` (`tests.yml:30-32`), then

@@ -9,7 +9,8 @@ import path from 'node:path';
 import { loadToolkitWithSources } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection } from './refs.mjs';
-import { readLock, readLocalLock, readTreeLock, collectUsedKeys } from './render.mjs';
+import { readLock, readLocalLock, readTreeLock } from './render.mjs';
+import { collectUsedKeys, layerOf, firstSentence } from './config-catalog.mjs';
 import { lockKeys } from './settings.mjs';
 import { doctor } from './doctor.mjs';
 import { substitute, PROMPT_MODE, modeMatches, parseFlagPlaceholder } from './template.mjs';
@@ -24,6 +25,8 @@ import {
 } from './project.mjs';
 import { exists, readYaml, lookupPath, parseFrontmatter } from './util.mjs';
 import { NO_UPDATE_VERDICT } from './update-check.mjs';
+
+export { layerOf, firstSentence };
 
 /** @import { Stack, Toolkit } from './toolkit.mjs' */
 /** @import { ProjectConfig, Target } from './project.mjs' */
@@ -321,31 +324,9 @@ export function resolveBehavioralKeys(stacks, { project, canonical, overlayValue
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-/**
- * The first sentence of a `description:`, whitespace-collapsed — the full prose stays in `stack.yaml`.
- * @param {unknown} text
- */
-export function firstSentence(text) {
-  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
-  const m = /^(.+?[.!?])(?:\s|$)/.exec(flat);
-  return m ? m[1] : flat;
-}
-
 /** @param {any} spec */
 function isBehavioral(spec) {
   return Boolean(spec) && typeof spec === 'object' && (Array.isArray(spec.modes) || (spec.flag && typeof spec.flag === 'object'));
-}
-
-/**
- * @param {string} key
- * @param {Record<string, any>} overlayValues
- * @param {Record<string, any>} committedValues
- * @returns {Layer}
- */
-export function layerOf(key, overlayValues, committedValues) {
-  if (lookupPath(overlayValues, key) !== undefined) return 'local-overlay';
-  if (lookupPath(committedValues, key) !== undefined) return 'waffle.yaml';
-  return 'stack-default';
 }
 
 /**
