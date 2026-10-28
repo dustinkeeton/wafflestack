@@ -32,10 +32,11 @@ const write = (files) => {
 };
 /**
  * Land one "PR" with --no-ff; returns the merge SHA. `from` is where its branch forks; `catchUp`
- * merges main in first (a branch that forked before main moved); `conflict` resolves by keeping ours.
+ * merges main in first (a branch that forked before main moved); `conflict` resolves by keeping ours;
+ * `rebase` replays the branch onto main and resolves by keeping the branch's side.
  */
 let n = 0;
-const pr = (files, { mv, from = 'main', catchUp = false, conflict = false } = {}) => {
+const pr = (files, { mv, from = 'main', catchUp = false, conflict = false, rebase = false } = {}) => {
   const branch = `pr-${++n}`;
   git('switch', '-q', '-c', branch, from);
   if (catchUp) git('merge', '-q', '--no-ff', 'main', '-m', `catch up ${branch}`);
@@ -49,6 +50,12 @@ const pr = (files, { mv, from = 'main', catchUp = false, conflict = false } = {}
     git('add', '-A');
     git('commit', '-q', '--no-edit');
   }
+  if (rebase) {
+    spawnSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', 'rebase', '-q', 'main'], { cwd: dir });
+    git('checkout', '--theirs', '--', ...Object.keys(files));
+    git('add', '-A');
+    git('-c', 'core.editor=true', 'rebase', '--continue');
+  }
   git('switch', '-q', 'main');
   git('merge', '-q', '--no-ff', branch, '-m', `merge ${branch}`);
   return git('rev-parse', 'HEAD');
@@ -61,6 +68,7 @@ const run = (...args) => {
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overwrites-748-'));
   git('init', '-q', '-b', 'main');
+  git('config', 'commit.gpgsign', 'false');
   write({ 'a.txt': 'one\ntwo\n', '.waffle/waffle.lock.json': '{"v":1}\n' });
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
@@ -96,6 +104,39 @@ describe('overwrites.mjs (#748)', () => {
     assert.equal(r.code, 0, r.out + r.err);
     assert.match(r.out, /^NOTE: a\.txt: #12 rewrote 1 line\(s\) #11 added, on a branch built on #11$/m);
     assert.match(r.out, /1 rewritten by PRs built on them/);
+  });
+
+  test('a conflict resolved by rebasing onto the earlier PR reads as built on it: a NOTE, exit 0', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nthree\n' });
+    const p2 = pr({ 'a.txt': 'one\ntwo\nTHREE\n' }, { from: base, rebase: true });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /^NOTE: a\.txt: #2 rewrote 1 line\(s\) #1 added, on a branch built on #1$/m);
+  });
+
+  test('a file deleted by a PR built on its adder is a NOTE, exit 0', () => {
+    const p1 = pr({ 'c.txt': 'x\ny\n' });
+    const p2 = pr({ 'c.txt': null });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /^NOTE: c\.txt: #2 rewrote 2 line\(s\) #1 added, on a branch built on #1$/m);
+  });
+
+  test('a file that is binary at the head is skipped', () => {
+    const p1 = pr({ 't.dat': 'x\n' });
+    const p2 = pr({ 't.dat': 'y\0z\n' }, { from: base, conflict: true });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /overwrites: none \(0 added line/);
+  });
+
+  test('a group past five findings prints a count of the rest', () => {
+    const p1 = pr({ 'a.txt': 'one\ntwo\nl1\nl2\nl3\nl4\nl5\nl6\nl7\n' });
+    const p2 = pr({ 'a.txt': 'one\ntwo\nX\n' }, { from: base, conflict: true });
+    const r = run('--head', 'HEAD', '--pr', `1=${p1}`, '--pr', `2=${p2}`);
+    assert.equal(r.code, 1);
+    assert.equal(r.out.match(/^OVERWRITE: a\.txt: #1 added "l\d"/gm).length, 5);
+    assert.match(r.out, /^OVERWRITE: a\.txt: … and 2 more line\(s\) #1 added; removed by #2$/m);
   });
 
   test('a non-numeric label (the sync) prints as given', () => {
@@ -172,6 +213,8 @@ describe('autopilot gate step 4 wires the checks (#748)', () => {
     assert.doesNotMatch(read('stacks/orchestration/skills/autopilot/overwrites.mjs'), /\{\{/);
     const step4 = md.slice(md.indexOf('4. **Checks.**'), md.indexOf('5. **Open the sync PR.**'));
     assert.match(step4, /Any nonzero exit stops the gate: \*\*hold\*\*/);
+    assert.match(step4, /every `NOTE:` line the detector printed, for the final PR body and the run report/);
+    assert.match(md, /`Overwrites: clean across <k> PRs` with the detector's `NOTE:` lines/);
   });
 
   test('a consumer render defaults to doctor --allow-missing through waffleCmd', () => {
