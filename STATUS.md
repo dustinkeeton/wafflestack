@@ -26,9 +26,9 @@ All 9 stacks are shipped and stable — **14 agents, 41 skills, and 1 mod** in t
 
 ## Installer & CLI
 
-All 15 commands work, plus 2 aliases (`init` → `setup` since #611, `bake` → `render`), over 29
+All 16 commands work, plus 2 aliases (`init` → `setup` since #611, `bake` → `render`), over 31
 pipeline modules in `installer/lib/`: `setup` (alias `init`) · `list` · `toggle` · `install` · `render` · `upgrade` ·
-`doctor` · `state` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
+`doctor` · `state` · `config` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
 ## Shipped in v0.18.0 — merged 2026-10-15 through 10-24
 

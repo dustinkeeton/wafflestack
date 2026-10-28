@@ -167,6 +167,9 @@ Walk the config schema of every enabled stack (from the inventory):
   e.g. `docs.protectedDocs`, the list of paths docs passes flag instead of rewriting, defaults
   to `README.md`, `CLAUDE.md`, the governance docs, `CHANGELOG.md`, and the `.waffle/` config +
   extensions. Set it to `[]` to render no protected-docs section at all.
+- **Look one up**: `wafflestack config [key-prefix]` lists every key this selection can set,
+  with its value, source file (`default` / `waffle.yaml` / `waffle.local.yaml`), default and
+  constraints; an exact key prints its full default and description.
 - **Layering**: shared values go in the committed `.waffle/waffle.yaml` under `config:`;
   account-specific values (bot emails, board IDs, tokens' owners) go in
   `.waffle/waffle.local.yaml`, which must be gitignored. A committed value may reference

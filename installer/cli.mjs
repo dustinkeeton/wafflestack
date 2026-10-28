@@ -10,6 +10,7 @@ import { validateToolkit, validateModPlugins, formatModPluginChecks } from './li
 import { setupGuide } from './lib/setup.mjs';
 import { collectReport, formatReportMarkdown } from './lib/report.mjs';
 import { collectState, formatStateText } from './lib/state.mjs';
+import { collectConfig, queryConfig, formatConfig } from './lib/config.mjs';
 import { upgrade } from './lib/upgrade.mjs';
 import { uninstall, reinstall } from './lib/uninstall.mjs';
 import { loadToolkit } from './lib/toolkit.mjs';
@@ -46,7 +47,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -127,6 +128,17 @@ try {
       const toolkitIdentity = warnProvenance(offlineIdentity());
       const state = collectState({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity, update: newerReleaseCheck() });
       process.stdout.write(json ? `${JSON.stringify(state, null, 2)}\n` : formatStateText(state));
+      break;
+    }
+    case 'config': {
+      if (args.length > 1) fail(`config takes at most one key or prefix (got ${args.join(', ')}) — e.g. \`wafflestack config prResponse.rubric\``);
+      // Read-only (#701), like `state`: warn on provenance, never refuse.
+      warnProvenance(offlineIdentity());
+      const model = collectConfig({ cwd, toolkitRoot, toolkitVersion: pkg.version });
+      for (const err of model.errors) console.error(`selection problem: ${err}`);
+      const result = queryConfig(model, args[0]);
+      if (result.error !== undefined) fail(result.error);
+      else process.stdout.write(formatConfig(result));
       break;
     }
     case 'report': {
@@ -398,6 +410,7 @@ function helpText() {
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',
     '  state       print the resolved behavioral keys (value, layer, tokens), run files, locks and drift',
+    '  config      look up the config keys this selection can set: value, source file, default, constraints',
     '  report      print redacted diagnostics (lock, config keys, doctor) for an upstream bug report',
     '  eject       release one item to project ownership; the files stay, the lock forgets them',
     '  uninstall   remove every wafflestack-managed file this repo has (dry run without --yes)',

@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadToolkit, missingRequiredKeys, MOD_MANIFEST } from './toolkit.mjs';
+import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
-import { exists, lookupPath } from './util.mjs';
-import { loadProjectConfig, makeResolver, resolveConfigFile } from './project.mjs';
+import { exists } from './util.mjs';
+import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle } from './refs.mjs';
 import { waffleStatus } from './registry.mjs';
-import { readTreeLock, collectUsedKeys } from './render.mjs';
+import { readTreeLock } from './render.mjs';
+import { configCatalog } from './config.mjs';
 import { lockKeys } from './settings.mjs';
 import {
   applicablePrerequisites,
@@ -130,25 +131,14 @@ function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {
     lines.push('');
   }
 
-  const groups = new Map();
-  for (const { stackName, stack, kind, item } of selection.items) {
-    if (!groups.has(stackName)) groups.set(stackName, { stack, items: [] });
-    groups.get(stackName).items.push({ kind, item });
-  }
-  // Scope each stack's config to the keys its *selected* items reference, exactly as the
-  // renderer does — a partial selection must not surface its siblings' config (#77).
-  for (const g of groups.values()) g.usedKeys = collectUsedKeys(g.items);
+  // Scoped exactly like the render (#77) — the same catalog `wafflestack config` prints (#701).
+  const catalog = configCatalog(selection.items, { values: project.values, target: primaryTarget, toolkitVersion });
 
   const valueLines = [];
-  for (const [stackName, { stack, usedKeys }] of groups) {
-    const entries = Object.entries(stack.config).filter(([key]) => usedKeys.has(key));
+  for (const { stackName, entries } of catalog) {
     if (!entries.length) continue;
-    const resolve = makeResolver(stack, project.values, primaryTarget, { toolkitVersion });
     valueLines.push(`### stack: ${stackName}`, '');
-    for (const [key, spec] of entries) {
-      const set = lookupPath(project.values, key) !== undefined;
-      valueLines.push(formatConfigValue(key, spec, set, resolve(key)));
-    }
+    for (const e of entries) valueLines.push(formatConfigValue(e.key, e.spec, e.set, e.value));
     valueLines.push('');
   }
   if (valueLines.length) {
@@ -165,13 +155,9 @@ function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {
     );
   }
 
-  const missing = [];
-  for (const [stackName, { stack, usedKeys }] of groups) {
-    const resolve = makeResolver(stack, project.values, primaryTarget, { toolkitVersion });
-    for (const key of missingRequiredKeys(stack, project.values, (_values, k) => resolve(k), usedKeys)) {
-      missing.push(`${stackName}: config.${key}`);
-    }
-  }
+  const missing = catalog.flatMap((s) =>
+    s.entries.filter((e) => e.spec?.required && e.value === undefined).map((e) => `${s.stackName}: config.${e.key}`),
+  );
   if (missing.length) {
     lines.push(
       '## Required keys still unset (render blockers)',
@@ -191,7 +177,7 @@ function currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude } = {
     // pairing (marked `scopedTo`, #364) from an ordinary one.
     skippedSyrupCompanions(toolkit, selection).map((s) => [s.fileRef, s]),
   );
-  const enabledStackNames = new Set([...project.stacks, ...groups.keys()]);
+  const enabledStackNames = new Set([...project.stacks, ...catalog.map((s) => s.stackName)]);
   const optInLines = [];
   for (const name of enabledStackNames) {
     const stack = toolkit.stacks.get(name);

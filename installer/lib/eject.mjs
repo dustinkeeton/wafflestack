@@ -244,6 +244,7 @@ include: []
 #  - skills/issue
 #  - agents/project-manager
 config:
+#  every key your selection can set, with defaults: npx github:OWNER/wafflestack config [key-prefix]
 #  project:
 #    name: My Project        # required by the github-workflow stack (prose + project-board title)
 #  git:
