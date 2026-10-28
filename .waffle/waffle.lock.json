@@ -36,7 +36,8 @@
     ".claude/skills/accurate/SKILL.md": "b4afc3f598b5fbd6255e89bf54cb1fc362fc1fe3294d2230abb0978faec681b7",
     ".claude/skills/adversarial-review/SKILL.md": "219e265dba4a7acb7e4bc1db5fa547c9865f1e54086a6c75d338d5d78f908d66",
     ".claude/skills/audit/SKILL.md": "1be0c87f4724ae6d00a5268a5a1aa18d016927b7938c5d7664f2099f335ffca7",
-    ".claude/skills/autopilot/SKILL.md": "ad7b3f2506cdb52d80a576c21f42ee1ef075b1efe7878617a108c4b7ea0ec6a7",
+    ".claude/skills/autopilot/overwrites.mjs": "7f7c51114dc82c7cfe92407c8e02119c32c4ec555a666ec80732a6448c68c3e3",
+    ".claude/skills/autopilot/SKILL.md": "4d1e2b6deb0661ed9ec32e52389be6ca29382bd1951820b87bcd0ed1ee52d885",
     ".claude/skills/clean-up/scripts/clean_up.sh": "7df01756bdb73a60bf3dfa9e000f0331a8e531049994be5ee6d280f1617b4630",
     ".claude/skills/clean-up/SKILL.md": "0adbb3386110990e2b7ebce4afd4e01dc4766d8ccb16a1676d268ece84378eaa",
     ".claude/skills/delegate/checkpoint.mjs": "5935c4c262f6a055d085454b03aed0857985be6fde7cd3c36f59075949441884",
@@ -95,7 +96,7 @@
     ".waffle/CHEATSHEET.md": "d43732a0f1281a02d5cb36a41f5c24e7d4756f6e6f5e2b37353c2e4e119d4f7b",
     ".waffle/team.html": "dda7d4d1dd06eafe2baa1a535c86b95de4baeeb118506e09705c58d5426f5da7",
     ".waffle/TEAM.md": "75d5ea58098143db27b23a399cbbd5ed1a54f9e3a32370be01f0a136f396efbc",
-    ".waffle/waffle.reference.yaml": "3008a24507cea2f423acb966b45d2cdb0cce1194bb1d27d698a615dd4966e886"
+    ".waffle/waffle.reference.yaml": "eb6e9e890751292ddc07ba162c4e32731143102fd17b8bc34e05969969aca205"
   },
   "settings": {
     ".claude/settings.json#/enabledPlugins/waffle-view@wafflestack": true,
