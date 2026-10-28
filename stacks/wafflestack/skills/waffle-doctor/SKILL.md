@@ -83,6 +83,10 @@ gate — nothing is on disk to compare, so the render is reproduced and checked 
   (to a fork, an older tag, or an unpinned ref) or the rendered skill is itself stale — re-render
   with **`/waffle-render`** to bring them back together, or run **`/waffle-upgrade`** to move
   forward deliberately.
+- **`a newer toolkit release exists: vX.Y.Z — this CLI is A.B.C`** — informational, never a
+  failure, and distinct from version skew: skew compares the lock with the CLI, this compares the
+  CLI with the newest release. The answer is cached for a day and skipped under `--offline`, so it
+  may lag a fresh tag. To move, run **`/waffle-upgrade`** or the command doctor printed under it.
 - **toolkit provenance note** — doctor names *which toolkit* produced the render, read from the
   lock's `toolkit` block (its ref and commit SHA, not just a version number). **Every form of this
   note is a warning: none of them fails the check.** Read it as the explanation for a red

@@ -266,6 +266,20 @@ describe('state: behavioral keys, run files, locks, drift (#561)', () => {
     assert.match(text, /demo\.consent: "prompt" \(stack-default, locked to "prompt"\) — \+go forces/);
     assert.match(text, /checkpoints: \.claude\/worktrees\/\.delegate — absent/);
   });
+
+  test('the `update` block (#608) is additive: all-null by default, the injected verdict otherwise', () => {
+    const bare = collect();
+    assert.equal(bare.version, STATE_SHAPE_VERSION);
+    assert.equal(STATE_SHAPE_VERSION, 1, 'an additive key is no shape bump');
+    assert.deepEqual(bare.update, { latestTag: null, available: false, command: null, checkedAt: null, source: null });
+    assert.match(formatStateText(bare), /\ncli: 0\.0\.test \(unverified\)\n$/);
+
+    const update = { latestTag: 'v9.0.0', available: true, command: 'npx --yes github:o/r#v9.0.0 upgrade', checkedAt: '2026-10-11T00:00:00.000Z', source: /** @type {const} */ ('remote') };
+    const state = collectState({ cwd, toolkitRoot, toolkitVersion: '0.0.test', update });
+    assert.deepEqual(state.update, update);
+    assert.match(formatStateText(state), /cli: 0\.0\.test \(unverified\) · v9\.0\.0 available — run npx --yes github:o\/r#v9\.0\.0 upgrade\n$/);
+    assert.ok(!state.drift.notes.some((n) => /newer toolkit release/.test(n)), 'state carries the verdict in `update`, not as a drift note');
+  });
 });
 
 describe('state: CLI surface (#561)', () => {
@@ -283,7 +297,8 @@ describe('state: CLI surface (#561)', () => {
     const r = runCli(['state', '--json'], cwd);
     assert.equal(r.status, 0, r.stderr);
     const doc = JSON.parse(r.stdout);
-    assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'config', 'skills']);
+    assert.deepEqual(Object.keys(doc), ['version', 'cli', 'project', 'keys', 'runFiles', 'locks', 'drift', 'config', 'skills', 'update']);
+    assert.ok(['local-tags', null].includes(doc.update.source), 'a checkout answers from its local tags — no network, no cache');
     assert.deepEqual(doc.skills.issue.keys, ['issue.confirmGate', 'issue.inferenceLabel', 'issue.priorityLabels', 'issue.reassessLabel', 'issue.typeLabels', 'project.name']);
     assert.deepEqual(doc.skills.issue.files, []);
     assert.equal(doc.config['project.name'].value, 'StateFixture');

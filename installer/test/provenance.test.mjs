@@ -1005,11 +1005,11 @@ describe('the CLI wires `--offline` — not the hatch — to the lookup (#383)',
   });
   after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-  const run = (args) => {
-    const cwd = fs.mkdtempSync(path.join(tmp, 'consumer-'));
-    write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
+  const run = (args, existing = null) => {
+    const cwd = existing ?? fs.mkdtempSync(path.join(tmp, 'consumer-'));
+    if (!existing) write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\nconfig: {}\n');
     fs.writeFileSync(stubLog, '');
-    const env = { ...process.env, PATH: spawnPath, GIT_STUB_LOG: stubLog };
+    const env = { ...process.env, PATH: spawnPath, GIT_STUB_LOG: stubLog, XDG_CACHE_HOME: path.join(tmp, 'xdg') };
     delete env.WAFFLESTACK_ALLOW_UNRELEASED;
     delete env.WAFFLESTACK_OFFLINE;
     const r = spawnSync(process.execPath, [fabCli, ...args, '--cwd', cwd], { encoding: 'utf8', env, timeout: 30000 });
@@ -1035,6 +1035,25 @@ describe('the CLI wires `--offline` — not the hatch — to the lookup (#383)',
     const lock = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
     assert.notEqual(lock.toolkit.status, 'release', 'skipping the lookup cannot manufacture a release');
     assert.equal(lock.toolkit.ref, null);
+  });
+
+  test('`doctor` asks once for the newest release, then answers from the user cache; `--offline` never asks (#608)', () => {
+    const { cwd } = run(['render', '--allow-unreleased', '--offline']);
+    const cacheFile = path.join(tmp, 'xdg', 'wafflestack', 'latest-release.json');
+    fs.rmSync(cacheFile, { force: true });
+    const offlineRun = run(['doctor', '--offline'], cwd);
+    assert.equal(offlineRun.r.status, 0, `${offlineRun.r.stdout}\n${offlineRun.r.stderr}`);
+    assert.doesNotMatch(offlineRun.gitCalls, /ls-remote/);
+    assert.equal(fs.existsSync(cacheFile), false, '`--offline` writes no cache');
+
+    const first = run(['doctor'], cwd);
+    assert.equal(first.r.status, 0, `${first.r.stdout}\n${first.r.stderr}`);
+    assert.equal(first.gitCalls.match(/ls-remote/g)?.length, 1, 'plain doctor pays for at most one lookup');
+    assert.equal(JSON.parse(fs.readFileSync(cacheFile, 'utf8'))['dustinkeeton/wafflestack'].latestTag, 'v0.12.0');
+    const second = run(['state', '--json'], cwd);
+    assert.equal(second.r.status, 0, second.r.stderr);
+    assert.doesNotMatch(second.gitCalls, /ls-remote/, 'a fresh cache entry answers without the network');
+    assert.equal(JSON.parse(second.r.stdout).update.source, 'cache');
   });
 });
 
