@@ -1422,7 +1422,7 @@ describe('autopilot skill: gate loops converge only on a cold round (#510, #357)
   test('guardrails state the worst-case passes per PR with the defaults filled in', () => {
     assert.ok(says(guardrails, /Worst-case spend per PR/i), 'no worst-case spend guardrail');
     assert.ok(says(guardrails, /10 gate passes/i), 'the guardrail does not state the default-cap total');
-    assert.ok(says(guardrails, /under 20/i), 'the guardrail does not bound the retry case');
+    assert.ok(says(guardrails, /at most 20/i), 'the guardrail does not bound the retry case');
     assert.match(guardrails, /converges \*\*only on a cold round\*\*/);
   });
 
@@ -1757,8 +1757,8 @@ describe('gate loops: cold-start signal is invocation-carried; triggers cover an
     const cold = /this pass is deliberately cold — do not seed history from the PR/g;
     assert.equal(
       [...md.matchAll(cold)].length,
-      4,
-      "both cap hatches and both loops' cold certification rounds carry the deliberately-cold sentence (#510)",
+      5,
+      "both cap hatches, both loops' cold certification rounds (#510) and integration stage 2's reviewer (#733) carry the deliberately-cold sentence",
     );
     for (const step of [qaStep, reviewStep]) {
       assert.match(step, /\*\*say so in the prompt\*\*/);

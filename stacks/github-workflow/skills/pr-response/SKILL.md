@@ -337,6 +337,12 @@ For each **Implement** finding, in order, following the `git-workflow` skill:
    `{{project.testCmd}}`, `{{project.buildCmd}}`.
 6. Push to the PR's branch. The PR updates in place — do not open a second PR.
 
+**A `## Fix branch` block in your invocation overrides items 1 and 6.** Autopilot's integration
+gate sends one when the PR's head is its integration branch, which takes changes only through PRs.
+Commit on the branch the block names, cut from the PR's head, push it, open the PR the block
+specifies, and report that PR's number. The reply and the `waffle/pr-response` status still go on
+the reviewed PR, at the head you read.
+
 For each **Defer** finding, file a follow-up issue (the `issue` skill does this well) and put the
 issue number in the reply. A defer with nowhere to land is a decline wearing a nicer word.
 
