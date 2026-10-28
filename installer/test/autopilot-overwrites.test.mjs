@@ -44,7 +44,7 @@ const pr = (files, { mv, from = 'main', catchUp = false, conflict = false } = {}
   git('add', '-A');
   git('commit', '-q', '-m', branch);
   if (conflict) {
-    spawnSync('git', ['merge', '-q', 'main'], { cwd: dir });
+    spawnSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.com', 'merge', '-q', 'main'], { cwd: dir });
     git('checkout', '--ours', '--', ...Object.keys(files));
     git('add', '-A');
     git('commit', '-q', '--no-edit');
