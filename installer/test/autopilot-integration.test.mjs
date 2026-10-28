@@ -127,6 +127,7 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(md, /## Base branch/);
     assert.match(md, /First wait out every \*\*armed\*\* run PR, including the last serial one and each parallel-group PR/);
     assert.match(md, /Do not wait on unarmed PRs/);
+    assert.match(md, /`mergeStateStatus` turns `DIRTY`/);
     assert.match(md, /\*\*no run PR is still open against `<integ>`\*\*/);
     assert.match(md, /Delete the branch only when \*\*no run PR is open against `<integ>`\*\*/);
     assert.doesNotMatch(md, /If none merged and `origin\/<integ>` still equals the cut SHA, delete/);
