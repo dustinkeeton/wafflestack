@@ -20,7 +20,7 @@ import { computeSelection, includeEjectOverlaps, formatEjectOverlap } from './re
 import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, formatCheckGate, unacknowledgedStacks } from './prerequisites.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { settingsDrift, lockKeys } from './settings.mjs';
-import { staleMods as findStaleMods, formatStaleMod } from './installed-mods.mjs';
+import { staleMods as findStaleMods, formatStaleMod, marketplacePinned } from './installed-mods.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
@@ -124,7 +124,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   const cliAhead = Boolean(parseVersion(toolkitVersion) && parseVersion(lock.toolkitVersion)) && compareVersions(toolkitVersion, lock.toolkitVersion) > 0;
   // An unreleased CLI ships mod versions the release-pinned marketplace may not serve yet.
   const unreleased = toolkitIdentity?.status === 'unreleased';
-  for (const m of staleMods) notes.push(formatStaleMod(m, { cliAhead, unreleased }));
+  for (const m of staleMods) notes.push(formatStaleMod(m, { cliAhead, unreleased, pinned: marketplacePinned(tree.settings, m.id) }));
 
   if (modified.length) {
     notes.push('managed files have local edits; move changes into .waffle/extensions/ or config, then re-render');

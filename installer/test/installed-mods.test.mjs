@@ -104,6 +104,22 @@ describe('stale installed mods (#730)', () => {
     assert.equal(dr.staleMods.length, 1);
     assert.ok(dr.notes.some((n) => n.includes(`claude plugin update ${ID} --scope user`)));
 
+    // Unpinned (no `ref`): update alone reaches the default branch, so no upgrade step or caveat.
+    for (const toolkitVersion of ['0.5.0', '0.6.0']) {
+      const unpinned = doctor({ cwd, toolkitVersion, toolkitIdentity: { status: 'unreleased' }, toolkitRoot, pluginsDir });
+      assert.ok(unpinned.notes.some((n) => n.includes(`run: claude plugin update ${ID} --scope user, then /reload-plugins or restart the session`) && !/pins|pinned/.test(n)), `unpinned marketplace at CLI ${toolkitVersion}: plain update`);
+    }
+
+    // Pin the rendered marketplace entry in both the lock and the settings file, so the tree stays clean.
+    for (const [rel, entry] of [
+      ['.waffle/waffle.lock.json', (j) => j.settings[marketplaceKey('fixture')]],
+      ['.claude/settings.json', (j) => j.extraKnownMarketplaces.fixture],
+    ]) {
+      const abs = path.join(cwd, rel);
+      const json = JSON.parse(fs.readFileSync(abs, 'utf8'));
+      entry(json).source.ref = 'v0.5.0';
+      fs.writeFileSync(abs, JSON.stringify(json, null, 2));
+    }
     const skewed = doctor({ cwd, toolkitVersion: '0.6.0', toolkitRoot, pluginsDir });
     assert.ok(skewed.notes.some((n) => n.includes(`run: \`wafflestack upgrade\` (the render pins an older release), then claude plugin update ${ID} --scope user`)), 'CLI newer than the render: re-render first');
     assert.ok(!dr.notes.some((n) => n.includes('wafflestack upgrade')), 'no skew, no upgrade step');

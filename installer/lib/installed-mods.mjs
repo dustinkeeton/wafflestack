@@ -6,7 +6,7 @@ import path from 'node:path';
 import { compareVersions, parseVersion } from './util.mjs';
 import { readMarketplace } from './marketplace.mjs';
 import { MOD_MANIFEST } from './toolkit.mjs';
-import { enabledPluginIds } from './settings.mjs';
+import { enabledPluginIds, marketplaceKey } from './settings.mjs';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -84,15 +84,22 @@ export function staleMods({ cwd, settings, toolkitRoot, pluginsDir }) {
   return stale;
 }
 
+/** Whether the rendered marketplace entry for mod `id` pins a `ref`; unpinned tracks the default branch. */
+export function marketplacePinned(settings, id) {
+  const entry = settings?.[marketplaceKey(id.slice(id.lastIndexOf('@') + 1))];
+  return isObject(entry) && isObject(entry.source) && typeof entry.source.ref === 'string' && entry.source.ref !== '';
+}
+
 /**
  * The doctor note for one stale record. `cliAhead` (CLI newer than the render): the pinned
  * marketplace can't reach `source` until a re-render. `unreleased` (same version, not a release
  * build): the pin may serve an older version than `source`, so the update may not clear the note.
+ * Both apply only when `pinned`: an entry without a `ref` tracks the default branch.
  */
-export function formatStaleMod(m, { cliAhead = false, unreleased = false } = {}) {
+export function formatStaleMod(m, { cliAhead = false, unreleased = false, pinned = true } = {}) {
   const where = m.scope === 'user' ? '' : ' (from this repo)';
-  const first = cliAhead ? '`wafflestack upgrade` (the render pins an older release), then ' : '';
-  const caveat = unreleased && !cliAhead
+  const first = pinned && cliAhead ? '`wafflestack upgrade` (the render pins an older release), then ' : '';
+  const caveat = pinned && unreleased && !cliAhead
     ? ` (this CLI is unreleased: the pinned release may ship an older ${m.id.slice(0, m.id.lastIndexOf('@'))}, so this note can persist until the next release)`
     : '';
   return `mod ${m.id} is installed at ${m.installed} (${m.scope} scope) but this toolkit ships ${m.source} — run${where}: ${first}${m.command}, then /reload-plugins or restart the session${caveat}`;
