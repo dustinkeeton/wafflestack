@@ -380,6 +380,15 @@ describe('overwrites.mjs --rebase (#752)', () => {
     assert.match(r.out, /^rebase: 1 of 1 upstream line\(s\) dropped, in 1 file\(s\)$/m);
   });
 
+  test('an upstream line the branch had also removed is still a finding when the resolution drops it', () => {
+    pr({ 'a.txt': 'two\none\n' });
+    pr({ 'a.txt': 'TWO\n' }, { from: base, rebase: true });
+    const r = runRebase();
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.out, /^REBASE: a\.txt: upstream added "one"; dropped resolving the rebase$/m);
+    assert.doesNotMatch(r.out, /^NOTE:/m);
+  });
+
   test('a modify/delete resolved by git rm is one DELETED line', () => {
     pr({ 'a.txt': 'one\ntwo\nthree\n' });
     pr({ 'a.txt': null }, { from: base, rebase: true, resolve: { 'a.txt': null } });

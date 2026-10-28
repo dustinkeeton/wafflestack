@@ -276,8 +276,8 @@ function report({ findings, notes, checked, prs }) {
 
 /**
  * A clean patch replays only removals of lines its pre-image held, so an upstream line missing after the
- * rebase was dropped by a conflict resolution, unless the branch removed identical text before the rebase
- * (a line upstream moved). A file gone after the rebase is always a finding. A line both --before and
+ * rebase was dropped by a conflict resolution, even when the branch removed identical text before the
+ * rebase (owner ruling, #752). A file gone after the rebase is always a finding. A line both --before and
  * --onto held is checked too: a branch that merged upstream in before the rebase forks after it.
  * @param {object} args `before`, `after`, `onto` and `ignores` from the command line
  */
@@ -285,11 +285,9 @@ function checkRebase(args) {
   const [before, after, onto] = [args.before, args.after, args.onto].map(resolve);
   if (!isAncestor(onto, after)) throw new Fail(`--after ${after} does not descend from --onto ${onto}`);
   const fork = git(['merge-base', before, onto]).trim();
-  const own = new Map(changes(fork, before).filter((f) => f.from).map((f) => [f.from, f]));
   const atAfter = pathsAtHead(onto, after);
   const cache = new Map();
   const findings = [];
-  const notes = [];
   let checked = 0;
   for (const f of changes(fork, onto)) {
     if (!f.to || args.ignores.includes(f.to)) continue;
@@ -299,13 +297,12 @@ function checkRebase(args) {
     const lines = now === null ? null : linesAt(after, now, cache);
     if (lines === 'binary') continue;
     checked += added.length;
-    const mine = f.from ? own.get(f.from) : undefined;
     if (lines === null) {
       findings.push({ kind: 'DELETED', path: f.to, count: added.length });
       continue;
     }
     for (const line of added) {
-      if (!lines.has(line)) (mine?.removed.includes(line) ? notes : findings).push({ kind: 'REBASE', path: now, line });
+      if (!lines.has(line)) findings.push({ kind: 'REBASE', path: now, line });
     }
   }
   const seen = new Set(findings.map((f) => `${f.path}\0${f.line ?? ''}`));
@@ -321,14 +318,10 @@ function checkRebase(args) {
     if (kept === null) findings.push({ kind: 'DELETED', path: f.from, count: dropped.length });
     else for (const line of dropped) findings.push({ kind: 'REBASE', path: f.to, line });
   }
-  return { findings, notes, checked, fork };
+  return { findings, checked, fork };
 }
 
-function reportRebase({ findings, notes, checked, fork }) {
-  for (const g of groupBy(notes, (f) => f.path)) {
-    const count = g.reduce((n, f) => n + (f.count ?? 1), 0);
-    console.log(`NOTE: ${g[0].path}: the branch removed ${count} line(s) upstream also added, as it did before the rebase`);
-  }
+function reportRebase({ findings, checked, fork }) {
   for (const g of groupBy(findings, (f) => `${f.kind}\0${f.path}`)) {
     const { kind, path, count } = g[0];
     if (kind === 'DELETED') {
