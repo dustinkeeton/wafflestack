@@ -242,7 +242,8 @@ Narrowed to `/standup`, the pane shows two sections:
   typed `/standup` runs, each row carries a live marker (`○` pending, `◐` running, `●` done, `✗`
   failed) built from the session's own spawn and finish events; the next `/standup` resets it (#699).
 
-Both views end in an **Open in \<editor\>** button. It runs the
+Both views end in an **Open in \<editor\>** button once the pane has read the repo's state (#696).
+There is no button before the first read or after a failed first read; a later failed refresh keeps it. It runs the
 launcher named by the optional `waffleView.editor` key (default `cursor`) on the repo, and shows a
 failure inline instead of breaking the pane (#616).
 See [DECISIONS.md](DECISIONS.md#2026-10-06-stacks-can-ship-claude-code-mods-rendered-verbatim-and-read-through-state---json-552-560564).
