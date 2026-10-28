@@ -226,6 +226,15 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's Step 8 red check no longer leaves an armed PR beside its retry or spends the retry
+  on infra (#745).** A red required check started a fresh retry while the original PR stayed open
+  and armed, so a re-run check could merge both. A cancelled or timed-out run also spent the only
+  retry. Now autopilot reruns an all-infra red check (`CANCELLED`, `TIMED_OUT`, `STARTUP_FAILURE`
+  Actions runs) once with `gh run rerun`. Before a retry it disarms (`gh pr merge --disable-auto`)
+  and closes the PR, keeps its branch, cuts the retry on a fresh `-retry` branch, and pauses the
+  dependent chain until the retry resolves. A PR whose auto-merge is switched off ends the wait as
+  **disarmed**. **Consumer impact:** re-render to pick up the autopilot skill; no config changes.
+
 - **Autopilot's Step 8 red check reads required checks only (#744).** The merge wait ended as red
   check on `BLOCKED` plus any red `statusCheckRollup` item, but `BLOCKED` also covers required
   checks still pending, so a fast optional check failing first spent the issue's one retry on a PR
