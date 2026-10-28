@@ -309,7 +309,7 @@ function checkRebase(args) {
   for (const c of git(['rev-list', '--no-merges', `${onto}..${before}`]).split('\n').filter(Boolean)) {
     const atAfterC = pathsAtHead(c, after);
     for (const f of changes(`${c}^`, c)) {
-      const p = f.to ? atAfterC(f.to) : f.from;
+      const p = f.to ? (atAfterC(f.to) ?? f.to) : f.from;
       for (const l of f.removed) if (!f.added.includes(l)) ownRemovals.add(`${p}\0${l}`);
     }
   }

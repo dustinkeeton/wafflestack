@@ -497,6 +497,17 @@ describe('overwrites.mjs --rebase (#752)', () => {
     assert.equal(renamed.code, 0, renamed.out + renamed.err);
   });
 
+  test('a file the branch edits, then deletes, replayed cleanly exits 0', () => {
+    git('switch', '-q', '-c', 'late', base);
+    write({ 'a.txt': 'one\nTWO\n' });
+    git('commit', '-qam', 'edit');
+    git('rm', '-q', 'a.txt');
+    git('commit', '-qm', 'delete');
+    pr({ 'b.txt': 'bee\n' });
+    const r = rebaseLate({});
+    assert.equal(r.code, 0, r.out + r.err);
+  });
+
   test('an upstream line the branch had also removed is still a finding when the resolution drops it', () => {
     pr({ 'a.txt': 'two\none\n' });
     pr({ 'a.txt': 'TWO\n' }, { from: base, rebase: true });
