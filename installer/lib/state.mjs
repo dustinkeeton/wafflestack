@@ -355,12 +355,13 @@ export function layerOf(key, overlayValues, committedValues) {
  * @param {ProjectConfig} project
  * @param {Target} target
  * @param {string} key
+ * @param {{ toolkitVersion?: string }} [runtime]
  * @returns {string|null}
  */
-export function expandKey(stack, project, target, key) {
+export function expandKey(stack, project, target, key, runtime = {}) {
   /** @type {string[]} */
   const errors = [];
-  const out = substitute(`{{${key}}}`, makeResolver(stack, project.values, target), stack.declared, errors, 'state', undefined);
+  const out = substitute(`{{${key}}}`, makeResolver(stack, project.values, target, runtime), stack.declared, errors, 'state', undefined);
   return errors.length || out === `{{${key}}}` ? null : out;
 }
 

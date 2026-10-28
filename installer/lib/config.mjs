@@ -152,7 +152,7 @@ export function collectConfig({ cwd, toolkitRoot, toolkitVersion, sourceCacheDir
   const catalog = configCatalog(selection.items, { values: project.values, target, toolkitVersion, overlayValues, committedValues: canonical.values });
   const keys = mergeCatalog(catalog);
   for (const k of keys) {
-    if (typeof k.value === 'string' && k.value.includes('{{')) k.expanded = expandKey(k.decls[0].stack, project, target, k.key);
+    if (typeof k.value === 'string' && k.value.includes('{{')) k.expanded = expandKey(k.decls[0].stack, project, target, k.key, { toolkitVersion });
   }
 
   const inScope = new Set(keys.map((k) => k.key));
@@ -195,7 +195,7 @@ export function nearestKey(q, keys) {
     const parts = k.split('.');
     for (let i = 1; i <= parts.length; i++) candidates.add(parts.slice(0, i).join('.'));
   }
-  const limit = Math.max(2, Math.floor(q.length / 4));
+  const limit = Math.min(Math.max(2, Math.floor(q.length / 4)), q.length - 1);
   /** @type {string|null} */
   let best = null;
   let bestD = Infinity;
@@ -238,7 +238,7 @@ export function queryConfig(model, arg) {
 const SUMMARY_MAX = 110;
 
 /**
- * A value on one line; multi-line and long structured values point at the exact-key lookup.
+ * A value on one line; multi-line and long values point at the exact-key lookup.
  * @param {string} key
  * @param {any} v
  */
@@ -246,7 +246,8 @@ function inlineValue(key, v) {
   if (v === undefined) return '(unset)';
   if (typeof v === 'string') {
     const lines = v.split('\n').length;
-    return lines > 1 ? `(multi-line, ${lines} lines — wafflestack config ${key})` : v;
+    if (lines > 1) return `(multi-line, ${lines} lines — wafflestack config ${key})`;
+    return v.length <= 80 ? v : `(${v.length} chars — wafflestack config ${key})`;
   }
   const json = JSON.stringify(v);
   return json.length <= 80 ? json : `(${Array.isArray(v) ? 'list' : 'map'}, ${json.length} chars — wafflestack config ${key})`;

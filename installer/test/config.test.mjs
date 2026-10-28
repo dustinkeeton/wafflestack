@@ -68,6 +68,14 @@ function fixtureToolkit() {
     '    required: false',
     '    default: "x-{{a.num}}"',
     '    description: A templated value.',
+    '  a.ver:',
+    '    required: false',
+    '    default: "v{{harness.toolkitVersion}}"',
+    '    description: A value built from the toolkit version.',
+    '  a.wide:',
+    '    required: false',
+    `    default: "${'w'.repeat(120)}"`,
+    '    description: A long single-line value.',
     '  a.only2:',
     '    required: false',
     '    default: two',
@@ -77,7 +85,7 @@ function fixtureToolkit() {
     '    keys: [a.low, a.num]',
     '',
   ].join('\n'));
-  write(root, 'stacks/a/skills/a1/SKILL.md', skill('a1', '{{shared.name}} {{a.num}} {{a.low}} {{a.gate}} {{a.long}} {{a.tmpl}}'));
+  write(root, 'stacks/a/skills/a1/SKILL.md', skill('a1', '{{shared.name}} {{a.num}} {{a.low}} {{a.gate}} {{a.long}} {{a.tmpl}} {{a.ver}} {{a.wide}}'));
   write(root, 'stacks/a/skills/a2/SKILL.md', skill('a2', '{{a.only2}}'));
   write(root, 'stacks/b/stack.yaml', [
     'name: b',
@@ -118,7 +126,7 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('lists exactly the keys setup scopes for the selection', () => {
     const keys = collect().keys.map((k) => k.key);
-    assert.deepEqual(keys, ['a.gate', 'a.long', 'a.low', 'a.num', 'a.tmpl', 'shared.name']);
+    assert.deepEqual(keys, ['a.gate', 'a.long', 'a.low', 'a.num', 'a.tmpl', 'a.ver', 'a.wide', 'shared.name']);
     const guide = setupGuide(toolkitRoot, '0.0.test', cwd);
     const section = guide.slice(guide.indexOf('## Config values'), guide.indexOf('## Required keys still unset'));
     const setupKeys = [...section.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]);
@@ -172,10 +180,12 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('a prefix filters at segment boundaries; a near miss gets a hint', () => {
     const out = run('a').out;
-    assert.match(out, /^5 config key\(s\) under `a`/);
+    assert.match(out, /^7 config key\(s\) under `a`/);
     assert.doesNotMatch(out, /shared\.name/);
     assert.equal(run('a.n').error, 'unknown config key or prefix `a.n` — did you mean `a.num`?');
     assert.equal(nearestKey('zzzzzz', ['a.num']), null);
+    assert.equal(nearestKey('x', ['pm']), null, 'a short query never gets an unrelated key');
+    assert.equal(nearestKey('a.', ['pm']), null);
   });
 
   test('unknown, out-of-scope, harness.* and a leading config. prefix', () => {
@@ -187,13 +197,16 @@ describe('config: lookup of keys, values and sources (#701)', () => {
 
   test('a templated value shows its expansion', () => {
     assert.match(run('a.tmpl').out, /^expands to: x-11$/m);
+    assert.match(run('a.ver').out, /^expands to: v0\.0\.test$/m, 'harness.toolkitVersion resolves');
   });
 
   test('long text: a one-line summary in the list, the full text on an exact lookup', () => {
     const list = run('a').out;
     const block = list.slice(list.indexOf('a.long ='));
     assert.match(block, /^a\.long = \(multi-line, 3 lines — wafflestack config a\.long\) {3}\[default\]$/m);
-    for (const line of list.split('\n')) assert.ok(line.length <= 112 || line.startsWith('a.'), `too long: ${line}`);
+    assert.match(list, /^a\.wide = \(120 chars — wafflestack config a\.wide\) {3}\[default\]$/m);
+    for (const line of list.split('\n')) assert.ok(line.length <= 112, `too long: ${line}`);
+    assert.match(run('a.wide').out, new RegExp(`^value: ${'w'.repeat(120)}$`, 'm'));
     const detail = run('a.long').out;
     assert.match(detail, /^default:\n {4}line one\n {4}line two\n {4}line three$/m);
     assert.ok(detail.replace(/\s+/g, ' ').includes(LONG_DESC.trim()), 'the whole description');
