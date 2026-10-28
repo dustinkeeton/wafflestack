@@ -126,6 +126,8 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(md, /`gh pr create --base <integ>`/);
     assert.match(md, /## Base branch/);
     assert.match(md, /\*\*no run PR is still open against `<integ>`\*\*/);
+    assert.match(md, /Delete the branch only when \*\*no run PR is open against `<integ>`\*\*/);
+    assert.doesNotMatch(md, /If none merged and `origin\/<integ>` still equals the cut SHA, delete/);
     assert.match(md, /\*\*Never arm it\*\* in this release/);
   });
 
@@ -138,6 +140,7 @@ describe('autopilot SKILL.md wires integration mode (#731)', () => {
     assert.match(section(md, '### Step 9', '## End-of-run'), /\*\*Integration mode on:\*\* skip items 1 and 2/);
     const guard = section(md, '## Guardrails', '## Failure handling');
     assert.match(guard, /Its only direct pushes are creating its own integration branch/);
+    assert.match(guard, /when nothing merged into it and no run PR is open against it, deleting it/);
     assert.match(guard, /The integration → `main` PR is never armed in this release/);
     assert.match(guard, /Integration mode is a routing mode, not a consent, so config may set it\./);
   });
