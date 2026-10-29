@@ -340,7 +340,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
     assert.match(branch, /run \[Integration gate — stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\) below, and open the final PR only when it passes/);
     assert.match(branch, /`Synced with main at <M> via #S`/);
-    assert.match(branch, /integration gate stages 2–3 run on this PR; their outcomes are in the run report — review the combined change/);
+    assert.match(branch, /outcomes of the stages that run are in the run report — review the combined change/);
     assert.doesNotMatch(md, /"integration gate not yet implemented/);
     assert.match(gate(), /Do not open it, not even as a draft/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 1 held\*\*.*\*\*integration-held\*\*/);
@@ -554,7 +554,7 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
 
   test('a stage 2 hold hands over the audit stage 3 never ran', () => {
     const hold = section(read(SKILL), '**Stage 2 hold.**', '### Integration gate — stage 3');
-    assert.match(hold, /with audit-step consent on, run `\/audit` with `git diff --name-only origin\/main\.\.\.origin\/<integ>` as its focus/);
+    assert.match(hold, /then the \[audit hand-off\]\(#integration-gate--stage-3-audit\)/);
   });
 
   test('every green wait reads a commit status by its state, so stage 2 statuses can go green', () => {
@@ -601,6 +601,43 @@ describe('integration gate stage 3: the audit moves to the final PR (#734)', () 
     assert.match(guard, /pushing its own `autopilot\/sync\/<ts>` branch and its own `autopilot\/stage3\/<ts>` branch/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 3 held\*\*/);
     assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /the stage 3 outcome \(passed \/ \*\*integration-held\*\*/);
+  });
+});
+
+// #756: the final PR body names only the stages that run; every path that skips stage 3 links one audit hand-off.
+describe('integration final PR body and the audit hand-off (#756)', () => {
+  const HANDOFF = /audit hand-off\]\(#integration-gate--stage-3-audit\)/;
+  const stage3 = () => section(read(SKILL), '### Integration gate — stage 3', '## Per-issue loop');
+
+  test('the body names each later stage as running or not run, never both as run', () => {
+    const md = read(SKILL);
+    const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
+    assert.match(branch, /`stage 2: runs on this PR` with review-loop consent \(§3\) on, else `stage 2: not run \(review loop off\)`/);
+    assert.match(branch, /`stage 3: runs on this PR` with audit-step consent \(§4\) on, else `stage 3: not run \(audit step off\)`/);
+    assert.doesNotMatch(md, /integration gate stages 2–3 run on this PR/);
+  });
+
+  test('the hand-off is defined once in stage 3 and linked from every path that skips it', () => {
+    const md = read(SKILL);
+    assert.match(stage3(), /\*\*The audit hand-off\.\*\* With audit-step consent on/);
+    assert.equal(md.match(/git diff --name-only origin\/main\.\.\.origin\/<integ>/g).length, 2);
+    assert.match(section(md, '**Hold.** Any stop in steps 2–6', '### Integration gate — stage 2'), HANDOFF);
+    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /the exact `gh pr create` command, and the \[audit hand-off\]/);
+    assert.match(section(md, '**Stage 2 hold.**', '### Integration gate — stage 3'), HANDOFF);
+    const hold3 = section(md, '**Stage 3 hold.**', '## Per-issue loop');
+    assert.match(hold3, HANDOFF);
+    assert.match(hold3, /never run the audit again to clear a block/);
+    assert.doesNotMatch(hold3, /re-run `\/audit` with the combined diff/);
+    const fail = section(md, '## Failure handling', 'At the end, the report');
+    assert.match(fail, /\*\*The final integration PR was not opened\*\*[^\n]*audit hand-off\]/);
+    assert.match(fail, /\*\*Integration gate stage 1 held\*\*[^\n]*audit hand-off\]/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /carries the audit hand-off when audit-step consent is on/);
+  });
+
+  test('the stray-edit check records HEAD and the branch once; a retry keeps it', () => {
+    const md = stage3();
+    assert.match(md, /`git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current`, once before the first attempt; a retry keeps it/);
+    assert.match(md, /If any of the main checkout's three reads differs from item 3's record/);
   });
 });
 
