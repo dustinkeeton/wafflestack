@@ -342,7 +342,9 @@ export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
 const POSTURE_2B_REMEDY =
   'move to lock-only Posture 2b: gitignore the whole render ' +
   'and gate CI with `doctor --allow-missing --verify-render` (docs/gitignore.md#posture-2b-commit-the-lock-only)';
-const OVERLAY_LEAK_REMEDY = `gitignore them (\`wafflestack render --gitignore\` adds them), or ${POSTURE_2B_REMEDY}`;
+// A lock-tracked path that goes absent fails a plain CI doctor `missing:` (Posture 1's default flags).
+const POSTURE_2_CLAUSE = 'and set `doctor.flags: --allow-missing` (Posture 2)';
+const OVERLAY_LEAK_REMEDY = `gitignore them (\`wafflestack render --gitignore\` adds them) ${POSTURE_2_CLAUSE}, or ${POSTURE_2B_REMEDY}`;
 
 /**
  * The remedy for these leaks: `render --gitignore` skips tracked paths, so only offer it for an untracked one.
@@ -350,7 +352,7 @@ const OVERLAY_LEAK_REMEDY = `gitignore them (\`wafflestack render --gitignore\` 
  * @param {OverlayLeak[]} leaks
  */
 export function overlayLeakRemedy(leaks) {
-  return leaks.some((l) => !l.tracked) ? OVERLAY_LEAK_REMEDY : `\`git rm --cached\` and gitignore them, or ${POSTURE_2B_REMEDY}`;
+  return leaks.some((l) => !l.tracked) ? OVERLAY_LEAK_REMEDY : `\`git rm --cached\` and gitignore them ${POSTURE_2_CLAUSE}, or ${POSTURE_2B_REMEDY}`;
 }
 
 /**

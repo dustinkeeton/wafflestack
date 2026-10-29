@@ -87,6 +87,7 @@ describe('overlay leak warning (#614)', () => {
     assert.deepEqual(first.overlayLeaks, [HELPER, '.codex/agents/helper.toml']);
     assert.ok(first.warnings.some((w) => w.startsWith(`${HELPER} embeds`) && /not gitignored/.test(w)));
     assert.ok(first.warnings.some((w) => /Posture 2b/.test(w) && /--verify-render/.test(w)));
+    assert.ok(first.warnings.some((w) => /not safe to commit/.test(w) && /doctor\.flags: --allow-missing/.test(w)));
 
     fs.appendFileSync(path.join(cwd, '.gitignore'), '.claude/\n.codex/\n');
     const second = render();
@@ -104,6 +105,23 @@ describe('overlay leak warning (#614)', () => {
     assert.ok(result.warnings.some((w) => w.includes(`git rm --cached ${HELPER}`)));
     const summary = result.warnings.find((w) => /not safe to commit/.test(w));
     assert.ok(summary && !/render --gitignore/.test(summary), summary);
+    assert.match(summary, /doctor\.flags: --allow-missing/);
+  });
+
+  test('cwd below the git root: leaks stay cwd-relative and a parent-level ignore silences them', () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-'));
+    try {
+      const child = path.join(parent, 'app');
+      fs.cpSync(cwd, child, { recursive: true });
+      git(parent, 'init', '-q');
+      write(parent, '.gitignore', 'app/.claude/\n');
+      const sub = () => renderProject({ toolkitRoot, cwd: child, toolkitVersion: '0.0.test' });
+      assert.deepEqual(sub().overlayLeaks, ['.codex/agents/helper.toml']);
+      fs.appendFileSync(path.join(parent, '.gitignore'), 'app/.codex/\n');
+      assert.deepEqual(sub().overlayLeaks, []);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
   });
 
   test('no warning without an overlay, or outside a git work tree', () => {

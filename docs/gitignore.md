@@ -272,7 +272,10 @@ The same goes for every rendered file your overlay changed. `render`, `upgrade` 
 `doctor` compare the two locks. They name each file whose hashes differ that git would still let
 you commit, because it is tracked or not ignored (#614). This catches a new skill that a toolkit
 release adds and that reads an overlay-fed key such as `git.cmd`. The fix is to gitignore those
-paths (`render --gitignore` adds them) or to move to [Posture 2b](#posture-2b-commit-the-lock-only).
+paths (`render --gitignore` adds them) and set `doctor.flags: --allow-missing`
+([Posture 2](#posture-2-commit-the-lock-ignore-a-subset-of-renders)), or to move to
+[Posture 2b](#posture-2b-commit-the-lock-only). Without the flag, CI doctor fails `missing:` on
+each path the committed lock still lists.
 
 ##### The one thing the overlay may not hold
 

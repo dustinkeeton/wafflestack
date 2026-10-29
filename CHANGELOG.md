@@ -36,11 +36,13 @@ is what you reach for across a breaking one.
 - **Warn when an overlay-fed render isn't gitignored (#614, part of #775).** When
   `waffle.local.yaml` changes a rendered file, `render` and `upgrade` now warn if git would let you
   commit that file — it is tracked by git, or not gitignored. The check uses `git check-ignore` and
-  `git ls-files`. The warning offers two fixes: gitignore the file, or move to lock-only Posture 2b.
+  `git ls-files`. The warning offers two fixes: gitignore the file and set
+  `doctor.flags: --allow-missing` (Posture 2), or move to lock-only Posture 2b.
   `render --gitignore` adds those exact paths. A local `doctor` reports the same files as
   `not gitignored (embeds local overlay): <path>`, or `tracked by git (embeds local overlay): <path>`
   for a tracked one. The check is informational: it never changes
-  doctor's exit code, and it is silent outside a git work tree.
+  doctor's exit code. Outside a git work tree `render` is silent, and `doctor` notes that it
+  could not check.
 
   **Consumer impact:** re-render only. No config change.
 
