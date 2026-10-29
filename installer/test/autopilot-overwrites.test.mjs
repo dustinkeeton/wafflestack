@@ -587,11 +587,21 @@ describe('autopilot gate step 4 wires the checks (#748)', () => {
     assert.match(step3, /a rebase-held PR is \*\*never armed\*\*/);
     assert.match(step3, /With integration mode on and the comment read back, the run PR arms into `<integ>` as usual, and the hold moves to the integration → `main` PR/);
     assert.match(step3, /Read it back with item 4's comments query on `<pr>`\. If that prints no id or errors, the hold is not durable: leave `<pr>` unarmed in either mode/);
-    assert.equal(md.match(/and the PR is not rebase-held \(Step 3\)/g).length, 3);
-    assert.match(md, /or Step 3 marked it \*\*rebase-held\*\* with integration mode off, treat it/);
+    assert.equal(md.match(/and the PR is not rebase-held \(Step 3, item 3: query its marker now\)/g).length, 3);
+    assert.match(md, /or, with integration mode off, Step 3 item 3's marker query on it prints an id or errors \(\*\*rebase-held\*\*\), treat it/);
     assert.match(md, /\*\*not armed — #P dropped earlier PRs' lines resolving its pre-gate rebase\*\*/);
     assert.match(md.slice(md.indexOf('## End-of-run housekeeping'), md.indexOf('## Guardrails')), /\*\*rebase-held\*\* with its conflicted paths/);
     assert.match(md.slice(md.indexOf('## Guardrails'), md.indexOf('## Failure handling')), /pre-gate rebase dropped stops auto-merge/);
+  });
+
+  test('#765: every non-integration arm re-reads the rebase-drop marker, not run memory', () => {
+    const md = read('.claude/skills/autopilot/SKILL.md');
+    const at = (h) => md.indexOf(h);
+    assert.match(md.slice(at('### Step 3'), at('### Step 4')), /each arm in Steps 5–7, and Step 8's hold check, runs item 4's comments query on `<pr>` at that moment\. Any id, or an error, means it is rebase-held/);
+    assert.doesNotMatch(md, /not rebase-held \(Step 3\),/);
+    for (const [from, to] of [['### Step 5', '### Step 6'], ['### Step 6', '### Step 7'], ['### Step 7', '### Step 8']]) {
+      assert.match(md.slice(at(from), at(to)), /not rebase-held \(Step 3, item 3: query its marker now\), arm/, from);
+    }
   });
 
   test('a consumer render defaults to doctor --allow-missing through waffleCmd', () => {

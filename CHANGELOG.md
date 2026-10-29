@@ -249,6 +249,13 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot re-reads the rebase-drop marker before every arm (#765).** With integration mode
+  off, the Step 5/6/7 arms and Step 8 trusted run memory for a rebase hold, which a compaction or
+  restart could lose. Each now runs the `<!-- autopilot:rebase-drop -->` comments query on the PR
+  when it gets there; any id, or an error, leaves the PR unarmed.
+
+  **Consumer impact:** re-render only.
+
 - **Autopilot integration stage 2 finds its own review when the reviewer returns no id (#758, part
   of #720).** A clean round posts through `gh pr review`, which returns no id and writes no
   `waffle/adversarial-review` status, and reviewers are often refused that status write anyway. So a
