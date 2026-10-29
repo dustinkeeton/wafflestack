@@ -494,6 +494,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /\*\*Close the round\*\* before the next one starts/);
     assert.match(md, /Close the round, then run the next round from \*\*Respond\*\*/);
     assert.match(md, /Then close the round and go back to item 2/);
+    assert.match(md, /followed by the full `## Fix branch` block with round `<k>`'s literal `<a2>` and `<b2>`/);
     assert.match(md, /Work only in <a2>/);
     assert.match(md, /never run\s+gh pr checkout/);
     assert.match(md, /it worked outside `<a2>`/);
