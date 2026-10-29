@@ -66,6 +66,7 @@ export function renderProject({
   log = () => {},
   sourceCacheDir = defaultSourceCacheDir(),
   refreshSources = false,
+  untrustedConfig = false,
 }) {
   const warnings = [];
   for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
@@ -82,6 +83,21 @@ export function renderProject({
   const canonicalProject = exists(resolveLocalConfigFile(cwd).file)
     ? loadProjectConfig(cwd, [], { canonical: true })
     : project;
+
+  // A config CI read from a PR head may not pull in a `source:` stack: its checks are shell commands.
+  if (untrustedConfig) {
+    const external = [...new Set([...project.externalStacks, ...canonicalProject.externalStacks].map((e) => e.name))];
+    if (external.length) {
+      return {
+        ok: false,
+        warnings,
+        errors: [
+          `--untrusted-config: ${CONFIG_FILE} declares external stack(s) ${external.join(', ')}, and an untrusted config ` +
+            'may not add a `source:` stack (its prerequisite checks run as shell commands). Commit the render instead, or render from a trusted checkout.',
+        ],
+      };
+    }
+  }
 
   const loadToolkitFor = (proj) =>
     loadToolkitWithSources({
@@ -138,7 +154,7 @@ export function renderProject({
 
   // Deliberately OUTSIDE `computeOutputs`: this shells out, so it runs once. Warns, never fails.
   // An external stack's checks stay unrun until its command list is acknowledged (#458).
-  {
+  if (!untrustedConfig) {
     const gates = externalCheckGates(toolkit, project);
     for (const gate of gates) if (!gate.acknowledged) warnings.push(formatCheckGate(gate));
     const prereqs = applicablePrerequisites(toolkit, { items: effective.selection.items });

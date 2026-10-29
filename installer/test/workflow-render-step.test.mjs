@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { renderProject } from '../lib/render.mjs';
+import { checksDigest } from '../lib/prerequisites.mjs';
+import { loadToolkitWithSources } from '../lib/toolkit.mjs';
 
 // #615: every shipped CI job that reads rendered resources renders the missing ones first.
 
@@ -208,7 +210,7 @@ describe('waffle-render step behavior (#615)', () => {
     const r = run();
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.calls[0], /^git ls-remote --tags -- https:\/\/github\.com\/dustinkeeton\/wafflestack$/);
-    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${SHA} render --cwd ${cwd}`);
+    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${SHA} render --untrusted-config --cwd ${cwd}`);
     assert.equal(fs.readFileSync(path.join(cwd, '.claude/agents/a.md'), 'utf8'), 'committed\n');
     assert.equal(git('status', '--porcelain'), '');
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/x/SKILL.md')));
@@ -218,7 +220,7 @@ describe('waffle-render step behavior (#615)', () => {
     lock(release({ commit: null }));
     const r = run({ lsRemote: `${SHA}\trefs/tags/v1.2.3\n${PEELED}\trefs/tags/v1.2.3^{}\n${'c'.repeat(40)}\trefs/tags/v1.2.30\n` });
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${PEELED} render --cwd ${cwd}`);
+    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${PEELED} render --untrusted-config --cwd ${cwd}`);
   });
 
   const refusals = [
@@ -276,7 +278,7 @@ describe('waffle-render step behavior (#615)', () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.deepEqual(r.calls, [
       'git ls-remote -- https://github.com/dustinkeeton/wafflestack',
-      `npx --yes github:dustinkeeton/wafflestack#${SHA} render --allow-unreleased --cwd ${cwd}`,
+      `npx --yes github:dustinkeeton/wafflestack#${SHA} render --allow-unreleased --untrusted-config --cwd ${cwd}`,
     ]);
     assert.equal(git('status', '--porcelain'), '');
   });
@@ -289,7 +291,7 @@ describe('waffle-render step behavior (#615)', () => {
     test(`the toolkit's own repo honors a trusted #ref: ${label}`, () => {
       const r = selfHost({ trusted: `github:dustinkeeton/wafflestack#${ref}`, lsRemote });
       assert.equal(r.status, 0, r.stdout + r.stderr);
-      assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${sha} render --allow-unreleased --cwd ${cwd}`);
+      assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${sha} render --allow-unreleased --untrusted-config --cwd ${cwd}`);
     });
   }
 
@@ -323,5 +325,94 @@ describe('CI renders overlay-free (#615)', () => {
     const r = renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test' });
     assert.equal(r.ok, false);
     assert.ok(r.errors.some((e) => /git\.botEmail/.test(e)), JSON.stringify(r.errors));
+  });
+});
+
+describe('render --untrusted-config: a PR-head config runs no prerequisite check (#615)', () => {
+  const CLI = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+  let dirs;
+  const tmp = (p) => {
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
+    dirs.push(d);
+    return d;
+  };
+  const put = (root, rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), text);
+  };
+  const ran = (root, name) => fs.existsSync(path.join(root, `${name}.ran`));
+  // The PR's own stack, acknowledged by a digest the PR wrote for itself.
+  const evilProject = (cwd, base = []) => {
+    put(cwd, 'evil/stacks/evil/stack.yaml', [
+      'name: evil',
+      'description: Evil.',
+      'skills: [x]',
+      'prerequisites:',
+      `  - { kind: tool, name: pwn, description: Pwn., check: 'touch "${cwd}/evil.ran"' }`,
+      '',
+    ].join('\n'));
+    put(cwd, 'evil/stacks/evil/skills/x/SKILL.md', '---\nname: x\ndescription: X.\n---\n\nX.\n');
+    const ext = { name: 'evil', source: './evil', sourceType: 'path', ref: null };
+    const digest = checksDigest(loadToolkitWithSources({ builtinRoot: fs.realpathSync(path.join(CLI, '../..')), externalStacks: [ext], cwd, cacheDir: tmp('cache-') }).stacks.get('evil'));
+    put(cwd, '.waffle/waffle.yaml', ['targets: [claude]', 'stacks:', ...base.map((b) => `  - ${b}`), '  - name: evil', '    source: ./evil', `    acknowledgedChecks: ${digest}`, ''].join('\n'));
+  };
+
+  beforeEach(() => {
+    dirs = [];
+  });
+  afterEach(() => {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('the CLI, run from an empty dir like the step, refuses an acknowledged local-path stack and never runs its check', () => {
+    const cwd = tmp('pr-head-');
+    evilProject(cwd);
+    const cli = (...flags) =>
+      spawnSync(process.execPath, [CLI, 'render', '--allow-unreleased', ...flags, '--cwd', cwd], { cwd: tmp('npx-'), encoding: 'utf8', env: { ...process.env, WAFFLESTACK_OFFLINE: '1' } });
+
+    const r = cli('--untrusted-config');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /--untrusted-config: .*external stack\(s\) evil/);
+    assert.equal(ran(cwd, 'evil'), false, 'the PR-authored check ran');
+    assert.equal(fs.existsSync(path.join(cwd, '.claude')), false);
+
+    const control = cli();
+    assert.equal(control.status, 0, control.stdout + control.stderr);
+    assert.equal(ran(cwd, 'evil'), true, 'control: without the flag the acknowledged check does run');
+  });
+
+  test('a committed overlay cannot slip a source: stack past the flag', () => {
+    const cwd = tmp('pr-head-');
+    evilProject(cwd);
+    const yaml = fs.readFileSync(path.join(cwd, '.waffle/waffle.yaml'), 'utf8');
+    put(cwd, '.waffle/waffle.local.yaml', yaml);
+    put(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: []\n');
+    const r = renderProject({ toolkitRoot: fs.realpathSync(path.join(CLI, '../..')), cwd, toolkitVersion: '0.0.test', sourceCacheDir: tmp('cache-'), untrustedConfig: true });
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some((e) => /external stack\(s\) evil/.test(e)), JSON.stringify(r.errors));
+    assert.equal(ran(cwd, 'evil'), false);
+  });
+
+  test("built-in stacks still render, with no prerequisite probe run", () => {
+    const toolkitRoot = tmp('toolkit-');
+    const cwd = tmp('pr-head-');
+    put(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: f\nstacks: [core]\n');
+    put(toolkitRoot, 'stacks/core/stack.yaml', [
+      'name: core',
+      'description: Core.',
+      'skills: [base]',
+      'prerequisites:',
+      `  - { kind: tool, name: probe, description: Probe., check: 'touch "${cwd}/core.ran"' }`,
+      '',
+    ].join('\n'));
+    put(toolkitRoot, 'stacks/core/skills/base/SKILL.md', '---\nname: base\ndescription: Base.\n---\n\nBase.\n');
+    put(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\n');
+    const go = (untrustedConfig) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', untrustedConfig });
+    const r = go(true);
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/base/SKILL.md')));
+    assert.equal(ran(cwd, 'core'), false, 'a probe ran under --untrusted-config');
+    assert.equal(go(false).ok, true);
+    assert.equal(ran(cwd, 'core'), true, 'control: a normal render probes');
   });
 });

@@ -122,7 +122,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       # Lock-only repos commit waffle.yaml + the lock, not the render: rebuild what this job reads (#615).
-      # Inline, and npx runs outside the checkout: a PR-head script or .npmrc would be PR-authored code.
+      # Inline, npx outside the checkout, --untrusted-config: no PR-head script, .npmrc or stack check runs.
       - name: Render missing wafflestack resources
         id: waffle-render
         if: steps.gate.outputs.should_review == 'true'
@@ -168,7 +168,7 @@ jobs:
               tip="$(git ls-remote -- "$url" | awk -v r="${want:-HEAD}" '$2 == r || $2 == "refs/heads/" r {h = $1} $2 == "refs/tags/" r {t = $1} $2 == "refs/tags/" r "^{}" {p = $1} END {print (p != "" ? p : t != "" ? t : h)}')"
             fi
             [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || fail "the trusted ref ${want:-HEAD} was not found on $base."
-            npx_render "${base}#${tip}" render --allow-unreleased
+            npx_render "${base}#${tip}" render --allow-unreleased --untrusted-config
             from="${base}#${tip} (the toolkit's own repo, at its trusted ref, not the PR head)"
           elif [ "$status" = release ]; then
             [ "$source" = - ] || [ "$(lc "$source")" = "$(lc "$base")" ] || fail "the lock's toolkit source $source is not the trusted toolkit $base (doctor.toolkitRef); refusing to fetch it."
@@ -176,7 +176,7 @@ jobs:
             tagged="$(git ls-remote --tags -- "$url" | awk -v t="refs/tags/$ref" '$2 == t {q = $1} $2 == t "^{}" {p = $1} END {print (p != "" ? p : q)}')"
             [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "release tag $ref was not found on $base."
             [ "$commit" = - ] || { [[ "$commit" =~ ^[0-9a-f]{7,40}$ ]] && [[ "$tagged" == "$commit"* ]]; } || fail "the lock pins commit $commit, but $base tag $ref is $tagged."
-            npx_render "${base}#${tagged}" render
+            npx_render "${base}#${tagged}" render --untrusted-config
             from="${base}#${ref}"
           else
             fail "$missing rendered file(s) are absent and the lock records no release pin (toolkit status: $status). Render from a toolkit release (wafflestack upgrade) and commit the lock, or commit the render."

@@ -43,7 +43,9 @@ is what you reach for across a breaking one.
   touched, and keeps its new files out of the harness's commits. npx runs from an empty temp
   directory with `--cwd` on the checkout and no inherited npm config, so a PR-committed `.npmrc`
   has no effect. The toolkit's own repo renders with the installer at its trusted ref, not the PR
-  head's. `waffle-doctor` stays exempt.
+  head's. A new `render --untrusted-config` flag, which the step passes, refuses any `source:`
+  stack and runs no prerequisite check, so a PR-head config can't run a self-acknowledged check.
+  `waffle-doctor` stays exempt.
   A new `workflow-render-step.test.mjs` fails when a shipped workflow reads a rendered path
   without the step.
 

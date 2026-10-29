@@ -273,7 +273,10 @@ setup: |-
   `installer/` or `package-lock.json`. Missing files there come from that ref's stacks, not the
   PR's. Either way npx runs from an empty temp directory with `--cwd` on the checkout, and every
   `npm_config_*` variable and the user and global npmrc are dropped, so a PR-committed `.npmrc`
-  can't change what npm runs. `waffle-doctor` deliberately has no such step, and the
+  can't change what npm runs. The render also runs with `--untrusted-config`, because the config
+  it reads is the PR's: it refuses any `source:` stack (whose prerequisite checks are shell
+  commands, and whose `acknowledgedChecks` digest a PR can write for itself) and runs no
+  prerequisite probe. A release without that flag fails the step, so pin a release that has it. `waffle-doctor` deliberately has no such step, and the
   release, post-merge and evals jobs read no rendered resource. A private toolkit repo needs
   credentials for the `ls-remote` and the fetch.
 
