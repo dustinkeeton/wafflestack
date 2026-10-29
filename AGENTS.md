@@ -78,7 +78,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 
 | Module | Purpose | Exports |
 |--------|---------|---------|
-| `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317) | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `overlayDivergentFiles`, `overlayLeaks`, `overlayLeakWarnings`, `OVERLAY_LEAK_REMEDY`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys` (re-export of `config-catalog.mjs`), `missingConfigFor`, `summarizeConfigKeys` |
+| `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317) | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `overlayDivergentFiles`, `overlayLeaks`, `overlayLeakWarnings`, `overlayLeakRemedy`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys` (re-export of `config-catalog.mjs`), `missingConfigFor`, `summarizeConfigKeys` |
 | `refs.mjs` | Ref grammar, resolution, dependency closure, render selection, target-scope gate (#364) | `itemOutputMatcher`, `legacyModDir`, `normalizeItemRef`, `itemsOfKind`, `findItems`, `selectingStack`, `parseRef`, `isWipWaffle`, `resolveRef`, `resolveDepStrict`, `resolveAgentSkill`, `closureFor`, `closureDeps`, `fileMatchesTargets`, `isTargetScoped`, `includeRefMatches`, `includeEjectOverlaps`, `formatEjectOverlap`, `computeSelection`, `skippedSyrupCompanions`, `unpouredRequiredSyrup`, `disabledStackRequires` |
 | `template.mjs` | `{{placeholder}}` substitution + `pattern:`/`entryPatterns:`/`modes:`/`range:` guard machinery + stack `constraints:` (#630, #644) | `substitute`, `PROMPT_MODE`, `FLAG_SIDES`, `parseFlagPlaceholder`, `flagPlaceholders`, `undeclaredFlagProblem`, `isModeScalar`, `modeMatches`, `modeProblems`, `makeGuard`, `entryPatternProblems`, `toRangeNumber`, `rangeProblem`, `CONSTRAINT_KINDS`, `constraintViolation`, `constraintProblems`, `LIST_FORMATS`, `formatValue`, `placeholderKeys`, `compilePattern` |
 | `toolkit.mjs` | Load `toolkit.yaml` + stack manifests; hard LOAD errors for `targets:` malformations (#364) | `MOD_MANIFEST`, `MOD_TARGETS`, `MOD_ENGINE_LAID`, `isEngineLaid`, `loadToolkit`, `loadToolkitWithSources`, `missingRequiredKeys` |
@@ -588,7 +588,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2060 tests, 281 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2061 tests, 281 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |

@@ -339,9 +339,19 @@ export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
     .map((p) => ({ path: p, tracked: status.tracked.has(p) }));
 }
 
-export const OVERLAY_LEAK_REMEDY =
-  'gitignore them (`wafflestack render --gitignore` adds them), or move to lock-only Posture 2b: gitignore the whole render ' +
+const POSTURE_2B_REMEDY =
+  'move to lock-only Posture 2b: gitignore the whole render ' +
   'and gate CI with `doctor --allow-missing --verify-render` (docs/gitignore.md#posture-2b-commit-the-lock-only)';
+const OVERLAY_LEAK_REMEDY = `gitignore them (\`wafflestack render --gitignore\` adds them), or ${POSTURE_2B_REMEDY}`;
+
+/**
+ * The remedy for these leaks: `render --gitignore` skips tracked paths, so only offer it for an untracked one.
+ *
+ * @param {OverlayLeak[]} leaks
+ */
+export function overlayLeakRemedy(leaks) {
+  return leaks.some((l) => !l.tracked) ? OVERLAY_LEAK_REMEDY : `\`git rm --cached\` and gitignore them, or ${POSTURE_2B_REMEDY}`;
+}
 
 /**
  * @param {OverlayLeak[]} leaks
@@ -354,7 +364,7 @@ export function overlayLeakWarnings(leaks) {
       ? `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit publishes them and fails CI doctor`
       : `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is not gitignored — committing it publishes them and fails CI doctor`,
   );
-  return [...lines, `${leaks.length} overlay-fed render(s) are not gitignored: ${OVERLAY_LEAK_REMEDY}`];
+  return [...lines, `${leaks.length} overlay-fed render(s) are not safe to commit: ${overlayLeakRemedy(leaks)}`];
 }
 
 /**

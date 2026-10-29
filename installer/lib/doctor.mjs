@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sha256, exists, compareVersions, parseVersion } from './util.mjs';
-import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems, overlayLeaks as findOverlayLeaks, OVERLAY_LEAK_REMEDY } from './render.mjs';
+import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems, overlayLeaks as findOverlayLeaks, overlayLeakRemedy } from './render.mjs';
 import {
   LOCK_FILE,
   LOCAL_LOCK_FILE,
@@ -96,7 +96,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     if (!leaks) notes.push('could not check whether overlay-fed renders are gitignored (not a git work tree, or git not found)');
     else if (leaks.length) {
       overlayLeaks = leaks.map((l) => l.path);
-      notes.push(`${leaks.length} file(s) embed ${LOCAL_CONFIG_FILE} values and are not gitignored — committing them publishes those values and fails CI doctor; ${OVERLAY_LEAK_REMEDY}`);
+      notes.push(`${leaks.length} file(s) embed ${LOCAL_CONFIG_FILE} values and are tracked or not gitignored — committing them publishes those values and fails CI doctor; ${overlayLeakRemedy(leaks)}`);
     }
   }
   const rendered = lock.toolkitVersion ?? 'unknown (pre-versioned lock)';

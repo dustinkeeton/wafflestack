@@ -102,6 +102,8 @@ describe('overlay leak warning (#614)', () => {
     const result = render();
     assert.deepEqual(result.overlayLeaks, [HELPER]);
     assert.ok(result.warnings.some((w) => w.includes(`git rm --cached ${HELPER}`)));
+    const summary = result.warnings.find((w) => /not safe to commit/.test(w));
+    assert.ok(summary && !/render --gitignore/.test(summary), summary);
   });
 
   test('no warning without an overlay, or outside a git work tree', () => {
@@ -155,6 +157,7 @@ describe('render --gitignore offers overlay-fed renders (#614)', () => {
   });
   afterEach(() => { fs.rmSync(cwd, { recursive: true, force: true }); });
   const run = () => spawnSync(process.execPath, [CLI, 'render', '--gitignore', '--allow-unreleased', '--cwd', cwd], { encoding: 'utf8' });
+  const runDoctor = () => spawnSync(process.execPath, [CLI, 'doctor', '--cwd', cwd], { encoding: 'utf8' });
   const gi = () => fs.readFileSync(path.join(cwd, '.gitignore'), 'utf8');
 
   test('adds the exact leaked paths, idempotently; unchanged output without an overlay', () => {
@@ -172,5 +175,19 @@ describe('render --gitignore offers overlay-fed renders (#614)', () => {
     assert.equal(again.status, 0, again.stdout + again.stderr);
     assert.match(again.stdout, /already lists the recommended entries/);
     assert.doesNotMatch(again.stderr, /not gitignored/);
+  });
+
+  test('doctor CLI prints each leaked path until it is gitignored', () => {
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n');
+    const rendered = spawnSync(process.execPath, [CLI, 'render', '--allow-unreleased', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(rendered.status, 0, rendered.stdout + rendered.stderr);
+    const before = runDoctor();
+    assert.equal(before.status, 0, before.stdout + before.stderr);
+    assert.match(before.stdout, /^not gitignored \(embeds local overlay\): \.claude\/skills\/git-workflow\/SKILL\.md/m);
+
+    fs.appendFileSync(path.join(cwd, '.gitignore'), '.claude/\n');
+    const after = runDoctor();
+    assert.equal(after.status, 0, after.stdout + after.stderr);
+    assert.doesNotMatch(after.stdout, /embeds local overlay/);
   });
 });
