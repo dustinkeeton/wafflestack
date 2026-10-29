@@ -101,26 +101,22 @@ function check({ dir, path: file }) {
 /** Walk the base; after each base line emit main's inserted lines, then integ's — once if identical, as git does. */
 function merge({ lines, main, integ }) {
   const at = (hunks, i) => hunks.filter((h) => h.at === i).flatMap((h) => h.lines);
-  let shared = 0;
   const both = (i) => {
     const m = at(main, i);
     const g = at(integ, i);
-    if (m.length !== g.length || m.some((l, k) => l !== g[k])) return [...m, ...g];
-    shared += m.length;
-    return m;
+    return m.length === g.length && m.every((l, k) => l === g[k]) ? m : [...m, ...g];
   };
   const out = both(0);
   lines.forEach((l, i) => out.push(l, ...both(i + 1)));
-  return { out, shared };
+  return out;
 }
 
 function run(args) {
   const r = check(args);
   const m = r.main.reduce((n, h) => n + h.lines.length, 0);
   const i = r.integ.reduce((n, h) => n + h.lines.length, 0);
-  const { out: merged, shared } = merge(r);
+  const merged = merge(r);
   if (merged.some((l) => MARKER.test(l))) throw new Hold(`a side adds a conflict-marker-shaped line to ${r.file}`);
-  if (merged.length !== r.lines.length + m + i - shared) throw new Fail(`line count mismatch resolving ${r.file}`);
   const counts = `${m} main line(s), ${i} integ line(s)`;
   if (!args.write) {
     console.log(`resolvable: ${r.file} additive conflict (${counts}); rerun with --write`);
