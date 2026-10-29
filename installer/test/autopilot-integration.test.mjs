@@ -649,6 +649,19 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
     assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /carries the audit hand-off when audit-step consent is on/);
   });
 
+  test('open-but-none-merged run PRs still get the hand-off (#771)', () => {
+    const md = read(SKILL);
+    const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
+    assert.match(branch, /With none open and none merged there is nothing to hand off\./);
+    assert.doesNotMatch(branch, /With none merged there is nothing to hand off/);
+    assert.match(stage3(), /with no run PR open or merged there is nothing to hand off; while run PRs are still open, it runs after they merge/);
+    assert.doesNotMatch(md, /no combined diff to hand off/);
+    const fail = section(md, '## Failure handling', 'At the end, the report');
+    assert.match(fail, /\*\*The final integration PR was not opened\*\*[^\n]*audit hand-off\]\(#integration-gate--stage-3-audit\) when a run PR is open or merged;/);
+    assert.doesNotMatch(fail, /when a run PR merged;/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /audit-step consent is on, a run PR is open or merged, and stage 3 did not pass or block/);
+  });
+
   test('the stray-edit check records HEAD and the branch once; a retry keeps it', () => {
     const md = stage3();
     assert.match(md, /`git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current`, once before the first attempt; a retry keeps it/);
