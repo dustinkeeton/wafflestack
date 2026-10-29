@@ -156,6 +156,22 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), above('### Fixed', '- m', '', '- g', '')(BASE));
   });
 
+  test('a shared start ending in a blank line keeps that blank once, as git does (#774)', () => {
+    const fixed = (who) => ins('- base fixed', `- ${who} fixed`);
+    sync({ main: { 'CHANGELOG.md': (s) => fixed('main')(ins('- base added', '- a', '')(s)) }, integ: { 'CHANGELOG.md': (s) => fixed('integ')(ins('- base added', '- a', '', '- c', '')(s)) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main fixed', '- integ fixed')(ins('- base added', '- a', '', '- c', '')(BASE)));
+  });
+
+  test('a shared entry then a different entry on each side keeps one blank between them (#774)', () => {
+    const fixed = (who) => ins('- base fixed', `- ${who} fixed`);
+    sync({ main: { 'CHANGELOG.md': (s) => fixed('main')(ins('- base added', '- a', '', '- m', '')(s)) }, integ: { 'CHANGELOG.md': (s) => fixed('integ')(ins('- base added', '- a', '', '- g', '')(s)) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main fixed', '- integ fixed')(ins('- base added', '- a', '', '- m', '', '- g', '')(BASE)));
+  });
+
   test('an identical addition ending in a blank line is kept once (#774)', () => {
     const side = (who) => (s) => ins('- base fixed', `- ${who}`)(ins('- base added', '- same', '')(s));
     sync({ main: { 'CHANGELOG.md': side('main') }, integ: { 'CHANGELOG.md': side('integ') } });

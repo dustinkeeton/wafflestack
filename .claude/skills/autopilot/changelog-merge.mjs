@@ -112,7 +112,6 @@ function merge({ lines, main, integ }) {
     while (p < n && m[p] === g[p]) p++;
     let s = 0;
     while (s < n - p && m[m.length - 1 - s] === g[g.length - 1 - s]) s++;
-    while (p && blank(m[p - 1])) p--;
     while (s && blank(m[m.length - s])) s--;
     const mm = m.slice(p, m.length - s);
     const gm = g.slice(p, g.length - s);
