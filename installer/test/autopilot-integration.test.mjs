@@ -511,6 +511,10 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /Work only in <a2>/);
     assert.match(md, /never run\s+gh pr checkout/);
     assert.match(md, /it worked outside `<a2>`/);
+    assert.match(md, /record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current` \(a round's retry keeps it\)/);
+    assert.match(md, /hold if any of the main checkout's three reads differs from the record: it worked outside `<a2>`/);
+    assert.match(md, /On the outside-`<a2>` hold, also list the newly changed main-checkout paths and, when either moved, the before and after `HEAD` and branch/);
+    assert.doesNotMatch(md, /`git status --porcelain` or `git branch --show-current` differs/);
     assert.match(md, /if `git ls-remote --heads origin <b2>` shows the errored attempt pushed `<b2>`, hold/);
     assert.match(md, /keep `<a2>` and `<b2>` \(skip item 5's removal\)/);
     assert.match(md, /`git branch --list 'autopilot\/stage2\/<ts>-\*'`/);

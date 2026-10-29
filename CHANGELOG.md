@@ -249,6 +249,14 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot integration stage 2 catches a responder that commits in the main checkout (#767,
+  part of #720).** The outside-worktree guard compared only the main checkout's status and branch,
+  so a responder that committed on the current branch slipped past it. Stage 2 now also records
+  `git rev-parse HEAD`, holds if it moved, and the follow-up lists the before and after `HEAD` and
+  branch, as stage 3 does.
+
+  **Consumer impact:** re-render only. It matters only with integration mode and the review loop on.
+
 - **Autopilot re-reads the rebase-drop marker before every arm (#765).** With integration mode
   off, the Step 5/6/7 arms and Step 8 trusted run memory for a rebase hold, which a compaction or
   restart could lose. Each now runs the `<!-- autopilot:rebase-drop -->` comments query on the PR
