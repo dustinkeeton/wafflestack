@@ -203,3 +203,28 @@ export function resolveInside(cwd, rel) {
   if (realAbs !== realRoot && realAbs.startsWith(realRoot + path.sep)) return abs;
   return null;
 }
+
+/**
+ * `resolveInside` for a WRITE (#789): `writeFileSync` follows a symlinked leaf, so a leaf link must
+ * also land inside `cwd`. A dangling leaf link cannot be verified and is refused.
+ *
+ * @param {string} cwd
+ * @param {string} rel
+ * @returns {string | null}
+ */
+export function resolveWritableInside(cwd, rel) {
+  const abs = resolveInside(cwd, rel);
+  if (!abs) return null;
+  try {
+    if (!fs.lstatSync(abs).isSymbolicLink()) return abs;
+  } catch {
+    return abs; // absent leaf — a fresh write under a verified parent
+  }
+  try {
+    const realRoot = fs.realpathSync(path.resolve(cwd));
+    const target = fs.realpathSync(abs);
+    return target !== realRoot && target.startsWith(realRoot + path.sep) ? abs : null;
+  } catch {
+    return null;
+  }
+}

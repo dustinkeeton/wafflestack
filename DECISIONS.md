@@ -9,6 +9,112 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-29: The toolkit repo commits the lock, not its self-render (#777, part of #775)
+
+**Context**: The 2026-07-03 decision committed this repo's `.claude/` render because a
+CI-dispatched harness read the committed skills. The paid hooks were removed in July (#396),
+and the hygiene hook now renders whatever it reads (#615). Meanwhile the committed render fought
+the owner's local overlay: every overlay-affected skill re-rendered as a tracked diff that had to
+be left out of each commit by hand.
+
+**Decision**: Move this repo to Posture 2b (lock only). The `.claude/` render (`skills/`,
+`agents/`, `workflows/`) is gitignored and untracked. `.waffle/waffle.yaml`,
+`.waffle/extensions/`, `.waffle/waffle.lock.json`, the rendered `.github/` files and
+`.claude/settings.json` stay committed. `tests.yml`'s `doctor --verify-render` keeps gating the
+lock, and `self-posture.test.mjs` fails if the render is re-tracked. Tests read a tmp render of
+the committed inputs (`installer/test/self-render.mjs`), never the working tree. Worktrees are not rendered
+into: Claude Code (v2.1.277+) loads the main checkout's skills when a worktree has none, and a
+render there would shadow your overlay with canonical copies.
+
+**Alternatives**:
+- *Keep committing the render and live with the overlay diff.* Rejected: the reason for
+  committing it is gone, and the per-commit hand-exclusion was the cost.
+- *Render in a `post-checkout` git hook.* Rejected: it is per-clone setup nobody would install,
+  and it fires on every branch switch.
+- *Have tests render on demand only when `.claude/` is missing.* Rejected: an overlay-fed
+  working-tree render would then leak into the assertions; the tmp render is canonical.
+
+**Rationale**: The lock is the part that carries the guarantee. `--verify-render` proves the
+committed inputs reproduce it, which a committed render never added to.
+
+**Affects**: this repo's `.gitignore`, `.waffle/waffle.yaml`, the installer tests, and the
+orchestration stack's delegate and autopilot skills. Pulling the change deletes a checkout's
+local render; re-run `node installer/cli.mjs render --allow-unreleased` to restore it. The
+consumer default is unchanged (#776). Supersedes the 2026-07-03 entry below.
+
+---
+
+## 2026-10-29: CI renders a missing harness from the lock's release, never from the PR head (#615, #789, part of #775)
+
+**Context**: A lock-only repo (Posture 2b) has no rendered `.claude/` in its checkout, so every
+CI job that tells Claude to run `.claude/skills/<name>/SKILL.md` would fail. The lock describes
+exactly what belongs there. But in CI the lock and config come from a PR head, which anyone who
+opens a PR controls.
+
+**Decision**: The label-hook (enrich, implement), hygiene, pr-green and pr-response jobs run a
+`Render missing wafflestack resources` step after checkout. `waffle-doctor` stays exempt.
+
+| Situation | What the step does |
+|---|---|
+| Every `.claude/` path in the lock is present | Nothing — repos that commit their render see no change |
+| Paths are missing and the lock pins a `vX.Y.Z` release on the repo named by `doctor.toolkitRef` | Renders from that tag's commit, with no overlay, then restores any tracked file it touched and keeps its new files out of the harness's commits |
+| Paths are missing and the lock has no release pin | Fails with a remedy |
+| The pinned release predates `--untrusted-config` | Fails naming the release and pointing at `wafflestack upgrade` (#789) — not v0.18.0's misleading "render takes no refs" |
+| The repo is the toolkit itself | Renders with the installer at its trusted ref, not the PR head's |
+
+The step passes a new `render --untrusted-config` flag. It refuses any `source:` stack, runs no
+prerequisite check, and refuses to write through a symlink that resolves outside the project
+root (`resolveWritableInside` in `installer/lib/util.mjs`, #789). npx runs from an empty temp
+directory with no inherited npm config, so a PR-committed `.npmrc` has no effect.
+
+**Alternatives**:
+- *Render from whatever ref the lock names.* Rejected: a PR could edit the lock to make CI fetch
+  and run code of its choosing. Only a release tag on the trusted repo is accepted.
+- *Let the untrusted render follow symlinks like a normal one.* Rejected (#789): a PR could commit
+  `.claude/skills` → a path outside the checkout, and the render wrote files there that the
+  step's cleanup could not see — before the step that holds the API key. A trusted `render` still
+  follows your own symlinked render directory.
+- *Exempt workflows that are inert today.* Rejected by owner direction: every workflow that reads
+  a rendered resource gets the step, and `workflow-render-step.test.mjs` fails a new one without it.
+
+**Rationale**: Lock-only is becoming the default (#776), and without this step every such repo's
+CI-dispatched skills break. Pinning to a release keeps a PR from choosing the code CI runs.
+
+**Affects**: the four rendered hook workflows in `github-workflow`, `render` (`--untrusted-config`)
+and `installer/lib/util.mjs`. Consumers re-render only. The flag must ship in a release before a
+lock-only consumer's CI can use it.
+
+---
+
+## 2026-10-29: Warn when an overlay-fed render could be committed (#614, part of #775)
+
+**Context**: A consumer upgraded to v0.17.2, which added `skills/pr-docs`. That skill's render
+embeds `git.cmd`, which their overlay (`waffle.local.yaml`) filled with a bot email and a
+home-directory path. The new file was not gitignored, so it was committed and pushed. Local
+`doctor` passed; only CI `doctor` caught it, after the values were public.
+
+**Decision**: When the overlay changes a rendered file, `render` and `upgrade` warn if git would
+let you commit it — the file is tracked, or not gitignored (`git check-ignore`, `git ls-files`).
+
+- **Two fixes offered** — gitignore the file and set `doctor.flags: --allow-missing` (Posture 2),
+  or move to lock-only Posture 2b.
+- **`render --gitignore`** — adds the exact leaked paths.
+- **Local `doctor`** — reports `not gitignored (embeds local overlay): <path>`, or `tracked by git
+  (embeds local overlay): <path>`. Information only: it never changes doctor's exit code.
+- **Outside a git work tree** — `render` is silent; `doctor` notes it could not check.
+
+**Alternatives**:
+- *Only mention the risk in each CHANGELOG entry.* Not chosen: the issue offered it as an
+  optional extra, and a warning fires at the moment the new file appears.
+
+**Rationale**: The toolkit already holds the signal. When the committed lock and the local lock
+disagree on a file's hash, that file embeds overlay values.
+
+**Affects**: `render`, `upgrade`, `doctor` and `render --gitignore`. Re-render only. An overlay
+that changes only `.claude/settings.json` entries is not checked yet (#786).
+
+---
+
 ## 2026-10-28: The stage 1 sync auto-resolves an additive-only CHANGELOG.md conflict (#759, part of #720)
 
 **Context**: About 40 of the last 61 merges to `main` touched `CHANGELOG.md`, nearly all adding
@@ -3738,6 +3844,8 @@ layout are untouched.
 ---
 
 ## 2026-07-03: Commit the self-render and arm the hygiene/doctor automation loop
+
+**Superseded by**: [2026-10-29: The toolkit repo commits the lock, not its self-render](#2026-10-29-the-toolkit-repo-commits-the-lock-not-its-self-render-777-part-of-775) — the render is gitignored again; the lock stays committed.
 
 **Context**: Activating the dogfooded hygiene hook (#46) required its CI-dispatched
 harness to read the committed `.claude/skills/` — but this repo gitignored its whole

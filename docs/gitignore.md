@@ -50,7 +50,11 @@ explaining any of it. For most teams this alone settles the question.
 **CI agents can read the skills at all.** This is the one that surprises people. A
 CI-dispatched agent harness reads `.claude/skills/` out of the checkout. If the render is
 gitignored, the checkout does not contain it — there is *nothing for CI to read*. Either the
-skills are in git, or CI renders them itself, or your CI agents have no skills.
+skills are in git, or CI renders them itself, or your CI agents have no skills. The shipped
+`waffle-*` workflows render for themselves (#615). Before a job reads a skill, it renders any
+missing `.claude/` file (the only harness these jobs read) from the lock's **release** pin, fetched only
+from the repo `doctor.toolkitRef` names. With the render committed, that step does nothing. A
+lock with no release pin fails the job with a remedy.
 
 **Your agents' actual behavior becomes reviewable.** Change a config value, add an extension,
 or upgrade the toolkit, and the re-rendered output lands in the same pull request. A reviewer
@@ -90,7 +94,7 @@ it. **This is the one the lock inverts** — see the case study below.
 
 ---
 
-## Case study: the toolkit's own repo made the call both ways
+## Case study: the toolkit's own repo made the call three times
 
 > [!NOTE]
 > **This is the wafflestack repo, not a consumer repo** — it self-hosts, so it holds the stack
@@ -99,11 +103,12 @@ it. **This is the one the lock inverts** — see the case study below.
 
 The strongest argument against committing — *a committed copy invites edits to generated
 files* — turns out to be **conditional**. The toolkit's own repository decided this twice, in
-opposite directions, three days apart. The second decision explains why.
+opposite directions, three days apart. The second decision explains why. A third, months later,
+landed on Posture 2b — and it is the lock, not the render, that it kept.
 
 ### First: ignore the render (2026-07-01)
 
-[`DECISIONS.md:1381`](../DECISIONS.md) — *Gitignore the rendered output in the toolkit repo*.
+[`DECISIONS.md`](../DECISIONS.md#2026-07-01-gitignore-the-rendered-output-in-the-toolkit-repo-v050) — *Gitignore the rendered output in the toolkit repo*.
 It ignored all rendered output **and the lock file**. The rationale:
 
 > A committed second copy of every skill would pollute code search and invite edits to
@@ -114,7 +119,7 @@ that holds both source and render, which is the toolkit's situation and not your
 
 ### Then: commit the render and the lock (2026-07-03)
 
-[`DECISIONS.md:933`](../DECISIONS.md) — *Commit the self-render and arm the hygiene/doctor
+[`DECISIONS.md`](../DECISIONS.md#2026-07-03-commit-the-self-render-and-arm-the-hygienedoctor-automation-loop) — *Commit the self-render and arm the hygiene/doctor
 automation loop* — partially reversed it. The forcing function was concrete: activating a
 CI-dispatched agent harness required it to read the **committed** `.claude/skills/`, and with
 the render gitignored there was nothing in the checkout for CI to read.
@@ -139,6 +144,21 @@ your render.
 
 What *does* transfer, as a genuine cost: contributors must commit the re-rendered output and
 lock alongside the change that caused it, or the required check fails their PR.
+
+### Then again: lock only (2026-10-29)
+
+[`DECISIONS.md`](../DECISIONS.md#2026-10-29-the-toolkit-repo-commits-the-lock-not-its-self-render-777-part-of-775)
+— *The toolkit repo commits the lock, not its self-render* — gitignored the render once more,
+but **kept the lock**. The 2026-07-03 forcing function was gone: the paid CI hooks were removed
+(#396), and the one live hook renders what it reads (#615). And the committed render had a cost
+of its own here: the owner's local overlay re-rendered skills as tracked diffs that had to be
+left out of every commit by hand.
+
+Note what survived. `doctor --verify-render` still proves the committed config reproduces the
+committed lock on every PR, so the insight above holds — the protection was always the lock's.
+What the repo gave up is what [Posture 2b](#posture-2b-commit-the-lock-only) gives up:
+a fresh clone or worktree has no skills until something renders them, so its tests render
+into a temp dir and its delegate/autopilot skills render into every worktree they cut.
 
 ---
 
@@ -267,6 +287,15 @@ that stops being true. An overlay holding only values the render never reads —
 path — never creates one at all. **Gitignore it** (`--gitignore` does this for you); committing it
 would push your machine's hashes into everyone else's `doctor`, which is the same propagation one
 file over. `render` warns you if `.gitignore` doesn't cover it.
+
+The same goes for every rendered file your overlay changed. `render`, `upgrade` and a local
+`doctor` compare the two locks. They name each file whose hashes differ that git would still let
+you commit, because it is tracked or not ignored (#614). This catches a new skill that a toolkit
+release adds and that reads an overlay-fed key such as `git.cmd`. The fix is to gitignore those
+paths (`render --gitignore` adds them) and set `doctor.flags: --allow-missing`
+([Posture 2](#posture-2-commit-the-lock-ignore-a-subset-of-renders)), or to move to
+[Posture 2b](#posture-2b-commit-the-lock-only). Without the flag, CI doctor fails `missing:` on
+each path the committed lock still lists.
 
 ##### The one thing the overlay may not hold
 

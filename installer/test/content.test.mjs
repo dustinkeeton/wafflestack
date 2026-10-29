@@ -13,6 +13,7 @@ import { toolkitInventory } from '../lib/setup.mjs';
 import { renderProject } from '../lib/render.mjs';
 import { VALID_TARGETS } from '../lib/project.mjs';
 import { HARNESS_TOOLS, DEAD_HARNESS_TOOLS, anyTargetTools, toolsForTarget, toolCalls, unknownToolCalls } from '../lib/harness-tools.mjs';
+import { selfRenderRoot } from './self-render.mjs';
 
 // -----------------------------------------------------------------------------
 // Layer 1 evals — deterministic pins on the RENDERED prompts a consumer installs;
@@ -20,7 +21,7 @@ import { HARNESS_TOOLS, DEAD_HARNESS_TOOLS, anyTargetTools, toolsForTarget, tool
 // -----------------------------------------------------------------------------
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
-const CLAUDE = path.join(REPO_ROOT, '.claude');
+const CLAUDE = path.join(selfRenderRoot(), '.claude');
 const STACKS = path.join(REPO_ROOT, 'stacks');
 
 const readSkill = (name) =>
@@ -66,12 +67,12 @@ const sourceAgentFiles = () =>
   });
 
 // Repo-relative: a source and its render share a basename, and a failure must say which to edit.
-const who = (f) => path.relative(REPO_ROOT, f);
+const who = (f) => (f.startsWith(CLAUDE) ? `render:${path.relative(path.dirname(CLAUDE), f)}` : path.relative(REPO_ROOT, f));
 
 describe('rendered content: frontmatter present where required', () => {
   test('every rendered skill has name + description frontmatter', () => {
     const skills = renderedSkillFiles();
-    assert.ok(skills.length >= 10, `expected the committed skill render, found ${skills.length}`);
+    assert.ok(skills.length >= 10, `expected the self-render skills, found ${skills.length}`);
     for (const file of skills) {
       const { data } = parseFrontmatter(fs.readFileSync(file, 'utf8'));
       assert.ok(data.name, `${file}: missing frontmatter name`);
@@ -81,7 +82,7 @@ describe('rendered content: frontmatter present where required', () => {
 
   test('every rendered agent has name + description frontmatter', () => {
     const agents = renderedAgentFiles();
-    assert.ok(agents.length >= 3, `expected the committed agent render, found ${agents.length}`);
+    assert.ok(agents.length >= 3, `expected the self-render agents, found ${agents.length}`);
     for (const file of agents) {
       const { data } = parseFrontmatter(fs.readFileSync(file, 'utf8'));
       assert.ok(data.name, `${file}: missing frontmatter name`);
@@ -107,7 +108,7 @@ describe('rendered content: no leftover config placeholders', () => {
     for (const file of [...renderedSkillFiles(), ...renderedAgentFiles()]) {
       for (const key of placeholderKeys(fs.readFileSync(file, 'utf8'))) {
         if (declared.has(key) || key.startsWith('harness.')) {
-          offenders.push(`${path.relative(REPO_ROOT, file)}: {{${key}}}`);
+          offenders.push(`${who(file)}: {{${key}}}`);
         }
       }
     }
@@ -692,10 +693,10 @@ describe('waffle:reassess is an installable hold label (#504)', () => {
       const body = fs.readFileSync(file, 'utf8');
       for (const re of mutators) {
         if (re === ADD && ADDERS.has(file)) continue;
-        assert.ok(!re.test(body), `${path.relative(REPO_ROOT, file)} applies, removes, or dispatches on the reassess label (${re})`);
+        assert.ok(!re.test(body), `${who(file)} applies, removes, or dispatches on the reassess label (${re})`);
       }
     }
-    for (const file of ADDERS) assert.match(fs.readFileSync(file, 'utf8'), ADD, `${path.relative(REPO_ROOT, file)} lost the reassess add`);
+    for (const file of ADDERS) assert.match(fs.readFileSync(file, 'utf8'), ADD, `${who(file)} lost the reassess add`);
   });
 
   test('/waffle-report files with the hold and the provenance label, tolerating each independently (#609)', () => {
@@ -2083,7 +2084,7 @@ describe('confirmation gates read their *.confirmGate keys — no hardcoded --ye
     }
   });
 
-  test('the committed render resolves the mode to the stack default and the tokens to the real words', () => {
+  test('the self-render resolves the mode to the stack default and the tokens to the real words', () => {
     for (const [key, [, skill, off, on]] of Object.entries(GATES)) {
       const md = readSkill(skill);
       assert.doesNotMatch(md, /\{\{[a-zA-Z.]*confirmGate/i, `${skill}: an unresolved gate placeholder survived the render`);
@@ -2178,7 +2179,7 @@ describe('auto-merge and delegate switches are flag-less behavioral keys — hyg
     assert.doesNotMatch(md, /`nonInteractive: /, 'no prompt mode, so the skill states no non-interactive fallback');
   });
 
-  test('the committed render resolves hygiene.autoMerge to the stack default, so behavior at defaults is the pre-#488 always-arm', () => {
+  test('the self-render resolves hygiene.autoMerge to the stack default, so behavior at defaults is the pre-#488 always-arm', () => {
     const md = readSkill('hygiene');
     assert.doesNotMatch(md, /\{\{[a-zA-Z.]*autoMerge/i, 'an unresolved auto-merge placeholder survived the render');
     assert.match(md, /Rendered value for this repo: `true`/);
@@ -3515,7 +3516,7 @@ describe('issue / PR / review templates (#337)', () => {
     assert.match(templates.review, /pr-response\/SKILL\.md/);
     assert.match(templates.review, /skills are canonical/i);
 
-    // Read both from the committed render — adversarial-review's stack is not in the minimal fixture.
+    // Read both from the self-render — adversarial-review's stack is not in the minimal fixture.
     const adversarial = readSkill('adversarial-review');
     const prResponse = readSkill('pr-response');
     for (const severity of ['blocker', 'should-fix', 'nit']) {
@@ -4377,9 +4378,9 @@ describe('source + rendered content: every tool call is in the harness roster (#
     assert.deepEqual(violations, [], `calls a tool no harness has — add it to HARNESS_TOOLS (installer/lib/harness-tools.mjs) on purpose, or fix the call:\n${violations.join('\n')}`);
   });
 
-  test("the committed claude render calls only claude's tools", () => {
+  test("the self-render calls only claude's tools", () => {
     const rendered = [...renderedSkillFiles(), ...renderedAgentFiles()];
-    assert.ok(rendered.length >= 20, `expected the committed .claude/ render, found ${rendered.length} files`);
+    assert.ok(rendered.length >= 20, `expected the self-render's .claude/ output, found ${rendered.length} files`);
     const violations = rendered.flatMap((f) => rosterViolationsInFile(f, HARNESS_TOOLS.claude));
     assert.deepEqual(violations, [], `rendered for claude, yet calls a tool claude lacks:\n${violations.join('\n')}`);
   });
@@ -4561,7 +4562,7 @@ describe('repo-local prompts: no bare gated toolkit command (#373)', () => {
       assert.ok(swept.includes(f), `${who(f)} is not swept by the #373 guard`);
     }
     assert.equal(ROOT_DOCS().length, 4, 'expected AGENTS.md + ARCHITECTURE.md + STATUS.md + waffle.yaml');
-    assert.ok(renderedAgentFiles().length >= 3, `expected the committed agent render, found ${renderedAgentFiles().length}`);
+    assert.ok(renderedAgentFiles().length >= 3, `expected the self-render agents, found ${renderedAgentFiles().length}`);
   });
 
   test('every `node installer/cli.mjs <gated>` order carries an escape hatch', () => {
@@ -4965,5 +4966,15 @@ describe('init and setup are one onboarding command (#611)', () => {
     assert.match(md, /If the CLI printed a \*\*"Current configuration — update mode"\*\* section/);
     assert.doesNotMatch(md, /If `\.waffle\/waffle\.yaml` already exists, this is an \*\*update\*\*/);
     assert.doesNotMatch(md, /Add `--gitignore` to that run/);
+  });
+});
+
+// A worktree with no render falls back to the main checkout's skills; rendering one would shadow it.
+describe('delegate: worktrees are not rendered into', () => {
+  test('delegate says not to render, and neither skill runs a worktree render', () => {
+    const md = readSkill('delegate');
+    assert.match(md, /\*\*Do not render into the worktree\.\*\*/);
+    assert.doesNotMatch(md, /render --cwd <wt>/);
+    assert.doesNotMatch(readSkill('autopilot'), /Render a gitignored render into the worktree/);
   });
 });

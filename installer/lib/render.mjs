@@ -4,13 +4,14 @@ import {
   sha256,
   exists,
   resolveInside,
+  resolveWritableInside,
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
 import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS, constraintProblems } from './template.mjs';
 import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
-import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
+import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys, parseSettingsKey } from './settings.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, closureFor } from './refs.mjs';
@@ -37,6 +38,7 @@ import {
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   gitignoreMentions,
+  gitIgnoreStatus,
   resolveLockFile,
   resolveLocalConfigFile,
   localLockPath,
@@ -65,9 +67,11 @@ export function renderProject({
   log = () => {},
   sourceCacheDir = defaultSourceCacheDir(),
   refreshSources = false,
+  untrustedConfig = false,
 }) {
   const warnings = [];
-  for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
+  // The migration renames through a PR-committed `.waffle` symlink, so an untrusted tree gets none (#789).
+  if (!untrustedConfig) for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
   const stale = staleGitignoreEntries(cwd);
   if (stale.length) {
     warnings.push(
@@ -81,6 +85,21 @@ export function renderProject({
   const canonicalProject = exists(resolveLocalConfigFile(cwd).file)
     ? loadProjectConfig(cwd, [], { canonical: true })
     : project;
+
+  // A config CI read from a PR head may not pull in a `source:` stack: its checks are shell commands.
+  if (untrustedConfig) {
+    const external = [...new Set([...project.externalStacks, ...canonicalProject.externalStacks].map((e) => e.name))];
+    if (external.length) {
+      return {
+        ok: false,
+        warnings,
+        errors: [
+          `--untrusted-config: ${CONFIG_FILE} declares external stack(s) ${external.join(', ')}, and an untrusted config ` +
+            'may not add a `source:` stack (its prerequisite checks run as shell commands). Commit the render instead, or render from a trusted checkout.',
+        ],
+      };
+    }
+  }
 
   const loadToolkitFor = (proj) =>
     loadToolkitWithSources({
@@ -137,7 +156,7 @@ export function renderProject({
 
   // Deliberately OUTSIDE `computeOutputs`: this shells out, so it runs once. Warns, never fails.
   // An external stack's checks stay unrun until its command list is acknowledged (#458).
-  {
+  if (!untrustedConfig) {
     const gates = externalCheckGates(toolkit, project);
     for (const gate of gates) if (!gate.acknowledged) warnings.push(formatCheckGate(gate));
     const prereqs = applicablePrerequisites(toolkit, { items: effective.selection.items });
@@ -186,6 +205,21 @@ export function renderProject({
 
   const managed = treeLock?.files ?? {};
   const managedSettings = treeLock?.settings ?? {};
+
+  // A PR head can commit a symlink: an untrusted render follows none out of the tree (#789). A
+  // trusted one keeps honouring the user's own symlinked render dir.
+  // Same parser as the writer: stripping at the first `#` would check a different file than it writes.
+  const settingsFiles = [...effective.settings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k);
+  const escaping = untrustedConfig
+    ? [...new Set([...effective.outputs.keys(), ...settingsFiles, LOCK_FILE, LOCAL_LOCK_FILE])].filter((rel) => !resolveWritableInside(cwd, rel))
+    : [];
+  if (escaping.length) {
+    return {
+      ok: false,
+      warnings,
+      errors: escaping.map((rel) => `refusing to write ${rel}: it resolves outside the project root through a symlink — remove the link and re-render`),
+    };
+  }
 
   // Checked before any write or prune (#25), so a refusal leaves the tree untouched.
   const settingsCheck = settingsConflicts(cwd, effective.settings, managedSettings);
@@ -255,6 +289,8 @@ export function renderProject({
   // Written only when the overlay actually moved a byte, and removed again the moment that stops
   // being true — a stale local lock would describe a tree that no longer exists.
   const localLockFile = localLockPath(cwd);
+  /** @type {OverlayLeak[]} */
+  let leaks = [];
   const overlayChangedTheRender =
     JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles) ||
     JSON.stringify(effectiveSettings) !== JSON.stringify(canonicalSettings);
@@ -285,6 +321,8 @@ export function renderProject({
           `\`--gitignore\`). ${LOCK_FILE} stays canonical and is the one to commit.`,
       );
     }
+    leaks = overlayLeaks(cwd, canonicalFiles, effectiveFiles) ?? [];
+    warnings.push(...overlayLeakWarnings(leaks));
   } else if (exists(localLockFile)) {
     fs.rmSync(localLockFile);
   }
@@ -299,7 +337,86 @@ export function renderProject({
     sources,
     toolkit: toolkitBlock,
     identity: toolkitIdentity,
+    overlayLeaks: leaks.map((l) => l.path),
   };
+}
+
+/** @typedef {{ path: string, tracked: boolean, overlayOnly?: boolean }} OverlayLeak */
+
+/**
+ * Paths whose effective (overlay-fed) hash differs from the canonical one, effective-only included.
+ *
+ * @param {Record<string, string>} canonicalFiles
+ * @param {Record<string, string>} effectiveFiles
+ * @returns {string[]}
+ */
+export function overlayDivergentFiles(canonicalFiles, effectiveFiles) {
+  return Object.keys(effectiveFiles).filter((k) => canonicalFiles[k] !== effectiveFiles[k]).sort();
+}
+
+/**
+ * Overlay-divergent paths git would let you commit (#614); `null` when git cannot say.
+ *
+ * @param {string} cwd
+ * @param {Record<string, string>} canonicalFiles
+ * @param {Record<string, string>} effectiveFiles
+ * @param {Parameters<typeof gitIgnoreStatus>[2]} [runGit]
+ * @returns {OverlayLeak[] | null}
+ */
+export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
+  const divergent = overlayDivergentFiles(canonicalFiles, effectiveFiles);
+  const status = gitIgnoreStatus(cwd, divergent, runGit);
+  if (!status) return null;
+  return divergent
+    .filter((p) => !status.beyondSymlink.has(p) && (status.tracked.has(p) || !status.ignored.has(p)))
+    .map((p) => ({ path: p, tracked: status.tracked.has(p), overlayOnly: !(p in canonicalFiles) }));
+}
+
+/**
+ * `overlayLeaks` for the tree on disk (committed lock vs local lock); `[]` with no local lock.
+ *
+ * @param {string} cwd
+ * @returns {OverlayLeak[] | null}
+ */
+export function treeOverlayLeaks(cwd) {
+  const lock = readLock(cwd);
+  const localLock = readLocalLock(cwd);
+  return lock && localLock ? overlayLeaks(cwd, lock.files, localLock.files) : [];
+}
+
+const POSTURE_2B_REMEDY =
+  'move to lock-only Posture 2b: gitignore the whole render ' +
+  'and gate CI with `doctor --allow-missing --verify-render` (docs/gitignore.md#posture-2b-commit-the-lock-only)';
+// A lock-tracked path that goes absent fails a plain CI doctor `missing:` (Posture 1's default flags).
+const POSTURE_2_CLAUSE = 'and set `doctor.flags: --allow-missing` (Posture 2)';
+const OVERLAY_LEAK_REMEDY = `gitignore them (\`wafflestack render --gitignore\` adds them) ${POSTURE_2_CLAUSE}, or ${POSTURE_2B_REMEDY}`;
+
+/**
+ * The remedy for these leaks: `render --gitignore` skips tracked paths, so only offer it for an untracked one.
+ *
+ * @param {OverlayLeak[]} leaks
+ */
+export function overlayLeakRemedy(leaks) {
+  return leaks.some((l) => !l.tracked) ? OVERLAY_LEAK_REMEDY : `\`git rm --cached\` and gitignore them ${POSTURE_2_CLAUSE}, or ${POSTURE_2B_REMEDY}`;
+}
+
+/**
+ * @param {OverlayLeak[]} leaks
+ * @returns {string[]}
+ */
+export function overlayLeakWarnings(leaks) {
+  if (!leaks.length) return [];
+  const lines = leaks.map((l) => {
+    // The canonical lock never lists an overlay-only path, so CI doctor cannot flag it.
+    const what = l.overlayOnly
+      ? `renders only from ${LOCAL_CONFIG_FILE} (the canonical render has no such file)`
+      : `embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render)`;
+    const harm = l.overlayOnly ? "publishes your overlay's output" : 'publishes them and fails CI doctor';
+    return l.tracked
+      ? `${l.path} ${what} and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit ${harm}`
+      : `${l.path} ${what} and is not gitignored — committing it ${harm}`;
+  });
+  return [...lines, `${leaks.length} overlay-fed render(s) are not safe to commit: ${overlayLeakRemedy(leaks)}`];
 }
 
 /**

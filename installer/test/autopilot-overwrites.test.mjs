@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
+import { readRendered } from './self-render.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
@@ -559,7 +560,7 @@ describe('overwrites.mjs --rebase (#752)', () => {
 });
 
 describe('autopilot gate step 4 wires the checks (#748)', () => {
-  const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+  const read = (rel) => (rel.startsWith('.claude/') ? readRendered(rel) : fs.readFileSync(path.join(repoRoot, rel), 'utf8'));
 
   test('the rendered skill invokes the rendered script and lists this repo\'s checks', () => {
     const md = read('.claude/skills/autopilot/SKILL.md');

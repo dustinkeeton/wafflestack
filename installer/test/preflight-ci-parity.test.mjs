@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { readRendered } from './self-render.mjs';
 
 // Guards pre-flight ↔ CI parity (#375). The rendered git-workflow pre-flight is a
 // hand-configured list (`project.*Cmd` in .waffle/waffle.yaml) of what CI's required `test`
@@ -27,7 +28,7 @@ function ciCommands() {
 }
 
 function preflightCommands() {
-  const skill = fs.readFileSync(path.join(ROOT, '.claude/skills/git-workflow/SKILL.md'), 'utf8');
+  const skill = readRendered('.claude/skills/git-workflow/SKILL.md');
   const match = skill.match(/^## Pre-flight Checklist$([\s\S]*?)(?=^## |(?![\s\S]))/m);
   assert.ok(match, 'rendered git-workflow SKILL.md has no "## Pre-flight Checklist" section');
   const commands = [];

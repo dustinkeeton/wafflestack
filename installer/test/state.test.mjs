@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
 import { agentRoster, collectState, formatStateText, STATE_SHAPE_VERSION } from '../lib/state.mjs';
 import { sha256 } from '../lib/util.mjs';
+import { renderedPath, selfRenderRoot } from './self-render.mjs';
 
 // `wafflestack state` (#561): resolved behavioral keys (value, layer, tokens), delegate run files,
 // lock status and drift, in one read-only document. The invariants: the layer is reported
@@ -361,11 +362,11 @@ describe('state: agent roster (#610)', () => {
     assert.deepEqual(roster.map((a) => a.file), ['custom/agents/e.md']);
   });
 
-  test("this repo's own render: every committed agent, in name order, in JSON and text", () => {
-    const state = collectState({ cwd: REPO_ROOT, toolkitRoot: REPO_ROOT, toolkitVersion: '0.0.test' });
-    const dir = path.join(REPO_ROOT, '.claude/agents');
+  test("this repo's own render: every agent, in name order, in JSON and text", () => {
+    const state = collectState({ cwd: selfRenderRoot(), toolkitRoot: REPO_ROOT, toolkitVersion: '0.0.test' });
+    const dir = renderedPath('.claude/agents');
     const names = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => fs.readFileSync(path.join(dir, f), 'utf8').match(/^name: (.+)$/m)[1]);
-    assert.ok(names.length > 0, 'the self-render commits agents');
+    assert.ok(names.length > 0, 'the self-render renders agents');
     assert.deepEqual(state.agents.map((a) => a.name), [...names].sort((a, b) => a.localeCompare(b)));
     assert.match(formatStateText(state), new RegExp(`\\nagents: ${names.length} in \\.claude/agents — `));
   });

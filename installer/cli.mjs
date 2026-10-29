@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { renderProject } from './lib/render.mjs';
+import { renderProject, treeOverlayLeaks } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { defaultPluginsDir } from './lib/installed-mods.mjs';
 import { eject, scaffoldConfig, installRefs, unejectCollisions } from './lib/eject.mjs';
@@ -64,11 +64,12 @@ try {
     case 'render': {
       const force = extractFlag(args, '--force');
       const gitignore = extractFlag(args, '--gitignore');
+      const untrustedConfig = extractFlag(args, '--untrusted-config');
       if (args.length) {
         fail(`${command} takes no refs — use \`wafflestack install <ref…>\` to add a stack or item (it persists the choice, then re-renders); bare \`${command}\` re-renders the current selection`);
       }
       const toolkitIdentity = requireRelease(command);
-      runRender(force, toolkitIdentity);
+      runRender(force, toolkitIdentity, null, { untrustedConfig });
       if (gitignore) offerGitignore();
       break;
     }
@@ -98,6 +99,10 @@ try {
       for (const f of result.render.absent) console.log(`stale lock entry: ${f}${from(f)} — tracked by the lock but no longer rendered by the config`);
       for (const f of result.render.unexpected) console.log(`unrendered: ${f} — the config would render this file but the lock does not track it`);
       for (const e of result.render.errors) console.log(`verify-render: ${e}`);
+      for (const f of result.overlayLeaks) {
+        const label = result.trackedOverlayLeaks.includes(f) ? 'tracked by git' : 'not gitignored';
+        console.log(`${label} (embeds local overlay): ${f}${from(f)}`);
+      }
       for (const n of result.notes) console.log(n);
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
@@ -434,7 +439,11 @@ function helpText() {
     '  --help, -h        print this help and exit 0; after a command, explain instead of running it',
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
     '                    uninstall: also delete files that were hand-edited after rendering',
+    '  --untrusted-config  render: the config came from an untrusted tree (a PR head in CI) — refuse',
+    '                    any `source:` stack, run no prerequisite check, and write through no',
+    '                    symlink that leaves the project root',
     '  --gitignore       setup/init/render/install: append the recommended .gitignore entries',
+    '                    render/install: plus each overlay-fed render git would let you commit',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
     '                    reinstall: required by --clean, the one path that deletes your config',
     '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
@@ -468,8 +477,8 @@ function helpText() {
 // `installed` is what `installRefs` just persisted. The render's own checks (`needs config values`,
 // collisions, …) run AFTER that save, so ANY refusal rolls it back and a refused install leaves
 // waffle.yaml as it found it (#548); an un-eject collision additionally names its `--force` remedy (#497).
-function runRender(force = false, toolkitIdentity = null, installed = null) {
-  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, log: console.log });
+function runRender(force = false, toolkitIdentity = null, installed = null, { untrustedConfig = false } = {}) {
+  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, untrustedConfig, log: console.log });
   for (const w of result.warnings) console.warn(`warning: ${w}`);
   if (!result.ok) {
     for (const e of result.errors) console.error(`error: ${e}`);
@@ -491,7 +500,8 @@ function runRender(force = false, toolkitIdentity = null, installed = null) {
 function offerGitignore() {
   const toolkit = loadToolkit(toolkitRoot);
   const project = loadProjectConfig(cwd);
-  reportGitignore(ensureGitignoreEntries(cwd, recommendedGitignoreEntries(toolkit, project)));
+  const leaks = (treeOverlayLeaks(cwd) ?? []).filter((l) => !l.tracked).map((l) => l.path);
+  reportGitignore(ensureGitignoreEntries(cwd, [...recommendedGitignoreEntries(toolkit, project), ...leaks]));
 }
 
 function reportGitignore(added, out = console.log) {

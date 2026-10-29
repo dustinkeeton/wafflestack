@@ -952,7 +952,8 @@ config:
     description: >-
       Dependency-install command. The github-workflow stack declares the same key with the same
       default and pattern; here autopilot runs it in the fresh worktree of the integration gate's
-      sync merge before `autopilot.waffleCmd render`. Default `npm install`.
+      sync merge, before
+      `autopilot.waffleCmd render`. Default `npm install`.
   docs.auditChecklist:
     required: false
     description: >-

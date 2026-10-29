@@ -32,5 +32,5 @@ jobs:
       - run: npm run typecheck
 
       # The CHECKOUT's own CLI, so the render under test is the PR's own stacks/** — DECISIONS #314/#316.
-      - name: Verify the committed render still reproduces the lock
+      - name: Verify a fresh render reproduces the committed lock
         run: node installer/cli.mjs doctor --allow-missing --verify-render

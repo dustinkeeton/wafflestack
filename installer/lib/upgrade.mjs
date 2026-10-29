@@ -132,7 +132,8 @@ export function upgrade({
   const moveNote = toolkitMove ? describeToolkitMove(toolkitMove) : null;
   if (moveNote) log(moveNote);
 
-  const dr = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot, pluginsDir });
+  // render.warnings already carries the overlay-leak lines (#614).
+  const dr = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot, pluginsDir, checkOverlayLeaks: false });
 
   return {
     ok: render.ok && dr.ok,

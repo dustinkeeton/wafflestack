@@ -33,6 +33,41 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **CI workflows render missing wafflestack resources before reading them (#615, part of #775).**
+  The label-hook (enrich, implement), hygiene, pr-green and pr-response jobs now run a `Render
+  missing wafflestack resources` step after checkout. If every `.claude/` path in the lock (the only
+  harness these jobs read) is present, it does nothing. Otherwise it renders from the lock's release pin.
+  The pin must name the repo in `doctor.toolkitRef` and a `vX.Y.Z` tag found there, and the fetch
+  uses that tag's commit, so a PR-head lock cannot choose the code npx runs. A lock without a
+  release pin fails with a remedy. The render runs with no overlay, restores any tracked file it
+  touched, and keeps its new files out of the harness's commits. npx runs from an empty temp
+  directory with `--cwd` on the checkout and no inherited npm config, so a PR-committed `.npmrc`
+  has no effect. The toolkit's own repo renders with the installer at its trusted ref, not the PR
+  head's. A new `render --untrusted-config` flag, which the step passes, refuses any `source:`
+  stack and runs no prerequisite check, so a PR-head config can't run a self-acknowledged check.
+  It also refuses to write through a PR-committed symlink that leaves the checkout and skips the
+  legacy-dotfile migration (#789). A toolkit release older than the flag fails the step with an
+  upgrade hint.
+  `waffle-doctor` stays exempt.
+  A new `workflow-render-step.test.mjs` fails when a shipped workflow reads a rendered path
+  without the step.
+
+  **Consumer impact:** re-render only. Repos that commit their render see no change.
+
+- **Warn when an overlay-fed render isn't gitignored (#614, part of #775).** When
+  `waffle.local.yaml` changes a rendered file, `render` and `upgrade` now warn if git would let you
+  commit that file — it is tracked by git, or not gitignored. The check uses `git check-ignore` and
+  `git ls-files`. The warning offers two fixes: gitignore the file and set
+  `doctor.flags: --allow-missing` (Posture 2), or move to lock-only Posture 2b.
+  `render --gitignore` adds those exact paths. A local `doctor` reports the same files as
+  `not gitignored (embeds local overlay): <path>`, or `tracked by git (embeds local overlay): <path>`
+  for a tracked one. The check is informational: it never changes
+  doctor's exit code. Outside a git work tree `render` is silent, and `doctor` notes that it
+  could not check. An overlay that changes only `.claude/settings.json` entries is not checked yet
+  (#786).
+
+  **Consumer impact:** re-render only. No config change.
+
 - **Autopilot integration mode (#731, slice 1 of #720).** A new `autopilot.integration` key
   (default `false`, per-run `+integration` / `-integration`) makes a run cut a per-run
   `autopilot/integration/<UTC timestamp>` branch from `origin/main`. Every PR the run opens targets
@@ -193,6 +228,13 @@ is what you reach for across a breaking one.
   do not change. An older CLI without `agents` makes the pane say so instead of showing a roster.
 
 ### Changed
+
+- **The toolkit repo moves to Posture 2b: only the lock is committed (#777, part of #775).**
+  Its `.claude/` render is gitignored. Delegate and autopilot do not render into the worktrees they
+  cut: Claude Code (v2.1.277+) loads the main checkout's skills, agents, and commands when a
+  worktree has none of its own, and tests never read the worktree's render.
+  **Consumer impact:** none. Toolkit contributors: pulling this change deletes your local
+  `.claude/` render — run `node installer/cli.mjs render --allow-unreleased` to restore it.
 
 - **Autopilot: a line an earlier PR added that a pre-gate rebase drops stops auto-merge (#752).**
   Owner ruling. Before re-pushing an implement-ahead branch it rebased onto the newly merged base,

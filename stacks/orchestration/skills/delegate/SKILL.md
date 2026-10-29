@@ -449,6 +449,8 @@ Notes:
 - Use `origin/main` as the base, not local `main`, so all worktrees start from the same fetched tip.
 - Keep `{{git.worktreesDir}}/` gitignored.
 
+**Do not render into the worktree.** A project that commits only its lock (Posture 2b) has no `{{harness.skillsDir}}/` render in a fresh worktree, and that is fine: Claude Code (v2.1.277+) loads the main checkout's project skills, agents, and commands when a worktree has none of its own, so the agent starts with the skills its prompt names — local overlay included. A render there would shadow that fallback with canonical copies. Tests and `doctor --allow-missing` never read the worktree's render.
+
 Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt. This path — and the branch — must match what the `plan` checkpoint recorded for this issue; **read them from the checkpoint** rather than re-deriving them, so a single source of truth drives both provisioning and the agent prompt.
 
 For **serial groups** (including the single-issue fast path), no worktree is needed — the agent runs in the main checkout and switches branches there.
