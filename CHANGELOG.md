@@ -238,6 +238,16 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot integration: the final PR body names only the stages that run, and every path that
+  skips stage 3 hands the audit to a human (#756, part of #720).** The body says
+  `stage 2: not run (review loop off)` / `stage 3: not run (audit step off)` instead of always
+  claiming stages 2–3 ran. With audit-step consent on, a stage 1 hold, a final PR left unopened
+  because a run PR is still open, a stage 2 hold and a stage 3 hold all end with one shared
+  "run `/audit` on the combined diff" hand-off, since per-PR audit and docs refresh are off in this
+  mode. An audit block keeps its own follow-up and is never re-audited. Stage 3's stray-edit check
+  also records the main checkout's `HEAD` and branch, once, so a retry no longer resets it.
+  Consumer impact: re-render only.
+
 - **Autopilot integration stage 2 no longer hangs on a conflicting final PR, needs proof its review
   landed, and runs its responder in its own worktree (#754, part of #720).** Stage 2's green wait
   now ends on Step 8's blocked exits (red, `DIRTY`, `CLOSED`, or a two-hour stall) as an
