@@ -197,8 +197,8 @@ is what you reach for across a breaking one.
 
 - **Autopilot arms the integration → `main` PR on a green integration gate (#735, part of #720).**
   With `+integration` and `+automerge`, the final PR is armed only after every enabled stage passed
-  (stage 1 always, stage 2 with `+review`, stage 3 with `+audit`) on the head that will merge, and,
-  after a stage 2 pass, only when that head carries a `waffle/adversarial-review` success status. It
+  (stage 1 always, stage 2 with `+review`, stage 3 with `+audit`) on the head that will merge, only
+  while `main` has not moved since the sync, and, after a stage 2 pass, only when that head carries a `waffle/adversarial-review` success status. It
   is never armed once a stage 2 or stage 3 fix PR merged into the integration branch, because those
   merge on CI alone, unreviewed: that run leaves the final PR for a human. A failed arm is never
   replaced by `--admin` or an immediate merge. After the merge the run verifies each closed issue,
@@ -238,6 +238,16 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot integration stage 2 finds its own review when the reviewer returns no id (#758, part
+  of #720).** A clean round posts through `gh pr review`, which returns no id and writes no
+  `waffle/adversarial-review` status, and reviewers are often refused that status write anyway. So a
+  clean integration gate could never pass or arm. After each review, stage 2 now lists the final PR's
+  reviews, takes one on the reviewed head, by this session's login, since the round began, whose body
+  starts with the adversarial-review marker, and writes the missing status itself. No such review
+  holds the round.
+
+  **Consumer impact:** re-render only. It matters only with integration mode and the review loop on.
+
 - **Autopilot integration: the final PR body names only the stages that run, and every path that
   skips stage 3 hands the audit to a human (#756, part of #720).** The body says
   `stage 2: not run (review loop off)` / `stage 3: not run (audit step off)` instead of always
@@ -256,9 +266,8 @@ is what you reach for across a breaking one.
   reviewer whose post failed can no longer count as clean. The responder works in an
   orchestrator-cut `autopilot-stage2-<ts>` worktree, never the main checkout. pr-response's
   `## Fix branch` block now also overrides §1's `gh pr checkout`. A retried round uses a
-  `-r<k>-retry` branch, and leftover local `autopilot/stage2/<ts>-*` branches are deleted. Until
-  #758 lands, a clean round whose reviewer was refused the status write holds instead of passing.
-  This fails closed.
+  `-r<k>-retry` branch, and leftover local `autopilot/stage2/<ts>-*` branches are deleted. A clean
+  round whose reviewer returned no review id now passes too: stage 2 finds the review itself (#758).
 
   **Consumer impact:** re-render only. It matters only with integration mode and the review loop on.
 
