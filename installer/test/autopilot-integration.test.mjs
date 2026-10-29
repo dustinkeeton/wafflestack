@@ -475,10 +475,11 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /Never review a red PR/);
   });
 
-  test('passing needs a clean summary or triaged reviews, plus a success status on <sha>', () => {
+  test('passing needs triaged reviews, not the reviewer\'s report, plus a success status on <sha>', () => {
     const md = stage2();
     assert.match(md, /\*\*Passed\?\*\* Both must hold\./);
-    assert.match(md, /never needed because this round's reviewer returned its clean summary/);
+    assert.match(md, /The responder implemented 0 or was never spawned, whatever the reviewer reported, and every review with findings/);
+    assert.doesNotMatch(md, /returned its clean summary/);
     assert.match(md, /gh api "repos\/\$OWNER\/\$REPO\/commits\/<sha>\/statuses" --paginate/);
     assert.match(md, /select\(\.context=="waffle\/adversarial-review" and \.state=="success"\)/);
     assert.match(md, /holds with the reason \*\*no `waffle\/adversarial-review` success status on `<sha>`\*\*/);
