@@ -636,7 +636,7 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
 
   test('the stray-edit check records HEAD and the branch once; a retry keeps it', () => {
     const md = stage3();
-    assert.match(md, /`git status --porcelain`, `git rev-parse HEAD` and `git symbolic-ref -q HEAD`, once before the first attempt; a retry keeps it/);
+    assert.match(md, /`git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current`, once before the first attempt; a retry keeps it/);
     assert.match(md, /If any of the main checkout's three reads differs from item 3's record/);
   });
 });

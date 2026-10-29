@@ -261,7 +261,7 @@ Runs from item 3, after stage 2, on `<F>`. It is Step 7's `/audit` gate, run onc
 
 1. **Gate.** It rides audit-step consent (§4) and needs none of its own. With that consent off, report `stage 3: not run (audit step off)`; after a stage 2 hold, report `stage 3: not run (stage 2 held)`; that hold carries the audit hand-off. A stage 1 hold opens no final PR, so stage 3 never runs after one.
 2. **Wait for green** on `<F>` with Step 7 item 1's poll. Step 8's blocked exits end the wait as a hold (below): a red check, `DIRTY` (a final PR that conflicts with `main` gets no CI, so it never goes green), `CLOSED`, or no green two hours after the wait began. Never audit a red PR.
-3. **Cut the worktree.** Record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git symbolic-ref -q HEAD`, once before the first attempt; a retry keeps it. Run `git fetch origin main <integ>`, hold if `git ls-remote --heads origin <b3>` already shows the branch, then `git worktree add -b <b3> <a3> origin/<integ>`. The focus is the combined diff. Read it from git, because the GitHub file list truncates on a large PR:
+3. **Cut the worktree.** Record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current`, once before the first attempt; a retry keeps it. Run `git fetch origin main <integ>`, hold if `git ls-remote --heads origin <b3>` already shows the branch, then `git worktree add -b <b3> <a3> origin/<integ>`. The focus is the combined diff. Read it from git, because the GitHub file list truncates on a large PR:
 
    ```bash
    git diff --name-only origin/main...origin/<integ>
