@@ -103,6 +103,14 @@ describe('waffle-render coverage (#615)', () => {
     assert.equal(violations.filter((v) => /no waffle-render step/.test(v)).length, 2);
     assert.ok(violations.some((v) => /\.waffle\/TEAM\.md, outside the waffle-render probe/.test(v)));
   });
+
+  test("a gated reader whose waffle-render step lacks its if: is reported", () => {
+    const wf = parseWorkflow(
+      'jobs:\n  x:\n    steps:\n      - uses: actions/checkout@abc\n      - id: waffle-render\n        run: "true"\n' +
+        '      - if: x\n        run: cat .claude/skills/x/SKILL.md\n',
+    );
+    assert.ok(auditWorkflow('synthetic.yml', wf).violations.some((v) => /waffle-render's if: differs/.test(v)));
+  });
 });
 
 const REAL_GIT = execFileSync('/usr/bin/env', ['which', 'git'], { encoding: 'utf8' }).trim();
