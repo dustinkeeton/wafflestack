@@ -81,6 +81,12 @@ describe('waffle-render coverage (#615)', () => {
     for (const name of Object.keys(EXEMPT)) assert.ok(WORKFLOWS.includes(name), `${name} exempt but not shipped`);
   });
 
+  test('github-workflow is the only stack that ships workflows, so the audit sees them all', () => {
+    const stacksDir = fileURLToPath(new URL('../../stacks/', import.meta.url));
+    const shipping = fs.readdirSync(stacksDir).filter((s) => fs.existsSync(path.join(stacksDir, s, 'files/.github/workflows')));
+    assert.deepEqual(shipping, ['github-workflow'], 'audit the new stack\'s workflows here too');
+  });
+
   for (const name of WORKFLOWS.filter((n) => !(n in EXEMPT))) {
     test(`${name}: every reader renders missing resources first`, () => {
       assert.deepEqual(AUDITS[name].violations, []);
