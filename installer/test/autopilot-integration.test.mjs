@@ -442,7 +442,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
 
   test('convergence: pass on a 0-implemented round, hold when the cap ends on fixes, tear down the responder', () => {
     const md = stage2();
-    assert.match(md, /\*\*Passed\?\*\* Both must hold\. The responder implemented 0/);
+    assert.match(md, /\*\*Passed\?\*\* Both must hold\. This round's responder implemented 0/);
     assert.match(md, /\*\*Cap reached\.\*\* If the last round still implemented fixes, hold/);
     assert.match(md, /`TaskStop` `respond-int-pr<F>`/);
     assert.match(md, /\*\*No fix PR\?\*\* The responder implemented 0, but a review on `<sha>` still reads untriaged/);
@@ -478,7 +478,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
   test('passing needs triaged reviews, not the reviewer\'s report, plus a success status on <sha>', () => {
     const md = stage2();
     assert.match(md, /\*\*Passed\?\*\* Both must hold\./);
-    assert.match(md, /The responder implemented 0 or was never spawned, whatever the reviewer reported, and every review with findings/);
+    assert.match(md, /This round's responder implemented 0 or was not spawned this round, whatever the reviewer reported, and every review with findings/);
     assert.doesNotMatch(md, /returned its clean summary/);
     assert.match(md, /gh api "repos\/\$OWNER\/\$REPO\/commits\/<sha>\/statuses" --paginate/);
     assert.match(md, /select\(\.context=="waffle\/adversarial-review" and \.state=="success"\)/);
