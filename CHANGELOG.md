@@ -35,8 +35,8 @@ is what you reach for across a breaking one.
 
 - **CI workflows render missing wafflestack resources before reading them (#615, part of #775).**
   The label-hook (enrich, implement), hygiene, pr-green and pr-response jobs now run a `Render
-  missing wafflestack resources` step after checkout. If every `.claude/`, `.codex/` and `.agents/`
-  path in the lock is present, it does nothing. Otherwise it renders from the lock's release pin.
+  missing wafflestack resources` step after checkout. If every `.claude/` path in the lock (the only
+  harness these jobs read) is present, it does nothing. Otherwise it renders from the lock's release pin.
   The pin must name the repo in `doctor.toolkitRef` and a `vX.Y.Z` tag found there, and the fetch
   uses that tag's commit, so a PR-head lock cannot choose the code npx runs. A lock without a
   release pin fails with a remedy. The render runs with no overlay, restores any tracked file it

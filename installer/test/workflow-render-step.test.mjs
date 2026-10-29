@@ -15,7 +15,7 @@ const WORKFLOWS = fs.readdirSync(WF_DIR).filter((f) => f.endsWith('.yml')).sort(
 const EXEMPT = { 'waffle-doctor.yml': 'doctor is the render checker; rendering first would hide its gaps' };
 const RENDERED_PATH = /(?:^|[\s'"(`])(\.(?:claude|codex|agents|waffle)\/[\w./*-]*)/g;
 const NOT_RENDERED = /^\.waffle\/(?:waffle\.yaml|waffle\.lock\.json|waffle\.local\.|telemetry\/)/;
-const PROBED = /^\.(?:claude|codex|agents)\//;
+const PROBED = /^\.claude\//;
 const HARNESS_USES = /^(?:__PH_harness\.actionRef__|anthropics\/claude-code-action)/;
 
 const parseWorkflow = (src) => YAML.parse(src.replace(/\{\{([a-z]\w*(?:\.\w+)+)\}\}/g, '__PH_$1__'));
@@ -164,6 +164,19 @@ describe('waffle-render step behavior (#615)', () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.deepEqual(r.calls, []);
     assert.match(r.stdout, /nothing to render/);
+  });
+
+  test('Posture 2: .claude/ committed, another harness gitignored, unreleased lock → no fetch, exit 0', () => {
+    lock({ source: 'github:consumer/app', ref: null, commit: null, status: 'unreleased' });
+    const l = JSON.parse(fs.readFileSync(path.join(cwd, '.waffle/waffle.lock.json'), 'utf8'));
+    l.files['.codex/config.toml'] = 'h';
+    l.files['.agents/skills/x/SKILL.md'] = 'h';
+    write('.waffle/waffle.lock.json', JSON.stringify(l));
+    write('.claude/skills/x/SKILL.md', 'x\n');
+    write('.claude/settings.json', '{}\n');
+    const r = run({ trusted: 'github:dustinkeeton/wafflestack#main' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(r.calls, []);
   });
 
   test('release pin: verifies the tag on the trusted repo, renders at its commit, fills gaps only', () => {

@@ -52,7 +52,7 @@ CI-dispatched agent harness reads `.claude/skills/` out of the checkout. If the 
 gitignored, the checkout does not contain it — there is *nothing for CI to read*. Either the
 skills are in git, or CI renders them itself, or your CI agents have no skills. The shipped
 `waffle-*` workflows render for themselves (#615). Before a job reads a skill, it renders any
-missing `.claude/`, `.codex/` or `.agents/` file from the lock's **release** pin, fetched only
+missing `.claude/` file (the only harness these jobs read) from the lock's **release** pin, fetched only
 from the repo `doctor.toolkitRef` names. With the render committed, that step does nothing. A
 lock with no release pin fails the job with a remedy.
 

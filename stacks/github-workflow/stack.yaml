@@ -258,9 +258,9 @@ setup: |-
 
   **Render-before-read step (#615).** Every shipped job that reads rendered resources (the label-hook
   enrich/implement jobs, hygiene, pr-green, pr-response) runs a `Render missing wafflestack
-  resources` step right after its checkout. When every `.claude/`, `.codex/` and `.agents/` path
-  the lock records is already in the checkout (renders committed), it does nothing: no network, no
-  npx. Otherwise it renders from the lock's toolkit pin, and only a release pin qualifies. The lock's
+  resources` step right after its checkout. When every `.claude/` path the lock records is already
+  in the checkout, it does nothing: no network, no npx. It ignores `.codex/` and `.agents/`, which
+  these jobs never read, so a Posture 2 repo that gitignores them stays a no-op. Otherwise it renders from the lock's toolkit pin, and only a release pin qualifies. The lock's
   `toolkit.source` must match the trusted base (`doctor.toolkitRef` with its `#…` stripped, taken
   from the workflow, never from the PR), `toolkit.ref` must be a `vX.Y.Z` tag that `git ls-remote`
   finds on that repo, and the step runs `npx <base>#<tag commit>` (`render` with no overlay; a key

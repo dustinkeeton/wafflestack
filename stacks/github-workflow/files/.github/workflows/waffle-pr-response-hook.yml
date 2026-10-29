@@ -197,7 +197,7 @@ jobs:
             const fs = require("fs");
             const l = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
             const keys = [...Object.keys(l.files || {}), ...Object.keys(l.settings || {})].map((k) => k.replace(/#.*$/, ""));
-            console.log([...new Set(keys)].filter((k) => /^\.(claude|codex|agents)\//.test(k) && !fs.existsSync(k)).length);
+            console.log([...new Set(keys)].filter((k) => /^\.claude\//.test(k) && !fs.existsSync(k)).length);
           ' "$LOCK")"
           if [ "$missing" = 0 ]; then
             echo "🧇 waffle-render: every rendered resource is in the checkout; nothing to render."
