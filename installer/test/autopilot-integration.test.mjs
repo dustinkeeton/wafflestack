@@ -483,6 +483,8 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /select\(\.context=="waffle\/adversarial-review" and \.state=="success"\)/);
     assert.match(md, /holds with the reason \*\*no `waffle\/adversarial-review` success status on `<sha>`\*\*/);
     assert.doesNotMatch(md, /or it was never needed, and every review/);
+    assert.match(md, /no clean summary and no responder ran: hold with the reason \*\*round `<k>`'s review did not land on `<sha>`\*\*/);
+    assert.match(md, /read as the final PR's arm check reads it/);
   });
 
   test('the responder works in its own worktree, and leftovers are cleaned up', () => {
