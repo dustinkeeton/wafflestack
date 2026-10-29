@@ -9,6 +9,32 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-28: The stage 1 sync auto-resolves an additive-only CHANGELOG.md conflict (#759, part of #720)
+
+**Context**: About 40 of the last 61 merges to `main` touched `CHANGELOG.md`, nearly all adding
+one bullet under `## [Unreleased]`. Any integration run that overlapped another merge to `main`
+conflicted on it at the stage 1 sync and held, though keeping both sides' bullets was almost
+always the right answer.
+
+**Decision**: Stage 1 resolves a `CHANGELOG.md` conflict, alone or with the lock, through
+`changelog-merge.mjs`. It reads git's merge stages and resolves only when each side, against the
+merge base, adds lines and removes or edits none, every added line falls inside the base's single
+`## [Unreleased]` section, and no added line is a heading. Additions in different `###`
+subsections of that section are allowed. The merged file keeps main's lines, then the integration
+branch's. Anything else aborts and holds as before, so the run still never picks a winner.
+
+**Alternatives**:
+- *`CHANGELOG.md merge=union` in `.gitattributes`.* Rejected: it applies to every merge in the
+  repo, and it puts bullets under the wrong heading when a release renames `[Unreleased]`.
+- *Require both sides to add under the same `###` subsection.* Rejected: a multi-PR run almost
+  always spans `### Added` and `### Fixed`, so the carve-out would rarely fire.
+- *Parse the conflict markers.* Rejected: the merge stages give the exact base and both sides.
+
+**Affects**: the orchestration stack's autopilot skill (integration gate stage 1). The overwrite
+detector is unaffected, because both sides' lines survive.
+
+---
+
 ## 2026-10-28: A line an earlier PR added that a rebase conflict drops stops auto-merge (#752)
 
 **Context**: Autopilot's overwrite detector (#748) reads merged history. A conflict resolved during

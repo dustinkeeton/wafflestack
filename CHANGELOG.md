@@ -74,6 +74,17 @@ is what you reach for across a breaking one.
   **Consumer impact:** re-render only. Integration mode is off by default. To run your own checks
   on the synced head, override `autopilot.integrationChecks`. An override replaces the default list.
 
+- **The integration sync auto-resolves an additive-only `CHANGELOG.md` conflict (#759, part of
+  #720).** Almost every PR adds a bullet under `## [Unreleased]`, so a run that overlapped any
+  other merge to `main` used to hold at the sync. A new dependency-free `changelog-merge.mjs`
+  helper, shipped with the autopilot skill, now resolves that conflict, alone or with the lock. It
+  resolves only when both sides only add lines, every added line sits inside `## [Unreleased]`, and
+  no added line is a heading. It keeps main's lines, then the integration branch's. A release
+  rename, a removed or edited line, an addition elsewhere or any other conflicting path still
+  holds. The sync PR and final PR bodies record `CHANGELOG.md additive conflict auto-resolved`.
+
+  **Consumer impact:** re-render only. Integration mode is off by default.
+
 - **Integration gate stage 2: a decision-preservation review of the final PR (#733, part of
   #720).** `adversarial-review <PR> --integration` reviews an integration → `main` PR against the
   run's merged PRs, their linked issues and `DECISIONS.md`. It asks one question: does the combined

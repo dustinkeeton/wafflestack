@@ -293,8 +293,17 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /gh pr create --base <integ> --head autopilot\/sync\/<ts> --title "autopilot: sync main into <integ>" --body-file <scratch-file>/);
   });
 
-  test('only a lock conflict is resolved (main\'s lock, then render); anything else aborts and holds', () => {
+  test('a lock conflict (main\'s lock, then render) and the #759 CHANGELOG.md carve-out resolve; anything else aborts and holds', () => {
     const md = gate();
+    const changelog = section(md, '- **`CHANGELOG.md`, alone or with the lock**', '- **Exactly `.waffle/waffle.lock.json`**');
+    assert.match(changelog, /`node \.claude\/skills\/autopilot\/changelog-merge\.mjs -C <gate> --write`/);
+    assert.match(changelog, /adds lines and removes or edits none, every added line falls inside the base's single `## \[Unreleased\]` section, and no added line is a heading/);
+    assert.match(changelog, /different `###` subsections/);
+    assert.match(changelog, /record `CHANGELOG\.md additive conflict auto-resolved`/);
+    assert.match(changelog, /Exit 1 \(`HOLD:`\) or 2 \(`ERROR:`\) → abort and hold/);
+    assert.match(md, /\*\*Anything else\*\* \(source, `CHANGELOG\.md` outside the carve-out above, the other decision docs/);
+    assert.match(md, /`CHANGELOG\.md additive conflict auto-resolved` when step 3 recorded it, and says it carries only main's commits/);
+    assert.match(read(SKILL), /noting a resolved lock conflict and `CHANGELOG\.md additive conflict auto-resolved` when step 3 recorded it/);
     assert.match(md, /\*\*Exactly `\.waffle\/waffle\.lock\.json`\*\*/);
     assert.match(md, /`git -C <gate> checkout --theirs -- \.waffle\/waffle\.lock\.json` and `git -C <gate> add \.waffle\/waffle\.lock\.json`, then, in `<gate>`, `npm install`\./);
     assert.match(md, /If `git -C <gate> diff --name-only` or `git -C <gate> ls-files --others --exclude-standard` prints anything, the install changed or created files.*abort and hold/);
