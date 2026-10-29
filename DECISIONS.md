@@ -70,7 +70,8 @@ reviewer's review landed (#754).
 
 **Decision**: With `+automerge`, autopilot arms the final PR only when every enabled stage passed (a
 stage not run because its consent is off does not block; a held one does), `<F>`'s head equals
-the integration branch and the head stage 1 passed on, no PR is open against the branch, and, after a
+the integration branch and the head stage 1 passed on, `main` has not moved since the sync (a pre-arm
+check; once armed, Step 8's wait ends on `BEHIND`), no PR is open against the branch, and, after a
 stage 2 pass, that head carries a `waffle/adversarial-review` success status. **If any stage 2 or
 stage 3 fix PR merged into the branch during the run, the final PR is not armed** and is left for a
 human, who reviews those fixes. The sync PR is exempt, since it carries only main's gated commits.

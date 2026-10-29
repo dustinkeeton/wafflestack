@@ -442,7 +442,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
 
   test('convergence: pass on a 0-implemented round, hold when the cap ends on fixes, tear down the responder', () => {
     const md = stage2();
-    assert.match(md, /\*\*Passed\?\*\* Both must hold\. The responder implemented 0/);
+    assert.match(md, /\*\*Passed\?\*\* Both must hold\. This round's responder implemented 0/);
     assert.match(md, /\*\*Cap reached\.\*\* If the last round still implemented fixes, hold/);
     assert.match(md, /`TaskStop` `respond-int-pr<F>`/);
     assert.match(md, /\*\*No fix PR\?\*\* The responder implemented 0, but a review on `<sha>` still reads untriaged/);
@@ -475,15 +475,17 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /Never review a red PR/);
   });
 
-  test('passing needs a clean summary or triaged reviews, plus a success status on <sha>', () => {
+  test('passing needs triaged reviews, not the reviewer\'s report, plus a success status on <sha>', () => {
     const md = stage2();
     assert.match(md, /\*\*Passed\?\*\* Both must hold\./);
-    assert.match(md, /never needed because this round's reviewer returned its clean summary/);
+    assert.match(md, /This round's responder implemented 0 or was not spawned this round, whatever the reviewer reported, and every review with findings/);
+    assert.doesNotMatch(md, /returned its clean summary/);
     assert.match(md, /gh api "repos\/\$OWNER\/\$REPO\/commits\/<sha>\/statuses" --paginate/);
     assert.match(md, /select\(\.context=="waffle\/adversarial-review" and \.state=="success"\)/);
     assert.match(md, /holds with the reason \*\*no `waffle\/adversarial-review` success status on `<sha>`\*\*/);
     assert.doesNotMatch(md, /or it was never needed, and every review/);
-    assert.match(md, /no clean summary and no responder ran: hold with the reason \*\*round `<k>`'s review did not land on `<sha>`\*\*/);
+    assert.match(md, /\*\*No id printed, or the query errors:\*\* hold with the reason \*\*round `<k>`'s review did not land on `<sha>`\*\*, and write no status/);
+    assert.doesNotMatch(md, /\*\*Review not landed\?\*\*/);
     assert.match(md, /read as the final PR's arm check reads it/);
   });
 
@@ -677,6 +679,7 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.match(md, /The sync PR is exempt/);
     const guard = section(read(SKILL), '## Guardrails', '## Failure handling');
     assert.match(guard, /\*\*Never once a stage 2 or stage 3 fix PR merged:\*\*/);
+    assert.match(guard, /on the head that will merge, with `main` not moved since the sync,/);
   });
 
   test('a stage 2 pass must carry its waffle/adversarial-review success status (#754)', () => {
@@ -687,10 +690,23 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.doesNotMatch(md, /means the review never posted/);
   });
 
-  test('stage 2 writes a denied reviewer status itself, only after reading the review back', () => {
+  // #758
+  test('stage 2 finds its own review by listing pulls/<F>/reviews, then writes a missing status', () => {
     const md = section(read(SKILL), '### Integration gate — stage 2', '### Integration gate — stage 3');
-    assert.match(md, /It returns its review id and whether its `waffle\/adversarial-review` status write succeeded/);
-    assert.match(md, /when its `commit_id` is `<sha>` and its body begins with the adversarial-review marker, write that status on `<sha>` yourself/);
+    const review = section(md, '   - **Review**', '   - **Respond**');
+    assert.match(review, /record `<t0>` with `date -u \+%Y-%m-%dT%H:%M:%SZ` and `<me>` with `gh api user --jq \.login`/);
+    assert.match(review, /gh api "repos\/\$OWNER\/\$REPO\/pulls\/<F>\/reviews" --paginate --jq/);
+    for (const clause of ['.commit_id == "<sha>"', '.user.login == "<me>"', '.submitted_at >= "<t0>"', 'startswith("<!-- waffle-adversarial-review -->")']) {
+      assert.ok(review.includes(clause), clause);
+    }
+    assert.match(review, /find its review yourself, whatever it reports/);
+    assert.match(review, /count `<sha>`'s `waffle\/adversarial-review` success statuses as \*\*Passed\?\*\* reads them, and on 0 write one/);
+    assert.doesNotMatch(review, /contains\(/);
+    assert.doesNotMatch(md, /It returns its review id and whether its/);
+    assert.doesNotMatch(md, /pulls\/<F>\/reviews\/<id>/);
+    const post = read('.claude/skills/adversarial-review/SKILL.md').split('\n').map((l) => l.trim())
+      .find((l) => l.startsWith('gh api --method POST "repos/$OWNER/$REPO/statuses/$HEAD_SHA"'));
+    assert.ok(post && review.includes(post.replace('$HEAD_SHA', '<sha>')), 'stage 2 writes the status with adversarial-review\'s exact POST');
   });
 
   test('after MERGED: Step 9 for every closed issue, then a probe-verified branch delete', () => {
