@@ -484,6 +484,17 @@ describe('render never writes through a PR-committed symlink out of the tree (#7
     assert.equal(fs.readFileSync(victim, 'utf8'), '{"x":true}\n');
   });
 
+  test('a lock settings key whose file holds a `#` is checked as the file the writer resolves', () => {
+    const victim = path.join(outside, 'victim.json');
+    fs.writeFileSync(victim, '{"x":true}\n');
+    fs.symlinkSync(victim, path.join(cwd, 'evil.json'));
+    put(cwd, '.waffle/waffle.lock.json', JSON.stringify({ files: {}, settings: { 'decoy#x/../evil.json#/x': true } }));
+    const r = go();
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some((e) => /refusing to write decoy#x\/\.\.\/evil\.json/.test(e)), JSON.stringify(r.errors));
+    assert.equal(fs.readFileSync(victim, 'utf8'), '{"x":true}\n');
+  });
+
   test('no legacy-dotfile migration renames through a symlinked .waffle out of the tree', () => {
     fs.rmSync(path.join(cwd, '.waffle'), { recursive: true });
     put(cwd, '.waffle.yaml', 'targets: [claude]\nstacks: [core]\n');

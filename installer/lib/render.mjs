@@ -11,7 +11,7 @@ import {
 import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS, constraintProblems } from './template.mjs';
 import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
-import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
+import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys, parseSettingsKey } from './settings.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, closureFor } from './refs.mjs';
@@ -208,7 +208,8 @@ export function renderProject({
 
   // A PR head can commit a symlink: an untrusted render follows none out of the tree (#789). A
   // trusted one keeps honouring the user's own symlinked render dir.
-  const settingsFiles = [...effective.settings.keys(), ...Object.keys(managedSettings)].map((k) => k.replace(/#.*$/, ''));
+  // Same parser as the writer: stripping at the first `#` would check a different file than it writes.
+  const settingsFiles = [...effective.settings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k);
   const escaping = untrustedConfig
     ? [...new Set([...effective.outputs.keys(), ...settingsFiles, LOCK_FILE, LOCAL_LOCK_FILE])].filter((rel) => !resolveWritableInside(cwd, rel))
     : [];
