@@ -40,7 +40,10 @@ is what you reach for across a breaking one.
   The pin must name the repo in `doctor.toolkitRef` and a `vX.Y.Z` tag found there, and the fetch
   uses that tag's commit, so a PR-head lock cannot choose the code npx runs. A lock without a
   release pin fails with a remedy. The render runs with no overlay, restores any tracked file it
-  touched, and keeps its new files out of the harness's commits. `waffle-doctor` stays exempt.
+  touched, and keeps its new files out of the harness's commits. npx runs from an empty temp
+  directory with `--cwd` on the checkout and no inherited npm config, so a PR-committed `.npmrc`
+  has no effect. The toolkit's own repo renders with the installer at its trusted ref, not the PR
+  head's. `waffle-doctor` stays exempt.
   A new `workflow-render-step.test.mjs` fails when a shipped workflow reads a rendered path
   without the step.
 

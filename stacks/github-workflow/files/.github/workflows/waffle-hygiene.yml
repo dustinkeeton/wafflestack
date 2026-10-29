@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Lock-only repos commit waffle.yaml + the lock, not the render: rebuild what this job reads (#615).
-      # Inline, not a script file: on a PR-head checkout a committed script would be PR-authored code.
+      # Inline, and npx runs outside the checkout: a PR-head script or .npmrc would be PR-authored code.
       - name: Render missing wafflestack resources
         id: waffle-render
         env:
@@ -50,18 +50,34 @@ jobs:
             console.log([t.status, t.source, t.ref, t.commit].map((v) => (typeof v === "string" && /^[^\s]+$/.test(v) ? v : "-")).join(" "));
           ' "$LOCK")
           base="${TRUSTED_TOOLKIT%%#*}"
-          if [ "$(lc "$base")" = "$(lc "github:${GITHUB_REPOSITORY}")" ] && [ -f installer/cli.mjs ]; then
-            [ -d node_modules ] || npm ci --ignore-scripts
-            node installer/cli.mjs render --allow-unreleased
-            from="this checkout (the toolkit's own repo)"
+          [[ "$base" =~ ^github:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "doctor.toolkitRef ($TRUSTED_TOOLKIT) is not a github:owner/repo spec, so the toolkit cannot be verified."
+          url="https://github.com/${base#github:}"
+          ws="$PWD"
+          npx_render() (
+            for v in $(compgen -e); do case "$(lc "$v")" in npm_config_*) unset "$v" ;; esac; done
+            scratch="$(mktemp -d)"
+            : > "$scratch/.npmrc"
+            cd "$scratch"
+            NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws"
+          )
+          if [ "$(lc "$base")" = "$(lc "github:${GITHUB_REPOSITORY}")" ]; then
+            want="${TRUSTED_TOOLKIT#"$base"}"
+            want="${want#\#}"
+            if [[ "$want" =~ ^[0-9a-f]{40}$ ]]; then
+              tip="$want"
+            else
+              tip="$(git ls-remote -- "$url" | awk -v r="${want:-HEAD}" '$2 == r || $2 == "refs/heads/" r {h = $1} $2 == "refs/tags/" r {t = $1} $2 == "refs/tags/" r "^{}" {p = $1} END {print (p != "" ? p : t != "" ? t : h)}')"
+            fi
+            [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || fail "the trusted ref ${want:-HEAD} was not found on $base."
+            npx_render "${base}#${tip}" render --allow-unreleased
+            from="${base}#${tip} (the toolkit's own repo, at its trusted ref, not the PR head)"
           elif [ "$status" = release ]; then
-            [[ "$base" =~ ^github:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "doctor.toolkitRef ($TRUSTED_TOOLKIT) is not a github:owner/repo spec, so the lock's pin cannot be verified."
             [ "$source" = - ] || [ "$(lc "$source")" = "$(lc "$base")" ] || fail "the lock's toolkit source $source is not the trusted toolkit $base (doctor.toolkitRef); refusing to fetch it."
             [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "the lock's toolkit ref $ref is not a vX.Y.Z release tag."
-            tagged="$(git ls-remote --tags -- "https://github.com/${base#github:}" | awk -v t="refs/tags/$ref" '$2 == t {q = $1} $2 == t "^{}" {p = $1} END {print (p != "" ? p : q)}')"
+            tagged="$(git ls-remote --tags -- "$url" | awk -v t="refs/tags/$ref" '$2 == t {q = $1} $2 == t "^{}" {p = $1} END {print (p != "" ? p : q)}')"
             [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "release tag $ref was not found on $base."
             [ "$commit" = - ] || { [[ "$commit" =~ ^[0-9a-f]{7,40}$ ]] && [[ "$tagged" == "$commit"* ]]; } || fail "the lock pins commit $commit, but $base tag $ref is $tagged."
-            npx --yes "${base}#${tagged}" render
+            npx_render "${base}#${tagged}" render
             from="${base}#${ref}"
           else
             fail "$missing rendered file(s) are absent and the lock records no release pin (toolkit status: $status). Render from a toolkit release (wafflestack upgrade) and commit the lock, or commit the render."

@@ -268,7 +268,12 @@ setup: |-
   remedy: render from a release (`wafflestack upgrade`) and commit the lock, or commit the render.
   The step restores any tracked file the render touched and adds the new files to
   `.git/info/exclude`, so the harness can't commit them. The toolkit's own repo (trusted base ==
-  this repo) renders from its tree instead. `waffle-doctor` deliberately has no such step, and the
+  this repo) has no release pin to check, so it renders with the installer at the trusted ref
+  (`doctor.toolkitRef`'s `#…`, or the default branch tip when it has none), never the PR head's
+  `installer/` or `package-lock.json`. Missing files there come from that ref's stacks, not the
+  PR's. Either way npx runs from an empty temp directory with `--cwd` on the checkout, and every
+  `npm_config_*` variable and the user and global npmrc are dropped, so a PR-committed `.npmrc`
+  can't change what npm runs. `waffle-doctor` deliberately has no such step, and the
   release, post-merge and evals jobs read no rendered resource. A private toolkit repo needs
   credentials for the `ls-remote` and the fetch.
 

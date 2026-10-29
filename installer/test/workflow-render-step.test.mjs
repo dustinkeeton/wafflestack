@@ -114,6 +114,7 @@ describe('waffle-render coverage (#615)', () => {
 });
 
 const REAL_GIT = execFileSync('/usr/bin/env', ['which', 'git'], { encoding: 'utf8' }).trim();
+const REAL_NPM = execFileSync('/usr/bin/env', ['which', 'npm'], { encoding: 'utf8' }).trim();
 const SHA = 'a'.repeat(40);
 const PEELED = 'b'.repeat(40);
 const exe = (p, body) => {
@@ -138,15 +139,17 @@ describe('waffle-render step behavior (#615)', () => {
       settings: { '.claude/settings.json#/k': true },
     }));
   const release = (extra = {}) => ({ source: 'github:dustinkeeton/wafflestack', ref: 'v1.2.3', commit: SHA, status: 'release', ...extra });
-  const run = ({ trusted = 'github:dustinkeeton/wafflestack#v1.2.3', repo = 'consumer/app', lsRemote = `${SHA}\trefs/tags/v1.2.3\n` } = {}) => {
+  const run = ({ trusted = 'github:dustinkeeton/wafflestack#v1.2.3', repo = 'consumer/app', lsRemote = `${SHA}\trefs/tags/v1.2.3\n`, env = {} } = {}) => {
     git('add', '-A');
     git('commit', '-qm', 'fixture');
     const r = spawnSync('bash', ['-c', CANONICAL.run], {
       cwd,
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TRUSTED_TOOLKIT: trusted, GITHUB_REPOSITORY: repo, LOG: log, LS_REMOTE: lsRemote, GITHUB_STEP_SUMMARY: path.join(bin, 'summary') },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TRUSTED_TOOLKIT: trusted, GITHUB_REPOSITORY: repo, LOG: log, LS_REMOTE: lsRemote, GITHUB_STEP_SUMMARY: path.join(bin, 'summary'), ...env },
     });
-    return { ...r, calls: fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [] };
+    const lines = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];
+    const npx = lines.filter((l) => l.startsWith('npx-env ')).map((l) => JSON.parse(l.slice(8)));
+    return { ...r, calls: lines.filter((l) => !l.startsWith('npx-env ')), npx };
   };
 
   beforeEach(() => {
@@ -155,8 +158,15 @@ describe('waffle-render step behavior (#615)', () => {
     log = path.join(bin, 'calls.log');
     git('init', '-q');
     write('.claude/agents/a.md', 'committed\n');
+    cwd = fs.realpathSync(cwd);
     const fakeRender = 'mkdir -p .claude/skills/x && echo r > .claude/skills/x/SKILL.md && echo {} > .claude/settings.json && echo edited > .claude/agents/a.md';
-    exe(path.join(bin, 'npx'), `echo "npx $*" >> "$LOG"\n${fakeRender}`);
+    // Records what npm itself would see from npx's cwd, then renders into --cwd like the real CLI.
+    exe(path.join(bin, 'npx'), [
+      'echo "npx $*" >> "$LOG"',
+      `node -e 'console.log("npx-env " + JSON.stringify({ pwd: process.cwd(), entries: require("fs").readdirSync("."), registry: process.argv[1], git: process.env.npm_config_git ?? null, upper: process.env.NPM_CONFIG_SCRIPT_SHELL ?? null }))' "$(${REAL_NPM} config get registry)" >> "$LOG"`,
+      'while [ $# -gt 0 ]; do [ "$1" = --cwd ] && d="$2"; shift; done',
+      `cd "$d" && ${fakeRender}`,
+    ].join('\n'));
     exe(path.join(bin, 'git'), `if [ "$1" = ls-remote ]; then echo "git $*" >> "$LOG"; printf '%b' "$LS_REMOTE"; exit 0; fi\nexec ${REAL_GIT} "$@"`);
   });
   afterEach(() => {
@@ -192,7 +202,7 @@ describe('waffle-render step behavior (#615)', () => {
     const r = run();
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.calls[0], /^git ls-remote --tags -- https:\/\/github\.com\/dustinkeeton\/wafflestack$/);
-    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${SHA} render`);
+    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${SHA} render --cwd ${cwd}`);
     assert.equal(fs.readFileSync(path.join(cwd, '.claude/agents/a.md'), 'utf8'), 'committed\n');
     assert.equal(git('status', '--porcelain'), '');
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/x/SKILL.md')));
@@ -202,7 +212,7 @@ describe('waffle-render step behavior (#615)', () => {
     lock(release({ commit: null }));
     const r = run({ lsRemote: `${SHA}\trefs/tags/v1.2.3\n${PEELED}\trefs/tags/v1.2.3^{}\n${'c'.repeat(40)}\trefs/tags/v1.2.30\n` });
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${PEELED} render`);
+    assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${PEELED} render --cwd ${cwd}`);
   });
 
   const refusals = [
@@ -230,22 +240,58 @@ describe('waffle-render step behavior (#615)', () => {
     assert.match(r.stdout, /waffle\.lock\.json is missing/);
   });
 
-  test("the toolkit's own repo (per the trusted ref, not the lock) renders from its tree", () => {
-    lock({ source: 'github:dustinkeeton/wafflestack', ref: null, commit: null, status: 'unreleased' });
-    write('installer/cli.mjs', `import fs from 'node:fs';\nfs.appendFileSync(process.env.LOG, 'node ' + process.argv.slice(2).join(' ') + '\\n');\n`);
-    fs.mkdirSync(path.join(cwd, 'node_modules'));
-    const r = run({ trusted: 'github:dustinkeeton/wafflestack', repo: 'DustinKeeton/wafflestack' });
+  test('a PR-committed .npmrc and npm_config_* env never reach npx: it runs from an empty dir outside the checkout', () => {
+    lock(release());
+    write('.npmrc', 'registry=http://evil.invalid/\ngit=./pwn.sh\nscript-shell=./pwn.sh\n');
+    write('package.json', '{"name":"pr-head"}\n');
+    const r = run({ env: { npm_config_git: './pwn.sh', NPM_CONFIG_SCRIPT_SHELL: './pwn.sh' } });
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(r.calls, ['node render --allow-unreleased']);
+    assert.equal(r.npx.length, 1);
+    const [seen] = r.npx;
+    assert.notEqual(seen.pwd, cwd);
+    assert.ok(!seen.pwd.startsWith(cwd + path.sep), seen.pwd);
+    assert.deepEqual(seen.entries, ['.npmrc']);
+    assert.equal(fs.readFileSync(path.join(seen.pwd, '.npmrc'), 'utf8'), '');
+    assert.doesNotMatch(seen.registry, /evil\.invalid/);
+    assert.equal(seen.git, null);
+    assert.equal(seen.upper, null);
+    assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/x/SKILL.md')));
   });
 
-  test("the toolkit's own repo installs dependencies first when node_modules is absent", () => {
+  const selfHost = (extra = {}) => {
     lock({ source: 'github:dustinkeeton/wafflestack', ref: null, commit: null, status: 'unreleased' });
     write('installer/cli.mjs', `import fs from 'node:fs';\nfs.appendFileSync(process.env.LOG, 'node ' + process.argv.slice(2).join(' ') + '\\n');\n`);
     exe(path.join(bin, 'npm'), 'echo "npm $*" >> "$LOG"');
-    const r = run({ trusted: 'github:dustinkeeton/wafflestack', repo: 'dustinkeeton/wafflestack' });
+    return run({ repo: 'DustinKeeton/wafflestack', ...extra });
+  };
+
+  test("the toolkit's own repo renders with the trusted default branch's installer, never the PR head's", () => {
+    const r = selfHost({ trusted: 'github:dustinkeeton/wafflestack', lsRemote: `${SHA}\tHEAD\n${PEELED}\trefs/heads/HEAD-x\n` });
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(r.calls, ['npm ci --ignore-scripts', 'node render --allow-unreleased']);
+    assert.deepEqual(r.calls, [
+      'git ls-remote -- https://github.com/dustinkeeton/wafflestack',
+      `npx --yes github:dustinkeeton/wafflestack#${SHA} render --allow-unreleased --cwd ${cwd}`,
+    ]);
+    assert.equal(git('status', '--porcelain'), '');
+  });
+
+  const E = 'e'.repeat(40);
+  for (const [label, ref, lsRemote, sha] of [
+    ['an annotated tag → its peeled commit', 'v1.2.3', `${SHA}\trefs/tags/v1.2.3\n${PEELED}\trefs/tags/v1.2.3^{}\n${E}\trefs/heads/v1.2.3x\n`, PEELED],
+    ['a branch → its tip', 'main', `${SHA}\tHEAD\n${E}\trefs/heads/main\n${PEELED}\trefs/heads/x/main\n`, E],
+  ]) {
+    test(`the toolkit's own repo honors a trusted #ref: ${label}`, () => {
+      const r = selfHost({ trusted: `github:dustinkeeton/wafflestack#${ref}`, lsRemote });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${sha} render --allow-unreleased --cwd ${cwd}`);
+    });
+  }
+
+  test("the toolkit's own repo fails when its trusted ref does not resolve, running nothing", () => {
+    const r = selfHost({ trusted: 'github:dustinkeeton/wafflestack#nope', lsRemote: `${SHA}\tHEAD\n` });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /trusted ref nope was not found/);
+    assert.deepEqual(r.calls, ['git ls-remote -- https://github.com/dustinkeeton/wafflestack']);
   });
 });
 
