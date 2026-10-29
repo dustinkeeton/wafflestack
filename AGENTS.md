@@ -644,7 +644,7 @@ config normalization, frontmatter patch, fixture render + toggle, CLI), `update-
 
 `installer/lib/harness-tools.mjs` is the single place a harness tool rename or removal is
 recorded. `content.test.mjs` ("every tool call is in the harness roster") extracts every
-call-shaped `Name(` from each `stacks/**` skill/agent source, the committed `.claude/` render, a
+call-shaped `Name(` from each `stacks/**` skill/agent source, the tmp self-render (`installer/test/self-render.mjs`), a
 temp all-targets render, and each agent's `tools:` frontmatter, and fails with file, line and
 name on any call outside the target's roster. Maintenance rule: adding a `Tool(` call to any
 skill or agent means adding the name to `HARNESS_TOOLS.<target>` on purpose, in the same PR — a
