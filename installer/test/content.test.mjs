@@ -4975,14 +4975,20 @@ describe('delegate: worktree provisioning renders a gitignored render (#777)', (
   const step = () => md().slice(md().indexOf('**Render a gitignored render into the worktree.**'), md().indexOf('Retain the absolute path'));
 
   test('the step renders only when the render is missing, with this repo\'s commands', () => {
-    assert.match(step(), /^1\. `test -e "\$WORKTREE_PATH\/\.claude\/skills\/delegate\/SKILL\.md"` — exit 0 [^\n]*skip to step 4\.$/m);
-    assert.match(step(), /^2\. With the worktree as the working directory, `npm install`, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render`\.$/m);
+    assert.match(step(), /^1\. `test -e <wt>\/\.claude\/skills\/delegate\/SKILL\.md` — exit 0 [^\n]*skip to step 4\.$/m);
+    assert.match(step(), /^2\. `npm install` with `<wt>` as the working directory, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render --cwd <wt>`\.$/m);
   });
 
   test('it restores touched tracked files and stops on any leftover status', () => {
-    assert.ok(step().includes('`git -C "$WORKTREE_PATH" diff --name-only -z | xargs -0 -r git -C "$WORKTREE_PATH" checkout --`'));
-    assert.match(step(), /^4\. `git -C "\$WORKTREE_PATH" status --porcelain` must print nothing\.$/m);
+    assert.ok(step().includes('`git -C <wt> diff --name-only -z | xargs -0 -r git -C <wt> checkout --`'));
+    assert.match(step(), /^4\. `git -C <wt> status --porcelain` must print nothing\.$/m);
     assert.match(step(), /\*\*stop\*\* before spawning/);
+  });
+
+  test('a clean status is not success: the render must exist after it (#790 F1)', () => {
+    assert.match(step(), /^5\. Re-run step 1's `test -e`: it must exit 0\./m);
+    assert.match(step(), /or step 5 exits non-zero, \*\*stop\*\* before spawning/);
+    assert.doesNotMatch(step(), /\$WORKTREE_PATH/);
   });
 
   test('autopilot cuts its stage-2 and stage-3 worktrees through the same step', () => {
