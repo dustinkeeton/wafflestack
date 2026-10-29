@@ -125,6 +125,45 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- same')(ins('- base added', '- main', '- integ')(BASE)));
   });
 
+  test('a line both sides add at the start of the same point is kept once, as git keeps it (#774)', () => {
+    const fixed = (who) => ins('- base fixed', `- ${who} fixed`);
+    sync({ main: { 'CHANGELOG.md': (s) => fixed('main')(ins('- base added', '- a', '- b')(s)) }, integ: { 'CHANGELOG.md': (s) => fixed('integ')(ins('- base added', '- a')(s)) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main fixed', '- integ fixed')(ins('- base added', '- a', '- b')(BASE)));
+  });
+
+  test('a line both sides add at the end of the same point is kept once, as git keeps it (#774)', () => {
+    const fixed = (who) => ins('- base fixed', `- ${who} fixed`);
+    sync({ main: { 'CHANGELOG.md': (s) => fixed('main')(ins('- base added', '- b', '- a')(s)) }, integ: { 'CHANGELOG.md': (s) => fixed('integ')(ins('- base added', '- a')(s)) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main fixed', '- integ fixed')(ins('- base added', '- b', '- a')(BASE)));
+  });
+
+  test('a shared start and end are each kept once around a middle only main adds (#774)', () => {
+    const fixed = (who) => ins('- base fixed', `- ${who} fixed`);
+    sync({ main: { 'CHANGELOG.md': (s) => fixed('main')(ins('- base added', '- a', '- b', '- c')(s)) }, integ: { 'CHANGELOG.md': (s) => fixed('integ')(ins('- base added', '- a', '- c')(s)) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main fixed', '- integ fixed')(ins('- base added', '- a', '- b', '- c')(BASE)));
+  });
+
+  test('each side keeps its own blank separator at the same point (#774)', () => {
+    sync({ main: { 'CHANGELOG.md': above('### Fixed', '- m', '') }, integ: { 'CHANGELOG.md': above('### Fixed', '- g', '') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), above('### Fixed', '- m', '', '- g', '')(BASE));
+  });
+
+  test('an identical addition ending in a blank line is kept once (#774)', () => {
+    const side = (who) => (s) => ins('- base fixed', `- ${who}`)(ins('- base added', '- same', '')(s));
+    sync({ main: { 'CHANGELOG.md': side('main') }, integ: { 'CHANGELOG.md': side('integ') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main', '- integ')(ins('- base added', '- same', '')(BASE)));
+  });
+
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
     sync({
       main: { 'CHANGELOG.md': ins('- base added', '- from main'), [LOCK]: '{"v":2}\n' },
@@ -184,6 +223,10 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
 
   test('a side adding a conflict-marker-shaped line holds', () => {
     hold({ main: main((s) => s), integ: { 'CHANGELOG.md': ins('- base added', '<<<<<<< HEAD') } }, /^HOLD: a side adds a conflict-marker-shaped line to CHANGELOG\.md$/m);
+  });
+
+  test('a line both sides add among different lines at the same point holds (#774)', () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '- x', '- a') }, integ: { 'CHANGELOG.md': ins('- base added', '- a', '- y') } }, /^HOLD: main and integ both add "- a" at the same point/);
   });
 
   test('CHANGELOG.md plus another non-lock path holds', () => {

@@ -98,13 +98,27 @@ function check({ dir, path: file }) {
   return { file, lines, ours, theirs, ...sides };
 }
 
-/** Walk the base; after each base line emit main's inserted lines, then integ's — once if identical, as git does. */
+const blank = (l) => l.trim() === '';
+
+/** Walk the base; after each base line emit main's inserted lines, then integ's, keeping a shared start or end once, as git does. */
 function merge({ lines, main, integ }) {
   const at = (hunks, i) => hunks.filter((h) => h.at === i).flatMap((h) => h.lines);
   const both = (i) => {
     const m = at(main, i);
     const g = at(integ, i);
-    return m.length === g.length && m.every((l, k) => l === g[k]) ? m : [...m, ...g];
+    if (m.length === g.length && m.every((l, k) => l === g[k])) return m;
+    const n = Math.min(m.length, g.length);
+    let p = 0;
+    while (p < n && m[p] === g[p]) p++;
+    let s = 0;
+    while (s < n - p && m[m.length - 1 - s] === g[g.length - 1 - s]) s++;
+    while (p && blank(m[p - 1])) p--;
+    while (s && blank(m[m.length - s])) s--;
+    const mm = m.slice(p, m.length - s);
+    const gm = g.slice(p, g.length - s);
+    const dup = mm.find((l) => !blank(l) && gm.includes(l));
+    if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup)} at the same point, among different lines`);
+    return [...m.slice(0, p), ...mm, ...gm, ...m.slice(m.length - s)];
   };
   const out = both(0);
   lines.forEach((l, i) => out.push(l, ...both(i + 1)));

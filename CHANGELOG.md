@@ -249,6 +249,14 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **The integration sync's CHANGELOG merge no longer writes a partly shared bullet twice (#774,
+  part of #720).** When main and the integration branch added lines at the same point and one
+  side's lines started or ended with the other's, the shared line was written twice. It is now kept
+  once, as git keeps it. A shared line in the middle of two different additions holds. Each side's
+  blank separator is kept.
+
+  **Consumer impact:** re-render only.
+
 - **Autopilot integration stage 2 catches a responder that commits in the main checkout (#767,
   part of #720).** The outside-worktree guard compared only the main checkout's status and branch,
   so a responder that committed on the current branch slipped past it. Stage 2 now also records
