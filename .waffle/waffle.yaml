@@ -1,8 +1,6 @@
-# wafflestack dogfoods itself. The rendered .claude/ output and the lock are COMMITTED, and the
-# doctor drift gate (required check on main) protects them from hand-edits. Still gitignored:
-# the label-hook workflow (committing it would arm a live dispatch) — hence doctor's
-# --allow-missing — and the .waffle/ overview docs, which doctor treats as presence-optional
-# on its own (#528). After a stack edit, re-render and commit render + lock:
+# wafflestack dogfoods itself, lock-only (Posture 2b, #777): this config, extensions/ and the
+# lock are committed; the .claude/ render is gitignored. tests.yml's doctor --verify-render gates
+# the lock. After a pull or a stack edit, re-render and commit the LOCK:
 #   node installer/cli.mjs render --allow-unreleased
 # (#373: `render` refuses from a non-release toolkit, and a working tree never is one.)
 targets: [ claude ]
@@ -71,7 +69,7 @@ config:
     toolkitRef: github:dustinkeeton/wafflestack
   waffle:
     # Unpinned for the same reason as doctor.toolkitRef (#469); a pin would also churn the
-    # committed render on every version bump.
+    # lock on every version bump.
     toolkitRef: github:dustinkeeton/wafflestack
   hygiene:
     # The docs skill's audit pass runs the toolkit CLI directly, which the baked allowlist does
@@ -134,11 +132,11 @@ config:
       - Changed installer exports or template semantics (`installer/lib/*.mjs`)
       - `stack.yaml` config declarations out of sync with placeholder usage
       - Rendered-output drift: `node installer/cli.mjs doctor --allow-missing` clean
-        (committed render + lock in sync — re-render and commit after stack edits, with
+        (lock in sync — re-render and commit the lock after stack edits, with
         `node installer/cli.mjs render --allow-unreleased`: #373 makes `render` refuse from a
         non-release toolkit, and a branch checkout never is one; plain `doctor` needs no flag);
-        `.gitignore` still covers the deliberately-untracked renders (label-hook
-        workflow, worktrees, `.waffle/` overview docs)
+        `.gitignore` still covers the deliberately-untracked renders (the `.claude/` render,
+        label-hook workflow, worktrees, `.waffle/` overview docs)
   roster:
     # Architecture here IS the installer/stack/harness design, so architectAgent routes to
     # harness-architect. No security-engineer is installed; securityAgent stays general-purpose.
@@ -174,11 +172,11 @@ config:
     defaultScope: all-open
     extraPreflight: |-
       - `npm run validate` passes after any stack/manifest edit
-      - If `stacks/**` changed: re-run `node installer/cli.mjs render --allow-unreleased` and commit the updated render + lock (the doctor CI gate fails on drift) — never hand-edit rendered `.claude/` output. The flag is required (#373): `render` refuses from a toolkit that is not at a release tag, and a feature branch never is. It suppresses the refusal, not the truth.
+      - If `stacks/**` changed: re-run `node installer/cli.mjs render --allow-unreleased` and commit the updated lock (`.waffle/waffle.lock.json`; tests.yml's `doctor --verify-render` fails on drift). The `.claude/` render is gitignored (#777): never `git add -f` it, and never hand-edit it. The flag is required (#373): `render` refuses from a toolkit that is not at a release tag, and a feature branch never is. It suppresses the refusal, not the truth.
   autopilot:
     # The working tree is the toolkit here; the npx default would fetch a release instead.
     waffleCmd: env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs
-    # --verify-render catches a sync merge that left the committed render stale; the comment
+    # --verify-render catches a sync merge that left the lock stale; the comment
     # gate exists only in this repo.
     integrationChecks:
       - "{{autopilot.waffleCmd}} doctor --allow-missing --verify-render"

@@ -208,10 +208,11 @@ describe('comment gate (DECISIONS.md #388)', () => {
     }
   });
 
-  test('GRANDFATHERED lists only files that still exist', () => {
+  test('GRANDFATHERED lists only files that are still tracked', () => {
+    const tracked = trackedSet();
     for (const r of Object.keys(GRANDFATHERED)) {
       assert.ok(
-        fs.existsSync(path.join(ROOT, r)),
+        tracked ? tracked.has(r) : fs.existsSync(path.join(ROOT, r)),
         `${r} is gone — delete its GRANDFATHERED entry`,
       );
     }

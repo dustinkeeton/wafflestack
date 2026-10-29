@@ -646,12 +646,13 @@ from the render. Then commit. Re-arm pr-green and pr-response together: pr-respo
 target PR from an artifact pr-green uploads, so without pr-green every pr-response run skips. See
 [DECISIONS.md](DECISIONS.md#2026-07-15-the-paid-claude-dispatch-hooks-are-disarmed-while-the-repo-carries-no-api-key-396).
 
-The rendered output (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json` — which also enables the `waffle-view` mod)
-and the lock (`.waffle/waffle.lock.json`) are **committed**, exactly like a real
-consuming project — the `waffle-doctor` drift gate (a required check on `main`) can
-only compare against a render + lock that live in git, and CI-dispatched harness runs
-read the committed skills when a hook is armed. So after any `stacks/**` change you
-must **re-render and commit** the updated files:
+This repo is **lock-only** (Posture 2b, #777). The lock (`.waffle/waffle.lock.json`), the
+config, the extensions, the rendered `.github/` workflows and `.claude/settings.json` (which
+also enables the `waffle-view` mod) are **committed**; the rendered `.claude/agents/`,
+`.claude/skills/` and `.claude/workflows/` are **gitignored**. Nothing in CI reads a committed
+skill any more — the hygiene hook renders what it needs (#615) — and a committed render turned
+every re-render with a local overlay into a tracked diff. So after a pull or any `stacks/**`
+change you must **re-render**, and commit the updated lock:
 
 ```bash
 node installer/cli.mjs render --allow-unreleased
@@ -662,10 +663,10 @@ not at a release tag, and a feature-branch working tree never is. It suppresses 
 refusal, not the truth — the identity still resolves to `unreleased`, which is what keeps
 this repo's own dogfooded lock honest rather than merely permitted.
 
-Two required checks then guard the committed render from different angles. The
-`waffle-doctor` drift gate re-hashes the committed files against the committed lock. But a
-forgotten re-render leaves files and lock stale *together* — they agree with each other,
-so that gate stays green — which is why the `tests` workflow ends with
+The lock is what CI guards. The `waffle-doctor` drift gate re-hashes the lock-managed files
+that are present (the `.github/` workflows, the settings keys) against the lock, but a
+forgotten re-render leaves a stale lock that nothing on disk contradicts — which is why the
+`tests` workflow ends with
 `WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs doctor --allow-missing --verify-render`,
 run with the checkout's own CLI: it re-renders the PR's committed inputs into a temp dir and
 diffs the result against the committed lock (#314/#316). The env twin is shown inline because
@@ -676,7 +677,12 @@ checkout's CLI (not the shipped
 `doctor.flags` route) because the shipped workflow fetches the toolkit from `main` — the
 wrong toolkit for the toolkit's own PRs.
 
-A few things stay deliberately untracked. `.claude/worktrees/` (throwaway working
+Tests never read the working tree's `.claude/`: `installer/test/self-render.mjs` renders the
+committed inputs (never the overlay) into a temp dir once per test process, and
+`self-posture.test.mjs` fails if the render is ever re-tracked. A fresh worktree has no render
+either, so delegate and autopilot render one into each worktree they cut.
+
+A few things stay deliberately untracked. The `.claude/` render, `.claude/worktrees/` (throwaway working
 state), `.codex/` and `.agents/` (non-targets — this repo only renders `claude`), and the
 `waffle-label-hook.yml` workflow (committing it would arm a live label→harness dispatch)
 are why `doctor` runs with `--allow-missing`. The generated `.waffle/` overview docs

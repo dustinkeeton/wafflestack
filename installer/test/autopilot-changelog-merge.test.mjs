@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readRendered } from './self-render.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
@@ -311,7 +312,7 @@ describe('changelog-merge.mjs usage (#759)', () => {
 });
 
 describe('changelog-merge.mjs renders next to the skill (#759)', () => {
-  const src = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+  const src = (rel) => (rel.startsWith('.claude/') ? readRendered(rel) : fs.readFileSync(path.join(repoRoot, rel), 'utf8'));
 
   test('the rendered script equals its source, which carries no placeholder', () => {
     assert.equal(src('.claude/skills/autopilot/changelog-merge.mjs'), src('stacks/orchestration/skills/autopilot/changelog-merge.mjs'));

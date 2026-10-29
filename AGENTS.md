@@ -588,19 +588,19 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2090 tests, 284 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2110 tests, 288 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
-| render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — flag REQUIRED (#373: a working tree is never at a release tag). Commit the updated render + lock (the doctor drift gate is a required check) |
+| render (dogfood) | `node installer/cli.mjs render --allow-unreleased` — flag REQUIRED (#373: a working tree is never at a release tag). Commit the updated lock (`.waffle/waffle.lock.json`); the `.claude/` render is gitignored (#777) — `doctor --verify-render` in `tests.yml` gates the lock |
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
 | evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 28 cases: `code-quality` (2) + `github-workflow` (15) + `orchestration` (5) + `wafflestack` (6). NOT in `npm test` |
 
 Test files (34): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
-1, #108: key-phrase assertions pinning load-bearing guardrails in the committed render AND every
+1, #108: key-phrase assertions pinning load-bearing guardrails in the self-render (a tmp render of the committed config, `installer/test/self-render.mjs`, #777) AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
-can-fail fixture, `content.test.mjs:3897`; the #511 block `autopilot skill: the manual-review queue has a service level (#511)` (`content.test.mjs:1296`); and the #445 harness tool allowlist sweep — sources, committed render, temp all-targets render, agent `tools:` frontmatter — with its own can-fail fixtures), `plugins.test.mjs` (#199: `recommendedPlugins:`
+can-fail fixture, `content.test.mjs:3897`; the #511 block `autopilot skill: the manual-review queue has a service level (#511)` (`content.test.mjs:1296`); and the #445 harness tool allowlist sweep — sources, self-render, temp all-targets render, agent `tools:` frontmatter — with its own can-fail fixtures), `plugins.test.mjs` (#199: `recommendedPlugins:`
 normalize/offer/lint over a one-stack fixture),
 `evals.test.mjs` (eval layer 2 harness with the mock model, free inside `npm test`),
 `checkpoint.test.mjs` / `memory.test.mjs` / `identity.test.mjs` (the delegate skill's shipped
@@ -644,7 +644,7 @@ config normalization, frontmatter patch, fixture render + toggle, CLI), `update-
 
 `installer/lib/harness-tools.mjs` is the single place a harness tool rename or removal is
 recorded. `content.test.mjs` ("every tool call is in the harness roster") extracts every
-call-shaped `Name(` from each `stacks/**` skill/agent source, the committed `.claude/` render, a
+call-shaped `Name(` from each `stacks/**` skill/agent source, the tmp self-render (`installer/test/self-render.mjs`), a
 temp all-targets render, and each agent's `tools:` frontmatter, and fails with file, line and
 name on any call outside the target's roster. Maintenance rule: adding a `Tool(` call to any
 skill or agent means adding the name to `HARNESS_TOOLS.<target>` on purpose, in the same PR — a
@@ -662,7 +662,7 @@ This repo renders 5 stacks into itself — `github-workflow`, `docs-system`, `or
 `code-quality/skills/adversarial-review` (run by pr-green when armed), `code-quality/skills/qa`
 (autopilot's opt-in QA gate), and the two orchestration syrup scripts
 `files/.claude/workflows/audit-stage-{1,2}.js` (#363: inert until a session invokes them, no spend —
-poured so the render + lock exercise the opt-in `targets:` path; tracked in git), and
+poured so the render + lock exercise the opt-in `targets:` path; gitignored with the rest of the `.claude/` render), and
 `files/.github/workflows/waffle-hygiene.yml` (`waffle.yaml:22`). Paid Claude-dispatch hooks: hygiene is
 ARMED — PR #495 re-added its `include:` line, PR #496 dropped its `eject:` entry and re-rendered, so
 `.github/workflows/waffle-hygiene.yml` is lock-managed (`waffle.lock.json:83`) and tracked in git (cron
@@ -671,10 +671,14 @@ pr-green and pr-response stay DISARMED: `eject:` holds both `files/` refs (`waff
 neither is in `include:`, the lock tracks neither rendered path, and neither file exists under
 `.github/workflows/`. Re-arm one (#343): `install <files/ref>` — un-ejects it, adds the `include:` entry and renders (`eject.mjs:169-180`, `cli.mjs:79-80`; a differing project-owned copy refuses and rolls back without `--force`) — then commit.
 
-The render (`.claude/agents/`, `.claude/skills/`, `.claude/settings.json` — whose `waffle-view@wafflestack` entries are lock-managed, #594) and the lock are
-COMMITTED, like a consuming project — the doctor drift gate (required check on main) needs render
-+ lock in git. Re-render AND commit after editing `stacks/**`. Gitignored deliberate absences,
-tolerated by doctor's `--allow-missing`: `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
+Lock-only (Posture 2b, #777): `.waffle/waffle.yaml`, `.waffle/extensions/`, the lock, the rendered
+`.github/` files and `.claude/settings.json` (project-owned; its `waffle-view@wafflestack` entries are
+lock-managed, #594) are COMMITTED; the `.claude/` render (`agents/`, `skills/`, `workflows/`) is
+gitignored (`/.claude/{skills,agents,workflows}/*`, so `!` can re-include an ejected item).
+Re-render after a pull or a `stacks/**` edit and commit the LOCK; `self-posture.test.mjs` fails if
+the render is re-tracked. Delegate/autopilot render into a fresh worktree that lacks it (delegate
+**Render a gitignored render into the worktree**). Gitignored deliberate absences,
+tolerated by doctor's `--allow-missing`: the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
 `.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the
 generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, both `.html`, `AVATARS.md`,
 `avatars/`, `waffle.reference.yaml`).

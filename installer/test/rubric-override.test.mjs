@@ -6,12 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
+import { readRendered } from './self-render.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
-const rendered = () => read('.claude/skills/pr-response/SKILL.md');
+const rendered = () => readRendered('.claude/skills/pr-response/SKILL.md');
 const section = (md, from, to) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
 const tableRows = (md) => [...md.matchAll(/^\| `(\w+)` \| `(prResponse\.rubric\.[\w.]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/gm)];
 
