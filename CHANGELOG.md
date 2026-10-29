@@ -238,6 +238,20 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot integration stage 2 no longer hangs on a conflicting final PR, needs proof its review
+  landed, and runs its responder in its own worktree (#754, part of #720).** Stage 2's green wait
+  now ends on Step 8's blocked exits (red, `DIRTY`, `CLOSED`, or a two-hour stall) as an
+  integration hold, so a final PR that conflicts with `main` and gets no CI no longer waits forever.
+  A round passes only when `<sha>` also carries a `waffle/adversarial-review` success status, so a
+  reviewer whose post failed can no longer count as clean. The responder works in an
+  orchestrator-cut `autopilot-stage2-<ts>` worktree, never the main checkout. pr-response's
+  `## Fix branch` block now also overrides §1's `gh pr checkout`. A retried round uses a
+  `-r<k>-retry` branch, and leftover local `autopilot/stage2/<ts>-*` branches are deleted. Until
+  #758 lands, a clean round whose reviewer was refused the status write holds instead of passing.
+  This fails closed.
+
+  **Consumer impact:** re-render only. It matters only with integration mode and the review loop on.
+
 - **Autopilot's overwrite detector judges the commit that removed a line (#752).** Integration
   stage 1 read only where the remover's branch first forked, so an intentional edit made after a
   clean catch-up merge (the normal `pr-docs` flow) held the final PR as an OVERWRITE. It now walks
