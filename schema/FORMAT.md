@@ -773,7 +773,9 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   (and is removed when that stops). Working-tree checks — `doctor` drift, `list`,
   `render`'s prune and overwrite bookkeeping — read it in preference to the committed
   lock, so a hand-edit is still caught locally while the committed lock stays canonical
-  and your private overlay values never reach a teammate or CI through it.
+  and your private overlay values never reach a teammate or CI through it. `render`,
+  `upgrade` and `doctor` warn about any file whose hashes differ between the two locks and
+  that git would still commit (#614).
 - `.waffle/CHEATSHEET.md`, `.waffle/TEAM.md`, `.waffle/cheatsheet.html`, `.waffle/team.html`,
   `.waffle/waffle.reference.yaml` (generated) — overview docs describing the installed selection (see *Generated overview
   docs* below). Managed like any rendered output: lock-tracked, drift-flagged, refreshed and

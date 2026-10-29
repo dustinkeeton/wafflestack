@@ -1,5 +1,6 @@
 // @ts-check
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import YAML from 'yaml';
@@ -187,6 +188,49 @@ export function gitignoreMentions(cwd, entry) {
   const gi = path.join(cwd, '.gitignore');
   if (!exists(gi)) return false;
   return fs.readFileSync(gi, 'utf8').includes(path.basename(entry));
+}
+
+/**
+ * Ask git which of `paths` are ignored and which are tracked — honours every exclude source.
+ * `null` when `cwd` is not a git work tree or git is unavailable.
+ *
+ * @param {string} cwd
+ * @param {string[]} paths repo-relative
+ * @param {(args: string[], input?: string) => { status: number|null, stdout: string, error?: Error }} [runGit]
+ * @returns {{ ignored: Set<string>, tracked: Set<string>, beyondSymlink: Set<string> } | null}
+ */
+export function gitIgnoreStatus(cwd, paths, runGit = defaultRunGit(cwd)) {
+  // git cannot commit these, and one in a `check-ignore` batch fails the whole batch (exit 128).
+  const beyondSymlink = new Set(paths.filter((p) => hasSymlinkedParent(cwd, p)));
+  const queried = paths.filter((p) => !beyondSymlink.has(p));
+  if (!queried.length) return { ignored: new Set(), tracked: new Set(), beyondSymlink };
+  const check = runGit(['check-ignore', '--stdin', '-z'], queried.join('\0'));
+  if (check.error || (check.status !== 0 && check.status !== 1)) return null;
+  const listed = runGit(['ls-files', '-z', '--', ...queried]);
+  if (listed.error || listed.status !== 0) return null;
+  const split = (/** @type {string} */ out) => new Set(out.split('\0').filter(Boolean));
+  return { ignored: split(check.stdout), tracked: split(listed.stdout), beyondSymlink };
+}
+
+/** @param {string} cwd @param {string} rel */
+function hasSymlinkedParent(cwd, rel) {
+  const parts = rel.split('/').slice(0, -1);
+  for (let i = 1; i <= parts.length; i++) {
+    try {
+      if (fs.lstatSync(path.join(cwd, ...parts.slice(0, i))).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** @param {string} cwd */
+function defaultRunGit(cwd) {
+  return (/** @type {string[]} */ args, /** @type {string|undefined} */ input) => {
+    const res = spawnSync('git', ['-C', cwd, ...args], { input, encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] });
+    return { status: res.status, stdout: res.stdout ?? '', error: res.error };
+  };
 }
 
 // Marker prefixing wafflestack's own appended block, so a human scanning `.gitignore` can see

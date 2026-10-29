@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sha256, exists, compareVersions, parseVersion } from './util.mjs';
-import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems } from './render.mjs';
+import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems, overlayLeaks as findOverlayLeaks, overlayLeakRemedy } from './render.mjs';
 import {
   LOCK_FILE,
   LOCAL_LOCK_FILE,
@@ -37,17 +37,18 @@ function noVerify() {
  * `canonical: true` (#473) reads the committed lock and config ONLY: neither the local overlay nor
  * the local lock is opened, so the result carries nothing from either.
  */
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null }) {
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null, checkOverlayLeaks = true }) {
   const lock = readLock(cwd);
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
     const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
-    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [] };
+    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [] };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
   const tree = canonical ? lock : readTreeLock(cwd);
   // EXISTS, not `tree !== lock`: readLock re-parses per call, so the fallback is equal-but-distinct.
-  const localRender = !canonical && readLocalLock(cwd) !== null;
+  const localLock = canonical ? null : readLocalLock(cwd);
+  const localRender = localLock !== null;
 
   const attribution = {};
   for (const src of tree.sources ?? []) {
@@ -86,6 +87,20 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     notes.push(
       `${LOCAL_CONFIG_FILE} feeds this machine's render, so the files on disk were checked against ${LOCAL_LOCK_FILE} (this machine's render); ${LOCK_FILE} records the canonical render and is the one you commit`,
     );
+  }
+  // Informational only (#614): never flips `ok`.
+  /** @type {string[]} */
+  let overlayLeaks = [];
+  /** @type {string[]} */
+  let trackedOverlayLeaks = [];
+  if (localLock && checkOverlayLeaks) {
+    const leaks = findOverlayLeaks(cwd, lock.files, localLock.files);
+    if (!leaks) notes.push('could not check whether overlay-fed renders are gitignored (not a git work tree, or git not found)');
+    else if (leaks.length) {
+      overlayLeaks = leaks.map((l) => l.path);
+      trackedOverlayLeaks = leaks.filter((l) => l.tracked).map((l) => l.path);
+      notes.push(`${leaks.length} file(s) embed ${LOCAL_CONFIG_FILE} values and are tracked or not gitignored — committing them publishes those values and fails CI doctor; ${overlayLeakRemedy(leaks)}`);
+    }
   }
   const rendered = lock.toolkitVersion ?? 'unknown (pre-versioned lock)';
   notes.push(
@@ -193,7 +208,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
 
   const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
   const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
-  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods };
+  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */

@@ -37,6 +37,7 @@ import {
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   gitignoreMentions,
+  gitIgnoreStatus,
   resolveLockFile,
   resolveLocalConfigFile,
   localLockPath,
@@ -255,6 +256,8 @@ export function renderProject({
   // Written only when the overlay actually moved a byte, and removed again the moment that stops
   // being true — a stale local lock would describe a tree that no longer exists.
   const localLockFile = localLockPath(cwd);
+  /** @type {OverlayLeak[]} */
+  let leaks = [];
   const overlayChangedTheRender =
     JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles) ||
     JSON.stringify(effectiveSettings) !== JSON.stringify(canonicalSettings);
@@ -285,6 +288,8 @@ export function renderProject({
           `\`--gitignore\`). ${LOCK_FILE} stays canonical and is the one to commit.`,
       );
     }
+    leaks = overlayLeaks(cwd, canonicalFiles, effectiveFiles) ?? [];
+    warnings.push(...overlayLeakWarnings(leaks));
   } else if (exists(localLockFile)) {
     fs.rmSync(localLockFile);
   }
@@ -299,7 +304,74 @@ export function renderProject({
     sources,
     toolkit: toolkitBlock,
     identity: toolkitIdentity,
+    overlayLeaks: leaks.map((l) => l.path),
   };
+}
+
+/** @typedef {{ path: string, tracked: boolean, overlayOnly?: boolean }} OverlayLeak */
+
+/**
+ * Paths whose effective (overlay-fed) hash differs from the canonical one, effective-only included.
+ *
+ * @param {Record<string, string>} canonicalFiles
+ * @param {Record<string, string>} effectiveFiles
+ * @returns {string[]}
+ */
+export function overlayDivergentFiles(canonicalFiles, effectiveFiles) {
+  return Object.keys(effectiveFiles).filter((k) => canonicalFiles[k] !== effectiveFiles[k]).sort();
+}
+
+/**
+ * Overlay-divergent paths git would let you commit (#614); `null` when git cannot say.
+ *
+ * @param {string} cwd
+ * @param {Record<string, string>} canonicalFiles
+ * @param {Record<string, string>} effectiveFiles
+ * @param {Parameters<typeof gitIgnoreStatus>[2]} [runGit]
+ * @returns {OverlayLeak[] | null}
+ */
+export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
+  const divergent = overlayDivergentFiles(canonicalFiles, effectiveFiles);
+  const status = gitIgnoreStatus(cwd, divergent, runGit);
+  if (!status) return null;
+  return divergent
+    .filter((p) => !status.beyondSymlink.has(p) && (status.tracked.has(p) || !status.ignored.has(p)))
+    .map((p) => ({ path: p, tracked: status.tracked.has(p), overlayOnly: !(p in canonicalFiles) }));
+}
+
+const POSTURE_2B_REMEDY =
+  'move to lock-only Posture 2b: gitignore the whole render ' +
+  'and gate CI with `doctor --allow-missing --verify-render` (docs/gitignore.md#posture-2b-commit-the-lock-only)';
+// A lock-tracked path that goes absent fails a plain CI doctor `missing:` (Posture 1's default flags).
+const POSTURE_2_CLAUSE = 'and set `doctor.flags: --allow-missing` (Posture 2)';
+const OVERLAY_LEAK_REMEDY = `gitignore them (\`wafflestack render --gitignore\` adds them) ${POSTURE_2_CLAUSE}, or ${POSTURE_2B_REMEDY}`;
+
+/**
+ * The remedy for these leaks: `render --gitignore` skips tracked paths, so only offer it for an untracked one.
+ *
+ * @param {OverlayLeak[]} leaks
+ */
+export function overlayLeakRemedy(leaks) {
+  return leaks.some((l) => !l.tracked) ? OVERLAY_LEAK_REMEDY : `\`git rm --cached\` and gitignore them ${POSTURE_2_CLAUSE}, or ${POSTURE_2B_REMEDY}`;
+}
+
+/**
+ * @param {OverlayLeak[]} leaks
+ * @returns {string[]}
+ */
+export function overlayLeakWarnings(leaks) {
+  if (!leaks.length) return [];
+  const lines = leaks.map((l) => {
+    // The canonical lock never lists an overlay-only path, so CI doctor cannot flag it.
+    const what = l.overlayOnly
+      ? `renders only from ${LOCAL_CONFIG_FILE} (the canonical render has no such file)`
+      : `embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render)`;
+    const harm = l.overlayOnly ? "publishes your overlay's output" : 'publishes them and fails CI doctor';
+    return l.tracked
+      ? `${l.path} ${what} and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit ${harm}`
+      : `${l.path} ${what} and is not gitignored — committing it ${harm}`;
+  });
+  return [...lines, `${leaks.length} overlay-fed render(s) are not safe to commit: ${overlayLeakRemedy(leaks)}`];
 }
 
 /**
