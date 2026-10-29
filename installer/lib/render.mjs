@@ -361,13 +361,16 @@ export function overlayLeakRemedy(leaks) {
  */
 export function overlayLeakWarnings(leaks) {
   if (!leaks.length) return [];
-  const lines = leaks.map((l) =>
-    l.tracked
-      ? `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit publishes them and fails CI doctor`
-      : l.overlayOnly
-        ? `${l.path} renders only from ${LOCAL_CONFIG_FILE} (the canonical render has no such file) and is not gitignored — committing it publishes your overlay's output`
-        : `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is not gitignored — committing it publishes them and fails CI doctor`,
-  );
+  const lines = leaks.map((l) => {
+    // The canonical lock never lists an overlay-only path, so CI doctor cannot flag it.
+    const what = l.overlayOnly
+      ? `renders only from ${LOCAL_CONFIG_FILE} (the canonical render has no such file)`
+      : `embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render)`;
+    const harm = l.overlayOnly ? "publishes your overlay's output" : 'publishes them and fails CI doctor';
+    return l.tracked
+      ? `${l.path} ${what} and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit ${harm}`
+      : `${l.path} ${what} and is not gitignored — committing it ${harm}`;
+  });
   return [...lines, `${leaks.length} overlay-fed render(s) are not safe to commit: ${overlayLeakRemedy(leaks)}`];
 }
 

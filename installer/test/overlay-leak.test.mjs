@@ -179,9 +179,11 @@ describe('overlay leak warning (#614)', () => {
   });
 
   test('an overlay-only path is worded as such, without the CI doctor claim', () => {
-    const [line] = overlayLeakWarnings([{ path: 'x.md', tracked: false, overlayOnly: true }]);
-    assert.match(line, /renders only from/);
-    assert.doesNotMatch(line, /fails CI doctor/);
+    for (const tracked of [false, true]) {
+      const [line] = overlayLeakWarnings([{ path: 'x.md', tracked, overlayOnly: true }]);
+      assert.match(line, /renders only from/);
+      assert.doesNotMatch(line, /fails CI doctor/);
+    }
   });
 
   test('overlayLeaks returns null without git; warnings are empty for no leaks', () => {
