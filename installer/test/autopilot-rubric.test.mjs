@@ -6,13 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
+import { readRendered } from './self-render.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const SKILL = '.claude/skills/autopilot/SKILL.md';
 const SOURCE = 'stacks/orchestration/skills/autopilot/SKILL.md';
-const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+const read = (rel) => (rel.startsWith('.claude/') ? readRendered(rel) : fs.readFileSync(path.join(repoRoot, rel), 'utf8'));
 const section = (md, from, to) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
 const SUB = '### Rubric override — optional, per-run, never stored';
 const override = () => section(read(SKILL), SUB, '## Per-issue loop');

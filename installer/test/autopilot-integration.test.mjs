@@ -8,13 +8,14 @@ import { renderProject } from '../lib/render.mjs';
 import { loadToolkit } from '../lib/toolkit.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
 import { makeResolver } from '../lib/project.mjs';
+import { readRendered } from './self-render.mjs';
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const SKILL = '.claude/skills/autopilot/SKILL.md';
 const SOURCE = 'stacks/orchestration/skills/autopilot/SKILL.md';
-const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+const read = (rel) => (rel.startsWith('.claude/') ? readRendered(rel) : fs.readFileSync(path.join(repoRoot, rel), 'utf8'));
 const section = (md, from, to) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
 const orchestration = () => loadToolkit(repoRoot).stacks.get('orchestration');
 

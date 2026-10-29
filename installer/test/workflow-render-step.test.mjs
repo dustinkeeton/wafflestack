@@ -416,3 +416,19 @@ describe('render --untrusted-config: a PR-head config runs no prerequisite check
     assert.equal(ran(cwd, 'core'), true, 'control: a normal render probes');
   });
 });
+
+// #777: this repo gitignores its .claude/ render, so its project-owned workflows must read none of it.
+describe("this repo's project-owned workflows read no rendered resource (#777)", () => {
+  const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, '.waffle/waffle.lock.json'), 'utf8'));
+  const own = fs.readdirSync(path.join(ROOT, '.github/workflows'))
+    .filter((f) => f.endsWith('.yml') && !(`.github/workflows/${f}` in lock.files));
+
+  test('the sweep sees tests.yml', () => assert.ok(own.includes('tests.yml'), own.join(', ')));
+  for (const name of own) {
+    test(`${name}: no reader step`, () => {
+      const wf = parseWorkflow(fs.readFileSync(path.join(ROOT, '.github/workflows', name), 'utf8'));
+      assert.deepEqual(auditWorkflow(name, wf).readers, []);
+    });
+  }
+});
