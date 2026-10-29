@@ -21,7 +21,9 @@ always the right answer.
 merge base, adds lines and removes or edits none, every added line falls inside the base's single
 `## [Unreleased]` section, and no added line is a heading. Additions in different `###`
 subsections of that section are allowed. The merged file keeps main's lines, then the integration
-branch's. Anything else aborts and holds as before, so the run still never picks a winner.
+branch's. A line both sides add at the start or end of the same point is kept once, as git keeps
+it. The same line added in the middle of two different additions holds. Anything else aborts and
+holds as before, so the run still never picks a winner.
 
 **Alternatives**:
 - *`CHANGELOG.md merge=union` in `.gitattributes`.* Rejected: it applies to every merge in the
