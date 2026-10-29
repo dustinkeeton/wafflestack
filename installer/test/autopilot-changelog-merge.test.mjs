@@ -180,6 +180,31 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- main', '- integ')(ins('- base added', '- same', '')(BASE)));
   });
 
+  const entry = (t, impact = 're-render only.') => [`- **${t}.** ${t} body`, `  continues ${t}.`, '', `  **Consumer impact:** ${impact}`, ''];
+
+  test('different entries ending in the same Consumer impact line are both kept whole (#783)', () => {
+    sync({ main: { 'CHANGELOG.md': above('- base fixed', ...entry('Main')) }, integ: { 'CHANGELOG.md': above('- base fixed', ...entry('Integ')) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), above('- base fixed', ...entry('Main'), ...entry('Integ'))(BASE));
+  });
+
+  test('a Consumer impact line shared inside different entries does not hold (#783)', () => {
+    const m = [...entry('A'), ...entry('B', 'none.')];
+    const g = [...entry('G'), ...entry('H', 'other.')];
+    sync({ main: { 'CHANGELOG.md': above('- base fixed', ...m) }, integ: { 'CHANGELOG.md': above('- base fixed', ...g) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), above('- base fixed', ...m, ...g)(BASE));
+  });
+
+  test('a whole multi-line entry both sides start or end with is kept once (#783)', () => {
+    sync({ main: { 'CHANGELOG.md': above('- base fixed', ...entry('S'), ...entry('M'), ...entry('T')) }, integ: { 'CHANGELOG.md': above('- base fixed', ...entry('S'), ...entry('T')) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), above('- base fixed', ...entry('S'), ...entry('M'), ...entry('T'))(BASE));
+  });
+
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
     sync({
       main: { 'CHANGELOG.md': ins('- base added', '- from main'), [LOCK]: '{"v":2}\n' },
@@ -243,6 +268,11 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
 
   test('a line both sides add among different lines at the same point holds (#774)', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '- x', '- a') }, integ: { 'CHANGELOG.md': ins('- base added', '- a', '- y') } }, /^HOLD: main and integ both add "- a" at the same point/);
+  });
+
+  test('a whole entry both sides add among different entries at the same point holds (#783)', () => {
+    const e = (t) => [`- **${t}.** ${t} body`, '', '  **Consumer impact:** re-render only.', ''];
+    hold({ main: { 'CHANGELOG.md': above('- base fixed', ...e('X'), ...e('S')) }, integ: { 'CHANGELOG.md': above('- base fixed', ...e('S'), ...e('Y')) } }, /^HOLD: main and integ both add "- \*\*S\.\*\* S body" at the same point/);
   });
 
   test('CHANGELOG.md plus another non-lock path holds', () => {

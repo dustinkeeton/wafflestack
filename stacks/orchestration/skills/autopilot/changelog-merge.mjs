@@ -98,26 +98,35 @@ function check({ dir, path: file }) {
   return { file, lines, ours, theirs, ...sides };
 }
 
-const blank = (l) => l.trim() === '';
+const BULLET = /^[-*+]\s/;
 
-/** Walk the base; after each base line emit main's inserted lines, then integ's, keeping a shared start or end once, as git does. */
+/** Split added lines into entries: each top-level bullet with its continuation lines; lines before the first bullet are a lead-in. */
+const entries = (lines) => lines.reduce((out, l) => (BULLET.test(l) || !out.length ? out.push([l]) : out.at(-1).push(l), out), []);
+const body = (e) => e.slice(0, e.findLastIndex((l) => l.trim() !== '') + 1).join('\n');
+const same = (a, b) => BULLET.test(a[0]) && body(a) === body(b);
+const fuller = (a, b) => (b.length > a.length ? b : a);
+
+/** Walk the base; after each base line emit main's inserted entries, then integ's, keeping a whole entry both start or end with once. */
 function merge({ lines, main, integ }) {
   const at = (hunks, i) => hunks.filter((h) => h.at === i).flatMap((h) => h.lines);
   const both = (i) => {
     const m = at(main, i);
     const g = at(integ, i);
     if (m.length === g.length && m.every((l, k) => l === g[k])) return m;
-    const n = Math.min(m.length, g.length);
+    const me = entries(m);
+    const ge = entries(g);
+    const n = Math.min(me.length, ge.length);
     let p = 0;
-    while (p < n && m[p] === g[p]) p++;
+    while (p < n && same(me[p], ge[p])) p++;
     let s = 0;
-    while (s < n - p && m[m.length - 1 - s] === g[g.length - 1 - s]) s++;
-    while (s && blank(m[m.length - s])) s--;
-    const mm = m.slice(p, m.length - s);
-    const gm = g.slice(p, g.length - s);
-    const dup = mm.find((l) => !blank(l) && gm.includes(l));
-    if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup)} at the same point, among different lines`);
-    return [...m.slice(0, p), ...mm, ...gm, ...m.slice(m.length - s)];
+    while (s < n - p && same(me[me.length - 1 - s], ge[ge.length - 1 - s])) s++;
+    const mm = me.slice(p, me.length - s);
+    const gm = ge.slice(p, ge.length - s);
+    const dup = mm.find((e) => gm.some((f) => same(e, f)));
+    if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup[0])} at the same point, among different entries`);
+    const head = me.slice(0, p).map((e, k) => fuller(e, ge[k]));
+    const tail = me.slice(me.length - s).map((e, k) => fuller(e, ge[ge.length - s + k]));
+    return [...head, ...mm, ...gm, ...tail].flat();
   };
   const out = both(0);
   lines.forEach((l, i) => out.push(l, ...both(i + 1)));
