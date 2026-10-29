@@ -471,6 +471,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /Step 8's blocked exits end the wait as a hold/);
     assert.match(md, /`DIRTY` \(a final PR that conflicts with `main` gets no CI/);
     assert.match(md, /no green two hours after the wait began/);
+    assert.match(md, /`DIRTY` \([^)]*\), `CLOSED`, or no green/);
     assert.match(md, /Never review a red PR/);
   });
 
@@ -489,6 +490,10 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /`<a2>` is round `<k>`'s responder worktree, `\.claude\/worktrees\/autopilot-stage2-<ts>`/);
     assert.match(md, /`autopilot\/stage2\/<ts>-r<k>-retry` on an errored round's retry/);
     assert.match(md, /`git worktree add -b <b2> <a2> origin\/<integ>`/);
+    assert.match(md, /hold if `git ls-remote --heads origin <b2>` already shows the branch/);
+    assert.match(md, /\*\*Close the round\*\* before the next one starts/);
+    assert.match(md, /Close the round, then run the next round from \*\*Respond\*\*/);
+    assert.match(md, /Then close the round and go back to item 2/);
     assert.match(md, /Work only in <a2>/);
     assert.match(md, /never run\s+gh pr checkout/);
     assert.match(md, /it worked outside `<a2>`/);
