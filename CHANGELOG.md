@@ -252,8 +252,9 @@ is what you reach for across a breaking one.
 - **Autopilot re-reads the rebase-drop marker before every arm (#765).** With integration mode
   off, the Step 5/6/7 arms and Step 8 trusted run memory for a rebase hold, which a compaction or
   restart could lose. Each now runs the `<!-- autopilot:rebase-drop -->` comments query on the PR
-  when it gets there; any id, or an error, leaves the PR unarmed. A hold whose marker comment
-  never posted stays held: the query adds holds, it never clears one.
+  when it gets there; any id, or an error, leaves the PR unarmed. A query error is reported as
+  its own **marker query failed** outcome, and a hold whose marker comment never posted stops the
+  run, since nothing durable records it.
 
   **Consumer impact:** re-render only.
 
