@@ -37,7 +37,7 @@
     ".claude/skills/adversarial-review/SKILL.md": "8691e51f86964a26e576b7406ec41c181f54645aa68919c99b3b83ed79cf0f38",
     ".claude/skills/audit/SKILL.md": "1be0c87f4724ae6d00a5268a5a1aa18d016927b7938c5d7664f2099f335ffca7",
     ".claude/skills/autopilot/overwrites.mjs": "ddff3bc413cfea979dc1d5699bffa4d87e3aa1376f5f6f28287663cac75e8de1",
-    ".claude/skills/autopilot/SKILL.md": "4819e09c360b689eb8c6529e21d7b28e62900f8a72bef8e1eaccb9fb15d7d522",
+    ".claude/skills/autopilot/SKILL.md": "2bf66007566be47d31a8ebd165883d6ba530ecf5f102d78731968fde4f0b78a5",
     ".claude/skills/clean-up/scripts/clean_up.sh": "7df01756bdb73a60bf3dfa9e000f0331a8e531049994be5ee6d280f1617b4630",
     ".claude/skills/clean-up/SKILL.md": "0adbb3386110990e2b7ebce4afd4e01dc4766d8ccb16a1676d268ece84378eaa",
     ".claude/skills/delegate/checkpoint.mjs": "5935c4c262f6a055d085454b03aed0857985be6fde7cd3c36f59075949441884",
