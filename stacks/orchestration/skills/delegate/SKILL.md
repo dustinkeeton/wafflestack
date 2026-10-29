@@ -452,7 +452,7 @@ Notes:
 **Render a gitignored render into the worktree.** A project that commits only the lock (Posture 2b) has no rendered skills, agents, or workflow scripts in a fresh worktree — the agent would start without the very skills its prompt names. Right after `git worktree add`, run each of these as its own call. Write the worktree's absolute path in as a literal wherever `<wt>` appears: a shell variable does not survive between calls, and `git -C ""` falls back to the cwd.
 
 1. `test -e <wt>/{{harness.skillsDir}}/delegate/SKILL.md` — exit 0 means the render is already there (a project that commits it): skip to step 4.
-2. `{{project.installCmd}}` with `<wt>` as the working directory, then `{{autopilot.waffleCmd}} render --cwd <wt>`.
+2. `{{project.installCmd}}`, then `{{autopilot.waffleCmd}} render --cwd <wt>`, both with `<wt>` as the working directory, so a relative `waffleCmd` renders the worktree's own sources.
 3. Put back any tracked file those touched: `git -C <wt> diff --name-only -z | xargs -0 -r git -C <wt> checkout --`.
 4. `git -C <wt> status --porcelain` must print nothing.
 5. Re-run step 1's `test -e`: it must exit 0. A clean status alone cannot tell a rendered worktree from one that was never rendered.

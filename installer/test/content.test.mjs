@@ -4976,7 +4976,7 @@ describe('delegate: worktree provisioning renders a gitignored render (#777)', (
 
   test('the step renders only when the render is missing, with this repo\'s commands', () => {
     assert.match(step(), /^1\. `test -e <wt>\/\.claude\/skills\/delegate\/SKILL\.md` — exit 0 [^\n]*skip to step 4\.$/m);
-    assert.match(step(), /^2\. `npm install` with `<wt>` as the working directory, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render --cwd <wt>`\.$/m);
+    assert.match(step(), /^2\. `npm install`, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render --cwd <wt>`, both with `<wt>` as the working directory, so a relative `waffleCmd` renders the worktree's own sources\.$/m);
   });
 
   test('it restores touched tracked files and stops on any leftover status', () => {
