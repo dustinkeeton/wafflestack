@@ -122,7 +122,7 @@ function merge({ lines, main, integ }) {
     while (s < n - p && same(me[me.length - 1 - s], ge[ge.length - 1 - s])) s++;
     const mm = me.slice(p, me.length - s);
     const gm = ge.slice(p, ge.length - s);
-    const dup = mm.find((e) => gm.some((f) => same(e, f)));
+    const dup = mm.find((e) => BULLET.test(e[0]) && gm.some((f) => f[0] === e[0]));
     if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup[0])} at the same point, among different entries`);
     const head = me.slice(0, p).map((e, k) => fuller(e, ge[k]));
     const tail = me.slice(me.length - s).map((e, k) => fuller(e, ge[ge.length - s + k]));

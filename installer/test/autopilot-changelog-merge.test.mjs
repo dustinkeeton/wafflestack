@@ -275,6 +275,10 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
     hold({ main: { 'CHANGELOG.md': above('- base fixed', ...e('X'), ...e('S')) }, integ: { 'CHANGELOG.md': above('- base fixed', ...e('S'), ...e('Y')) } }, /^HOLD: main and integ both add "- \*\*S\.\*\* S body" at the same point/);
   });
 
+  test('a bullet both sides add with different continuation lines holds (#783)', () => {
+    hold({ main: { 'CHANGELOG.md': above('- base fixed', '- **A.** x', '  - sub one', '  - sub two', '') }, integ: { 'CHANGELOG.md': above('- base fixed', '- **A.** x', '  - sub one', '') } }, /^HOLD: main and integ both add "- \*\*A\.\*\* x" at the same point/);
+  });
+
   test('CHANGELOG.md plus another non-lock path holds', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '- from main'), 'a.txt': 'main\n' }, integ: { ...integ, 'a.txt': 'integ\n' } }, /^HOLD: other conflicting path\(s\): a\.txt$/m);
   });
