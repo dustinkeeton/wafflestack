@@ -98,13 +98,35 @@ function check({ dir, path: file }) {
   return { file, lines, ours, theirs, ...sides };
 }
 
-/** Walk the base; after each base line emit main's inserted lines, then integ's — once if identical, as git does. */
+const BULLET = /^[-*+]\s/;
+
+/** Split added lines into entries: each top-level bullet with its continuation lines; lines before the first bullet are a lead-in. */
+const entries = (lines) => lines.reduce((out, l) => (BULLET.test(l) || !out.length ? out.push([l]) : out.at(-1).push(l), out), []);
+const body = (e) => e.slice(0, e.findLastIndex((l) => l.trim() !== '') + 1).join('\n');
+const same = (a, b) => BULLET.test(a[0]) && body(a) === body(b);
+const fuller = (a, b) => (b.length > a.length ? b : a);
+
+/** Walk the base; after each base line emit main's inserted entries, then integ's, keeping a whole entry both start or end with once. */
 function merge({ lines, main, integ }) {
   const at = (hunks, i) => hunks.filter((h) => h.at === i).flatMap((h) => h.lines);
   const both = (i) => {
     const m = at(main, i);
     const g = at(integ, i);
-    return m.length === g.length && m.every((l, k) => l === g[k]) ? m : [...m, ...g];
+    if (m.length === g.length && m.every((l, k) => l === g[k])) return m;
+    const me = entries(m);
+    const ge = entries(g);
+    const n = Math.min(me.length, ge.length);
+    let p = 0;
+    while (p < n && same(me[p], ge[p])) p++;
+    let s = 0;
+    while (s < n - p && same(me[me.length - 1 - s], ge[ge.length - 1 - s])) s++;
+    const mm = me.slice(p, me.length - s);
+    const gm = ge.slice(p, ge.length - s);
+    const dup = mm.find((e) => BULLET.test(e[0]) && gm.some((f) => f[0] === e[0]));
+    if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup[0])} at the same point, among different entries`);
+    const head = me.slice(0, p).map((e, k) => fuller(e, ge[k]));
+    const tail = me.slice(me.length - s).map((e, k) => fuller(e, ge[ge.length - s + k]));
+    return [...head, ...mm, ...gm, ...tail].flat();
   };
   const out = both(0);
   lines.forEach((l, i) => out.push(l, ...both(i + 1)));

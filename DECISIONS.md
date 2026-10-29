@@ -21,7 +21,11 @@ always the right answer.
 merge base, adds lines and removes or edits none, every added line falls inside the base's single
 `## [Unreleased]` section, and no added line is a heading. Additions in different `###`
 subsections of that section are allowed. The merged file keeps main's lines, then the integration
-branch's. Anything else aborts and holds as before, so the run still never picks a winner.
+branch's. A whole entry (a top-level bullet and its continuation lines) that both sides add at the
+start or end of the same point is kept once. An entry whose bullet line both sides add among
+different entries holds, even when its continuation lines differ. Lines that different entries
+merely share, such as a `**Consumer impact:**` line, stay in both.
+Anything else aborts and holds as before, so the run still never picks a winner.
 
 **Alternatives**:
 - *`CHANGELOG.md merge=union` in `.gitattributes`.* Rejected: it applies to every merge in the
