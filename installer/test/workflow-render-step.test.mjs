@@ -172,6 +172,7 @@ describe('waffle-render step behavior (#615)', () => {
     exe(path.join(bin, 'npx'), [
       'echo "npx $*" >> "$LOG"',
       `node -e 'console.log("npx-env " + JSON.stringify({ pwd: process.cwd(), entries: require("fs").readdirSync("."), registry: process.argv[1], git: process.env.npm_config_git ?? null, upper: process.env.NPM_CONFIG_SCRIPT_SHELL ?? null }))' "$(${REAL_NPM} config get registry)" >> "$LOG"`,
+      '[ -z "${NPX_STDERR:-}" ] || { echo "$NPX_STDERR" >&2; exit 1; }',
       'while [ $# -gt 0 ]; do [ "$1" = --cwd ] && d="$2"; shift; done',
       `cd "$d" && ${fakeRender}`,
     ].join('\n'));
@@ -214,6 +215,21 @@ describe('waffle-render step behavior (#615)', () => {
     assert.equal(fs.readFileSync(path.join(cwd, '.claude/agents/a.md'), 'utf8'), 'committed\n');
     assert.equal(git('status', '--porcelain'), '');
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/x/SKILL.md')));
+  });
+
+  test('a release older than --untrusted-config fails with an upgrade hint, not a bare "takes no refs" (#789)', () => {
+    lock(release());
+    const r = run({ env: { NPX_STDERR: 'render takes no refs — use `wafflestack install <ref…>`' } });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /::error title=waffle-render::toolkit github:dustinkeeton\/wafflestack#a+ predates render --untrusted-config/);
+  });
+
+  test('any other render failure still fails the step, with its own stderr and no upgrade hint', () => {
+    lock(release());
+    const r = run({ env: { NPX_STDERR: 'some other render failure' } });
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stdout, /predates/);
+    assert.match(r.stderr, /some other render failure/);
   });
 
   test('no lock commit → the tag commit; an annotated tag → its peeled commit', () => {
@@ -414,6 +430,90 @@ describe('render --untrusted-config: a PR-head config runs no prerequisite check
     assert.equal(ran(cwd, 'core'), false, 'a probe ran under --untrusted-config');
     assert.equal(go(false).ok, true);
     assert.equal(ran(cwd, 'core'), true, 'control: a normal render probes');
+  });
+});
+
+describe('render never writes through a PR-committed symlink out of the tree (#789)', () => {
+  let dirs;
+  const tmp = (p) => {
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
+    dirs.push(d);
+    return d;
+  };
+  const put = (root, rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), text);
+  };
+  let toolkitRoot;
+  let cwd;
+  let outside;
+  const go = () => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', untrustedConfig: true });
+
+  beforeEach(() => {
+    dirs = [];
+    toolkitRoot = tmp('toolkit-');
+    cwd = tmp('pr-head-');
+    outside = tmp('outside-');
+    put(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: f\nstacks: [core]\n');
+    put(toolkitRoot, 'stacks/core/stack.yaml', 'name: core\ndescription: Core.\nskills: [base]\n');
+    put(toolkitRoot, 'stacks/core/skills/base/SKILL.md', '---\nname: base\ndescription: Base.\n---\n\nBase.\n');
+    put(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [core]\n');
+  });
+  afterEach(() => {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('a symlinked parent directory is refused before any write', () => {
+    fs.mkdirSync(path.join(cwd, '.claude'));
+    fs.symlinkSync(outside, path.join(cwd, '.claude/skills'));
+    const r = go();
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some((e) => /refusing to write \.claude\/skills\/base\/SKILL\.md: .*symlink/.test(e)), JSON.stringify(r.errors));
+    assert.deepEqual(fs.readdirSync(outside), []);
+    assert.equal(fs.existsSync(path.join(cwd, '.waffle/waffle.lock.json')), false, 'the lock was written');
+  });
+
+  test('a settings file the PR-head lock names is not merged through a symlinked leaf', () => {
+    const victim = path.join(outside, 'victim.json');
+    fs.writeFileSync(victim, '{"x":true}\n');
+    fs.symlinkSync(victim, path.join(cwd, 'evil.json'));
+    put(cwd, '.waffle/waffle.lock.json', JSON.stringify({ files: {}, settings: { 'evil.json#/x': true } }));
+    const r = go();
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some((e) => /refusing to write evil\.json/.test(e)), JSON.stringify(r.errors));
+    assert.equal(fs.readFileSync(victim, 'utf8'), '{"x":true}\n');
+  });
+
+  test('no legacy-dotfile migration renames through a symlinked .waffle out of the tree', () => {
+    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true });
+    put(cwd, '.waffle.yaml', 'targets: [claude]\nstacks: [core]\n');
+    fs.symlinkSync(outside, path.join(cwd, '.waffle'));
+    go();
+    assert.deepEqual(fs.readdirSync(outside), []);
+    assert.ok(fs.existsSync(path.join(cwd, '.waffle.yaml')));
+  });
+
+  test('a symlinked leaf (the lock, or an output) pointing outside is refused; one pointing inside is not', () => {
+    const victim = path.join(outside, 'victim');
+    fs.writeFileSync(victim, '{}\n');
+    fs.symlinkSync(victim, path.join(cwd, '.waffle/waffle.lock.json'));
+    let r = go();
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some((e) => /refusing to write \.waffle\/waffle\.lock\.json/.test(e)), JSON.stringify(r.errors));
+    assert.equal(fs.readFileSync(victim, 'utf8'), '{}\n');
+
+    fs.rmSync(path.join(cwd, '.waffle/waffle.lock.json'));
+    fs.mkdirSync(path.join(cwd, '.claude/skills/base'), { recursive: true });
+    fs.symlinkSync(path.join(outside, 'gone'), path.join(cwd, '.claude/skills/base/SKILL.md'));
+    r = go();
+    assert.equal(r.ok, false, 'a dangling link cannot be verified');
+    assert.equal(fs.existsSync(path.join(outside, 'gone')), false);
+
+    fs.rmSync(path.join(cwd, '.claude/skills/base/SKILL.md'));
+    put(cwd, 'in-tree.md', 'x\n');
+    fs.symlinkSync(path.join(cwd, 'in-tree.md'), path.join(cwd, '.claude/skills/base/SKILL.md'));
+    r = go();
+    assert.ok(!(r.errors ?? []).some((e) => /through a symlink/.test(e)), JSON.stringify(r.errors));
   });
 });
 

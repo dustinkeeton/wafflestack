@@ -45,6 +45,9 @@ is what you reach for across a breaking one.
   has no effect. The toolkit's own repo renders with the installer at its trusted ref, not the PR
   head's. A new `render --untrusted-config` flag, which the step passes, refuses any `source:`
   stack and runs no prerequisite check, so a PR-head config can't run a self-acknowledged check.
+  It also refuses to write through a PR-committed symlink that leaves the checkout and skips the
+  legacy-dotfile migration (#789). A toolkit release older than the flag fails the step with an
+  upgrade hint.
   `waffle-doctor` stays exempt.
   A new `workflow-render-step.test.mjs` fails when a shipped workflow reads a rendered path
   without the step.

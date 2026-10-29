@@ -214,9 +214,14 @@ jobs:
           npx_render() (
             for v in $(compgen -e); do case "$(lc "$v")" in npm_config_*) unset "$v" ;; esac; done
             scratch="$(mktemp -d)"
+            err="$(mktemp)"
             : > "$scratch/.npmrc"
             cd "$scratch"
-            NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws"
+            NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
+            cat "$err" >&2
+            # A release older than --untrusted-config rejects the flag as a ref (#789).
+            [ "$rc" = 0 ] || ! grep -q 'takes no refs' "$err" || fail "toolkit $1 predates render --untrusted-config; move the lock to a newer release (wafflestack upgrade) or commit the render."
+            exit "$rc"
           )
           if [ "$(lc "$base")" = "$(lc "github:${GITHUB_REPOSITORY}")" ]; then
             want="${TRUSTED_TOOLKIT#"$base"}"
