@@ -924,8 +924,7 @@ config:
     pattern: '^[^\r\n]*$'
     description: >-
       Command prefix autopilot uses to run the wafflestack CLI, e.g. `<waffleCmd> render` when
-      the integration gate's sync merge resolves a `.waffle/waffle.lock.json` conflict, or when
-      delegate renders a gitignored render into a fresh worktree. The
+      the integration gate's sync merge resolves a `.waffle/waffle.lock.json` conflict. The
       default is `npx --yes` plus the value of `waffle.toolkitRef`, so it runs the toolkit that
       produced your render, a fork's included. Override it only for a non-npx runner, or in the
       toolkit's own repo, where the working tree is the toolkit (`node installer/cli.mjs`, with
@@ -953,7 +952,7 @@ config:
     description: >-
       Dependency-install command. The github-workflow stack declares the same key with the same
       default and pattern; here autopilot runs it in the fresh worktree of the integration gate's
-      sync merge, and delegate in a fresh worktree that lacks its render, before
+      sync merge, before
       `autopilot.waffleCmd render`. Default `npm install`.
   docs.auditChecklist:
     required: false

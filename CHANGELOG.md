@@ -229,15 +229,11 @@ is what you reach for across a breaking one.
 
 ### Changed
 
-- **Delegate and autopilot render a missing render into each fresh worktree (#777, part of #775).**
-  A project that commits only its lock (Posture 2b) has no rendered skills or agents in a new
-  worktree. Delegate now checks for its own rendered `SKILL.md` right after `git worktree add`; when
-  it is missing it runs `project.installCmd` and `autopilot.waffleCmd render` in the worktree, puts
-  back any tracked file they touched, and stops before spawning if `git status` is not clean.
-  Autopilot's stage 2 and stage 3 worktrees reuse the step. The toolkit repo itself moved to Posture
-  2b: its `.claude/` render is gitignored and only the lock is committed.
-  **Consumer impact:** re-render only. A project that commits its render sees no change; the check
-  finds the render and skips. Toolkit contributors: pulling this change deletes your local
+- **The toolkit repo moves to Posture 2b: only the lock is committed (#777, part of #775).**
+  Its `.claude/` render is gitignored. Delegate and autopilot do not render into the worktrees they
+  cut: Claude Code (v2.1.277+) loads the main checkout's skills, agents, and commands when a
+  worktree has none of its own, and tests never read the worktree's render.
+  **Consumer impact:** none. Toolkit contributors: pulling this change deletes your local
   `.claude/` render — run `node installer/cli.mjs render --allow-unreleased` to restore it.
 
 - **Autopilot: a line an earlier PR added that a pre-gate rebase drops stops auto-merge (#752).**
