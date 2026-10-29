@@ -9,6 +9,41 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-29: The toolkit repo commits the lock, not its self-render (#777, part of #775)
+
+**Context**: The 2026-07-03 decision committed this repo's `.claude/` render because a
+CI-dispatched harness read the committed skills. The paid hooks were removed in July (#396),
+and the hygiene hook now renders whatever it reads (#615). Meanwhile the committed render fought
+the owner's local overlay: every overlay-affected skill re-rendered as a tracked diff that had to
+be left out of each commit by hand.
+
+**Decision**: Move this repo to Posture 2b (lock only). The `.claude/` render (`skills/`,
+`agents/`, `workflows/`) is gitignored and untracked. `.waffle/waffle.yaml`,
+`.waffle/extensions/`, `.waffle/waffle.lock.json`, the rendered `.github/` files and
+`.claude/settings.json` stay committed. `tests.yml`'s `doctor --verify-render` keeps gating the
+lock, and `self-posture.test.mjs` fails if the render is re-tracked. Tests read a tmp render of
+the committed inputs (`installer/test/self-render.mjs`), never the working tree. Delegate renders
+into each fresh worktree that lacks a render, and autopilot's stage 2 and 3 worktrees reuse
+that step.
+
+**Alternatives**:
+- *Keep committing the render and live with the overlay diff.* Rejected: the reason for
+  committing it is gone, and the per-commit hand-exclusion was the cost.
+- *Render in a `post-checkout` git hook.* Rejected: it is per-clone setup nobody would install,
+  and it fires on every branch switch.
+- *Have tests render on demand only when `.claude/` is missing.* Rejected: an overlay-fed
+  working-tree render would then leak into the assertions; the tmp render is canonical.
+
+**Rationale**: The lock is the part that carries the guarantee. `--verify-render` proves the
+committed inputs reproduce it, which a committed render never added to.
+
+**Affects**: this repo's `.gitignore`, `.waffle/waffle.yaml`, the installer tests, and the
+orchestration stack's delegate and autopilot skills. Pulling the change deletes a checkout's
+local render; re-run `node installer/cli.mjs render --allow-unreleased` to restore it. The
+consumer default is unchanged (#776). Supersedes the 2026-07-03 entry below.
+
+---
+
 ## 2026-10-28: The stage 1 sync auto-resolves an additive-only CHANGELOG.md conflict (#759, part of #720)
 
 **Context**: About 40 of the last 61 merges to `main` touched `CHANGELOG.md`, nearly all adding
@@ -3738,6 +3773,8 @@ layout are untouched.
 ---
 
 ## 2026-07-03: Commit the self-render and arm the hygiene/doctor automation loop
+
+**Superseded by**: [2026-10-29: The toolkit repo commits the lock, not its self-render](#2026-10-29-the-toolkit-repo-commits-the-lock-not-its-self-render-777-part-of-775) — the render is gitignored again; the lock stays committed.
 
 **Context**: Activating the dogfooded hygiene hook (#46) required its CI-dispatched
 harness to read the committed `.claude/skills/` — but this repo gitignored its whole

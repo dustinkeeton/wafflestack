@@ -4,7 +4,7 @@ You are working inside **WaffleStack itself** — the toolkit that *renders* har
 
 ### Mental model
 
-The source of truth is `stacks/**` — canonical, harness-neutral agent/skill/file definitions. The `wafflestack` CLI (`installer/cli.mjs`, exports mapped in `AGENTS.md`) renders them into harness-native output (`.claude/`, `.codex/`, `.agents/`). Rendered files are generated output — **never hand-edit them**; change the source, project config, or a project extension instead. In *this* repo the rendered `.claude/` output and `.waffle/waffle.lock.json` are **committed** (see `.waffle/waffle.yaml`), so after any `stacks/**` or `toolkit.yaml` edit you must re-render from the working tree **and commit the updated render + lock** — the `doctor` drift gate is a required check on `main`:
+The source of truth is `stacks/**` — canonical, harness-neutral agent/skill/file definitions. The `wafflestack` CLI (`installer/cli.mjs`, exports mapped in `AGENTS.md`) renders them into harness-native output (`.claude/`, `.codex/`, `.agents/`). Rendered files are generated output — **never hand-edit them**; change the source, project config, or a project extension instead. In *this* repo the lock (`.waffle/waffle.lock.json`) is **committed** and the rendered `.claude/` output is **gitignored** (lock-only, Posture 2b — #777; see `.waffle/waffle.yaml`), so after any `stacks/**` or `toolkit.yaml` edit — or a pull — you must re-render from the working tree **and commit the updated lock**; `tests.yml`'s `doctor --verify-render` gates it on every PR:
 
 ```
 node installer/cli.mjs render --allow-unreleased
@@ -37,7 +37,7 @@ The flag is **required** (#373): `render` refuses from a toolkit that is not at 
 
 1. `npm run validate` — `node installer/cli.mjs validate`: manifests parse, frontmatter complete, placeholder↔declaration sync, agent-skill/`requires:` refs resolve, `pattern:`/`optIn:` integrity.
 2. `npm test` — the `node:test` installer suite under `installer/test/*.test.mjs`.
-3. `node installer/cli.mjs render --allow-unreleased && node installer/cli.mjs doctor` — regenerate all outputs, then confirm reality matches the lock (no drift, no hand-edits), and **commit the updated render + lock**. `render` is gated (#373) and refuses without the flag from a non-release checkout; plain `doctor` is **not** gated and needs nothing. A few files stay deliberately gitignored (the label-hook workflow, the generated `.waffle/` overview docs), which is why CI runs `doctor --allow-missing`.
+3. `node installer/cli.mjs render --allow-unreleased && node installer/cli.mjs doctor` — regenerate all outputs, then confirm reality matches the lock (no drift, no hand-edits), and **commit the updated lock** (the `.claude/` render is gitignored). `render` is gated (#373) and refuses without the flag from a non-release checkout; plain `doctor` is **not** gated and needs nothing. Several outputs stay deliberately gitignored (the `.claude/` render, the label-hook workflow, the generated `.waffle/` overview docs), which is why CI runs `doctor --allow-missing`. Tests read a tmp self-render (`installer/test/self-render.mjs`), never the working tree's `.claude/`.
 4. `npm pack --dry-run` — the build/pack check the release flow uses.
 
 ### Worked answers

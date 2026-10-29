@@ -94,7 +94,7 @@ it. **This is the one the lock inverts** — see the case study below.
 
 ---
 
-## Case study: the toolkit's own repo made the call both ways
+## Case study: the toolkit's own repo made the call three times
 
 > [!NOTE]
 > **This is the wafflestack repo, not a consumer repo** — it self-hosts, so it holds the stack
@@ -103,11 +103,12 @@ it. **This is the one the lock inverts** — see the case study below.
 
 The strongest argument against committing — *a committed copy invites edits to generated
 files* — turns out to be **conditional**. The toolkit's own repository decided this twice, in
-opposite directions, three days apart. The second decision explains why.
+opposite directions, three days apart. The second decision explains why. A third, months later,
+landed on Posture 2b — and it is the lock, not the render, that it kept.
 
 ### First: ignore the render (2026-07-01)
 
-[`DECISIONS.md:1381`](../DECISIONS.md) — *Gitignore the rendered output in the toolkit repo*.
+[`DECISIONS.md`](../DECISIONS.md#2026-07-01-gitignore-the-rendered-output-in-the-toolkit-repo-v050) — *Gitignore the rendered output in the toolkit repo*.
 It ignored all rendered output **and the lock file**. The rationale:
 
 > A committed second copy of every skill would pollute code search and invite edits to
@@ -118,7 +119,7 @@ that holds both source and render, which is the toolkit's situation and not your
 
 ### Then: commit the render and the lock (2026-07-03)
 
-[`DECISIONS.md:933`](../DECISIONS.md) — *Commit the self-render and arm the hygiene/doctor
+[`DECISIONS.md`](../DECISIONS.md#2026-07-03-commit-the-self-render-and-arm-the-hygienedoctor-automation-loop) — *Commit the self-render and arm the hygiene/doctor
 automation loop* — partially reversed it. The forcing function was concrete: activating a
 CI-dispatched agent harness required it to read the **committed** `.claude/skills/`, and with
 the render gitignored there was nothing in the checkout for CI to read.
@@ -143,6 +144,21 @@ your render.
 
 What *does* transfer, as a genuine cost: contributors must commit the re-rendered output and
 lock alongside the change that caused it, or the required check fails their PR.
+
+### Then again: lock only (2026-10-29)
+
+[`DECISIONS.md`](../DECISIONS.md#2026-10-29-the-toolkit-repo-commits-the-lock-not-its-self-render-777-part-of-775)
+— *The toolkit repo commits the lock, not its self-render* — gitignored the render once more,
+but **kept the lock**. The 2026-07-03 forcing function was gone: the paid CI hooks were removed
+(#396), and the one live hook renders what it reads (#615). And the committed render had a cost
+of its own here: the owner's local overlay re-rendered skills as tracked diffs that had to be
+left out of every commit by hand.
+
+Note what survived. `doctor --verify-render` still proves the committed config reproduces the
+committed lock on every PR, so the insight above holds — the protection was always the lock's.
+What the repo gave up is what [Posture 2b](#posture-2b-commit-the-lock-only) gives up:
+a fresh clone or worktree has no skills until something renders them, so its tests render
+into a temp dir and its delegate/autopilot skills render into every worktree they cut.
 
 ---
 

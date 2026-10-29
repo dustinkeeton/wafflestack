@@ -1,11 +1,11 @@
 node_modules/
 .DS_Store
 
-# Self-render (`node installer/cli.mjs render`): the .claude/ output and the lock are
-# COMMITTED, like a consuming project — the CI-dispatched hygiene harness reads the
-# committed skills, and the waffle-doctor drift gate needs render + lock in git to be
-# meaningful. Re-render AND commit after editing stacks/**. Worktrees are throwaway
-# working state; .codex/ and .agents/ are non-targets here (targets: [claude]).
+# Lock-only (Posture 2b, #777): the .claude/ render is gitignored; commit the lock. Re-render after
+# a pull or stacks/** edit; .github/ and .claude/settings.json stay tracked. `!` re-includes an ejected item.
+/.claude/skills/*
+/.claude/agents/*
+/.claude/workflows/*
 .claude/worktrees/
 .codex/
 .agents/
