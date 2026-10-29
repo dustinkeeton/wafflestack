@@ -4,13 +4,14 @@ import {
   sha256,
   exists,
   resolveInside,
+  resolveWritableInside,
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
 import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS, constraintProblems } from './template.mjs';
 import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
-import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys } from './settings.mjs';
+import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys, parseSettingsKey } from './settings.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, closureFor } from './refs.mjs';
@@ -69,7 +70,8 @@ export function renderProject({
   untrustedConfig = false,
 }) {
   const warnings = [];
-  for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
+  // The migration renames through a PR-committed `.waffle` symlink, so an untrusted tree gets none (#789).
+  if (!untrustedConfig) for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
   const stale = staleGitignoreEntries(cwd);
   if (stale.length) {
     warnings.push(
@@ -203,6 +205,21 @@ export function renderProject({
 
   const managed = treeLock?.files ?? {};
   const managedSettings = treeLock?.settings ?? {};
+
+  // A PR head can commit a symlink: an untrusted render follows none out of the tree (#789). A
+  // trusted one keeps honouring the user's own symlinked render dir.
+  // Same parser as the writer: stripping at the first `#` would check a different file than it writes.
+  const settingsFiles = [...effective.settings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k);
+  const escaping = untrustedConfig
+    ? [...new Set([...effective.outputs.keys(), ...settingsFiles, LOCK_FILE, LOCAL_LOCK_FILE])].filter((rel) => !resolveWritableInside(cwd, rel))
+    : [];
+  if (escaping.length) {
+    return {
+      ok: false,
+      warnings,
+      errors: escaping.map((rel) => `refusing to write ${rel}: it resolves outside the project root through a symlink — remove the link and re-render`),
+    };
+  }
 
   // Checked before any write or prune (#25), so a refusal leaves the tree untouched.
   const settingsCheck = settingsConflicts(cwd, effective.settings, managedSettings);
@@ -353,6 +370,18 @@ export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
   return divergent
     .filter((p) => !status.beyondSymlink.has(p) && (status.tracked.has(p) || !status.ignored.has(p)))
     .map((p) => ({ path: p, tracked: status.tracked.has(p), overlayOnly: !(p in canonicalFiles) }));
+}
+
+/**
+ * `overlayLeaks` for the tree on disk (committed lock vs local lock); `[]` with no local lock.
+ *
+ * @param {string} cwd
+ * @returns {OverlayLeak[] | null}
+ */
+export function treeOverlayLeaks(cwd) {
+  const lock = readLock(cwd);
+  const localLock = readLocalLock(cwd);
+  return lock && localLock ? overlayLeaks(cwd, lock.files, localLock.files) : [];
 }
 
 const POSTURE_2B_REMEDY =

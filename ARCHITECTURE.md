@@ -172,6 +172,21 @@ use it today, all `targets: [claude]`: the four github-workflow hooks that dispa
 A Codex- or agents-dir-only project never receives a workflow that dispatches a harness it
 doesn't render for.
 
+**Those four hooks render a missing harness first (#615).** A lock-only repo has no `.claude/`
+in its checkout, so each hook's `Render missing wafflestack resources` step checks the lock's
+`.claude/` paths before Claude runs:
+
+- **All present** — the step does nothing, so a repo that commits its render sees no change.
+- **Some missing** — it renders from the lock's `vX.Y.Z` release on the repo `doctor.toolkitRef`
+  names, using that tag's commit, so a PR-head lock cannot choose the code CI runs. It passes
+  `render --untrusted-config` (no `source:` stacks, no prerequisite checks, no write through a
+  symlink that leaves the checkout) and keeps its output out of the harness's commits.
+- **No release pin, or a release older than the flag** — the step fails with a remedy (#789).
+
+`waffle-doctor` stays exempt. `workflow-render-step.test.mjs` fails any shipped workflow that
+reads a rendered path without the step. See
+[DECISIONS.md](DECISIONS.md#2026-10-29-ci-renders-a-missing-harness-from-the-locks-release-never-from-the-pr-head-615-789-part-of-775).
+
 ### Agents and skills
 
 - **Agent** — a specialist persona with instructions (e.g. a documentation
@@ -463,7 +478,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `list` | Show every stack/item as installed & current / out of date / not installed — plus `not installable` (scoped to targets this repo doesn't enable) and `PENDING REMOVAL` (poured under an older scope; the next render deletes it). `--interactive` multi-selects the ones to add/update and applies them, with a hint on any row that would fail to apply (#549, #577–#579). `--check-prereqs` runs the hinted prerequisite checks and shows only the unmet ones. |
 | `toggle` | Choose, per skill, whether an agent may invoke it on its own or only you can via `/slash` (#476). A checkbox picker in a terminal, a plain table on a pipe, `--disable` / `--enable` flags for agents and CI. Writes `waffle.yaml`, then renders. See [below](#two-consumer-side-knobs-toggle-and-report). |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Only the changed lines of `waffle.yaml` are edited (#575), and an item a selected stack already provides persists nothing (#571). Installing an **ejected** item un-ejects it (#497). If the render is refused for any reason — missing config values, a collision, a guard — `waffle.yaml` is restored byte-for-byte and nothing changes (#548); when the refusal is your differing project-owned copy of that un-ejected item, the error names `--force`. Bare `install` just renders. |
-| `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. `bake` is a pure alias — same command, better metaphor. |
+| `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. Warns when your overlay shaped a file git would let you commit (#614); `--gitignore` adds those paths. `--untrusted-config` is for a config CI took from a PR head (#615): no `source:` stacks, no prerequisite checks, no write through a symlink that leaves the project root. `bake` is a pure alias — same command, better metaphor. |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations (an unreleased toolkit also runs the steps keyed past its own version, #501), move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. The generated `.waffle/` overview docs are presence-optional (#528): an absent one is a note, an edited one still fails; `--allow-missing` tolerates every *other* absent file. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. It also notes when a newer toolkit release exists (#608) — information only, never a failure. |
 | `state` | Print the repo's resolved state (#561): each behavioral key's effective value, the layer it came from and its tokens; delegate's run files; committed vs local lock; drift; and the agents `/standup` would round up (an `agents` array, #610). `--json` for machines — the `waffle-view` mod reads it. Also says whether a newer toolkit release exists (an `update` block, #608). `--board` (#697) adds a `board` block: open milestones, open epics (`n of m` done) and the In Progress / In Review items of the board named by `project.name`, read through `gh` and cached 60 s. Plain `state` never calls `gh`. Never changes the repo; it may make one cached 2 s lookup and write a user-cache file (`--offline` stops the lookup and the board read). Exit 0 even on drift or a failed board read. |
@@ -593,6 +608,11 @@ output path is a hard error (never last-write-wins), and a render that would
 overwrite a pre-existing file the lock doesn't track (a consumer's hand-written
 file) is refused before any write — a byte-identical file is adopted silently, and
 `--force` overrides the guard.
+
+When the overlay changed an output byte, `render` also checks each such file with git. If the
+file is tracked or not gitignored, committing it would publish your private values, so `render`
+warns and offers two fixes: gitignore it, or move to lock-only Posture 2b (#614). Local
+`doctor` reports the same files, without changing its exit code.
 
 Later, `doctor` re-hashes the files and compares them to the lock that describes the
 tree (the local one when your overlay shaped this machine's render, else the committed

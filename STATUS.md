@@ -68,10 +68,11 @@ v0.17.x (docs refresh per PR, mods + `state`, picker hints) and everything befor
   pr-green's `waffle-pr-target` artifact, hardened by #622–#624. The fix is unproven live until both hooks are re-armed (#343).
 - **Comment burn-down follow-ups (open):** #440 bash essays in workflow `run:` blocks, #441
   DECISIONS triage, #442 `AGENTS.md` prose trim (652 lines, cap 300; fences gone since #415).
-- **Lock-only since #777.** The `.claude/` render is gitignored; only the lock is committed. After a
-  pull or a `stacks/**` edit, re-run `node installer/cli.mjs render --allow-unreleased` (flag
-  required, #373) and commit the lock. Pulling the #777 merge deletes your local render — re-run
-  that command to restore it.
+- **Lock-only since #777.** The `.claude/` render is gitignored; only the lock is committed. After a pull
+  or a `stacks/**` edit, re-run `node installer/cli.mjs render --allow-unreleased` (flag required,
+  #373) and commit the lock. Pulling the #777 merge deletes your local render; that command restores it.
+- **CI render step needs a release (#615, #789):** no release accepts `render --untrusted-config` yet,
+  so a lock-only consumer's hook CI fails (naming the release to move past) until one ships it.
 - **Deliberately gitignored here:** the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/`, and
   `waffle-label-hook.yml` — why `doctor` runs with `--allow-missing`.
 

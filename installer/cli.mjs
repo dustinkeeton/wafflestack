@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { renderProject, readLock, readLocalLock, overlayLeaks } from './lib/render.mjs';
+import { renderProject, treeOverlayLeaks } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { defaultPluginsDir } from './lib/installed-mods.mjs';
 import { eject, scaffoldConfig, installRefs, unejectCollisions } from './lib/eject.mjs';
@@ -440,7 +440,8 @@ function helpText() {
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
     '                    uninstall: also delete files that were hand-edited after rendering',
     '  --untrusted-config  render: the config came from an untrusted tree (a PR head in CI) — refuse',
-    '                    any `source:` stack and run no prerequisite check',
+    '                    any `source:` stack, run no prerequisite check, and write through no',
+    '                    symlink that leaves the project root',
     '  --gitignore       setup/init/render/install: append the recommended .gitignore entries',
     '                    render/install: plus each overlay-fed render git would let you commit',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
@@ -499,9 +500,7 @@ function runRender(force = false, toolkitIdentity = null, installed = null, { un
 function offerGitignore() {
   const toolkit = loadToolkit(toolkitRoot);
   const project = loadProjectConfig(cwd);
-  const lock = readLock(cwd);
-  const localLock = readLocalLock(cwd);
-  const leaks = lock && localLock ? (overlayLeaks(cwd, lock.files, localLock.files) ?? []).filter((l) => !l.tracked).map((l) => l.path) : [];
+  const leaks = (treeOverlayLeaks(cwd) ?? []).filter((l) => !l.tracked).map((l) => l.path);
   reportGitignore(ensureGitignoreEntries(cwd, [...recommendedGitignoreEntries(toolkit, project), ...leaks]));
 }
 
