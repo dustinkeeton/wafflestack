@@ -256,6 +256,30 @@ setup: |-
   scope; the local `render` flow writes it fine. `eject: [files/.github/workflows/waffle-doctor.yml]`
   opts a repo out.
 
+  **Render-before-read step (#615).** Every shipped job that reads rendered resources (the label-hook
+  enrich/implement jobs, hygiene, pr-green, pr-response) runs a `Render missing wafflestack
+  resources` step right after its checkout. When every `.claude/` path the lock records is already
+  in the checkout, it does nothing: no network, no npx. It ignores `.codex/` and `.agents/`, which
+  these jobs never read, so a Posture 2 repo that gitignores them stays a no-op. Otherwise it renders from the lock's toolkit pin, and only a release pin qualifies. The lock's
+  `toolkit.source` must match the trusted base (`doctor.toolkitRef` with its `#…` stripped, taken
+  from the workflow, never from the PR), `toolkit.ref` must be a `vX.Y.Z` tag that `git ls-remote`
+  finds on that repo, and the step runs `npx <base>#<tag commit>` (`render` with no overlay; a key
+  only the overlay sets fails the run and names the key). A lock with no release pin fails with a
+  remedy: render from a release (`wafflestack upgrade`) and commit the lock, or commit the render.
+  The step restores any tracked file the render touched and adds the new files to
+  `.git/info/exclude`, so the harness can't commit them. The toolkit's own repo (trusted base ==
+  this repo) has no release pin to check, so it renders with the installer at the trusted ref
+  (`doctor.toolkitRef`'s `#…`, or the default branch tip when it has none), never the PR head's
+  `installer/` or `package-lock.json`. Missing files there come from that ref's stacks, not the
+  PR's. Either way npx runs from an empty temp directory with `--cwd` on the checkout, and every
+  `npm_config_*` variable and the user and global npmrc are dropped, so a PR-committed `.npmrc`
+  can't change what npm runs. The render also runs with `--untrusted-config`, because the config
+  it reads is the PR's: it refuses any `source:` stack (whose prerequisite checks are shell
+  commands, and whose `acknowledgedChecks` digest a PR can write for itself) and runs no
+  prerequisite probe. A release without that flag fails the step, so pin a release that has it. `waffle-doctor` deliberately has no such step, and the
+  release, post-merge and evals jobs read no rendered resource. A private toolkit repo needs
+  credentials for the `ls-remote` and the fetch.
+
   **Issue / PR / review templates (default render, #337).** This stack ships six inert templates
   that pour with the stack — no opt-in, because unlike every workflow above they hold no
   permissions, run no job, and spend no money: `.github/ISSUE_TEMPLATE/{config,bug,feature,
@@ -1841,6 +1865,8 @@ config:
       #372 `upgrade` rewrites an explicit release-shaped pin to the toolkit that just rendered
       your lock — before the render, so the new ref lands in this workflow in the same run — and
       leaves a `#main`/`#<sha>` pin alone, noted.
+      Its repo part (before `#`) is also the TRUSTED BASE the render-before-read CI step (#615)
+      fetches the lock's release pin from; a lock naming any other source is refused.
       An UNPINNED value ("github:dustinkeeton/wafflestack", no `#tag`) is deliberately NOT the
       default: it runs whatever is on the toolkit's DEFAULT BRANCH at the moment CI runs, so every
       push and PR in your repo executes an unreviewed upstream commit against your checked-out

@@ -64,11 +64,12 @@ try {
     case 'render': {
       const force = extractFlag(args, '--force');
       const gitignore = extractFlag(args, '--gitignore');
+      const untrustedConfig = extractFlag(args, '--untrusted-config');
       if (args.length) {
         fail(`${command} takes no refs — use \`wafflestack install <ref…>\` to add a stack or item (it persists the choice, then re-renders); bare \`${command}\` re-renders the current selection`);
       }
       const toolkitIdentity = requireRelease(command);
-      runRender(force, toolkitIdentity);
+      runRender(force, toolkitIdentity, null, { untrustedConfig });
       if (gitignore) offerGitignore();
       break;
     }
@@ -438,6 +439,8 @@ function helpText() {
     '  --help, -h        print this help and exit 0; after a command, explain instead of running it',
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
     '                    uninstall: also delete files that were hand-edited after rendering',
+    '  --untrusted-config  render: the config came from an untrusted tree (a PR head in CI) — refuse',
+    '                    any `source:` stack and run no prerequisite check',
     '  --gitignore       setup/init/render/install: append the recommended .gitignore entries',
     '                    render/install: plus each overlay-fed render git would let you commit',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
@@ -473,8 +476,8 @@ function helpText() {
 // `installed` is what `installRefs` just persisted. The render's own checks (`needs config values`,
 // collisions, …) run AFTER that save, so ANY refusal rolls it back and a refused install leaves
 // waffle.yaml as it found it (#548); an un-eject collision additionally names its `--force` remedy (#497).
-function runRender(force = false, toolkitIdentity = null, installed = null) {
-  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, log: console.log });
+function runRender(force = false, toolkitIdentity = null, installed = null, { untrustedConfig = false } = {}) {
+  const result = renderProject({ toolkitRoot, cwd, toolkitVersion: pkg.version, toolkitIdentity, force, untrustedConfig, log: console.log });
   for (const w of result.warnings) console.warn(`warning: ${w}`);
   if (!result.ok) {
     for (const e of result.errors) console.error(`error: ${e}`);
