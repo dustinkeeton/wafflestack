@@ -160,6 +160,30 @@ describe('overlay leak warning (#614)', () => {
     assert.ok(!result.doctor.notes.some((n) => /Posture 2b/.test(n)));
   });
 
+  test('a symlinked render dir is skipped without hiding leaks in real dirs', () => {
+    git(cwd, 'init', '-q');
+    render();
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'real-claude-'));
+    try {
+      fs.cpSync(path.join(cwd, '.claude'), real, { recursive: true });
+      fs.rmSync(path.join(cwd, '.claude'), { recursive: true });
+      fs.symlinkSync(real, path.join(cwd, '.claude'));
+      const result = render();
+      assert.deepEqual(result.overlayLeaks, ['.codex/agents/helper.toml']);
+      const dr = doctor({ cwd, toolkitVersion: '0.0.test' });
+      assert.deepEqual(dr.overlayLeaks, ['.codex/agents/helper.toml']);
+      assert.ok(!dr.notes.some((n) => /could not check/.test(n)));
+    } finally {
+      fs.rmSync(real, { recursive: true, force: true });
+    }
+  });
+
+  test('an overlay-only path is worded as such, without the CI doctor claim', () => {
+    const [line] = overlayLeakWarnings([{ path: 'x.md', tracked: false, overlayOnly: true }]);
+    assert.match(line, /renders only from/);
+    assert.doesNotMatch(line, /fails CI doctor/);
+  });
+
   test('overlayLeaks returns null without git; warnings are empty for no leaks', () => {
     assert.equal(overlayLeaks(cwd, { a: '1' }, { a: '2' }), null);
     assert.deepEqual(overlayLeakWarnings([]), []);

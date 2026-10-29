@@ -42,7 +42,8 @@ is what you reach for across a breaking one.
   `not gitignored (embeds local overlay): <path>`, or `tracked by git (embeds local overlay): <path>`
   for a tracked one. The check is informational: it never changes
   doctor's exit code. Outside a git work tree `render` is silent, and `doctor` notes that it
-  could not check.
+  could not check. An overlay that changes only `.claude/settings.json` entries is not checked yet
+  (#786).
 
   **Consumer impact:** re-render only. No config change.
 

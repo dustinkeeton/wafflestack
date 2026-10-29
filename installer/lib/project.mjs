@@ -197,16 +197,32 @@ export function gitignoreMentions(cwd, entry) {
  * @param {string} cwd
  * @param {string[]} paths repo-relative
  * @param {(args: string[], input?: string) => { status: number|null, stdout: string, error?: Error }} [runGit]
- * @returns {{ ignored: Set<string>, tracked: Set<string> } | null}
+ * @returns {{ ignored: Set<string>, tracked: Set<string>, beyondSymlink: Set<string> } | null}
  */
 export function gitIgnoreStatus(cwd, paths, runGit = defaultRunGit(cwd)) {
-  if (!paths.length) return { ignored: new Set(), tracked: new Set() };
-  const check = runGit(['check-ignore', '--stdin', '-z'], paths.join('\0'));
+  // git cannot commit these, and one in a `check-ignore` batch fails the whole batch (exit 128).
+  const beyondSymlink = new Set(paths.filter((p) => hasSymlinkedParent(cwd, p)));
+  const queried = paths.filter((p) => !beyondSymlink.has(p));
+  if (!queried.length) return { ignored: new Set(), tracked: new Set(), beyondSymlink };
+  const check = runGit(['check-ignore', '--stdin', '-z'], queried.join('\0'));
   if (check.error || (check.status !== 0 && check.status !== 1)) return null;
-  const listed = runGit(['ls-files', '-z', '--', ...paths]);
+  const listed = runGit(['ls-files', '-z', '--', ...queried]);
   if (listed.error || listed.status !== 0) return null;
   const split = (/** @type {string} */ out) => new Set(out.split('\0').filter(Boolean));
-  return { ignored: split(check.stdout), tracked: split(listed.stdout) };
+  return { ignored: split(check.stdout), tracked: split(listed.stdout), beyondSymlink };
+}
+
+/** @param {string} cwd @param {string} rel */
+function hasSymlinkedParent(cwd, rel) {
+  const parts = rel.split('/').slice(0, -1);
+  for (let i = 1; i <= parts.length; i++) {
+    try {
+      if (fs.lstatSync(path.join(cwd, ...parts.slice(0, i))).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 /** @param {string} cwd */

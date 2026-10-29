@@ -308,7 +308,7 @@ export function renderProject({
   };
 }
 
-/** @typedef {{ path: string, tracked: boolean }} OverlayLeak */
+/** @typedef {{ path: string, tracked: boolean, overlayOnly?: boolean }} OverlayLeak */
 
 /**
  * Paths whose effective (overlay-fed) hash differs from the canonical one, effective-only included.
@@ -335,8 +335,8 @@ export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
   const status = gitIgnoreStatus(cwd, divergent, runGit);
   if (!status) return null;
   return divergent
-    .filter((p) => status.tracked.has(p) || !status.ignored.has(p))
-    .map((p) => ({ path: p, tracked: status.tracked.has(p) }));
+    .filter((p) => !status.beyondSymlink.has(p) && (status.tracked.has(p) || !status.ignored.has(p)))
+    .map((p) => ({ path: p, tracked: status.tracked.has(p), overlayOnly: !(p in canonicalFiles) }));
 }
 
 const POSTURE_2B_REMEDY =
@@ -364,7 +364,9 @@ export function overlayLeakWarnings(leaks) {
   const lines = leaks.map((l) =>
     l.tracked
       ? `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit publishes them and fails CI doctor`
-      : `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is not gitignored — committing it publishes them and fails CI doctor`,
+      : l.overlayOnly
+        ? `${l.path} renders only from ${LOCAL_CONFIG_FILE} (the canonical render has no such file) and is not gitignored — committing it publishes your overlay's output`
+        : `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is not gitignored — committing it publishes them and fails CI doctor`,
   );
   return [...lines, `${leaks.length} overlay-fed render(s) are not safe to commit: ${overlayLeakRemedy(leaks)}`];
 }
