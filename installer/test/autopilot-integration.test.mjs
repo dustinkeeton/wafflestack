@@ -659,6 +659,7 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
     const fail = section(md, '## Failure handling', 'At the end, the report');
     assert.match(fail, /\*\*The final integration PR was not opened\*\*[^\n]*audit hand-off\]\(#integration-gate--stage-3-audit\) when a run PR is open or merged;/);
     assert.doesNotMatch(fail, /when a run PR merged;/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /audit-step consent is on, a run PR is open or merged, and stage 3 did not pass or block/);
   });
 
   test('the stray-edit check records HEAD and the branch once; a retry keeps it', () => {
