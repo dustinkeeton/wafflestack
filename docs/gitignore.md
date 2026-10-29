@@ -50,7 +50,11 @@ explaining any of it. For most teams this alone settles the question.
 **CI agents can read the skills at all.** This is the one that surprises people. A
 CI-dispatched agent harness reads `.claude/skills/` out of the checkout. If the render is
 gitignored, the checkout does not contain it — there is *nothing for CI to read*. Either the
-skills are in git, or CI renders them itself, or your CI agents have no skills.
+skills are in git, or CI renders them itself, or your CI agents have no skills. The shipped
+`waffle-*` workflows render for themselves (#615). Before a job reads a skill, it renders any
+missing `.claude/`, `.codex/` or `.agents/` file from the lock's **release** pin, fetched only
+from the repo `doctor.toolkitRef` names. With the render committed, that step does nothing. A
+lock with no release pin fails the job with a remedy.
 
 **Your agents' actual behavior becomes reviewable.** Change a config value, add an extension,
 or upgrade the toolkit, and the re-rendered output lands in the same pull request. A reviewer

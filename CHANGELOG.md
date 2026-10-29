@@ -33,6 +33,19 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **CI workflows render missing wafflestack resources before reading them (#615, part of #775).**
+  The label-hook (enrich, implement), hygiene, pr-green and pr-response jobs now run a `Render
+  missing wafflestack resources` step after checkout. If every `.claude/`, `.codex/` and `.agents/`
+  path in the lock is present, it does nothing. Otherwise it renders from the lock's release pin.
+  The pin must name the repo in `doctor.toolkitRef` and a `vX.Y.Z` tag found there, and the fetch
+  uses that tag's commit, so a PR-head lock cannot choose the code npx runs. A lock without a
+  release pin fails with a remedy. The render runs with no overlay, restores any tracked file it
+  touched, and keeps its new files out of the harness's commits. `waffle-doctor` stays exempt.
+  A new `workflow-render-step.test.mjs` fails when a shipped workflow reads a rendered path
+  without the step.
+
+  **Consumer impact:** re-render only. Repos that commit their render see no change.
+
 - **Warn when an overlay-fed render isn't gitignored (#614, part of #775).** When
   `waffle.local.yaml` changes a rendered file, `render` and `upgrade` now warn if git would let you
   commit that file — it is tracked by git, or not gitignored. The check uses `git check-ignore` and

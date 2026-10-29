@@ -23,6 +23,54 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Lock-only repos commit waffle.yaml + the lock, not the render: rebuild what this job reads (#615).
+      # Inline, not a script file: on a PR-head checkout a committed script would be PR-authored code.
+      - name: Render missing wafflestack resources
+        id: waffle-render
+        env:
+          TRUSTED_TOOLKIT: 'github:dustinkeeton/wafflestack'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=waffle-render::$*"; exit 1; }
+          lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+          LOCK=.waffle/waffle.lock.json
+          [ -f "$LOCK" ] || fail "$LOCK is missing; commit it so CI can reproduce the wafflestack render."
+          missing="$(node -e '
+            const fs = require("fs");
+            const l = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const keys = [...Object.keys(l.files || {}), ...Object.keys(l.settings || {})].map((k) => k.replace(/#.*$/, ""));
+            console.log([...new Set(keys)].filter((k) => /^\.(claude|codex|agents)\//.test(k) && !fs.existsSync(k)).length);
+          ' "$LOCK")"
+          if [ "$missing" = 0 ]; then
+            echo "🧇 waffle-render: every rendered resource is in the checkout; nothing to render."
+            exit 0
+          fi
+          read -r status source ref commit < <(node -e '
+            const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).toolkit || {};
+            console.log([t.status, t.source, t.ref, t.commit].map((v) => (typeof v === "string" && /^[^\s]+$/.test(v) ? v : "-")).join(" "));
+          ' "$LOCK")
+          base="${TRUSTED_TOOLKIT%%#*}"
+          if [ "$(lc "$base")" = "$(lc "github:${GITHUB_REPOSITORY}")" ] && [ -f installer/cli.mjs ]; then
+            [ -d node_modules ] || npm ci --ignore-scripts
+            node installer/cli.mjs render --allow-unreleased
+            from="this checkout (the toolkit's own repo)"
+          elif [ "$status" = release ]; then
+            [[ "$base" =~ ^github:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "doctor.toolkitRef ($TRUSTED_TOOLKIT) is not a github:owner/repo spec, so the lock's pin cannot be verified."
+            [ "$source" = - ] || [ "$(lc "$source")" = "$(lc "$base")" ] || fail "the lock's toolkit source $source is not the trusted toolkit $base (doctor.toolkitRef); refusing to fetch it."
+            [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "the lock's toolkit ref $ref is not a vX.Y.Z release tag."
+            tagged="$(git ls-remote --tags -- "https://github.com/${base#github:}" | awk -v t="refs/tags/$ref" '$2 == t {q = $1} $2 == t "^{}" {p = $1} END {print (p != "" ? p : q)}')"
+            [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "release tag $ref was not found on $base."
+            [ "$commit" = - ] || { [[ "$commit" =~ ^[0-9a-f]{7,40}$ ]] && [[ "$tagged" == "$commit"* ]]; } || fail "the lock pins commit $commit, but $base tag $ref is $tagged."
+            npx --yes "${base}#${tagged}" render
+            from="${base}#${ref}"
+          else
+            fail "$missing rendered file(s) are absent and the lock records no release pin (toolkit status: $status). Render from a toolkit release (wafflestack upgrade) and commit the lock, or commit the render."
+          fi
+          git diff --name-only -z | xargs -0 -r git checkout --
+          exclude="$(git rev-parse --git-path info/exclude)"
+          mkdir -p "$(dirname "$exclude")"
+          git ls-files --others --exclude-standard | sed 's#^#/#' >> "$exclude"
+          echo "🧇 waffle-render: rendered $missing missing file(s) from ${from}." | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
       # Deterministic bootstrap BEFORE the paid harness runs: doing the install here keeps the
       # harness allowlist free of any install/network permission. See the setup note.
       - name: Install project dependencies
