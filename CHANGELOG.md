@@ -400,6 +400,11 @@ is what you reach for across a breaking one.
   gate config set to `false` even though the invoker typed a token for it. The new row says ask,
   whatever the rendered gate says; a non-interactive caller resolves to off. **Consumer impact:**
   autopilot skill text only — `render` picks it up.
+- **Autopilot integration hands off `/audit` when run PRs are still open (#771, part of #720).** A
+  run whose run PRs were all still open, none merged (no auto-merge consent, or every armed PR
+  merge-blocked), opened no final PR and gave no audit hand-off, so the combined change could reach
+  `main` unaudited. The hand-off is now withheld only when no run PR is open and none merged.
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
 
 ## [0.18.0] - 2026-10-25
 
