@@ -98,7 +98,10 @@ try {
       for (const f of result.render.absent) console.log(`stale lock entry: ${f}${from(f)} — tracked by the lock but no longer rendered by the config`);
       for (const f of result.render.unexpected) console.log(`unrendered: ${f} — the config would render this file but the lock does not track it`);
       for (const e of result.render.errors) console.log(`verify-render: ${e}`);
-      for (const f of result.overlayLeaks) console.log(`not gitignored (embeds local overlay): ${f}${from(f)}`);
+      for (const f of result.overlayLeaks) {
+        const label = result.trackedOverlayLeaks.includes(f) ? 'tracked by git' : 'not gitignored';
+        console.log(`${label} (embeds local overlay): ${f}${from(f)}`);
+      }
       for (const n of result.notes) console.log(n);
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);

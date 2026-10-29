@@ -190,4 +190,20 @@ describe('render --gitignore offers overlay-fed renders (#614)', () => {
     assert.equal(after.status, 0, after.stdout + after.stderr);
     assert.doesNotMatch(after.stdout, /embeds local overlay/);
   });
+
+  test('a tracked leak: doctor labels it tracked, and --gitignore does not add it', () => {
+    write(cwd, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: local@example.com\n');
+    const leaked = '.claude/skills/git-workflow/SKILL.md';
+    const first = spawnSync(process.execPath, [CLI, 'render', '--allow-unreleased', '--cwd', cwd], { encoding: 'utf8' });
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    git(cwd, 'add', leaked);
+    const again = run();
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.doesNotMatch(gi(), /SKILL\.md/);
+    fs.appendFileSync(path.join(cwd, '.gitignore'), '.claude/\n');
+    const dr = runDoctor();
+    assert.equal(dr.status, 0, dr.stdout + dr.stderr);
+    assert.match(dr.stdout, /^tracked by git \(embeds local overlay\): \.claude\/skills\/git-workflow\/SKILL\.md/m);
+    assert.doesNotMatch(dr.stdout, /^not gitignored \(embeds local overlay\)/m);
+  });
 });
