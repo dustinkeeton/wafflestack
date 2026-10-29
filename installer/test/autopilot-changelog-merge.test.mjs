@@ -117,6 +117,14 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), ins('### Fixed', '- main near')(ins('- base added', '- from main', '- from integ')(BASE)));
   });
 
+  test('a line both sides add identically at the same point is kept once, as git keeps it', () => {
+    const side = (who) => (s) => ins('- base fixed', '- same')(ins('- base added', `- ${who}`)(s));
+    sync({ main: { 'CHANGELOG.md': side('main') }, integ: { 'CHANGELOG.md': side('integ') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- same')(ins('- base added', '- main', '- integ')(BASE)));
+  });
+
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
     sync({
       main: { 'CHANGELOG.md': ins('- base added', '- from main'), [LOCK]: '{"v":2}\n' },
