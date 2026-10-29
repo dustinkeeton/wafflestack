@@ -500,6 +500,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /Work only in <a2>/);
     assert.match(md, /never run\s+gh pr checkout/);
     assert.match(md, /it worked outside `<a2>`/);
+    assert.match(md, /if `git ls-remote --heads origin <b2>` shows the errored attempt pushed `<b2>`, hold/);
     assert.match(md, /keep `<a2>` and `<b2>` \(skip item 5's removal\)/);
     assert.match(md, /`git branch --list 'autopilot\/stage2\/<ts>-\*'`/);
     assert.match(md, /retry on a fresh spawn with the full prompt on the `-r<k>-retry` branch in a fresh `<a2>`/);
