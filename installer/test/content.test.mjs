@@ -4980,7 +4980,8 @@ describe('delegate: worktree provisioning renders a gitignored render (#777)', (
   });
 
   test('it restores touched tracked files and stops on any leftover status', () => {
-    assert.ok(step().includes('`git -C <wt> diff --name-only -z | xargs -0 -r git -C <wt> checkout --`'));
+    assert.match(step(), /^3\. Put back any tracked file those touched: `git -C <wt> checkout -- \.`\./m);
+    assert.doesNotMatch(step(), /\|/, 'one program per call: no pipeline (#790 F6)');
     assert.match(step(), /^4\. `git -C <wt> status --porcelain` must print nothing\.$/m);
     assert.match(step(), /\*\*stop\*\* before spawning/);
   });

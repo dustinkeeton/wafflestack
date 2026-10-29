@@ -45,7 +45,7 @@
     ".claude/skills/delegate/checkpoint.schema.json": "7e12e1c870713ac252194ba418241719ca47679ada9d7557684d128cb029fe98",
     ".claude/skills/delegate/identity.mjs": "c09437b80fe1dcd3eb9e2e6efc2207e6beb44dcd3ad853484860ac60bbb3516a",
     ".claude/skills/delegate/memory.mjs": "dfd1bf402c15d100a0c13ece20fd5b41c9e06b36832d86511760d9c67b066d6b",
-    ".claude/skills/delegate/SKILL.md": "e1439d8b1c140a52aa5d711b49e860e0f1817d0e84751642f9808efc1377828c",
+    ".claude/skills/delegate/SKILL.md": "f4fc223b688b087e296159cf42727b94fe7e02cbef5df49216850c2c6b9d2d33",
     ".claude/skills/diagram/SKILL.md": "950ecd00a7f7f5c3e2524ba4f18cba6a78f564255646fbd1177089f2fcaf3345",
     ".claude/skills/docs-agent/SKILL.md": "ec6a029f52fcc46ebb4aec379933695d33d3ce52b69ad7c361735059e59e7147",
     ".claude/skills/docs-human/SKILL.md": "54b8df535482ac3d30c57fd0e9d9379116576de0f694ae4c2453e0cb01278d25",
