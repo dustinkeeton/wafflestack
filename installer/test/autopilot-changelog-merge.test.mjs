@@ -53,6 +53,8 @@ const run = (...args) => {
 };
 /** An edit that inserts `add` lines after the line `after`. */
 const ins = (after, ...add) => (s) => s.replace(`${after}\n`, `${[after, ...add].join('\n')}\n`);
+/** An edit that inserts `add` lines directly above the line `line`. */
+const above = (line, ...add) => (s) => s.replace(`\n${line}\n`, `\n${[...add, line].join('\n')}\n`);
 /** Commit each side off the base (a function edits the file, null deletes it), then merge main into integ; asserts it conflicts. */
 const sync = ({ main = {}, integ = {} }) => {
   for (const [branch, files] of [['main', main], ['integ', integ]]) {
@@ -100,6 +102,13 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), want);
   });
 
+  test('appending right before the next ## heading, the last legal point, resolves', () => {
+    sync({ main: { 'CHANGELOG.md': above('## [0.1.0] - 2026-01-01', '- from main') }, integ: { 'CHANGELOG.md': above('## [0.1.0] - 2026-01-01', '- from integ') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), above('## [0.1.0] - 2026-01-01', '- from main', '- from integ')(BASE));
+  });
+
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
     sync({
       main: { 'CHANGELOG.md': ins('- base added', '- from main'), [LOCK]: '{"v":2}\n' },
@@ -142,6 +151,15 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
 
   test('an addition under a different ## heading holds', () => {
     hold({ main: { 'CHANGELOG.md': ins('- shipped', '- late note') }, integ: { 'CHANGELOG.md': ins('- shipped', '- other note') } }, /^HOLD: main adds lines outside "## \[Unreleased\]"/);
+  });
+
+  test('an addition directly under the next ## heading holds', () => {
+    const under = (line) => ({ 'CHANGELOG.md': ins('## [0.1.0] - 2026-01-01', line) });
+    hold({ main: under('- m'), integ: under('- i') }, /^HOLD: main adds lines outside "## \[Unreleased\]" \(after base line 13\)/);
+  });
+
+  test('an addition directly above ## [Unreleased] holds', () => {
+    hold({ main: { 'CHANGELOG.md': above('## [Unreleased]', '- m') }, integ: { 'CHANGELOG.md': above('## [Unreleased]', '- i') } }, /^HOLD: main adds lines outside "## \[Unreleased\]" \(after base line 2\)/);
   });
 
   test('an added ### heading inside [Unreleased] holds', () => {
