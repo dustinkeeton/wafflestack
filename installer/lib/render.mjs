@@ -37,6 +37,7 @@ import {
   migrateLegacyDotfiles,
   staleGitignoreEntries,
   gitignoreMentions,
+  gitIgnoreStatus,
   resolveLockFile,
   resolveLocalConfigFile,
   localLockPath,
@@ -255,6 +256,8 @@ export function renderProject({
   // Written only when the overlay actually moved a byte, and removed again the moment that stops
   // being true — a stale local lock would describe a tree that no longer exists.
   const localLockFile = localLockPath(cwd);
+  /** @type {OverlayLeak[]} */
+  let leaks = [];
   const overlayChangedTheRender =
     JSON.stringify(effectiveFiles) !== JSON.stringify(canonicalFiles) ||
     JSON.stringify(effectiveSettings) !== JSON.stringify(canonicalSettings);
@@ -285,6 +288,8 @@ export function renderProject({
           `\`--gitignore\`). ${LOCK_FILE} stays canonical and is the one to commit.`,
       );
     }
+    leaks = overlayLeaks(cwd, canonicalFiles, effectiveFiles) ?? [];
+    warnings.push(...overlayLeakWarnings(leaks));
   } else if (exists(localLockFile)) {
     fs.rmSync(localLockFile);
   }
@@ -299,7 +304,57 @@ export function renderProject({
     sources,
     toolkit: toolkitBlock,
     identity: toolkitIdentity,
+    overlayLeaks: leaks.map((l) => l.path),
   };
+}
+
+/** @typedef {{ path: string, tracked: boolean }} OverlayLeak */
+
+/**
+ * Paths whose effective (overlay-fed) hash differs from the canonical one, effective-only included.
+ *
+ * @param {Record<string, string>} canonicalFiles
+ * @param {Record<string, string>} effectiveFiles
+ * @returns {string[]}
+ */
+export function overlayDivergentFiles(canonicalFiles, effectiveFiles) {
+  return Object.keys(effectiveFiles).filter((k) => canonicalFiles[k] !== effectiveFiles[k]).sort();
+}
+
+/**
+ * Overlay-divergent paths git would let you commit (#614); `null` when git cannot say.
+ *
+ * @param {string} cwd
+ * @param {Record<string, string>} canonicalFiles
+ * @param {Record<string, string>} effectiveFiles
+ * @param {Parameters<typeof gitIgnoreStatus>[2]} [runGit]
+ * @returns {OverlayLeak[] | null}
+ */
+export function overlayLeaks(cwd, canonicalFiles, effectiveFiles, runGit) {
+  const divergent = overlayDivergentFiles(canonicalFiles, effectiveFiles);
+  const status = gitIgnoreStatus(cwd, divergent, runGit);
+  if (!status) return null;
+  return divergent
+    .filter((p) => status.tracked.has(p) || !status.ignored.has(p))
+    .map((p) => ({ path: p, tracked: status.tracked.has(p) }));
+}
+
+export const OVERLAY_LEAK_REMEDY =
+  'gitignore them (`wafflestack render --gitignore` adds them), or move to lock-only Posture 2b: gitignore the whole render ' +
+  'and gate CI with `doctor --allow-missing --verify-render` (docs/gitignore.md#posture-2b-commit-the-lock-only)';
+
+/**
+ * @param {OverlayLeak[]} leaks
+ * @returns {string[]}
+ */
+export function overlayLeakWarnings(leaks) {
+  if (!leaks.length) return [];
+  const lines = leaks.map((l) =>
+    l.tracked
+      ? `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is tracked by git — \`git rm --cached ${l.path}\` and gitignore it, or the next commit publishes them and fails CI doctor`
+      : `${l.path} embeds ${LOCAL_CONFIG_FILE} values (differs from the canonical render) and is not gitignored — committing it publishes them and fails CI doctor`,
+  );
+  return [...lines, `${leaks.length} overlay-fed render(s) are not gitignored: ${OVERLAY_LEAK_REMEDY}`];
 }
 
 /**

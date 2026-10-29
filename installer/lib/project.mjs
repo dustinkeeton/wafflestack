@@ -1,5 +1,6 @@
 // @ts-check
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import YAML from 'yaml';
@@ -187,6 +188,33 @@ export function gitignoreMentions(cwd, entry) {
   const gi = path.join(cwd, '.gitignore');
   if (!exists(gi)) return false;
   return fs.readFileSync(gi, 'utf8').includes(path.basename(entry));
+}
+
+/**
+ * Ask git which of `paths` are ignored and which are tracked — honours every exclude source.
+ * `null` when `cwd` is not a git work tree or git is unavailable.
+ *
+ * @param {string} cwd
+ * @param {string[]} paths repo-relative
+ * @param {(args: string[], input?: string) => { status: number|null, stdout: string, error?: Error }} [runGit]
+ * @returns {{ ignored: Set<string>, tracked: Set<string> } | null}
+ */
+export function gitIgnoreStatus(cwd, paths, runGit = defaultRunGit(cwd)) {
+  if (!paths.length) return { ignored: new Set(), tracked: new Set() };
+  const check = runGit(['check-ignore', '--stdin', '-z'], paths.join('\0'));
+  if (check.error || (check.status !== 0 && check.status !== 1)) return null;
+  const listed = runGit(['ls-files', '-z', '--', ...paths]);
+  if (listed.error || listed.status !== 0) return null;
+  const split = (/** @type {string} */ out) => new Set(out.split('\0').filter(Boolean));
+  return { ignored: split(check.stdout), tracked: split(listed.stdout) };
+}
+
+/** @param {string} cwd */
+function defaultRunGit(cwd) {
+  return (/** @type {string[]} */ args, /** @type {string|undefined} */ input) => {
+    const res = spawnSync('git', ['-C', cwd, ...args], { input, encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] });
+    return { status: res.status, stdout: res.stdout ?? '', error: res.error };
+  };
 }
 
 // Marker prefixing wafflestack's own appended block, so a human scanning `.gitignore` can see

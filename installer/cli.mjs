@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { renderProject } from './lib/render.mjs';
+import { renderProject, readLock, readLocalLock, overlayLeaks } from './lib/render.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { defaultPluginsDir } from './lib/installed-mods.mjs';
 import { eject, scaffoldConfig, installRefs, unejectCollisions } from './lib/eject.mjs';
@@ -98,6 +98,7 @@ try {
       for (const f of result.render.absent) console.log(`stale lock entry: ${f}${from(f)} — tracked by the lock but no longer rendered by the config`);
       for (const f of result.render.unexpected) console.log(`unrendered: ${f} — the config would render this file but the lock does not track it`);
       for (const e of result.render.errors) console.log(`verify-render: ${e}`);
+      for (const f of result.overlayLeaks) console.log(`not gitignored (embeds local overlay): ${f}${from(f)}`);
       for (const n of result.notes) console.log(n);
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
@@ -435,6 +436,7 @@ function helpText() {
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
     '                    uninstall: also delete files that were hand-edited after rendering',
     '  --gitignore       setup/init/render/install: append the recommended .gitignore entries',
+    '                    render/install: plus each overlay-fed render git would let you commit',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
     '                    reinstall: required by --clean, the one path that deletes your config',
     '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
@@ -491,7 +493,10 @@ function runRender(force = false, toolkitIdentity = null, installed = null) {
 function offerGitignore() {
   const toolkit = loadToolkit(toolkitRoot);
   const project = loadProjectConfig(cwd);
-  reportGitignore(ensureGitignoreEntries(cwd, recommendedGitignoreEntries(toolkit, project)));
+  const lock = readLock(cwd);
+  const localLock = readLocalLock(cwd);
+  const leaks = lock && localLock ? (overlayLeaks(cwd, lock.files, localLock.files) ?? []).filter((l) => !l.tracked).map((l) => l.path) : [];
+  reportGitignore(ensureGitignoreEntries(cwd, [...recommendedGitignoreEntries(toolkit, project), ...leaks]));
 }
 
 function reportGitignore(added, out = console.log) {
