@@ -278,7 +278,7 @@ Runs from item 3, after stage 2, on `<F>`. It is Step 7's `/audit` gate, run onc
    ```
 
    Its `docs` invocation is the run's one docs refresh, over the combined diff. **Own the teardown:** `shutdown_request` each audit agent and then `TaskStop` each one, even if a pass errors. An errored chain follows Step 7's one-retry rule: tear down, `git worktree remove --force <a3>` and `git branch -D <b3>`, retry once on the `-r2` branch in a fresh `<a3>`, and hold if it errors again.
-5. **Check where the fixes went.** If any of the main checkout's three reads differs from item 3's record, hold: an agent edited outside `<a3>`. On this hold, keep `<a3>` and `<b3>` (skip the Stage 3 hold's removal) so the audit's fixes are not lost, and list the newly changed main-checkout paths in the follow-up.
+5. **Check where the fixes went.** If any of the main checkout's three reads differs from item 3's record, hold: an agent edited outside `<a3>`. On this hold, keep `<a3>` and `<b3>` (skip the Stage 3 hold's removal) so the audit's fixes are not lost, and list in the follow-up the newly changed main-checkout paths and, when either moved, the before and after `HEAD` and branch.
 6. **Open the fix PR.** Only when `git -C <a3> status --porcelain` prints anything:
 
    ```bash
