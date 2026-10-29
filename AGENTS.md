@@ -678,8 +678,8 @@ Lock-only (Posture 2b, #777): `.waffle/waffle.yaml`, `.waffle/extensions/`, the 
 lock-managed, #594) are COMMITTED; the `.claude/` render (`agents/`, `skills/`, `workflows/`) is
 gitignored (`/.claude/{skills,agents,workflows}/*`, so `!` can re-include an ejected item).
 Re-render after a pull or a `stacks/**` edit and commit the LOCK; `self-posture.test.mjs` fails if
-the render is re-tracked. Delegate/autopilot render into a fresh worktree that lacks it (delegate
-**Render a gitignored render into the worktree**). Gitignored deliberate absences,
+the render is re-tracked. Delegate/autopilot never render into a worktree: Claude Code loads the main
+checkout's skills when a worktree has none. Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
 `.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the
 generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, both `.html`, `AVATARS.md`,

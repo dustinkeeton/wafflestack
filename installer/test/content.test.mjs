@@ -4969,36 +4969,12 @@ describe('init and setup are one onboarding command (#611)', () => {
   });
 });
 
-// #777: a lock-only project's fresh worktree has no render; delegate renders it and restores tracked files.
-describe('delegate: worktree provisioning renders a gitignored render (#777)', () => {
-  const md = () => readSkill('delegate');
-  const step = () => md().slice(md().indexOf('**Render a gitignored render into the worktree.**'), md().indexOf('Retain the absolute path'));
-
-  test('the step renders only when the render is missing, with this repo\'s commands', () => {
-    assert.match(step(), /^1\. `test -e <wt>\/\.claude\/skills\/delegate\/SKILL\.md` — exit 0 [^\n]*skip to step 5\.$/m);
-    assert.match(step(), /^2\. `npm install`, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs render --cwd <wt>`, both with `<wt>` as the working directory, so a relative `waffleCmd` renders the worktree's own sources\.$/m);
-  });
-
-  test('it restores touched tracked files and stops on any leftover status', () => {
-    assert.match(step(), /^4\. Put back any tracked file those touched: `git -C <wt> checkout -- \.`\./m);
-    assert.doesNotMatch(step(), /\|/, 'one program per call: no pipeline (#790 F6)');
-    assert.match(step(), /^5\. `git -C <wt> status --porcelain` must print nothing\.$/m);
-    assert.match(step(), /\*\*stop\*\* before spawning/);
-  });
-
-  test('a clean status is not success: the render must exist after it (#790 F1)', () => {
-    assert.match(step(), /^6\. Re-run step 1's `test -e`: it must exit 0\./m);
-    assert.match(step(), /step 3 or step 6 exits non-zero, or step 5 prints anything, \*\*stop\*\* before spawning/);
-    assert.doesNotMatch(step(), /\$WORKTREE_PATH/);
-  });
-
-  test('a lock diff after the render stops before the restore can hide it (#790 F7)', () => {
-    assert.match(step(), /^3\. `git -C <wt> diff --quiet -- \.waffle\/waffle\.lock\.json` must exit 0\./m);
-    assert.ok(step().indexOf('diff --quiet') < step().indexOf('checkout -- .'));
-  });
-
-  test('autopilot cuts its stage-2 and stage-3 worktrees through the same step', () => {
-    const ap = readSkill('autopilot');
-    for (const wt of ['<a2>', '<a3>']) assert.ok(ap.includes(`render into \`${wt}\` by delegate's **Render a gitignored render into the worktree** step`), wt);
+// A worktree with no render falls back to the main checkout's skills; rendering one would shadow it.
+describe('delegate: worktrees are not rendered into', () => {
+  test('delegate says not to render, and neither skill runs a worktree render', () => {
+    const md = readSkill('delegate');
+    assert.match(md, /\*\*Do not render into the worktree\.\*\*/);
+    assert.doesNotMatch(md, /render --cwd <wt>/);
+    assert.doesNotMatch(readSkill('autopilot'), /Render a gitignored render into the worktree/);
   });
 });

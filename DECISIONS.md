@@ -22,9 +22,9 @@ be left out of each commit by hand.
 `.waffle/extensions/`, `.waffle/waffle.lock.json`, the rendered `.github/` files and
 `.claude/settings.json` stay committed. `tests.yml`'s `doctor --verify-render` keeps gating the
 lock, and `self-posture.test.mjs` fails if the render is re-tracked. Tests read a tmp render of
-the committed inputs (`installer/test/self-render.mjs`), never the working tree. Delegate renders
-into each fresh worktree that lacks a render, and autopilot's stage 2 and 3 worktrees reuse
-that step.
+the committed inputs (`installer/test/self-render.mjs`), never the working tree. Worktrees are not rendered
+into: Claude Code (v2.1.277+) loads the main checkout's skills when a worktree has none, and a
+render there would shadow your overlay with canonical copies.
 
 **Alternatives**:
 - *Keep committing the render and live with the overlay diff.* Rejected: the reason for
