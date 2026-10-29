@@ -109,6 +109,14 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), above('## [0.1.0] - 2026-01-01', '- from main', '- from integ')(BASE));
   });
 
+  test('a user diff.interHunkContext does not fuse nearby insertions into a false hold', () => {
+    git('config', 'diff.interHunkContext', '5');
+    sync({ main: { 'CHANGELOG.md': (s) => ins('### Fixed', '- main near')(ins('- base added', '- from main')(s)) }, integ: { 'CHANGELOG.md': ins('- base added', '- from integ') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('### Fixed', '- main near')(ins('- base added', '- from main', '- from integ')(BASE)));
+  });
+
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
     sync({
       main: { 'CHANGELOG.md': ins('- base added', '- from main'), [LOCK]: '{"v":2}\n' },
@@ -164,6 +172,10 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
 
   test('an added ### heading inside [Unreleased] holds', () => {
     hold({ main: main(ins('- base fixed', '', '### Changed', '', '- x')), integ }, /^HOLD: main adds a heading/);
+  });
+
+  test('a side adding a conflict-marker-shaped line holds', () => {
+    hold({ main: main((s) => s), integ: { 'CHANGELOG.md': ins('- base added', '<<<<<<< HEAD') } }, /^HOLD: a side adds a conflict-marker-shaped line to CHANGELOG\.md$/m);
   });
 
   test('CHANGELOG.md plus another non-lock path holds', () => {

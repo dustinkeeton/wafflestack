@@ -58,7 +58,7 @@ function stage(git, n, file) {
 
 /** Insertions of `side` against the base: [{ at, lines }], `at` = base line number the lines follow. */
 function insertions(git, file, n, side) {
-  const out = git(['diff', '--no-color', '--no-ext-diff', '--unified=0', '--histogram', `:1:${file}`, `:${n}:${file}`]);
+  const out = git(['diff', '--no-color', '--no-ext-diff', '--unified=0', '--inter-hunk-context=0', '--histogram', `:1:${file}`, `:${n}:${file}`]);
   const hunks = [];
   for (const line of out.split('\n')) {
     const h = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(line);
