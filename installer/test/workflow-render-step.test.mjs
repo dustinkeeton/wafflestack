@@ -238,6 +238,15 @@ describe('waffle-render step behavior (#615)', () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.deepEqual(r.calls, ['node render --allow-unreleased']);
   });
+
+  test("the toolkit's own repo installs dependencies first when node_modules is absent", () => {
+    lock({ source: 'github:dustinkeeton/wafflestack', ref: null, commit: null, status: 'unreleased' });
+    write('installer/cli.mjs', `import fs from 'node:fs';\nfs.appendFileSync(process.env.LOG, 'node ' + process.argv.slice(2).join(' ') + '\\n');\n`);
+    exe(path.join(bin, 'npm'), 'echo "npm $*" >> "$LOG"');
+    const r = run({ trusted: 'github:dustinkeeton/wafflestack', repo: 'dustinkeeton/wafflestack' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(r.calls, ['npm ci --ignore-scripts', 'node render --allow-unreleased']);
+  });
 });
 
 describe('CI renders overlay-free (#615)', () => {
