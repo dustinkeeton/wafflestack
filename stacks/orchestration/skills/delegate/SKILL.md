@@ -451,13 +451,14 @@ Notes:
 
 **Render a gitignored render into the worktree.** A project that commits only the lock (Posture 2b) has no rendered skills, agents, or workflow scripts in a fresh worktree — the agent would start without the very skills its prompt names. Right after `git worktree add`, run each of these as its own call. Write the worktree's absolute path in as a literal wherever `<wt>` appears: a shell variable does not survive between calls, and `git -C ""` falls back to the cwd.
 
-1. `test -e <wt>/{{harness.skillsDir}}/delegate/SKILL.md` — exit 0 means the render is already there (a project that commits it): skip to step 4.
+1. `test -e <wt>/{{harness.skillsDir}}/delegate/SKILL.md` — exit 0 means the render is already there (a project that commits it): skip to step 5.
 2. `{{project.installCmd}}`, then `{{autopilot.waffleCmd}} render --cwd <wt>`, both with `<wt>` as the working directory, so a relative `waffleCmd` renders the worktree's own sources.
-3. Put back any tracked file those touched: `git -C <wt> checkout -- .`. The worktree was created a moment ago, so its only tracked changes are ones install or render made; untracked and ignored files, the render among them, are left alone.
-4. `git -C <wt> status --porcelain` must print nothing.
-5. Re-run step 1's `test -e`: it must exit 0. A clean status alone cannot tell a rendered worktree from one that was never rendered.
+3. `git -C <wt> diff --quiet -- .waffle/waffle.lock.json` must exit 0. A render of the worktree's own sources reproduces its committed lock, so a lock diff means step 2 rendered from the wrong sources (a slipped cwd, or a `waffleCmd` toolkit other than the lock's).
+4. Put back any tracked file those touched: `git -C <wt> checkout -- .`. The worktree was created a moment ago, so its only tracked changes are ones install or render made; untracked and ignored files, the render among them, are left alone.
+5. `git -C <wt> status --porcelain` must print nothing.
+6. Re-run step 1's `test -e`: it must exit 0. A clean status alone cannot tell a rendered worktree from one that was never rendered.
 
-If the render fails, step 4 prints anything, or step 5 exits non-zero, **stop** before spawning. Leftover status means the project's `.gitignore` does not cover its render, so the agent would commit it; a missing render means the agent would start without its skills. Report the paths rather than deleting them.
+If the render fails, step 3 or step 6 exits non-zero, or step 5 prints anything, **stop** before spawning. A lock diff means a render from the wrong sources; leftover status means the project's `.gitignore` does not cover its render, so the agent would commit it; a missing render means the agent would start without its skills. Report the paths rather than deleting them.
 
 Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt. This path — and the branch — must match what the `plan` checkpoint recorded for this issue; **read them from the checkpoint** rather than re-deriving them, so a single source of truth drives both provisioning and the agent prompt.
 
