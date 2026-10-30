@@ -61,13 +61,13 @@ dryRunResponse: |
   Posting a NEW comment (round two gets its own comment, oldest-first trail preserved):
 
   <!-- waffle-pr-response -->
-  **PR response, round 2** — 2 new findings: 1 implemented, 1 implemented; 1 prior verdict
+  **PR response, round 2** — 2 new findings: 1 implemented, 1 declined; 1 prior verdict
   corrected.
 
   | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
   |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
   | F4 | first retry silently skipped | 3 | 3 | 3 | 3 | 3 | 15 | **Implement** |
-  | F5 | "maximum retires" typo | 1 | 1 | 3 | 3 | 2 | 10 | **Implement** (rode along with F4's test pass) |
+  | F5 | "maximum retires" typo | 1 | 1 | 3 | 3 | 2 | 10 | **Decline** (nit below the Implement bar) |
 
   - **Correction to round one:** F2 is a real bug after all — new evidence from the reviewer's
     repro. Round one's Defer stands as the record of what we knew then; the fix lands this

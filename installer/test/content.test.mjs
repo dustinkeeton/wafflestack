@@ -961,10 +961,10 @@ describe('autopilot skill: opt-in adversarial-review → pr-response review loop
     assert.match(md, /not armed yet/);
   });
 
-  test('the loop: wait-green then adversarial-review then pr-response --yes, converge on 0 implemented', () => {
+  test('the loop: wait-green then adversarial-review then pr-response --yes, converge on 0 should-fix implemented', () => {
     assert.match(md, /adversarial-review <pr>/);
     assert.match(md, /pr-response <pr> --yes/);
-    assert.match(md, /A \*\*cold\*\* round that implements \*\*0 findings\*\* is the terminal signal/);
+    assert.match(md, /A \*\*cold\*\* round that implements \*\*0 should-fix or blocker findings\*\* is the terminal signal/);
     assert.match(md, /re-wait for green/);
   });
 
@@ -1063,10 +1063,10 @@ describe('autopilot skill: opt-in /qa gate before the review loop (#228)', () =>
     assert.match(md, /the QA gate is \*not\* the last gate — do \*\*not\*\* arm here/);
   });
 
-  test('the loop: wait-green then qa then pr-response --yes, converge on 0 implemented', () => {
+  test('the loop: wait-green then qa then pr-response --yes, converge on 0 should-fix implemented', () => {
     assert.match(qaStep, /run `qa <pr>`/);
     assert.match(qaStep, /pr-response <pr> --yes/);
-    assert.match(qaStep, /A \*\*cold\*\* round that implements \*\*0 findings\*\* is the terminal signal/);
+    assert.match(qaStep, /A \*\*cold\*\* round that implements \*\*0 should-fix or blocker findings\*\* is the terminal signal/);
     assert.match(qaStep, /re-wait for green/);
   });
 
@@ -1359,7 +1359,8 @@ describe('autopilot skill: the manual-review queue has a service level (#511)', 
     assert.match(report, /gh issue list --state open --label "waffle:manual-review"/);
     assert.ok(says(report, /hold queue: empty/i), 'an empty queue is silent — indistinguishable from a skipped listing');
     assert.ok(says(report, /no free scheduled sweep/i, /paid/i), 'the report promises a cadence the toolkit cannot run');
-    assert.match(report, /cap-reached with nits reported, not filed/);
+    assert.match(report, /cap-reached with a clean fresh pass \(no follow-up — convergence evidence; any nits reported, not filed\)/);
+    assert.doesNotMatch(report, /cap-reached with nits reported, not filed/);
   });
 
   test('DECISIONS.md records the service level and who burns the queue down', () => {
@@ -1459,6 +1460,71 @@ describe('autopilot skill: gate loops converge only on a cold round (#510, #357)
   });
 });
 
+describe('autopilot + pr-response: gate loops converge on zero should-fix, not zero implemented (#794)', () => {
+  let md;
+  let pr;
+  let steps;
+  let hatches;
+  let guardrails;
+  const sentences = (text) =>
+    text
+      .replace(/[*_`]/g, '')
+      .split(/(?<=[.!?;])\s+|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const says = (text, ...res) => sentences(text).find((s) => res.every((re) => re.test(s)));
+
+  before(() => {
+    md = readSkill('autopilot');
+    pr = readSkill('pr-response');
+    steps = {
+      QA: md.slice(md.indexOf('### Step 5 — QA'), md.indexOf('### Step 6')),
+      review: md.slice(md.indexOf('### Step 6 — Review'), md.indexOf('### Step 7')),
+    };
+    hatches = {
+      QA: steps.QA.slice(steps.QA.indexOf('#### QA cap reached')),
+      review: steps.review.slice(steps.review.indexOf('#### Cap reached')),
+    };
+    guardrails = md.slice(md.indexOf('## Guardrails'), md.indexOf('## Failure handling'));
+    assert.ok(steps.QA.length > 0 && steps.review.length > 0 && guardrails.length > 0);
+  });
+
+  test('pr-response returns implemented counts split by recorded Severity', () => {
+    assert.match(pr, /`implemented: blocker=<b> should-fix=<s> nit=<n>`/);
+    assert.match(pr, /recorded \*\*Severity\*\* score: 3 is a blocker, 2 a should-fix, 0 or 1 a\s+nit/);
+    assert.match(pr, /blocker and should-fix counts are the loop's\s+convergence signal/);
+    assert.match(pr, /never a Severity scored down\s+to end the loop/);
+  });
+
+  test('pr-response enforces the Implement threshold strictly', () => {
+    assert.match(pr, /\*\*The Implement threshold is strict\.\*\* Nothing below/);
+    assert.doesNotMatch(pr, /small edit worth making/);
+    assert.doesNotMatch(pr, /F5 — Defer/);
+  });
+
+  for (const name of ['QA', 'review']) {
+    test(`${name} loop: convergence reads the should-fix and blocker counts; nits do not restart it`, () => {
+      const step = steps[name];
+      assert.ok(says(step, /implemented:/, /blocker/, /should-fix/), `${name}: the stop signal is not read from the implemented: line`);
+      assert.ok(says(step, /Nits/i, /do not restart the count/i), `${name}: a nit can restart convergence again`);
+      assert.ok(says(step, /well-formed/i, /not converged/i), `${name}: a missing implemented: line can read as converged`);
+      assert.ok(says(step, /pushed nits/i, /re-wait for green/i), `${name}: a converging round's nit push skips the green wait`);
+    });
+
+    test(`${name} hatch: a nit-only fresh pass is clean evidence`, () => {
+      const h = hatches[name];
+      assert.ok(says(h, /no should-fix or blocker/i, /nits only/i, /file nothing/i), `${name}: a nit-only pass is not clean`);
+      assert.ok(says(h, /converged-on-the-evidence-pass/i, /nits/i), `${name}: a nit-only pass does not record convergence`);
+    });
+  }
+
+  test('no restatement keeps the zero-implemented stop rule', () => {
+    assert.doesNotMatch(md, /implements \*\*0 findings\*\*/);
+    assert.doesNotMatch(md, /implemented-count of 0/);
+    assert.equal(guardrails.match(/converges \*\*only on a cold round\*\* that implements 0 should-fix or blocker findings/g)?.length, 2);
+  });
+});
+
 describe('autopilot skill: persistent gate agents across subloop rounds (#295)', () => {
   let md;
   let qaStep;
@@ -1492,7 +1558,7 @@ describe('autopilot skill: persistent gate agents across subloop rounds (#295)',
   test('the structured return contract — and therefore convergence — is unchanged', () => {
     for (const step of [qaStep, reviewStep]) {
       assert.match(step, /The return contract is identical/);
-      assert.match(step, /A \*\*cold\*\* round that implements \*\*0 findings\*\* is the terminal signal/);
+      assert.match(step, /A \*\*cold\*\* round that implements \*\*0 should-fix or blocker findings\*\* is the terminal signal/);
     }
     assert.match(qaStep, /never take an agent's word over the PR's own state/);
   });

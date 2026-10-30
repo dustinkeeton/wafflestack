@@ -799,8 +799,8 @@ config:
       human review (cleaning it up first). When true, autopilot withholds auto-merge arming from
       the delegate run, waits for each PR to go green, then loops up to autopilot.maxReviewRounds
       rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging only when a COLD
-      round (round 1, or a fresh unnamed certification round after an anchored round implemented 0)
-      implements 0 findings, and arms auto-merge itself afterward if that was also consented.
+      round (round 1, or a fresh unnamed certification round after an anchored round implemented
+      none) implements 0 should-fix or blocker findings (nits may land), and arms auto-merge itself afterward if that was also consented.
       Config may say false (the run never asks and never loops) or prompt, never true — render and
       doctor reject it (configModes, #626), so only the per-run +review token can turn the loop on;
       -review or +review:0 turns it off for one run, and an unattended run with no token resolves to off.
@@ -810,12 +810,13 @@ config:
     description: >-
       Hard cap on the number of adversarial-review → pr-response rounds the review loop runs per
       PR before giving up on convergence (only consulted when autopilot.reviewLoop is on). A COLD round
-      that implements 0 findings converges and breaks early; an anchored round's 0 is only a candidate
+      that implements 0 should-fix or blocker findings (nits may land) converges and breaks early; an
+      anchored round's 0 is only a candidate
       that the next round, a cold certification, must confirm, and that round counts toward the cap; reaching the cap without converging is
       a safety bound, NOT a merge blocker — autopilot runs one fresh adversarial-review pass
       (outside the cap, no pr-response follows it) purely as the brief's source, files an
       autopilot.holdLabel-labeled follow-up issue from THOSE findings so the remaining work isn't
-      lost — a clean fresh pass skips the follow-up (it is the convergence evidence) — and only
+      lost — a clean or nit-only fresh pass skips the follow-up (it is the convergence evidence) — and only
       THEN proceeds (arms if consented and the review loop is the last gate that is on, else leaves
       the arming to the audit gate or the PR to a human). Pass, then file, then arm: the fresh pass
       always precedes the filing it briefs, and the arming always follows both. Raise it as the pr-response
@@ -839,7 +840,8 @@ config:
       autopilot.reviewLoop, and autopilot.auditStep: any combination may be on. When true, autopilot
       withholds auto-merge arming from the delegate run, waits for each PR to go green, then loops
       up to autopilot.maxQaRounds rounds of `qa <PR#>` → `pr-response <PR#> --yes`, converging only
-      when a COLD round (round 1, or a fresh unnamed certification round) implements 0 findings; it arms auto-merge itself afterward only if that was also
+      when a COLD round (round 1, or a fresh unnamed certification round) implements 0 should-fix or
+      blocker findings (nits may land); it arms auto-merge itself afterward only if that was also
       consented AND the review loop and audit gate are both off — otherwise the last enabled gate
       arms. Config may say false (the run never asks and never QAs) or prompt, never true — render
       and doctor reject it (configModes, #626), so only the per-run +qa token can turn the loop on;
@@ -849,12 +851,12 @@ config:
     default: 2
     description: >-
       Hard cap on the number of qa → pr-response rounds the QA gate runs per PR before giving up on
-      convergence (only consulted when autopilot.qaLoop is on). A COLD round that implements 0 findings
-      converges and breaks early; an anchored round's 0 is only a candidate that the next round, a
+      convergence (only consulted when autopilot.qaLoop is on). A COLD round that implements 0
+      should-fix or blocker findings (nits may land) converges and breaks early; an anchored round's 0 is only a candidate that the next round, a
       cold certification, must confirm, and that round counts toward the cap; reaching the cap without converging is a safety bound, NOT a merge
       blocker — autopilot runs one fresh qa pass (outside the cap, no pr-response follows it)
       purely as the brief's source, files an autopilot.holdLabel-labeled follow-up issue from THOSE
-      findings so the remaining work isn't lost — a clean fresh pass skips the follow-up (it is the
+      findings so the remaining work isn't lost — a clean or nit-only fresh pass skips the follow-up (it is the
       convergence evidence), and when the review loop is also on the filing defers to it (its
       rounds triage the fresh-pass findings) — and only THEN proceeds (arms if consented and the QA
       gate is the last gate that is on, else defers the arming to the later gates or leaves the PR

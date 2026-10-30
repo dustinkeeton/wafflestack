@@ -9,6 +9,36 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-29: Autopilot's gate loops converge on zero should-fix, not zero implemented (#794)
+
+**Context**: Steps 5–6 stopped only on a cold round that implemented nothing, nits included. The
+2026-10-29 run (+qa:4 +review:4, integration PR #792) hit both caps on all three PRs. Each nit
+fix moved the head, the next cold reader found more nits, and the bar drifted at the margin:
+#788 F7 scored 10 and was implemented anyway as "worth having".
+
+**Decision**: `pr-response` ends its return with `implemented: blocker=<b> should-fix=<s> nit=<n>`,
+classed by each finding's recorded Severity (3, 2, 0–1). A cold round with blocker + should-fix
+= 0 converges; nits applied in it do not restart the count, and a pushed nit still re-waits for
+green. A missing or malformed line reads as not converged. A cap-hatch evidence pass that raises
+only nits is clean evidence. `pr-response` implements nothing below the Implement threshold except
+through the confirmed-blocker override; a nit under the bar is declined.
+
+**Alternatives**:
+- *Re-weight the rubric so nits cannot reach the bar.* Rejected: at the default weights a perfect
+  nit composes to exactly 11, and the drift was judgment, not arithmetic. The fix must hold at
+  any weights.
+- *Parse the responder's prose for "nit".* Rejected: route on structure, never on phrasing (#674).
+
+**Rationale**: A nit cannot block a merge, so it should not block convergence. Integration stage 2
+keeps its total-0 rule because its fixes land through fix PRs merged on CI alone, unreviewed.
+
+**Affects**: the orchestration stack's autopilot skill and config descriptions, and the
+github-workflow stack's pr-response skill and evals. Residual risk, accepted: on a repo with an
+armed `waffle-pr-green-hook`, a nit push in the converging round mints a head whose hook review
+can land after the last gate arms. This repo's hooks are disarmed (#396).
+
+---
+
 ## 2026-10-29: The toolkit repo commits the lock, not its self-render (#777, part of #775)
 
 **Context**: The 2026-07-03 decision committed this repo's `.claude/` render because a

@@ -497,6 +497,7 @@ describe('integration gate stage 2: decision-preservation review (#733)', () => 
     assert.match(md, /\*\*No id printed, or the query errors:\*\* hold with the reason \*\*round `<k>`'s review did not land on `<sha>`\*\*, and write no status/);
     assert.doesNotMatch(md, /\*\*Review not landed\?\*\*/);
     assert.match(md, /read as the final PR's arm check reads it/);
+    assert.match(md, /Nits count here, unlike Steps 5–6/);
   });
 
   test('the responder works in its own worktree, and leftovers are cleaned up', () => {
