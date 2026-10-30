@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-29
+
 ### Added
 
 - **CI workflows render missing wafflestack resources before reading them (#615, part of #775).**
