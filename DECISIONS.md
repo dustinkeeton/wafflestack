@@ -583,6 +583,9 @@ blocks the follow-up and leaves the fix to judgment.
 
 **Impact**: Narrows #388's skill/agent markdown exemption. The cutoff stays 11. Consumers re-render.
 
+**Superseded in part 2026-10-29 ([#794](#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794), above).** The Implement cutoff is now strict: a nit
+under it is declined, never implemented as a small edit.
+
 ---
 
 ## 2026-10-24: `/waffle-report` picks the form by structure, never by wording (#674)
@@ -1045,6 +1048,10 @@ whose fresh pass raises only nits no longer opens an issue, and every run report
 hold queue. Content tests pin the floor in both hatches and the fallback, the audit gate's
 exemption, the "reported but not filed" shed count, and the queue listing.
 
+**Superseded in part 2026-10-29 ([#794](#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794), above).** A nit-only fresh pass is now convergence
+evidence: the PR is recorded as converged-on-the-evidence-pass, and its nits are still reported,
+not filed.
+
 ---
 
 ## 2026-10-19: Autopilot's gate loops converge only on a cold round; the cap stays per-run (#510, #357)
@@ -1105,6 +1112,9 @@ hatch's cold pass rather than converging in-loop. The run report shows it, throu
 certification catch, and shed. `qa` and `adversarial-review` already honour the
 deliberately-cold sentence, so they need only a wording update. Content tests pin the cold-round
 rule, the shared sentence (four uses now), the bound, and the per-run statement.
+
+**Superseded in part 2026-10-29 ([#794](#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794), above).** A cold round now converges when it implements
+0 should-fix or blocker findings; nits may land in it. Integration stage 2 still needs a total of 0.
 
 ---
 
