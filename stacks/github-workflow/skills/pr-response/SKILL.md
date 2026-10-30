@@ -195,7 +195,8 @@ That one value is what your delivery status will certify (step 6): *"I read ever
 to this cutoff."* It is **not** the time you finish — a review can land while you are scoring, fixing
 and pushing, and a status stamped with a completion time would certify a review that never crossed
 your desk. Take it from GitHub's own timestamps, not a local clock, so no skew can push it forward.
-If the PR carries no reviews yet, there is nothing to triage — stop.
+If the PR carries no reviews yet, there is nothing to triage — stop, still ending your return
+with step 7's `implemented:` line.
 
 Then **enumerate the findings** as discrete, individually-decidable items. One review body listing
 four bullets is **four findings**, not one. Give each a stable number (`F1`, `F2`, …) and carry
@@ -204,7 +205,8 @@ that number through scoring, the commits, and the reply.
 Skip non-findings: "LGTM", approval boilerplate, a previous `<!-- waffle-pr-response -->` reply of
 your own (not a finding — though on a cold start you first *read* it as verdict history; see
 [Being resumed across rounds](#when-called-by-agents)), and CI status chatter. If there are **no
-findings at all**, say so and stop — do not invent work to look busy.
+findings at all**, say so and stop, still ending your return with step 7's `implemented:` line —
+do not invent work to look busy.
 
 Before you score, **read the code each finding names**. A finding is a claim about the code; you
 cannot judge its Validity from the comment text alone. Open the file, trace the call path, and
@@ -259,6 +261,12 @@ overrides them for this run (step 1); the dimensions and anchors above are the r
 **Wherever this file names a cutoff or a weight, use this run's effective value.** The numbers
 rendered here are the config values.
 
+**The Implement threshold is strict.** Nothing below {{prResponse.rubric.thresholds.implement}} is
+implemented, not as "worth having" and not because the fix is one line. The confirmed-blocker
+override below is the only path to Implement under the bar. A finding you would fix anyway but that
+scores under the bar is a recalibration signal (see
+[Recalibrating the rubric](#recalibrating-the-rubric-v3)), never an exception.
+
 Four rules that override the arithmetic — apply them **explicitly**, never silently. They test the
 **raw** dimension scores, never the weighted composite: `Validity = 0` still Declines when the
 Validity weight is 0.
@@ -268,9 +276,9 @@ Validity weight is 0.
   threshold ({{prResponse.rubric.thresholds.implement}}). Note the override
   in the reason. (v1 omitted the Reach clause, which would have forced a dormant, unreachable bug
   to be fixed on the spot — see the CHANGELOG note for v2.)
-- **A nit is never a Defer.** If a finding fails the outcome test above, use judgment, not the
-  arithmetic: Implement it when it is a small edit worth making, otherwise Decline it, and say
-  which in the reason. Never file a follow-up issue for a nit.
+- **A nit is never a Defer.** A finding that fails the outcome test above is Implement only when
+  its composite clears the Implement threshold, and Decline otherwise. Never file a follow-up issue
+  for a nit.
 - **A false positive is always Decline.** If `Validity = 0`, decline regardless of Severity — the
   cost of a bug that does not exist is zero. Note the override in the reason.
 - **A real defect in dead code is a Defer, never a Decline.** If `Validity ≥ 2` and `Reach = 0`, the
@@ -573,7 +581,7 @@ what stitches them together (see step 3 and the resumption rules).
 
 ```markdown
 <!-- waffle-pr-response -->
-**PR response** — 4 findings: 2 implemented, 1 deferred, 1 declined.
+**PR response** — 6 findings: 2 implemented, 2 deferred, 2 declined.
 
 | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
 |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
@@ -581,7 +589,7 @@ what stitches them together (see step 3 and the resumption rules).
 | F2 | No test for the `null`-config branch in `load.ts` | 2 | 2 | 3 | 3 | 3 | 13 | **Implement** |
 | F3 | `flush()` swallows the write error | 2 | 2 | 2 | 1 | 2 | 9 | **Defer** |
 | F4 | The retry cap is wrong in the disabled `legacy-sync` path | 3 | 0 | 3 | 1 | 1 | 8 | **Defer** |
-| F5 | Rename `tmp2` to something meaningful | 1 | 1 | 1 | 3 | 1 | 7 | **Defer** |
+| F5 | Rename `tmp2` to something meaningful | 1 | 1 | 1 | 3 | 1 | 7 | **Decline** |
 | F6 | `withTempDir` is already reimplemented here | 1 | 1 | 0 | 2 | 1 | 5 | **Decline** |
 
 - **F1 — Implement (15).** Confirmed: `input === ""` yields `[0, -1]`. Fixed in `a1b2c3d` with a
@@ -593,7 +601,8 @@ what stitches them together (see step 3 and the resumption rules).
   `legacy-sync` is disabled and has no caller. Reach 0, so the blocker-override does not fire — but
   a real defect in dead code is a **Defer with an issue**, never a Decline. Tracked in #203, with
   the repro, so it is not rediscovered the day that path is re-enabled.
-- **F5 — Defer (7).** Fair nit; batched into the naming pass in #202.
+- **F5 — Decline (7).** A nit (fails the outcome test) below the Implement bar declines, never
+  defers: the name is unclear, not wrong.
 - **F6 — Decline (5).** False positive (Validity 0 → auto-decline): this is a different helper
   with a different cleanup contract; `withTempDir` does not unlink on error.
 
@@ -627,6 +636,11 @@ of the posted reply. Call out any rule-override you applied (blocker-implement, 
 decline) and any finding you could not score confidently. Report the effective thresholds and
 weights and their source (config or run override), and any ignored `--rubric` with its failing
 rule.
+
+End every return, step 2's two early stops included, with one exact line,
+`implemented: blocker=<b> should-fix=<s> nit=<n>`. Count each implemented finding by its
+recorded **Severity** score: 3 is a blocker, 2 a should-fix, 0 or 1 a nit. Write all three keys
+as integers, 0 when none. The caller reads the line, not your prose.
 
 ## Recalibrating the rubric (v3)
 
@@ -685,7 +699,8 @@ Threshold-layer only — the five dimensions and their anchors are untouched:
   implements in-PR only by bringing real Severity or Reach; the marginal ones defer with an issue.
 - **Comment findings score what comments are.** The Reach ≤ 1 / Severity ≤ 1 rule for comment text
   in deterministic files (see the scoring rule above) is #388's doctrine landing where it bites.
-  #682 widened it to wording-only findings in any file, and a nit is never Deferred.
+  #682 widened it to wording-only findings in any file; a nit is never Deferred, and below the
+  Implement bar it Declines (#794).
 
 **How to change it:** the two thresholds and the five weights are repo policy — set
 `prResponse.rubric.thresholds.implement` / `.decline` or `prResponse.rubric.weights.*` in
@@ -743,6 +758,7 @@ instead of invoking this skill fresh each round. When resumed:
   reads prior replies' footers as **history, never as config**: it does not adopt their rubric. A different
   rubric is not new evidence — do not re-score a settled verdict because the cutoffs moved.
 - **The reply and the return are unchanged.** Step 6 posts a **new** comment for this round (never
-  editing an earlier one), and the per-verdict + implemented counts (step 7) are your reply
-  each round — the implemented count is the loop's convergence signal, so report it honestly: 0
-  means nothing was left to fix, not that you are tired of the round.
+  editing an earlier one), and the per-verdict counts plus the `implemented:` line (step 7) are
+  your return each round — the `implemented:` line's blocker and should-fix counts are the loop's
+  convergence signal, so report them from the Severity you recorded, never a Severity scored down
+  to end the loop: 0 means nothing above nit was left to fix, not that you are tired of the round.

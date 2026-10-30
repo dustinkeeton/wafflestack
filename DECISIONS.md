@@ -9,6 +9,36 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-10-29: Autopilot's gate loops converge on zero should-fix, not zero implemented (#794)
+
+**Context**: Steps 5–6 stopped only on a cold round that implemented nothing, nits included. The
+2026-10-29 run (+qa:4 +review:4, integration PR #792) hit both caps on all three PRs. Each nit
+fix moved the head, the next cold reader found more nits, and the bar drifted at the margin:
+#788 F7 scored 10 and was implemented anyway as "worth having".
+
+**Decision**: `pr-response` ends its return with `implemented: blocker=<b> should-fix=<s> nit=<n>`,
+classed by each finding's recorded Severity (3, 2, 0–1). A cold round with blocker + should-fix
+= 0 converges; nits applied in it do not restart the count, and a pushed nit still re-waits for
+green. A missing or malformed line reads as not converged. A cap-hatch evidence pass that raises
+only nits is clean evidence. `pr-response` implements nothing below the Implement threshold except
+through the confirmed-blocker override; a nit under the bar is declined.
+
+**Alternatives**:
+- *Re-weight the rubric so nits cannot reach the bar.* Rejected: at the default weights a perfect
+  nit composes to exactly 11, and the drift was judgment, not arithmetic. The fix must hold at
+  any weights.
+- *Parse the responder's prose for "nit".* Rejected: route on structure, never on phrasing (#674).
+
+**Rationale**: A nit cannot block a merge, so it should not block convergence. Integration stage 2
+keeps its total-0 rule because its fixes land through fix PRs merged on CI alone, unreviewed.
+
+**Affects**: the orchestration stack's autopilot skill and config descriptions, and the
+github-workflow stack's pr-response skill and evals. Residual risk, accepted: on a repo with an
+armed `waffle-pr-green-hook`, a nit push in the converging round mints a head whose hook review
+can land after the last gate arms. This repo's hooks are disarmed (#396).
+
+---
+
 ## 2026-10-29: The toolkit repo commits the lock, not its self-render (#777, part of #775)
 
 **Context**: The 2026-07-03 decision committed this repo's `.claude/` render because a
@@ -553,6 +583,9 @@ blocks the follow-up and leaves the fix to judgment.
 
 **Impact**: Narrows #388's skill/agent markdown exemption. The cutoff stays 11. Consumers re-render.
 
+**Superseded in part 2026-10-29 ([#794](#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794), above).** The Implement cutoff is now strict: a nit
+under it is declined, never implemented as a small edit.
+
 ---
 
 ## 2026-10-24: `/waffle-report` picks the form by structure, never by wording (#674)
@@ -1015,6 +1048,10 @@ whose fresh pass raises only nits no longer opens an issue, and every run report
 hold queue. Content tests pin the floor in both hatches and the fallback, the audit gate's
 exemption, the "reported but not filed" shed count, and the queue listing.
 
+**Superseded in part 2026-10-29 ([#794](#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794), above).** A nit-only fresh pass is now convergence
+evidence: the PR is recorded as converged-on-the-evidence-pass, and its nits are still reported,
+not filed.
+
 ---
 
 ## 2026-10-19: Autopilot's gate loops converge only on a cold round; the cap stays per-run (#510, #357)
@@ -1075,6 +1112,9 @@ hatch's cold pass rather than converging in-loop. The run report shows it, throu
 certification catch, and shed. `qa` and `adversarial-review` already honour the
 deliberately-cold sentence, so they need only a wording update. Content tests pin the cold-round
 rule, the shared sentence (four uses now), the bound, and the per-run statement.
+
+**Superseded in part 2026-10-29 ([#794](#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794), above).** A cold round now converges when it implements
+0 should-fix or blocker findings; nits may land in it. Integration stage 2 still needs a total of 0.
 
 ---
 

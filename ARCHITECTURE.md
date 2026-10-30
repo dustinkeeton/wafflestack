@@ -286,8 +286,11 @@ one home — a contract section in `audit` that `standup` and `autopilot` cite (
 ### Autopilot's gate loops end only on a cold round
 
 Autopilot's optional QA and review loops (reviewer → `pr-response` → repeat) stop only when a
-**cold** round implements zero findings (#510). A round is cold when its reviewer has no history of
-the PR:
+**cold** round implements zero should-fix or blocker findings (#510, #794). Nits may land in that
+round without restarting the count. Autopilot reads the counts from the closing line of the
+`pr-response` summary, `implemented: blocker=<b> should-fix=<s> nit=<n>`; a missing or malformed line
+counts as not converged. Integration stage 2 still needs a total of 0. A round is cold when its
+reviewer has no history of the PR:
 
 - **Round 1** — always cold.
 - **Cold certification round** — when a resumed ("anchored") reviewer comes back clean, autopilot
@@ -298,7 +301,8 @@ Every round counts toward the cap, so a loop costs at most cap + 1 reviewer pass
 `pr-response` passes. With both loops on at the default caps of 2, that is 10 gate passes per PR per run. The cap is
 **per-run, not per-PR** (#357): a later run starts its count over, and a hand-run `/pr-response`
 is never bounded. See
-[DECISIONS.md](DECISIONS.md#2026-10-19-autopilots-gate-loops-converge-only-on-a-cold-round-the-cap-stays-per-run-510-357).
+[DECISIONS.md](DECISIONS.md#2026-10-19-autopilots-gate-loops-converge-only-on-a-cold-round-the-cap-stays-per-run-510-357)
+and [the #794 change](DECISIONS.md#2026-10-29-autopilots-gate-loops-converge-on-zero-should-fix-not-zero-implemented-794).
 
 ### A cap-reached loop files only real work, and every run lists the queue
 
@@ -308,9 +312,9 @@ naming `#N` picks it up again. Since #511, two rules keep that queue small and v
 
 - **Severity floor** — a cap hatch files only should-fix and blocker findings. This covers the
   cold certification catch and the errored-twice fallback too.
-- **Nits are reported, not filed** — a fresh pass that raises only nits files nothing. Its nits go
-  in the run report, one line each with file:line, under the outcome "cap-reached with nits
-  reported, not filed".
+- **A nit-only fresh pass is convergence evidence** — it files nothing, and autopilot records the
+  PR as converged-on-the-evidence-pass (#794). Its nits still go in the run report, one line each
+  with file:line, as reported-not-filed.
 - **The audit gate is exempt** — it still files every unresolved Critical/High finding.
 - **Every run report ends with the hold queue** — each open hold-labeled issue with its number,
   title, and age, or "hold queue: empty". The person who started the run implements, relabels,
