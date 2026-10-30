@@ -195,7 +195,8 @@ That one value is what your delivery status will certify (step 6): *"I read ever
 to this cutoff."* It is **not** the time you finish — a review can land while you are scoring, fixing
 and pushing, and a status stamped with a completion time would certify a review that never crossed
 your desk. Take it from GitHub's own timestamps, not a local clock, so no skew can push it forward.
-If the PR carries no reviews yet, there is nothing to triage — stop.
+If the PR carries no reviews yet, there is nothing to triage — stop, still ending your return
+with step 7's `implemented:` line.
 
 Then **enumerate the findings** as discrete, individually-decidable items. One review body listing
 four bullets is **four findings**, not one. Give each a stable number (`F1`, `F2`, …) and carry
@@ -204,7 +205,8 @@ that number through scoring, the commits, and the reply.
 Skip non-findings: "LGTM", approval boilerplate, a previous `<!-- waffle-pr-response -->` reply of
 your own (not a finding — though on a cold start you first *read* it as verdict history; see
 [Being resumed across rounds](#when-called-by-agents)), and CI status chatter. If there are **no
-findings at all**, say so and stop — do not invent work to look busy.
+findings at all**, say so and stop, still ending your return with step 7's `implemented:` line —
+do not invent work to look busy.
 
 Before you score, **read the code each finding names**. A finding is a claim about the code; you
 cannot judge its Validity from the comment text alone. Open the file, trace the call path, and
@@ -635,9 +637,10 @@ decline) and any finding you could not score confidently. Report the effective t
 weights and their source (config or run override), and any ignored `--rubric` with its failing
 rule.
 
-End the summary with one exact line, `implemented: blocker=<b> should-fix=<s> nit=<n>`. Count each
-implemented finding by its recorded **Severity** score: 3 is a blocker, 2 a should-fix, 0 or 1 a
-nit. Write all three keys as integers, 0 when none. The caller reads the line, not your prose.
+End every return, step 2's two early stops included, with one exact line,
+`implemented: blocker=<b> should-fix=<s> nit=<n>`. Count each implemented finding by its
+recorded **Severity** score: 3 is a blocker, 2 a should-fix, 0 or 1 a nit. Write all three keys
+as integers, 0 when none. The caller reads the line, not your prose.
 
 ## Recalibrating the rubric (v3)
 

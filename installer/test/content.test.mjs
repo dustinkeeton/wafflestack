@@ -1496,6 +1496,13 @@ describe('autopilot + pr-response: gate loops converge on zero should-fix, not z
     assert.match(pr, /never a Severity scored down\s+to end the loop/);
   });
 
+  test("pr-response's early stops still return the implemented: line", () => {
+    assert.match(pr, /End every return, step 2's two early stops included, with one exact line/);
+    const exits = pr.slice(pr.indexOf('## 2. Read every finding'), pr.indexOf('## 3. Score each finding'));
+    assert.match(exits, /nothing to triage — stop, still ending your return\s+with step 7's `implemented:` line/);
+    assert.match(exits, /say so and stop, still ending your return with step 7's `implemented:` line/);
+  });
+
   test('pr-response enforces the Implement threshold strictly', () => {
     assert.match(pr, /\*\*The Implement threshold is strict\.\*\* Nothing below/);
     assert.doesNotMatch(pr, /small edit worth making/);
