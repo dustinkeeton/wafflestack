@@ -31,6 +31,21 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Changed
+
+- **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate
+  and review loop now stop on a cold round whose responder implemented no should-fix or blocker
+  finding; nits applied in that round no longer restart the count. `pr-response` ends its return
+  with a fixed `implemented: blocker=<b> should-fix=<s> nit=<n>` line, classed by each finding's
+  recorded Severity, and autopilot reads convergence from it, failing closed on a missing line. A
+  cap-hatch evidence pass that raises only nits now counts as clean: it files nothing, reports the
+  nits, and records convergence on the evidence pass. `pr-response` enforces the Implement
+  threshold strictly: nothing below it is implemented as "worth having", and a nit under the bar is
+  declined. The confirmed-blocker override stays the only below-bar Implement. Integration stage 2
+  still passes only on a round that implemented nothing, since its fixes land unreviewed.
+
+  **Consumer impact:** re-render only.
+
 ## [0.19.0] - 2026-10-29
 
 ### Added

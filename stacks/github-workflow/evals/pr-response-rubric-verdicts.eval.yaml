@@ -3,7 +3,7 @@
 #
 # Pins pr-response scoring under rubric v3 (#385): the confirmed-blocker override is load-bearing
 # (F1's honest composite sits three points under the Implement bar — #210, #532), the false-positive
-# override fires, and a valid-but-cosmetic nit defers instead of auto-implementing.
+# override fires, and a valid-but-cosmetic nit below the Implement bar declines (#682, #794).
 
 name: pr-response-scores-findings-and-emits-verdicts
 description: >-
@@ -11,7 +11,8 @@ description: >-
   below the Implement bar, a cheap valid nit, and a false positive), the pr-response skill scores
   each on the v3 rubric and returns per-finding Implement / Defer / Decline verdicts with reasons —
   the confirmed-blocker override is what lifts the blocker to Implement, the false-positive
-  override fires, and the cosmetic nit defers instead of auto-implementing. The judge grades
+  override fires, and the cosmetic nit declines below the bar instead of deferring or
+  auto-implementing. The judge grades
   pass/fail conditions, not exact anchors.
 
 target:
@@ -84,9 +85,12 @@ assert:
       about 8); a Reach of 3 is acceptable. No F1 score value beyond the bounds in (c), (d) and
       (e) is judged. A note in F1's reason that the fix could be split into its own PR is not a
       fault, as long as the verdict is Implement.
-      F2 — PASS requires that the verdict is Defer and the reason mentions a follow-up issue.
-      FAIL if the verdict is Implement or Decline. F2's five dimension scores and its composite
-      are not judged; in particular an Effort/Risk of 3 is not a fault.
+      F2 — PASS requires ALL of: (a) F2's Severity is 0 or 1 and its Reach is 0 or 1; (b) the
+      verdict follows F2's own composite — Decline when it is strictly less than 11 and the reason
+      says it is a nit below the Implement bar, Implement when it is 11 or more. FAIL if the
+      verdict is Defer, or if the verdict and the composite disagree. Guidance only, never a fail
+      condition: F2 is expected around composite 10, Decline. No other F2 score value is judged;
+      in particular an Effort/Risk of 3 is not a fault.
       F3 — PASS requires that the verdict is Decline, Validity is scored 0, and the reason states
       the finding is wrong because the `with` block already closes the handle. FAIL if the
       verdict is not Decline, or if the reason declines on cost or effort rather than on the
@@ -96,12 +100,12 @@ assert:
 
 dryRunResponse: |
   <!-- waffle-pr-response -->
-  **PR response** — 3 findings: 1 implemented, 1 deferred, 1 declined.
+  **PR response** — 3 findings: 1 implemented, 0 deferred, 2 declined.
 
   | # | Finding | Sev | Reach | Val | E/R | Align | Score | Verdict |
   |---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
   | F1 | `parseRange("")` returns `[0, -1]` | 3 | 2 | 3 | 0 | 0 | 8 | **Implement** (override) |
-  | F2 | `tmp2` is a meaningless name in `load.ts` | 1 | 1 | 3 | 3 | 2 | 10 | **Defer** |
+  | F2 | `tmp2` is a meaningless name in `load.ts` | 1 | 1 | 3 | 3 | 2 | 10 | **Decline** |
   | F3 | `flush()` leaks the file handle | 3 | 2 | 0 | 3 | 1 | 9 | **Decline** |
 
   - **F1 — Implement (8, confirmed-blocker override).** Confirmed: empty input yields `[0, -1]`
@@ -114,8 +118,8 @@ dryRunResponse: |
     lifts it to Implement regardless. Landing the bounds fix with a regression test on the
     empty-input case, plus tests pinning the three callers before the rework; the PR description
     gets a line widening its scope.
-  - **F2 — Defer (10).** Valid and trivial, but cosmetic: no run behaves differently, so Severity 1
-    and Reach 1 keep it under the ≥11 bar. Filed into the naming-pass follow-up issue.
+  - **F2 — Decline (10).** Valid and trivial, but cosmetic: no run behaves differently, so Severity 1
+    and Reach 1 keep it under the ≥11 bar. A nit below the Implement bar declines, never defers.
   - **F3 — Decline (9).** False positive (Validity 0 → auto-decline, overriding the composite):
     `flush()` wraps the handle in a `with` block, which closes it on every path including
     exceptions. There is no leak. Declining on correctness, not on cost.
