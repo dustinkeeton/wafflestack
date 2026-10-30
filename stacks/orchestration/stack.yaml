@@ -800,7 +800,7 @@ config:
       the delegate run, waits for each PR to go green, then loops up to autopilot.maxReviewRounds
       rounds of `adversarial-review <PR#>` → `pr-response <PR#> --yes`, converging only when a COLD
       round (round 1, or a fresh unnamed certification round after an anchored round implemented
-      none) implements 0 should-fix or blocker findings (nits may land), and arms auto-merge itself afterward if that was also consented.
+      0 should-fix or blocker findings) implements 0 should-fix or blocker findings (nits may land), and arms auto-merge itself afterward if that was also consented.
       Config may say false (the run never asks and never loops) or prompt, never true — render and
       doctor reject it (configModes, #626), so only the per-run +review token can turn the loop on;
       -review or +review:0 turns it off for one run, and an unattended run with no token resolves to off.
