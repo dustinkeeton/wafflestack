@@ -206,6 +206,38 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), above('- base fixed', ...entry('S'), ...entry('M'), ...entry('T'))(BASE));
   });
 
+  const count = (needle) => read('CHANGELOG.md').split('\n').filter((l) => l === needle).length;
+
+  test('an identical lead-in both sides add before their first bullet is kept once, as git keeps it (#784)', () => {
+    sync({ main: { 'CHANGELOG.md': ins('- base added', '  extra base note.', '', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  extra base note.', '', '- G') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(count('  extra base note.'), 1);
+    assert.equal(read('CHANGELOG.md'), ins('- base added', '  extra base note.', '', '- M', '- G')(BASE));
+  });
+
+  test('an identical lead-in with no blank before the bullets is kept once (#784)', () => {
+    sync({ main: { 'CHANGELOG.md': ins('- base added', '  extra base note.', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  extra base note.', '- G') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(count('  extra base note.'), 1);
+    assert.equal(read('CHANGELOG.md'), ins('- base added', '  extra base note.', '- M', '- G')(BASE));
+  });
+
+  test('a lead-in only main adds stays under the base entry (#784)', () => {
+    sync({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '- G') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base added', '  main note.', '- M', '- G')(BASE));
+  });
+
+  test('blank-only lead-ins on both sides are each kept (#784)', () => {
+    sync({ main: { 'CHANGELOG.md': ins('- base added', '', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '', '- G') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base added', '', '- M', '', '- G')(BASE));
+  });
+
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
     sync({
       main: { 'CHANGELOG.md': ins('- base added', '- from main'), [LOCK]: '{"v":2}\n' },
@@ -264,7 +296,7 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
   });
 
   test('a side adding a conflict-marker-shaped line holds', () => {
-    hold({ main: main((s) => s), integ: { 'CHANGELOG.md': ins('- base added', '<<<<<<< HEAD') } }, /^HOLD: a side adds a conflict-marker-shaped line to CHANGELOG\.md$/m);
+    hold({ main: main((s) => s), integ: { 'CHANGELOG.md': ins('- base added', '- from integ', '<<<<<<< HEAD') } }, /^HOLD: a side adds a conflict-marker-shaped line to CHANGELOG\.md$/m);
   });
 
   test('a line both sides add among different lines at the same point holds (#774)', () => {
@@ -278,6 +310,18 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
 
   test('a bullet both sides add with different continuation lines holds (#783)', () => {
     hold({ main: { 'CHANGELOG.md': above('- base fixed', '- **A.** x', '  - sub one', '  - sub two', '') }, integ: { 'CHANGELOG.md': above('- base fixed', '- **A.** x', '  - sub one', '') } }, /^HOLD: main and integ both add "- \*\*A\.\*\* x" at the same point/);
+  });
+
+  test('lead-ins that share a line but differ hold (#784)', () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  note.', '  main more.', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  note.', '  integ more.', '- G') } }, /^HOLD: integ adds " {2}note\." before its first bullet/);
+  });
+
+  test('lead-ins that share nothing hold (#784)', () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.', '- G') } }, /^HOLD: integ adds " {2}integ note\." before its first bullet, after main's added lines/);
+  });
+
+  test('a lead-in only integ adds, after an entry main adds, holds (#784)', () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.', '- G') } }, /^HOLD: integ adds " {2}integ note\." before its first bullet/);
   });
 
   test('CHANGELOG.md plus another non-lock path holds', () => {
