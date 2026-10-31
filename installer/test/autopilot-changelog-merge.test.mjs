@@ -232,10 +232,15 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
   });
 
   test('blank-only lead-ins on both sides are each kept (#784)', () => {
+    // A tight list, so git keeps each hunk's blank in front of its bullet.
+    const tight = ins('- base added', '- base added two')(BASE);
+    write({ 'CHANGELOG.md': tight });
+    git('commit', '-qam', 'tight');
+    git('branch', '-f', 'integ', 'main');
     sync({ main: { 'CHANGELOG.md': ins('- base added', '', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '', '- G') } });
     const r = run('-C', dir, '--write');
     assert.equal(r.code, 0, r.out + r.err);
-    assert.equal(read('CHANGELOG.md'), ins('- base added', '', '- M', '', '- G')(BASE));
+    assert.equal(read('CHANGELOG.md'), ins('- base added', '', '- M', '', '- G')(tight));
   });
 
   test('CHANGELOG.md plus the lock is eligible; the lock is left for its own path', () => {
