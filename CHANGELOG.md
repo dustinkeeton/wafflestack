@@ -46,6 +46,39 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** re-render only.
 
+### Fixed
+
+- **The CI render step names the pinned release and v0.19.0 when that release predates
+  `--untrusted-config` (#789).** The `::error` used to name the tag's commit SHA and say only "a newer
+  release"; it now names the lock's tag (or the trusted ref on the toolkit's own repo) and v0.19.0, the
+  first release with the flag. Its remedy fits the branch: upgrade and commit the lock, or, on the
+  toolkit's own repo, move `doctor.toolkitRef`.
+
+  **Consumer impact:** re-render only.
+
+- **The integration sync's CHANGELOG merge no longer writes a shared lead-in twice (#784, part of
+  #720).** Lines a side adds before its first bullet continue the entry above them. When both sides
+  added the same such lead-in at one point, `changelog-merge.mjs` wrote it twice, the second copy
+  under main's new entry. It now keeps an identical lead-in once, as git does, and holds when an
+  `<integ>` lead-in would land after main's added lines, where it would move under a different entry.
+
+  **Consumer impact:** re-render only.
+
+- **Autopilot no longer reads a marker-query error on an armed PR as rebase-held (#779).** Step 8
+  re-ran the rebase-drop marker query, and a transient error held an armed PR: the dependent chain
+  stopped and the report said rebase-held while the PR merged by itself. An error now holds only a PR
+  that is neither armed nor merged, since every arm runs the query first. An id still holds in every case.
+
+  **Consumer impact:** re-render only.
+
+- **Autopilot integration hands off stage 2 when no final PR opens (#782, part of #720).** A run
+  whose run PRs were still open, or whose stage 1 held, handed the human only the `/audit` step, so
+  a final PR opened later reached `main` with no decision-preservation review. With review-loop
+  consent on, those paths now also say "run `adversarial-review <F> --integration` after the final
+  PR opens", just before the audit hand-off.
+
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
+
 ## [0.19.0] - 2026-10-29
 
 ### Added
