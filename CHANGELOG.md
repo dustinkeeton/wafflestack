@@ -71,6 +71,14 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** re-render only.
 
+- **Autopilot integration hands off stage 2 when no final PR opens (#782, part of #720).** A run
+  whose run PRs were still open, or whose stage 1 held, handed the human only the `/audit` step, so
+  a final PR opened later reached `main` with no decision-preservation review. With review-loop
+  consent on, those paths now also say "run `adversarial-review <F> --integration` after the final
+  PR opens", just before the audit hand-off.
+
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
+
 ## [0.19.0] - 2026-10-29
 
 ### Added
