@@ -46,6 +46,15 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** re-render only.
 
+### Fixed
+
+- **The CI render step names the pinned release and v0.19.0 when that release predates
+  `--untrusted-config` (#789).** The `::error` used to name the tag's commit SHA and say only "a newer
+  release"; it now names the lock's tag (or the trusted ref on the toolkit's own repo) and v0.19.0, the
+  first release with the flag.
+
+  **Consumer impact:** re-render only.
+
 ## [0.19.0] - 2026-10-29
 
 ### Added

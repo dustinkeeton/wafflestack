@@ -181,7 +181,7 @@ in its checkout, so each hook's `Render missing wafflestack resources` step chec
   names, using that tag's commit, so a PR-head lock cannot choose the code CI runs. It passes
   `render --untrusted-config` (no `source:` stacks, no prerequisite checks, no write through a
   symlink that leaves the checkout) and keeps its output out of the harness's commits.
-- **No release pin, or a release older than the flag** — the step fails with a remedy (#789).
+- **No release pin, or a release older than the flag** (v0.19.0) — the step fails with a remedy (#789).
 
 `waffle-doctor` stays exempt. `workflow-render-step.test.mjs` fails any shipped workflow that
 reads a rendered path without the step. See

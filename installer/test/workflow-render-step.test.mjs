@@ -221,7 +221,7 @@ describe('waffle-render step behavior (#615)', () => {
     lock(release());
     const r = run({ env: { NPX_STDERR: 'render takes no refs — use `wafflestack install <ref…>`' } });
     assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /::error title=waffle-render::toolkit github:dustinkeeton\/wafflestack#a+ predates render --untrusted-config/);
+    assert.match(r.stdout, /::error title=waffle-render::toolkit v1\.2\.3 predates render --untrusted-config, first shipped in v0\.19\.0; run wafflestack upgrade/);
   });
 
   test('any other render failure still fails the step, with its own stderr and no upgrade hint', () => {
@@ -310,6 +310,16 @@ describe('waffle-render step behavior (#615)', () => {
       assert.equal(r.calls[1], `npx --yes github:dustinkeeton/wafflestack#${sha} render --allow-unreleased --untrusted-config --cwd ${cwd}`);
     });
   }
+
+  test("the toolkit's own repo names its trusted ref and v0.19.0 when that ref predates --untrusted-config (#789)", () => {
+    const r = selfHost({
+      trusted: 'github:dustinkeeton/wafflestack#v0.18.0',
+      lsRemote: `${SHA}\trefs/tags/v0.18.0\n`,
+      env: { NPX_STDERR: 'render takes no refs — use `wafflestack install <ref…>`' },
+    });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /::error title=waffle-render::toolkit v0\.18\.0 predates render --untrusted-config, first shipped in v0\.19\.0/);
+  });
 
   test("the toolkit's own repo fails when its trusted ref does not resolve, running nothing", () => {
     const r = selfHost({ trusted: 'github:dustinkeeton/wafflestack#nope', lsRemote: `${SHA}\tHEAD\n` });
