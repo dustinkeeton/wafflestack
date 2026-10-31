@@ -321,6 +321,10 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '  note.', '  main more.', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  note.', '  integ more.', '- G') } }, /^HOLD: integ adds " {2}note\." before its first bullet/);
   });
 
+  test('lead-ins that share a line but differ hold, with no bullet on either side (#784)', () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  note.', '  main more.') }, integ: { 'CHANGELOG.md': ins('- base added', '  note.', '  integ more.') } }, /^HOLD: integ adds " {2}note\." before its first bullet/);
+  });
+
   test('lead-ins that share nothing hold (#784)', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.', '- G') } }, /^HOLD: integ adds " {2}integ note\." before its first bullet, after main's added lines/);
   });
