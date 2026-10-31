@@ -67,7 +67,7 @@ is what you reach for across a breaking one.
 - **Autopilot no longer reads a marker-query error on an armed PR as rebase-held (#779).** Step 8
   re-ran the rebase-drop marker query, and a transient error held an armed PR: the dependent chain
   stopped and the report said rebase-held while the PR merged by itself. An error now holds only a PR
-  that is not armed, since every arm runs the query first. An id still holds in every case.
+  that is neither armed nor merged, since every arm runs the query first. An id still holds in every case.
 
   **Consumer impact:** re-render only.
 
