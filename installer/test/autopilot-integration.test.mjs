@@ -679,7 +679,7 @@ describe('integration stage 2 hand-off (#782)', () => {
   test('the hand-off is defined once in stage 2', () => {
     const md = read(SKILL);
     assert.match(stage2(), /\*\*The stage 2 hand-off\.\*\* With review-loop consent on/);
-    assert.match(stage2(), /"run `adversarial-review <F> --integration` after the final PR opens", just before the audit hand-off/);
+    assert.match(stage2(), /its report, and its follow-up when it files one, says "run `adversarial-review <F> --integration` after the final PR opens", just before the audit hand-off/);
     assert.match(stage2(), /stage 2 never runs after one; that hold carries the stage 2 hand-off\./);
     assert.equal(md.match(/\*\*The stage 2 hand-off\.\*\*/g).length, 1);
   });
