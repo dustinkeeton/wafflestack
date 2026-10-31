@@ -89,7 +89,7 @@ opens a PR controls.
 | Every `.claude/` path in the lock is present | Nothing — repos that commit their render see no change |
 | Paths are missing and the lock pins a `vX.Y.Z` release on the repo named by `doctor.toolkitRef` | Renders from that tag's commit, with no overlay, then restores any tracked file it touched and keeps its new files out of the harness's commits |
 | Paths are missing and the lock has no release pin | Fails with a remedy |
-| The pinned release predates `--untrusted-config` | Fails naming the release and pointing at `wafflestack upgrade` (#789) — not v0.18.0's misleading "render takes no refs" |
+| The pinned release predates `--untrusted-config` | Fails naming the release, v0.19.0 (the first with the flag), and `wafflestack upgrade` (#789) — not v0.18.0's misleading "render takes no refs" |
 | The repo is the toolkit itself | Renders with the installer at its trusted ref, not the PR head's |
 
 The step passes a new `render --untrusted-config` flag. It refuses any `source:` stack, runs no
