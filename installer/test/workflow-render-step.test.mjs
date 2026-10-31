@@ -318,7 +318,8 @@ describe('waffle-render step behavior (#615)', () => {
       env: { NPX_STDERR: 'render takes no refs — use `wafflestack install <ref…>`' },
     });
     assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /::error title=waffle-render::toolkit v0\.18\.0 predates render --untrusted-config, first shipped in v0\.19\.0/);
+    assert.match(r.stdout, /::error title=waffle-render::toolkit v0\.18\.0 predates render --untrusted-config, first shipped in v0\.19\.0; move doctor\.toolkitRef's #ref to v0\.19\.0 or later, or drop the #ref\./);
+    assert.doesNotMatch(r.stdout, /wafflestack upgrade/, "the self-host branch renders from doctor.toolkitRef, not the lock");
   });
 
   test("the toolkit's own repo fails when its trusted ref does not resolve, running nothing", () => {

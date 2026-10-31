@@ -51,7 +51,8 @@ is what you reach for across a breaking one.
 - **The CI render step names the pinned release and v0.19.0 when that release predates
   `--untrusted-config` (#789).** The `::error` used to name the tag's commit SHA and say only "a newer
   release"; it now names the lock's tag (or the trusted ref on the toolkit's own repo) and v0.19.0, the
-  first release with the flag.
+  first release with the flag. Its remedy fits the branch: upgrade and commit the lock, or, on the
+  toolkit's own repo, move `doctor.toolkitRef`.
 
   **Consumer impact:** re-render only.
 

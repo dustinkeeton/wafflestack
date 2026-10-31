@@ -62,7 +62,7 @@ jobs:
             NPM_CONFIG_USERCONFIG="$scratch/.npmrc" NPM_CONFIG_GLOBALCONFIG="$scratch/.npmrc" npx --yes "$@" --cwd "$ws" 2> "$err" && rc=0 || rc=$?
             cat "$err" >&2
             # A release older than --untrusted-config rejects the flag as a ref (#789).
-            [ "$rc" = 0 ] || ! grep -q 'takes no refs' "$err" || fail "toolkit ${pin:-$1} predates render --untrusted-config, first shipped in v0.19.0; run wafflestack upgrade to v0.19.0 or later and commit the lock, or commit the render."
+            [ "$rc" = 0 ] || ! grep -q 'takes no refs' "$err" || fail "toolkit ${pin:-$1} predates render --untrusted-config, first shipped in v0.19.0; $fix."
             exit "$rc"
           )
           if [ "$(lc "$base")" = "$(lc "github:${GITHUB_REPOSITORY}")" ]; then
@@ -75,6 +75,7 @@ jobs:
             fi
             [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || fail "the trusted ref ${want:-HEAD} was not found on $base."
             pin="${want:-HEAD}"
+            fix="move doctor.toolkitRef's #ref to v0.19.0 or later, or drop the #ref"
             npx_render "${base}#${tip}" render --allow-unreleased --untrusted-config
             from="${base}#${tip} (the toolkit's own repo, at its trusted ref, not the PR head)"
           elif [ "$status" = release ]; then
@@ -84,6 +85,7 @@ jobs:
             [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "release tag $ref was not found on $base."
             [ "$commit" = - ] || { [[ "$commit" =~ ^[0-9a-f]{7,40}$ ]] && [[ "$tagged" == "$commit"* ]]; } || fail "the lock pins commit $commit, but $base tag $ref is $tagged."
             pin="$ref"
+            fix="run wafflestack upgrade to v0.19.0 or later and commit the lock, or commit the render"
             npx_render "${base}#${tagged}" render --untrusted-config
             from="${base}#${ref}"
           else
