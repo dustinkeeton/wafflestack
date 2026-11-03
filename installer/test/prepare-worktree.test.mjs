@@ -97,7 +97,9 @@ describe('resolveOverlayPolicy', () => {
   test('flag, then the main overlay, then the destination overlay, then config, then local', () => {
     assert.deepEqual(resolveOverlayPolicy({}), { mode: 'local', source: 'default' });
     assert.deepEqual(resolveOverlayPolicy({ projectRaw: { worktrees: { overlay: 'none' } } }), { mode: 'none', source: 'config' });
-    assert.deepEqual(resolveOverlayPolicy({ projectRaw: { worktrees: { overlay: 'none' } }, destOverlayRaw: { worktrees: { overlay: 'main' } } }), { mode: 'main', source: 'config' });
+    assert.deepEqual(resolveOverlayPolicy({ projectRaw: { worktrees: { overlay: 'none' } }, destOverlayRaw: { worktrees: { overlay: 'local' } } }), { mode: 'local', source: 'config' });
+    assert.match(resolveOverlayPolicy({ projectRaw: { worktrees: { overlay: 'main' } } }).error, /accepted only from the main checkout's own/);
+    assert.match(resolveOverlayPolicy({ destOverlayRaw: { worktrees: { overlay: 'main' } } }).error, /accepted only from/);
     assert.deepEqual(resolveOverlayPolicy({ mainOverlayRaw: { worktrees: { overlay: 'main' } }, projectRaw: { worktrees: { overlay: 'none' } } }), { mode: 'main', source: 'main-overlay' });
     assert.deepEqual(resolveOverlayPolicy({ flag: 'none', mainOverlayRaw: { worktrees: { overlay: 'main' } } }), { mode: 'none', source: 'flag' });
     assert.match(resolveOverlayPolicy({ flag: 'all' }).error, /--overlay must be one of local, main, none/);
@@ -284,6 +286,19 @@ describe('prepareWorktree: refusals', () => {
     assert.equal(r.status, 'failed');
     assert.ok(r.conflicts.some((c) => c.path === SKILL && /symlink/.test(c.reason)), JSON.stringify(r.conflicts));
     assert.equal(fs.readdirSync(outside).length, 0, 'nothing was written through the link');
+  });
+
+  test('a symlinked local lock that leaves the checkout is refused before any write', () => {
+    const wt = addWorktree(main);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-outside-'));
+    fs.symlinkSync(path.join(outside, 'local.lock.json'), path.join(wt, '.waffle/waffle.local.lock.json'));
+    write(main, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: private@example.com\n');
+    const r = prepare(wt, toolkitRoot, { overlay: 'main' });
+    assert.equal(r.status, 'failed');
+    assert.deepEqual(r.conflicts.map((c) => c.path), ['.waffle/waffle.local.lock.json']);
+    assert.match(r.conflicts[0].reason, /symlink/);
+    assert.deepEqual(fs.readdirSync(outside), [], 'nothing was written through either link');
+    assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
   });
 
   test('a missing lock, a missing config, and a stale lock each fail with a repair instruction', () => {

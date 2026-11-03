@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { sha256, exists, readYaml, resolveWritableInside } from './util.mjs';
 import { renderProject, readLock, readLocalLock, readTreeLock } from './render.mjs';
 import {
@@ -108,7 +109,8 @@ export function checkoutInfo(cwd, runGit = defaultRunGit) {
 /**
  * Which overlay feeds the staged render. Precedence: the CLI flag, the main checkout's own
  * overlay (`worktrees.overlay` — the machine whose private values would be imported is the one
- * that opts in), the destination's config, then `local`.
+ * that opts in), the destination's config, then `local`. Only the flag and the main overlay may say
+ * `main`: a committed config must not pull a teammate's private overlay into their render.
  *
  * @param {{ flag?: string|null, mainOverlayRaw?: any, projectRaw?: any, destOverlayRaw?: any }} args
  * @returns {{ mode: OverlayMode, source: 'flag'|'main-overlay'|'config'|'default' } | { error: string }}
@@ -130,6 +132,9 @@ export function resolveOverlayPolicy({ flag = null, mainOverlayRaw = null, proje
     const v = raw?.[WORKTREES_KEY]?.overlay;
     if (v === undefined || v === null) continue;
     if (!valid(v)) return { error: bad(v, where) };
+    if (v === 'main' && source !== 'main-overlay') {
+      return { error: `${where}: \`${WORKTREES_KEY}.overlay: main\` is accepted only from the main checkout's own ${LOCAL_CONFIG_FILE} or the --overlay flag — a config that travels with the branch may not opt a private overlay in` };
+    }
     return { mode: v, source };
   }
   return { mode: 'local', source: 'default' };
@@ -255,8 +260,8 @@ function pidAlive(pid) {
 /** @param {string} abs @param {Buffer} content */
 function writeAtomic(abs, content) {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const tmp = `${abs}.wafflestack-${process.pid}.tmp`;
-  fs.writeFileSync(tmp, content);
+  const tmp = `${abs}.${randomBytes(6).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, content, { flag: 'wx' });
   fs.renameSync(tmp, abs);
 }
 
@@ -425,6 +430,13 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
     }
 
     const managedSettings = treeLock?.settings ?? {};
+    // Settings files and the local lock are written through their own paths, so they get the same
+    // symlink containment check as every rendered file (a committed link could point them out of the tree).
+    const sideFiles = new Set([...desiredSettings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k));
+    if (staged.overlayChanged) sideFiles.add(LOCAL_LOCK_FILE);
+    for (const file of [...sideFiles].sort()) {
+      if (!resolveWritableInside(cwd, file)) conflicts.push({ path: file, reason: 'resolves outside the checkout through a symlink' });
+    }
     const check = settingsConflicts(cwd, desiredSettings, managedSettings);
     if (check.errors.length) return fail(...check.errors);
     for (const key of check.collisions) conflicts.push({ path: key, reason: 'a settings entry already holds a different value not tracked by the lock' });

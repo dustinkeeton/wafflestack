@@ -47,7 +47,7 @@ is what you reach for across a breaking one.
   worktree is a `no-op`; a per-worktree lock refuses a concurrent run; `--json` prints the readiness
   document; exit 1 on `failed`. `--overlay local|main|none` picks the private overlay policy (default: the
   destination's own overlay, if any; `main` opts the linked main checkout's in, persisted as
-  `worktrees: { overlay: main }` in that overlay); an omitted main overlay is named, never printed. The
+  `worktrees: { overlay: main }` in that overlay and accepted from nowhere a branch carries); an omitted main overlay is named, never printed. The
   `delegate` and `autopilot` skills now prepare every worktree they cut — parallel issue worktrees, retry
   branches, the integration stage 2 responder and stage 3 audit worktrees — before spawning, and stop that
   launch on a non-zero exit, replacing the former "do not render into the worktree" rule. `docs/worktrees.md`

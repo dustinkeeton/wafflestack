@@ -86,8 +86,9 @@ worktrees:
   overlay: main
 ```
 
-The same key in `.waffle/waffle.yaml` works too (`none` is the usual committed value); the flag
-wins over the main overlay, which wins over the destination's config. When the main checkout has an
+`.waffle/waffle.yaml` may carry the key with `local` or `none` only: a config that travels with the
+branch cannot opt a teammate's private overlay in, so `main` there is an error. The flag wins over
+the main overlay, which wins over the destination's config. When the main checkout has an
 overlay and the chosen policy leaves it out, the run says so by name, never by value. The result's
 `overlay.effective` reads `canonical` or `overlay`, so a host script can tell which it got.
 

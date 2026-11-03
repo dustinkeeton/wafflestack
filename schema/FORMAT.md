@@ -747,7 +747,7 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   on conflict. For account-specific values that must not be committed.
   `wafflestack config [key-prefix]` lists every key the selection can set and says which of
   the two files (or the stack default) each value comes from. A top-level `worktrees:` block
-  (`overlay: local | main | none`, valid in either file) is the persisted overlay policy of
+  (`overlay: local | main | none`; `main` only in the main checkout's overlay) is the persisted overlay policy of
   `wafflestack prepare-worktree`, which provisions a worktree's or fresh clone's harness
   resources from its own lock before a session starts there — see `docs/worktrees.md`.
 - `.waffle/extensions/agents/<name>.md`, `.waffle/extensions/skills/<name>.md`
