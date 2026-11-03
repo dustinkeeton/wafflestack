@@ -9,6 +9,21 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-03: Worktrees provision pinned local resources before startup (#820)
+
+**Decision:** Treat readiness as matching files and settings entries, not directory presence
+or runtime fallback. `prepare-worktree` plans through the renderer without side effects,
+checks canonical reproduction against the destination lock, and applies only harness artifacts
+under a per-checkout transaction mutex. Refuse edits/collisions and roll back write failures.
+A process interruption leaves a private journal and a blocking mutex, never a readiness claim.
+
+Resolve the lock's immutable commit and corroborate its release ref, including offline cache
+use. An incompatible pin requires an explicit upgrade, never silent main/latest substitution.
+Inherited private overlays are a persisted local Git opt-in; relative sources resolve at the
+destination and tracked private-derived output is refused. Main directories are never copied
+or linked wholesale. Host setup runs outside the agent session; orchestration gates every
+creation/reuse/retry launch. This replaces the lock-only posture's Claude-fallback assumption.
+
 ## 2026-10-29: Autopilot's gate loops converge on zero should-fix, not zero implemented (#794)
 
 **Context**: Steps 5–6 stopped only on a cold round that implemented nothing, nits included. The

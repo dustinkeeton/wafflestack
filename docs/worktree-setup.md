@@ -1,0 +1,188 @@
+# Prepare a checkout before starting an agent
+
+`wafflestack prepare-worktree --cwd /absolute/checkout --json` prepares the selected
+Claude, Codex and agents-dir resources from that checkout's committed config and lock.
+Run it outside the new session, after checkout creation and before launching the agent.
+It also works on a fresh clone. A successful exit is `ready` or `no-op`; a failed exit
+must stop the launch. Repeat after changing branches, pins, extensions or configuration.
+
+## Install the command first
+
+This command ships after v0.19.0. Do not append `prepare-worktree` to a v0.19.0-or-older
+pinned CLI. Choose an explicitly released version containing this command, install it,
+and use that executable in your host setup script. For example, with `FEATURE_TAG` set
+to that release tag:
+
+```sh
+npm install --global "github:dustinkeeton/wafflestack#$FEATURE_TAG"
+wafflestack help
+```
+
+Confirm help lists `prepare-worktree`. On an old consumer, run that selected release's
+`upgrade --cwd /absolute/checkout`, review the config/output changes, and commit the
+canonical config and lock before enabling startup preparation. Until this feature is
+released, test from an explicit checkout of this PR, using its absolute
+`installer/cli.mjs` path; do not describe an unreleased tag as available.
+
+The launcher may be newer than the destination pin. Preparation resolves the destination
+lock's repository, release and immutable commit; it never substitutes main's toolkit or
+latest. A matching installed toolkit or verified source-cache checkout supplies the
+source bytes. An online cache miss fetches the locked commit; `--offline` requires a
+cache hit. The release ref must identify that commit. The current renderer must reproduce
+**every canonical file and settings entry** in the lock before applying anything. An
+incompatible older pin fails with a pinned render/upgrade remedy instead of migrating
+silently. A lock without release provenance needs an explicit upgrade. Toolkit developers
+alone can use `--allow-unreleased` with the CLI and destination in the same toolkit
+checkout; exact canonical lock reproduction still applies.
+
+## Plain Git and Claude
+
+```sh
+git worktree add -b feat/example "/absolute/worktree" origin/main
+wafflestack prepare-worktree --cwd "/absolute/worktree" --json &&
+  (cd "/absolute/worktree" && claude)
+```
+
+The `&&` is the launch gate. For a reused checkout, run preparation again before the
+launch. Do not use `/waffle-render` inside an already-started session as the bootstrap.
+If preparation happened late, restart the session and verify its skill and agent roster.
+
+This wrapper deliberately leaves Git in charge of creation. Claude's
+[`WorktreeCreate`](https://code.claude.com/docs/en/hooks#worktreecreate) hook **replaces**
+the default creation mechanism; it is not an additive post-create setup hook. Wafflestack
+does not install one. If using Claude's automatic isolation, configure a deliberately
+owned creation adapter that gates launch, or create and prepare the worktree externally
+as above. A `SessionStart` render alone is not this pre-start contract.
+
+## T3 Code adapter
+
+T3 selects one `runOnWorktreeCreate` setup script. In project `t3.json`, add this entry
+to `scripts`, or append the preparation command with `&&` to the existing setup script (use the absolute installed executable
+if the host shell does not find `wafflestack`):
+
+```json
+{
+  "scripts": [
+    {
+      "name": "Prepare Wafflestack",
+      "command": "wafflestack prepare-worktree --cwd \"$PWD\" --json",
+      "icon": "configure",
+      "runOnWorktreeCreate": true,
+      "async": false
+    }
+  ]
+}
+```
+
+`async: false` makes setup a startup prerequisite. T3 runs the setup script with the worktree as its working directory and records its exit
+code. Treat a failed setup as a blocked launch; repair it and retry setup before submitting
+the worker. Do not skip a failed setup. Reused worktrees need the same command again
+before launching with changed inputs. This adapter does not copy main's directories.
+The repository's own `t3.json` installs dependencies and invokes its local development
+CLI, with the explicit unreleased exception, before a new worktree session.
+
+Syntax and lifecycle were checked against the official T3
+[`t3.json`](https://github.com/pingdotgg/t3code/blob/main/t3.json),
+[`ProjectSetupScriptRunner`](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/project/ProjectSetupScriptRunner.ts)
+and [`WorktreeSetupTracker`](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/project/WorktreeSetupTracker.ts)
+on 2026-11-03. This is source verification, not a desktop UI end-to-end test.
+
+## Codex desktop local environment
+
+In the desktop app's local-environment settings, set the worktree setup script to:
+
+```sh
+wafflestack prepare-worktree --cwd "$PWD" --json
+```
+
+Save the generated `.codex` environment configuration to share it. Setup runs when the
+app creates a new worktree at the start of a chat. Stop on a nonzero preparation exit;
+do not send work into a failed setup. Re-run before using an existing worktree whose
+inputs changed. The current
+[local-environment documentation](https://learn.chatgpt.com/docs/environments/local-environment)
+was checked on 2026-11-03; let the app generate its environment schema rather than
+hand-authoring a version-specific TOML layout. Do not copy the entire harness directory
+with `.worktreeinclude`: content must follow the destination pin.
+
+## Private overlay policy
+
+The default is destination config/extensions plus an ignored local overlay already in
+that checkout. To opt into associated main-checkout overlay inheritance persistently:
+
+```sh
+git config --local wafflestack.worktreeOverlay main
+```
+
+Reset with `git config --local wafflestack.worktreeOverlay destination`. This repository-local
+Git setting is shared by its linked worktrees. A destination overlay wins when present;
+otherwise `main` imports only the associated main checkout's overlay. Git verifies the
+association. All relative source paths, including those declared by an inherited overlay,
+resolve against the **destination checkout**; extensions always come from the destination.
+No arbitrary files or extensions from main are imported. Default omission of an existing
+main overlay produces a notice, without values. JSON identifies `canonical`,
+`destination-overlay` or `main-overlay` mode.
+
+Overlays and their differing outputs must be untracked and ignored. Preparation refuses
+private-derived changes to tracked output, even when the renderer normally owns it.
+Change the tracking/ignore posture explicitly, or change the overlay policy. Public locks
+remain canonical and unchanged. Private local-lock hashes never enter public diagnostics.
+`--untrusted-config` refuses main overlay inheritance and external `source:` stacks;
+preparation never acknowledges external prerequisite checks or runs them.
+
+## Readiness, conflicts and recovery
+
+Preparation computes outputs in memory with the normal renderer, then applies only
+`.claude/`, `.agents/` and `.codex/` artifacts and, when necessary, the ignored local lock.
+It does not render workflows outside those directories, overview docs, public locks or
+project configuration. Helpers, agent definitions and individual managed settings entries
+count toward readiness. Directory presence does not. Unrelated settings and custom files
+survive. The Git index and main checkout are unchanged.
+
+`--json` returns `status`, `targets`, `pin`, `generatedPaths`, `conflicts`, `overlayMode`,
+`notices`, `missingIgnore` and `errors`. Exit 1 means no launch. No-op leaves artifact bytes
+and mtimes unchanged. Untracked public outputs without ignore coverage are reported;
+preparation never edits `.gitignore`. If you choose Git local excludes, remember the common
+`.git/info/exclude` is **shared among linked worktrees**.
+
+Edited or colliding output fails before any artifact is written. Preserve your edits and
+resolve the named paths with an intentional render/eject or input change; no force flag
+exists. A changed selection with leftover previously prepared resources fails closed until
+you reconcile those resources. Settings are merged only when absent, identical, or still matching a known managed value.
+All destination symlinks are refused, including links back to main, to preserve isolation.
+
+A per-checkout Git-administrative mutex prevents concurrent preparation. Write errors roll
+back already-applied file contents. A killed process leaves the mutex and a private journal,
+so a subsequent call cannot report readiness. Stop the original process; inspect
+`$(git rev-parse --absolute-git-dir)/wafflestack-prepare/journal.json` locally (it may contain
+private backup content; do not post it). Preserve any edits, restore backups if needed,
+remove only that transaction directory, and run preparation again before starting a session.
+A rollback failure keeps the journal. No blanket restore/delete of the worktree is required.
+
+Unmanaged, uncommitted custom skills cannot be reconstructed from a lock. Keep them as
+personal skills, commit them as project-owned resources, or configure a narrowly scoped,
+explicit copy step. Personal skills remain a separate additive source. Committed custom
+skills plus ignored generated resources is supported; untracking every custom skill is
+not a universal fix. Runtime-specific fallback is observed behavior, never the provisioning
+contract. Whole-directory symlinks to main break write isolation and version independence.
+
+## Verification record and repeatable smoke test
+
+[2026-11-03 runtime results](worktree-smoke-2026-11-03.json) record Claude 2.1.317
+startup skill/agent rosters and Codex 0.156.1 app-server `skills/list` with
+`forceReload: true`. All five directory states passed after preparation. Tests used
+external and nested disposable repositories, including paths with spaces. These results
+prove discovery, not custom-agent invocation or desktop session creation.
+
+Run the optional, non-CI harness smoke test with installed runtimes:
+
+```sh
+WAFFLE_CODEX_BIN=/absolute/path/to/codex node installer/smoke/worktree-discovery.mjs
+```
+
+`WAFFLE_CLAUDE_BIN` can select Claude. The script stops Claude after `system/init`, uses
+project-only settings and no MCP servers, and never submits a Codex model turn in discovery
+mode. `--invoke` additionally exercises Claude's `--agent worker` and Codex's custom
+`worker` spawn against synthetic fixtures, using authenticated model calls. Live invocation
+was not run in the recorded result: automatic approval review blocked those external model
+calls pending explicit approval. Run and record that check before release. CI's deterministic
+worktree tests never call models. A Codex skill-list result is not evidence of agent usability.

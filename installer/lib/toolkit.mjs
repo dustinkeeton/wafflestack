@@ -161,10 +161,11 @@ export function loadToolkit(rootDir) {
  * @param {string} [opts.cacheDir] where git sources are checked out
  * @param {(source: string, ref: string, dest: string) => void} [opts.gitFetch] injectable for tests
  * @param {(dir: string) => string | null} [opts.gitResolveCommit] injectable for tests
+ * @param {boolean} [opts.offline] refuse uncached git sources
  * @param {boolean} [opts.refreshSources] force a git re-fetch instead of reusing the session cache
  * @returns {Toolkit}
  */
-export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false }) {
+export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, cacheDir, gitFetch, gitResolveCommit, refreshSources = false, offline = false }) {
   const builtin = loadToolkit(builtinRoot);
   if (!externalStacks.length) return builtin;
 
@@ -179,7 +180,7 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
           `${describeSource(ext)} — a stack name must be unique across all sources; rename or remove one`,
       );
     }
-    const { root, commit } = resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, refresh: refreshSources });
+    const { root, commit } = resolveSource(ext, { cwd, cacheDir, gitFetch, gitResolveCommit, refresh: refreshSources, offline });
     const dir = externalStackDir(root, ext.name);
     if (!dir) {
       throw new Error(

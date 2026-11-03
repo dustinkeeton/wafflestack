@@ -68,10 +68,13 @@ export function renderProject({
   sourceCacheDir = defaultSourceCacheDir(),
   refreshSources = false,
   untrustedConfig = false,
+  planOnly = false,
+  localConfigDir = cwd,
+  offline = false,
 }) {
   const warnings = [];
   // The migration renames through a PR-committed `.waffle` symlink, so an untrusted tree gets none (#789).
-  if (!untrustedConfig) for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
+  if (!untrustedConfig && !planOnly) for (const { from, to } of migrateLegacyDotfiles(cwd)) log(`renamed legacy ${from} → ${to}`);
   const stale = staleGitignoreEntries(cwd);
   if (stale.length) {
     warnings.push(
@@ -81,8 +84,8 @@ export function renderProject({
 
   // `canonicalProject === project` — the same object, by identity — is the "no overlay" fast path
   // every branch below tests against.
-  const project = loadProjectConfig(cwd, warnings);
-  const canonicalProject = exists(resolveLocalConfigFile(cwd).file)
+  const project = loadProjectConfig(cwd, warnings, { localConfigDir });
+  const canonicalProject = exists(resolveLocalConfigFile(localConfigDir).file)
     ? loadProjectConfig(cwd, [], { canonical: true })
     : project;
 
@@ -108,6 +111,7 @@ export function renderProject({
       cwd: sourceBaseDir,
       cacheDir: sourceCacheDir,
       refreshSources,
+      offline,
     });
   let toolkit;
   let canonicalToolkit;
@@ -156,7 +160,7 @@ export function renderProject({
 
   // Deliberately OUTSIDE `computeOutputs`: this shells out, so it runs once. Warns, never fails.
   // An external stack's checks stay unrun until its command list is acknowledged (#458).
-  if (!untrustedConfig) {
+  if (!untrustedConfig && !planOnly) {
     const gates = externalCheckGates(toolkit, project);
     for (const gate of gates) if (!gate.acknowledged) warnings.push(formatCheckGate(gate));
     const prereqs = applicablePrerequisites(toolkit, { items: effective.selection.items });
@@ -202,6 +206,14 @@ export function renderProject({
       ],
     };
   }
+
+  if (planOnly) return {
+    ok: true, errors: [], warnings,
+    plan: { effective, canonical, targets: project.targets,
+      canonicalTargets: canonicalProject.targets, canonicalStacks: canonicalProject.stacks, canonicalInclude: canonicalProject.include,
+      sources: collectSourceProvenance(canonical.groups, canonical.producedBy, hashOutputs(canonical.outputs)),
+      files: hashOutputs(canonical.outputs), settings: settingsLockMap(canonical.settings) },
+  };
 
   const managed = treeLock?.files ?? {};
   const managedSettings = treeLock?.settings ?? {};

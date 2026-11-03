@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { renderProject, treeOverlayLeaks } from './lib/render.mjs';
+import { prepareWorktree } from './lib/prepare-worktree.mjs';
 import { doctor } from './lib/doctor.mjs';
 import { defaultPluginsDir } from './lib/installed-mods.mjs';
 import { eject, scaffoldConfig, installRefs, unejectCollisions } from './lib/eject.mjs';
@@ -49,7 +50,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <setup|init|list|toggle|install|render|prepare-worktree|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -60,6 +61,19 @@ if (args.includes('--help') || args.includes('-h')) {
 
 try {
   switch (command) {
+    case 'prepare-worktree': {
+      const json = extractFlag(args, '--json');
+      const untrustedConfig = extractFlag(args, '--untrusted-config');
+      if (args.length) fail('prepare-worktree takes no refs; use --cwd with the checkout root');
+      const result = prepareWorktree({ cwd, toolkitRoot, offline, untrustedConfig, allowUnreleased });
+      process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : [
+        `prepare-worktree: ${result.status} (${result.overlayMode}; ${result.pin ?? 'no pin'})`,
+        ...result.notices, ...result.errors, ...result.conflicts.map((p) => `conflict: ${p}`),
+        ...result.missingIgnore.map((p) => `missing ignore coverage: ${p}`),
+      ].join('\n') + '\n');
+      process.exitCode = result.status === 'failed' ? 1 : 0;
+      break;
+    }
     case 'bake':
     case 'render': {
       const force = extractFlag(args, '--force');
@@ -421,6 +435,7 @@ function helpText() {
     '  toggle      pick which rendered skills an agent may invoke on its own (TTY picker), then render',
     '  install     add stacks/items to the selection (persists them), then render',
     '  render      re-render the current selection into .claude/ (agents, skills, mods), .codex/, .agents/ and files/ paths',
+    '  prepare-worktree  provision pinned harness artifacts before startup (--json, --offline, --untrusted-config)',
     '  bake        alias for render — same command, better metaphor',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',

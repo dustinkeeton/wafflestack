@@ -22,6 +22,23 @@ Cross-referenced, never duplicated:
 - **`clean-up`** — post-merge git/harness teardown (`clean-up git --yes` right after a merge; the confirm-first full sweep at the end of the run).
 - **`git-workflow`** — branch/commit/PR conventions and the [After a PR merges](../git-workflow/SKILL.md) close-out (verify the issue closed, reconcile the board, clean the debris) that autopilot performs on every merge.
 
+## Worktree launch prerequisite
+
+Before **every** worker launch in a created or reused checkout, run
+`wafflestack prepare-worktree --cwd <absolute-worktree-path> --json` using an installed
+feature-capable CLI outside that worker session. Require exit 0 and `ready` or `no-op`;
+otherwise retain diagnostics, stop the launch and report the preparation failure.
+This applies to delegate implementers, implement-ahead, QA/review workers and responders,
+integration reviewers, stage-2 `<a2>` responders, stage-3 `<a3>` audit workers, gate
+worktrees, and every retry/recreated worktree. Recheck after checkout, merge/rebase,
+config/extension/pin changes, and before the next spawn or resume. Do not prepare one
+worktree concurrently; the command's per-worktree mutex fails closed.
+For serial work in the current checkout, prepare before the next worker starts too.
+The destination's committed pin and inputs govern; a missing main-checkout fallback is
+never a reason to skip setup. See `docs/worktree-setup.md` for the explicit upgrade path
+when the installed CLI predates this command and for host setup scripts that run before
+session startup. Restart and verify discovery if preparation ran after session startup.
+
 ## Instantiation contract
 
 Capture **all five** of these **before any work starts** — they are the run's entire mandate. If any is missing from the invocation arguments — and, for the three gates, config has not pre-answered it `false` (§3) — ask for it with `AskUserQuestion`; never guess. One optional run parameter rides with them, the **rubric override** (see *Rubric override* below). Its absence is never asked about. **Integration mode** (see *Integration mode* below) resolves from its token or config; its absence is never asked about either.
@@ -248,7 +265,7 @@ Runs from item 3, right after the final PR opens; `<F>` is its number. `<a2>` is
      ```bash
      gh api --method POST "repos/$OWNER/$REPO/statuses/<sha>" -f state=success -f context=waffle/adversarial-review -f description="Adversarial review posted"
      ```
-   - **Respond** — on Step 5's spawn trigger (any untriaged review with findings on `<sha>`, read by the `triaged-through` test, a hook's or a human's included), first cut the worktree: record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current` (a round's retry keeps it), `git fetch origin <integ>`, hold if `git ls-remote --heads origin <b2>` already shows the branch, then `git worktree add -b <b2> <a2> origin/<integ>`. Then spawn `Agent(name: "respond-int-pr<F>", …)` running `pr-response <F> --yes` (`pr-response <F> --yes --rubric <spec>` when this run carries one), with this block above the invocation:
+   - **Respond** — on Step 5's spawn trigger (any untriaged review with findings on `<sha>`, read by the `triaged-through` test, a hook's or a human's included), first cut the worktree: record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current` (a round's retry keeps it), `git fetch origin <integ>`, hold if `git ls-remote --heads origin <b2>` already shows the branch, then `git worktree add -b <b2> <a2> origin/<integ>`. Prepare `<a2>` with the worktree launch prerequisite, stopping on failure. Then spawn `Agent(name: "respond-int-pr<F>", …)` running `pr-response <F> --yes` (`pr-response <F> --yes --rubric <spec>` when this run carries one), with this block above the invocation:
 
      ```
      ## Fix branch
@@ -281,7 +298,7 @@ Runs from item 3, after stage 2, on `<F>`. It is Step 7's `/audit` gate, run onc
 
 1. **Gate.** It rides audit-step consent (§4) and needs none of its own. With that consent off, report `stage 3: not run (audit step off)`; after a stage 2 hold, report `stage 3: not run (stage 2 held)`; that hold carries the audit hand-off. A stage 1 hold opens no final PR, so stage 3 never runs after one.
 2. **Wait for green** on `<F>` with Step 7 item 1's poll. Step 8's blocked exits end the wait as a hold (below): a red check, `DIRTY` (a final PR that conflicts with `main` gets no CI, so it never goes green), `CLOSED`, or no green two hours after the wait began. Never audit a red PR.
-3. **Cut the worktree.** Record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current`, once before the first attempt; a retry keeps it. Run `git fetch origin main <integ>`, hold if `git ls-remote --heads origin <b3>` already shows the branch, then `git worktree add -b <b3> <a3> origin/<integ>`. The focus is the combined diff. Read it from git, because the GitHub file list truncates on a large PR:
+3. **Cut the worktree.** Record the main checkout's `git status --porcelain`, `git rev-parse HEAD` and `git branch --show-current`, once before the first attempt; a retry keeps it. Run `git fetch origin main <integ>`, hold if `git ls-remote --heads origin <b3>` already shows the branch, then `git worktree add -b <b3> <a3> origin/<integ>`. Prepare `<a3>` with the worktree launch prerequisite before starting any audit worker, including retries. The focus is the combined diff. Read it from git, because the GitHub file list truncates on a large PR:
 
    ```bash
    git diff --name-only origin/main...origin/<integ>

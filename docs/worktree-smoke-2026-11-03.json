@@ -1,0 +1,38 @@
+{
+  "date": "2026-11-03",
+  "versions": {
+    "codex": "codex-cli 0.156.1",
+    "claude": "2.1.317 (Claude Code)"
+  },
+  "discovery": [
+    {
+      "state": "absent",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "empty",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "custom-only",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "partial",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "complete",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    }
+  ],
+  "invocation": {
+    "claude": "not run (startup discovery only)",
+    "codex": "not run (skills/list is not agent invocation)"
+  }
+}

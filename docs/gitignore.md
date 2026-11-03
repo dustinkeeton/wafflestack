@@ -27,6 +27,21 @@ This guide argues both sides so you can pick deliberately.
 
 ---
 
+## Worktree and fresh-clone setup
+
+Committed custom skills/agents and ignored generated Wafflestack resources can coexist.
+Run `wafflestack prepare-worktree --cwd /absolute/checkout --json` after checkout creation
+and before starting Claude or Codex; require exit 0. Fresh clones need setup too when
+outputs are ignored. See [worktree setup](worktree-setup.md) for the pinned bootstrap,
+T3/Codex/Claude adapters, overlay policy and readiness/conflict contract.
+
+Claude 2.1.317 was observed to fall back to main's skills/agents only when the respective
+local directory is absent; empty or custom-only directories shadow that fallback. Codex
+0.156.1 and 0.154.0-alpha.6.2 did not discover main-only skills in those cases (#820, #819).
+These observations are not a provisioning guarantee. Keep custom resources committed,
+prepare complete local output, and retain personal skills as a separate additive source.
+Never symlink a whole harness directory to main: writes and branch versions would mix.
+
 ## The short version
 
 | If you… | Commit the render? | Commit the lock? |

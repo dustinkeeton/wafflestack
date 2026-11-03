@@ -20,6 +20,7 @@ import { exists, sha256 } from './util.mjs';
  * @param {(dir: string) => string | null} [opts.gitResolveCommit] injectable for tests
  * @param {(dir: string) => string | null} [opts.gitOriginUrl] injectable for tests
  * @param {(dir: string, ref: string) => string | null} [opts.gitRefCommit] injectable for tests
+ * @param {boolean} [opts.offline] refuse uncached git sources
  * @param {boolean} [opts.refresh] re-fetch a pinned ref instead of serving the session cache
  * @returns {{ root: string, commit: string | null }}
  */
@@ -33,6 +34,7 @@ export function resolveSource(
     gitOriginUrl = gitRemoteOriginUrl,
     gitRefCommit = gitResolveRefCommit,
     refresh = false,
+    offline = false,
   } = {},
 ) {
   if (ext.sourceType === 'git') {
@@ -56,6 +58,7 @@ export function resolveSource(
     const dest = path.join(cacheDir, sha256(`${ext.source}@${ext.ref}`).slice(0, 24));
     // A present `.git` is not proof (#460): the checkout must also be OUR clone of the pinned source.
     const cached = exists(path.join(dest, '.git')) && checkoutMatches(dest, ext, { gitResolveCommit, gitOriginUrl, gitRefCommit });
+    if (!cached && offline) throw new Error(`offline cache miss for pinned source ${ext.name} — fetch it online first`);
     if (!cached) {
       fs.rmSync(dest, { recursive: true, force: true }); // clear any partial/failed prior fetch
       try {
@@ -66,7 +69,7 @@ export function resolveSource(
           `external stack "${ext.name}": could not fetch git source "${ext.source}" at ref "${ext.ref}" — ${err.message}`,
         );
       }
-    } else if (refresh) {
+    } else if (refresh && !offline) {
       // Best-effort: fetch into a sibling dir and swap only on success, so an unreachable remote
       // leaves the cached checkout intact and `upgrade` stays usable offline.
       const tmp = `${dest}.refresh`;
