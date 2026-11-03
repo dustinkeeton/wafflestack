@@ -48,6 +48,15 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot integration hands off stage 1 before the final PR when run PRs are still open (#806,
+  part of #720).** When a run PR was still open, the report handed the human the `gh pr create`
+  command with no word about stage 1, so a final PR opened from it skipped the sync, the overwrite
+  detector and the integration checks, and its body carried none of the `NOTE:` lines stage 2 reads.
+  The report, the run report and the failure bullet now say to run stage 1 first and open the final
+  PR only on a pass, then hand off stage 2 and the audit.
+
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
+
 - **The CI render step names the pinned release and v0.19.0 when that release predates
   `--untrusted-config` (#789).** The `::error` used to name the tag's commit SHA and say only "a newer
   release"; it now names the lock's tag (or the trusted ref on the toolkit's own repo) and v0.19.0, the

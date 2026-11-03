@@ -639,7 +639,7 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
     assert.match(stage3(), /\*\*The audit hand-off\.\*\* With audit-step consent on/);
     assert.equal(md.match(/git diff --name-only origin\/main\.\.\.origin\/<integ>/g).length, 2);
     assert.match(section(md, '**Hold.** Any stop in steps 2–6', '### Integration gate — stage 2'), HANDOFF);
-    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /the exact `gh pr create` command, the \[stage 2 hand-off\]\(#integration-gate--stage-2-decision-preservation-review\), and the \[audit hand-off\]/);
+    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /and only on a pass the exact `gh pr create` command, then the \[stage 2 hand-off\]\(#integration-gate--stage-2-decision-preservation-review\) and the \[audit hand-off\]/);
     assert.match(section(md, '**Stage 2 hold.**', '### Integration gate — stage 3'), HANDOFF);
     const hold3 = section(md, '**Stage 3 hold.**', '## Per-issue loop');
     assert.match(hold3, HANDOFF);
@@ -674,6 +674,7 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
 // #782: a run that opens no final PR hands stage 2 to the human, ahead of the audit hand-off.
 describe('integration stage 2 hand-off (#782)', () => {
   const ORDER = /\[stage 2 hand-off\]\(#integration-gate--stage-2-decision-preservation-review\)[^\n]*\[audit hand-off\]\(#integration-gate--stage-3-audit\)/;
+  const STAGE1_FIRST = new RegExp(String.raw`\[stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\)[^\n]*gh pr create[^\n]*` + ORDER.source);
   const stage2 = () => section(read(SKILL), '### Integration gate — stage 2', '### Integration gate — stage 3');
 
   test('the hand-off is defined once in stage 2', () => {
@@ -694,6 +695,19 @@ describe('integration stage 2 hand-off (#782)', () => {
     assert.match(fail, /\*\*The final integration PR was not opened\*\*[^\n]*\[stage 2 hand-off\][^\n]*\[audit hand-off\]/);
     assert.match(fail, /\*\*Integration gate stage 1 held\*\*[^\n]*\[stage 2 hand-off\][^\n]*\[audit hand-off\]/);
     assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /carries the stage 2 hand-off when review-loop consent is on, a run PR is open or merged, and no final PR opened/);
+  });
+
+  // #806: the not-opened path runs stage 1 before the final PR command.
+  test('the not-opened path hands off stage 1 before gh pr create (#806)', () => {
+    const md = read(SKILL);
+    const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
+    assert.match(branch, STAGE1_FIRST);
+    assert.match(branch, /\(sync, overwrites, integration checks\), and only on a pass the exact `gh pr create` command/);
+    assert.doesNotMatch(md, /both to run after those PRs merge and the final PR opens/);
+    const fail = section(md, '## Failure handling', 'At the end, the report');
+    assert.match(fail, new RegExp(String.raw`\*\*The final integration PR was not opened\*\*[^\n]*\[stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\) to pass first, and the exact command, with the ` + ORDER.source));
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /"not opened", the reason, stage 1 to pass first, and the exact command/);
+    assert.match(section(md, '### Integration gate — stage 3', '## Per-issue loop'), /it runs after they merge, stage 1 passes, and the final PR opens/);
   });
 
   test('the stage 2 hold keeps its own re-run command, not the hand-off', () => {
