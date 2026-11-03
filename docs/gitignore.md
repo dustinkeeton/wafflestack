@@ -157,8 +157,9 @@ left out of every commit by hand.
 Note what survived. `doctor --verify-render` still proves the committed config reproduces the
 committed lock on every PR, so the insight above holds — the protection was always the lock's.
 What the repo gave up is what [Posture 2b](#posture-2b-commit-the-lock-only) gives up:
-a fresh clone or worktree has no skills until something renders them, so its tests render
-into a temp dir and its delegate/autopilot skills render into every worktree they cut.
+a fresh clone or worktree has no skills until something provisions them, so its tests render
+into a temp dir and its delegate/autopilot skills run `prepare-worktree` on every worktree
+they cut before an agent starts there (#820; see [worktrees.md](worktrees.md)).
 
 ---
 
@@ -422,6 +423,16 @@ on rendered files, no re-render-and-commit tax on contributors. If your team's o
 Posture 1 is *"I don't want generated files in my pull requests"* — this is the posture that
 answers it, and it answers it without giving up the shared-source guarantee.
 
+**A worktree or a fresh clone needs provisioning.** Both hold tracked files only, so under this
+posture neither has a render until something lays it down. `wafflestack prepare-worktree --cwd
+<checkout>` does exactly that from the checkout's own lock, per file, refusing on conflicts;
+[worktrees.md](worktrees.md) has the host recipes (T3 Code, the Codex app, Claude Code, plain
+`git worktree add`) and the overlay policy. Committed project-owned skills next to ignored
+generated ones is a supported layout: the generated ones are added, yours are left alone. Do not
+plan on a harness falling back to the main checkout's copies: Claude Code does so only while the
+whole `.claude/skills` (or `.claude/agents`) directory is absent in the worktree, and Codex does not
+at all. That fallback is observed behavior at a version, not the contract.
+
 **Be clear-eyed that the pitch is narrower than it looks.** It is not "avoid the duplicate-copy
 tax" — you never pay that tax (see the note above). It is *only* about keeping generated output
 out of git and out of review. That is a genuine preference, held by real teams, and it is
@@ -598,7 +609,8 @@ uncluttered by it.
 | **Forgotten re-render caught?** | Only with `--verify-render` | Only with `--verify-render` | Yes — that *is* the gate | No |
 | **Who runs `render`** | Whoever edits a stack | Whoever edits a stack | Every person; CI reproduces it | Every person, always |
 | **CI agents can read skills** | Yes | Yes, if committed | Only if CI also renders in place | **No** |
-| **Fresh clone works** | Yes | Yes | No — render first | No — install + render first |
+| **Fresh clone works** | Yes | Yes | After `prepare-worktree` (or `render`) | No — install + render first |
+| **Fresh worktree works** | Yes | Yes, for committed files | After `prepare-worktree` — a harness may read the main checkout's copies while the directory is absent, but that is not the contract | After `prepare-worktree` in the worktree, overlay-fed |
 | **Agent behavior reviewable in a PR** | **Yes** | Partly | No — only a hash changes | No |
 | **Generated files in your diffs** | Yes | Some | **None** | None |
 | **Re-render-and-commit tax** | On every contributor | On every contributor | **None** | None |

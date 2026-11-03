@@ -31,6 +31,33 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **`wafflestack prepare-worktree --cwd <checkout>` provisions a checkout's skills and agents from its own
+  lock before a Claude or Codex session starts there (#820).** A fresh git worktree or clone holds tracked
+  files only, so a repo that gitignores its render had no generated skills there, and a committed custom
+  skill switched off the one harness fallback that existed. The command resolves the checkout through git
+  (nested or external worktrees, `.git` files, spaces), reads that checkout's committed config, extensions
+  and lock, refuses a lock rendered by another toolkit version with the exact pinned command, stages a
+  render, and copies only the missing or stale harness artifacts (`.claude/`, `.codex/`, `.agents/` for the
+  enabled targets, plus the lock-managed `.claude/settings.json` entries) — never `.github/` payloads, the
+  committed lock, project-owned files or the index. Any conflict (a hand-edited managed file, an unmanaged
+  file at a rendered path, a symlink leaving the checkout, a tracked path the overlay would change) fails
+  before a byte is written and names the paths; every artifact is re-hashed before `ready`; a complete
+  worktree is a `no-op`; a per-worktree lock refuses a concurrent run; `--json` prints the readiness
+  document; exit 1 on `failed`. `--overlay local|main|none` picks the private overlay policy (default: the
+  destination's own overlay, if any; `main` opts the linked main checkout's in, persisted as
+  `worktrees: { overlay: main }` in that overlay); an omitted main overlay is named, never printed. The
+  `delegate` and `autopilot` skills now prepare every worktree they cut — parallel issue worktrees, retry
+  branches, the integration stage 2 responder and stage 3 audit worktrees — before spawning, and stop that
+  launch on a non-zero exit, replacing the former "do not render into the worktree" rule. `docs/worktrees.md`
+  carries the contract, the overlay policy, a pin-honoring host script, and recipes for plain git, T3 Code,
+  the Codex app and Claude Code.
+  **Consumer impact**: additive — a `render` picks up the skill changes; a consumer pinned before this
+  release gets a clear upgrade instruction from the host script rather than an unknown command. If your
+  worktrees relied on Claude Code's main-checkout read-through, nothing changes until you run the command
+  (or wire the recipe); once prepared, a worktree renders from its own lock, overlay excluded by default.
+
 ### Changed
 
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate

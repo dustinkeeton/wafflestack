@@ -112,13 +112,15 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `sources.mjs` | External `source:` resolution: local path or pinned-git cache (#88/#125) | `resolveSource`, `resolveSourceRoot`, `gitFetchCheckout`, `gitHeadCommit`, `gitRemoteOriginUrl`, `gitResolveRefCommit`, `checkoutMatches`, `defaultSourceCacheDir` |
 | `toolkit-ref.mjs` | Toolkit self-identification (#373), lock `toolkit` block (#374), write-side pin (#372) | `resolveToolkitIdentity`, `commitFromNpmLockfile`, `shaFromResolved`, `parseLsRemoteTags`, `latestReleaseTag`, `toolkitRef`, `toolkitSource`, `toolkitLockEntry`, `toolkitPinFromLock`, `toolkitPinFromIdentity`, `classifyToolkitRefValue`, `describeToolkitProvenance`, `repoSlug`, `lockRepoSlug`, `parseRepoSlug`, `httpsUrl`, `gitLsRemoteTags` (optional `{ timeoutMs }`, default 15 s), `newerRelease` (#608: the one `{tag, command}` newer-than-running verdict `upgrade`/`doctor`/`state` share; remedy `npx --yes github:<repo>#<tag> upgrade`, `command: null` with no repo), `gitCapture`, `changelogHasUnreleasedEntries`, `changelogLatestRelease`, `formatUnreleasedRefusal`, `formatProvenanceWarning` |
 | `update-check.mjs` | Newer-release check behind `doctor`/`state` (#608): a checkout answers from its local tags, else its CHANGELOG (`source` `local-tags`/`changelog`, from `ToolkitIdentity.latestTagSource`, #694); an install reads a fresh `$XDG_CACHE_HOME/wafflestack/latest-release.json` entry (keyed by repo; 24 h TTL, 1 h for a negative entry), else one 2 s `git ls-remote` that writes it, else the identity's CHANGELOG value. `--offline` reads the cache, never asks or writes. Never throws — failure is "no verdict" | `UPDATE_CHECK_TIMEOUT_MS`, `UPDATE_CACHE_TTL_MS`, `UPDATE_FAIL_TTL_MS`, `defaultUpdateCacheFile`, `readUpdateCache`, `writeUpdateCache`, `resolveLatestRelease`, `updateVerdict`, `NO_UPDATE_VERDICT` |
+| `worktree.mjs` | `prepare-worktree` (#820): provision ONE checkout's harness resources from its OWN committed lock, before an agent session starts there. `checkoutInfo` resolves the checkout through git (`--show-toplevel`/`--git-dir`/`--git-common-dir`; nested, external, `.git`-file worktrees; `mainCheckout` = the common dir's parent); `resolveOverlayPolicy` (flag > main overlay's `worktrees.overlay` > destination config > `local`); `stageRender` copies config + extensions + lock (+ the chosen overlay) to a tmp dir and runs `renderProject` with `sourceBaseDir: cwd`; `prepareWorktree` refuses a lock whose `toolkitVersion` differs from the CLI (naming `npx --yes <pin> prepare-worktree --cwd …`, or the upgrade when unpinned), refuses a lock the staged canonical render does not reproduce, then classifies every `isHarnessPath` output (`HARNESS_DIRS`: claude → `.claude/`, codex → `.codex/`+`.agents/`, agents-dir → `.agents/`; settings keys by file): present+matching → counted, absent → written, at a hash the lock / local lock / the git-dir `PREPARED_MANIFEST` recorded → refreshed, anything else (edited, unmanaged, symlink-escaping via `resolveWritableInside`, directory, settings collision, tracked path the overlay would change, tracked local lock) → a conflict that fails BEFORE any write; writes atomically under the git-dir `PREPARE_LOCK` (live pid refuses, dead pid taken over), applies settings via `applySettings`, writes/removes the destination local lock exactly as `render` would, re-hashes everything, reports uncovered-by-ignore paths (never edits `.gitignore`); `expectedHarnessPaths`, `formatPrepareResult`; `PREPARE_WORKTREE_SINCE` = `0.20.0` is the host-script version floor | `OVERLAY_MODES`, `WORKTREES_KEY`, `PREPARE_LOCK`, `PREPARED_MANIFEST`, `HARNESS_DIRS`, `PREPARE_WORKTREE_SINCE`, `defaultRunGit`, `checkoutInfo`, `resolveOverlayPolicy`, `isHarnessPath`, `stageRender`, `prepareWorktree`, `expectedHarnessPaths`, `formatPrepareResult` |
 | `board.mjs` | `state --board` team-focus read (#697, part of #610): up to three `gh api graphql` calls run in the repo dir (`{owner}`/`{repo}` resolved by gh) — (1) open milestones (soonest due first); (2) open epics with native sub-issue progress (an epic is an open issue with sub-issues — parents come from the newest 100 open issues, since search has no sub-issue qualifier — or an `[epic]` title); (3) only when `project.name` is set, the owner's Projects v2 board matched to it case-insensitively, with its In Progress / In Review items. Call 3 is separate because `projectsV2` needs gh's opt-in `project` scope: its failure sets `projectError` and keeps milestones and epics. 5 s per call, 8 s for the whole read; 60 s cache in `board.json` beside `latest-release.json`, keyed by repo dir + project name, failures cached too. Offline → `error: 'offline'`, no read. Never throws; the gh runner is injectable | `BOARD_CALL_TIMEOUT_MS`, `BOARD_BUDGET_MS`, `BOARD_CACHE_TTL_MS`, `BOARD_STATUSES`, `BOARD_ERRORS`, `defaultBoardCacheFile`, `ghRun`, `emptyBoard`, `readBoard`, `describeGhError` |
 
 Import graph (real `import` statements only; `util.mjs` and `template.mjs` depend only on `yaml`):
 
 ```
 cli.mjs      → render, doctor, eject, validate, setup, report, state, config, upgrade, uninstall, toolkit,
-               prerequisites, list, toggle, toolkit-ref, update-check, board, project, installed-mods, avatars-sync (dynamic)
+               prerequisites, list, toggle, toolkit-ref, update-check, board, worktree, project, installed-mods, avatars-sync (dynamic)
+worktree.mjs → render, project, toolkit-ref, settings, sources, util
 render.mjs   → template, toolkit-ref, toolkit, sources, refs, validate, prerequisites, waffledocs, config-catalog, model-invocation, marketplace, settings, project, util
 doctor.mjs   → render, project, toolkit-ref, toolkit, refs, prerequisites, sources, waffledocs, settings, installed-mods, util
 installed-mods.mjs → marketplace, toolkit, settings, util
@@ -156,7 +158,7 @@ project.mjs  → util, model-invocation, template (parseFlagPlaceholder only; bo
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Usage:
-`wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
+`wafflestack <setup|init|list|toggle|install|render|bake|prepare-worktree|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
 (`USAGE`, `cli.mjs:50`).
 
 Dispatch and exit contract: `help`/`--help`/`-h` print the full help to stdout, exit 0 —
@@ -164,7 +166,7 @@ intercepted before the switch (`cli.mjs:55`), so `uninstall --help` explains rat
 there is no per-command help page (#187, `helpText` `cli.mjs:406`). An unknown command, and bare
 `wafflestack`, print banner + usage to stderr, exit 1. Flags are spliced out by name
 (`extractFlag` `cli.mjs:550`, `extractCwd` `cli.mjs:541`), so an unrecognized flag survives as a
-positional: `setup`/`init`/`render`/`bake`/`upgrade`/`list`/`toggle`/`state`/`report`/`uninstall`/`reinstall` reject it
+positional: `setup`/`init`/`render`/`bake`/`prepare-worktree`/`upgrade`/`list`/`toggle`/`state`/`report`/`uninstall`/`reinstall` reject it
 (takes-no-refs guard, exit 1 — `setup --force` / `init --yes` fail; `setup`/`init` refuse before
 scaffolding, so nothing is written), `install`/`eject` fail resolving it as a ref, `avatars` rejects a
 non-`sync`/`status` first arg, `config` takes at most ONE positional (a key or prefix — a stray
@@ -176,7 +178,8 @@ flag becomes that query and fails as an unknown key; two positionals exit 1), `d
 | `--help`, `-h` | every command | print help to stdout, exit 0; intercepted before dispatch |
 | `--force` | `render`, `bake`, `install`, `reinstall` | override render's unmanaged-file overwrite guard |
 | `--force` | `uninstall`, `reinstall --clean` | also delete drifted (hand-edited) managed files |
-| `--untrusted-config` | `render`, `bake` | #615/#789: the config came from an untrusted tree (a PR head in CI) — refuse any `source:` stack in waffle.yaml or the overlay, run no prerequisite probe, refuse any write whose path resolves outside the project root through a symlink (`resolveWritableInside`); `render.mjs:89`, `render.mjs:158`, `render.mjs:211` |
+| `--overlay MODE` | `prepare-worktree` | #820: `local` (default — the destination's own `.waffle/waffle.local.yaml`, if any), `main` (also the linked main checkout's overlay), `none` (canonical); validated in `cli.mjs` before the gate, an invalid or missing value exits 1 |
+| `--untrusted-config` | `render`, `bake`, `prepare-worktree` | #615/#789: the config came from an untrusted tree (a PR head in CI) — refuse any `source:` stack in waffle.yaml or the overlay, run no prerequisite probe, refuse any write whose path resolves outside the project root through a symlink (`resolveWritableInside`); `render.mjs:89`, `render.mjs:158`, `render.mjs:211` |
 | `--gitignore` | `setup`, `init`, `render`, `bake`, `install` | append the recommended `.gitignore` entries; after a render, also each untracked overlay-fed file git would commit (#614) |
 | `--yes` | `uninstall` | actually delete; without it `uninstall` is a dry run |
 | `--yes` | `reinstall` | required by `--clean` only; a plain refresh needs none |
@@ -186,7 +189,7 @@ flag becomes that query and fails as an unknown key; two positionals exit 1), `d
 | `--verify-render` | `doctor` | re-render committed inputs in a temp dir vs the committed lock |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
 | `--check-prereqs` | `list` | run the hinted prerequisite checks (shells out) and show only the unmet ones; a broken probe reads as unknown (#579) |
-| `--json` | `report`, `state` | print the report bundle / state document as JSON on stdout instead of Markdown / human text |
+| `--json` | `report`, `state`, `prepare-worktree` | print the report bundle / state document / readiness document as JSON on stdout instead of Markdown / human text |
 | `--board` | `state` | #697: add the `board` block (milestones, epics, In Progress / In Review) read via `gh`; the one `state` path that calls `gh`. Best-effort: a failure sets `board.error`, never the exit code; `--offline` / `WAFFLESTACK_OFFLINE=1` skip it (`error: "offline"`) |
 | `--disable SKILL` / `--enable SKILL` | `toggle` | #476: set / clear the per-skill model-invocation override without the picker; repeatable, comma-splittable (`extractValues` `cli.mjs:530`); either flag skips the TTY prompt; a name on both sides, a name no selected stack renders, or a flag with no value exits 1 before anything is written |
 | `--no-color` | `list`, `toggle` | suppress ANSI; the `NO_COLOR` env var does the same (`cli.mjs:264`, `cli.mjs:292`); neither is listed in `help`'s flag block (#359) |
@@ -214,6 +217,7 @@ ignorance, fail closed only on a successful "not a release" lookup. The identity
 | `install [ref…]` | Persist each ref to config (stack → `stacks:`, item → canonical `include:`), then render. An EJECTED item ref is un-ejected, loudly (#497). ANY refused render rolls the config back to the text as found (#548, `cli.mjs:475`); when the refusal is an un-ejected item's differing project-owned copy the error names `--force` and the item stays ejected. Bare `install` = `render`. `eject.mjs:118` |
 | `render` | Regenerate all managed files verbatim, prune stale managed files, write lock. Rejects positional refs. Refuses to overwrite a pre-existing untracked file unless `--force` (`render.mjs:225`). When the overlay changes the render, warns per overlay-fed file git would let you commit (`git check-ignore` + `ls-files`; silent outside a work tree) with a gitignore-or-Posture-2b remedy, and returns them as `overlayLeaks` (#614). `--untrusted-config` (CI's `waffle-render` step) refuses `source:` stacks, skips prerequisite probes, refuses symlink-escaping writes. `render.mjs:60` |
 | `bake` | Pure alias for `render` — a fall-through case sharing its body and guards (#176). |
+| `prepare-worktree` | #820: provision the checkout at `--cwd` (the main checkout, a fresh clone, a nested or external linked worktree) with the harness resources its OWN committed lock describes, before an agent session starts there — see `worktree.mjs`. Gated like `render` (writes toolkit content). Refuses, writing nothing: not a git work tree; no config or lock; a lock rendered by another toolkit version (names the pinned command); a lock the config no longer reproduces; any conflict (edited managed file, unmanaged file at a rendered path, symlink escape, settings collision, overlay-derived change to a tracked path). Writes only missing/stale `.claude/`, `.codex/`, `.agents/` paths + lock-managed settings entries; never `.github/`, generated `.waffle/` docs, the committed lock, ejected files, `.gitignore` or the index. Per-worktree lock in the git dir; the written hashes recorded there (`wafflestack-prepared.json`) so a reused worktree refreshes. Human text (status line `ready|no-op|failed — N written, M refreshed, K already present`, then checkout/toolkit/targets/overlay/settings lines, notes, warnings, errors; failed → stderr) or `--json`; exit 1 on `failed`. `delegate`/`autopilot` run it as `{{autopilot.waffleCmd}} prepare-worktree --cwd <path>` on every worktree they cut, before the spawn. Host recipes: `docs/worktrees.md`. `cli.mjs` |
 | `upgrade` | Lock-vs-CLI version diff, CHANGELOG delta, migrations in `(from, to]` (an unreleased toolkit also runs the steps keyed past its version, #501), pin reconcile (#372), render (`refreshSources: true`, reporting source + built-in toolkit commit moves, #374) + doctor. Missing lock degrades to render + doctor; a lock recording no `toolkitVersion` skips migrations and the changelog delta (`upgrade.mjs:51`). Exit follows doctor. `upgrade.mjs:28` |
 | `doctor` | Diff managed files vs `readTreeLock`; report `toolkitVersion` + skew note + `toolkit` provenance note (#374, warning only) + a newer-release note (#608, informational, never flips `ok`; `update-check.mjs`) + a stale-installed-mod note per enabled mod whose Claude Code install is older than the toolkit's (#730, informational, never flips `ok`; `installed-mods.mjs`, also surfaced by `upgrade`); run selected stacks' `prerequisites:` checks. Exit 1 on drift, an unmet `require` prerequisite, OR an `include:` ∩ `eject:` overlap (#497, `ejectOverlaps` + an `include/eject overlap:` note; needs no toolkit). `--allow-missing`: only modified files count. An absent generated `.waffle/` doc (`isGeneratedDoc`) is a note in every mode, never drift (#528); the all-absent guard (#311) stays flag-independent. `canonical: true` (library option, #473): compare against the committed lock and load the config without the overlay — neither local file is opened. With a local lock, lists each file whose local-lock hash differs from the committed one and that is tracked or not gitignored as `not gitignored (embeds local overlay): <path>` (`tracked by git (embeds local overlay): <path>` when tracked; `trackedOverlayLeaks`) plus one remedy note (#614, informational, never flips `ok`; skipped under `canonical: true` and by `upgrade`, whose render already warned). `doctor.mjs:39` |
 | `report` | Print a REDACTED diagnostics bundle for an upstream toolkit bug report (#473): committed lock summary (version, `toolkit` block, targets, stacks, include, tracked-file COUNT, external source names), committed config (targets, stacks, external names/refs, eject, config KEY paths — never values), environment (CLI version/status, node, platform, overlay PRESENCE), and a `doctor({ canonical: true })` summary. Never opens `waffle.local.yaml` or `waffle.local.lock.json`; scrubs cwd/home/emails/remotes. Markdown `<details>` by default, `--json` for machines. Takes no refs; never contacts GitHub; exit 0 even on a red doctor. `report.mjs`, `cli.mjs:148` |
@@ -575,7 +579,7 @@ pre-0.6.0 `.wafflestack.*` names still read with a deprecation note, migrated in
 | File | Tracked | Role |
 |------|---------|------|
 | `.waffle/waffle.yaml` | committed | version, `targets`, `stacks`, `include`, `config`, `eject`, `skills.modelInvocation` (#476: `{ disabled: [..], enabled: [..] }` of skill names; shape-validated on load, throws like invalid `targets:`) (`loadProjectConfig`, `project.mjs:543`); `install`/`eject`/`upgrade`/`toggle` edit it comment-preservingly |
-| `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict. Private, never canonical (#317): shapes only this machine's bytes, excluded from the committed lock |
+| `.waffle/waffle.local.yaml` | gitignored | deep-merged over committed config, wins on conflict. Private, never canonical (#317): shapes only this machine's bytes, excluded from the committed lock. Top-level `worktrees: { overlay: local\|main\|none }` (#820, also valid in `waffle.yaml`) is `prepare-worktree`'s persisted overlay policy, read from the MAIN checkout's overlay first |
 | `.waffle/extensions/{agents,skills}/<name>.md` | committed | appended to the rendered item inside extension markers |
 | `.waffle/waffle.lock.json` | generated (committed) | rendered file → sha256 map + toolkitVersion + optional `toolkit` (#374) and `sources` (#125) provenance blocks. Hashes the CANONICAL render (committed inputs only, #317) — byte-identical on every machine; `doctor --verify-render` reproduces it |
 | `.waffle/waffle.local.lock.json` | gitignored | the render this machine actually wrote; written only when the overlay changes an output byte. `readTreeLock` prefers it |
@@ -589,7 +593,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2145 tests, 292 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2175 tests, 301 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
@@ -597,7 +601,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
 | evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 28 cases: `code-quality` (2) + `github-workflow` (15) + `orchestration` (5) + `wafflestack` (6). NOT in `npm test` |
 
-Test files (39): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
+Test files (40): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the self-render (a tmp render of the committed config, `installer/test/self-render.mjs`, #777) AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
@@ -640,7 +644,7 @@ config normalization, frontmatter patch, fixture render + toggle, CLI), `update-
 `blockers.test.mjs` (#549/#579: picker blockers, prerequisite and external-source trust hints, upgrade names stale tag mentions), `board.test.mjs` (#697: `readBoard`, state text board block, CLI flag),
 `config-reference.test.mjs` (#703: `configReferenceYaml` formatter, the real toolkit reference, uncommented tree passes render + doctor, #317 no config value leaks), `installed-mods.test.mjs` (#730: doctor names the `claude plugin update` for a stale installed mod),
 `post-merge-delete.test.mjs` (#212: post-merge hook branch-delete probe — confirmed 404 vs failed check; skipped without bash),
-`overlay-leak.test.mjs` (#614: `overlayDivergentFiles`, `gitIgnoreStatus`, render/doctor/upgrade leak warnings incl. tracked, sub-root cwd and symlinked render dirs, `render --gitignore` adding leaked paths, doctor CLI), `workflow-render-step.test.mjs` (#615/#789: `waffle-render` step coverage + canonical block, step behavior on fixtures, overlay-free CI render, `--untrusted-config`, symlink refusal), `self-posture.test.mjs` (#777: this repo's lock-managed `.claude/` render is untracked + gitignored; config, extensions, lock and rendered workflows tracked).
+`overlay-leak.test.mjs` (#614: `overlayDivergentFiles`, `gitIgnoreStatus`, render/doctor/upgrade leak warnings incl. tracked, sub-root cwd and symlinked render dirs, `render --gitignore` adding leaked paths, doctor CLI), `workflow-render-step.test.mjs` (#615/#789: `waffle-render` step coverage + canonical block, step behavior on fixtures, overlay-free CI render, `--untrusted-config`, symlink refusal), `self-posture.test.mjs` (#777: this repo's lock-managed `.claude/` render is untracked + gitignored; config, extensions, lock and rendered workflows tracked), `prepare-worktree.test.mjs` (#820: `checkoutInfo` on external/nested worktrees and non-git dirs, `resolveOverlayPolicy` precedence, `isHarnessPath` per target; on real `git worktree add` fixtures with a space in the path: absent/empty/partial/custom-only/full/fresh-clone/per-target provisioning, idempotent second run with no content or index drift, conflicts (edited managed file, unmanaged file, symlink escape) writing nothing, missing/stale lock and missing config remedies, version mismatch naming the pinned command or the upgrade, concurrent-run refusal and stale-lock takeover, the prepared manifest refreshing an older render, overlay `local`/`main`/`none` with the omitted-overlay notice and no value leakage, a tracked overlay-changed path refused, ignore-coverage warning with `.gitignore` untouched; CLI help/flags/`--json`/exit codes; the `PREPARE_WORKTREE_SINCE` floor).
 
 ### Harness tool roster (#445)
 
@@ -678,8 +682,10 @@ Lock-only (Posture 2b, #777): `.waffle/waffle.yaml`, `.waffle/extensions/`, the 
 lock-managed, #594) are COMMITTED; the `.claude/` render (`agents/`, `skills/`, `workflows/`) is
 gitignored (`/.claude/{skills,agents,workflows}/*`, so `!` can re-include an ejected item).
 Re-render after a pull or a `stacks/**` edit and commit the LOCK; `self-posture.test.mjs` fails if
-the render is re-tracked. Delegate/autopilot never render into a worktree: Claude Code loads the main
-checkout's skills when a worktree has none. Gitignored deliberate absences,
+the render is re-tracked. Delegate/autopilot prepare every worktree they cut with
+`env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs prepare-worktree --cwd <path>` (the rendered
+`autopilot.waffleCmd`) before spawning into it (#820; the old no-render rule relied on a Claude Code
+read-through that a present directory switches off and Codex lacks). Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
 `.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the
 generated `.waffle/` overview docs (`CHEATSHEET.md`, `TEAM.md`, both `.html`, `AVATARS.md`,
@@ -697,6 +703,10 @@ workflow renders via `npx github:dustinkeeton/wafflestack` (main's toolkit), wro
 repo's own PRs in both directions. Toolkit-local CLI calls in this repo's config prompts
 (`delegate.extraPreflight`, `audit.compliancePrompt`) pass `--allow-unreleased` on `render` for
 the same reason.
+
+Worktrees of this repo: `scripts/prepare-worktree.sh` is not shipped here; run
+`env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs prepare-worktree --cwd <worktree>` (the lock
+is `unreleased`, so the pinned `npx` form never applies to the toolkit's own checkout).
 
 `.github/workflows/consumer-report-hold.yml` (#640) is also project-owned — NOT lock-managed, no
 stack renders it: on `issues: opened` it adds `waffle:reassess` + `waffle:consumer-report` to

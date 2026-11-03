@@ -73,6 +73,10 @@ v0.17.x (docs refresh per PR, mods + `state`, picker hints) and everything befor
   #373) and commit the lock. Pulling the #777 merge deletes your local render; that command restores it.
 - **CI render step needs v0.19.0+ (#615, #789):** v0.19.0 is the first release with `render --untrusted-config`;
   a lock pinned at v0.18.x or older fails hook CI, naming the pin and v0.19.0, until `wafflestack upgrade`.
+- **Worktrees need preparing (#820).** A worktree holds tracked files only; before an agent session starts
+  in one, run `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs prepare-worktree --cwd <worktree>`.
+  Delegate and autopilot do this for every worktree they cut. Do not count on Claude Code reading the main
+  checkout's skills: that works only while the whole directory is absent, and Codex never does it.
 - **Deliberately gitignored here:** the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/`, and
   `waffle-label-hook.yml` — why `doctor` runs with `--allow-missing`.
 

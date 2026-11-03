@@ -704,8 +704,10 @@ wrong toolkit for the toolkit's own PRs.
 Tests never read the working tree's `.claude/`: `installer/test/self-render.mjs` renders the
 committed inputs (never the overlay) into a temp dir once per test process, and
 `self-posture.test.mjs` fails if the render is ever re-tracked. A fresh worktree has no render
-either, and delegate and autopilot leave it that way: Claude Code then loads the main checkout's
-skills, local overlay included.
+either, so delegate and autopilot run `prepare-worktree` on every worktree they cut before an agent
+starts there (#820): it lays the harness resources the worktree's own lock describes, refusing on
+conflicts and leaving tracked files alone. The host recipes for worktrees you create yourself are
+in `docs/worktrees.md`.
 
 A few things stay deliberately untracked. The `.claude/` render, `.claude/worktrees/` (throwaway working
 state), `.codex/` and `.agents/` (non-targets — this repo only renders `claude`), and the

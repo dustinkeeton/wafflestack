@@ -21,6 +21,7 @@ import { computeToggleModel, formatToggleTable, interactiveToggle, applyToggle }
 import { resolveToolkitIdentity, formatUnreleasedRefusal, formatProvenanceWarning } from './lib/toolkit-ref.mjs';
 import { resolveLatestRelease, updateVerdict } from './lib/update-check.mjs';
 import { readBoard } from './lib/board.mjs';
+import { prepareWorktree, formatPrepareResult, OVERLAY_MODES } from './lib/worktree.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -49,7 +50,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <setup|init|list|toggle|install|render|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <setup|init|list|toggle|install|render|bake|prepare-worktree|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -71,6 +72,21 @@ try {
       const toolkitIdentity = requireRelease(command);
       runRender(force, toolkitIdentity, null, { untrustedConfig });
       if (gitignore) offerGitignore();
+      break;
+    }
+    // Provision one checkout's harness resources from its own lock (#820): staged render, harness
+    // artifacts only, refuses on conflict, validates after writing. Gated like render: it writes toolkit content.
+    case 'prepare-worktree': {
+      const json = extractFlag(args, '--json');
+      const untrustedConfig = extractFlag(args, '--untrusted-config');
+      const overlay = extractValue(args, '--overlay');
+      if (overlay !== null && !OVERLAY_MODES.includes(overlay)) fail(`--overlay must be one of ${OVERLAY_MODES.join(', ')} (got ${overlay})`);
+      if (args.length) fail(`prepare-worktree takes no refs (got ${args.join(', ')}) — it provisions the checkout at --cwd from its committed lock; flags: --overlay <${OVERLAY_MODES.join('|')}>, --json, --untrusted-config`);
+      const toolkitIdentity = requireRelease('prepare-worktree');
+      const result = prepareWorktree({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity, overlay, untrustedConfig });
+      if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      else process[result.status === 'failed' ? 'stderr' : 'stdout'].write(formatPrepareResult(result));
+      process.exit(result.status === 'failed' ? 1 : 0);
       break;
     }
     case 'install': {
@@ -422,6 +438,8 @@ function helpText() {
     '  install     add stacks/items to the selection (persists them), then render',
     '  render      re-render the current selection into .claude/ (agents, skills, mods), .codex/, .agents/ and files/ paths',
     '  bake        alias for render — same command, better metaphor',
+    '  prepare-worktree  provision a checkout\'s .claude/, .codex/, .agents/ resources from its own lock, before an',
+    '              agent session starts there (a fresh git worktree, a fresh clone); no-op when complete',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',
     '  state       print the resolved behavioral keys (value, layer, tokens), run files, locks and drift',
@@ -439,11 +457,13 @@ function helpText() {
     '  --help, -h        print this help and exit 0; after a command, explain instead of running it',
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',
     '                    uninstall: also delete files that were hand-edited after rendering',
-    '  --untrusted-config  render: the config came from an untrusted tree (a PR head in CI) — refuse',
+    '  --untrusted-config  render/prepare-worktree: the config came from an untrusted tree (a PR head in CI) — refuse',
     '                    any `source:` stack, run no prerequisite check, and write through no',
     '                    symlink that leaves the project root',
     '  --gitignore       setup/init/render/install: append the recommended .gitignore entries',
     '                    render/install: plus each overlay-fed render git would let you commit',
+    '  --overlay MODE    prepare-worktree: local (default — the checkout\'s own .waffle/waffle.local.yaml, if any),',
+    '                    main (also the main checkout\'s overlay, for a linked worktree), or none (canonical)',
     '  --yes             uninstall: actually delete (without it, uninstall only reports)',
     '                    reinstall: required by --clean, the one path that deletes your config',
     '  --keep-config     uninstall: keep .waffle/ — your selection, extensions and lock — and take',
@@ -453,6 +473,7 @@ function helpText() {
     '  --verify-render   doctor: also check the config still renders what the lock records',
     '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
     '                    state: print the state document as JSON (the shape AGENTS.md documents)',
+    '                    prepare-worktree: print the readiness document as JSON',
     '  --board           state: also read milestones, open epics and In Progress / In Review board',
     '                    items via gh (5 s per call, 8 s total, cached 60 s); a failure sets board.error',
     '  --interactive     list: pick stacks in a TTY prompt (falls back to the plain table)',
@@ -535,6 +556,16 @@ function applyToggleAndRender(model, disable, enable, toolkitIdentity) {
   const state = (list, verb) => (list.length ? `${verb}: ${list.join(', ')}` : null);
   console.log(`${CONFIG_FILE}: skills.modelInvocation → ${[state(result.disabled, 'disabled'), state(result.enabled, 'enabled')].filter(Boolean).join('; ') || 'removed (source defaults)'}`);
   runRender(false, toolkitIdentity);
+}
+
+// `--name VALUE`, once; spliced out like `extractFlag`. Null when absent.
+function extractValue(argv, name) {
+  const i = argv.indexOf(name);
+  if (i === -1) return null;
+  const value = argv[i + 1];
+  if (!value || value.startsWith('--')) fail(`${name} requires a value`);
+  argv.splice(i, 2);
+  return value;
 }
 
 // `--name VALUE` pairs, repeatable, comma-splittable; spliced out like `extractFlag`.

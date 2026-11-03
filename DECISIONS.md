@@ -39,6 +39,51 @@ can land after the last gate arms. This repo's hooks are disarmed (#396).
 
 ---
 
+## 2026-11-03: Worktrees are provisioned from their own lock before a session starts (#820)
+
+**Context**: The 2026-10-29 decision left worktrees unrendered and leaned on Claude Code loading the
+main checkout's skills when a worktree has none. Measured (#819, #820): that read-through is per
+directory and only while the directory is absent — one committed project-owned skill under
+`.claude/skills/` switches it off, and by-name invocation then fails — and Codex has no such
+fallback at all. A consumer that commits custom skills next to an ignored generated render had no
+generated skills in any worktree, in either harness.
+
+**Decision**: One deterministic, harness-neutral operation, `wafflestack prepare-worktree --cwd
+<checkout>`, provisions a checkout's harness resources from that checkout's own committed config,
+extensions and lock: it stages a render, copies only the missing or stale `.claude/`, `.codex/`,
+`.agents/` artifacts and lock-managed settings entries, refuses any conflict before writing,
+validates afterwards, and is a no-op when complete. The lock's `toolkitVersion` must be the
+running CLI's; the mismatch message names the pinned command, so the main checkout's current
+toolkit never provisions a worktree pinned elsewhere. The overlay policy is explicit
+(`--overlay local|main|none`, persisted as `worktrees.overlay` in the main checkout's overlay);
+the default is canonical, an omitted main overlay is named, and overlay-derived content never
+reaches tracked output. `delegate` and `autopilot` run it on every worktree they cut before the
+spawn and stop that launch on failure, replacing the "do not render into the worktree" rule.
+Host recipes (plain git, T3 Code, the Codex app, Claude Code) live in `docs/worktrees.md`; a
+pin-honoring script refuses a lock older than the command's first release instead of asking an
+old CLI to run it.
+
+**Alternatives**:
+- *Keep relying on the Claude Code read-through.* Rejected: it is observed behavior at a version,
+  per directory, off the moment a tracked file appears, and absent in Codex.
+- *Run a full `render` in the worktree.* Rejected: it rewrites `.github/` payloads, generated docs
+  and the committed lock, prunes, and needs `--force` to get past collisions — the opposite of a
+  setup step that must leave project-owned files, tracked output and the index untouched.
+- *Symlink the harness directory to the main checkout.* Rejected: it breaks write isolation and
+  version independence.
+- *A Claude `WorktreeCreate` hook.* Rejected: it replaces git worktree creation outright; there is
+  no post-create hook, and a setup step must not take ownership of creation.
+
+**Rationale**: Readiness is a property of each managed file, judged against the destination's own
+lock, and the harness that proves it is the CLI's exit code — not directory presence, not
+`doctor --allow-missing`, not a fallback another harness lacks.
+
+**Affects**: `installer/lib/worktree.mjs`, `installer/cli.mjs`, the `delegate`, `autopilot` and
+`git-workflow` skills, `docs/worktrees.md`, `docs/gitignore.md`, this repo's dogfood notes. The
+2026-10-29 sentence "Worktrees are not rendered into" is superseded.
+
+---
+
 ## 2026-10-29: The toolkit repo commits the lock, not its self-render (#777, part of #775)
 
 **Context**: The 2026-07-03 decision committed this repo's `.claude/` render because a
@@ -52,9 +97,9 @@ be left out of each commit by hand.
 `.waffle/extensions/`, `.waffle/waffle.lock.json`, the rendered `.github/` files and
 `.claude/settings.json` stay committed. `tests.yml`'s `doctor --verify-render` keeps gating the
 lock, and `self-posture.test.mjs` fails if the render is re-tracked. Tests read a tmp render of
-the committed inputs (`installer/test/self-render.mjs`), never the working tree. Worktrees are not rendered
-into: Claude Code (v2.1.277+) loads the main checkout's skills when a worktree has none, and a
-render there would shadow your overlay with canonical copies.
+the committed inputs (`installer/test/self-render.mjs`), never the working tree. Worktrees were left
+unrendered at the time, on the strength of Claude Code's main-checkout read-through; superseded on
+2026-11-03 (#820): every worktree an agent works in is now provisioned from its own lock.
 
 **Alternatives**:
 - *Keep committing the render and live with the overlay diff.* Rejected: the reason for

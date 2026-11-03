@@ -449,7 +449,13 @@ Notes:
 - Use `origin/main` as the base, not local `main`, so all worktrees start from the same fetched tip.
 - Keep `{{git.worktreesDir}}/` gitignored.
 
-**Do not render into the worktree.** A project that commits only its lock (Posture 2b) has no `{{harness.skillsDir}}/` render in a fresh worktree, and that is fine: Claude Code (v2.1.277+) loads the main checkout's project skills, agents, and commands when a worktree has none of its own, so the agent starts with the skills its prompt names — local overlay included. A render there would shadow that fallback with canonical copies. Tests and `doctor --allow-missing` never read the worktree's render.
+**Prepare the worktree before its agent starts.** A fresh worktree holds only tracked files, so a project that gitignores its render (Posture 2b) has no `{{harness.skillsDir}}/` or `{{harness.agentsDir}}/` there, and a project that commits a few project-owned skills there has those alone. Provision the worktree's own harness resources from its own committed lock — never rely on a harness falling back to the main checkout's copies, which Claude Code does only while the whole directory is absent and Codex does not do at all:
+
+```bash
+{{autopilot.waffleCmd}} prepare-worktree --cwd "$(realpath "$WORKTREE_PATH")"
+```
+
+It renders in a staging dir and copies only the harness artifacts (`.claude/`, `.codex/`, `.agents/` for the enabled targets, plus the lock-managed `.claude/settings.json` entries) that are missing or stale, refuses on any conflict before writing a byte (naming the paths), validates every artifact afterwards, and is a no-op on a complete worktree, so run it again for a **reused** worktree (an existing branch from an aborted run, a `-retry` branch) after `git worktree add` — the lock on the branch may differ from the one that prepared it. It never touches the committed lock, `.github/` payloads, project-owned files or the index. It takes a per-worktree lock, so two preparations of one worktree never race; run it once per worktree, before the spawn. **A non-zero exit stops this issue's launch**: keep the command's output verbatim, record the issue as failed with that output in its `execution` entry, do not spawn its agent, and continue with the next issue; the output names the repair (a lock that needs re-rendering in the main checkout, a conflicting path, a lock pinned to a toolkit that is not this one). Default overlay policy prepares the canonical render; `--overlay main` opts the main checkout's private `.waffle/waffle.local.yaml` in (see `docs/worktrees.md` in the toolkit).
 
 Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt. This path — and the branch — must match what the `plan` checkpoint recorded for this issue; **read them from the checkpoint** rather than re-deriving them, so a single source of truth drives both provisioning and the agent prompt.
 
@@ -503,7 +509,7 @@ Errors in any step → log a warning and continue. Board updates must never bloc
 
 ### Spawning agents
 
-**Parallel groups** — each agent gets a pre-provisioned worktree. **Do NOT pass `isolation: "worktree"`** — delegate provisions worktrees itself so the path, branch, and base commit are deterministic and match the checkpoint (see [Worktree provisioning](#worktree-provisioning-parallel-groups-only) above). Inject the worktree path into the prompt; the agent will `cd` into it as its first action.
+**Parallel groups** — each agent gets a pre-provisioned worktree. **Do NOT pass `isolation: "worktree"`** — delegate provisions worktrees itself so the path, branch, and base commit are deterministic and match the checkpoint (see [Worktree provisioning](#worktree-provisioning-parallel-groups-only) above), and `prepare-worktree` has already laid the harness resources into it — an agent whose worktree failed to prepare is never spawned. Inject the worktree path into the prompt; the agent will `cd` into it as its first action.
 
 ```
 Agent(
@@ -791,5 +797,6 @@ There is no team to delete — the session has a single implicit team, so nothin
 - **Build failure** — stop the chain, report to the user, do not create a PR for the failing agent's work
 - **Agent cannot complete** — add a comment to the GitHub issue via `gh issue comment {N} --body "..."` explaining what was attempted and what blocked completion, then move on to the next issue
 - **Worktree conflict** — fall back to serial execution in the main working directory, report the conflict
+- **Worktree preparation failure** — `prepare-worktree` exited non-zero. Do not spawn that issue's agent and never render by hand in its place; record the output verbatim in the issue's `execution` entry (`status: "failed"`), surface it in the Report, and continue with the next issue. A lock-level cause (stale or missing lock, a pin that is not this toolkit) fails every worktree the same way — stop the group and report once.
 - **All agents failed** — present a summary of all failures and suggest manual intervention
 - **Board sync failure** — log warning and continue; board updates are informational, never blocking

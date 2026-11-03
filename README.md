@@ -146,6 +146,7 @@ resolution — lives in **[Upgrades and release resolution](docs/upgrades.md)**.
 
 - **[Upgrades & release resolution](docs/upgrades.md)** — versioning contract, migrations, pins.
 - **[Committing vs. gitignoring the render](docs/gitignore.md)** — the trade-off, and the lock.
+- **[Worktrees](docs/worktrees.md)** — `prepare-worktree`: skills and agents in every worktree and fresh clone before a session starts; host recipes.
 - **[Format reference](schema/FORMAT.md)** — stack, agent, skill, and syrup definitions.
 - **[Brand assets](assets/)** — logos and guidelines.
 
