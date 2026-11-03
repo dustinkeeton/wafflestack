@@ -731,6 +731,9 @@ describe('integration stage 1 hand-off (#812)', () => {
     assert.match(handoff, /overwrites\.mjs --head origin\/<integ>/);
     assert.match(handoff, /\[Integration checks\]\(#integration-checks\)/);
     assert.match(handoff, /Only when every command exits 0, run item 3's `gh pr create`/);
+    assert.match(handoff, /If you have reviewed and accept the detector's `OVERWRITE:` or `DELETED:` lines, open it anyway with those lines in the body/);
+    assert.match(handoff, /If an integration check failed, fix it through a PR into `<integ>` and start again at step 1/);
+    assert.match(handoff, /other than a stage 1 hold at steps 4–6/);
     assert.doesNotMatch(handoff, /\{\{/);
   });
 

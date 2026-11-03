@@ -170,13 +170,13 @@ Skip this section when integration mode is off.
 
 ### Integration gate — stage 1 (mechanical, no LLM)
 
-**The stage 1 hand-off.** Any path that ends the run with a run PR open or merged and no final PR, other than a stage 1 hold, hands stage 1 to the human: its report, and its follow-up when it files one, gives these commands with `<integ>` and `<ts>` filled in. A human needs no consent, so step 6's hold never applies: they merge the sync PR themselves. Run them after every run PR against `<integ>` has merged.
+**The stage 1 hand-off.** Any path that ends the run with a run PR open or merged and no final PR, other than a stage 1 hold at steps 4–6 (each has its own resume below), hands stage 1 to the human: its report, and its follow-up when it files one, gives these commands with `<integ>` and `<ts>` filled in. A human needs no consent, so step 6's hold never applies: they merge the sync PR themselves. Run them after every run PR against `<integ>` has merged.
 
 1. `git fetch origin main <integ>`, then `git merge-base --is-ancestor origin/main origin/<integ>`. Success means no sync: skip to 3.
 2. Merge `main` in through a PR: `git switch -c autopilot/sync/<ts> origin/<integ>`, `git merge --no-ff origin/main`, `git push -u origin autopilot/sync/<ts>`, `gh pr create --base <integ> --head autopilot/sync/<ts>`. Merge it, then `git fetch origin <integ>`. Never push `main` into `<integ>` directly.
 3. In a worktree at `origin/<integ>`, run `{{project.installCmd}}`. From the main checkout, run step 4's `gh pr list --base <integ> --state merged … --jq` line, then `node {{harness.skillsDir}}/autopilot/overwrites.mjs --head origin/<integ> <its --pr lines>`.
 4. In that worktree, run each command in [Integration checks](#integration-checks).
-5. Only when every command exits 0, run item 3's `gh pr create`, with the detector's `NOTE:` lines in the body. On any nonzero exit, do not open it.
+5. Only when every command exits 0, run item 3's `gh pr create`, with the detector's `NOTE:` lines in the body. On any nonzero exit, do not open it. If you have reviewed and accept the detector's `OVERWRITE:` or `DELETED:` lines, open it anyway with those lines in the body. If an integration check failed, fix it through a PR into `<integ>` and start again at step 1.
 
 Runs from item 3, after the wait, before the final PR. `main` reaches `<integ>` only through a PR: a ruleset may reject a direct push, and every change to the branch should arrive reviewed by CI. `<ts>` is the integration branch's own UTC timestamp, and `<gate>` is the gate worktree, `{{git.worktreesDir}}/autopilot-gate-<ts>`.
 
