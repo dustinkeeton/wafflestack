@@ -238,6 +238,20 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), ins('- base added', '  main note.', '  integ note.', '- G')(BASE));
   });
 
+  test('a lead-in only main adds, where integ adds nothing, resolves (#803)', () => {
+    sync({ main: { 'CHANGELOG.md': (s) => ins('- base fixed', '- M')(ins('- base added', '  main note.')(s)) }, integ: { 'CHANGELOG.md': ins('- base fixed', '- G') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- M', '- G')(ins('- base added', '  main note.')(BASE)));
+  });
+
+  test('a lead-in only main adds, before a bullet both sides add, resolves (#803)', () => {
+    sync({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '- X') }, integ: { 'CHANGELOG.md': (s) => ins('- base fixed', '- G')(ins('- base added', '- X')(s)) } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- G')(ins('- base added', '  main note.', '- X')(BASE)));
+  });
+
   test('blank-only lead-ins on both sides are each kept (#784)', () => {
     // A tight list, so git keeps each hunk's blank in front of its bullet.
     const tight = ins('- base added', '- base added two')(BASE);

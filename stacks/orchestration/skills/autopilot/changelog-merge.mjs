@@ -123,7 +123,7 @@ function merge({ lines, main, integ }) {
     while (s < n - p && same(me[me.length - 1 - s], ge[ge.length - 1 - s])) s++;
     const mm = me.slice(p, me.length - s);
     const gm = ge.slice(p, ge.length - s);
-    const shared = lead(mm[0]) && mm[0].some((l) => l.trim() !== '' && gm[0].includes(l));
+    const shared = lead(mm[0]) && lead(gm[0]) && mm[0].some((l) => l.trim() !== '' && gm[0].includes(l));
     if (lead(gm[0]) && (mm.some((e) => BULLET.test(e[0])) || shared)) throw new Hold(`integ adds ${JSON.stringify(gm[0].find((l) => l.trim() !== ''))} before its first bullet, after main's added lines`);
     const dup = mm.find((e) => BULLET.test(e[0]) && gm.some((f) => f[0] === e[0]));
     if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup[0])} at the same point, among different entries`);
