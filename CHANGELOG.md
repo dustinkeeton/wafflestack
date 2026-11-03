@@ -48,6 +48,14 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's `changelog-merge.mjs` holds when main's lead-in leaves the entry above (#810).**
+  The #803 narrowing let an `<integ>` lead-in resolve after a main lead-in that ends in a blank
+  line, or that already holds a blank followed by a line indented under two spaces. Written after it, `<integ>`'s
+  lines fell out of the base entry into a stray paragraph, with exit 0. Those shapes now hold. Two
+  lead-ins that share a line up to trailing whitespace now hold too, instead of writing it twice.
+
+  **Consumer impact:** autopilot skill script only — `render` picks it up.
+
 - **Autopilot integration hands off stage 1 before the final PR when run PRs are still open (#806,
   part of #720).** When a run PR was still open, the report handed the human the `gh pr create`
   command with no word about stage 1, so a final PR opened from it skipped the sync, the overwrite
