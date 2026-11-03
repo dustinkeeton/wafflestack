@@ -59,8 +59,10 @@ is what you reach for across a breaking one.
 - **The integration sync's CHANGELOG merge no longer writes a shared lead-in twice (#784, part of
   #720).** Lines a side adds before its first bullet continue the entry above them. When both sides
   added the same such lead-in at one point, `changelog-merge.mjs` wrote it twice, the second copy
-  under main's new entry. It now keeps an identical lead-in once, as git does, and holds when an
-  `<integ>` lead-in would land after main's added lines, where it would move under a different entry.
+  under main's new entry. It now keeps an identical lead-in once, as git does. It holds when an
+  `<integ>` lead-in would land after a bullet main added, where it would move under a different
+  entry, or when the two sides' lead-ins share a line but differ. When main added only a lead-in that
+  shares no line with integ's, it writes main's lead-in, then integ's, under the base entry (#803).
 
   **Consumer impact:** re-render only.
 
