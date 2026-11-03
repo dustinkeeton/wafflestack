@@ -639,7 +639,7 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
     assert.match(stage3(), /\*\*The audit hand-off\.\*\* With audit-step consent on/);
     assert.equal(md.match(/git diff --name-only origin\/main\.\.\.origin\/<integ>/g).length, 2);
     assert.match(section(md, '**Hold.** Any stop in steps 2–6', '### Integration gate — stage 2'), HANDOFF);
-    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /and only on a pass the exact `gh pr create` command, then the \[stage 2 hand-off\]\(#integration-gate--stage-2-decision-preservation-review\) and the \[audit hand-off\]/);
+    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), /which ends with the exact `gh pr create` command, then the \[stage 2 hand-off\]\(#integration-gate--stage-2-decision-preservation-review\) and the \[audit hand-off\]/);
     assert.match(section(md, '**Stage 2 hold.**', '### Integration gate — stage 3'), HANDOFF);
     const hold3 = section(md, '**Stage 3 hold.**', '## Per-issue loop');
     assert.match(hold3, HANDOFF);
@@ -674,7 +674,7 @@ describe('integration final PR body and the audit hand-off (#756)', () => {
 // #782: a run that opens no final PR hands stage 2 to the human, ahead of the audit hand-off.
 describe('integration stage 2 hand-off (#782)', () => {
   const ORDER = /\[stage 2 hand-off\]\(#integration-gate--stage-2-decision-preservation-review\)[^\n]*\[audit hand-off\]\(#integration-gate--stage-3-audit\)/;
-  const STAGE1_FIRST = new RegExp(String.raw`\[stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\)[^\n]*gh pr create[^\n]*` + ORDER.source);
+  const STAGE1_FIRST = new RegExp(String.raw`\[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\)[^\n]*gh pr create[^\n]*` + ORDER.source);
   const stage2 = () => section(read(SKILL), '### Integration gate — stage 2', '### Integration gate — stage 3');
 
   test('the hand-off is defined once in stage 2', () => {
@@ -690,7 +690,7 @@ describe('integration stage 2 hand-off (#782)', () => {
     assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), ORDER);
     const hold = section(md, '**Hold.** Any stop in steps 2–6', '### Integration gate — stage 2');
     assert.match(hold, ORDER);
-    assert.match(hold, /sync, open the final PR, review it, then audit/);
+    assert.match(hold, /sync, pass stage 1, open the final PR, review it, then audit/);
     const fail = section(md, '## Failure handling', 'At the end, the report');
     assert.match(fail, /\*\*The final integration PR was not opened\*\*[^\n]*\[stage 2 hand-off\][^\n]*\[audit hand-off\]/);
     assert.match(fail, /\*\*Integration gate stage 1 held\*\*[^\n]*\[stage 2 hand-off\][^\n]*\[audit hand-off\]/);
@@ -702,11 +702,11 @@ describe('integration stage 2 hand-off (#782)', () => {
     const md = read(SKILL);
     const branch = section(md, '## Integration branch', '### Integration gate — stage 1');
     assert.match(branch, STAGE1_FIRST);
-    assert.match(branch, /\(sync, overwrites, integration checks\), and only on a pass the exact `gh pr create` command/);
+    assert.match(branch, /\[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\), which ends with the exact `gh pr create` command/);
     assert.doesNotMatch(md, /both to run after those PRs merge and the final PR opens/);
     const fail = section(md, '## Failure handling', 'At the end, the report');
-    assert.match(fail, new RegExp(String.raw`\*\*The final integration PR was not opened\*\*[^\n]*\[stage 1\]\(#integration-gate--stage-1-mechanical-no-llm\) to pass first, and the exact command, with the ` + ORDER.source));
-    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /"not opened", the reason, stage 1 to pass first, and the exact command/);
+    assert.match(fail, new RegExp(String.raw`\*\*The final integration PR was not opened\*\*[^\n]*\[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\), which ends with the exact command, with the ` + ORDER.source));
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /"not opened", the reason, and the stage 1 hand-off, or/);
     assert.match(section(md, '### Integration gate — stage 3', '## Per-issue loop'), /it runs after they merge, stage 1 passes, and the final PR opens/);
   });
 
@@ -714,6 +714,39 @@ describe('integration stage 2 hand-off (#782)', () => {
     const hold2 = section(read(SKILL), '**Stage 2 hold.**', '### Integration gate — stage 3');
     assert.doesNotMatch(hold2, /stage 2 hand-off/);
     assert.match(hold2, /re-run `adversarial-review <F> --integration`/);
+  });
+});
+
+// #812: stage 1 hands a human runnable commands, and a steps 2–3 hold re-runs stage 1.
+describe('integration stage 1 hand-off (#812)', () => {
+  test('the stage 1 hand-off is defined once, as commands a human runs', () => {
+    const md = read(SKILL);
+    const stage1 = section(md, '### Integration gate — stage 1', '#### Integration checks');
+    assert.match(stage1, /\*\*The stage 1 hand-off\.\*\*/);
+    assert.equal(md.match(/\*\*The stage 1 hand-off\.\*\*/g).length, 1);
+    const handoff = section(md, '**The stage 1 hand-off.**', 'Runs from item 3, after the wait');
+    assert.match(handoff, /A human needs no consent, so step 6's hold never applies/);
+    assert.match(handoff, /git merge-base --is-ancestor origin\/main origin\/<integ>/);
+    assert.match(handoff, /gh pr create --base <integ> --head autopilot\/sync\/<ts>/);
+    assert.match(handoff, /overwrites\.mjs --head origin\/<integ>/);
+    assert.match(handoff, /\[Integration checks\]\(#integration-checks\)/);
+    assert.match(handoff, /Only when every command exits 0, run item 3's `gh pr create`/);
+    assert.doesNotMatch(handoff, /\{\{/);
+  });
+
+  test('every not-opened report points to it; a steps 2–3 hold re-runs stage 1', () => {
+    const md = read(SKILL);
+    const LINK = /\[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\)/;
+    assert.match(section(md, '## Integration branch', '### Integration gate — stage 1'), LINK);
+    const fail = section(md, '## Failure handling', 'At the end, the report');
+    assert.match(fail, /\*\*The final integration PR was not opened\*\*[^\n]*\[stage 1 hand-off\]/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /"not opened", the reason, and the stage 1 hand-off/);
+    const steps23 = section(md, '- **Steps 2–3**', '- **Step 4, a check hold.**');
+    assert.match(steps23, /re-run stage 1 from step 1/);
+    assert.match(steps23, LINK);
+    assert.doesNotMatch(steps23, /through a PR, run item 3's `gh pr create`\./);
+    assert.match(md, /sync, pass stage 1, open the final PR, review it, then audit/);
+    assert.doesNotMatch(md, /stage 1 to pass first/);
   });
 });
 
