@@ -56,6 +56,15 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** autopilot skill script only — `render` picks it up.
 
+- **Autopilot integration gives stage 1 a concrete hand-off, and a steps 2–3 hold re-runs it
+  (#812).** The not-opened report linked to stage 1, a section written for the orchestrator, so a
+  human following it hit step 6's consent hold. A new stage 1 hand-off lists the commands a human
+  runs, including merging the sync PR themselves, and the report, the run report and the failure
+  bullet point to it. A steps 2–3 hold's resume ran `gh pr create` with no overwrite detector or
+  integration checks; it now re-runs stage 1 from step 1.
+
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
+
 - **Autopilot integration hands off stage 1 before the final PR when run PRs are still open (#806,
   part of #720).** When a run PR was still open, the report handed the human the `gh pr create`
   command with no word about stage 1, so a final PR opened from it skipped the sync, the overwrite
