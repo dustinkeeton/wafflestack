@@ -238,18 +238,25 @@ describe('changelog-merge.mjs resolves additive-only [Unreleased] conflicts (#75
     assert.equal(read('CHANGELOG.md'), ins('- base added', '  main note.', '  integ note.', '- G')(BASE));
   });
 
-  test('a lead-in only main adds, where integ adds nothing, resolves (#803)', () => {
+  test('a lead-in only main adds, where integ adds nothing, still resolves (#803 guard)', () => {
     sync({ main: { 'CHANGELOG.md': (s) => ins('- base fixed', '- M')(ins('- base added', '  main note.')(s)) }, integ: { 'CHANGELOG.md': ins('- base fixed', '- G') } });
     const r = run('-C', dir, '--write');
     assert.equal(r.code, 0, r.out + r.err);
     assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- M', '- G')(ins('- base added', '  main note.')(BASE)));
   });
 
-  test('a lead-in only main adds, before a bullet both sides add, resolves (#803)', () => {
+  test('a lead-in only main adds, before a bullet both sides add, still resolves (#803 guard)', () => {
     sync({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '- X') }, integ: { 'CHANGELOG.md': (s) => ins('- base fixed', '- G')(ins('- base added', '- X')(s)) } });
     const r = run('-C', dir, '--write');
     assert.equal(r.code, 0, r.out + r.err);
     assert.equal(read('CHANGELOG.md'), ins('- base fixed', '- G')(ins('- base added', '  main note.', '- X')(BASE)));
+  });
+
+  test('differing lead-ins with no bullet on either side resolve main-first (#803)', () => {
+    sync({ main: { 'CHANGELOG.md': ins('- base added', '  main note.') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.') } });
+    const r = run('-C', dir, '--write');
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(read('CHANGELOG.md'), ins('- base added', '  main note.', '  integ note.')(BASE));
   });
 
   test('blank-only lead-ins on both sides are each kept (#784)', () => {
@@ -352,6 +359,18 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
 
   test('a lead-in only integ adds, after an entry main adds, holds (#784)', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '- M') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.', '- G') } }, /^HOLD: integ adds " {2}integ note\." before its first bullet/);
+  });
+
+  test("an unindented integ lead-in after main's lead-in ends in a blank holds (#810)", () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '') }, integ: { 'CHANGELOG.md': ins('- base added', 'integ lazy.', '- G') } }, /^HOLD: integ adds "integ lazy\." before its first bullet, where main's lead-in leaves the entry above/);
+  });
+
+  test("an integ lead-in after main's lead-in already left the entry above holds (#810)", () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '', 'main para.') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.', '- G') } }, /^HOLD: integ adds " {2}integ note\." before its first bullet, where main's lead-in leaves the entry above/);
+  });
+
+  test('lead-ins that share a line up to trailing whitespace hold (#810)', () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  note.', '  main note.') }, integ: { 'CHANGELOG.md': ins('- base added', '  note. ', '- G') } }, /^HOLD: integ adds " {2}note\. " before its first bullet, after main's added lines/);
   });
 
   test('CHANGELOG.md plus another non-lock path holds', () => {
