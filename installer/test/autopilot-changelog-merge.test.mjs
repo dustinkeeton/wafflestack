@@ -369,6 +369,10 @@ describe('changelog-merge.mjs holds everything else (#759)', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '', 'main para.') }, integ: { 'CHANGELOG.md': ins('- base added', '  integ note.', '- G') } }, /^HOLD: integ adds " {2}integ note\." before its first bullet, where main's lead-in leaves the entry above/);
   });
 
+  test("a one-space integ lead-in after main's lead-in ends in a blank holds (#810)", () => {
+    hold({ main: { 'CHANGELOG.md': ins('- base added', '  main note.', '') }, integ: { 'CHANGELOG.md': ins('- base added', ' integ lazy.', '- G') } }, /^HOLD: integ adds " integ lazy\." before its first bullet, where main's lead-in leaves the entry above/);
+  });
+
   test('lead-ins that share a line up to trailing whitespace hold (#810)', () => {
     hold({ main: { 'CHANGELOG.md': ins('- base added', '  note.', '  main note.') }, integ: { 'CHANGELOG.md': ins('- base added', '  note. ', '- G') } }, /^HOLD: integ adds " {2}note\. " before its first bullet, after main's added lines/);
   });

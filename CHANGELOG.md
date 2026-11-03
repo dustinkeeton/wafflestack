@@ -50,7 +50,7 @@ is what you reach for across a breaking one.
 
 - **Autopilot's `changelog-merge.mjs` holds when main's lead-in leaves the entry above (#810).**
   The #803 narrowing let an `<integ>` lead-in resolve after a main lead-in that ends in a blank
-  line, or that already holds a blank followed by an unindented line. Written after it, `<integ>`'s
+  line, or that already holds a blank followed by a line indented under two spaces. Written after it, `<integ>`'s
   lines fell out of the base entry into a stray paragraph, with exit 0. Those shapes now hold. Two
   lead-ins that share a line up to trailing whitespace now hold too, instead of writing it twice.
 

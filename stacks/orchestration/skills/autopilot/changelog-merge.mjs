@@ -127,7 +127,8 @@ function merge({ lines, main, integ }) {
     const shared = lead(mm[0]) && first && mm[0].some((l) => l.trim() !== '' && gm[0].some((g) => g.trimEnd() === l.trimEnd()));
     if (first && (mm.some((e) => BULLET.test(e[0])) || shared)) throw new Hold(`integ adds ${JSON.stringify(first)} before its first bullet, after main's added lines`);
     const ml = mm.flat();
-    const escapes = ml.some((l, k) => k > 0 && ml[k - 1].trim() === '' && /^\S/.test(l)) || (ml.at(-1)?.trim() === '' && /^\S/.test(first));
+    const shallow = (l) => /^ ?\S/.test(l);
+    const escapes = ml.some((l, k) => k > 0 && ml[k - 1].trim() === '' && shallow(l)) || (ml.at(-1)?.trim() === '' && shallow(first));
     if (first && escapes) throw new Hold(`integ adds ${JSON.stringify(first)} before its first bullet, where main's lead-in leaves the entry above`);
     const dup = mm.find((e) => BULLET.test(e[0]) && gm.some((f) => f[0] === e[0]));
     if (dup !== undefined) throw new Hold(`main and integ both add ${JSON.stringify(dup[0])} at the same point, among different entries`);
