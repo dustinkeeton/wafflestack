@@ -246,6 +246,16 @@ describe('doctor: upstream provenance surfaces and verify-render reproduces it (
     assert.equal(render(toolkitRoot, cwd).ok, true);
     assert.equal(run({ verifyRender: true }).render.ok, true);
   });
+
+  test('ejecting an unpinned skill keeps every other pin in both locks', () => {
+    const { toolkitRoot, cwd } = setup();
+    write(cwd, '.waffle/waffle.local.yaml', YAML.stringify({ config: { vendor: { mode: 'slow' } } }));
+    assert.equal(render(toolkitRoot, cwd).ok, true);
+    const before = readLock(cwd).upstream;
+    eject({ cwd, item: 'skills/plain' });
+    assert.deepEqual(readLock(cwd).upstream, before);
+    assert.deepEqual(readLocalLock(cwd).upstream.map((e) => e.item), [ITEM]);
+  });
 });
 
 describe('report and upgrade surface upstream provenance (#827)', () => {
