@@ -17,6 +17,7 @@ import { validateToolkit } from '../lib/validate.mjs';
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const sha = (n) => String(n).repeat(40).slice(0, 40);
 const [C1, C2, C3] = [sha('a'), sha('b'), sha('c')];
+const [B0, F, M] = [sha('d'), sha('e'), sha('f')];
 const MIT = 'MIT License\n\nCopyright (c) upstream\n';
 const SKILL_V1 = '---\nname: echo\ndescription: Echo skill.\n---\n\nEcho v1.\n';
 const SKILL_V2 = '---\nname: echo\ndescription: Echo skill.\n---\n\nEcho v2 {{literal}}.\n';
@@ -48,23 +49,31 @@ function snapshot(root) {
 }
 
 /**
- * A fake upstream: `commits` in branch order, each a full `{ path: content }` tree (plus optional raw
- * `entries`); `diverged` shas compare as diverged. Records every call; any other endpoint throws.
+ * A fake upstream: `commits` in date order, each a full `{ path: content }` tree (plus optional raw
+ * `entries` and `parents`, default the previous commit); the last is the default branch's head.
+ * `diverged` shas compare as diverged. Records every call; any other endpoint throws.
  */
 function fakeGh({ repo = 'acme/tools', commits, license = 'MIT', diverged = [], fail = [] }) {
   const calls = [];
   const blobs = new Map();
   const blobSha = (content) => {
-    const id = crypto.createHash('sha1').update(content).digest('hex');
+    const bytes = Buffer.from(content);
+    const id = crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
     blobs.set(id, content);
     return id;
   };
   const idx = (s) => commits.findIndex((c) => c.sha === s);
-  const touches = (c, p) => {
-    const prev = commits[idx(c.sha) - 1];
-    const pick = (t) => JSON.stringify(Object.entries(t?.files ?? {}).filter(([k]) => k === p || k.startsWith(`${p}/`)).sort());
-    return !prev || pick(c) !== pick(prev);
+  const parents = (c) => c.parents ?? (idx(c.sha) > 0 ? [commits[idx(c.sha) - 1].sha] : []);
+  const ancestors = (s) => {
+    const seen = new Set();
+    const walk = (x) => { if (seen.has(x)) return; seen.add(x); parents(commits[idx(x)]).forEach(walk); };
+    walk(s);
+    return seen;
   };
+  const pick = (c, p) => JSON.stringify(Object.entries(c.files).filter(([k]) => k === p || k.startsWith(`${p}/`)).sort());
+  // git's history simplification: a merge TREESAME to any parent at `p` is not listed.
+  const touches = (c, p) => parents(c).every((ps) => pick(commits[idx(ps)], p) !== pick(c, p));
+  const head = commits.at(-1)?.sha;
   const gh = (args) => {
     calls.push(args.join(' '));
     assert.equal(args.length, 1, `unexpected gh args: ${args.join(' ')}`);
@@ -73,16 +82,17 @@ function fakeGh({ repo = 'acme/tools', commits, license = 'MIT', diverged = [], 
     const r = fail.find((f) => p.startsWith(`repos/${f}`));
     if (r) throw new Error(`gh api ${p}: HTTP 404: Not Found`);
     if (p === `repos/${repo}`) return { default_branch: 'main', license: { spdx_id: license } };
+    if (p === `repos/${repo}/commits/main`) return { sha: head };
     if (p === `repos/${repo}/commits`) {
-      assert.equal(url.searchParams.get('sha'), 'main');
-      const hit = [...commits].reverse().find((c) => touches(c, url.searchParams.get('path')));
+      const from = ancestors(url.searchParams.get('sha'));
+      const hit = [...commits].reverse().find((c) => from.has(c.sha) && touches(c, url.searchParams.get('path')));
       return hit ? [{ sha: hit.sha }] : [];
     }
     let m = p.match(new RegExp(`^repos/${repo}/compare/([0-9a-f]{40})\\.\\.\\.([0-9a-f]{40})$`));
     if (m) {
       if (diverged.includes(m[1]) || diverged.includes(m[2])) return { status: 'diverged' };
-      const d = idx(m[2]) - idx(m[1]);
-      return { status: d > 0 ? 'ahead' : d < 0 ? 'behind' : 'identical' };
+      if (m[1] === m[2]) return { status: 'identical' };
+      return { status: ancestors(m[2]).has(m[1]) ? 'ahead' : ancestors(m[1]).has(m[2]) ? 'behind' : 'diverged' };
     }
     m = p.match(new RegExp(`^repos/${repo}/git/trees/([0-9a-f]{40})$`));
     if (m) {
@@ -157,6 +167,29 @@ describe('upstream:check (#828)', () => {
   test('a pin off the default branch is diverged', () => {
     const gh = fakeGh({ commits: [{ sha: C1, files: V1 }, { sha: C2, files: { ...V1, 'skills/echo/SKILL.md': SKILL_V2 } }], diverged: [C1] });
     assert.equal(status(makeToolkit(), gh)[0][1], 'diverged');
+  });
+
+  // #832: GitHub's path history lists a merged side branch's commit, not the merge.
+  const SIDE = { ...V1, 'skills/echo/SKILL.md': SKILL_V2 };
+  const sideMergedAfterPin = () => [
+    { sha: B0, files: V1 },
+    { sha: F, parents: [B0], files: SIDE },
+    { sha: C1, parents: [B0], files: { ...V1, 'README.md': 'r2\n' } },
+    { sha: M, parents: [C1, F], files: { ...SIDE, 'README.md': 'r2\n' } },
+  ];
+
+  test('a pin behind a merged side branch that forked before it is behind; latest is the head (#832)', () => {
+    assert.deepEqual(status(makeToolkit(), fakeGh({ commits: sideMergedAfterPin() })), [['up/skills/echo', 'behind', M, false]]);
+  });
+
+  test('a side branch merged before the pin is already in it: current (#832)', () => {
+    const gh = fakeGh({ commits: [{ sha: B0, files: V1 }, { sha: F, parents: [B0], files: SIDE }, { sha: M, parents: [B0, F], files: SIDE }, { sha: C1, parents: [M], files: { ...SIDE, 'README.md': 'r2\n' } }] });
+    assert.deepEqual(status(makeToolkit({ files: SIDE }), gh), [['up/skills/echo', 'current', C1, false]]);
+  });
+
+  test('a pin on a branch that never merged is diverged (#832)', () => {
+    const gh = fakeGh({ commits: [{ sha: B0, files: V1 }, { sha: C1, parents: [B0], files: V1 }, { sha: C2, parents: [B0], files: SIDE }] });
+    assert.deepEqual(status(makeToolkit(), gh), [['up/skills/echo', 'diverged', C2, false]]);
   });
 
   test('a gh error on one item is reported as error; the other items are still checked', () => {
@@ -259,6 +292,39 @@ describe('upstream:bump (#828)', () => {
     const { items } = bumpUpstream({ toolkitRoot: root, gh: fakeGh({ commits: [{ sha: C1, files: V1 }, { sha: C2, files: V2 }], diverged: [C1] }) });
     assert.match(items[0].error, /diverged/);
     assert.deepEqual(snapshot(root), before);
+  });
+
+  test('bumps a pin behind a merged side branch to the merge commit, without --commit (#832)', () => {
+    const root = makeToolkit();
+    const commits = [
+      { sha: B0, files: V1 },
+      { sha: F, parents: [B0], files: V2 },
+      { sha: C1, parents: [B0], files: V1 },
+      { sha: M, parents: [C1, F], files: V2 },
+    ];
+    const { items } = bumpUpstream({ toolkitRoot: root, gh: fakeGh({ commits }) });
+    assert.deepEqual(items.map((i) => [i.status, i.to, i.error]), [['bumped', M, null]]);
+    assert.equal(fs.readFileSync(path.join(root, 'stacks/up/skills/echo/SKILL.md'), 'utf8'), SKILL_V2);
+  });
+
+  test('--commit refuses a target whose LICENSE is neither the copy\'s nor the head\'s, and writes nothing (#833)', () => {
+    const root = makeToolkit({ commit: C2 });
+    const before = snapshot(root);
+    const gpl = { ...V2, LICENSE: 'GNU GENERAL PUBLIC LICENSE\n' };
+    const gh = fakeGh({ commits: [{ sha: C1, files: gpl }, { sha: C2, files: V1 }, { sha: C3, files: { ...V1, 'README.md': 'r2\n' } }] });
+    const { items } = bumpUpstream({ toolkitRoot: root, gh, ref: 'skills/echo', commit: C1 });
+    assert.equal(items[0].status, 'error');
+    assert.match(items[0].error, /LICENSE at aaaaaaaaaaaa differs .*human decision/);
+    assert.deepEqual(snapshot(root), before);
+  });
+
+  test('--commit accepts a target whose LICENSE matches the head\'s, though not the copy\'s (#833)', () => {
+    const root = makeToolkit();
+    const v2 = { ...V2, LICENSE: `${MIT}2026\n` };
+    const gh = fakeGh({ commits: [{ sha: C1, files: V1 }, { sha: C2, files: v2 }, { sha: C3, files: { ...v2, 'README.md': 'r2\n' } }] });
+    const { items } = bumpUpstream({ toolkitRoot: root, gh, ref: 'skills/echo', commit: C2 });
+    assert.deepEqual(items.map((i) => [i.status, i.to, i.error]), [['bumped', C2, null]]);
+    assert.equal(fs.readFileSync(path.join(root, 'stacks/up/skills/echo/LICENSE'), 'utf8'), `${MIT}2026\n`);
   });
 
   test('an unknown ref throws before any gh call', () => {

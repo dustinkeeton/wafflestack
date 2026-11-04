@@ -2,6 +2,7 @@
 // Keeping upstream-pinned skills current (#828, part of #825): `npm run upstream:check` / `upstream:bump`.
 // Toolkit-developer tooling only; it talks to GitHub through `gh api`, injectable for tests.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,6 +35,7 @@ import { setScalarIn } from './project.mjs';
  * @property {string | null} path
  * @property {string | null} pinned
  * @property {string | null} latest the commit a bump would move to (null when unknown)
+ * @property {string | null} head the default branch's head commit
  * @property {'current' | 'behind' | 'diverged' | 'error'} status
  * @property {boolean} licenseChanged upstream's root LICENSE moved past the pin
  * @property {string | null} upstreamLicense upstream's SPDX id
@@ -97,11 +99,11 @@ function newer(gh, repo, a, b) {
  * @param {GhJson} gh
  * @param {string} repo
  * @param {string} relPath
- * @param {string} branch
+ * @param {string} head
  * @returns {string | null}
  */
-function latestTouching(gh, repo, relPath, branch) {
-  const commits = gh([`repos/${repo}/commits?path=${encodeURIComponent(relPath)}&sha=${encodeURIComponent(branch)}&per_page=1`]);
+function latestTouching(gh, repo, relPath, head) {
+  const commits = gh([`repos/${repo}/commits?path=${encodeURIComponent(relPath)}&sha=${head}&per_page=1`]);
   return Array.isArray(commits) && typeof commits[0]?.sha === 'string' ? commits[0].sha : null;
 }
 
@@ -114,7 +116,7 @@ function latestTouching(gh, repo, relPath, branch) {
 function checkOne(p, gh, repoCache) {
   const { repo, path: relPath, commit } = p.pin;
   /** @type {CheckItem} */
-  const item = { ref: p.ref, repo, path: relPath, pinned: commit, latest: null, status: 'error', licenseChanged: false, upstreamLicense: null, error: null };
+  const item = { ref: p.ref, repo, path: relPath, pinned: commit, latest: null, head: null, status: 'error', licenseChanged: false, upstreamLicense: null, error: null };
   try {
     if (!repo || !relPath || !commit) throw new Error('pin names no repo, path and commit (run validate)');
     if (!repoCache.has(repo)) repoCache.set(repo, gh([`repos/${repo}`]));
@@ -122,25 +124,22 @@ function checkOne(p, gh, repoCache) {
     item.upstreamLicense = info?.license?.spdx_id ?? null;
     const branch = info?.default_branch;
     if (typeof branch !== 'string') throw new Error(`repos/${repo} reports no default branch`);
-    const latestPath = latestTouching(gh, repo, relPath, branch);
-    const latestLicense = latestTouching(gh, repo, UPSTREAM_LICENSE_FILE, branch);
-    if (!latestPath) throw new Error(`no commit on ${branch} touches ${relPath}`);
-    const pathCmp = newer(gh, repo, commit, latestPath);
-    const licenseCmp = latestLicense ? newer(gh, repo, commit, latestLicense) : 'a';
-    item.licenseChanged = licenseCmp === 'b';
-    if (pathCmp === 'diverged' || licenseCmp === 'diverged') {
+    const head = gh([`repos/${repo}/commits/${encodeURIComponent(branch)}`])?.sha;
+    if (typeof head !== 'string') throw new Error(`repos/${repo} reports no head for ${branch}`);
+    item.head = head;
+    if (commit !== head && newer(gh, repo, commit, head) !== 'b') {
       item.status = 'diverged';
-      item.latest = latestPath;
-    } else if (pathCmp === 'b' && item.licenseChanged && latestLicense) {
-      item.status = 'behind';
-      item.latest = newer(gh, repo, latestPath, latestLicense) === 'b' ? latestLicense : latestPath;
-    } else if (pathCmp === 'b' || item.licenseChanged) {
-      item.status = 'behind';
-      item.latest = pathCmp === 'b' ? latestPath : /** @type {string} */ (latestLicense);
-    } else {
-      item.status = 'current';
-      item.latest = commit;
+      item.latest = head;
+      return item;
     }
+    const latestPath = latestTouching(gh, repo, relPath, head);
+    if (!latestPath) throw new Error(`no commit on ${branch} touches ${relPath}`);
+    // A side-branch commit merged after the pin compares as diverged from it: still a change the pin lacks (#832).
+    const after = (/** @type {string | null} */ f) => !!f && f !== commit && ['b', 'diverged'].includes(newer(gh, repo, commit, f));
+    const pathMoved = commit !== head && after(latestPath);
+    item.licenseChanged = commit !== head && after(latestTouching(gh, repo, UPSTREAM_LICENSE_FILE, head));
+    item.status = pathMoved || item.licenseChanged ? 'behind' : 'current';
+    item.latest = item.status === 'behind' ? head : commit;
   } catch (err) {
     item.status = 'error';
     item.error = /** @type {Error} */ (err).message;
@@ -149,7 +148,8 @@ function checkOne(p, gh, repoCache) {
 }
 
 /**
- * Compare every pin against the latest upstream commit touching its path (or the root LICENSE).
+ * Compare every pin against upstream's default-branch head: off it is diverged; behind when a later
+ * commit touches its path or the root LICENSE.
  *
  * @param {{ toolkitRoot: string, gh?: GhJson, pins?: PinnedSkill[] }} opts
  * @returns {{ items: CheckItem[] }}
@@ -325,15 +325,37 @@ function hashOfCopy(files) {
  * @property {string[]} warnings
  */
 
+/** @param {Buffer} bytes */
+const gitBlobSha = (bytes) => crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+
+/**
+ * `license.spdx_id` describes the head only (#833): a target's LICENSE must be the head's, or the copy's own.
+ *
+ * @param {GhJson} gh
+ * @param {PinnedSkill} p
+ * @param {string} to
+ * @param {string} head
+ * @param {Buffer} license the LICENSE bytes at `to`
+ */
+function checkLicenseAt(gh, p, to, head, license) {
+  const ownFile = path.join(p.dir, UPSTREAM_LICENSE_FILE);
+  if (fs.existsSync(ownFile) && fs.readFileSync(ownFile).equals(license)) return;
+  const tree = gh([`repos/${p.pin.repo}/git/trees/${head}`]);
+  const atHead = Array.isArray(tree?.tree) ? tree.tree.find((/** @type {any} */ e) => e.path === UPSTREAM_LICENSE_FILE && e.type === 'blob') : null;
+  if (atHead?.sha === gitBlobSha(license)) return;
+  throw new Error(`the ${UPSTREAM_LICENSE_FILE} at ${to.slice(0, 12)} differs from the pinned copy's and from ${p.pin.repo}'s default-branch head, where its ${p.pin.license} license was checked; a relicense is a human decision`);
+}
+
 /**
  * @param {string} toolkitRoot
  * @param {PinnedSkill} p
  * @param {string} to
  * @param {GhJson} gh
  * @param {string | null} upstreamLicense
+ * @param {string} head the default branch's head, where GitHub reads `upstreamLicense`
  * @returns {string[]} warnings
  */
-function bumpOne(toolkitRoot, p, to, gh, upstreamLicense) {
+function bumpOne(toolkitRoot, p, to, gh, upstreamLicense, head) {
   if (upstreamLicense !== p.pin.license) {
     throw new Error(`upstream ${p.pin.repo} is licensed ${upstreamLicense ?? 'unknown'}, the pin says ${p.pin.license}; a relicense is a human decision`);
   }
@@ -341,6 +363,7 @@ function bumpOne(toolkitRoot, p, to, gh, upstreamLicense) {
     throw new Error(`the copy at ${path.relative(toolkitRoot, p.dir)} no longer matches its pin (an edit or a stray file); restore it before bumping`);
   }
   const files = fetchCopy(gh, p.pin, to);
+  if (to !== head) checkLicenseAt(gh, p, to, head, /** @type {Buffer} */ (files.get(UPSTREAM_LICENSE_FILE)));
   const hash = hashOfCopy(files);
   const stackFile = path.join(toolkitRoot, 'stacks', p.stack, 'stack.yaml');
   let stackText = fs.readFileSync(stackFile, 'utf8');
@@ -397,7 +420,7 @@ export function bumpUpstream({ toolkitRoot, gh = ghJson, ref = null, commit = nu
         if (c.status === 'error') throw new Error(/** @type {string} */ (c.error));
         if (!commit && c.status === 'diverged') throw new Error(`the pin has diverged from ${p.pin.repo}'s default branch; pass --commit <sha>`);
         if (!item.to || item.to === p.pin.commit) return item;
-        item.warnings = bumpOne(toolkitRoot, p, item.to, gh, c.upstreamLicense);
+        item.warnings = bumpOne(toolkitRoot, p, item.to, gh, c.upstreamLicense, /** @type {string} */ (c.head));
         item.status = 'bumped';
       } catch (err) {
         item.status = 'error';
