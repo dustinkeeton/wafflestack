@@ -20,7 +20,8 @@ import {
   gitIgnoreStatus,
 } from './project.mjs';
 import { toolkitPinFromLock } from './toolkit-ref.mjs';
-import { settingsConflicts, applySettings, settingsDrift, parseSettingsKey, lockKeys } from './settings.mjs';
+import { isDeepStrictEqual } from 'node:util';
+import { settingsConflicts, applySettings, settingsValueAt, parseSettingsKey, lockKeys } from './settings.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
 
 /**
@@ -327,6 +328,9 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
       : `the lock records no release pin (toolkit status: ${lock.toolkit?.status ?? 'not recorded'}); from the main checkout run \`wafflestack upgrade\` with a release of the toolkit, commit the lock, and prepare again — or, for the toolkit's own checkout, run its installer with --allow-unreleased`;
     return fail(`this CLI is wafflestack ${toolkitVersion}, but ${LOCK_FILE} was rendered by ${lock.toolkitVersion ?? 'an unversioned toolkit'} — a worktree is provisioned by the toolkit its lock pins, never by whichever CLI happens to run; ${remedy}`);
   }
+  if (pin && toolkitIdentity?.status === 'release' && (toolkitIdentity.tag !== lock.toolkit.ref || (lock.toolkit.commit && toolkitIdentity.commit && toolkitIdentity.commit !== lock.toolkit.commit))) {
+    return fail(`this CLI is release ${toolkitIdentity.tag ?? toolkitIdentity.version}${toolkitIdentity.commit ? ` @ ${toolkitIdentity.commit.slice(0, 12)}` : ''}, but ${LOCK_FILE} pins ${pin}${lock.toolkit.commit ? ` @ ${String(lock.toolkit.commit).slice(0, 12)}` : ''} — same version number, different toolkit; run the pinned one:\n  npx --yes ${pin} prepare-worktree --cwd "${cwd}"`);
+  }
   if (pin && toolkitIdentity && toolkitIdentity.status !== 'release') {
     result.warnings.push(`the lock pins ${pin}, but this CLI is ${toolkitIdentity.status} at the same version — fine for toolkit development, otherwise run \`npx --yes ${pin} prepare-worktree\``);
   }
@@ -357,6 +361,9 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
   let overlayFile = null;
   if (policy.mode !== 'none' && destOverlayRaw) overlayFile = destOverlayFile;
   else if (policy.mode === 'main' && git.linked && mainOverlayRaw) overlayFile = mainOverlayFile;
+  if (untrustedConfig && policy.mode === 'main') {
+    return fail('--untrusted-config refuses overlay policy `main`: a private overlay from another checkout never feeds a render of a tree you did not author — prepare with `--overlay none` or `local`');
+  }
   if (policy.mode === 'main' && git.linked && !git.mainCheckout) {
     return fail(`--overlay main: this worktree's main checkout could not be resolved (git common dir ${git.commonDir} is not a \`.git\` directory)`);
   }
@@ -388,7 +395,11 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
   const destLocal = readLocalLock(cwd);
 
   const manifestFile = gitPath(cwd, runGit, PREPARED_MANIFEST);
-  const prepared = manifestFile ? readJsonIfPresent(manifestFile)?.files ?? {} : {};
+  const manifest = manifestFile ? readJsonIfPresent(manifestFile) : null;
+  /** @type {Record<string, string>} */
+  const prepared = manifest?.files ?? {};
+  /** @type {Record<string, unknown>} */
+  const preparedSettings = manifest?.settings ?? {};
   const locked = withPrepareLock(cwd, runGit, plan);
   return 'status' in locked ? locked : fail(locked.error);
 
@@ -430,34 +441,56 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
     }
 
     const managedSettings = treeLock?.settings ?? {};
+    // Settings entries follow the file rule: present+matching counts, absent is written, a value the
+    // lock or an earlier run recorded is refreshed, any other value is a local edit and a conflict.
+    /** @type {Record<string, boolean>} */
+    const ownedSettings = {};
+    /** @type {string[]} */
+    const settingsToWrite = [];
+    for (const [key, value] of desiredSettings) {
+      const current = settingsValueAt(cwd, key);
+      if (current === undefined) {
+        settingsToWrite.push(key);
+      } else if (isDeepStrictEqual(current, value)) {
+        ownedSettings[key] = true;
+      } else if ([managedSettings[key], preparedSettings[key]].some((v) => v !== undefined && isDeepStrictEqual(v, current))) {
+        ownedSettings[key] = true;
+        settingsToWrite.push(key);
+      } else {
+        conflicts.push({ path: key, reason: 'a lock-managed settings entry with local edits (restore it, or keep the change outside the managed key)' });
+      }
+    }
+    const check = settingsConflicts(cwd, desiredSettings, ownedSettings);
+    if (check.errors.length) return fail(...check.errors);
+    for (const key of check.collisions) {
+      if (!conflicts.some((c) => c.path === key)) conflicts.push({ path: key, reason: 'a settings entry already holds a different value not tracked by the lock' });
+    }
     // Settings files and the local lock are written through their own paths, so they get the same
     // symlink containment check as every rendered file (a committed link could point them out of the tree).
+    const settingsFiles = [...new Set(settingsToWrite.map((k) => parseSettingsKey(k)?.file ?? k))].sort();
     const sideFiles = new Set([...desiredSettings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k));
     if (staged.overlayChanged) sideFiles.add(LOCAL_LOCK_FILE);
     for (const file of [...sideFiles].sort()) {
       if (!resolveWritableInside(cwd, file)) conflicts.push({ path: file, reason: 'resolves outside the checkout through a symlink' });
     }
-    const check = settingsConflicts(cwd, desiredSettings, managedSettings);
-    if (check.errors.length) return fail(...check.errors);
-    for (const key of check.collisions) conflicts.push({ path: key, reason: 'a settings entry already holds a different value not tracked by the lock' });
-    const desiredLockMap = Object.fromEntries(desiredSettings);
-    const drift = settingsDrift(cwd, desiredLockMap);
-    const settingsToWrite = [...drift.modified, ...drift.missing].filter((k) => !check.collisions.includes(k)).sort();
 
     const toWrite = writes.map((w) => w.rel);
     const localLockNeeded = staged.overlayChanged;
-    const probe = [...toWrite, ...(localLockNeeded ? [LOCAL_LOCK_FILE] : [])];
+    const probe = [...toWrite, ...settingsFiles, ...(localLockNeeded ? [LOCAL_LOCK_FILE] : [])];
     const status = probe.length ? gitIgnoreStatus(cwd, probe) : null;
     if (probe.length && !status) result.notes.push('could not ask git whether the generated paths are ignored (git unavailable?) — check .gitignore covers them');
     if (status) {
       result.ignore.checked = true;
+      const tracked = 'tracked by git, and the private overlay would change it — overlay-derived content never lands in tracked output (gitignore the render, or prepare with `--overlay none`)';
       const canonicalHash = (/** @type {string} */ rel) => staged.canonical?.files?.[rel];
       for (const rel of toWrite) {
         if (!status.tracked.has(rel)) continue;
         const want = sha256(/** @type {Buffer} */ (staged.files.get(rel)));
-        if (want !== canonicalHash(rel)) {
-          conflicts.push({ path: rel, reason: `tracked by git, and the private overlay would change it — overlay-derived content never lands in tracked output (gitignore the render, or prepare with \`--overlay none\`)` });
-        }
+        if (want !== canonicalHash(rel)) conflicts.push({ path: rel, reason: tracked });
+      }
+      for (const key of settingsToWrite) {
+        const file = parseSettingsKey(key)?.file ?? key;
+        if (status.tracked.has(file) && !isDeepStrictEqual(desiredSettings.get(key), staged.canonical?.settings?.[key])) conflicts.push({ path: key, reason: tracked });
       }
       if (localLockNeeded && status.tracked.has(LOCAL_LOCK_FILE)) conflicts.push({ path: LOCAL_LOCK_FILE, reason: 'tracked by git — the local lock is private; `git rm --cached` it and gitignore it' });
       result.ignore.uncovered = probe.filter((p) => !status.tracked.has(p) && !status.ignored.has(p) && !status.beyondSymlink.has(p)).sort();
@@ -473,36 +506,64 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
       return fail(`${conflicts.length} conflict(s) — nothing was written; resolve them and prepare again:`, ...result.conflicts.map((c) => `  ${c.path}: ${c.reason}`));
     }
 
-    for (const { rel, abs, kind } of writes) {
-      writeAtomic(abs, /** @type {Buffer} */ (staged.files.get(rel)));
-      (kind === 'missing' ? result.generated : result.refreshed).push(rel);
-    }
-    if (settingsToWrite.length) {
-      applySettings(cwd, desiredSettings, managedSettings);
-      result.settings = settingsToWrite;
-    }
+    // Every write records what it replaced, so a failure part-way restores the tree as found.
+    /** @type {[string, Buffer|null][]} */
+    const undo = [];
+    const snapshot = (/** @type {string} */ abs) => undo.push([abs, exists(abs) ? fs.readFileSync(abs) : null]);
+    const restore = () => {
+      for (const [abs, before] of undo.reverse()) {
+        try {
+          if (before === null) fs.rmSync(abs, { force: true });
+          else fs.writeFileSync(abs, before);
+        } catch { /* best effort: the validation below reports what is left */ }
+      }
+    };
     const localLockFile = localLockPath(cwd);
-    if (localLockNeeded) {
-      const before = exists(localLockFile) ? fs.readFileSync(localLockFile, 'utf8') : null;
-      const after = `${JSON.stringify(staged.tree, null, 2)}\n`;
-      if (before !== after) writeAtomic(localLockFile, Buffer.from(after));
-    } else if (exists(localLockFile)) {
-      fs.rmSync(localLockFile);
-      result.notes.push(`removed a stale ${LOCAL_LOCK_FILE}: this render is canonical`);
+    try {
+      for (const { rel, abs, kind } of writes) {
+        snapshot(abs);
+        writeAtomic(abs, /** @type {Buffer} */ (staged.files.get(rel)));
+        (kind === 'missing' ? result.generated : result.refreshed).push(rel);
+      }
+      if (settingsToWrite.length) {
+        for (const file of settingsFiles) snapshot(path.join(cwd, file));
+        applySettings(cwd, desiredSettings, ownedSettings);
+        result.settings = settingsToWrite;
+      }
+      if (localLockNeeded) {
+        const after = `${JSON.stringify(staged.tree, null, 2)}\n`;
+        if (!exists(localLockFile) || fs.readFileSync(localLockFile, 'utf8') !== after) {
+          snapshot(localLockFile);
+          writeAtomic(localLockFile, Buffer.from(after));
+        }
+      } else if (exists(localLockFile)) {
+        snapshot(localLockFile);
+        fs.rmSync(localLockFile);
+        result.notes.push(`removed a stale ${LOCAL_LOCK_FILE}: this render is canonical`);
+      }
+    } catch (err) {
+      restore();
+      result.generated = [];
+      result.refreshed = [];
+      result.settings = [];
+      return fail(`writing failed (${/** @type {Error} */ (err).message}) — the ${undo.length} path(s) touched were restored as found; nothing is ready, fix the cause and prepare again`);
     }
     result.present = present;
-    if (manifestFile && writes.length) {
+    if (manifestFile && (writes.length || settingsToWrite.length)) {
       for (const { rel } of writes) prepared[rel] = sha256(/** @type {Buffer} */ (staged.files.get(rel)));
-      fs.writeFileSync(manifestFile, `${JSON.stringify({ files: prepared }, null, 2)}\n`);
+      for (const key of settingsToWrite) preparedSettings[key] = desiredSettings.get(key);
+      fs.writeFileSync(manifestFile, `${JSON.stringify({ files: prepared, settings: preparedSettings }, null, 2)}\n`);
     }
 
     const broken = desiredFiles.filter((rel) => {
       const abs = path.join(cwd, rel);
       return !exists(abs) || sha256(fs.readFileSync(abs)) !== sha256(/** @type {Buffer} */ (staged.files.get(rel)));
     });
-    const after = settingsDrift(cwd, desiredLockMap);
-    broken.push(...after.modified, ...after.missing);
-    if (broken.length) return fail(`validation after writing failed for ${broken.length} path(s): ${broken.slice(0, 5).join(', ')} — the worktree is not ready; check the filesystem and prepare again`);
+    for (const [key, value] of desiredSettings) if (!isDeepStrictEqual(settingsValueAt(cwd, key), value)) broken.push(key);
+    if (broken.length) {
+      restore();
+      return fail(`validation after writing failed for ${broken.length} path(s): ${broken.slice(0, 5).join(', ')} — the paths this run touched were restored; nothing is ready, check the filesystem and prepare again`);
+    }
     result.status = result.generated.length || result.refreshed.length || result.settings.length ? 'ready' : 'no-op';
     return result;
   }

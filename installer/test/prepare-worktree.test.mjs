@@ -30,12 +30,18 @@ const git = (cwd, ...args) =>
   spawnSync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', '-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' });
 const porcelain = (cwd) => git(cwd, 'status', '--porcelain', '--untracked-files=all').stdout;
 
-function makeToolkit(root) {
+function makeToolkit(root, { mod = false } = {}) {
   write(root, 'toolkit.yaml', 'name: fixture\ndescription: test fixture\nstacks: [demo]\n');
   write(root, 'stacks/demo/stack.yaml', [
     'name: demo', 'description: Demo.', 'agents: [helper]', 'skills: [greet]', 'files: [.github/workflows/demo.yml]',
-    'config:', '  git.botEmail:', '    required: true', '    description: bot email', '',
+    ...(mod ? ['mods: [example]'] : []),
+    'config:', '  git.botEmail:', '    required: true', '    description: bot email',
+    '  waffle.toolkitRef:', '    required: false', '    default: github:example/fixture#v1.0.0', '    description: pin', '',
   ].join('\n'));
+  if (mod) {
+    write(root, 'package.json', '{"name":"fixture","version":"1.0.0","repository":"https://github.com/example/fixture.git"}');
+    write(root, 'stacks/demo/mods/example/.claude-plugin/plugin.json', '{"name":"example","version":"1.0.0","description":"fixture"}');
+  }
   write(root, 'stacks/demo/agents/helper.md', '---\nname: helper\ndescription: A helper.\n---\n\nCommit as {{git.botEmail}}.\n');
   write(root, 'stacks/demo/skills/greet/SKILL.md', '---\nname: greet\ndescription: Greets.\n---\n\nSay hi from {{git.botEmail}}.\n');
   write(root, 'stacks/demo/skills/greet/scripts/hello.sh', '#!/bin/sh\necho hi\n');
@@ -43,10 +49,10 @@ function makeToolkit(root) {
 }
 
 /** A rendered, committed main checkout under Posture 2b (render gitignored, lock committed). */
-function makeMain({ targets = 'claude, codex', ignore = '.claude/\n.codex/\n.agents/\n' } = {}) {
+function makeMain({ targets = 'claude, codex', ignore = '.claude/\n.codex/\n.agents/\n', mod = false } = {}) {
   const toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-toolkit-'));
   const main = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-main-'));
-  makeToolkit(toolkitRoot);
+  makeToolkit(toolkitRoot, { mod });
   write(main, '.waffle/waffle.yaml', `targets: [${targets}]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n`);
   write(main, '.gitignore', `${ignore}.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n`);
   git(main, 'init', '-q', '-b', 'main');
@@ -360,6 +366,94 @@ describe('prepareWorktree: refusals', () => {
     assert.ok(r.conflicts.some((c) => c.path === HELPER));
     assert.doesNotMatch(read(wt, HELPER), /private@example\.com/);
     assert.doesNotMatch(JSON.stringify(r), /private@example\.com/, 'no overlay value in the result');
+  });
+});
+
+describe('prepareWorktree: settings entries, rollback and the pin (review findings on #822)', () => {
+  const PLUGIN_KEY = '.claude/settings.json#/enabledPlugins/example@fixture';
+  const SETTINGS = '.claude/settings.json';
+  let main;
+  let toolkitRoot;
+  afterEach(() => {
+    fs.rmSync(main, { recursive: true, force: true });
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+  });
+
+  test('a lock-managed settings entry with a local edit is a conflict, not restored; a recorded value is refreshed', () => {
+    ({ main, toolkitRoot } = makeMain({ mod: true, ignore: '.claude/skills/\n.claude/agents/\n.codex/\n.agents/\n' }));
+    const wt = addWorktree(main);
+    assert.ok(JSON.parse(read(wt, SETTINGS)).enabledPlugins['example@fixture'], 'Posture 1 for settings: committed with the entry');
+    const first = prepare(wt, toolkitRoot);
+    assert.equal(first.status, 'ready', JSON.stringify(first.errors));
+    const settings = JSON.parse(read(wt, SETTINGS));
+    settings.enabledPlugins['example@fixture'] = false;
+    settings.permissions = { allow: ['Read'] };
+    write(wt, SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
+    const edited = prepare(wt, toolkitRoot);
+    assert.equal(edited.status, 'failed');
+    assert.deepEqual(edited.conflicts.map((c) => c.path), [PLUGIN_KEY]);
+    assert.match(edited.conflicts[0].reason, /lock-managed settings entry with local edits/);
+    assert.equal(JSON.parse(read(wt, SETTINGS)).enabledPlugins['example@fixture'], false, 'the edit stands');
+    settings.enabledPlugins['example@fixture'] = true;
+    write(wt, SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
+    const back = prepare(wt, toolkitRoot);
+    assert.equal(back.status, 'no-op', JSON.stringify(back.errors));
+    assert.deepEqual(JSON.parse(read(wt, SETTINGS)).permissions, { allow: ['Read'] }, 'unrelated settings untouched');
+  });
+
+  test('an overlay-derived settings change never lands in a tracked settings file', () => {
+    ({ main, toolkitRoot } = makeMain({ mod: true, ignore: '.claude/skills/\n.claude/agents/\n.codex/\n.agents/\n' }));
+    write(main, '.waffle/waffle.local.yaml', 'config:\n  waffle:\n    toolkitRef: github:example/fixture#v2.0.0\n');
+    const wt = addWorktree(main);
+    const before = read(wt, SETTINGS);
+    const r = prepare(wt, toolkitRoot, { overlay: 'main' });
+    assert.equal(r.status, 'failed');
+    assert.ok(r.conflicts.some((c) => c.path.startsWith('.claude/settings.json#') && /tracked by git, and the private overlay/.test(c.reason)), JSON.stringify(r.conflicts));
+    assert.equal(read(wt, SETTINGS), before);
+    assert.doesNotMatch(JSON.stringify(r), /v2\.0\.0/, 'no overlay value in the result');
+  });
+
+  test('--untrusted-config refuses overlay policy main before anything is staged', () => {
+    ({ main, toolkitRoot } = makeMain());
+    write(main, '.waffle/waffle.local.yaml', 'config:\n  git:\n    botEmail: private@example.com\n');
+    const wt = addWorktree(main);
+    const r = prepare(wt, toolkitRoot, { overlay: 'main', untrustedConfig: true });
+    assert.equal(r.status, 'failed');
+    assert.match(r.errors[0], /--untrusted-config refuses overlay policy `main`/);
+    assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
+    assert.equal(prepare(wt, toolkitRoot, { overlay: 'none', untrustedConfig: true }).status, 'ready');
+  });
+
+  test('a write that fails part-way restores every path the run touched', () => {
+    ({ main, toolkitRoot } = makeMain());
+    const wt = addWorktree(main);
+    fs.mkdirSync(path.join(wt, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(wt, '.claude/agents'), 'a file where a directory must go\n');
+    const r = prepare(wt, toolkitRoot);
+    assert.equal(r.status, 'failed');
+    assert.match(r.errors[0], /writing failed .* were restored as found/);
+    assert.deepEqual(r.generated, []);
+    assert.equal(fs.existsSync(path.join(wt, AGENTS_SKILL)), false, 'the earlier .agents/ writes are rolled back');
+    assert.equal(read(wt, '.claude/agents'), 'a file where a directory must go\n');
+    fs.rmSync(path.join(wt, '.claude/agents'));
+    assert.equal(prepare(wt, toolkitRoot).status, 'ready');
+  });
+
+  test('a release CLI at the same version but another tag or commit never provisions the lock', () => {
+    ({ main, toolkitRoot } = makeMain());
+    const wt = addWorktree(main);
+    const lockFile = path.join(wt, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+    const commit = 'a'.repeat(40);
+    fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkit: { source: 'github:example/fixture', sourceType: 'git', ref: 'v0.0.test', commit, status: 'release' } }, null, 2));
+    const identity = (tag, sha) => ({ status: 'release', version: VERSION, tag, commit: sha, ref: `github:example/fixture#${tag}`, origin: 'npm-install', repo: 'example/fixture', lockRepo: 'example/fixture', latestTag: tag, lookupError: null });
+    const other = prepare(wt, toolkitRoot, { toolkitIdentity: identity('v0.0.test', 'b'.repeat(40)) });
+    assert.equal(other.status, 'failed');
+    assert.match(other.errors[0], /same version number, different toolkit/);
+    assert.match(other.errors[0], /npx --yes github:example\/fixture#v0\.0\.test prepare-worktree/);
+    assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
+    const same = prepare(wt, toolkitRoot, { toolkitIdentity: identity('v0.0.test', commit) });
+    assert.equal(same.status, 'ready', JSON.stringify(same.errors));
   });
 });
 

@@ -25,7 +25,8 @@ cd ../myrepo-feature && claude        # or codex
 2. **Reads that checkout's own inputs**: `.waffle/waffle.yaml`, `.waffle/extensions/`, the committed
    lock, and (by [overlay policy](#overlay-policy)) a `.waffle/waffle.local.yaml`. Never another
    branch's config, never the main checkout's current render.
-3. **Reconciles the pin.** The lock's `toolkitVersion` must equal the running CLI's. A mismatch fails
+3. **Reconciles the pin.** The lock's `toolkitVersion` must equal the running CLI's, and a release
+   CLI must carry the lock's pinned tag and commit. A mismatch fails
    and prints the exact command the lock pins (`npx --yes github:owner/repo#vX.Y.Z prepare-worktree
    --cwd …`), or, when the lock records no release pin, the upgrade to run in the main checkout. The
    CLI that happens to be on `PATH` never provisions a worktree pinned to another version.
@@ -39,10 +40,14 @@ cd ../myrepo-feature && claude        # or codex
    (ejected or untracked) files are never written.
 6. **Treats completeness per file.** A present, matching file is left alone; a missing one is
    written; a file still at a hash this lock, this checkout's local lock, or an earlier
-   `prepare-worktree` run recorded is refreshed. Any other difference is a **conflict**: a hand-edited
-   managed file, an unmanaged file at a rendered path, a symlink that leaves the checkout, a settings
-   entry holding a different value. One conflict fails the whole run **before a byte is written**,
-   naming every path. There is no `--force`.
+   `prepare-worktree` run recorded is refreshed. A lock-managed settings entry follows the same rule:
+   a value the lock or an earlier run recorded is refreshed, any other value is a local edit. Any
+   other difference is a **conflict**: a hand-edited managed file, an unmanaged file at a rendered
+   path, a symlink that leaves the checkout, an edited or foreign settings entry. One conflict fails
+   the whole run **before a byte is written**, naming every path. There is no `--force`. A write that
+   fails part-way (a file where a directory must go, a full disk) restores every path the run touched
+   and reports `failed`; a run killed outright leaves no readiness claim, and the next run completes
+   or refuses on what it finds.
 7. **Reports ignore coverage.** A path it wrote that git would show as untracked is listed, with the
    two remedies: the committed `.gitignore` (from the main checkout, `wafflestack render
    --gitignore` offers the entries), or `git rev-parse --git-path info/exclude`, which every linked
@@ -95,7 +100,9 @@ overlay and the chosen policy leaves it out, the run says so by name, never by v
 An overlay-fed render writes the destination's gitignored `.waffle/waffle.local.lock.json`, exactly
 as `render` would, so `doctor` in that worktree stays truthful. Private content never reaches
 tracked output: a tracked rendered path the overlay would change is a conflict (gitignore the
-render, or prepare with `--overlay none`); a tracked local lock is a conflict too. No overlay value
+render, or prepare with `--overlay none`), so is a tracked `.claude/settings.json` whose
+lock-managed entry the overlay would change, and so is a tracked local lock. `--untrusted-config`
+refuses policy `main` outright. No overlay value
 appears in the committed lock, in the output, or in a `--json` document.
 
 **Unmanaged custom files are not recoverable from a lock.** A skill you keep in

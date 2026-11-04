@@ -41,9 +41,10 @@ is what you reach for across a breaking one.
   and lock, refuses a lock rendered by another toolkit version with the exact pinned command, stages a
   render, and copies only the missing or stale harness artifacts (`.claude/`, `.codex/`, `.agents/` for the
   enabled targets, plus the lock-managed `.claude/settings.json` entries) — never `.github/` payloads, the
-  committed lock, project-owned files or the index. Any conflict (a hand-edited managed file, an unmanaged
-  file at a rendered path, a symlink leaving the checkout, a tracked path the overlay would change) fails
-  before a byte is written and names the paths; every artifact is re-hashed before `ready`; a complete
+  committed lock, project-owned files or the index. Any conflict (a hand-edited managed file or settings
+  entry, an unmanaged file at a rendered path, a symlink leaving the checkout, a tracked path or settings entry the overlay
+  would change) fails before a byte is written and names the paths; a write that fails part-way restores every touched
+  path; every artifact is re-hashed before `ready`; a complete
   worktree is a `no-op`; a per-worktree lock refuses a concurrent run; `--json` prints the readiness
   document; exit 1 on `failed`. `--overlay local|main|none` picks the private overlay policy (default: the
   destination's own overlay, if any; `main` opts the linked main checkout's in, persisted as
