@@ -117,6 +117,11 @@ test('offline cached worktree pin wins over a different running toolkit; cache m
   const result = prepareWorktree(options);
   assert.equal(result.status, 'ready', JSON.stringify(result)); assert.equal(result.pin, 'github:example/fixture#v1.0.0');
   assert.equal(fs.readFileSync(path.join(f.wt, '.agents/skills/hello/helper.mjs'), 'utf8'), 'export const hello = 1;\n');
+  write(cached, 'stacks/demo/skills/hello/SKILL.md', 'tampered skill');
+  assert.equal(prepareWorktree(options).status, 'failed');
+  git(cached, 'checkout', '--', '.');
+  write(cached, 'stacks/demo/skills/hello/untracked.mjs', 'tampered helper');
+  assert.equal(prepareWorktree(options).status, 'failed');
   fs.rmSync(cached, { recursive: true });
   assert.match(prepareWorktree(options).errors.join(), /offline cache miss/);
 });

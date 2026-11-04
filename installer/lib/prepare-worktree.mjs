@@ -50,6 +50,7 @@ export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, 
   }
   try {
     const resolved = resolveSource({ name: 'worktree-toolkit', source: httpsUrl(slug), sourceType: 'git', ref: lock.toolkit.commit }, { cacheDir: sourceCacheDir, offline: offline || untrustedConfig });
+    if (git(resolved.root, ['status', '--porcelain', '--untracked-files=all'])) throw new Error('dirty toolkit cache');
     if (git(resolved.root, ['rev-parse', '--verify', `${lock.toolkit.ref}^{commit}`]) !== lock.toolkit.commit || resolved.commit !== lock.toolkit.commit || json(path.join(resolved.root, 'package.json')).version !== lock.toolkitVersion) throw new Error('pin mismatch');
     return { root: resolved.root, pin, version: lock.toolkitVersion };
   } catch {
