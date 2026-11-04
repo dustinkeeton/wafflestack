@@ -33,6 +33,17 @@ is what you reach for across a breaking one.
 
 ### Changed
 
+- **Autopilot files a follow-up issue for an integration hold only when findings remain unresolved
+  (#838).** A stage 1 hold, a stage 2 hold with nothing at should-fix or above left unresolved, and
+  any stage 3 hold other than an audit block now post one comment instead: on the final PR for
+  stages 2 and 3, and for stage 1 on the sync PR, or on the run PR merged most recently into the
+  integration branch when no sync PR exists yet. The comment carries what the issue did (reason,
+  findings with citations, open fix PRs, kept worktrees and branches, resume commands), and the run
+  report links it. A stage 2 hold with deferred, declined or untriaged findings at should-fix or
+  above still files one `autopilot.holdLabel` issue, listing only those. The Step 5–6 cap hatches,
+  the Step 7 audit gate and the stage 3 audit block file as before.
+
+  **Consumer impact:** re-render only. Integration mode is off by default.
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate
   and review loop now stop on a cold round whose responder implemented no should-fix or blocker
   finding; nits applied in that round no longer restart the count. `pr-response` ends its return

@@ -316,7 +316,8 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.match(md, /Leave `<integ>`, any pushed sync branch and any sync PR open/);
     assert.match(section(md, '- **Steps 2–3**', '- **Step 4, a check hold.**'), /Remove `<gate>` if it still exists \(`git worktree remove --force <gate>`\) and any local sync branch/);
     assert.match(md, /The run \*\*never picks a winner\*\*/);
-    assert.match(md, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
+    assert.match(md, /`gh pr comment <n> --body-file <scratch-file>`/);
+    assert.doesNotMatch(md, /gh issue create|waffle:manual-review|follow-up/);
   });
 
   test('the sync PR arms only with +automerge, waits by Step 8, and must land the synced tree', () => {
@@ -354,7 +355,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.doesNotMatch(md, /"integration gate not yet implemented/);
     assert.match(gate(), /Do not open it, not even as a draft/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 1 held\*\*.*\*\*integration-held\*\*/);
-    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /\*\*integration-held\*\* with the reason, the follow-up, and the exact commands/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /\*\*integration-held\*\* with the reason, the follow-up number and a link to the hold comment, whichever were made, and the exact commands/);
   });
 
   test('the contract, mandate and guardrails cover the sync PR', () => {
@@ -680,7 +681,7 @@ describe('integration stage 2 hand-off (#782)', () => {
   test('the hand-off is defined once in stage 2', () => {
     const md = read(SKILL);
     assert.match(stage2(), /\*\*The stage 2 hand-off\.\*\* With review-loop consent on/);
-    assert.match(stage2(), /its report, and its follow-up when it files one, says "run `adversarial-review <F> --integration` after the final PR opens", just before the audit hand-off/);
+    assert.match(stage2(), /its report, and its hold comment when it posts one, says "run `adversarial-review <F> --integration` after the final PR opens", just before the audit hand-off/);
     assert.match(stage2(), /stage 2 never runs after one; that hold carries the stage 2 hand-off\./);
     assert.equal(md.match(/\*\*The stage 2 hand-off\.\*\*/g).length, 1);
   });
@@ -843,5 +844,58 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.match(fail, /\*\*The final PR was not armed, or its wait ended blocked\*\*/);
     assert.match(fail, /\*\*`<integ>` survived the final merge\*\*/);
     assert.doesNotMatch(read(SOURCE), /one unarmed integration/);
+  });
+});
+
+// #838: an integration hold files an issue only for real work; everything else is one PR comment.
+describe('integration holds: an issue only for real work (#838)', () => {
+  const md = () => read(SKILL);
+  const hold1 = () => section(md(), '**Hold.** Any stop in steps 2–6', '- **Steps 2–3**');
+  const hold2 = () => section(md(), '**Stage 2 hold.**', '**The audit hand-off.**');
+  const hold3 = () => section(md(), '**Stage 3 hold.**', '\n#');
+  const fail = () => section(md(), '## Failure handling', 'At the end, the report');
+
+  test('a stage 1 hold posts one comment on the sync PR, else the last merged run PR', () => {
+    const h = hold1();
+    assert.match(h, /A stage 1 hold files no issue/);
+    assert.match(h, /`gh pr comment <n> --body-file <scratch-file>`/);
+    assert.match(h, /`<n>` is the sync PR `<S>` when step 5 opened one/);
+    assert.match(h, /--json number,mergedAt --jq 'sort_by\(\.mergedAt\) \| last \| \.number'/);
+    assert.match(h, /Post it once and never edit it/);
+    assert.match(h, /with the reason, a link to the hold comment, and the resume commands/);
+    assert.doesNotMatch(h, /gh issue create/);
+  });
+
+  test('a stage 2 hold files an issue only for unresolved should-fix-or-above findings', () => {
+    const h = hold2();
+    assert.match(h, /still reads untriaged by Step 5's `triaged-through` test, and those the responder's reply marked Defer or Decline/);
+    assert.match(h, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
+    assert.match(h, /Give a Defer the issue number `pr-response` filed for it/);
+    assert.match(h, /List only the unresolved findings at should-fix or above/);
+    assert.match(h, /A finding below should-fix never goes in the follow-up \(#511\): when one also remains, also post one hold comment on `<F>` as stage 1's \*\*Hold\*\* does, listing those findings with their citations and linking the follow-up/);
+    assert.match(h, /When none at should-fix or above remain, as when the cap ended on a round whose fixes all merged, file nothing: post one hold comment on `<F>`/);
+    assert.match(h, /the follow-up number and a link to the hold comment, whichever were made/);
+    assert.doesNotMatch(h, /goes in a hold comment, never the follow-up/);
+  });
+
+  test('a stage 3 hold comments on <F>; only the item 7 audit block files', () => {
+    const h = hold3();
+    assert.match(h, /Unless item 7 filed the follow-up, file nothing: post one hold comment on `<F>`/);
+    assert.doesNotMatch(h, /gh issue create/);
+    assert.match(section(md(), '7. **Hard gate.**', '**Stage 3 hold.**'), /--add-label "waffle:manual-review"/);
+  });
+
+  test('failure handling matches, one line per stage', () => {
+    const f = fail();
+    assert.match(f, /\*\*Integration gate stage 1 held\*\*[^\n]*one hold comment posted \(on the sync PR, else the run PR merged last into `<integ>`\), no issue filed/);
+    assert.doesNotMatch(f.match(/\*\*Integration gate stage 1 held\*\*[^\n]*/)[0], /follow-up filed/);
+    assert.match(f, /\*\*Integration gate stage 2 held\*\*[^\n]*one hold comment posted on `<F>`, or, when findings at should-fix or above remain unresolved, one `waffle:manual-review` follow-up filed listing only those, plus a hold comment on `<F>` when a finding below should-fix also remains/);
+    assert.match(f, /\*\*Integration gate stage 3 held\*\*[^\n]*one hold comment posted on `<F>`, except an unresolved Critical\/High, which files item 7's `waffle:manual-review` follow-up instead/);
+  });
+
+  test('the hand-offs ride the hold comment', () => {
+    assert.match(md(), /its report, and its hold comment or follow-up, ends with/);
+    assert.match(md(), /its hold comment when it posts one, gives these commands/);
+    assert.doesNotMatch(md(), /its follow-up when it files one/);
   });
 });
