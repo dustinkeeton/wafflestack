@@ -10,7 +10,8 @@ import { resolveSource, defaultSourceCacheDir } from './sources.mjs';
 import { resolveConfigFile, resolveLockFile, resolveLocalConfigFile, LOCAL_LOCK_FILE, gitIgnoreStatus } from './project.mjs';
 import { sha256, resolveWritableInside } from './util.mjs';
 import { parseRef, itemOutputMatcher } from './refs.mjs';
-import { acquirePreparation, recoverPreparation, replaceBytes, readBytes, sameBytes } from './preparation-transaction.mjs';
+import { upstreamLockEntries } from './upstream.mjs';
+import { safeDestination, acquirePreparation, recoverPreparation, replaceBytes, readBytes, sameBytes } from './preparation-transaction.mjs';
 import { applySettings, parseSettingsKey, settingsConflicts, settingsValueAt } from './settings.mjs';
 
 /** @param {string} p */
@@ -23,7 +24,7 @@ const present = (p) => { try { return fs.lstatSync(p); } catch (e) { if (e.code 
 const json = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 
 /**
- * @typedef {{ toolkitVersion: string, toolkit?: import('./toolkit-ref.mjs').ToolkitLockEntry, files: Record<string,string>, settings?: Record<string,unknown> }} PreparationLock
+ * @typedef {{ toolkitVersion: string, toolkit?: import('./toolkit-ref.mjs').ToolkitLockEntry, files: Record<string,string>, settings?: Record<string,unknown>, upstream?: any[] }} PreparationLock
  * @typedef {{ root: string, pin: string, version: string }} PreparedToolkit
  * @typedef {{ lock: PreparationLock, toolkitRoot: string, cwd: string, offline?: boolean, untrustedConfig?: boolean, sourceCacheDir?: string, allowUnreleased?: boolean }} ToolkitOptions
  * @typedef {{ cwd: string, toolkitRoot: string, offline?: boolean, untrustedConfig?: boolean, allowUnreleased?: boolean, sourceCacheDir?: string, overlay?: 'local'|'main'|'none', resolveToolkit?: (options: ToolkitOptions) => PreparedToolkit, beforeWrite?: (path: string) => void }} PrepareOptions
@@ -118,7 +119,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     result.targets = plan.targets;
     if (!isDeepStrictEqual(plan.files, lock.files) || !isDeepStrictEqual(plan.settings, lock.settings ?? {}) ||
       !isDeepStrictEqual(plan.canonicalTargets, lock.targets) || !isDeepStrictEqual(plan.canonicalStacks, lock.stacks) ||
-      !isDeepStrictEqual(plan.canonicalInclude, lock.include ?? []) || !isDeepStrictEqual(plan.sources, lock.sources ?? [])) throw new Error('config/lock/pinned toolkit mismatch — run a pinned render or upgrade, review and commit its canonical lock before preparation');
+      !isDeepStrictEqual(plan.canonicalInclude, lock.include ?? []) || !isDeepStrictEqual(plan.sources, lock.sources ?? []) || !isDeepStrictEqual(plan.upstream, lock.upstream ?? [])) throw new Error('config/lock/pinned toolkit mismatch — run a pinned render or upgrade, review and commit its canonical lock before preparation');
     const outputs = new Map([...plan.effective.outputs].filter(([p]) => harnessPath(p)));
     const settings = new Map([...plan.effective.settings].filter(([p]) => harnessPath(p)));
     const ejected = [...plan.effective.selection.ejected].map((ref) => {
@@ -132,7 +133,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     const settingFiles = [...new Set([...settings.keys()].map((p) => parseSettingsKey(p).file))];
     const paths = [...outputs.keys(), ...settingFiles];
     for (const rel of [...paths, LOCAL_LOCK_FILE]) {
-      if (!resolveWritableInside(cwd, rel) || hasSymlink(cwd, rel)) result.conflicts.push(rel);
+      if (!safeDestination(cwd, rel)) result.conflicts.push(rel);
     }
     if (result.conflicts.length) throw new Error('unsafe symlink destinations — remove links and retry');
     for (const [rel, content] of outputs) {
@@ -144,7 +145,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     for (const rel of Object.keys(previous.files ?? {})) {
       if (!harnessPath(rel) || isEjected(rel) || outputs.has(rel) || settingFiles.includes(rel)) continue;
       const abs = path.join(cwd, rel);
-      if (!resolveWritableInside(cwd, rel) || hasSymlink(cwd, rel)) { result.conflicts.push(rel); continue; }
+      if (!safeDestination(cwd, rel)) { result.conflicts.push(rel); continue; }
       const stat = present(abs);
       if (!stat) continue;
       if (!stat.isFile() || sha256(fs.readFileSync(abs)) !== previous.files[rel] || git(cwd, ['ls-files', '--', rel])) result.conflicts.push(rel);
@@ -190,6 +191,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     if (privatePaths.length) {
       const localManifest = {
         ...lock, targets: plan.targets,
+        upstream: upstreamLockEntries(plan.effective.groups, plan.effective.producedBy, Object.fromEntries([...plan.effective.outputs].map(([p, c]) => [p, sha256(c)]))),
         files: {
           ...Object.fromEntries(Object.entries(lock.files).filter(([p]) => !harnessPath(p))),
           ...Object.fromEntries([...outputs].filter(([p]) => !settingFiles.includes(p)).map(([p, c]) => [p, sha256(c)])),
@@ -204,17 +206,17 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     const desired = [...outputs].map(([p, c]) => [p, Buffer.from(c)]);
     desired.push(...prune.map((p) => /** @type {[string, null]} */ ([p, null])));
     const changes = desired.filter(([p, c]) => !sameBytes(readBytes(path.join(cwd, p)), c));
-    const entries = changes.map(([rel, content]) => [rel, readBytes(path.join(cwd, /** @type {string} */ (rel)))?.toString('base64') ?? null, content?.toString('base64') ?? null]);
+    const entries = changes.map(([rel, content]) => [rel, readBytes(path.join(cwd, rel))?.toString('base64') ?? null, content?.toString('base64') ?? null]);
     if (present(receiptPath)?.isSymbolicLink()) throw new Error('unsafe receipt destination');
     entries.push(['@receipt', readBytes(receiptPath)?.toString('base64') ?? null, receipt.toString('base64')]);
     replaceBytes(path.join(mutex, 'journal.json'), Buffer.from(JSON.stringify({ version: 1, entries })));
     for (const [rel, content] of changes) {
-      const p = /** @type {string} */ (rel);
+      const p = rel;
       beforeWrite(p);
-      if (!resolveWritableInside(cwd, p) || hasSymlink(cwd, p)) throw new Error('destination changed during preparation');
+      if (!safeDestination(cwd, p)) throw new Error('destination changed during preparation');
       const before = entries.find(([r]) => r === rel)[1];
       if (!sameBytes(readBytes(path.join(cwd, p)), before === null ? null : Buffer.from(before, 'base64'))) throw new Error('destination edited during preparation');
-      replaceBytes(path.join(cwd, p), /** @type {Buffer} */ (content));
+      replaceBytes(path.join(cwd, p), content);
     }
     for (const [rel, content] of outputs) if (!fs.readFileSync(path.join(cwd, rel)).equals(Buffer.from(content))) throw new Error('artifact verification failed');
     for (const rel of prune) if (present(path.join(cwd, rel))) throw new Error('prune verification failed');
@@ -234,16 +236,6 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     if (acquired) fs.rmSync(mutex, { recursive: true, force: true });
   }
   return result;
-}
-
-/** @param {string} cwd @param {string} rel */
-function hasSymlink(cwd, rel) {
-  let current = cwd;
-  for (const part of rel.split('/')) {
-    current = path.join(current, part);
-    if (present(current)?.isSymbolicLink()) return true;
-  }
-  return false;
 }
 
 /** Categorize renderer failures without copying private values or raw YAML into diagnostics.

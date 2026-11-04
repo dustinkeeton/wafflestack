@@ -34,8 +34,11 @@ an old pin needs the explicit upgrade above before orchestration starts.
 The launcher may be newer than the destination pin. Preparation resolves the destination
 lock's repository, release and immutable commit; it never substitutes main's toolkit or
 latest. A matching installed toolkit or verified source-cache checkout supplies the
-source bytes. An online cache miss fetches the locked commit; `--offline` requires a
-cache hit. The release ref must identify that commit. The current renderer must reproduce
+source bytes. The lock repository must match the running CLI's repository. An exact
+repository/commit/version match accepts an npm installation even offline with an empty cache.
+Other pins require a clean source-cache checkout (including no untracked files) whose release
+ref identifies the locked commit. Trusted online setup can fetch a missing locked commit;
+`--offline` and `--untrusted-config` never fetch a toolkit selected by the lock. The current renderer must reproduce
 **every canonical file and settings entry** in the lock before applying anything. An
 incompatible older pin fails with a pinned render/upgrade remedy instead of migrating
 silently. A lock without release provenance needs an explicit upgrade. Toolkit developers
@@ -152,7 +155,7 @@ project configuration. Helpers, agent definitions and individual managed setting
 count toward readiness. Directory presence does not. Unrelated settings and custom files
 survive. The Git index and main checkout are unchanged.
 
-`--json` returns `status`, `targets`, `pin`, `generatedPaths`, `conflicts`, `overlayMode`,
+`--json` returns `status`, `targets`, `pin`, `generatedPaths`, `prunedPaths`, `conflicts`, `overlayMode`,
 `notices`, `missingIgnore` and `errors`. Exit 1 means no launch. No-op leaves artifact bytes
 and mtimes unchanged. Untracked public outputs without ignore coverage are reported;
 preparation never edits `.gitignore`. If you choose Git local excludes, remember the common
@@ -160,18 +163,22 @@ preparation never edits `.gitignore`. If you choose Git local excludes, remember
 
 Edited or colliding output fails before any artifact is written. Preserve your edits and
 resolve the named paths with an intentional render/eject or input change; no force flag
-exists. A changed selection with leftover previously prepared resources fails closed until
-you reconcile those resources. Settings are merged only when absent, identical, or still matching a known managed value.
+exists. Files no longer selected are pruned only when they still match the previous receipt,
+are untracked, and are not ejected. Edited, tracked, and symlinked stale files remain conflicts;
+ejected skills and their helpers stay project-owned. Settings are merged only when absent, identical, or still matching a known managed value.
 All destination symlinks are refused, including links back to main, to preserve isolation.
 
-A per-checkout Git-administrative mutex prevents concurrent preparation. Write errors roll
-back already-applied file contents. A killed process leaves the mutex and a private journal,
-so a subsequent call cannot report readiness. Stop the original process; inspect
+A per-checkout Git-administrative mutex prevents concurrent preparation. Writes use atomic
+replacement, and the private journal records original and intended bytes, including deletions
+and the receipt. On retry, a verifiably dead local owner triggers serialized journal recovery:
+each file must match its original or intended bytes before restoration begins. Recovery is
+itself restartable. A live owner, unknown owner, changed artifact, unsafe path, or invalid
+journal blocks readiness. PID liveness alone never authorizes discarding a transaction.
+
+If automatic recovery stops, inspect
 `$(git rev-parse --absolute-git-dir)/wafflestack-prepare/journal.json` locally (it may contain
-private backup content; do not post it). Preserve any edits, restore backups if needed,
-remove only that transaction directory, and run preparation again before starting a session.
-A rollback failure keeps the journal. A dead PID alone is not evidence that the partial
-installation is safe; preparation deliberately does not auto-remove an interrupted transaction.
+private backup content; do not post it). Preserve conflicting edits and reconcile the journal
+before retrying. Remove a legacy ownerless transaction only after verifying its backups.
 Render failures report safe categories (missing required configuration, YAML syntax,
 external source/trust, or other render inputs), without printing private values or raw YAML.
 Inspect the destination inputs locally with the pinned toolkit, repair and commit canonical
@@ -195,6 +202,12 @@ Codex 0.156.1’s normal session reported no `agent_type` selector; its generic 
 receive the fixture’s custom instructions. An initial ephemeral session also failed to spawn
 with `no thread with id`. Codex custom-agent usability therefore remains unverified in this
 runtime/tool configuration. No desktop session-creation claim is made.
+
+[2026-11-04 runtime results](worktree-smoke-2026-11-04.json) repeat all five discovery states
+on Codex 0.166.0 and Claude 2.1.318. Claude invocation passes; Codex again reports no custom
+agent selector. Disabling `multi_agent_v2` does not expose one. A GPT-5.4 compatibility probe
+was rejected as unsupported by the account. The owner requires successful custom invocation;
+B5 and #820's invocation acceptance remain open. This evidence does not narrow that criterion.
 
 Run the optional, non-CI harness smoke test with installed runtimes:
 

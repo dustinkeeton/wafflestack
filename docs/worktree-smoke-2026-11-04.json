@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-04",
+  "versions": {
+    "codex": "codex-cli 0.166.0",
+    "claude": "2.1.318 (Claude Code)"
+  },
+  "discovery": [
+    {
+      "state": "absent",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "empty",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "custom-only",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "partial",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "complete",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    }
+  ],
+  "invocation": {
+    "claude": "pass: --agent worker returned canonical",
+    "codex": "failed: runtime could not select the custom agent type"
+  },
+  "codexDiagnostics": {
+    "spawnAgentParameters": [
+      "fork_turns",
+      "message",
+      "model",
+      "reasoning_effort",
+      "task_name"
+    ],
+    "customAgentSelector": false,
+    "disableMultiAgentV2": "same schema; no agent_type",
+    "compatibilityProbe": {
+      "model": "gpt-5.4",
+      "result": "not supported when using Codex with this ChatGPT account"
+    },
+    "acceptance": "B5 remains unresolved; owner requires successful custom-agent invocation"
+  }
+}

@@ -6,7 +6,7 @@ import { resolveWritableInside } from './util.mjs';
 
 /** @param {string} cwd @param {string} rel */
 export function safeDestination(cwd, rel) {
-  if (!resolveWritableInside(cwd, rel)) return false;
+  if (rel.split('/').some(part => !part || part === '.' || part === '..') || rel.includes('\\') || !resolveWritableInside(cwd, rel)) return false;
   let current = cwd;
   for (const part of rel.split('/')) {
     current = path.join(current, part);
@@ -82,9 +82,12 @@ export function recoverPreparation(cwd, mutex) {
       const intended = after === null ? null : Buffer.from(after, 'base64');
       const current = readBytes(file);
       if (!sameBytes(current, original) && !sameBytes(current, intended)) throw new Error('concurrent edit');
-      return { file, original };
+      return { rel, file, original, intended };
     });
-    for (const { file, original } of entries.reverse()) {
+    for (const { rel, file, original, intended } of entries.reverse()) {
+      if (rel !== '@receipt' && !safeDestination(cwd, rel) || fs.existsSync(file) && fs.lstatSync(file).isSymbolicLink()) throw new Error('unsafe path');
+      const current = readBytes(file);
+      if (!sameBytes(current, original) && !sameBytes(current, intended)) throw new Error('concurrent edit');
       replaceBytes(file, original);
       if (!sameBytes(readBytes(file), original)) throw new Error('restore verification failed');
     }

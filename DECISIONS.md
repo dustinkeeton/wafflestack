@@ -9,6 +9,17 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-04: Preparation recovers only journal-verifiable interrupted writes (#821)
+
+Toolkit pins stay within the running CLI's repository; untrusted preparation uses only the
+running exact commit or an existing clean cache. Exact npm-installed commit/version identity
+works offline without requiring release classification. Interrupted preparation may recover
+only after the local owner is dead and every journal entry matches its original or intended
+bytes. Atomic replacement and a journaled receipt make restoration restartable. Changed or
+unsafe artifacts retain the barrier. Obsolete untracked files may be pruned only when their
+receipt hashes still match; ejected resources and helpers are preserved. This supersedes the
+manual-only interruption recovery below. Codex invocation acceptance remains required.
+
 ## 2026-11-04: A small external skill ships as an upstream-pinned copy; an optional provider stays behind a proxy (#825)
 
 **Context**: #471 rejected vendoring archify and wrote down that "the toolkit fetches, locks, and

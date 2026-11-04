@@ -34,7 +34,8 @@ is what you reach for across a breaking one.
 ### Added
 
 - `prepare-worktree` provisions pinned worktree-local harness resources before agent startup,
-  with conflict checks, rollback, structured readiness and explicit private-overlay policy (#820).
+  with conflict checks, verified interruption recovery, safe stale-file pruning, structured
+  readiness and explicit private-overlay policy (#820).
   Delegate/autopilot now gate worker launches on preparation; host setup recipes cover T3,
   Codex desktop and plain Git/Claude. **Consumer impact:** install a release containing this
   command and explicitly upgrade old provenance-less locks before enabling startup scripts.

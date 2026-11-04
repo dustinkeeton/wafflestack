@@ -213,6 +213,7 @@ export function renderProject({
     ok: true, errors: [], warnings,
     plan: { effective, canonical, targets: project.targets,
       canonicalTargets: canonicalProject.targets, canonicalStacks: canonicalProject.stacks, canonicalInclude: canonicalProject.include,
+      upstream: upstreamLockEntries(canonical.groups, canonical.producedBy, hashOutputs(canonical.outputs)),
       sources: collectSourceProvenance(canonical.groups, canonical.producedBy, hashOutputs(canonical.outputs)),
       files: hashOutputs(canonical.outputs), settings: settingsLockMap(canonical.settings) },
   };
