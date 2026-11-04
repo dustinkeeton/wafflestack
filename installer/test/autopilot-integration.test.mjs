@@ -874,7 +874,7 @@ describe('integration holds: an issue only for real work (#838)', () => {
     assert.match(h, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
     assert.match(h, /List only the open findings at should-fix or above/);
     assert.match(h, /A Defer and a finding below should-fix never go in the follow-up \(#511\): when either also remains, also post one hold comment on `<F>` as stage 1's \*\*Hold\*\* does, listing those findings with their citations, each Defer with the issue number `pr-response` filed for it, and linking the follow-up/);
-    assert.match(h, /When no open finding at should-fix or above remains \(only Defers or findings below should-fix, or none, as when the cap ended on a round whose fixes all merged\), file nothing: post one hold comment on `<F>`/);
+    assert.match(h, /When no open finding at should-fix or above remains \(only Defers or findings below should-fix, or none, as when the cap ended on a round whose fixes all merged\), file nothing: post one hold comment on `<F>` as stage 1's \*\*Hold\*\* does, with the reason, the findings with their citations, each Defer with its issue number,/);
     assert.match(h, /the follow-up number and a link to the hold comment, whichever were made/);
     assert.doesNotMatch(h, /goes in a hold comment, never the follow-up/);
   });
