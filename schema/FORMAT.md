@@ -40,6 +40,7 @@ description: One-line description of the stack.
 recommended: true                    # optional: setup wizard pre-selects it unless the user opts out
 agents: [architect, security]        # files under agents/, without .md
 skills: [git-workflow, issue]        # directories under skills/
+                                     # an entry may also be { name, upstream } — see "Upstream-pinned skills"
 files:                               # generic files under files/, by repo-relative path
   - .github/workflows/release.yml
   - scripts/check-format.mjs
@@ -334,6 +335,61 @@ network/auth kinds to the deliberate `doctor` gate. The legacy `env:` map is **s
 `env` kind, read-compatibly** — an existing `env:` map keeps working and is still warned at render,
 so no stack must migrate at once.
 
+### Upstream-pinned skills — `upstream:`
+
+An **upstream-pinned skill** is a skill copied from another repo at a pinned commit and shipped
+as a first-class waffle: registered, stack-listed, rendered and locked like any skill, with its
+origin recorded. It differs from a `source:` stack (fetched per consumer at render time) and
+from `recommendedPlugins:` (offered, never rendered). A `skills:` entry that would otherwise be a
+bare name becomes a mapping:
+
+```yaml
+skills:
+  - tdd
+  - name: council
+    upstream:
+      repo: t3dotgg/tstack
+      path: skills/council
+      commit: 0123456789abcdef0123456789abcdef01234567
+      license: MIT
+      hash: sha256:<64 lowercase hex>
+```
+
+| Field | Format |
+|---|---|
+| `repo` | GitHub `owner/name` |
+| `path` | the upstream repo-relative directory the copy came from (POSIX, no leading or trailing `/`, no `.`/`..`/empty segment) |
+| `commit` | the full 40-char lowercase sha the copy was taken at |
+| `license` | the upstream license identifier (required) |
+| `hash` | `sha256:<64 hex>` content hash of the copy, defined below |
+
+The mapping accepts only `name` and `upstream`; any other key (an `upstrem:` typo) is a load
+error, because silently dropping the pin would drop its gate. `validate` lints every field and
+requires upstream's `LICENSE` file in the skill directory: the license travels with the copy.
+
+**The hash covers the copy, `LICENSE` included.** It is computed over every file in the skill
+directory (exactly the files the loader lists and the render copies), offline: one
+`<sha256 hex>  <posix-relative-path>\n` line per file, sorted by path, and the sha256 of those
+lines, prefixed `sha256:`. Raw bytes, no line-ending normalization; mode and mtime are not
+hashed. It is a hash of the copy, not of upstream's tree, because `LICENSE` comes from outside
+`path`. The JS export `upstreamHash` (`installer/lib/upstream.mjs`) is the definition; for ASCII
+paths this shell line reproduces it:
+
+```bash
+cd <skill-dir> && find . -type f | sed 's|^\./||' | LC_ALL=C sort \
+  | while IFS= read -r f; do shasum -a 256 "$f"; done | shasum -a 256   # prefix the result with sha256:
+```
+
+**The copy-matches-pin gate.** `validate` fails when the copy no longer hashes to `hash`, naming
+the skill and the remedy. A pinned copy is never edited in place: put a local adaptation in a
+project extension (`.waffle/extensions/skills/<name>.md`), or bump the pin — re-copy upstream at
+the new commit, then record the new `commit` and `hash` in `stack.yaml` and the new `commit` in
+the registry. A stray untracked file in the directory (a `.DS_Store`) also changes the hash. The
+gate runs inside `validateStack`, so an external stack with a stale pin also refuses to render.
+
+In this release an upstream-pinned skill still renders like any other skill (template
+substitution applies); verbatim rendering and lock provenance arrive in #827.
+
 ## Waffle registry (`stacks/registry.yaml`)
 
 `toolkit.yaml` lists the **stacks**. `stacks/registry.yaml` lists the **waffles** — and it is the
@@ -347,6 +403,7 @@ waffles:
     stack: github-workflow         # the owning stack, as listed in toolkit.yaml
     path: stacks/github-workflow/skills/issue
     status: stable                 # stable | wip | deprecated | replaced
+    # upstream: { repo, path, commit, license }   # upstream-pinned skills only — must equal stack.yaml's
 
   - name: old-name                 # a tombstone: the name is gone
     kind: skill
@@ -374,12 +431,19 @@ downstream repo; the render says the pin is stale, and `wafflestack upgrade` rew
 `.waffle/waffle.yaml` for good. Chains are followed transitively, so a config two renames behind
 lands on the current name in one upgrade.
 
+**`upstream:` records an upstream-pinned skill's provenance** (`repo`, `path`, `commit`,
+`license`; see "Upstream-pinned skills"). Every field must equal the skill's `stack.yaml` pin. The
+`hash` is not repeated here: it is a derived checksum whose gate lives in `stack.yaml`, so a
+`hash` key in a registry `upstream` is an unknown key. Only skills carry it, and never a
+tombstone.
+
 **The registry is enforced, not advisory.** `wafflestack validate` reconciles it three ways — against
 the filesystem, against every `stack.yaml`, and against itself — and reds on any divergence: a
 waffle on disk that nobody registered, a `stack.yaml` naming an unregistered waffle, a registered
 waffle whose path doesn't exist or isn't the path the loader would use, a duplicate entry, a
-tombstone whose name still resolves or whose successor doesn't, and an offered waffle whose
-`requires:` edge lands on a `wip` one. **Renaming a waffle is therefore a three-part edit** — move
+tombstone whose name still resolves or whose successor doesn't, an offered waffle whose
+`requires:` edge lands on a `wip` one, and an `upstream:` that is missing on one side or differs
+from the `stack.yaml` pin. **Renaming a waffle is therefore a three-part edit** — move
 the files, update the owning `stack.yaml`, and replace the registry entry with a tombstone plus a
 live entry under the new name — and CI stays red until all three land.
 

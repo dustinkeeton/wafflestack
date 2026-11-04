@@ -31,6 +31,18 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **Upstream-pinned skills: `upstream:` provenance and a copy-matches-pin gate (#826, part of
+  #825).** A `stack.yaml` `skills:` entry may now be a mapping `{ name, upstream: { repo, path,
+  commit, license, hash } }` recording the upstream commit a skill was copied from. `validate`
+  lints the pin, requires an upstream `LICENSE` beside the copy, checks that the matching
+  `stacks/registry.yaml` entry records the same `upstream: { repo, path, commit, license }`, and
+  fails when the copy's files no longer hash to the recorded `hash`. No shipped skill is pinned
+  yet. Verbatim rendering and lock provenance follow in #827.
+
+  **Consumer impact:** none — no rendered output changes.
+
 ### Changed
 
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate
