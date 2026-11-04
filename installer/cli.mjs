@@ -83,7 +83,7 @@ try {
       if (overlay !== null && !OVERLAY_MODES.includes(overlay)) fail(`--overlay must be one of ${OVERLAY_MODES.join(', ')} (got ${overlay})`);
       if (args.length) fail(`prepare-worktree takes no refs (got ${args.join(', ')}) — it provisions the checkout at --cwd from its committed lock; flags: --overlay <${OVERLAY_MODES.join('|')}>, --json, --untrusted-config`);
       const toolkitIdentity = requireRelease('prepare-worktree');
-      const result = prepareWorktree({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity, overlay, untrustedConfig });
+      const result = prepareWorktree({ cwd, toolkitRoot, toolkitVersion: pkg.version, toolkitIdentity, overlay, untrustedConfig, offline });
       if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       else process[result.status === 'failed' ? 'stderr' : 'stdout'].write(formatPrepareResult(result));
       process.exit(result.status === 'failed' ? 1 : 0);
@@ -439,7 +439,8 @@ function helpText() {
     '  render      re-render the current selection into .claude/ (agents, skills, mods), .codex/, .agents/ and files/ paths',
     '  bake        alias for render — same command, better metaphor',
     '  prepare-worktree  provision a checkout\'s .claude/, .codex/, .agents/ resources from its own lock, before an',
-    '              agent session starts there (a fresh git worktree, a fresh clone); no-op when complete',
+    '              agent session starts there (a fresh git worktree, a fresh clone); no-op when complete. A lock',
+    '              pinned to another release is rendered by that release (source cache, fetched once; --offline needs a hit)',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',
     '  state       print the resolved behavioral keys (value, layer, tokens), run files, locks and drift',

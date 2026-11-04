@@ -19,10 +19,10 @@ import {
   loadProjectConfig,
   gitIgnoreStatus,
 } from './project.mjs';
-import { toolkitPinFromLock } from './toolkit-ref.mjs';
+import { toolkitPinFromLock, parseRepoSlug, httpsUrl } from './toolkit-ref.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { settingsConflicts, applySettings, settingsValueAt, parseSettingsKey, lockKeys } from './settings.mjs';
-import { defaultSourceCacheDir } from './sources.mjs';
+import { defaultSourceCacheDir, resolveSource, gitFetchCheckout } from './sources.mjs';
 
 /**
  * Worktree provisioning (#820): lay the lock-described harness resources of ONE checkout into that
@@ -40,10 +40,11 @@ import { defaultSourceCacheDir } from './sources.mjs';
  * @property {string} cwd
  * @property {{ toplevel: string|null, linked: boolean, mainCheckout: string|null }} checkout
  * @property {string[]} targets
- * @property {{ version: string|null, ref: string|null, status: string|null }} pin
+ * @property {{ version: string|null, ref: string|null, status: string|null, from: 'running'|'cache'|'fetch'|null }} pin  `from`: which toolkit rendered — the running CLI, the lock's pinned release served from the source cache, or fetched into it
  * @property {{ mode: OverlayMode|null, source: string|null, effective: 'canonical'|'overlay'|null, file: string|null }} overlay
  * @property {string[]} generated   harness paths written by this run
  * @property {string[]} refreshed   lock-tracked paths rewritten from an older render of the same lock
+ * @property {string[]} pruned      paths an earlier preparation wrote that this lock no longer renders, removed unchanged
  * @property {number} present       harness paths already matching
  * @property {string[]} settings    settings keys written by this run
  * @property {Conflict[]} conflicts
@@ -67,6 +68,66 @@ export const HARNESS_DIRS = Object.freeze({ claude: ['.claude/'], codex: ['.code
 export const PREPARE_WORKTREE_SINCE = '0.20.0';
 
 /** @typedef {(cwd: string, args: string[]) => { status: number|null, stdout: string, stderr: string, error?: Error }} RunGit */
+
+/**
+ * The toolkit that provisions `lock`: the running CLI when its version — and, for a release, its
+ * tag and commit — are the lock's; otherwise the lock's own release pin, served from the source cache
+ * or cloned into it once (never when offline). The pin must name the running CLI's own repository
+ * (a lock is data: it may not choose which toolkit's content becomes the agent's skills) and carry
+ * the commit the tag must resolve to; an untrusted tree's lock is never fetched for. A lock with no
+ * release pin can only be provisioned by a CLI at its version. Every refusal names the pinned command.
+ *
+ * @param {{ lock: any, cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: any, offline?: boolean, untrustedConfig?: boolean, sourceCacheDir?: string, resolve?: typeof resolveSource }} args
+ * @returns {{ root: string, version: string, identity: any, from: 'running'|'cache'|'fetch' } | { error: string }}
+ */
+export function resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, offline = false, untrustedConfig = false, sourceCacheDir = defaultSourceCacheDir(), resolve = resolveSource }) {
+  const pin = toolkitPinFromLock(lock);
+  const t = lock?.toolkit ?? {};
+  const sameVersion = lock?.toolkitVersion === toolkitVersion;
+  const releaseMismatch = Boolean(pin && toolkitIdentity?.status === 'release' && (toolkitIdentity.tag !== t.ref || (t.commit && toolkitIdentity.commit && toolkitIdentity.commit !== t.commit)));
+  if (sameVersion && !releaseMismatch) return { root: toolkitRoot, version: toolkitVersion, identity: toolkitIdentity, from: 'running' };
+  const running = `wafflestack ${toolkitVersion}${toolkitIdentity?.tag ? ` (${toolkitIdentity.tag})` : ''}`;
+  const rendered = `${lock?.toolkitVersion ?? 'an unversioned toolkit'}${pin ? ` (${pin})` : ''}`;
+  if (!pin) {
+    return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered} and records no release pin (toolkit status: ${t.status ?? 'not recorded'}) — a worktree is provisioned by the toolkit its lock pins, never by whichever CLI happens to run; from the main checkout run \`wafflestack upgrade\` with a release of the toolkit, commit the lock, and prepare again — or, for the toolkit's own checkout, run its installer with --allow-unreleased` };
+  }
+  // A command is printed only for a pin whose every character came through a validator — and never
+  // on a path that is refusing because the lock itself is not trusted.
+  const slug = parseRepoSlug(t.source);
+  const tagged = /^[A-Za-z0-9._-]+$/.test(String(t.ref ?? ''));
+  const remedy = slug && tagged
+    ? `run the pinned toolkit yourself:\n  npx --yes github:${slug.owner}/${slug.repo}#${t.ref} prepare-worktree --cwd "${cwd}"`
+    : `check the \`toolkit\` block of ${LOCK_FILE} (its ref is not a plain tag name), then re-render from a release you trust and commit the lock`;
+  if (!slug) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}, whose source is not a GitHub repository this CLI can fetch — ${remedy}` };
+  if (!tagged) return { error: `this CLI is ${running}, but the \`toolkit\` block of ${LOCK_FILE} pins a ref that is not a plain tag name, so it is never handed to git — ${remedy}` };
+  if (untrustedConfig) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}; --untrusted-config never fetches a toolkit an untrusted tree's lock names — render this tree from a toolkit you chose, or prepare it from a trusted checkout` };
+  const own = parseRepoSlug(toolkitIdentity?.lockRepo ?? toolkitIdentity?.repo ?? null);
+  if (!own || own.owner.toLowerCase() !== slug.owner.toLowerCase() || own.repo.toLowerCase() !== slug.repo.toLowerCase()) {
+    return { error: `this CLI is ${running} from ${own ? `${own.owner}/${own.repo}` : 'an unknown repository'}, but ${LOCK_FILE} pins ${pin} — a lock may only be rendered by a release of the running CLI's own repository, never by one it names; check that lock's \`toolkit\` block, and if that repository is one you trust, prepare with its own CLI` };
+  }
+  if (!/^[0-9a-f]{40}$/i.test(String(t.commit ?? ''))) return { error: `${LOCK_FILE} pins ${pin} without a full commit, so the tag cannot be verified — re-render from a release you trust and commit the lock, or ${remedy}` };
+  let fetched = false;
+  const gitFetch = offline
+    ? () => { throw new Error('offline, and the pinned release is not in the source cache'); }
+    : (/** @type {string} */ src, /** @type {string} */ ref, /** @type {string} */ dest) => { fetched = true; gitFetchCheckout(src, ref, dest); };
+  let resolved;
+  try {
+    resolved = resolve({ name: `wafflestack ${t.ref}`, source: httpsUrl(slug), sourceType: 'git', ref: t.ref }, { cacheDir: sourceCacheDir, gitFetch });
+  } catch (err) {
+    return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}; resolving that release failed (${/** @type {Error} */ (err).message}) — ${offline ? 'go online once so it can be fetched into the source cache, or ' : ''}${remedy}` };
+  }
+  if (resolved.commit !== t.commit) {
+    return { error: `${LOCK_FILE} pins ${pin} at commit ${String(t.commit).slice(0, 12)}, but that tag resolves to ${String(resolved.commit ?? 'nothing').slice(0, 12)} on ${httpsUrl(slug)} — the tag moved; re-render from a release you trust and commit the lock` };
+  }
+  let version = null;
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(resolved.root, 'package.json'), 'utf8')).version;
+  } catch { /* reported below */ }
+  if (version !== lock.toolkitVersion) {
+    return { error: `${LOCK_FILE} pins ${pin} and says version ${lock.toolkitVersion}, but the toolkit at that tag is version ${version ?? 'unknown'} — the lock is inconsistent; re-render from a release you trust and commit the lock` };
+  }
+  return { root: resolved.root, version, identity: null, from: fetched ? 'fetch' : 'cache' };
+}
 
 /** @type {RunGit} */
 export function defaultRunGit(cwd, args) {
@@ -258,6 +319,19 @@ function pidAlive(pid) {
   }
 }
 
+/** Remove `dir` and each parent it leaves empty, stopping below `cwd`. @param {string} cwd @param {string} dir */
+function pruneEmptyDirs(cwd, dir) {
+  const root = path.resolve(cwd);
+  for (let d = path.resolve(dir); d !== root && d.startsWith(root + path.sep); d = path.dirname(d)) {
+    try {
+      if (fs.readdirSync(d).length) return;
+      fs.rmdirSync(d);
+    } catch {
+      return;
+    }
+  }
+}
+
 /** @param {string} abs @param {Buffer} content */
 function writeAtomic(abs, content) {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -280,10 +354,10 @@ function readYamlIfPresent(file) {
  * Provision one checkout's harness resources from its own lock. See the module docblock; the
  * CLI prints the result and exits 1 on `failed`.
  *
- * @param {{ cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: any, overlay?: string|null, untrustedConfig?: boolean, sourceCacheDir?: string, runGit?: RunGit }} args
+ * @param {{ cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: any, overlay?: string|null, untrustedConfig?: boolean, offline?: boolean, sourceCacheDir?: string, runGit?: RunGit, resolve?: typeof resolveSource }} args
  * @returns {PrepareResult}
  */
-export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, overlay = null, untrustedConfig = false, sourceCacheDir = defaultSourceCacheDir(), runGit = defaultRunGit }) {
+export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, overlay = null, untrustedConfig = false, offline = false, sourceCacheDir = defaultSourceCacheDir(), runGit = defaultRunGit, resolve = resolveSource }) {
   cwd = path.resolve(cwd);
   /** @type {PrepareResult} */
   const result = {
@@ -291,10 +365,11 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
     cwd,
     checkout: { toplevel: null, linked: false, mainCheckout: null },
     targets: [],
-    pin: { version: null, ref: null, status: null },
+    pin: { version: null, ref: null, status: null, from: null },
     overlay: { mode: null, source: null, effective: null, file: null },
     generated: [],
     refreshed: [],
+    pruned: [],
     present: 0,
     settings: [],
     conflicts: [],
@@ -321,17 +396,12 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
     return fail(`${LOCK_FILE} not found in ${cwd} — the lock describes what to provision; run \`wafflestack render\` in the main checkout, commit the lock, and bring the branch up to date`);
   }
   const pin = toolkitPinFromLock(lock);
-  result.pin = { version: lock.toolkitVersion ?? null, ref: pin, status: lock.toolkit?.status ?? null };
-  if (lock.toolkitVersion !== toolkitVersion) {
-    const remedy = pin
-      ? `run the toolkit the lock pins instead:\n  npx --yes ${pin} prepare-worktree --cwd "${cwd}"`
-      : `the lock records no release pin (toolkit status: ${lock.toolkit?.status ?? 'not recorded'}); from the main checkout run \`wafflestack upgrade\` with a release of the toolkit, commit the lock, and prepare again — or, for the toolkit's own checkout, run its installer with --allow-unreleased`;
-    return fail(`this CLI is wafflestack ${toolkitVersion}, but ${LOCK_FILE} was rendered by ${lock.toolkitVersion ?? 'an unversioned toolkit'} — a worktree is provisioned by the toolkit its lock pins, never by whichever CLI happens to run; ${remedy}`);
-  }
-  if (pin && toolkitIdentity?.status === 'release' && (toolkitIdentity.tag !== lock.toolkit.ref || (lock.toolkit.commit && toolkitIdentity.commit && toolkitIdentity.commit !== lock.toolkit.commit))) {
-    return fail(`this CLI is release ${toolkitIdentity.tag ?? toolkitIdentity.version}${toolkitIdentity.commit ? ` @ ${toolkitIdentity.commit.slice(0, 12)}` : ''}, but ${LOCK_FILE} pins ${pin}${lock.toolkit.commit ? ` @ ${String(lock.toolkit.commit).slice(0, 12)}` : ''} — same version number, different toolkit; run the pinned one:\n  npx --yes ${pin} prepare-worktree --cwd "${cwd}"`);
-  }
-  if (pin && toolkitIdentity && toolkitIdentity.status !== 'release') {
+  result.pin = { version: lock.toolkitVersion ?? null, ref: pin, status: lock.toolkit?.status ?? null, from: null };
+  const toolkit = resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, toolkitIdentity, offline, untrustedConfig, sourceCacheDir, resolve });
+  if ('error' in toolkit) return fail(toolkit.error);
+  result.pin.from = toolkit.from;
+  if (toolkit.from !== 'running') result.notes.push(`rendered with the lock's pinned release ${pin}, ${toolkit.from === 'fetch' ? 'fetched into' : 'served from'} the source cache — this CLI (${toolkitVersion}) did not render`);
+  if (pin && toolkit.from === 'running' && toolkitIdentity && toolkitIdentity.status !== 'release') {
     result.warnings.push(`the lock pins ${pin}, but this CLI is ${toolkitIdentity.status} at the same version — fine for toolkit development, otherwise run \`npx --yes ${pin} prepare-worktree\``);
   }
 
@@ -375,7 +445,7 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
   if (policy.mode === 'none' && destOverlayRaw) result.notes.push(`overlay policy \`none\`: this checkout's own ${LOCAL_CONFIG_FILE} is left out of the render`);
   result.overlay.file = overlayFile;
 
-  const stagedRender = stageRender({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity, overlayFile, untrustedConfig, sourceCacheDir });
+  const stagedRender = stageRender({ cwd, toolkitRoot: toolkit.root, toolkitVersion: toolkit.version, toolkitIdentity: toolkit.identity, overlayFile, untrustedConfig, sourceCacheDir });
   if ('errors' in stagedRender) return fail(...stagedRender.errors);
   const staged = stagedRender;
   result.overlay.effective = staged.overlayChanged ? 'overlay' : 'canonical';
@@ -385,7 +455,7 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
   const stale = Object.keys({ ...committed, ...stagedCanonical }).filter((k) => committed[k] !== stagedCanonical[k]).sort();
   if (stale.length) {
     return fail(
-      `${LOCK_FILE} does not match what ${CONFIG_FILE} (+ ${EXTENSIONS_DIR}/) renders with this toolkit (${stale.length} path(s): ${stale.slice(0, 5).join(', ')}${stale.length > 5 ? ', …' : ''}) — re-render in the main checkout, commit the lock, and bring the branch up to date`,
+      `${LOCK_FILE} does not match what ${CONFIG_FILE} (+ ${EXTENSIONS_DIR}/) renders with ${toolkit.from === 'running' ? 'this toolkit' : `its pinned toolkit ${pin}`} (${stale.length} path(s): ${stale.slice(0, 5).join(', ')}${stale.length > 5 ? ', …' : ''}) — re-render in the main checkout, commit the lock, and bring the branch up to date`,
     );
   }
 
@@ -460,6 +530,29 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
         conflicts.push({ path: key, reason: 'a lock-managed settings entry with local edits (restore it, or keep the change outside the managed key)' });
       }
     }
+    // What an earlier preparation wrote and this lock no longer renders: removed when unchanged,
+    // a conflict when edited — the manifest proves ownership, so nothing else is ever pruned.
+    /** @type {{ rel: string, abs: string }[]} */
+    const prunes = [];
+    for (const rel of Object.keys(prepared)) {
+      if (desiredFiles.includes(rel)) continue;
+      const abs = resolveWritableInside(cwd, rel);
+      if (!abs || !exists(abs)) {
+        delete prepared[rel];
+        continue;
+      }
+      if (sha256(fs.readFileSync(abs)) === prepared[rel]) prunes.push({ rel, abs });
+      else conflicts.push({ path: rel, reason: 'written by an earlier preparation, no longer rendered by this lock, and edited since (move it aside)' });
+    }
+    /** @type {string[]} */
+    const staleSettings = [];
+    for (const key of Object.keys(preparedSettings)) {
+      if (desiredSettings.has(key)) continue;
+      const current = settingsValueAt(cwd, key);
+      if (current === undefined) delete preparedSettings[key];
+      else if (isDeepStrictEqual(current, preparedSettings[key])) staleSettings.push(key);
+      else conflicts.push({ path: key, reason: 'written by an earlier preparation, no longer rendered by this lock, and edited since (restore or remove it)' });
+    }
     const check = settingsConflicts(cwd, desiredSettings, ownedSettings);
     if (check.errors.length) return fail(...check.errors);
     for (const key of check.collisions) {
@@ -467,8 +560,8 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
     }
     // Settings files and the local lock are written through their own paths, so they get the same
     // symlink containment check as every rendered file (a committed link could point them out of the tree).
-    const settingsFiles = [...new Set(settingsToWrite.map((k) => parseSettingsKey(k)?.file ?? k))].sort();
-    const sideFiles = new Set([...desiredSettings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k));
+    const settingsFiles = [...new Set([...settingsToWrite, ...staleSettings].map((k) => parseSettingsKey(k)?.file ?? k))].sort();
+    const sideFiles = new Set([...desiredSettings.keys(), ...Object.keys(managedSettings), ...staleSettings].map((k) => parseSettingsKey(k)?.file ?? k));
     if (staged.overlayChanged) sideFiles.add(LOCAL_LOCK_FILE);
     for (const file of [...sideFiles].sort()) {
       if (!resolveWritableInside(cwd, file)) conflicts.push({ path: file, reason: 'resolves outside the checkout through a symlink' });
@@ -525,10 +618,16 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
         writeAtomic(abs, /** @type {Buffer} */ (staged.files.get(rel)));
         (kind === 'missing' ? result.generated : result.refreshed).push(rel);
       }
-      if (settingsToWrite.length) {
+      if (settingsToWrite.length || staleSettings.length) {
         for (const file of settingsFiles) snapshot(path.join(cwd, file));
-        applySettings(cwd, desiredSettings, ownedSettings);
+        applySettings(cwd, desiredSettings, { ...ownedSettings, ...Object.fromEntries(staleSettings.map((k) => [k, true])) });
         result.settings = settingsToWrite;
+      }
+      for (const { rel, abs } of prunes) {
+        snapshot(abs);
+        fs.rmSync(abs);
+        pruneEmptyDirs(cwd, path.dirname(abs));
+        result.pruned.push(rel);
       }
       if (localLockNeeded) {
         const after = `${JSON.stringify(staged.tree, null, 2)}\n`;
@@ -546,12 +645,15 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
       result.generated = [];
       result.refreshed = [];
       result.settings = [];
+      result.pruned = [];
       return fail(`writing failed (${/** @type {Error} */ (err).message}) — the ${undo.length} path(s) touched were restored as found; nothing is ready, fix the cause and prepare again`);
     }
     result.present = present;
-    if (manifestFile && (writes.length || settingsToWrite.length)) {
+    if (manifestFile && (writes.length || settingsToWrite.length || prunes.length || staleSettings.length)) {
       for (const { rel } of writes) prepared[rel] = sha256(/** @type {Buffer} */ (staged.files.get(rel)));
+      for (const { rel } of prunes) delete prepared[rel];
       for (const key of settingsToWrite) preparedSettings[key] = desiredSettings.get(key);
+      for (const key of staleSettings) delete preparedSettings[key];
       fs.writeFileSync(manifestFile, `${JSON.stringify({ files: prepared, settings: preparedSettings }, null, 2)}\n`);
     }
 
@@ -564,7 +666,7 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
       restore();
       return fail(`validation after writing failed for ${broken.length} path(s): ${broken.slice(0, 5).join(', ')} — the paths this run touched were restored; nothing is ready, check the filesystem and prepare again`);
     }
-    result.status = result.generated.length || result.refreshed.length || result.settings.length ? 'ready' : 'no-op';
+    result.status = result.generated.length || result.refreshed.length || result.settings.length || result.pruned.length ? 'ready' : 'no-op';
     return result;
   }
 }
@@ -590,11 +692,11 @@ export function formatPrepareResult(r) {
   if (r.status === 'failed') {
     lines.push(`prepare-worktree: failed — ${r.cwd}`);
   } else {
-    const counts = [`${r.generated.length} written`, ...(r.refreshed.length ? [`${r.refreshed.length} refreshed`] : []), `${r.present} already present`];
+    const counts = [`${r.generated.length} written`, ...(r.refreshed.length ? [`${r.refreshed.length} refreshed`] : []), ...(r.pruned.length ? [`${r.pruned.length} pruned`] : []), `${r.present} already present`];
     lines.push(`prepare-worktree: ${r.status} — ${counts.join(', ')} in ${r.cwd}`);
   }
   lines.push(`  checkout: ${where}`);
-  if (r.pin.version) lines.push(`  toolkit:  ${r.pin.version}${r.pin.ref ? ` (${r.pin.ref})` : ` (${r.pin.status ?? 'unpinned'}, no release pin)`}`);
+  if (r.pin.version) lines.push(`  toolkit:  ${r.pin.version}${r.pin.ref ? ` (${r.pin.ref})` : ` (${r.pin.status ?? 'unpinned'}, no release pin)`}${r.pin.from && r.pin.from !== 'running' ? ` — pinned release ${r.pin.from === 'fetch' ? 'fetched into' : 'served from'} the source cache` : ''}`);
   if (r.targets.length) lines.push(`  targets:  ${r.targets.join(', ')}`);
   if (r.overlay.mode) {
     const eff = r.overlay.effective === 'overlay' ? `overlay-effective (${r.overlay.file})` : r.overlay.effective === 'canonical' ? 'canonical' : 'undetermined';

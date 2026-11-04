@@ -25,11 +25,18 @@ cd ../myrepo-feature && claude        # or codex
 2. **Reads that checkout's own inputs**: `.waffle/waffle.yaml`, `.waffle/extensions/`, the committed
    lock, and (by [overlay policy](#overlay-policy)) a `.waffle/waffle.local.yaml`. Never another
    branch's config, never the main checkout's current render.
-3. **Reconciles the pin.** The lock's `toolkitVersion` must equal the running CLI's, and a release
-   CLI must carry the lock's pinned tag and commit. A mismatch fails
-   and prints the exact command the lock pins (`npx --yes github:owner/repo#vX.Y.Z prepare-worktree
-   --cwd …`), or, when the lock records no release pin, the upgrade to run in the main checkout. The
-   CLI that happens to be on `PATH` never provisions a worktree pinned to another version.
+3. **Resolves the pin.** The running CLI renders only when its version, and for a release its tag
+   and commit, are the lock's. Otherwise the lock's own pinned release does: it is served from the
+   source cache (`~/.cache/wafflestack/sources/`), or cloned into it once at the pinned tag, with the
+   tag's commit and the toolkit's version checked against the lock before it renders anything. The
+   pin must name the running CLI's own repository and carry a full commit: a lock is data, and it
+   may not choose which toolkit's content becomes the agent's skills, so a pin to another repository
+   is refused with the command to run that repository's own CLI. `--untrusted-config` never fetches.
+   With `--offline` a cache miss fails. Every refusal prints the command the lock pins
+   (`npx --yes github:owner/repo#vX.Y.Z prepare-worktree --cwd …`), or, when the lock records no
+   release pin, the upgrade to run in the main checkout. The CLI that happens to be on `PATH` never
+   renders a worktree pinned elsewhere; the report's `pin.from` says which toolkit did (`running`,
+   `cache`, `fetch`).
 4. **Stages a render** in a temp dir with the real render engine, then checks the canonical result
    against the committed lock. A stale lock (config edited, never re-rendered) fails: re-render in the
    main checkout, commit the lock, bring the branch up to date.
@@ -47,7 +54,10 @@ cd ../myrepo-feature && claude        # or codex
    the whole run **before a byte is written**, naming every path. There is no `--force`. A write that
    fails part-way (a file where a directory must go, a full disk) restores every path the run touched
    and reports `failed`; a run killed outright leaves no readiness claim, and the next run completes
-   or refuses on what it finds.
+   or refuses on what it finds. A file this command wrote for an earlier lock that the current lock
+   no longer renders (a dropped target, an ejected or removed skill) is pruned, with its emptied
+   directories, when it still holds what was written; edited since, it is a conflict. Nothing the
+   command did not write is ever removed.
 7. **Reports ignore coverage.** A path it wrote that git would show as untracked is listed, with the
    two remedies: the committed `.gitignore` (from the main checkout, `wafflestack render
    --gitignore` offers the entries), or `git rev-parse --git-path info/exclude`, which every linked
@@ -140,7 +150,9 @@ exec npx --yes "$pin" prepare-worktree --cwd "$wt" "${@:2}"
 
 It refuses an old pin instead of asking an old CLI to run a command it does not implement, and
 after the upgrade every later run honors whatever the lock then pins — a fork's included, since
-the pin comes from the lock's `toolkit` block. For the toolkit's own repo (never at a release tag),
+the pin comes from the lock's `toolkit` block. Any installed CLI at v0.20.0 or later can replace
+the `npx` line: it resolves the lock's pin itself, so the host script can simply be
+`wafflestack prepare-worktree --cwd "$wt"` once such a CLI is on `PATH`. For the toolkit's own repo (never at a release tag),
 replace the last line with `exec env WAFFLESTACK_ALLOW_UNRELEASED=1 node "$wt/installer/cli.mjs"
 prepare-worktree --cwd "$wt" "${@:2}"`.
 
@@ -170,7 +182,8 @@ linked worktree; supported).
 
 T3 Code runs project **scripts** (Settings → Projects, or a checked-in `t3.json`, which each user
 imports once). Add one that runs `scripts/prepare-worktree.sh` with `runOnWorktreeCreate: true` and
-`async: false`:
+`async: false`. This repository's own `t3.json` does exactly that with its checkout's installer
+(`npm ci --ignore-scripts && env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs prepare-worktree --cwd "$PWD"`):
 
 ```json
 {
@@ -246,14 +259,23 @@ needing a session restart, and prefer preparing before launch.
 
 ## Runtime acceptance matrix
 
-Rendered skills are discovered by each harness at startup. Before a release that touches this path,
-run the two smoke checks below against a disposable repo that commits one custom skill under
-`.claude/skills/` and gitignores the rest, prepare a worktree, and record the versions and results
-here. CI covers the deterministic half (`installer/test/prepare-worktree.test.mjs`: absent, empty,
-custom-only, partial, full, external and nested worktrees, spaces, reuse, pin mismatch, stale lock,
-overlay modes, conflicts, symlinks, concurrency); it makes no model calls.
+Rendered skills are discovered by each harness at startup. `installer/smoke/worktree-discovery.mjs`
+is the repeatable check: it builds the test fixtures, prepares a worktree in each of the five
+directory states (absent, empty, custom-only, partial, complete), asks Claude Code for its startup
+roster (`system/init`, stopped before any model turn) and Codex for `skills/list` over its
+app-server protocol with `forceReload`, and prints one JSON report, exit 1 on any miss:
 
-| Harness | Check | Last recorded |
+```sh
+WAFFLE_CLAUDE_BIN=claude WAFFLE_CODEX_BIN=codex node installer/smoke/worktree-discovery.mjs
+```
+
+CI runs the same script against stub harnesses (`installer/test/worktree-smoke.test.mjs`) so its
+fixtures and protocol handling stay exercised without a model call; the deterministic half of the
+contract is `installer/test/prepare-worktree.test.mjs`. Before a release that touches this path, run
+the script with the installed harnesses and commit the report next to the previous one
+(`docs/worktree-smoke-<date>.json`).
+
+| Harness | Check | Last recorded ([report](worktree-smoke-2026-11-04.json)) |
 | --- | --- | --- |
-| Claude Code | `claude -p --output-format stream-json --verbose --max-turns 1 "reply ok"` in the worktree; the `system/init` event lists every lock-rendered skill and agent next to the custom one | **2.1.317, 2026-11-03, measured on the #820 PR**: worktree with a committed `custom` skill and an ignored render — before: `skills` held `custom` only (the generated `greet` was absent; `agents` still showed `helper`, read through from the main checkout because `.claude/agents` was absent); after `prepare-worktree`: `custom` and `greet`, `helper` from the worktree |
-| Codex | app-server `skills/list` with `forceReload: true` from the worktree; invoke one prepared skill and one `.codex/agents/*.toml` agent | 0.156.1 and 0.154.0-alpha.6.2, 2026-11-03, from #820's evidence (not re-run on the PR): no main-checkout fallback in any directory state; a complete local render lists every skill |
+| Claude Code | startup roster (`system/init`) lists every lock-rendered skill and agent next to the custom one, in all five states | **2.1.317, 2026-11-04**: pass in all five states; `custom` kept in the custom-only state. Before preparation, measured on 2026-11-03: a custom-only `.claude/skills` listed `custom` alone, the generated `greet` absent, while `helper` was still read through from the main checkout because `.claude/agents` was absent |
+| Codex | app-server `skills/list` with `forceReload: true` lists the prepared skills from the worktree's own path, in all five states | **0.156.1 and 0.154.0-alpha.6.2, 2026-11-04**: pass in all five states. Discovery only: #821's live check found that Codex 0.156.1 could not select a `.codex/agents/*.toml` custom agent through `spawn_agent`, so custom-agent invocation on Codex stays unverified |

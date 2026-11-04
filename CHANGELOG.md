@@ -38,13 +38,15 @@ is what you reach for across a breaking one.
   files only, so a repo that gitignores its render had no generated skills there, and a committed custom
   skill switched off the one harness fallback that existed. The command resolves the checkout through git
   (nested or external worktrees, `.git` files, spaces), reads that checkout's committed config, extensions
-  and lock, refuses a lock rendered by another toolkit version with the exact pinned command, stages a
+  and lock, renders a lock pinned to another release with that release (served from the source cache or cloned into it
+  once; only a pin to the running CLI's own repository with a full commit, tag commit and version verified, never
+  under `--untrusted-config`; `--offline` needs a cache hit) and otherwise names the exact pinned command, stages a
   render, and copies only the missing or stale harness artifacts (`.claude/`, `.codex/`, `.agents/` for the
   enabled targets, plus the lock-managed `.claude/settings.json` entries) — never `.github/` payloads, the
   committed lock, project-owned files or the index. Any conflict (a hand-edited managed file or settings
   entry, an unmanaged file at a rendered path, a symlink leaving the checkout, a tracked path or settings entry the overlay
   would change) fails before a byte is written and names the paths; a write that fails part-way restores every touched
-  path; every artifact is re-hashed before `ready`; a complete
+  path; a file an earlier run wrote that the lock no longer renders is pruned unchanged or refused when edited; every artifact is re-hashed before `ready`; a complete
   worktree is a `no-op`; a per-worktree lock refuses a concurrent run; `--json` prints the readiness
   document; exit 1 on `failed`. `--overlay local|main|none` picks the private overlay policy (default: the
   destination's own overlay, if any; `main` opts the linked main checkout's in, persisted as
@@ -53,7 +55,10 @@ is what you reach for across a breaking one.
   branches, the integration stage 2 responder and stage 3 audit worktrees — before spawning, and stop that
   launch on a non-zero exit, replacing the former "do not render into the worktree" rule. `docs/worktrees.md`
   carries the contract, the overlay policy, a pin-honoring host script, and recipes for plain git, T3 Code,
-  the Codex app and Claude Code.
+  the Codex app and Claude Code; `installer/smoke/worktree-discovery.mjs` is the repeatable two-harness runtime
+  check (Claude Code startup roster, Codex app-server `skills/list`, five directory states), stub-tested in CI and
+  recorded for Claude 2.1.317 and Codex 0.156.1 / 0.154.0-alpha.6.2 in `docs/worktree-smoke-2026-11-04.json`; this
+  repo's `t3.json` prepares its own T3 Code worktrees.
   **Consumer impact**: additive — a `render` picks up the skill changes; a consumer pinned before this
   release gets a clear upgrade instruction from the host script rather than an unknown command. If your
   worktrees relied on Claude Code's main-checkout read-through, nothing changes until you run the command
