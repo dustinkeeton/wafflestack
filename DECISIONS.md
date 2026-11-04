@@ -42,6 +42,31 @@ pinned copies; the proxy convention stands for optional providers. The `tstack` 
 
 ---
 
+## 2026-11-04: An integration hold files an issue only for unresolved findings (#838)
+
+**Context**: Autopilot filed a `waffle:manual-review` issue on every integration-gate hold. Run
+#825 filed #837 for final PR #834: stage 2 hit its cap while its last round was still fixing, and
+every finding was already fixed. The issue only restated the PR's state and the commands to finish
+it. The owner closed it as noise.
+
+**Decision**: A follow-up issue is only for real work: findings left unresolved. A stage 2 hold
+files one when findings at should-fix or above stay untriaged or declined, listing only those; a
+deferred finding already has the issue `pr-response` filed for it, so the hold comment cites that
+issue rather than filing one that only points at it. The stage 3 audit block files as before. Every other hold posts one append-only comment
+(`gh pr comment --body-file`) with what the issue carried, and the run report links it. Stages 2
+and 3 comment on the final PR. Stage 1 comments on the sync PR, or, before one exists, on the run
+PR merged most recently into the integration branch; the run report is how a human finds it.
+
+**Alternatives**:
+- *Comment on the epic issue.* Rejected: a run need not have an epic, and the run PR is where the
+  parked branch's history already lives.
+- *The run report only.* Rejected: the report lives in one session, and the hold must outlast it.
+
+**Affects**: the orchestration stack's autopilot skill (integration gate stages 1–3, failure
+handling, run report). Steps 5–7 filing is unchanged.
+
+---
+
 ## 2026-10-29: Autopilot's gate loops converge on zero should-fix, not zero implemented (#794)
 
 **Context**: Steps 5–6 stopped only on a cold round that implemented nothing, nits included. The
@@ -367,6 +392,9 @@ install first.
 
 **Impact**: Integration-mode runs open one extra PR per run when `main` moved. `CHANGELOG.md` will
 often conflict on a sync, which holds the run for a human.
+
+**Updated 2026-11-04 — a stage 1 hold no longer files an issue (#838).** It posts one hold comment
+instead, on the sync PR or else the run PR merged last into the integration branch (entry above).
 
 ---
 
