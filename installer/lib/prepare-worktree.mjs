@@ -10,6 +10,7 @@ import { resolveSource, defaultSourceCacheDir } from './sources.mjs';
 import { resolveConfigFile, resolveLockFile, resolveLocalConfigFile, LOCAL_LOCK_FILE, gitIgnoreStatus } from './project.mjs';
 import { sha256, resolveWritableInside } from './util.mjs';
 import { parseRef, itemOutputMatcher } from './refs.mjs';
+import { acquirePreparation, recoverPreparation, replaceBytes, readBytes, sameBytes } from './preparation-transaction.mjs';
 import { applySettings, parseSettingsKey, settingsConflicts, settingsValueAt } from './settings.mjs';
 
 /** @param {string} p */
@@ -65,25 +66,17 @@ export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, 
 export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedConfig = false, allowUnreleased = false, sourceCacheDir = defaultSourceCacheDir(), overlay, resolveToolkit = resolvePreparationToolkit, beforeWrite = () => {} }) {
   /** @type {PrepareResult} */
   const result = { status: 'failed', targets: [], pin: null, generatedPaths: [], conflicts: [], overlayMode: 'canonical', notices: [], missingIgnore: [], errors: [] };
-  let mutex;
+  let mutex = '';
   let acquired = false;
   let temp;
-  /** @type {Map<string, Buffer|null>} */
-  const backups = new Map();
-  /** @type {string[]} */
-  const applied = [];
-  /** @type {Map<string, Buffer>} */
-  const written = new Map();
   try {
     if (overlay !== undefined && !['local', 'main', 'none'].includes(overlay)) throw new Error('--overlay must be local, main, or none');
     cwd = fs.realpathSync(cwd);
     if (fs.realpathSync(git(cwd, ['rev-parse', '--show-toplevel'])) !== cwd || git(cwd, ['rev-parse', '--is-bare-repository']) !== 'false') throw new Error('destination must be the root of a non-bare Git checkout');
     const gitDir = git(cwd, ['rev-parse', '--absolute-git-dir']);
     mutex = path.join(gitDir, 'wafflestack-prepare');
-    try { fs.mkdirSync(mutex, { mode: 0o700 }); acquired = true; } catch (e) {
-      if (e.code === 'EEXIST') throw new Error('preparation active or interrupted — stop the owning process, inspect the private transaction in the checkout Git directory, then remove only its wafflestack-prepare directory and retry before launching');
-      throw e;
-    }
+    acquirePreparation(mutex, () => recoverPreparation(cwd, mutex));
+    acquired = true;
     const lockPath = resolveLockFile(cwd).file;
     const configPath = resolveConfigFile(cwd).file;
     for (const input of [lockPath, configPath]) {
@@ -199,36 +192,28 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
       outputs.set(LOCAL_LOCK_FILE, `${JSON.stringify(localManifest, null, 2)}\n`);
     }
     else if (present(path.join(cwd, LOCAL_LOCK_FILE))) throw new Error('stale local lock — reconcile it with an explicit render before canonical preparation');
-    const changes = [...outputs].filter(([p, c]) => !present(path.join(cwd, p)) || !fs.readFileSync(path.join(cwd, p)).equals(Buffer.from(c)));
-    for (const [rel] of changes) {
-      const abs = path.join(cwd, rel);
-      backups.set(rel, present(abs) ? fs.readFileSync(abs) : null);
-    }
-    fs.writeFileSync(path.join(mutex, 'journal.json'), JSON.stringify([...backups].map(([p, b]) => [p, b?.toString('base64') ?? null])), { mode: 0o600 });
+    const receipt = Buffer.from(JSON.stringify({ files: Object.fromEntries([...outputs].filter(([p]) => harnessPath(p) && !settingFiles.includes(p)).map(([p, c]) => [p, sha256(c)])), settings: Object.fromEntries([...settings].map(([key, value]) => [key, sha256(JSON.stringify(value))])) }));
+    const changes = [...outputs].map(([p, c]) => [p, Buffer.from(c)]).filter(([p, c]) => !sameBytes(readBytes(path.join(cwd, /** @type {string} */ (p))), /** @type {Buffer} */ (c)));
+    const entries = changes.map(([rel, content]) => [rel, readBytes(path.join(cwd, /** @type {string} */ (rel)))?.toString('base64') ?? null, content.toString('base64')]);
+    if (present(receiptPath)?.isSymbolicLink()) throw new Error('unsafe receipt destination');
+    entries.push(['@receipt', readBytes(receiptPath)?.toString('base64') ?? null, receipt.toString('base64')]);
+    replaceBytes(path.join(mutex, 'journal.json'), Buffer.from(JSON.stringify({ version: 1, entries })));
     for (const [rel, content] of changes) {
-      beforeWrite(rel);
-      if (!resolveWritableInside(cwd, rel) || hasSymlink(cwd, rel)) throw new Error('destination changed during preparation');
-      const abs = path.join(cwd, rel);
-      const before = backups.get(rel);
-      if (before === null ? present(abs) : !present(abs) || !fs.readFileSync(abs).equals(before)) throw new Error('destination edited during preparation');
-      fs.mkdirSync(path.dirname(abs), { recursive: true });
-      applied.push(rel);
-      written.set(rel, Buffer.from(content));
-      fs.writeFileSync(abs, content, { mode: 0o600 });
+      const p = /** @type {string} */ (rel);
+      beforeWrite(p);
+      if (!resolveWritableInside(cwd, p) || hasSymlink(cwd, p)) throw new Error('destination changed during preparation');
+      const before = entries.find(([r]) => r === rel)[1];
+      if (!sameBytes(readBytes(path.join(cwd, p)), before === null ? null : Buffer.from(before, 'base64'))) throw new Error('destination edited during preparation');
+      replaceBytes(path.join(cwd, p), /** @type {Buffer} */ (content));
     }
     for (const [rel, content] of outputs) if (!fs.readFileSync(path.join(cwd, rel)).equals(Buffer.from(content))) throw new Error('artifact verification failed');
     for (const [key, value] of settings) if (!isDeepStrictEqual(settingsValueAt(cwd, key), value)) throw new Error('settings verification failed');
-    fs.writeFileSync(receiptPath, JSON.stringify({ files: Object.fromEntries([...outputs].filter(([p]) => harnessPath(p) && !settingFiles.includes(p)).map(([p, c]) => [p, sha256(c)])), settings: Object.fromEntries([...settings].map(([key, value]) => [key, sha256(JSON.stringify(value))])) }), { mode: 0o600 });
-    result.generatedPaths = changes.map(([p]) => p);
+    replaceBytes(receiptPath, receipt);
+    result.generatedPaths = changes.map(([p]) => /** @type {string} */ (p));
     result.status = changes.length ? 'ready' : 'no-op';
   } catch (e) {
-    for (const rel of applied.reverse()) {
-      try {
-        if (!resolveWritableInside(cwd, rel) || hasSymlink(cwd, rel) || !fs.readFileSync(path.join(cwd, rel)).equals(written.get(rel))) throw new Error('artifact changed after write');
-        const before = backups.get(rel);
-        if (before === null) fs.rmSync(path.join(cwd, rel));
-        else fs.writeFileSync(path.join(cwd, rel), before);
-      }
+    if (acquired) {
+      try { recoverPreparation(cwd, mutex); }
       catch { result.errors.push('rollback incomplete — inspect private transaction journal before retrying'); acquired = false; }
     }
     result.errors.push(e.message);

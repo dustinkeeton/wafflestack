@@ -315,3 +315,22 @@ for (const offline of [true, false]) test(`npm-installed exact commit prepares w
   lock.toolkit.commit = 'c'.repeat(40);
   assert.throws(() => resolvePreparationToolkit({ lock, toolkitRoot: installed, cwd: f.wt, offline: true, sourceCacheDir: cache }), /cache miss/);
 });
+
+for (const signal of ['SIGINT', 'SIGKILL']) test(`dead preparation owner recovers its journal after ${signal}`, (t) => {
+  const f = fixture(t);
+  const module = new URL('../lib/prepare-worktree.mjs', import.meta.url).href;
+  const script = `import { prepareWorktree } from ${JSON.stringify(module)};
+    let n = 0;
+    prepareWorktree({ cwd: ${JSON.stringify(f.wt)}, toolkitRoot: ${JSON.stringify(f.toolkit)},
+      resolveToolkit: () => ({ root: ${JSON.stringify(f.toolkit)}, pin: 'fixture', version: '1.0.0' }),
+      beforeWrite: () => { if (++n === 2) process.kill(process.pid, ${JSON.stringify(signal)}); }
+    });`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script]);
+  assert.equal(child.signal, signal, child.stderr.toString());
+  const mutex = path.join(git(f.wt, 'rev-parse', '--absolute-git-dir'), 'wafflestack-prepare');
+  assert.ok(fs.existsSync(path.join(mutex, 'journal.json')));
+  const result = f.run();
+  assert.equal(result.status, 'ready', JSON.stringify(result));
+  assert.equal(f.run().status, 'no-op');
+  assert.equal(fs.existsSync(mutex), false);
+});
