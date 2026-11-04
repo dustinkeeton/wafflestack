@@ -297,3 +297,21 @@ for (const foreign of [true, false]) test(`untrusted toolkit resolution never fe
   assert.doesNotMatch(fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8') : '', /clone|fetch|ls-remote/);
   assert.deepEqual(fs.existsSync(cache) ? fs.readdirSync(cache) : [], []);
 });
+
+for (const offline of [true, false]) test(`npm-installed exact commit prepares without a cache (offline=${offline})`, (t) => {
+  const f = fixture(t);
+  const commit = 'b'.repeat(40);
+  const installed = path.join(f.dir, 'node_modules/fixture');
+  fs.cpSync(f.toolkit, installed, { recursive: true });
+  write(f.dir, 'node_modules/.package-lock.json', JSON.stringify({ packages: { 'node_modules/fixture': { resolved: `git+https://github.com/example/fixture.git#${commit}` } } }));
+  const lock = readLock(f.wt);
+  lock.toolkit = { source: 'github:example/fixture', ref: 'v1.0.0', commit, status: 'release' };
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'pin npm toolkit');
+  const cache = path.join(f.dir, 'cold-cache');
+  const result = prepareWorktree({ cwd: f.wt, toolkitRoot: installed, offline, sourceCacheDir: cache });
+  assert.equal(result.status, 'ready', JSON.stringify(result));
+  assert.equal(fs.existsSync(cache), false);
+  lock.toolkit.commit = 'c'.repeat(40);
+  assert.throws(() => resolvePreparationToolkit({ lock, toolkitRoot: installed, cwd: f.wt, offline: true, sourceCacheDir: cache }), /cache miss/);
+});

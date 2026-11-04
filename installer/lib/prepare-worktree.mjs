@@ -45,7 +45,7 @@ export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, 
   const slug = parseRepoSlug(lock.toolkit.source);
   if (!slug || toolkitSource(`${slug.owner}/${slug.repo}`) !== lock.toolkit.source) throw new Error('unsupported toolkit provenance — repair the lock with a pinned upgrade');
   if (`${slug.owner}/${slug.repo}` !== identity.repo) throw new Error('toolkit repository differs from the running CLI — repair the lock using the trusted pinned CLI');
-  if (identity.status === 'release' && identity.tag === lock.toolkit.ref && identity.commit === lock.toolkit.commit && identity.version === lock.toolkitVersion && toolkitSource(identity.repo) === lock.toolkit.source) {
+  if ((identity.origin !== 'checkout' || !git(toolkitRoot, ['status', '--porcelain', '--untracked-files=all'])) && identity.commit === lock.toolkit.commit && identity.version === lock.toolkitVersion && toolkitSource(identity.repo) === lock.toolkit.source) {
     return { root: toolkitRoot, pin, version: lock.toolkitVersion };
   }
   try {
