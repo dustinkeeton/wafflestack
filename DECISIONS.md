@@ -359,6 +359,9 @@ install first.
 **Impact**: Integration-mode runs open one extra PR per run when `main` moved. `CHANGELOG.md` will
 often conflict on a sync, which holds the run for a human.
 
+**Updated 2026-11-04 — a stage 1 hold no longer files an issue (#838).** It posts one hold comment
+instead, on the sync PR or else the run PR merged last into the integration branch (entry above).
+
 ---
 
 ## 2026-10-28: Autopilot integration mode is a routing mode, not a consent (#731, part of #720)
