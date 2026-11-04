@@ -355,7 +355,7 @@ describe('autopilot integration gate stage 1: sync PR (#747)', () => {
     assert.doesNotMatch(md, /"integration gate not yet implemented/);
     assert.match(gate(), /Do not open it, not even as a draft/);
     assert.match(section(md, '## Failure handling', 'At the end, the report'), /\*\*Integration gate stage 1 held\*\*.*\*\*integration-held\*\*/);
-    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /\*\*integration-held\*\* with the reason, a link to the hold comment \(or the follow-up, when one was filed\), and the exact commands/);
+    assert.match(section(md, '## End-of-run housekeeping', '## Guardrails'), /\*\*integration-held\*\* with the reason, the follow-up number and a link to the hold comment, whichever were made, and the exact commands/);
   });
 
   test('the contract, mandate and guardrails cover the sync PR', () => {
@@ -872,9 +872,10 @@ describe('integration holds: an issue only for real work (#838)', () => {
     assert.match(h, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
     assert.match(h, /Give a Defer the issue number `pr-response` filed for it/);
     assert.match(h, /List only the unresolved findings at should-fix or above/);
-    assert.match(h, /a finding below should-fix goes in a hold comment, never the follow-up \(#511\)/);
+    assert.match(h, /A finding below should-fix never goes in the follow-up \(#511\): when one also remains, also post one hold comment on `<F>` as stage 1's \*\*Hold\*\* does, listing those findings with their citations and linking the follow-up/);
     assert.match(h, /When none at should-fix or above remain, as when the cap ended on a round whose fixes all merged, file nothing: post one hold comment on `<F>`/);
-    assert.match(h, /the follow-up number or a link to the hold comment/);
+    assert.match(h, /the follow-up number and a link to the hold comment, whichever were made/);
+    assert.doesNotMatch(h, /goes in a hold comment, never the follow-up/);
   });
 
   test('a stage 3 hold comments on <F>; only the item 7 audit block files', () => {
@@ -888,7 +889,7 @@ describe('integration holds: an issue only for real work (#838)', () => {
     const f = fail();
     assert.match(f, /\*\*Integration gate stage 1 held\*\*[^\n]*one hold comment posted \(on the sync PR, else the run PR merged last into `<integ>`\), no issue filed/);
     assert.doesNotMatch(f.match(/\*\*Integration gate stage 1 held\*\*[^\n]*/)[0], /follow-up filed/);
-    assert.match(f, /\*\*Integration gate stage 2 held\*\*[^\n]*one hold comment posted on `<F>`, or, when findings remain unresolved, one `waffle:manual-review` follow-up filed listing only those/);
+    assert.match(f, /\*\*Integration gate stage 2 held\*\*[^\n]*one hold comment posted on `<F>`, or, when findings at should-fix or above remain unresolved, one `waffle:manual-review` follow-up filed listing only those, plus a hold comment on `<F>` when a finding below should-fix also remains/);
     assert.match(f, /\*\*Integration gate stage 3 held\*\*[^\n]*one hold comment posted on `<F>`, except an unresolved Critical\/High, which files item 7's `waffle:manual-review` follow-up instead/);
   });
 
