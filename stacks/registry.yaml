@@ -324,3 +324,15 @@ waffles:
     stack: wafflestack
     path: stacks/wafflestack/mods/waffle-view
     status: stable
+
+  # ── tstack ──────────────────────────────────────────────────────────────────
+  - name: council
+    kind: skill
+    stack: tstack
+    path: stacks/tstack/skills/council
+    status: stable
+    upstream:
+      repo: t3dotgg/tstack
+      path: skills/council
+      commit: 1085050f3baed1ac724caa4a8166145fb2ac88af
+      license: MIT

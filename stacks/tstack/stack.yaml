@@ -1,0 +1,13 @@
+name: tstack
+description: >-
+  Skills from t3dotgg/tstack, copied verbatim at a pinned commit with upstream's MIT LICENSE.
+  council runs a three-provider review (one flagship model per provider) and records scored
+  rounds in the PR description. Standalone /council only; not wired into autopilot.
+skills:
+  - name: council
+    upstream:
+      repo: t3dotgg/tstack
+      path: skills/council
+      commit: 1085050f3baed1ac724caa4a8166145fb2ac88af
+      license: MIT
+      hash: sha256:0335b6d2537bfda4f071e1213dc57af1c17d92a43d0562f5da0ebafe33dd86ed

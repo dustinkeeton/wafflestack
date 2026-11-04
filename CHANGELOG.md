@@ -54,6 +54,22 @@ is what you reach for across a breaking one.
   **Consumer impact:** none until a pinned skill is selected — no shipped skill is pinned yet, and
   locks without one are byte-identical.
 
+- **New `tstack` stack ships `council` from t3dotgg/tstack (#828, part of #825).** `council` runs
+  a review with one flagship model from each of three providers and records scored rounds in the PR
+  description. It is the first shipped upstream-pinned skill: upstream's `SKILL.md` and MIT
+  `LICENSE`, byte-for-byte at `1085050f3bae`, rendered verbatim. Invoke it as `/council`; it is not
+  wired into autopilot. Enable it with `stacks: [tstack]` or `include: [skills/council]`.
+
+  **Consumer impact:** none unless you enable `tstack`.
+
+- **`npm run upstream:check` and `npm run upstream:bump` keep upstream-pinned skills current (#828,
+  part of #825).** `check` reports each pin as current, behind, diverged or error against the latest
+  upstream commit touching its path or `LICENSE`. `bump` re-copies the files, rewrites the pin, hash
+  and registry commit, and adds a CHANGELOG line; it refuses a relicense or a hand-edited copy.
+  Toolkit-developer scripts over `gh api`, with no CI hook.
+
+  **Consumer impact:** none unless you enable `tstack` (the scripts never run in a consumer repo).
+
 ### Changed
 
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate
