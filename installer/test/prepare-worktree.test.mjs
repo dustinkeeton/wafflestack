@@ -334,3 +334,39 @@ for (const signal of ['SIGINT', 'SIGKILL']) test(`dead preparation owner recover
   assert.equal(f.run().status, 'no-op');
   assert.equal(fs.existsSync(mutex), false);
 });
+
+for (const scenario of ['removed-agent', 'dropped-target', 'edited', 'symlink', 'tracked', 'rollback']) test(`receipt pruning: ${scenario}`, (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 'ready');
+  const rel = '.claude/agents/worker.md';
+  const original = fs.readFileSync(path.join(f.wt, rel));
+  if (scenario !== 'dropped-target') {
+    const manifest = path.join(f.toolkit, 'stacks/demo/stack.yaml');
+    fs.writeFileSync(manifest, fs.readFileSync(manifest, 'utf8').replace('agents: [worker]', 'agents: []'));
+  }
+  const config = scenario === 'dropped-target' ? 'targets: [codex, agents-dir]\nstacks: [demo]\n' : 'targets: [claude, codex, agents-dir]\nstacks: [demo]\n';
+  write(f.wt, '.waffle/waffle.yaml', config);
+  const planned = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0', planOnly: true });
+  assert.equal(planned.ok, true, JSON.stringify(planned.errors));
+  const lock = readLock(f.wt);
+  lock.files = planned.plan.files;
+  lock.settings = planned.plan.settings;
+  lock.targets = planned.plan.canonicalTargets;
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.yaml', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'remove selection');
+  if (scenario === 'edited') write(f.wt, rel, 'user edits');
+  if (scenario === 'symlink') { fs.unlinkSync(path.join(f.wt, rel)); fs.symlinkSync(path.join(f.wt, '.claude/agents/custom.md'), path.join(f.wt, rel)); }
+  if (scenario === 'tracked') git(f.wt, 'add', '-f', rel);
+  let n = 0;
+  const result = f.run({ beforeWrite: () => { if (scenario === 'rollback' && ++n === 2) throw new Error('injected prune failure'); } });
+  if (['edited', 'symlink', 'tracked', 'rollback'].includes(scenario)) {
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.ok(fs.existsSync(path.join(f.wt, rel)));
+    if (scenario === 'rollback') assert.deepEqual(fs.readFileSync(path.join(f.wt, rel)), original);
+  } else {
+    assert.equal(result.status, 'ready', JSON.stringify(result));
+    assert.ok(result.prunedPaths.includes(rel));
+    assert.equal(fs.existsSync(path.join(f.wt, rel)), false);
+    assert.equal(f.run().status, 'no-op');
+  }
+});

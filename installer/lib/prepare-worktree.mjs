@@ -27,7 +27,7 @@ const json = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
  * @typedef {{ root: string, pin: string, version: string }} PreparedToolkit
  * @typedef {{ lock: PreparationLock, toolkitRoot: string, cwd: string, offline?: boolean, untrustedConfig?: boolean, sourceCacheDir?: string, allowUnreleased?: boolean }} ToolkitOptions
  * @typedef {{ cwd: string, toolkitRoot: string, offline?: boolean, untrustedConfig?: boolean, allowUnreleased?: boolean, sourceCacheDir?: string, overlay?: 'local'|'main'|'none', resolveToolkit?: (options: ToolkitOptions) => PreparedToolkit, beforeWrite?: (path: string) => void }} PrepareOptions
- * @typedef {{ status: 'failed'|'ready'|'no-op', targets: string[], pin: string|null, generatedPaths: string[], conflicts: string[], overlayMode: 'canonical'|'destination-overlay'|'main-overlay', notices: string[], missingIgnore: string[], errors: string[] }} PrepareResult
+ * @typedef {{ status: 'failed'|'ready'|'no-op', targets: string[], pin: string|null, generatedPaths: string[], prunedPaths: string[], conflicts: string[], overlayMode: 'canonical'|'destination-overlay'|'main-overlay', notices: string[], missingIgnore: string[], errors: string[] }} PrepareResult
  */
 
 /** Resolve source bytes by the destination lock, never by the associated main checkout.
@@ -65,7 +65,7 @@ export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, 
  */
 export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedConfig = false, allowUnreleased = false, sourceCacheDir = defaultSourceCacheDir(), overlay, resolveToolkit = resolvePreparationToolkit, beforeWrite = () => {} }) {
   /** @type {PrepareResult} */
-  const result = { status: 'failed', targets: [], pin: null, generatedPaths: [], conflicts: [], overlayMode: 'canonical', notices: [], missingIgnore: [], errors: [] };
+  const result = { status: 'failed', targets: [], pin: null, generatedPaths: [], prunedPaths: [], conflicts: [], overlayMode: 'canonical', notices: [], missingIgnore: [], errors: [] };
   let mutex = '';
   let acquired = false;
   let temp;
@@ -140,11 +140,18 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
       const stat = present(abs);
       if (stat && (!stat.isFile() || ![sha256(content), previous.files?.[rel], lock.files[rel]].includes(sha256(fs.readFileSync(abs))))) result.conflicts.push(rel);
     }
+    const prune = [];
     for (const rel of Object.keys(previous.files ?? {})) {
-      if (harnessPath(rel) && !isEjected(rel) && !outputs.has(rel) && !settingFiles.includes(rel) && present(path.join(cwd, rel))) result.conflicts.push(rel);
+      if (!harnessPath(rel) || isEjected(rel) || outputs.has(rel) || settingFiles.includes(rel)) continue;
+      const abs = path.join(cwd, rel);
+      if (!resolveWritableInside(cwd, rel) || hasSymlink(cwd, rel)) { result.conflicts.push(rel); continue; }
+      const stat = present(abs);
+      if (!stat) continue;
+      if (!stat.isFile() || sha256(fs.readFileSync(abs)) !== previous.files[rel] || git(cwd, ['ls-files', '--', rel])) result.conflicts.push(rel);
+      else prune.push(rel);
     }
     for (const rel of plan.canonical.outputs.keys()) {
-      if (harnessPath(rel) && !outputs.has(rel) && present(path.join(cwd, rel))) result.conflicts.push(rel);
+      if (harnessPath(rel) && !outputs.has(rel) && !prune.includes(rel) && !isEjected(rel) && present(path.join(cwd, rel))) result.conflicts.push(rel);
     }
     for (const key of plan.canonical.settings.keys()) {
       if (harnessPath(key) && !settings.has(key) && settingsValueAt(cwd, key) !== undefined) result.conflicts.push(key);
@@ -193,8 +200,11 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     }
     else if (present(path.join(cwd, LOCAL_LOCK_FILE))) throw new Error('stale local lock — reconcile it with an explicit render before canonical preparation');
     const receipt = Buffer.from(JSON.stringify({ files: Object.fromEntries([...outputs].filter(([p]) => harnessPath(p) && !settingFiles.includes(p)).map(([p, c]) => [p, sha256(c)])), settings: Object.fromEntries([...settings].map(([key, value]) => [key, sha256(JSON.stringify(value))])) }));
-    const changes = [...outputs].map(([p, c]) => [p, Buffer.from(c)]).filter(([p, c]) => !sameBytes(readBytes(path.join(cwd, /** @type {string} */ (p))), /** @type {Buffer} */ (c)));
-    const entries = changes.map(([rel, content]) => [rel, readBytes(path.join(cwd, /** @type {string} */ (rel)))?.toString('base64') ?? null, content.toString('base64')]);
+    /** @type {[string, Buffer|null][]} */
+    const desired = [...outputs].map(([p, c]) => [p, Buffer.from(c)]);
+    desired.push(...prune.map((p) => /** @type {[string, null]} */ ([p, null])));
+    const changes = desired.filter(([p, c]) => !sameBytes(readBytes(path.join(cwd, p)), c));
+    const entries = changes.map(([rel, content]) => [rel, readBytes(path.join(cwd, /** @type {string} */ (rel)))?.toString('base64') ?? null, content?.toString('base64') ?? null]);
     if (present(receiptPath)?.isSymbolicLink()) throw new Error('unsafe receipt destination');
     entries.push(['@receipt', readBytes(receiptPath)?.toString('base64') ?? null, receipt.toString('base64')]);
     replaceBytes(path.join(mutex, 'journal.json'), Buffer.from(JSON.stringify({ version: 1, entries })));
@@ -207,9 +217,11 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
       replaceBytes(path.join(cwd, p), /** @type {Buffer} */ (content));
     }
     for (const [rel, content] of outputs) if (!fs.readFileSync(path.join(cwd, rel)).equals(Buffer.from(content))) throw new Error('artifact verification failed');
+    for (const rel of prune) if (present(path.join(cwd, rel))) throw new Error('prune verification failed');
     for (const [key, value] of settings) if (!isDeepStrictEqual(settingsValueAt(cwd, key), value)) throw new Error('settings verification failed');
     replaceBytes(receiptPath, receipt);
-    result.generatedPaths = changes.map(([p]) => /** @type {string} */ (p));
+    result.generatedPaths = changes.filter(([, c]) => c !== null).map(([p]) => p);
+    result.prunedPaths = prune;
     result.status = changes.length ? 'ready' : 'no-op';
   } catch (e) {
     if (acquired) {
