@@ -11,7 +11,7 @@ import { validateToolkit } from '../lib/validate.mjs';
 import { renderProject, readLock, readLocalLock } from '../lib/render.mjs';
 import { doctor } from '../lib/doctor.mjs';
 import { eject } from '../lib/eject.mjs';
-import { collectReport, formatReportMarkdown, redact } from '../lib/report.mjs';
+import { collectReport, formatReportMarkdown, redact, EXTERNAL_UPSTREAM } from '../lib/report.mjs';
 import { upgrade, diffUpstream } from '../lib/upgrade.mjs';
 import { collectState } from '../lib/state.mjs';
 import { collectConfig } from '../lib/config.mjs';
@@ -270,6 +270,21 @@ describe('report and upgrade surface upstream provenance (#827)', () => {
     const plain = makeProject({ stacks: [], include: ['skills/plain'] });
     assert.equal(render(toolkitRoot, plain).ok, true);
     assert.doesNotMatch(formatReportMarkdown(collectReport({ cwd: plain, toolkitRoot, toolkitVersion: VERSION })), /upstream-pinned/);
+  });
+
+  test('report: an external stack\'s upstream repo and path are withheld in the bundle and the markdown (#473)', () => {
+    const toolkitRoot = makeToolkit();
+    const cwd = makeProject();
+    assert.equal(render(toolkitRoot, cwd).ok, true);
+    const lockFile = path.join(cwd, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+    lock.sources = [{ name: 'vendor', source: 'git@example.com:acme/private.git', sourceType: 'git', ref: 'v1', commit: COMMIT, files: [] }];
+    fs.writeFileSync(lockFile, JSON.stringify(lock, null, 2));
+    const bundle = collectReport({ cwd, toolkitRoot, toolkitVersion: VERSION });
+    assert.deepEqual(bundle.lock.upstream, [{ item: ITEM, repo: EXTERNAL_UPSTREAM, path: EXTERNAL_UPSTREAM, commit: COMMIT }]);
+    const md = formatReportMarkdown(bundle);
+    assert.match(md, /- \*\*upstream-pinned\*\*: vendor\/skills\/echo \(<external-upstream> @ 0123456\)/);
+    assert.doesNotMatch(JSON.stringify(bundle) + md, /tstack|"skills\/echo"/);
   });
 
   test('diffUpstream: added, moved, repointed, removed; an unchanged pin is no move', () => {
