@@ -681,7 +681,10 @@ lock-managed, #594) are COMMITTED; the `.claude/` render (`agents/`, `skills/`, 
 gitignored (`/.claude/{skills,agents,workflows}/*`, so `!` can re-include an ejected item).
 Re-render after a pull or a `stacks/**` edit and commit the LOCK; `self-posture.test.mjs` fails if
 the render is re-tracked. Delegate/autopilot run `prepare-worktree` before worker startup and recheck reused/retry
-checkouts after input changes. `t3.json` runs the local development CLI before new worktree
+checkouts after input changes. They run `autopilot.waffleCmd` from inside the destination
+checkout, so this repo uses its own unreleased installer rather than a bare executable.
+The preparation module is type-checked; `--overlay local|main|none` overrides local Git
+policy per invocation without bypassing privacy or interrupted-transaction guards. `t3.json` runs the local development CLI before new worktree
 sessions; it reproduces the committed lock and provisions only harness artifacts. Runtime
 fallback is not the contract. See `docs/worktree-setup.md` for host adapters and overlay policy. Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),

@@ -64,10 +64,13 @@ try {
     case 'prepare-worktree': {
       const json = extractFlag(args, '--json');
       const untrustedConfig = extractFlag(args, '--untrusted-config');
+      const hasOverlay = args.includes('--overlay');
+      const overlays = extractValues(args, '--overlay', 'local, main, or none');
+      if ((hasOverlay && overlays.length !== 1) || (overlays.length && !['local', 'main', 'none'].includes(overlays[0]))) fail('--overlay requires exactly one of local, main, none');
       if (args.length) fail('prepare-worktree takes no refs; use --cwd with the checkout root');
-      const result = prepareWorktree({ cwd, toolkitRoot, offline, untrustedConfig, allowUnreleased });
+      const result = prepareWorktree({ cwd, toolkitRoot, offline, untrustedConfig, allowUnreleased, overlay: overlays[0] });
       process.stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : [
-        `prepare-worktree: ${result.status} (${result.overlayMode}; ${result.pin ?? 'no pin'})`,
+        `prepare-worktree: ${result.status} (${result.generatedPaths.length} written; ${result.overlayMode}; ${result.pin ?? 'no pin'})`,
         ...result.notices, ...result.errors, ...result.conflicts.map((p) => `conflict: ${p}`),
         ...result.missingIgnore.map((p) => `missing ignore coverage: ${p}`),
       ].join('\n') + '\n');
@@ -435,7 +438,7 @@ function helpText() {
     '  toggle      pick which rendered skills an agent may invoke on its own (TTY picker), then render',
     '  install     add stacks/items to the selection (persists them), then render',
     '  render      re-render the current selection into .claude/ (agents, skills, mods), .codex/, .agents/ and files/ paths',
-    '  prepare-worktree  provision pinned harness artifacts before startup (--json, --offline, --untrusted-config)',
+    '  prepare-worktree  provision pinned harness artifacts before startup (--json, --offline, --untrusted-config, --overlay local|main|none)',
     '  bake        alias for render — same command, better metaphor',
     '  upgrade     move this repo across toolkit versions: run migrations, then re-render',
     '  doctor      check the rendered files still match the lock manifest (drift check)',
@@ -553,11 +556,11 @@ function applyToggleAndRender(model, disable, enable, toolkitIdentity) {
 }
 
 // `--name VALUE` pairs, repeatable, comma-splittable; spliced out like `extractFlag`.
-function extractValues(argv, name) {
+function extractValues(argv, name, expected = 'a skill name') {
   const values = [];
   for (let i = argv.indexOf(name); i !== -1; i = argv.indexOf(name)) {
     const value = argv[i + 1];
-    if (!value || value.startsWith('--')) fail(`${name} requires a skill name`);
+    if (!value || value.startsWith('--')) fail(`${name} requires ${expected}`);
     argv.splice(i, 2);
     for (const v of value.split(',')) if (v.trim()) values.push(v.trim());
   }

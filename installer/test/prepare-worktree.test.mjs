@@ -1,9 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { prepareWorktree, resolvePreparationToolkit } from '../lib/prepare-worktree.mjs';
 import { renderProject, readLock } from '../lib/render.mjs';
+import { resolveToolkitIdentity } from '../lib/toolkit-ref.mjs';
 import { sha256 } from '../lib/util.mjs';
 
 import { fixture, git, write } from './prepare-fixture.mjs';
@@ -139,7 +142,7 @@ test('untrusted configuration rejects external sources without running checks', 
   write(f.wt, '.waffle/waffle.yaml', 'stacks:\n  - name: demo\n    source: ../private-source\n');
   git(f.wt, 'add', '.waffle/waffle.yaml'); git(f.wt, 'commit', '-m', 'external source');
   const result = f.run({ untrustedConfig: true });
-  assert.equal(result.status, 'failed'); assert.match(result.errors.join(), /external-source trust/);
+  assert.equal(result.status, 'failed'); assert.match(result.errors.join(), /external source or trust failure/);
 });
 
 test('relative external sources and extensions resolve from the destination', (t) => {
@@ -187,4 +190,90 @@ test('ejected resources remain project-owned after a selection change', (t) => {
   git(f.wt, 'add', '.waffle/waffle.yaml', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'eject hello');
   const result = f.run(); assert.notEqual(result.status, 'failed', JSON.stringify(result));
   assert.equal(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), 'project-owned ejected content');
+});
+
+
+test('per-run overlay choices override persisted policy without changing it', (t) => {
+  const f = fixture(t);
+  write(f.root, '.waffle/waffle.local.yaml', 'config:\n  greeting: MAIN_PRIVATE\n');
+  git(f.root, 'config', '--local', 'wafflestack.worktreeOverlay', 'main');
+  assert.equal(f.run({ overlay: 'local' }).overlayMode, 'canonical');
+  write(f.wt, '.waffle/waffle.local.yaml', 'config:\n  greeting: DEST_PRIVATE\n');
+  const canonical = f.run({ overlay: 'none', untrustedConfig: true });
+  assert.equal(canonical.status, 'no-op', JSON.stringify(canonical));
+  assert.equal(canonical.overlayMode, 'canonical');
+  assert.doesNotMatch(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), /PRIVATE/);
+  assert.equal(f.run({ overlay: 'local' }).overlayMode, 'destination-overlay');
+  assert.equal(git(f.root, 'config', '--local', '--get', 'wafflestack.worktreeOverlay'), 'main');
+  assert.equal(f.run({ overlay: 'main', untrustedConfig: true }).status, 'failed');
+  // Disabling overlays does not silently discard a previous private render/local lock.
+  const disabled = f.run({ overlay: 'none' });
+  assert.equal(disabled.status, 'failed');
+  assert.match(disabled.errors.join(), /stale local lock/);
+  assert.match(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), /DEST_PRIVATE/);
+});
+
+test('none skips malformed private YAML; local reports a safe syntax diagnosis', (t) => {
+  const f = fixture(t);
+  write(f.wt, '.waffle/waffle.local.yaml', 'config: [PRIVATE_SECRET');
+  assert.equal(f.run({ overlay: 'none' }).status, 'ready');
+  const result = f.run({ overlay: 'local' });
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /invalid configuration syntax/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SECRET/);
+});
+
+test('missing required configuration reports a repair category without raw values', (t) => {
+  const f = fixture(t);
+  fs.appendFileSync(path.join(f.toolkit, 'stacks/demo/stack.yaml'), '  missing.value:\n    required: true\n');
+  write(f.toolkit, 'stacks/demo/skills/hello/SKILL.md', '---\nname: hello\ndescription: fixture\n---\n{{missing.value}}\n');
+  const result = f.run();
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /missing required configuration/);
+  assert.equal(fs.existsSync(path.join(f.wt, '.agents/skills/hello/SKILL.md')), false);
+});
+
+test('main overlay flag preserves tracked-output and ignore safeguards', (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 'ready');
+  git(f.wt, 'add', '-f', '.claude/skills/hello/SKILL.md');
+  git(f.wt, 'commit', '-m', 'track generated output');
+  write(f.root, '.waffle/waffle.local.yaml', 'config:\n  greeting: PRIVATE_FLAG\n');
+  const result = f.run({ overlay: 'main' });
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /tracked or exposed/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_FLAG/);
+});
+
+
+test('the delegate recipe runs the actual development CLI inside the destination', (t) => {
+  const f = fixture(t);
+  const repo = fileURLToPath(new URL('../../', import.meta.url));
+  fs.cpSync(f.toolkit, f.wt, { recursive: true });
+  fs.cpSync(path.join(repo, 'installer/lib'), path.join(f.wt, 'installer/lib'), { recursive: true });
+  fs.copyFileSync(path.join(repo, 'installer/cli.mjs'), path.join(f.wt, 'installer/cli.mjs'));
+  fs.symlinkSync(path.join(repo, 'node_modules'), path.join(f.wt, 'node_modules'));
+  const rendered = renderProject({ cwd: f.wt, toolkitRoot: f.wt, toolkitVersion: '1.0.0', toolkitIdentity: resolveToolkitIdentity({ toolkitRoot: f.wt, offline: true }) });
+  assert.equal(rendered.ok, true, JSON.stringify(rendered.errors));
+  git(f.wt, 'add', '.waffle/waffle.lock.json', 'package.json', 'toolkit.yaml', 'stacks'); git(f.wt, 'commit', '-m', 'destination toolkit');
+  fs.rmSync(path.join(f.wt, '.agents'), { recursive: true });
+  const skill = fs.readFileSync(path.join(repo, 'stacks/orchestration/skills/delegate/SKILL.md'), 'utf8');
+  const recipe = skill.split('\n').find(line => line.startsWith('(cd "$WORKTREE_PATH" &&'));
+  assert.ok(recipe);
+  const command = recipe.replace('{{autopilot.waffleCmd}}', 'env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs');
+  const run = (extra = '') => spawnSync('sh', ['-c', command.replace(' --json)', ` --json ${extra})`)], {
+    cwd: f.root, encoding: 'utf8', env: { ...process.env, WORKTREE_PATH: f.wt, WAFFLESTACK_OFFLINE: '1' },
+  });
+  const first = run();
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.equal(JSON.parse(first.stdout).status, 'ready');
+  assert.ok(fs.existsSync(path.join(f.wt, '.agents/skills/hello/helper.mjs')));
+  const second = run('--overlay none');
+  assert.equal(second.status, 0, second.stdout + second.stderr);
+  assert.equal(JSON.parse(second.stdout).status, 'no-op');
+  for (const flag of ['--overlay', '--overlay invalid', '--overlay local --overlay main', '--overlay ,']) {
+    const invalid = run(flag);
+    assert.equal(invalid.status, 1, flag);
+    assert.match(invalid.stderr, /--overlay requires/);
+  }
 });

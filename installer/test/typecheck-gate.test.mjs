@@ -12,6 +12,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 
 // Every file migrated so far — repo-relative. Append here as waves land.
 const MIGRATED = [
+  'installer/lib/prepare-worktree.mjs',
   'installer/lib/util.mjs',
   'installer/lib/toolkit.mjs',
   'installer/lib/refs.mjs',

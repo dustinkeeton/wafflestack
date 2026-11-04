@@ -56,6 +56,11 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- Worktree preparation now runs delegate/autopilot's configured CLI inside the destination
+  checkout, including this repository's unreleased development runner. Adds per-run
+  `--overlay local|main|none`, privacy-safe render failure categories, and type checking
+  of the preparation module; interrupted-write and private-output guards remain enforced.
+
 - **Autopilot's `changelog-merge.mjs` holds when main's lead-in leaves the entry above (#810).**
   The #803 narrowing let an `<integ>` lead-in resolve after a main lead-in that ends in a blank
   line, or that already holds a blank followed by a line indented under two spaces. Written after it, `<integ>`'s

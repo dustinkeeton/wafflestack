@@ -5,6 +5,12 @@ the toolkit enforces, see [schema/FORMAT.md](schema/FORMAT.md).
 For decisions and current state, see [DECISIONS.md](DECISIONS.md) and
 [STATUS.md](STATUS.md).
 
+Worktree startup uses a read-only render plan followed by a harness-only transaction.
+`prepare-worktree` resolves the destination pin, checks ownership and private-output
+posture, and retains a recovery journal for interrupted writes. Orchestration runs its
+configured CLI inside the destination before launching a worker. See
+[worktree preparation](docs/worktree-setup.md).
+
 ## What wafflestack is
 
 wafflestack is a **library of reusable AI-agent and skill definitions** and a

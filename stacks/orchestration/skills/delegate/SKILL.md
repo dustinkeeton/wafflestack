@@ -449,12 +449,16 @@ Notes:
 - Use `origin/main` as the base, not local `main`, so all worktrees start from the same fetched tip.
 - Keep `{{git.worktreesDir}}/` gitignored.
 
-**Prepare before launching.** After each worktree creation or reuse, run the installed
-feature-capable CLI from outside the new worker session:
+**Prepare before launching.** After each worktree creation or reuse, run the configured
+feature-capable CLI from inside the destination checkout, outside the new worker session:
 
 ```bash
-wafflestack prepare-worktree --cwd "$(realpath "$WORKTREE_PATH")" --json
+(cd "$WORKTREE_PATH" && {{autopilot.waffleCmd}} prepare-worktree --cwd "$PWD" --json)
 ```
+
+The subshell makes relative CLI paths use the destination toolkit, including this toolkit’s
+unreleased development runner. Ensure its dependencies are installed before preparation.
+For a released consumer, upgrade a pre-feature pin before using this command.
 
 Require `ready` or `no-op` and exit 0 before spawning the worker. On failure retain the
 structured diagnostics and stop that launch; never substitute `doctor --allow-missing`,

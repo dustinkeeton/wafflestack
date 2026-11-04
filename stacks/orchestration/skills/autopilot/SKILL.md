@@ -25,8 +25,10 @@ Cross-referenced, never duplicated:
 ## Worktree launch prerequisite
 
 Before **every** worker launch in a created or reused checkout, run
-`wafflestack prepare-worktree --cwd <absolute-worktree-path> --json` using an installed
-feature-capable CLI outside that worker session. Require exit 0 and `ready` or `no-op`;
+`(cd "<absolute-worktree-path>" && {{autopilot.waffleCmd}} prepare-worktree --cwd "$PWD" --json)`
+using the configured feature-capable CLI outside that worker session. Run from inside the
+destination so relative development runners use its own toolkit; install its dependencies
+first if needed. Require exit 0 and `ready` or `no-op`;
 otherwise retain diagnostics, stop the launch and report the preparation failure.
 This applies to delegate implementers, implement-ahead, QA/review workers and responders,
 integration reviewers, stage-2 `<a2>` responders, stage-3 `<a3>` audit workers, gate

@@ -8,6 +8,11 @@
 - **Health**: 🟢 tests 1830 in 241 suites (1828 pass, 2 skipped by design, #445) · `validate` clean · CI green on `main` at `32f668d` (PR #683's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
+Worktree preparation is implemented for the next release; see the
+[setup and validation record](docs/worktree-setup.md). Claude invocation passed; Codex
+custom-agent invocation remains unresolved in the tested runtime. Desktop startup
+has not been verified end to end.
+
 ## Stacks
 
 All 9 stacks are shipped and stable — **14 agents, 41 skills, and 1 mod** in total. Pick what a project needs.
