@@ -43,6 +43,17 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** none — no rendered output changes.
 
+- **Upstream-pinned skills render verbatim and record their provenance in the lock (#827, part of
+  #825).** A pinned skill's files render byte-for-byte as the copy, with no `{{…}}` substitution
+  (`harness.*` included); a project extension and the `skills.modelInvocation` patch still apply,
+  and the skill demands no config. The lock gains an `upstream` block (`{ item, repo, path, commit,
+  files }` per pinned skill), which `doctor --verify-render` reproduces. `doctor` notes each pin and
+  attributes drift to it, `report` lists it, `upgrade` logs each pin that moved, and `eject` drops
+  the ejected skill's entry.
+
+  **Consumer impact:** none until a pinned skill is selected — no shipped skill is pinned yet, and
+  locks without one are byte-identical.
+
 ### Changed
 
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate

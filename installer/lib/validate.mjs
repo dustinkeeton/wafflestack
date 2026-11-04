@@ -758,7 +758,8 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       const { data } = skill;
       if (!data.name) problems.push(`${ctx}: skill ${skill.name} missing frontmatter name`);
       if (!data.description) problems.push(`${ctx}: skill ${skill.name} missing frontmatter description`);
-      for (const rel of skill.files.filter((f) => f.endsWith('.md'))) {
+      // A pinned copy renders verbatim (#827): its `{{…}}` text is upstream's, never a placeholder.
+      for (const rel of skill.upstream ? [] : skill.files.filter((f) => f.endsWith('.md'))) {
         for (const k of placeholderKeys(fs.readFileSync(path.join(skill.dir, rel), 'utf8'))) usedKeys.add(k);
       }
       if (skill.upstream) for (const problem of upstreamPinProblems(skill)) problems.push(`${ctx}: skill ${skill.name} ${problem}`);

@@ -104,3 +104,46 @@ export function upstreamShapeProblems(pin, { allowed = UPSTREAM_KEYS, requireHas
   }
   return problems;
 }
+
+/**
+ * @typedef {object} UpstreamLockEntry the consumer lock's provenance for one pinned skill (#827)
+ * @property {string} item `<stack>/skills/<name>`, the render context that emitted the files
+ * @property {string} repo
+ * @property {string} path
+ * @property {string} commit
+ * @property {string[]} files rendered lock paths, sorted
+ */
+
+/**
+ * The lock's `upstream` block: one entry per selected pinned skill that rendered ≥1 file, sorted by
+ * item. A pin too malformed to name its repo, path and commit gets no entry (validate is the gate).
+ *
+ * @param {Map<string, { stack: { name: string }, items: { kind: string, item: any }[] }>} groups
+ * @param {Map<string, string>} producedBy rendered path → emitting context
+ * @param {Record<string, string>} lockFiles
+ * @returns {UpstreamLockEntry[]}
+ */
+export function upstreamLockEntries(groups, producedBy, lockFiles) {
+  /** @type {UpstreamLockEntry[]} */
+  const entries = [];
+  for (const { stack, items } of groups.values()) {
+    for (const { kind, item } of items) {
+      const pin = kind === 'skills' ? item.upstream : null;
+      if (!pin?.isMap || !pin.repo || !pin.path || !pin.commit) continue;
+      const id = `${stack.name}/skills/${item.name}`;
+      const files = Object.keys(lockFiles).filter((rel) => producedBy.get(rel) === id).sort((a, b) => a.localeCompare(b));
+      if (files.length) entries.push({ item: id, repo: pin.repo, path: pin.path, commit: pin.commit, files });
+    }
+  }
+  return entries.sort((a, b) => a.item.localeCompare(b.item));
+}
+
+/**
+ * The lock's `upstream` entries, tolerating an absent or malformed block.
+ *
+ * @param {any} lock
+ * @returns {UpstreamLockEntry[]}
+ */
+export function lockUpstream(lock) {
+  return Array.isArray(lock?.upstream) ? lock.upstream.filter((/** @type {any} */ e) => e && typeof e.item === 'string') : [];
+}
