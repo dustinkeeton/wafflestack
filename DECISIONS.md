@@ -9,6 +9,15 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-04: Codex invocation verification is separate from provisioning (#820, #843)
+
+The owner narrowed #820 after the named-agent smoke test failed in Codex CLI 0.166.0.
+Provisioning acceptance covers safe pinned local artifacts, completeness, Claude/Codex skill
+discovery, and verified Claude custom-agent invocation. Successful Codex named-agent invocation
+moves to #843 and no longer blocks PR #821. Keep the failed CLI evidence and avoid claiming
+native-app verification or successful Codex invocation. This supersedes the invocation
+requirement recorded below; it does not turn the failed runtime probe into a pass.
+
 ## 2026-11-04: Preparation recovers only journal-verifiable interrupted writes (#821)
 
 Toolkit pins stay within the running CLI's repository; untrusted preparation uses only the

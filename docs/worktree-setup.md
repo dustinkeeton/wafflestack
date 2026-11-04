@@ -210,8 +210,10 @@ any tool parameter. Its definition alone contains a random response string. The 
 declined the request, made no spawn, and did not return that string. This establishes a failed
 invocation in the tested CLI configuration, not a general absence of custom-agent support.
 The native app workflow has not been tested. Earlier parameter-specific probes and the
-account's rejection of GPT-5.4 are recorded separately. The owner requires successful invocation;
-B5 and #820's invocation acceptance remain open. This evidence does not narrow that criterion.
+account's rejection of GPT-5.4 are recorded separately. The owner approved narrowing #820 on 2026-11-04 to provisioning, artifact completeness,
+Claude/Codex skill discovery, and Claude custom-agent invocation. Successful Codex named-agent
+invocation is tracked separately in [#843](https://github.com/dustinkeeton/wafflestack/issues/843)
+and no longer blocks the provisioning PR. The failed CLI evidence remains unchanged.
 
 Run the optional, non-CI harness smoke test with installed runtimes:
 

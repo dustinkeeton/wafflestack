@@ -58,7 +58,15 @@
       "model": "gpt-5.4",
       "result": "not supported when using Codex with this ChatGPT account"
     },
-    "acceptance": "B5 remains unresolved; owner requires successful custom-agent invocation"
+    "acceptance": "Historical decision at probe time: successful invocation was required. Superseded by the owner-approved scope adjustment below."
   },
-  "scope": "Codex CLI 0.166.0 exec; the native app named-agent workflow has not been tested"
+  "scope": "Codex CLI 0.166.0 exec; the native app named-agent workflow has not been tested",
+  "acceptanceScope": {
+    "decisionDate": "2026-11-04",
+    "issue": 820,
+    "required": "safe pinned provisioning, artifact completeness, Claude/Codex skill discovery, and Claude custom-agent invocation",
+    "codexInvocationFollowup": 843,
+    "blocksProvisioningPR": false,
+    "codexInvocationVerified": false
+  }
 }
