@@ -49,7 +49,9 @@ is what you reach for across a breaking one.
   and the skill demands no config. The lock gains an `upstream` block (`{ item, repo, path, commit,
   files }` per pinned skill), which `doctor --verify-render` reproduces. `doctor` notes each pin and
   attributes drift to it, `report` lists it, `upgrade` logs each pin that moved, and `eject` drops
-  the ejected skill's entry.
+  the ejected skill's entry. For a skill from an external `source:` stack, `report` prints
+  `<external-upstream>` in place of the upstream repo and path, the way it withholds source URLs
+  (#473).
 
   **Consumer impact:** none until a pinned skill is selected — no shipped skill is pinned yet, and
   locks without one are byte-identical.
