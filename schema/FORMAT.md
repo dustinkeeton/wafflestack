@@ -340,8 +340,12 @@ so no stack must migrate at once.
 An **upstream-pinned skill** is a skill copied from another repo at a pinned commit and shipped
 as a first-class waffle: registered, stack-listed, rendered and locked like any skill, with its
 origin recorded. It differs from a `source:` stack (fetched per consumer at render time) and
-from `recommendedPlugins:` (offered, never rendered). A `skills:` entry that would otherwise be a
-bare name becomes a mapping:
+from `recommendedPlugins:` (offered, never rendered). Pin an external skill when it is small,
+its license lets the copy ship with upstream's `LICENSE`, and it needs no install or runtime of
+its own. An optional provider, a large package, or one with its own update channel goes behind a
+[proxy skill](#proxy-skills--preferring-an-external-provider-without-depending-on-it) instead
+(DECISIONS.md, #825 and #471). A `skills:` entry that would otherwise be a bare name becomes a
+mapping:
 
 ```yaml
 skills:
