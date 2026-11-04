@@ -28,6 +28,7 @@ import {
 } from './prerequisites.mjs';
 import { generateWaffleDocs } from './waffledocs.mjs';
 import { collectUsedKeys } from './config-catalog.mjs';
+import { upstreamLockEntries } from './upstream.mjs';
 
 export { collectUsedKeys };
 import { applyModelInvocation, overrideFor } from './model-invocation.mjs';
@@ -271,6 +272,8 @@ export function renderProject({
   const settingsBlock = (map) => (Object.keys(map).length ? { settings: map } : {});
 
   const sources = collectSourceProvenance(canonical.groups, canonical.producedBy, canonicalFiles);
+  const upstream = upstreamLockEntries(canonical.groups, canonical.producedBy, canonicalFiles);
+  const upstreamBlock = (entries) => (entries.length ? { upstream: entries } : {});
 
   // Each lock carries its toolkit block forward from its OWN predecessor (#317/#374).
   const toolkitBlock = toolkitLockEntry(toolkitIdentity, { prevLock: lock, newFiles: canonicalFiles, toolkitVersion });
@@ -282,6 +285,7 @@ export function renderProject({
     stacks: canonicalProject.stacks,
     include: canonicalProject.include,
     ...(sources.length ? { sources } : {}),
+    ...upstreamBlock(upstream),
     files: canonicalFiles,
     ...settingsBlock(canonicalSettings),
   });
@@ -310,6 +314,7 @@ export function renderProject({
         const s = collectSourceProvenance(effective.groups, effective.producedBy, effectiveFiles);
         return s.length ? { sources: s } : {};
       })(),
+      ...upstreamBlock(upstreamLockEntries(effective.groups, effective.producedBy, effectiveFiles)),
       files: effectiveFiles,
       ...settingsBlock(effectiveSettings),
     });
@@ -335,6 +340,7 @@ export function renderProject({
     written: [...effective.outputs.keys()],
     removed,
     sources,
+    upstream,
     toolkit: toolkitBlock,
     identity: toolkitIdentity,
     overlayLeaks: leaks.map((l) => l.path),
@@ -845,7 +851,8 @@ function renderSkill({ skill, stack, resolvers, project, cwd, emit, errors, guar
       const context = `${itemContext}/${rel}`;
       const raw = fs.readFileSync(abs, 'utf8');
       for (const [dir, target] of skillDirs) {
-        let content = substitute(raw, resolvers[target], stack.declared, errors, context, guards);
+        // An upstream-pinned copy renders verbatim, `harness.*` included (#827).
+        let content = skill.upstream ? raw : substitute(raw, resolvers[target], stack.declared, errors, context, guards);
         // The override is a Claude Code frontmatter key; the cross-tool dir renders the source verbatim (#476).
         if (rel === 'SKILL.md' && target === 'claude') {
           content = applyModelInvocation(content, overrideFor(project.modelInvocation, skill.name));

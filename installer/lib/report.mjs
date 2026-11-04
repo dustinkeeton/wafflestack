@@ -8,6 +8,7 @@ import { doctor } from './doctor.mjs';
 import { formatPrereq } from './prerequisites.mjs';
 import { loadProjectConfig, LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, resolveConfigFile } from './project.mjs';
 import { exists } from './util.mjs';
+import { lockUpstream } from './upstream.mjs';
 
 /**
  * @typedef {object} ReportBundle the redacted diagnostics `wafflestack report` prints (#473)
@@ -25,6 +26,7 @@ import { exists } from './util.mjs';
  * @property {string[]} include
  * @property {number} trackedFiles
  * @property {{ name: string, sourceType: string, ref: string|null, commit: string|null }[]} sources
+ * @property {{ item: string, repo: string, path: string, commit: string }[]} upstream upstream-pinned skills (#827)
  *
  * @typedef {object} ReportConfig
  * @property {boolean} present
@@ -58,6 +60,11 @@ export function collectReport({ cwd, toolkitRoot, toolkitVersion, toolkitIdentit
   const lock = readLockSafe(cwd);
   const config = projectConfig(cwd);
   const health = summarizeDoctor({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity });
+  const external = new Set((lock?.sources ?? []).map((s) => s.name));
+  health.notes = health.notes.map((n) => {
+    const m = /^upstream-pinned: (\S+) — copied from .* @ (\S+)$/.exec(n);
+    return m && external.has(m[1].split('/')[0]) ? `upstream-pinned: ${m[1]} — copied from ${EXTERNAL_UPSTREAM} @ ${m[2]}` : n;
+  });
   const bundle = {
     cli: { version: toolkitVersion, status: toolkitIdentity?.status ?? 'unverified', commit: toolkitIdentity?.commit ?? null },
     lock,
@@ -73,6 +80,9 @@ export function collectReport({ cwd, toolkitRoot, toolkitVersion, toolkitIdentit
   return /** @type {ReportBundle} */ (redact(bundle, { cwd, home }));
 }
 
+// An external stack's upstream repo/path is withheld like its source URL (#473).
+export const EXTERNAL_UPSTREAM = '<external-upstream>';
+
 /** @param {string} cwd @returns {ReportLock|null} */
 function readLockSafe(cwd) {
   /** @type {any} */
@@ -83,6 +93,8 @@ function readLockSafe(cwd) {
     return null;
   }
   if (!lock) return null;
+  const sources = Array.isArray(lock.sources) ? lock.sources : [];
+  const external = new Set(sources.map((/** @type {any} */ s) => String(s.name)));
   return {
     toolkitVersion: lock.toolkitVersion ?? null,
     toolkit: {
@@ -95,12 +107,16 @@ function readLockSafe(cwd) {
     stacks: strings(lock.stacks),
     include: strings(lock.include),
     trackedFiles: Object.keys(lock.files ?? {}).length,
-    sources: (Array.isArray(lock.sources) ? lock.sources : []).map((/** @type {any} */ s) => ({
+    sources: sources.map((/** @type {any} */ s) => ({
       name: String(s.name),
       sourceType: String(s.sourceType ?? 'unknown'),
       ref: s.ref ?? null,
       commit: s.commit ?? null,
     })),
+    upstream: lockUpstream(lock).map((e) => {
+      const hidden = external.has(e.item.split('/')[0]);
+      return { item: e.item, repo: hidden ? EXTERNAL_UPSTREAM : String(e.repo), path: hidden ? EXTERNAL_UPSTREAM : String(e.path), commit: String(e.commit) };
+    }),
   };
 }
 
@@ -237,6 +253,7 @@ export function formatReportMarkdown(b) {
     lines.push(`- **targets**: ${list(b.lock.targets)}`);
     lines.push(`- **stacks**: ${list(b.lock.stacks)}`);
     lines.push(`- **include**: ${list(b.lock.include)}`);
+    if (b.lock.upstream.length) lines.push(`- **upstream-pinned**: ${list(b.lock.upstream.map((u) => `${u.item} (${u.repo === EXTERNAL_UPSTREAM ? EXTERNAL_UPSTREAM : `${u.repo}/${u.path}`} @ ${short(u.commit)})`))}`);
     if (b.lock.sources.length) lines.push(`- **external sources**: ${list(b.lock.sources.map((s) => `${s.name} (${s.sourceType}${s.ref ? ` @ ${s.ref}` : ''})`))}`);
   } else {
     lines.push('- **lock**: none — the repo has not been rendered');

@@ -84,7 +84,9 @@ stacks, and required config is scoped to what the selected items actually use.
 exists in the toolkit source but is deliberately absent from the inventory, and installing
 its ref fails. Do not go looking for item names in the toolkit source — if it is not in the
 inventory, it is not installable. An item shown as **(deprecated)** still installs; prefer
-its successor when one is named. A ref for a waffle that has been **renamed** keeps working:
+its successor when one is named. An item copied from an upstream repo at a pinned commit (the `tstack` stack's `council`) renders
+byte-for-byte as upstream wrote it; put a local change in a project extension
+(`.waffle/extensions/skills/<name>.md`), never in the rendered copy. A ref for a waffle that has been **renamed** keeps working:
 it is forwarded to the new name, and `wafflestack upgrade` rewrites the stale ref in
 `.waffle/waffle.yaml`.
 
