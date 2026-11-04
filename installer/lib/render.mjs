@@ -70,6 +70,7 @@ export function renderProject({
   untrustedConfig = false,
   planOnly = false,
   localConfigDir = cwd,
+  ignoreLocalConfig = false,
   offline = false,
 }) {
   const warnings = [];
@@ -84,8 +85,8 @@ export function renderProject({
 
   // `canonicalProject === project` — the same object, by identity — is the "no overlay" fast path
   // every branch below tests against.
-  const project = loadProjectConfig(cwd, warnings, { localConfigDir });
-  const canonicalProject = exists(resolveLocalConfigFile(localConfigDir).file)
+  const project = loadProjectConfig(cwd, warnings, { localConfigDir, canonical: ignoreLocalConfig });
+  const canonicalProject = !ignoreLocalConfig && exists(resolveLocalConfigFile(localConfigDir).file)
     ? loadProjectConfig(cwd, [], { canonical: true })
     : project;
 

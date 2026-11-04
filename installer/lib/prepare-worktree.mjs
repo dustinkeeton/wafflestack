@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,12 +12,27 @@ import { sha256, resolveWritableInside } from './util.mjs';
 import { parseRef, itemOutputMatcher } from './refs.mjs';
 import { applySettings, parseSettingsKey, settingsConflicts, settingsValueAt } from './settings.mjs';
 
+/** @param {string} p */
 const harnessPath = (p) => /^(?:\.claude|\.codex|\.agents)\//.test(p);
+/** @param {string} cwd @param {string[]} args */
 const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+/** @param {string} p */
 const present = (p) => { try { return fs.lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
+/** @param {string} p @returns {any} JSON is validated by the consuming boundary. */
 const json = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 
-/** Resolve source bytes by the destination lock, never by the associated main checkout. */
+/**
+ * @typedef {{ toolkitVersion: string, toolkit?: import('./toolkit-ref.mjs').ToolkitLockEntry, files: Record<string,string>, settings?: Record<string,unknown> }} PreparationLock
+ * @typedef {{ root: string, pin: string, version: string }} PreparedToolkit
+ * @typedef {{ lock: PreparationLock, toolkitRoot: string, cwd: string, offline?: boolean, sourceCacheDir?: string, allowUnreleased?: boolean }} ToolkitOptions
+ * @typedef {{ cwd: string, toolkitRoot: string, offline?: boolean, untrustedConfig?: boolean, allowUnreleased?: boolean, sourceCacheDir?: string, overlay?: 'local'|'main'|'none', resolveToolkit?: (options: ToolkitOptions) => PreparedToolkit, beforeWrite?: (path: string) => void }} PrepareOptions
+ * @typedef {{ status: 'failed'|'ready'|'no-op', targets: string[], pin: string|null, generatedPaths: string[], conflicts: string[], overlayMode: 'canonical'|'destination-overlay'|'main-overlay', notices: string[], missingIgnore: string[], errors: string[] }} PrepareResult
+ */
+
+/** Resolve source bytes by the destination lock, never by the associated main checkout.
+ * @param {ToolkitOptions} options
+ * @returns {PreparedToolkit}
+ */
 export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, sourceCacheDir = defaultSourceCacheDir(), allowUnreleased = false, cwd }) {
   const pin = toolkitPinFromLock(lock);
   const identity = resolveToolkitIdentity({ toolkitRoot, offline: true });
@@ -40,16 +56,24 @@ export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, 
   }
 }
 
-/** Prepare only harness artifacts; the Git administrative directory holds the transaction mutex. */
-export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedConfig = false, allowUnreleased = false, sourceCacheDir = defaultSourceCacheDir(), resolveToolkit = resolvePreparationToolkit, beforeWrite = () => {} }) {
+/** Prepare only harness artifacts; the Git administrative directory holds the transaction mutex.
+ * @param {PrepareOptions} options
+ * @returns {PrepareResult}
+ */
+export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedConfig = false, allowUnreleased = false, sourceCacheDir = defaultSourceCacheDir(), overlay, resolveToolkit = resolvePreparationToolkit, beforeWrite = () => {} }) {
+  /** @type {PrepareResult} */
   const result = { status: 'failed', targets: [], pin: null, generatedPaths: [], conflicts: [], overlayMode: 'canonical', notices: [], missingIgnore: [], errors: [] };
   let mutex;
   let acquired = false;
   let temp;
+  /** @type {Map<string, Buffer|null>} */
   const backups = new Map();
+  /** @type {string[]} */
   const applied = [];
+  /** @type {Map<string, Buffer>} */
   const written = new Map();
   try {
+    if (overlay !== undefined && !['local', 'main', 'none'].includes(overlay)) throw new Error('--overlay must be local, main, or none');
     cwd = fs.realpathSync(cwd);
     if (fs.realpathSync(git(cwd, ['rev-parse', '--show-toplevel'])) !== cwd || git(cwd, ['rev-parse', '--is-bare-repository']) !== 'false') throw new Error('destination must be the root of a non-bare Git checkout');
     const gitDir = git(cwd, ['rev-parse', '--absolute-git-dir']);
@@ -75,25 +99,26 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     const mainOverlay = resolveLocalConfigFile(main).file;
     let policy = 'destination';
     try { policy = git(cwd, ['config', '--local', '--get', 'wafflestack.worktreeOverlay']) || policy; } catch {}
-    if (!['destination', 'main'].includes(policy)) throw new Error('wafflestack.worktreeOverlay must be destination or main');
+    if (overlay !== undefined) policy = overlay === 'local' ? 'destination' : overlay;
+    if (!['destination', 'main', 'none'].includes(policy)) throw new Error('wafflestack.worktreeOverlay must be destination or main');
     if (untrustedConfig && policy === 'main') throw new Error('--untrusted-config refuses main-overlay inheritance; set wafflestack.worktreeOverlay to destination');
     let localConfigDir = cwd;
-    if (present(localOverlay)) result.overlayMode = 'destination-overlay';
+    if (policy !== 'none' && present(localOverlay)) result.overlayMode = 'destination-overlay';
     else if (policy === 'main' && present(mainOverlay)) {
       if (git(main, ['rev-parse', '--path-format=absolute', '--git-common-dir']) !== git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])) throw new Error('main overlay association does not match Git common directory');
       localConfigDir = main;
       result.overlayMode = 'main-overlay';
     } else if (main !== cwd && present(mainOverlay)) result.notices.push('destination overlay policy omits the main checkout private overlay; prepared canonical resources');
     const overlayFile = resolveLocalConfigFile(localConfigDir).file;
-    if (present(overlayFile)) {
+    if (policy !== 'none' && present(overlayFile)) {
       const coverage = gitIgnoreStatus(localConfigDir, [path.relative(localConfigDir, overlayFile)]);
       if (!coverage || coverage.tracked.size || !coverage.ignored.size) throw new Error('private overlay must be untracked and ignored before preparation');
     }
     let planned;
     try {
-      planned = renderProject({ cwd, toolkitRoot: selected.root, toolkitVersion: selected.version, planOnly: true, localConfigDir, untrustedConfig, offline, sourceCacheDir });
-    } catch { throw new Error('render planning failed — validate destination config, extensions and source trust with the pinned toolkit; private values suppressed'); }
-    if (!planned.ok) throw new Error('render planning failed — validate config/extension inputs and external-source trust with the pinned toolkit; private values suppressed');
+      planned = renderProject({ cwd, toolkitRoot: selected.root, toolkitVersion: selected.version, planOnly: true, localConfigDir, ignoreLocalConfig: policy === 'none', untrustedConfig, offline, sourceCacheDir });
+    } catch (error) { throw new Error(safePlanningError([error.message])); }
+    if (!planned.ok) throw new Error(safePlanningError(planned.errors));
     const { plan } = planned;
     result.targets = plan.targets;
     if (!isDeepStrictEqual(plan.files, lock.files) || !isDeepStrictEqual(plan.settings, lock.settings ?? {}) ||
@@ -103,9 +128,10 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     const settings = new Map([...plan.effective.settings].filter(([p]) => harnessPath(p)));
     const ejected = [...plan.effective.selection.ejected].map((ref) => {
       const parsed = parseRef(ref);
+      if (parsed.form === 'stack') throw new Error('invalid ejected resource: expected an item reference');
       return itemOutputMatcher(parsed.kind, parsed.name);
     });
-    const isEjected = (rel) => ejected.some((matches) => matches(rel));
+    const isEjected = (/** @type {string} */ rel) => ejected.some((matches) => matches(rel));
     const receiptPath = path.join(gitDir, 'wafflestack-prepared.json');
     const previous = present(receiptPath) ? json(receiptPath) : { files: {} };
     const settingFiles = [...new Set([...settings.keys()].map((p) => parseSettingsKey(p).file))];
@@ -142,8 +168,8 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     const coverage = gitIgnoreStatus(cwd, paths);
     if (!coverage) throw new Error('cannot determine Git ignore/tracking posture');
     result.missingIgnore = paths.filter((p) => !coverage.tracked.has(p) && !coverage.ignored.has(p));
-    const privatePaths = [...outputs].filter(([p, c]) => sha256(c) !== plan.files[p]).map(([p]) => p);
-    for (const [key, value] of settings) if (!isDeepStrictEqual(value, plan.settings[key])) privatePaths.push(parseSettingsKey(key).file);
+    const privatePaths = [...outputs].filter(([p, c]) => sha256(c) !== /** @type {Record<string, string>} */ (plan.files)[p]).map(([p]) => p);
+    for (const [key, value] of settings) if (!isDeepStrictEqual(value, /** @type {Record<string, unknown>} */ (plan.settings)[key])) privatePaths.push(parseSettingsKey(key).file);
     const privateCoverage = gitIgnoreStatus(cwd, [...privatePaths, LOCAL_LOCK_FILE]);
     if (!privateCoverage) throw new Error('cannot determine private output ignore coverage');
     const exposed = privatePaths.filter((p) => privateCoverage.tracked.has(p) || !privateCoverage.ignored.has(p));
@@ -211,6 +237,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
   return result;
 }
 
+/** @param {string} cwd @param {string} rel */
 function hasSymlink(cwd, rel) {
   let current = cwd;
   for (const part of rel.split('/')) {
@@ -218,4 +245,19 @@ function hasSymlink(cwd, rel) {
     if (present(current)?.isSymbolicLink()) return true;
   }
   return false;
+}
+
+/** Categorize renderer failures without copying private values or raw YAML into diagnostics.
+ * @param {string[]} errors
+ */
+export function safePlanningError(errors) {
+  const text = errors.join('\n');
+  const category = /missing config value|required config|missing required|needs config values/i.test(text)
+    ? 'missing required configuration: supply the required keys in the destination config'
+    : /source:|external stack|trust|--untrusted-config/i.test(text)
+      ? 'external source or trust failure: check destination source declarations and trusted setup policy'
+      : /YAMLParseError|YAMLException|parse|mapping|indent|flow sequence/i.test(text)
+        ? 'invalid configuration syntax: check destination YAML and extension frontmatter'
+        : 'invalid render inputs: check destination config, extensions and selected resources';
+  return `render planning failed — ${category}. Inspect locally with the pinned CLI; private values suppressed. Re-render and commit canonical inputs/lock when repaired, then retry prepare-worktree.`;
 }

@@ -9,6 +9,16 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-03: Worktree follow-up uses the destination runner and keeps recovery barriers
+
+Review of #821 and #822 found that a bare installed CLI does not serve this toolkit's
+unreleased worktrees. Delegate/autopilot now run `autopilot.waffleCmd` inside the destination,
+with a fixture that executes the actual CLI from another checkout. Per-run overlay selection
+is additive to local Git policy; disabling an overlay never silently discards stale resources.
+Keep immutable-pin resolution, private-output guards and interrupted-transaction journals.
+PID liveness alone cannot prove a partial write is safe to adopt. Renderer errors expose safe
+categories, not raw private values; the preparation module opts into the type-check gate.
+
 ## 2026-11-03: Worktrees provision pinned local resources before startup (#820)
 
 **Decision:** Treat readiness as matching files and settings entries, not directory presence

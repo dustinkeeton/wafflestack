@@ -20,6 +20,10 @@ explicit, diffable upgrades with versioned migrations. It carries content across
 harnesses and keeps it current; it doesn't produce that content (that's a process pack like
 [gstack](https://github.com/garrytan/gstack)) or run it (that's an always-on agent runtime).
 
+For ignored generated skills in worktrees or fresh clones, follow the
+[pre-session preparation guide](docs/worktree-setup.md). It covers T3, Codex desktop,
+plain Git, pinned toolkit versions, and private-overlay policy.
+
 ## Vocabulary
 
 - **waffle** — an individual installable item: an agent, a skill, or a mod (a Claude Code

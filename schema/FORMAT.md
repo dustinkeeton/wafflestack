@@ -1403,4 +1403,6 @@ committed config/lock against its pinned toolkit and prepares only harness resou
 It changes no public lock or config schema. Exit 0 (`ready` or `no-op`) gates startup;
 exit 1 (`failed`) stops it. Persistent private-overlay inheritance uses the local Git
 setting `wafflestack.worktreeOverlay` (`destination`, default; or `main`), not a public
-YAML value. See [worktree setup](../docs/worktree-setup.md) for the full contract.
+YAML value. Per-run `--overlay local|main|none` overrides that policy without persisting it;
+`none` skips private input, but never discards stale output or bypasses privacy guards.
+See [worktree setup](../docs/worktree-setup.md) for the full contract.

@@ -5047,6 +5047,8 @@ describe('orchestration: worktrees are prepared before launch', () => {
     for (const name of ['delegate', 'autopilot']) {
       const md = readSkill(name);
       assert.match(md, /prepare-worktree --cwd/);
+      assert.match(md, /cd [^\n]+&& env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd "\$PWD" --json/);
+      assert.doesNotMatch(md, /`wafflestack prepare-worktree/);
       assert.match(md, /stop (?:that |the )launch/);
       assert.match(md, /before\s+session startup/);
       assert.match(md, /retry/);

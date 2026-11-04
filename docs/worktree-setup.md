@@ -24,6 +24,13 @@ canonical config and lock before enabling startup preparation. Until this featur
 released, test from an explicit checkout of this PR, using its absolute
 `installer/cli.mjs` path; do not describe an unreleased tag as available.
 
+Delegate and autopilot invoke `autopilot.waffleCmd` from inside the destination checkout,
+with `prepare-worktree --cwd "$PWD" --json`. This makes a relative development runner
+use the destination's installer. In this repository the prefix is
+`env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs`; install dependencies in that
+checkout first. A consumer's configured prefix must name a release containing this command;
+an old pin needs the explicit upgrade above before orchestration starts.
+
 The launcher may be newer than the destination pin. Preparation resolves the destination
 lock's repository, release and immutable commit; it never substitutes main's toolkit or
 latest. A matching installed toolkit or verified source-cache checkout supplies the
@@ -113,6 +120,13 @@ that checkout. To opt into associated main-checkout overlay inheritance persiste
 git config --local wafflestack.worktreeOverlay main
 ```
 
+For one invocation, `--overlay local` uses only the destination overlay, `--overlay main`
+allows the associated main overlay when the destination has none, and `--overlay none`
+uses canonical inputs without reading either overlay. These flags override the Git setting
+without changing it. Untrusted preparation still refuses `main`. The flags do not bypass
+conflict or privacy checks: switching an already prepared private checkout to `none` may
+require explicit reconciliation of its existing resources/local lock before retrying.
+
 Reset with `git config --local wafflestack.worktreeOverlay destination`. This repository-local
 Git setting is shared by its linked worktrees. A destination overlay wins when present;
 otherwise `main` imports only the associated main checkout's overlay. Git verifies the
@@ -156,7 +170,12 @@ so a subsequent call cannot report readiness. Stop the original process; inspect
 `$(git rev-parse --absolute-git-dir)/wafflestack-prepare/journal.json` locally (it may contain
 private backup content; do not post it). Preserve any edits, restore backups if needed,
 remove only that transaction directory, and run preparation again before starting a session.
-A rollback failure keeps the journal. No blanket restore/delete of the worktree is required.
+A rollback failure keeps the journal. A dead PID alone is not evidence that the partial
+installation is safe; preparation deliberately does not auto-remove an interrupted transaction.
+Render failures report safe categories (missing required configuration, YAML syntax,
+external source/trust, or other render inputs), without printing private values or raw YAML.
+Inspect the destination inputs locally with the pinned toolkit, repair and commit canonical
+config/lock changes, then retry. No blanket restore/delete of the worktree is required.
 
 Unmanaged, uncommitted custom skills cannot be reconstructed from a lock. Keep them as
 personal skills, commit them as project-owned resources, or configure a narrowly scoped,
