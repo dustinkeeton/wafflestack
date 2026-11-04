@@ -204,9 +204,13 @@ with `no thread with id`. Codex custom-agent usability therefore remains unverif
 runtime/tool configuration. No desktop session-creation claim is made.
 
 [2026-11-04 runtime results](worktree-smoke-2026-11-04.json) repeat all five discovery states
-on Codex 0.166.0 and Claude 2.1.318. Claude invocation passes; Codex again reports no custom
-agent selector. Disabling `multi_agent_v2` does not expose one. A GPT-5.4 compatibility probe
-was rejected as unsupported by the account. The owner requires successful custom invocation;
+on Codex 0.166.0 and Claude 2.1.318. Claude invocation passes. The corrected Codex probe
+requests the uniquely named `waffle_invocation_probe` in natural language, without prescribing
+any tool parameter. Its definition alone contains a random response string. The CLI session
+declined the request, made no spawn, and did not return that string. This establishes a failed
+invocation in the tested CLI configuration, not a general absence of custom-agent support.
+The native app workflow has not been tested. Earlier parameter-specific probes and the
+account's rejection of GPT-5.4 are recorded separately. The owner requires successful invocation;
 B5 and #820's invocation acceptance remain open. This evidence does not narrow that criterion.
 
 Run the optional, non-CI harness smoke test with installed runtimes:
@@ -217,8 +221,10 @@ WAFFLE_CODEX_BIN=/absolute/path/to/codex node installer/smoke/worktree-discovery
 
 `WAFFLE_CLAUDE_BIN` can select Claude. The script stops Claude after `system/init`, uses
 project-only settings and no MCP servers, and never submits a Codex model turn in discovery
-mode. `--invoke` additionally exercises Claude's `--agent worker` and Codex's custom
-`worker` spawn against synthetic fixtures, using authenticated model calls. Invocation uses
+mode. `--invoke` additionally exercises Claude's `--agent worker` and a natural-language
+request for Codex's uniquely named custom agent against synthetic fixtures, using authenticated
+model calls. The Codex probe requires a completed spawn and the random response from the
+agent definition; the response is never supplied in the parent prompt. Invocation uses
 a normal Codex session because the tested ephemeral mode could not spawn a child. A missing
 custom-type selector or generic-agent fallback fails the smoke test; it must not be counted
 as a successful custom-agent invocation. Resolve and recheck the recorded Codex limitation

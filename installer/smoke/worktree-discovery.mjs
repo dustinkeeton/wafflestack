@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { fixture } from '../test/prepare-fixture.mjs';
+import { fixture, git, write } from '../test/prepare-fixture.mjs';
+import { renderProject } from '../lib/render.mjs';
 
 const codex = process.env.WAFFLE_CODEX_BIN ?? 'codex';
 const claude = process.env.WAFFLE_CLAUDE_BIN ?? 'claude';
@@ -81,17 +83,28 @@ try {
     const claudeReply = execFileSync(claude, ['--print', 'Follow your agent instructions. Reply with only the requested word.', '--agent', 'worker', '--no-session-persistence', '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--tools', ''], { cwd: f.wt, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
     assert.match(claudeReply, /canonical/i);
     report.invocation.claude = 'pass: --agent worker returned canonical';
-    const codexReply = execFileSync(codex, ['exec', '--json', '--sandbox', 'read-only', '-c', `projects.${JSON.stringify(fs.realpathSync(f.wt))}.trust_level="trusted"`, 'Invoke the custom worker agent exactly once with spawn_agent agent_type worker. Ask it to follow its agent instructions and reply with only the requested word. Wait for completion and report its reply. Do not read or edit files, and do not substitute a generic agent. If the tool cannot select the custom type, report unavailable and stop.'], { cwd: f.wt, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const name = 'waffle_invocation_probe';
+    const nonce = `waffle-proof-${randomBytes(16).toString('hex')}`;
+    const manifest = path.join(f.toolkit, 'stacks/demo/stack.yaml');
+    fs.writeFileSync(manifest, fs.readFileSync(manifest, 'utf8').replace('agents: [worker]', `agents: [${name}]`));
+    write(f.toolkit, `stacks/demo/agents/${name}.md`, `---\nname: ${name}\ndescription: A named agent for verifying worktree preparation.\n---\nRespond with exactly ${nonce} and nothing else. Do not use tools or read files.\n`);
+    const rendered = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0' });
+    assert.equal(rendered.ok, true, JSON.stringify(rendered.errors));
+    git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'pin unique probe agent');
+    for (const dir of ['.claude/agents', '.codex/agents', '.agents/agents']) fs.rmSync(path.join(f.wt, dir), { recursive: true, force: true });
+    assert.equal(f.run().status, 'ready');
+    const prompt = `Use the installed custom agent named ${name} for one task: ask it to follow its configured instructions and return its response. Wait for it to finish and report its response verbatim. Use the normal named-agent workflow available in this client; no particular tool or parameter is prescribed. Do not read files, run shell commands, or copy agent instructions into the task. Do not substitute a generic agent. If the named agent cannot be invoked, explain what prevented it.`;
+    const codexReply = execFileSync(codex, ['exec', '--json', '--sandbox', 'read-only', '-c', `projects.${JSON.stringify(fs.realpathSync(f.wt))}.trust_level="trusted"`, prompt], { cwd: f.wt, encoding: 'utf8', timeout: 90000, stdio: ['ignore', 'pipe', 'pipe'] });
     const events = codexReply.trim().split('\n').map((line) => JSON.parse(line));
     const completed = events.filter((event) => event.type === 'item.completed').map((event) => event.item);
     const spawned = completed.some((item) => item.type === 'collab_tool_call' && item.tool === 'spawn_agent' && item.status === 'completed' && item.receiver_thread_ids?.length);
-    const replied = completed.some((item) => item.type === 'agent_message' && /canonical/i.test(item.text));
-    const unavailable = completed.some((item) => item.type === 'agent_message' && /unavailable|no `?agent_type`?|cannot.*select|can't.*select/i.test(item.text));
-    if (spawned && replied && !unavailable) report.invocation.codex = 'pass: custom worker spawn and canonical response';
+    const replied = completed.some((item) => item.type === 'agent_message' && item.text.includes(nonce));
+    const fileAccess = completed.some((item) => ['command_execution', 'mcp_tool_call', 'file_change'].includes(item.type));
+    report.invocation.codexProbe = { agentName: name, method: 'natural-language named-agent request; no prescribed tool parameter', expectedResponse: nonce, completedSpawn: spawned, responseMatched: replied, fileAccessObserved: fileAccess };
+    if (spawned && replied && !fileAccess) report.invocation.codex = 'pass: named custom agent spawned and returned its private response string';
     else {
-      report.invocation.codex = unavailable
-        ? 'failed: runtime could not select the custom agent type'
-        : 'failed: no completed spawn and canonical response evidence';
+      report.invocation.codex = 'failed: no verified named-agent invocation in the tested CLI configuration';
+      report.invocation.codexProbe.runtimeResponse = completed.filter((item) => item.type === 'agent_message').map((item) => item.text).join('\n');
       process.exitCode = 1;
     }
   }
