@@ -395,7 +395,7 @@ gate runs inside `validateStack`, so an external stack with a stale pin also ref
   changed)` when the license moved), `diverged`, or `error`. A pin taken at a later commit that did
   not touch the path is `current`. Exit 0 when every pin is current, 1 when any is behind or
   diverged, 2 on an error.
-- `npm run upstream:bump [-- <ref>] [--commit <sha>]` moves every behind pin (or `<ref>`, to
+- `npm run upstream:bump -- [<ref>] [--commit <sha>]` moves every behind pin (or `<ref>`, to
   `--commit`): it re-copies the files from upstream's git objects (raw bytes, no eol filter), drops
   files upstream deleted, records the new `commit` and `hash` in `stack.yaml` and the new `commit`
   in the registry (only those bytes change), and adds a `**Bump upstream-pinned …**` bullet under
