@@ -139,6 +139,14 @@ is what you reach for across a breaking one.
 
   **Consumer impact:** autopilot skill text only — `render` picks it up.
 
+- **Autopilot integration's step 4 and steps 5–6 hold resumes go through the stage 1 hand-off
+  (#817).** A step 4 check hold whose fix belongs in `<integ>`, and a steps 5–6 hold where `<integ>`
+  moved, both said "re-run stage 1 from step 1" with no link, and the hand-off excluded every step
+  4–6 hold, so a human re-ran the orchestrator's steps and stopped at step 6's consent hold. Both
+  resumes now link the hand-off, and a step 4–6 hold gives it beside its own resume.
+
+  **Consumer impact:** autopilot skill text only — `render` picks it up.
+
 - **Autopilot integration hands off stage 1 before the final PR when run PRs are still open (#806,
   part of #720).** When a run PR was still open, the report handed the human the `gh pr create`
   command with no word about stage 1, so a final PR opened from it skipped the sync, the overwrite
