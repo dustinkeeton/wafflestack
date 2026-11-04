@@ -734,7 +734,7 @@ describe('integration stage 1 hand-off (#812)', () => {
     assert.match(handoff, /Only when every command exits 0, run item 3's `gh pr create`/);
     assert.match(handoff, /If you have reviewed and accept the detector's `OVERWRITE:` or `DELETED:` lines, open it anyway with those lines in the body/);
     assert.match(handoff, /If an integration check failed, fix it through a PR into `<integ>` and start again at step 1/);
-    assert.match(handoff, /other than a stage 1 hold at steps 4–6/);
+    assert.match(handoff, /A stage 1 hold at steps 4–6 gives them beside its own resume below/);
     assert.doesNotMatch(handoff, /\{\{/);
   });
 
@@ -751,6 +751,31 @@ describe('integration stage 1 hand-off (#812)', () => {
     assert.doesNotMatch(steps23, /through a PR, run item 3's `gh pr create`\./);
     assert.match(md, /sync, pass stage 1, open the final PR, review it, then audit/);
     assert.doesNotMatch(md, /stage 1 to pass first/);
+  });
+});
+
+// #817: every stage 1 hold resume that re-runs stage 1 goes through the hand-off.
+describe('integration stage 1 hold resumes use the hand-off (#817)', () => {
+  const LINK = /\[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\)/;
+
+  test('the hand-off covers steps 4–6 holds beside their own resumes', () => {
+    const handoff = section(read(SKILL), '**The stage 1 hand-off.**', 'Runs from item 3, after the wait');
+    assert.doesNotMatch(handoff, /other than a stage 1 hold at steps 4–6/);
+    assert.match(handoff, /a step 4 flag a human accepts, or a steps 5–6 sync PR a human merges/);
+    assert.match(handoff, /these commands are the way back whenever it re-runs stage 1 from step 1/);
+  });
+
+  test('step 4 (fix in <integ>) and steps 5–6 (<integ> moved) resumes link it', () => {
+    const md = read(SKILL);
+    const step4 = section(md, '- **Step 4, a check hold.**', '- **Steps 5–6**');
+    assert.match(step4, /re-run stage 1 from step 1 \(the \[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\)\)/);
+    const steps56 = section(md, '- **Steps 5–6**', '### Integration gate — stage 2');
+    assert.match(steps56, /merge the open sync PR, then run item 3's `gh pr create`/);
+    assert.match(steps56, /If `<integ>` moved, re-run stage 1 from step 1 instead \(the \[stage 1 hand-off\]\(#integration-gate--stage-1-mechanical-no-llm\)\)/);
+    const hold = section(md, '**Hold.** Any stop', '### Integration gate — stage 2');
+    const reruns = hold.match(/re-run stage 1 from step 1[^.;]*/g);
+    assert.equal(reruns.length, 3);
+    for (const r of reruns) assert.match(r, LINK);
   });
 });
 
