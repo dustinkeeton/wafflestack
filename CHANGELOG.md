@@ -74,6 +74,13 @@ is what you reach for across a breaking one.
 
 ### Changed
 
+- **`upstream:check` and `upstream:bump` fix two pin checks (#832, #833).** A pin behind a merged
+  side branch that forked before it now reports `behind`, not `diverged`, and `bump` moves it to the
+  default branch's head; `bump --commit` refuses a target whose `LICENSE` matches neither the pinned
+  copy's nor the default branch head's.
+
+  **Consumer impact:** none (toolkit-developer scripts only).
+
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate
   and review loop now stop on a cold round whose responder implemented no should-fix or blocker
   finding; nits applied in that round no longer restart the count. `pr-response` ends its return
