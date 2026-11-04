@@ -152,6 +152,15 @@ before the first session.
 
 ### T3 Code
 
+T3 Code's worktree settings (location, "start from remote", branch naming) decide *where* and
+*from what* a worktree is cut; none of them provisions skills. Its lifecycle is "create a local
+worktree using its selected strategy, then run the project's setup script", and a thread's first run
+is held while that setup is unresolved — which is the hook this command needs. "Start from remote"
+matters for one reason: the worktree's branch, and so its lock, can be newer than your main
+checkout's, which is why the script below pins the toolkit from the worktree's lock and never the
+main checkout's CLI. Worktrees land under `~/.t3/worktrees/<project>/<id>` by default (an external
+linked worktree; supported).
+
 T3 Code runs project **actions** (Settings → Projects → Actions; a checked-in `t3.json` can define
 one, which each user imports once). Add an action that runs `scripts/prepare-worktree.sh` with
 **`runOnWorktreeCreate`** on and **`waitForCompletion`** on. Without the wait, T3 launches the first

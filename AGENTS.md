@@ -684,7 +684,7 @@ gitignored (`/.claude/{skills,agents,workflows}/*`, so `!` can re-include an eje
 Re-render after a pull or a `stacks/**` edit and commit the LOCK; `self-posture.test.mjs` fails if
 the render is re-tracked. Delegate/autopilot prepare every worktree they cut with
 `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs prepare-worktree --cwd <path>` (the rendered
-`autopilot.waffleCmd`) before spawning into it (#820; the old no-render rule relied on a Claude Code
+`autopilot.waffleCmd`), run FROM INSIDE the worktree so the relative path is the worktree's own installer (a branch that edits `stacks/**` carries a lock main's installer cannot reproduce), before spawning into it (#820; the old no-render rule relied on a Claude Code
 read-through that a present directory switches off and Codex lacks). Gitignored deliberate absences,
 tolerated by doctor's `--allow-missing`: the `.claude/` render, `.claude/worktrees/`, `.codex/`/`.agents/` (non-targets),
 `.github/workflows/waffle-label-hook.yml` (would arm a live label→harness dispatch), and the

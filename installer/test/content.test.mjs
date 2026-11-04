@@ -5052,7 +5052,7 @@ describe('delegate + autopilot: worktrees are prepared before their agent starts
     assert.match(md, /\*\*Prepare the worktree before its agent starts\.\*\*/);
     const block = md.match(/```bash\n(.*prepare-worktree --cwd.*)\n```/);
     assert.ok(block, 'the command is a copyable fenced line');
-    assert.match(block[1], /^env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd "\$\(realpath "\$WORKTREE_PATH"\)"$/, 'this repo renders its own waffleCmd into it');
+    assert.match(block[1], /^\(cd "\$WORKTREE_PATH" && env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd "\$PWD"\)$/, 'this repo renders its own waffleCmd into it, run from inside the worktree so a relative toolkit path is the worktree\'s');
     assert.match(md, /A non-zero exit stops this issue's launch/);
     assert.match(md, /run it again for a \*\*reused\*\* worktree/);
     assert.match(md, /Worktree preparation failure\*\* — `prepare-worktree` exited non-zero\. Do not spawn/);
@@ -5061,16 +5061,16 @@ describe('delegate + autopilot: worktrees are prepared before their agent starts
   });
   test('autopilot prepares the stage 2 responder and stage 3 audit worktrees and the integration-based run worktrees; the gate worktree is exempt', () => {
     const md = readSkill('autopilot');
-    assert.match(md, /git worktree add -b <b2> <a2> origin\/<integ>`, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd <a2>` — a non-zero exit holds the round/);
-    assert.match(md, /git worktree add -b <b3> <a3> origin\/<integ>`, then `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd <a3>` — a non-zero exit holds stage 3/);
-    assert.match(md, /each still prepared with `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd <path>` before its agent spawns/);
+    assert.match(md, /git worktree add -b <b2> <a2> origin\/<integ>`, then, from inside `<a2>`, `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd <a2>` — a non-zero exit holds the round/);
+    assert.match(md, /git worktree add -b <b3> <a3> origin\/<integ>`, then, from inside `<a3>`, `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd <a3>` — a non-zero exit holds stage 3/);
+    assert.match(md, /each still prepared with `env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd <path>`, run from inside the worktree, before its agent spawns/);
     assert.match(md, /The gate spawns no agent, so it is not prepared with `prepare-worktree`/);
     assert.doesNotMatch(md, /Render a gitignored render into the worktree/);
   });
   test('the sources say the same with the waffleCmd placeholder, so a consumer renders its own pin', () => {
     const delegate = fs.readFileSync(path.join(STACKS, 'orchestration/skills/delegate/SKILL.md'), 'utf8');
     const autopilot = fs.readFileSync(path.join(STACKS, 'orchestration/skills/autopilot/SKILL.md'), 'utf8');
-    assert.match(delegate, /\{\{autopilot\.waffleCmd\}\} prepare-worktree --cwd "\$\(realpath "\$WORKTREE_PATH"\)"/);
+    assert.match(delegate, /\(cd "\$WORKTREE_PATH" && \{\{autopilot\.waffleCmd\}\} prepare-worktree --cwd "\$PWD"\)/);
     assert.equal((autopilot.match(/\{\{autopilot\.waffleCmd\}\} prepare-worktree --cwd/g) ?? []).length, 3);
     assert.match(fs.readFileSync(path.join(STACKS, 'github-workflow/skills/git-workflow/SKILL.md'), 'utf8'), CMD);
   });
