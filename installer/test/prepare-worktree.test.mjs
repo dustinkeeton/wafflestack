@@ -101,6 +101,7 @@ test('config/lock mismatch and missing release provenance have repair instructio
 
 test('offline cached worktree pin wins over a different running toolkit; cache misses fail explicitly', (t) => {
   const f = fixture(t);
+  write(f.toolkit, 'package.json', JSON.stringify({ name: 'fixture', version: '1.0.0', repository: 'https://github.com/example/fixture.git' }));
   git(f.toolkit, 'init'); git(f.toolkit, 'add', '.'); git(f.toolkit, 'commit', '-m', 'version one'); git(f.toolkit, 'tag', 'v1.0.0');
   const commit = git(f.toolkit, 'rev-parse', 'HEAD');
   const cache = path.join(f.dir, 'cache');
@@ -276,4 +277,18 @@ test('the delegate recipe runs the actual development CLI inside the destination
     assert.equal(invalid.status, 1, flag);
     assert.match(invalid.stderr, /--overlay requires/);
   }
+});
+
+for (const foreign of [true, false]) test(`untrusted toolkit resolution never fetches (${foreign ? 'foreign' : 'same'} repository)`, (t) => {
+  const f = fixture(t);
+  write(f.toolkit, 'package.json', JSON.stringify({ name: 'fixture', version: '1.0.0', repository: 'https://github.com/example/fixture.git' }));
+  const cache = path.join(f.dir, 'cold-cache');
+  const trace = path.join(f.dir, 'git-trace');
+  const old = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = trace;
+  t.after(() => { if (old === undefined) delete process.env.GIT_TRACE; else process.env.GIT_TRACE = old; });
+  const lock = { toolkitVersion: '1.0.0', files: {}, toolkit: { source: foreign ? 'github:foreign/toolkit' : 'github:example/fixture', ref: 'v1.0.0', commit: 'a'.repeat(40), status: 'release' } };
+  assert.throws(() => resolvePreparationToolkit({ lock, toolkitRoot: f.toolkit, cwd: f.wt, untrustedConfig: true, sourceCacheDir: cache }), foreign ? /repository differs/ : /npx --yes github:example\/fixture#v1.0.0 prepare-worktree/);
+  assert.doesNotMatch(fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8') : '', /clone|fetch|ls-remote/);
+  assert.deepEqual(fs.existsSync(cache) ? fs.readdirSync(cache) : [], []);
 });

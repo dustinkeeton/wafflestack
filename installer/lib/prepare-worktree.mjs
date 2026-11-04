@@ -24,7 +24,7 @@ const json = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 /**
  * @typedef {{ toolkitVersion: string, toolkit?: import('./toolkit-ref.mjs').ToolkitLockEntry, files: Record<string,string>, settings?: Record<string,unknown> }} PreparationLock
  * @typedef {{ root: string, pin: string, version: string }} PreparedToolkit
- * @typedef {{ lock: PreparationLock, toolkitRoot: string, cwd: string, offline?: boolean, sourceCacheDir?: string, allowUnreleased?: boolean }} ToolkitOptions
+ * @typedef {{ lock: PreparationLock, toolkitRoot: string, cwd: string, offline?: boolean, untrustedConfig?: boolean, sourceCacheDir?: string, allowUnreleased?: boolean }} ToolkitOptions
  * @typedef {{ cwd: string, toolkitRoot: string, offline?: boolean, untrustedConfig?: boolean, allowUnreleased?: boolean, sourceCacheDir?: string, overlay?: 'local'|'main'|'none', resolveToolkit?: (options: ToolkitOptions) => PreparedToolkit, beforeWrite?: (path: string) => void }} PrepareOptions
  * @typedef {{ status: 'failed'|'ready'|'no-op', targets: string[], pin: string|null, generatedPaths: string[], conflicts: string[], overlayMode: 'canonical'|'destination-overlay'|'main-overlay', notices: string[], missingIgnore: string[], errors: string[] }} PrepareResult
  */
@@ -33,7 +33,7 @@ const json = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
  * @param {ToolkitOptions} options
  * @returns {PreparedToolkit}
  */
-export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, sourceCacheDir = defaultSourceCacheDir(), allowUnreleased = false, cwd }) {
+export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, untrustedConfig = false, sourceCacheDir = defaultSourceCacheDir(), allowUnreleased = false, cwd }) {
   const pin = toolkitPinFromLock(lock);
   const identity = resolveToolkitIdentity({ toolkitRoot, offline: true });
   if (!pin || !/^v\d+\.\d+\.\d+$/.test(lock.toolkit?.ref ?? '') || !/^[a-f0-9]{40}$/i.test(lock.toolkit?.commit ?? '')) {
@@ -44,15 +44,16 @@ export function resolvePreparationToolkit({ lock, toolkitRoot, offline = false, 
   }
   const slug = parseRepoSlug(lock.toolkit.source);
   if (!slug || toolkitSource(`${slug.owner}/${slug.repo}`) !== lock.toolkit.source) throw new Error('unsupported toolkit provenance — repair the lock with a pinned upgrade');
+  if (`${slug.owner}/${slug.repo}` !== identity.repo) throw new Error('toolkit repository differs from the running CLI — repair the lock using the trusted pinned CLI');
   if (identity.status === 'release' && identity.tag === lock.toolkit.ref && identity.commit === lock.toolkit.commit && identity.version === lock.toolkitVersion && toolkitSource(identity.repo) === lock.toolkit.source) {
     return { root: toolkitRoot, pin, version: lock.toolkitVersion };
   }
   try {
-    const resolved = resolveSource({ name: 'worktree-toolkit', source: httpsUrl(slug), sourceType: 'git', ref: lock.toolkit.commit }, { cacheDir: sourceCacheDir, offline });
+    const resolved = resolveSource({ name: 'worktree-toolkit', source: httpsUrl(slug), sourceType: 'git', ref: lock.toolkit.commit }, { cacheDir: sourceCacheDir, offline: offline || untrustedConfig });
     if (git(resolved.root, ['rev-parse', '--verify', `${lock.toolkit.ref}^{commit}`]) !== lock.toolkit.commit || resolved.commit !== lock.toolkit.commit || json(path.join(resolved.root, 'package.json')).version !== lock.toolkitVersion) throw new Error('pin mismatch');
     return { root: resolved.root, pin, version: lock.toolkitVersion };
   } catch {
-    throw new Error(`${offline ? 'offline cache miss' : 'unavailable or mismatched toolkit'} for ${pin} — make the locked commit available in the source cache online, or explicitly upgrade and commit the new lock`);
+    throw new Error(`${offline ? 'offline cache miss' : 'unavailable or mismatched toolkit'} for ${pin} — run npx --yes ${pin} prepare-worktree in trusted setup; make the locked commit available in the source cache online, or explicitly upgrade and commit the new lock`);
   }
 }
 
@@ -92,7 +93,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
     const lock = readLock(cwd);
     if (!lock) throw new Error('missing lock — run a pinned upgrade/render and commit the lock first');
     result.pin = toolkitPinFromLock(lock);
-    const selected = resolveToolkit({ lock, toolkitRoot, offline, sourceCacheDir, allowUnreleased, cwd });
+    const selected = resolveToolkit({ lock, toolkitRoot, offline, untrustedConfig, sourceCacheDir, allowUnreleased, cwd });
     result.pin = selected.pin;
     const main = git(cwd, ['worktree', 'list', '--porcelain', '-z']).split('\0')[0].slice('worktree '.length);
     const localOverlay = resolveLocalConfigFile(cwd).file;
