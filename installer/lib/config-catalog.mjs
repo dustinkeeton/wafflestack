@@ -74,7 +74,8 @@ export function collectUsedKeys(items) {
     if (kind === 'agents') {
       for (const k of placeholderKeys(item.body)) keys.add(k);
       for (const k of placeholderKeys(item.data.description ?? '')) keys.add(k);
-    } else if (kind === 'skills') {
+    } else if (kind === 'skills' && !item.upstream) {
+      // An upstream-pinned skill renders verbatim (#827), so it references no config.
       for (const rel of item.files) {
         if (!rel.endsWith('.md')) continue;
         for (const k of placeholderKeys(fs.readFileSync(path.join(item.dir, rel), 'utf8'))) keys.add(k);

@@ -82,6 +82,11 @@ export function eject({ cwd, item, toolkitRoot = null, log = () => {} }) {
       }
       if (!Object.keys(lock.settings).length) delete lock.settings;
     }
+    // An ejected pinned skill is project-owned, so its upstream provenance leaves the lock (#827).
+    if (kind === 'skills' && Array.isArray(lock.upstream)) {
+      lock.upstream = lock.upstream.filter((e) => !String(e?.item).endsWith(`/skills/${name}`));
+      if (!lock.upstream.length) delete lock.upstream;
+    }
     // Always write to the current location — a lock read via the legacy fallback migrates here.
     writeFileEnsuringDir(path.join(cwd, file), `${JSON.stringify(lock, null, 2)}\n`);
   }

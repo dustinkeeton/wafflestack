@@ -387,8 +387,46 @@ the new commit, then record the new `commit` and `hash` in `stack.yaml` and the 
 the registry. A stray untracked file in the directory (a `.DS_Store`) also changes the hash. The
 gate runs inside `validateStack`, so an external stack with a stale pin also refuses to render.
 
-In this release an upstream-pinned skill still renders like any other skill (template
-substitution applies); verbatim rendering and lock provenance arrive in #827.
+**Rendering: verbatim (#827).** An upstream-pinned skill renders with **no `{{…}}` substitution**,
+`harness.*` included: an upstream `{{` is never read as a placeholder, so every rendered file equals
+the copy byte for byte. Two consumer-requested patches still apply to the rendered `SKILL.md`, on
+top of those bytes: the `skills.modelInvocation` frontmatter patch (claude target only, so
+`toggle` works on a pinned skill) and the project extension, appended inside its markers. A pinned
+skill references no config: no required key, `pattern:`/`modes:`/`range:` guard or stack
+`constraints:` check comes from it, `config`/`setup`/`state` list no key for it, and `validate`
+does not sweep its `.md` files for undeclared placeholders. The `.waffle/` overview docs quote its
+`description` and `argument-hint` raw.
+
+**Lock provenance (#827).** The consumer lock records each selected pinned skill in a top-level
+`upstream` array, after `sources` and before `files`:
+
+```json
+"upstream": [
+  {
+    "item": "tstack/skills/council",
+    "repo": "t3dotgg/tstack",
+    "path": "skills/council",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "files": [".claude/skills/council/LICENSE", ".claude/skills/council/SKILL.md"]
+  }
+]
+```
+
+- `item` is `<stack>/skills/<name>`; `files` lists the rendered lock paths it produced, sorted. The
+  array is sorted by `item`. `license` and `hash` stay toolkit-side (registry and `validate`).
+- The key is **omitted** when no pinned skill renders a file, so a lock without one is
+  byte-identical to before. It is canonical like the rest of the lock: built from the toolkit's
+  pins and the committed selection only. The local lock carries the effective render's twin.
+- `doctor --verify-render` compares it: each entry is checked as an `upstream:<item>` key, so a
+  commit-only bump with unchanged bytes still reads `stale`, and an entry the render no longer
+  produces reads `absent`.
+- `doctor` adds one note per entry (`upstream-pinned: <item> — copied from <repo>/<path> @ <sha12>`,
+  never flips `ok`) and attributes drift in a pinned file to `upstream <repo>@<sha12>`. `report`
+  lists the entries (`lock.upstream`, plus an `upstream-pinned` Markdown line). `upgrade` logs each
+  pin that moved, was repointed, added or removed between the old and new lock (`upstreamMoves`).
+- `eject skills/<name>` drops the item's entry from both locks.
+- Compatibility: an additive key, so no lock-format version bump and no migration (same rule as
+  the `sources` and `toolkit` blocks).
 
 ## Waffle registry (`stacks/registry.yaml`)
 

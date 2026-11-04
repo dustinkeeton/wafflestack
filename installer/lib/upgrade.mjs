@@ -9,6 +9,7 @@ import { CONFIG_FILE, LOCK_FILE, resolveConfigFile, setScalarIn } from './projec
 import { classifyToolkitRefValue, toolkitPinFromIdentity, parseRepoSlug, newerRelease } from './toolkit-ref.mjs';
 import { loadRegistry, replacementFor } from './registry.mjs';
 import { parseRef } from './refs.mjs';
+import { lockUpstream } from './upstream.mjs';
 
 const CHANGELOG_FILE = 'CHANGELOG.md';
 
@@ -41,6 +42,7 @@ export function upgrade({
   const fromVersion = lock?.toolkitVersion ?? null;
   const toVersion = toolkitVersion;
   const oldSources = new Map((lock?.sources ?? []).map((s) => [s.name, s]));
+  const oldUpstream = new Map(lockUpstream(lock).map((e) => [e.item, e]));
   // Null for a lock written before the `toolkit` block existed (#374); every reader tolerates that.
   const oldToolkit = lock?.toolkit ?? null;
 
@@ -122,11 +124,13 @@ export function upgrade({
   const render = renderProject({ toolkitRoot, cwd, toolkitVersion, toolkitIdentity, sourceCacheDir, refreshSources: true, log });
   if (!render.ok) {
     // The config writes already happened, so `pinMoves` rides the failure return too.
-    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], toolkitMove: null, pinMoves, waffleMoves, newerRelease: newerRelease?.result ?? null, notes };
+    return { ok: false, status, fromVersion, toVersion, identity: toolkitIdentity, changelogDelta, migrationsRun, render, doctor: null, sourceMoves: [], upstreamMoves: [], toolkitMove: null, pinMoves, waffleMoves, newerRelease: newerRelease?.result ?? null, notes };
   }
 
   const sourceMoves = diffSources(oldSources, render.sources ?? []);
   for (const move of sourceMoves) log(describeSourceMove(move));
+  const upstreamMoves = diffUpstream(oldUpstream, render.upstream ?? []);
+  for (const move of upstreamMoves) log(describeUpstreamMove(move));
 
   const toolkitMove = diffToolkit(oldToolkit, render.toolkit ?? null, { fromVersion, toVersion });
   const moveNote = toolkitMove ? describeToolkitMove(toolkitMove) : null;
@@ -146,6 +150,7 @@ export function upgrade({
     render,
     doctor: dr,
     sourceMoves,
+    upstreamMoves,
     toolkitMove,
     pinMoves,
     waffleMoves,
@@ -409,6 +414,27 @@ export function diffSources(oldSources, newSources) {
 }
 
 /**
+ * Diff the lock's upstream pins (`oldUpstream`, item → entry) against the re-render's (#827): a
+ * `moved` commit, a `repointed` repo or path, plus items `added` and `removed`. Sorted by item.
+ *
+ * @param {Map<string, import('./upstream.mjs').UpstreamLockEntry>} oldUpstream
+ * @param {import('./upstream.mjs').UpstreamLockEntry[]} newUpstream
+ */
+export function diffUpstream(oldUpstream, newUpstream) {
+  const moves = [];
+  const move = (e, from, to, status) => ({ item: e.item, repo: e.repo, path: e.path, from, to, status });
+  for (const e of newUpstream) {
+    const prev = oldUpstream.get(e.item);
+    if (!prev) moves.push(move(e, null, e.commit, 'added'));
+    else if (prev.repo !== e.repo || prev.path !== e.path) moves.push({ ...move(e, prev.commit, e.commit, 'repointed'), fromRepo: prev.repo, fromPath: prev.path });
+    else if (prev.commit !== e.commit) moves.push(move(e, prev.commit, e.commit, 'moved'));
+  }
+  const kept = new Set(newUpstream.map((e) => e.item));
+  for (const [item, prev] of oldUpstream) if (!kept.has(item)) moves.push(move(prev, prev.commit, null, 'removed'));
+  return moves.sort((a, b) => a.item.localeCompare(b.item));
+}
+
+/**
  * Diff the built-in toolkit's provenance across an upgrade — the lock's `toolkit` block before the
  * re-render against the block it wrote — or null when neither side recorded anything (#374).
  *
@@ -490,6 +516,14 @@ function describeSourceMove(move) {
     return `source ${move.name} added${move.sourceType === 'git' ? ` at ${shortSha(move.to)}${at}` : ' (local path)'}`;
   }
   return `source ${move.name} removed${move.sourceType === 'git' ? ` (was ${shortSha(move.from)})` : ''}`;
+}
+
+function describeUpstreamMove(m) {
+  const at = `(${m.repo} ${m.path})`;
+  if (m.status === 'moved') return `upstream ${m.item} ${at} moved ${shortSha(m.from)} → ${shortSha(m.to)}`;
+  if (m.status === 'repointed') return `upstream ${m.item} repointed ${m.fromRepo} ${m.fromPath} @ ${shortSha(m.from)} → ${m.repo} ${m.path} @ ${shortSha(m.to)}`;
+  if (m.status === 'added') return `upstream ${m.item} ${at} added at ${shortSha(m.to)}`;
+  return `upstream ${m.item} ${at} removed (was ${shortSha(m.from)})`;
 }
 
 function readChangelog(toolkitRoot) {

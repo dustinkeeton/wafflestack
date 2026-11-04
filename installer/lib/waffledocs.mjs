@@ -174,15 +174,17 @@ export function generateWaffleDocs({ toolkit, project, selection, errors = [], t
     if (kind !== 'skills') continue;
     const { data } = item;
     if (!isUserInvocable(data)) continue;
+    // A pinned skill's frontmatter renders verbatim (#827), so the overview quotes it raw.
+    const text = (/** @type {string} */ value, /** @type {string} */ ctx) => (item.upstream ? String(value ?? '').trim() : sub(stack, value, ctx));
     commands.push({
       // The key an agent's frontmatter `skills:` list resolves against, so the reverse map joins on it.
       ref: item.name,
       name: data.name ?? item.name,
       argumentHint:
         data['argument-hint'] != null
-          ? sub(stack, data['argument-hint'], `waffledocs:skills/${item.name}#argument-hint`)
+          ? text(data['argument-hint'], `waffledocs:skills/${item.name}#argument-hint`)
           : '',
-      description: sub(stack, data.description, `waffledocs:skills/${item.name}#description`),
+      description: text(data.description, `waffledocs:skills/${item.name}#description`),
     });
   }
   const agents = enumerateAgents(selection, sub, 'waffledocs');

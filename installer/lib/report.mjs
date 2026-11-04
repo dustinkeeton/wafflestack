@@ -8,6 +8,7 @@ import { doctor } from './doctor.mjs';
 import { formatPrereq } from './prerequisites.mjs';
 import { loadProjectConfig, LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, resolveConfigFile } from './project.mjs';
 import { exists } from './util.mjs';
+import { lockUpstream } from './upstream.mjs';
 
 /**
  * @typedef {object} ReportBundle the redacted diagnostics `wafflestack report` prints (#473)
@@ -25,6 +26,7 @@ import { exists } from './util.mjs';
  * @property {string[]} include
  * @property {number} trackedFiles
  * @property {{ name: string, sourceType: string, ref: string|null, commit: string|null }[]} sources
+ * @property {{ item: string, repo: string, path: string, commit: string }[]} upstream upstream-pinned skills (#827)
  *
  * @typedef {object} ReportConfig
  * @property {boolean} present
@@ -101,6 +103,7 @@ function readLockSafe(cwd) {
       ref: s.ref ?? null,
       commit: s.commit ?? null,
     })),
+    upstream: lockUpstream(lock).map((e) => ({ item: e.item, repo: String(e.repo), path: String(e.path), commit: String(e.commit) })),
   };
 }
 
@@ -237,6 +240,7 @@ export function formatReportMarkdown(b) {
     lines.push(`- **targets**: ${list(b.lock.targets)}`);
     lines.push(`- **stacks**: ${list(b.lock.stacks)}`);
     lines.push(`- **include**: ${list(b.lock.include)}`);
+    if (b.lock.upstream.length) lines.push(`- **upstream-pinned**: ${list(b.lock.upstream.map((u) => `${u.item} (${u.repo}/${u.path} @ ${short(u.commit)})`))}`);
     if (b.lock.sources.length) lines.push(`- **external sources**: ${list(b.lock.sources.map((s) => `${s.name} (${s.sourceType}${s.ref ? ` @ ${s.ref}` : ''})`))}`);
   } else {
     lines.push('- **lock**: none — the repo has not been rendered');
