@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-04",
+  "script": "installer/smoke/worktree-discovery.mjs",
+  "branch": "feat/issue-820-stack-2 (PR on #822)",
+  "versions": {
+    "claude": "2.1.317 (Claude Code)",
+    "codex": ["codex-cli 0.156.1 (T3-installed)", "codex-cli 0.154.0-alpha.6.2 (Codex.app bundled)"]
+  },
+  "check": {
+    "claude": "startup roster (system/init, stopped before any model turn) lists the lock-rendered skill `greet` and agent `helper`; the committed `custom` skill is kept in the custom-only state",
+    "codex": "app-server skills/list with forceReload lists `greet` from a path inside the worktree"
+  },
+  "states": [
+    { "state": "absent", "prepared": "ready", "claude": "pass", "codex-0.156.1": "pass", "codex-0.154.0-alpha.6.2": "pass" },
+    { "state": "empty", "prepared": "ready", "claude": "pass", "codex-0.156.1": "pass", "codex-0.154.0-alpha.6.2": "pass" },
+    { "state": "custom-only", "prepared": "ready", "claude": "pass (custom kept)", "codex-0.156.1": "pass", "codex-0.154.0-alpha.6.2": "pass" },
+    { "state": "partial", "prepared": "ready", "claude": "pass", "codex-0.156.1": "pass", "codex-0.154.0-alpha.6.2": "pass" },
+    { "state": "complete", "prepared": "no-op", "claude": "pass", "codex-0.156.1": "pass", "codex-0.154.0-alpha.6.2": "pass" }
+  ],
+  "ok": true,
+  "notes": [
+    "Discovery only: no model turn was submitted and no custom agent was invoked.",
+    "Custom-agent invocation on Codex remains unverified: PR #821's live check found Codex 0.156.1 could not select a .codex/agents/*.toml agent through spawn_agent."
+  ]
+}

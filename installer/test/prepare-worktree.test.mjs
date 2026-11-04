@@ -6,70 +6,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
+import { resolveSource } from '../lib/sources.mjs';
+import { VERSION, write, read, git, porcelain, makeMain, addWorktree } from './prepare-fixture.mjs';
 import { doctor } from '../lib/doctor.mjs';
-import { prepareWorktree, checkoutInfo, resolveOverlayPolicy, isHarnessPath, expectedHarnessPaths, formatPrepareResult, PREPARE_LOCK, PREPARED_MANIFEST, PREPARE_WORKTREE_SINCE } from '../lib/worktree.mjs';
+import { prepareWorktree, resolvePinnedToolkit, checkoutInfo, resolveOverlayPolicy, isHarnessPath, expectedHarnessPaths, formatPrepareResult, PREPARE_LOCK, PREPARED_MANIFEST, PREPARE_WORKTREE_SINCE } from '../lib/worktree.mjs';
 import { parseVersion, compareVersions } from '../lib/util.mjs';
 
 // #820: provision a checkout's harness resources from its own lock before a session starts there.
 
 const CLI = fileURLToPath(new URL('../cli.mjs', import.meta.url));
-const VERSION = '0.0.test';
 const HELPER = '.claude/agents/helper.md';
 const SKILL = '.claude/skills/greet/SKILL.md';
 const SKILL_SCRIPT = '.claude/skills/greet/scripts/hello.sh';
 const CODEX_AGENT = '.codex/agents/helper.toml';
 const AGENTS_SKILL = '.agents/skills/greet/SKILL.md';
 const WORKFLOW = '.github/workflows/demo.yml';
-
-function write(root, rel, content) {
-  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-  fs.writeFileSync(path.join(root, rel), content);
-}
-const read = (root, rel) => fs.readFileSync(path.join(root, rel), 'utf8');
-const git = (cwd, ...args) =>
-  spawnSync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', '-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' });
-const porcelain = (cwd) => git(cwd, 'status', '--porcelain', '--untracked-files=all').stdout;
-
-function makeToolkit(root, { mod = false } = {}) {
-  write(root, 'toolkit.yaml', 'name: fixture\ndescription: test fixture\nstacks: [demo]\n');
-  write(root, 'stacks/demo/stack.yaml', [
-    'name: demo', 'description: Demo.', 'agents: [helper]', 'skills: [greet]', 'files: [.github/workflows/demo.yml]',
-    ...(mod ? ['mods: [example]'] : []),
-    'config:', '  git.botEmail:', '    required: true', '    description: bot email',
-    '  waffle.toolkitRef:', '    required: false', '    default: github:example/fixture#v1.0.0', '    description: pin', '',
-  ].join('\n'));
-  if (mod) {
-    write(root, 'package.json', '{"name":"fixture","version":"1.0.0","repository":"https://github.com/example/fixture.git"}');
-    write(root, 'stacks/demo/mods/example/.claude-plugin/plugin.json', '{"name":"example","version":"1.0.0","description":"fixture"}');
-  }
-  write(root, 'stacks/demo/agents/helper.md', '---\nname: helper\ndescription: A helper.\n---\n\nCommit as {{git.botEmail}}.\n');
-  write(root, 'stacks/demo/skills/greet/SKILL.md', '---\nname: greet\ndescription: Greets.\n---\n\nSay hi from {{git.botEmail}}.\n');
-  write(root, 'stacks/demo/skills/greet/scripts/hello.sh', '#!/bin/sh\necho hi\n');
-  write(root, 'stacks/demo/files/.github/workflows/demo.yml', 'name: demo\non: push\n');
-}
-
-/** A rendered, committed main checkout under Posture 2b (render gitignored, lock committed). */
-function makeMain({ targets = 'claude, codex', ignore = '.claude/\n.codex/\n.agents/\n', mod = false } = {}) {
-  const toolkitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-toolkit-'));
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-main-'));
-  makeToolkit(toolkitRoot, { mod });
-  write(main, '.waffle/waffle.yaml', `targets: [${targets}]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n`);
-  write(main, '.gitignore', `${ignore}.waffle/waffle.local.yaml\n.waffle/waffle.local.lock.json\n`);
-  git(main, 'init', '-q', '-b', 'main');
-  const rendered = renderProject({ toolkitRoot, cwd: main, toolkitVersion: VERSION });
-  assert.equal(rendered.ok, true, JSON.stringify(rendered.errors));
-  git(main, 'add', '-A');
-  git(main, 'commit', '-q', '-m', 'init');
-  return { toolkitRoot, main: fs.realpathSync(main) };
-}
-
-/** `git worktree add` with a path containing a space, outside the main checkout unless `nested`. */
-function addWorktree(main, { nested = false, name = 'wt one' } = {}) {
-  const dir = nested ? path.join(main, '.claude', 'worktrees', name) : path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pw-ext-')), name);
-  const r = git(main, 'worktree', 'add', '-q', dir, '-b', `feat/${name.replace(/\s/g, '-')}`);
-  assert.equal(r.status, 0, r.stderr);
-  return fs.realpathSync(dir);
-}
 
 const prepare = (cwd, toolkitRoot, extra = {}) => prepareWorktree({ cwd, toolkitRoot, toolkitVersion: VERSION, ...extra });
 
@@ -326,11 +277,11 @@ describe('prepareWorktree: refusals', () => {
     const lockFile = path.join(wt, '.waffle/waffle.lock.json');
     const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
     fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkitVersion: '0.0.older', toolkit: { source: 'github:o/r', sourceType: 'git', ref: 'v0.0.older', commit: 'a'.repeat(40), status: 'release' } }, null, 2));
-    const pinned = prepare(wt, toolkitRoot);
+    const pinned = prepare(wt, toolkitRoot, { offline: true });
     assert.equal(pinned.status, 'failed');
     assert.match(pinned.errors[0], /rendered by 0\.0\.older/);
     assert.match(pinned.errors[0], new RegExp(`npx --yes github:o/r#v0\\.0\\.older prepare-worktree --cwd "${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-    assert.deepEqual(pinned.pin, { version: '0.0.older', ref: 'github:o/r#v0.0.older', status: 'release' });
+    assert.deepEqual(pinned.pin, { version: '0.0.older', ref: 'github:o/r#v0.0.older', status: 'release', from: null });
     fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkitVersion: '0.0.older', toolkit: { ...lock.toolkit, status: 'unreleased', ref: null, commit: null } }, null, 2));
     const unpinned = prepare(wt, toolkitRoot);
     assert.match(unpinned.errors[0], /records no release pin.*wafflestack upgrade/);
@@ -447,13 +398,175 @@ describe('prepareWorktree: settings entries, rollback and the pin (review findin
     const commit = 'a'.repeat(40);
     fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkit: { source: 'github:example/fixture', sourceType: 'git', ref: 'v0.0.test', commit, status: 'release' } }, null, 2));
     const identity = (tag, sha) => ({ status: 'release', version: VERSION, tag, commit: sha, ref: `github:example/fixture#${tag}`, origin: 'npm-install', repo: 'example/fixture', lockRepo: 'example/fixture', latestTag: tag, lookupError: null });
-    const other = prepare(wt, toolkitRoot, { toolkitIdentity: identity('v0.0.test', 'b'.repeat(40)) });
+    const other = prepare(wt, toolkitRoot, { toolkitIdentity: identity('v0.0.test', 'b'.repeat(40)), offline: true });
     assert.equal(other.status, 'failed');
-    assert.match(other.errors[0], /same version number, different toolkit/);
+    assert.match(other.errors[0], /offline, and the pinned release is not in the source cache/);
     assert.match(other.errors[0], /npx --yes github:example\/fixture#v0\.0\.test prepare-worktree/);
     assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
     const same = prepare(wt, toolkitRoot, { toolkitIdentity: identity('v0.0.test', commit) });
     assert.equal(same.status, 'ready', JSON.stringify(same.errors));
+  });
+});
+
+describe('prepareWorktree: the lock pin picks the toolkit (ported from #821)', () => {
+  let main;
+  let toolkitRoot;
+  let repo;
+  let cache;
+  let other;
+  afterEach(() => {
+    for (const d of [main, toolkitRoot, repo, cache, other]) if (d) fs.rmSync(d, { recursive: true, force: true });
+  });
+  /** The fixture toolkit as a tagged git repo standing in for github.com/example/fixture. */
+  function pinToRepo(wt, { commit }) {
+    const lockFile = path.join(wt, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+    fs.writeFileSync(lockFile, `${JSON.stringify({ ...lock, toolkit: { source: 'github:example/fixture', sourceType: 'git', ref: 'v0.0.test', commit, status: 'release' } }, null, 2)}\n`);
+  }
+  const viaRepo = (ext, opts) => resolveSource({ ...ext, source: repo }, opts);
+
+  beforeEach(() => {
+    ({ main, toolkitRoot } = makeMain());
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-repo-'));
+    fs.cpSync(toolkitRoot, repo, { recursive: true });
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'v0.0.test');
+    git(repo, 'tag', 'v0.0.test');
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-cache-'));
+    // The running CLI: another version, with different content, so a render from it would not match the lock.
+    other = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-other-'));
+    fs.cpSync(toolkitRoot, other, { recursive: true });
+    write(other, 'package.json', '{"name":"fixture","version":"0.0.newer"}');
+    write(other, 'stacks/demo/agents/helper.md', '---\nname: helper\ndescription: A newer helper.\n---\n\nNewer.\n');
+  });
+
+  test('a newer CLI fetches the pinned release once, then serves it from the cache, offline too', () => {
+    const wt = addWorktree(main);
+    pinToRepo(wt, { commit: git(repo, 'rev-parse', 'HEAD').stdout.trim() });
+    const run = (extra = {}) => prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: viaRepo, ...extra });
+    const first = run();
+    assert.equal(first.status, 'ready', JSON.stringify(first.errors));
+    assert.equal(first.pin.from, 'fetch');
+    assert.match(read(wt, HELPER), /A helper\./, 'rendered by the pinned toolkit, not the newer running one');
+    assert.ok(first.notes.some((n) => /pinned release github:example\/fixture#v0\.0\.test, fetched into the source cache/.test(n)));
+    const again = run({ offline: true });
+    assert.equal(again.status, 'no-op', JSON.stringify(again.errors));
+    assert.equal(again.pin.from, 'cache');
+    fs.rmSync(cache, { recursive: true, force: true });
+    fs.rmSync(path.join(wt, HELPER));
+    const miss = run({ offline: true });
+    assert.equal(miss.status, 'failed');
+    assert.match(miss.errors[0], /offline, and the pinned release is not in the source cache/);
+    assert.match(miss.errors[0], /go online once .* or run the pinned toolkit yourself:\n {2}npx --yes github:example\/fixture#v0\.0\.test prepare-worktree/);
+    assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
+  });
+
+  test('a moved tag or an inconsistent version at the tag is refused, not rendered', () => {
+    const wt = addWorktree(main);
+    pinToRepo(wt, { commit: 'c'.repeat(40) });
+    const moved = prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: viaRepo });
+    assert.equal(moved.status, 'failed');
+    assert.match(moved.errors[0], /the tag moved/);
+    write(repo, 'package.json', '{"name":"fixture","version":"0.0.wrong"}');
+    git(repo, 'commit', '-q', '-am', 'wrong version');
+    git(repo, 'tag', '-f', 'v0.0.test');
+    pinToRepo(wt, { commit: git(repo, 'rev-parse', 'HEAD').stdout.trim() });
+    fs.rmSync(cache, { recursive: true, force: true });
+    const wrong = prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: viaRepo });
+    assert.equal(wrong.status, 'failed');
+    assert.match(wrong.errors[0], /the toolkit at that tag is version 0\.0\.wrong/);
+    assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
+  });
+
+  test('resolvePinnedToolkit: the running CLI wins only at the pinned tag and commit', () => {
+    const lock = { toolkitVersion: '0.0.test', toolkit: { source: 'github:example/fixture', ref: 'v0.0.test', commit: 'a'.repeat(40), status: 'release' } };
+    const identity = (tag, commit) => ({ status: 'release', version: '0.0.test', tag, commit });
+    assert.equal(resolvePinnedToolkit({ lock, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.test', toolkitIdentity: identity('v0.0.test', 'a'.repeat(40)) }).from, 'running');
+    assert.equal(resolvePinnedToolkit({ lock, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.test', toolkitIdentity: { status: 'unreleased', version: '0.0.test' } }).from, 'running');
+    const r = resolvePinnedToolkit({ lock, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.test', toolkitIdentity: identity('v0.0.test', 'b'.repeat(40)), offline: true });
+    assert.match(r.error, /offline, and the pinned release is not in the source cache/);
+    assert.equal(resolvePinnedToolkit({ lock: { toolkitVersion: '0.0.test' }, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.other' }).error.includes('records no release pin'), true);
+  });
+});
+
+describe('prepareWorktree: a changed selection prunes what an earlier run wrote; ejected and sourced items', () => {
+  let main;
+  let toolkitRoot;
+  beforeEach(() => ({ main, toolkitRoot } = makeMain()));
+  afterEach(() => {
+    fs.rmSync(main, { recursive: true, force: true });
+    fs.rmSync(toolkitRoot, { recursive: true, force: true });
+  });
+
+  test('dropping a target removes the files this command wrote for it, and leaves an edited one as a conflict', () => {
+    const wt = addWorktree(main);
+    assert.equal(prepare(wt, toolkitRoot).status, 'ready');
+    write(main, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+    assert.equal(renderProject({ toolkitRoot, cwd: main, toolkitVersion: VERSION }).ok, true);
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'claude only');
+    git(wt, 'merge', '-q', 'main');
+    const r = prepare(wt, toolkitRoot);
+    assert.equal(r.status, 'ready', JSON.stringify(r.errors));
+    assert.deepEqual(r.pruned, [AGENTS_SKILL, '.agents/skills/greet/scripts/hello.sh', CODEX_AGENT].sort((a, b) => a.localeCompare(b)));
+    assert.equal(fs.existsSync(path.join(wt, '.agents')), false, 'emptied directories go too');
+    assert.equal(fs.existsSync(path.join(wt, '.codex')), false);
+    assert.ok(fs.existsSync(path.join(wt, HELPER)));
+    assert.equal(prepare(wt, toolkitRoot).status, 'no-op');
+    // The other way round, with an edit in the way: nothing is pruned, the edit is named.
+    write(main, '.waffle/waffle.yaml', 'targets: [codex]\nstacks: [demo]\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+    assert.equal(renderProject({ toolkitRoot, cwd: main, toolkitVersion: VERSION }).ok, true);
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'codex only');
+    git(wt, 'merge', '-q', 'main');
+    write(wt, HELPER, 'edited after preparation\n');
+    const edited = prepare(wt, toolkitRoot);
+    assert.equal(edited.status, 'failed');
+    assert.deepEqual(edited.conflicts.map((c) => c.path), [HELPER]);
+    assert.match(edited.conflicts[0].reason, /written by an earlier preparation, no longer rendered/);
+    assert.equal(fs.existsSync(path.join(wt, AGENTS_SKILL)), false, 'nothing was written');
+  });
+
+  test('an ejected item stays project-owned through a preparation', () => {
+    const wt = addWorktree(main);
+    assert.equal(prepare(wt, toolkitRoot).status, 'ready');
+    fs.appendFileSync(path.join(main, '.waffle/waffle.yaml'), 'eject: [skills/greet]\n');
+    assert.equal(renderProject({ toolkitRoot, cwd: main, toolkitVersion: VERSION }).ok, true);
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'eject greet');
+    git(wt, 'merge', '-q', 'main');
+    write(wt, SKILL, 'project-owned now\n');
+    const r = prepare(wt, toolkitRoot);
+    assert.equal(r.status, 'failed', 'the ejected copy this command once wrote was edited: it must not be pruned or overwritten');
+    assert.deepEqual(r.conflicts.map((c) => c.path), [SKILL]);
+    assert.equal(read(wt, SKILL), 'project-owned now\n');
+  });
+
+  test('a relative external source and an extension resolve against the destination checkout', () => {
+    write(main, 'vendor/extra/stack.yaml', 'name: extra\ndescription: Destination fixture.\nskills: [local]\n');
+    write(main, 'vendor/extra/skills/local/SKILL.md', '---\nname: local\ndescription: Destination source.\n---\n\nDestination bytes.\n');
+    write(main, '.waffle/extensions/skills/local.md', 'Destination extension.\n');
+    write(main, '.waffle/waffle.yaml', 'targets: [claude, codex]\nstacks:\n  - demo\n  - name: extra\n    source: ./vendor/extra\nconfig:\n  git:\n    botEmail: bot@example.com\n');
+    assert.equal(renderProject({ toolkitRoot, cwd: main, toolkitVersion: VERSION }).ok, true);
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'local source');
+    const wt = addWorktree(main);
+    const r = prepare(wt, toolkitRoot);
+    assert.equal(r.status, 'ready', JSON.stringify(r.errors));
+    assert.match(read(wt, '.claude/skills/local/SKILL.md'), /Destination bytes[\s\S]*Destination extension/);
+    assert.equal(fs.existsSync(path.join(wt, 'vendor/extra/stack.yaml')), true, 'the source the worktree rendered from is its own copy');
+  });
+});
+
+describe('t3.json dogfood', () => {
+  test('this repo prepares its own T3 worktrees synchronously with the worktree installer', () => {
+    const t3 = JSON.parse(fs.readFileSync(new URL('../../t3.json', import.meta.url), 'utf8'));
+    const script = t3.scripts.find((s) => /prepare-worktree/.test(s.command));
+    assert.ok(script, JSON.stringify(t3));
+    assert.equal(script.runOnWorktreeCreate, true);
+    assert.equal(script.async, false);
+    assert.match(script.command, /npm ci --ignore-scripts && env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd "\$PWD"$/);
   });
 });
 
