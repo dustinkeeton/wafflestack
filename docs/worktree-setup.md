@@ -171,7 +171,11 @@ contract. Whole-directory symlinks to main break write isolation and version ind
 startup skill/agent rosters and Codex 0.156.1 app-server `skills/list` with
 `forceReload: true`. All five directory states passed after preparation. Tests used
 external and nested disposable repositories, including paths with spaces. These results
-prove discovery, not custom-agent invocation or desktop session creation.
+prove discovery. The separately approved live invocation passed with Claude’s `--agent worker`.
+Codex 0.156.1’s normal session reported no `agent_type` selector; its generic child did not
+receive the fixture’s custom instructions. An initial ephemeral session also failed to spawn
+with `no thread with id`. Codex custom-agent usability therefore remains unverified in this
+runtime/tool configuration. No desktop session-creation claim is made.
 
 Run the optional, non-CI harness smoke test with installed runtimes:
 
@@ -182,7 +186,13 @@ WAFFLE_CODEX_BIN=/absolute/path/to/codex node installer/smoke/worktree-discovery
 `WAFFLE_CLAUDE_BIN` can select Claude. The script stops Claude after `system/init`, uses
 project-only settings and no MCP servers, and never submits a Codex model turn in discovery
 mode. `--invoke` additionally exercises Claude's `--agent worker` and Codex's custom
-`worker` spawn against synthetic fixtures, using authenticated model calls. Live invocation
-was not run in the recorded result: automatic approval review blocked those external model
-calls pending explicit approval. Run and record that check before release. CI's deterministic
-worktree tests never call models. A Codex skill-list result is not evidence of agent usability.
+`worker` spawn against synthetic fixtures, using authenticated model calls. Invocation uses
+a normal Codex session because the tested ephemeral mode could not spawn a child. A missing
+custom-type selector or generic-agent fallback fails the smoke test; it must not be counted
+as a successful custom-agent invocation. Resolve and recheck the recorded Codex limitation
+before claiming full custom-agent runtime acceptance. CI’s deterministic worktree tests
+never call models. A Codex skill-list result is not evidence of agent usability.
+
+The [official custom-agent documentation](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+describes project `.codex/agents/*.toml` definitions. Provisioning those files does not prove
+that a particular runtime/model tool interface can select them.

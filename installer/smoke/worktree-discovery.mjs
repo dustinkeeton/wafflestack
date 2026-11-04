@@ -81,10 +81,19 @@ try {
     const claudeReply = execFileSync(claude, ['--print', 'Follow your agent instructions. Reply with only the requested word.', '--agent', 'worker', '--no-session-persistence', '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--tools', ''], { cwd: f.wt, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
     assert.match(claudeReply, /canonical/i);
     report.invocation.claude = 'pass: --agent worker returned canonical';
-    const codexReply = execFileSync(codex, ['exec', '--ephemeral', '--json', '--sandbox', 'read-only', '-c', `projects.${JSON.stringify(fs.realpathSync(f.wt))}.trust_level="trusted"`, 'Invoke the custom worker agent exactly once with spawn_agent agent_type worker. Ask it to follow its agent instructions and reply with only the requested word. Wait for completion and report its reply. Do not edit files.'], { cwd: f.wt, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
-    assert.match(codexReply, /spawn_agent/);
-    assert.match(codexReply, /canonical/i);
-    report.invocation.codex = 'pass: custom worker spawn and canonical response';
+    const codexReply = execFileSync(codex, ['exec', '--json', '--sandbox', 'read-only', '-c', `projects.${JSON.stringify(fs.realpathSync(f.wt))}.trust_level="trusted"`, 'Invoke the custom worker agent exactly once with spawn_agent agent_type worker. Ask it to follow its agent instructions and reply with only the requested word. Wait for completion and report its reply. Do not read or edit files, and do not substitute a generic agent. If the tool cannot select the custom type, report unavailable and stop.'], { cwd: f.wt, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const events = codexReply.trim().split('\n').map((line) => JSON.parse(line));
+    const completed = events.filter((event) => event.type === 'item.completed').map((event) => event.item);
+    const spawned = completed.some((item) => item.type === 'collab_tool_call' && item.tool === 'spawn_agent' && item.status === 'completed' && item.receiver_thread_ids?.length);
+    const replied = completed.some((item) => item.type === 'agent_message' && /canonical/i.test(item.text));
+    const unavailable = completed.some((item) => item.type === 'agent_message' && /unavailable|no `?agent_type`?|cannot.*select|can't.*select/i.test(item.text));
+    if (spawned && replied && !unavailable) report.invocation.codex = 'pass: custom worker spawn and canonical response';
+    else {
+      report.invocation.codex = unavailable
+        ? 'failed: runtime could not select the custom agent type'
+        : 'failed: no completed spawn and canonical response evidence';
+      process.exitCode = 1;
+    }
   }
   console.log(JSON.stringify(report, null, 2));
 } finally {
