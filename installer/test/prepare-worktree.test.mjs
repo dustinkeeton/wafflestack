@@ -280,7 +280,7 @@ describe('prepareWorktree: refusals', () => {
     const pinned = prepare(wt, toolkitRoot, { offline: true });
     assert.equal(pinned.status, 'failed');
     assert.match(pinned.errors[0], /pins github:o\/r#v0\.0\.older — a lock may only be rendered by a release of the running CLI's own repository/);
-    assert.match(pinned.errors[0], new RegExp(`npx --yes github:o/r#v0\\.0\\.older prepare-worktree --cwd "${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    assert.doesNotMatch(pinned.errors[0], /npx/);
     assert.deepEqual(pinned.pin, { version: '0.0.older', ref: 'github:o/r#v0.0.older', status: 'release', from: null });
     fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkitVersion: '0.0.older', toolkit: { ...lock.toolkit, status: 'unreleased', ref: null, commit: null } }, null, 2));
     const unpinned = prepare(wt, toolkitRoot);
@@ -495,7 +495,16 @@ describe('prepareWorktree: the lock pin picks the toolkit (ported from #821)', (
     const untrusted = prepareWorktree({ ...base, toolkitIdentity: NEWER, untrustedConfig: true });
     assert.equal(untrusted.status, 'failed');
     assert.match(untrusted.errors[0], /--untrusted-config never fetches a toolkit an untrusted tree's lock names/);
-    assert.match(untrusted.errors[0], /npx --yes github:example\/fixture#v0\.0\.test prepare-worktree/);
+    assert.doesNotMatch(untrusted.errors[0], /npx/, 'an untrusted lock\'s pin is never offered as a command');
+    assert.doesNotMatch(foreign.errors[0], /npx/, 'a foreign pin is never offered as a command');
+    pinToRepo(wt, { commit });
+    const lockFile = path.join(wt, '.waffle/waffle.lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+    fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkit: { ...lock.toolkit, ref: 'v0.0.test; echo pwned' } }));
+    const odd = prepareWorktree({ ...base, toolkitIdentity: NEWER, offline: true });
+    assert.equal(odd.status, 'failed');
+    assert.doesNotMatch(odd.errors.join('\n'), /npx/, 'a ref that is not a plain tag name never reaches a printed command');
+    assert.match(odd.errors[0], /not a plain tag name/);
     pinToRepo(wt, { commit: 'abc' });
     const short = prepareWorktree({ ...base, toolkitIdentity: NEWER });
     assert.match(short.errors[0], /without a full commit/);

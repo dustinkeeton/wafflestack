@@ -91,13 +91,19 @@ export function resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, t
   if (!pin) {
     return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered} and records no release pin (toolkit status: ${t.status ?? 'not recorded'}) — a worktree is provisioned by the toolkit its lock pins, never by whichever CLI happens to run; from the main checkout run \`wafflestack upgrade\` with a release of the toolkit, commit the lock, and prepare again — or, for the toolkit's own checkout, run its installer with --allow-unreleased` };
   }
-  const remedy = `run the pinned toolkit yourself:\n  npx --yes ${pin} prepare-worktree --cwd "${cwd}"`;
+  // A command is printed only for a pin whose every character came through a validator — and never
+  // on a path that is refusing because the lock itself is not trusted.
   const slug = parseRepoSlug(t.source);
+  const tagged = /^[A-Za-z0-9._-]+$/.test(String(t.ref ?? ''));
+  const remedy = slug && tagged
+    ? `run the pinned toolkit yourself:\n  npx --yes github:${slug.owner}/${slug.repo}#${t.ref} prepare-worktree --cwd "${cwd}"`
+    : `check the \`toolkit\` block of ${LOCK_FILE} (its ref is not a plain tag name), then re-render from a release you trust and commit the lock`;
   if (!slug) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}, whose source is not a GitHub repository this CLI can fetch — ${remedy}` };
-  if (untrustedConfig) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}; --untrusted-config never fetches a toolkit an untrusted tree's lock names — ${remedy}` };
+  if (!tagged) return { error: `this CLI is ${running}, but the \`toolkit\` block of ${LOCK_FILE} pins a ref that is not a plain tag name, so it is never handed to git — ${remedy}` };
+  if (untrustedConfig) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}; --untrusted-config never fetches a toolkit an untrusted tree's lock names — render this tree from a toolkit you chose, or prepare it from a trusted checkout` };
   const own = parseRepoSlug(toolkitIdentity?.lockRepo ?? toolkitIdentity?.repo ?? null);
   if (!own || own.owner.toLowerCase() !== slug.owner.toLowerCase() || own.repo.toLowerCase() !== slug.repo.toLowerCase()) {
-    return { error: `this CLI is ${running} from ${own ? `${own.owner}/${own.repo}` : 'an unknown repository'}, but ${LOCK_FILE} pins ${pin} — a lock may only be rendered by a release of the running CLI's own repository, never by one it names; ${remedy}` };
+    return { error: `this CLI is ${running} from ${own ? `${own.owner}/${own.repo}` : 'an unknown repository'}, but ${LOCK_FILE} pins ${pin} — a lock may only be rendered by a release of the running CLI's own repository, never by one it names; check that lock's \`toolkit\` block, and if that repository is one you trust, prepare with its own CLI` };
   }
   if (!/^[0-9a-f]{40}$/i.test(String(t.commit ?? ''))) return { error: `${LOCK_FILE} pins ${pin} without a full commit, so the tag cannot be verified — re-render from a release you trust and commit the lock, or ${remedy}` };
   let fetched = false;
