@@ -9,10 +9,12 @@ import { normalizePrerequisites } from './prerequisites.mjs';
 import { normalizeRecommendedPlugins } from './plugins.mjs';
 import { loadRegistry } from './registry.mjs';
 import { flagPlaceholders } from './template.mjs';
+import { normalizeUpstream } from './upstream.mjs';
 
 /** @import { ExternalStackEntry } from './project.mjs' */
 /** @import { Registry } from './registry.mjs' */
 /** @import { RecommendedPlugin } from './plugins.mjs' */
+/** @import { UpstreamPin } from './upstream.mjs' */
 
 /**
  * The core toolkit types. This module owns them; every other module imports them from here.
@@ -30,6 +32,7 @@ import { flagPlaceholders } from './template.mjs';
  * @property {string} dir absolute path to `skills/<name>/`
  * @property {string[]} files skill-dir-relative paths, sorted; always includes `SKILL.md`
  * @property {Record<string, any>} data parsed SKILL.md frontmatter, read once at load (#485)
+ * @property {UpstreamPin | null} upstream the entry's `upstream:` pin (#826), null when unpinned
  *
  * @typedef {object} FileItem
  * @property {'files'} kind
@@ -95,7 +98,8 @@ import { flagPlaceholders } from './template.mjs';
  * @property {boolean} [recommended] pre-selected by the setup wizard unless the user opts out
  * @property {unknown} [recommendedPlugins] external harness plugins the setup wizard offers (#199)
  * @property {string[]} [agents] bare agent names
- * @property {string[]} [skills] bare skill names
+ * @property {(string | { name: string, upstream?: unknown })[]} [skills] bare skill names, or a
+ *   `{ name, upstream }` mapping for an upstream-pinned skill (#826)
  * @property {(string | { path: string, targets?: string[] })[]} [files] repo-relative output paths
  * @property {string[]} [mods] bare mod names (directories under `mods/`)
  * @property {string[]} [optIn] item refs gated out of a default render
@@ -109,6 +113,7 @@ import { flagPlaceholders } from './template.mjs';
  */
 
 const FILE_ENTRY_KEYS = new Set(['path', 'targets']);
+const SKILL_ENTRY_KEYS = new Set(['name', 'upstream']);
 
 /** The one file every mod dir must carry — Claude Code's plugin manifest (#560). */
 export const MOD_MANIFEST = '.claude-plugin/plugin.json';
@@ -267,7 +272,17 @@ function loadStack(name, dir) {
 
   /** @type {SkillItem[]} */
   const skills = (manifest.skills ?? []).map((entry) => {
-    const skillName = bareName('skills', entry);
+    const mapped = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : null;
+    if (mapped) {
+      // An unknown key is a load error, like `files:` — an `upstrem:` typo would drop the pin's gate.
+      for (const k of Object.keys(mapped)) {
+        if (!SKILL_ENTRY_KEYS.has(k)) {
+          throw new Error(`stack ${name}: skills entry has unknown key "${k}" (allowed: ${[...SKILL_ENTRY_KEYS].join(', ')})`);
+        }
+      }
+      if (typeof mapped.name !== 'string') throw new Error(`stack ${name}: a mapping skills entry needs a \`name:\` string`);
+    }
+    const skillName = bareName('skills', mapped ? mapped.name : /** @type {string} */ (entry));
     const skillDir = path.join(dir, 'skills', skillName);
     const files = fs
       .readdirSync(skillDir, { recursive: true, withFileTypes: true })
@@ -278,7 +293,8 @@ function loadStack(name, dir) {
       throw new Error(`stack ${name}: skill ${skillName} has no SKILL.md`);
     }
     const { data } = parseFrontmatter(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8'));
-    return { kind: 'skill', name: skillName, dir: skillDir, files, data };
+    const upstream = mapped ? normalizeUpstream(mapped.upstream) : null;
+    return { kind: 'skill', name: skillName, dir: skillDir, files, data, upstream };
   });
 
   /** @type {FileItem[]} */

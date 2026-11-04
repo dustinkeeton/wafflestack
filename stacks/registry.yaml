@@ -18,6 +18,8 @@
 #                          consumer to its successor
 #   replacedBy  successor waffle NAME (required by `replaced`, optional on `deprecated`)
 #   note        optional free text
+#   upstream    upstream-pinned skills only: { repo, path, commit, license }, equal to the
+#               stack.yaml pin (the content hash lives only in stack.yaml)
 #
 # Renaming a waffle is a THREE-part edit, and validate reds until all three land: move the files,
 # update the owning stack.yaml, and here replace the old entry with a `replaced` tombstone plus a

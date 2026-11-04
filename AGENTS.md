@@ -97,6 +97,7 @@ and `mobile-architect` take seniority in their domains. The output-conflict guar
 | `config-reference.mjs` | `.waffle/waffle.reference.yaml` (#703): `configReferenceYaml(merged)` reads declarations only. Layout: `## ` lines are notes, `# ` lines are YAML (strip one `# ` → valid config). Header, then `## Must set` (required with no default, never shown as values), `## Locked` (`lockMode:` keys), then the commented `# config:` tree. Multi-line, over-110-char, `null`/no-default, conflicting and leaf-and-prefix keys become comment-only leaves pointing at `wafflestack config <key>`. `generateConfigReference` runs the catalog with `values: {}`. `harness.*` is excluded (a one-line FORMAT.md pointer) | `CONFIG_REFERENCE`, `configReferenceYaml`, `generateConfigReference` |
 | `config.mjs` | `config [key-prefix]` lookup (#701): `configCatalog` — the per-stack, render-scoped (#77) key catalog `setup`'s "Config values" section ALSO prints (one function, no drift) — with value, `set` and source file (`default`/`waffle.yaml`/`waffle.local.yaml`, via `layerOf`) — both defined in `config-catalog.mjs` and re-exported here; `mergeCatalog` folds multi-stack keys and flags declarations that disagree on anything but `description`; `collectConfig` loads like `state` (`loadToolkitWithSources`, tree lock); `queryConfig` = all / exact key / dotted prefix / error with a nearest-match hint; plain-text `formatConfig` | `configCatalog`, `mergeCatalog`, `collectConfig`, `nearestKey`, `queryConfig`, `formatConfig` |
 | `migrations.mjs` | Ordered, idempotent, version-keyed migration steps | `MIGRATIONS`, `EXTENSIONLESS_FILES_0_18`, `protectedPathsFromProse`, `migrationCeiling`, `applicableMigrations`, `runMigrations` |
+| `upstream.mjs` | Upstream-pinned skills (#826, part of #825): the `upstream:` pin shape (`stack.yaml` keys `repo`/`path`/`commit`/`license`/`hash`; registry keys omit `hash`), normalize + context-free shape lint, and the offline copy content hash (`sha256sum`-style manifest of every file in the skill dir, `LICENSE` included, POSIX-sorted) behind `validate`'s copy-matches-pin gate | `UPSTREAM_KEYS`, `REGISTRY_UPSTREAM_KEYS`, `UPSTREAM_LICENSE_FILE`, `UPSTREAM_REPO_RE`, `UPSTREAM_COMMIT_RE`, `UPSTREAM_HASH_RE`, `normalizeUpstream`, `upstreamHash`, `upstreamShapeProblems` |
 | `registry.mjs` | WAFFLE registry loader + the wip/replaced status gate (#335) | `REGISTRY_FILE`, `WAFFLE_KINDS`, `WAFFLE_STATUSES`, `LIVE_STATUSES`, `REGISTRY_ENTRY_KEYS`, `refKindOf`, `waffleKindOf`, `canonicalWafflePath`, `loadRegistry`, `waffleStatus`, `isWaffleWip`, `replacementFor` |
 | `upgrade.mjs` | Version diff, changelog delta, migrations, pin reconcile (#372), render + doctor; `pluginsDir` param → threaded to doctor's stale-mod note (#730, null skips) | `upgrade`, `reconcileToolkitRefPins`, `staleTagMentions`, `forwardRenamedWaffleRefs`, `diffSources`, `diffToolkit`, `changelogBetween` |
 | `uninstall.mjs` | `uninstall` / `reinstall` + the pure `planUninstall` they share (#182) | `planUninstall`, `uninstall`, `reinstall` |
@@ -129,7 +130,7 @@ config-catalog.mjs → project, template, util
 upgrade.mjs  → render, doctor, migrations, project, toolkit-ref, registry, refs, util
 uninstall.mjs → render, eject, toolkit, settings, project, util
 eject.mjs    → render, toolkit, sources, refs, settings, project, util
-validate.mjs → toolkit, template, refs, prerequisites, plugins, marketplace, project, registry
+validate.mjs → toolkit, template, refs, prerequisites, plugins, marketplace, project, registry, upstream
 setup.mjs    → toolkit, render, config, project, refs, prerequisites, plugins, registry, marketplace, settings, util
 list.mjs     → toolkit, render, refs, settings, project, util
 toggle.mjs   → toolkit, sources, refs, render, settings, project, list, model-invocation
@@ -141,12 +142,13 @@ avatars-sync.mjs → toolkit, project, refs, waffledocs
 evals.mjs    → render, template, util
 migrations.mjs → project, refs, util
 board.mjs    → update-check (defaultUpdateCacheFile)
-toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID_TARGETS only), template (flagPlaceholders only), util
+toolkit.mjs  → refs, sources, prerequisites, plugins, registry, project (VALID_TARGETS only), template (flagPlaceholders only), upstream, util
 prerequisites.mjs → refs
 plugins.mjs  → refs
 marketplace.mjs → toolkit
 refs.mjs     → project (VALID_TARGETS only), registry (the wip/replaced gate; registry.mjs imports only util.mjs — no cycle), settings (ownsModKey; settings.mjs imports only util.mjs)
-registry.mjs → util
+registry.mjs → upstream, util
+upstream.mjs → util
 sources.mjs  → util
 toolkit-ref.mjs → util
 update-check.mjs → toolkit-ref
@@ -589,7 +591,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 
 | Task | Command |
 |------|---------|
-| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2145 tests, 292 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
+| test | `npm test` (node:test, `installer/test/*.test.mjs`; 2171 tests, 297 suites (2 skipped: the #445 per-target check for `codex` / `agents-dir`, whose rosters are null)) |
 | validate | `npm run validate` = `node installer/cli.mjs validate` |
 | typecheck | `npm run typecheck` = `tsc -p tsconfig.json` |
 | build | `npm run build` = `npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` |
@@ -597,7 +599,7 @@ Node >= 18. Single runtime dependency: `yaml` (`package.json:31`).
 | verify render | `node installer/cli.mjs doctor` (tree vs lock — not gated) / `node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased` (committed inputs reproduce the committed lock — the CI gate, `tests.yml:36`, which gets the env twin from the job `env:` at `tests.yml:21` instead of the flag) |
 | evals (metered, #109) | `npm run evals -- --max-calls N` (live, needs `ANTHROPIC_API_KEY`) / `npm run evals -- --dry-run` (mock, free). 28 cases: `code-quality` (2) + `github-workflow` (15) + `orchestration` (5) + `wafflestack` (6). NOT in `npm test` |
 
-Test files (39): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
+Test files (40): `installer.test.mjs` (render pipeline; sets `WAFFLESTACK_ALLOW_UNRELEASED=1` at
 module scope — it spawns the real CLI from an untagged checkout), `content.test.mjs` (eval layer
 1, #108: key-phrase assertions pinning load-bearing guardrails in the self-render (a tmp render of the committed config, `installer/test/self-render.mjs`, #777) AND every
 `stacks/**` source, #360; includes the #172 clean-up delegate-checkpoint sweep guard with its
@@ -610,7 +612,7 @@ against fixtures), `avatars-sync.test.mjs` (#285: injected HTTP + rasterizer),
 `typecheck-gate.test.mjs` (#177), `provenance.test.mjs` (#373/#374/#372: identity, release gate,
 lock toolkit block, pin reconcile — hermetic, strips the env var per spawn),
 `preflight-ci-parity.test.mjs` (#375: the four `project.*Cmd` config slots mirror `tests.yml`'s
-required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation),
+required `test` job), `registry.test.mjs` (#335: waffle registry gating/rename reconciliation), `upstream.test.mjs` (#826: `upstreamHash` known vector + order/byte/rename/add sensitivity, the `{ name, upstream }` skills entry load + load errors, `upstream:` shape lint and the `LICENSE` requirement, the copy-matches-pin gate (one byte, `LICENSE`, `.DS_Store`), registry ↔ stack.yaml upstream reconcile),
 `mods.test.mjs` (#560: the `mods/` kind on a fixture stack — load shape, ref grammar, verbatim
 claude-only render → lock → doctor hand-edit → eject → prune on target change, include-skip warning,
 opt-in gate, cross-stack conflict, load errors, registry reconcile/wip gate, inventory; #562: the built-in `wafflestack/mods/waffle-view` loads with its six files, its manifest/hooks.json point at shipped files, it reads only via `state --json` (no `--offline`, #608), and it renders byte-identical into a claude consumer's lock; #616: the stack declares `waffleView.editor` (default `cursor`, no `modes`), `state.ts` spells it as a literal, `collectState` resolves it as `stack-default` and an argv-array override as `waffle.yaml`, and a fixture mod's quoted literal keeps a declared key referenced (gone → "never referenced"); #610 (`state.test.mjs`): `agentRoster` keeps top-level named `*.md` only (nameless, bad-YAML, `.txt`, nested skipped), sorts by name, reads `.agents/agents` for codex and the Claude roster under `[codex, claude]`, follows a `harness.skillsDir` override, matches this repo's committed `.claude/agents/` in JSON and text, and pins the standup SKILL.md roster sentences; #563: `config` resolves every declared key with its layer, `skills` lists a skill's referenced keys (flag placeholders folded) and its `SKILL_RUN_FILE_KEYS` files incl. delegate's newest checkpoint; #564: `MOD_ENGINE_LAID` files laid into a fixture mod are skipped at load and absent from the render, `validateModPlugins` with stubbed `locate`/`run` covers the present/ok, present/FAIL and absent/skipped paths plus no-mods silence, and `setupGuide` prints the mods load block with the probe's three states and omits it without the claude target),
