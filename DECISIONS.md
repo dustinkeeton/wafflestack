@@ -17,8 +17,9 @@ every finding was already fixed. The issue only restated the PR's state and the 
 it. The owner closed it as noise.
 
 **Decision**: A follow-up issue is only for real work: findings left unresolved. A stage 2 hold
-files one when findings at should-fix or above stay untriaged, deferred or declined, listing only
-those; the stage 3 audit block files as before. Every other hold posts one append-only comment
+files one when findings at should-fix or above stay untriaged or declined, listing only those; a
+deferred finding already has the issue `pr-response` filed for it, so the hold comment cites that
+issue rather than filing one that only points at it. The stage 3 audit block files as before. Every other hold posts one append-only comment
 (`gh pr comment --body-file`) with what the issue carried, and the run report links it. Stages 2
 and 3 comment on the final PR. Stage 1 comments on the sync PR, or, before one exists, on the run
 PR merged most recently into the integration branch; the run report is how a human finds it.

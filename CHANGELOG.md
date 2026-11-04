@@ -39,8 +39,10 @@ is what you reach for across a breaking one.
   stages 2 and 3, and for stage 1 on the sync PR, or on the run PR merged most recently into the
   integration branch when no sync PR exists yet. The comment carries what the issue did (reason,
   findings with citations, open fix PRs, kept worktrees and branches, resume commands), and the run
-  report links it. A stage 2 hold with deferred, declined or untriaged findings at should-fix or
-  above still files one `autopilot.holdLabel` issue, listing only those. The Step 5–6 cap hatches,
+  report links it. A stage 2 hold with declined or untriaged findings at should-fix or above still
+  files one `autopilot.holdLabel` issue, listing only those. A deferred finding never counts:
+  `pr-response` already filed an issue for it, so the hold comment cites that issue instead of
+  filing a second one. The Step 5–6 cap hatches,
   the Step 7 audit gate and the stage 3 audit block file as before.
 
   **Consumer impact:** re-render only. Integration mode is off by default.
