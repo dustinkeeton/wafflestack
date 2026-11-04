@@ -15,7 +15,7 @@ has not been verified end to end.
 
 ## Stacks
 
-All 9 stacks are shipped and stable — **14 agents, 41 skills, and 1 mod** in total. Pick what a project needs.
+All 10 stacks are shipped and stable — **14 agents, 42 skills, and 1 mod** in total. Pick what a project needs.
 
 | Stack | What you get |
 |--------|--------------|
@@ -28,6 +28,7 @@ All 9 stacks are shipped and stable — **14 agents, 41 skills, and 1 mod** in t
 | `expo-dev` | Expo / React Native app development |
 | `harness-architect` | Single domain agent — expert in building agent harnesses |
 | `wafflestack` | Self-referential: ten `/waffle-*` skills, each wrapping one CLI command, plus the **`waffle-view` mod** (a live state pane, claude target only); dogfooded here |
+| `tstack` | `council` from [t3dotgg/tstack](https://github.com/t3dotgg/tstack), copied verbatim at a pinned commit with its MIT `LICENSE`: a three-provider review with scored rounds. Standalone `/council` only; not enabled here |
 
 ## Installer & CLI
 

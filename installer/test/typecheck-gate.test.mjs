@@ -25,6 +25,7 @@ const MIGRATED = [
   'installer/lib/harness-tools.mjs',
   'installer/lib/config-catalog.mjs',
   'installer/lib/config-reference.mjs',
+  'installer/lib/upstream-sync.mjs',
 ];
 
 describe('typecheck gate (#177)', () => {

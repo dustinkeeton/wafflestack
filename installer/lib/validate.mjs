@@ -18,6 +18,13 @@ import {
   refKindOf,
   waffleStatus,
 } from './registry.mjs';
+import {
+  REGISTRY_UPSTREAM_KEYS,
+  UPSTREAM_HASH_RE,
+  UPSTREAM_LICENSE_FILE,
+  upstreamHash,
+  upstreamShapeProblems,
+} from './upstream.mjs';
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -136,6 +143,59 @@ export function formatModPluginChecks(result) {
 }
 
 /**
+ * Lint an upstream-pinned skill (#826): pin shape, the upstream LICENSE beside the copy, and the
+ * copy-matches-pin gate — the copy's files must still hash to the recorded `hash`.
+ *
+ * @param {import('./toolkit.mjs').SkillItem} skill a skill whose `upstream` is set
+ * @returns {string[]} context-free problems
+ */
+function upstreamPinProblems(skill) {
+  const pin = /** @type {import('./upstream.mjs').UpstreamPin} */ (skill.upstream);
+  const problems = upstreamShapeProblems(pin);
+  if (!pin.isMap) return problems;
+  if (!skill.files.includes(UPSTREAM_LICENSE_FILE)) {
+    problems.push(
+      `is upstream-pinned (license ${pin.license ?? '?'}) but ships no ${UPSTREAM_LICENSE_FILE} file in its directory — ` +
+        `copy upstream's ${UPSTREAM_LICENSE_FILE} alongside the files`,
+    );
+  }
+  if (pin.hash && UPSTREAM_HASH_RE.test(pin.hash)) {
+    const actual = upstreamHash(skill.dir, skill.files);
+    if (actual !== pin.hash) {
+      problems.push(
+        `no longer matches its upstream pin ${pin.repo ?? '?'}@${(pin.commit ?? '?').slice(0, 12)} — ` +
+          `its ${skill.files.length} file(s) hash to ${actual}, not the recorded ${pin.hash}. ` +
+          `An upstream-pinned copy is never edited in place: put a local change in a project extension ` +
+          `(.waffle/extensions/skills/${skill.name}.md), or bump the pin (re-copy upstream at the new commit and record the new hash). ` +
+          `A stray untracked file in the directory (e.g. .DS_Store) also changes the hash.`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The registry's `upstream` must equal the stack.yaml pin on every provenance field (#826).
+ *
+ * @param {string} at problem prefix
+ * @param {import('./upstream.mjs').UpstreamPin | null} reg the registry entry's pin
+ * @param {import('./upstream.mjs').UpstreamPin | null} manifest the stack.yaml entry's pin
+ * @param {string} stackName
+ * @returns {string[]}
+ */
+function upstreamReconcileProblems(at, reg, manifest, stackName) {
+  const yaml = `stacks/${stackName}/stack.yaml`;
+  if (reg && !manifest) return [`${at} records \`upstream\` in the registry, but its ${yaml} entry declares no \`upstream:\` pin — the two must agree`];
+  if (manifest && !reg) {
+    return [`${at} is upstream-pinned in ${yaml}, but its registry entry has no \`upstream\` — record its upstream { repo, path, commit, license } in the registry`];
+  }
+  if (!reg || !manifest || !reg.isMap || !manifest.isMap) return [];
+  return REGISTRY_UPSTREAM_KEYS.filter((f) => reg[f] !== manifest[f]).map(
+    (f) => `${at} upstream.${f} is "${reg[f] ?? ''}" in the registry but "${manifest[f] ?? ''}" in ${yaml} — bump both together`,
+  );
+}
+
+/**
  * Reconcile the waffle registry against the filesystem and against every `stack.yaml` (#335), so
  * that a three-way divergence — a rename or a move landed halfway — is a red here. Built-in stacks
  * only: an external stack is governed by ITS toolkit's registry, and syrup is out of scope.
@@ -184,6 +244,7 @@ export function validateRegistry(rootDir, toolkit) {
       for (const field of ['stack', 'path']) {
         if (e[field]) problems.push(`${where}: ${at} is \`replaced\`, so it must not declare a \`${field}\` — a tombstone names no location`);
       }
+      if (e.upstream) problems.push(`${where}: ${at} is \`replaced\`, so it must not declare \`upstream\` — a tombstone names no upstream; the copy is gone`);
       if (!e.replacedBy) {
         problems.push(
           `${where}: ${at} is \`replaced\` but declares no \`replacedBy\` — that is the forward-fix a pinned ` +
@@ -196,6 +257,12 @@ export function validateRegistry(rootDir, toolkit) {
     if (!LIVE_STATUSES.includes(e.status)) continue; // unreachable; keeps the narrowing honest
     if (e.replacedBy && e.status !== 'deprecated') {
       problems.push(`${where}: ${at} declares \`replacedBy\` but is \`${e.status}\` — only \`deprecated\` and \`replaced\` name a successor`);
+    }
+    if (e.upstream) {
+      if (e.kind !== 'skill') problems.push(`${where}: ${at} declares \`upstream\`, but only skills can be upstream-pinned`);
+      for (const p of upstreamShapeProblems(e.upstream, { allowed: REGISTRY_UPSTREAM_KEYS, requireHash: false })) {
+        problems.push(`${where}: ${at} ${p}`);
+      }
     }
     if (!e.stack) problems.push(`${where}: ${at} is \`${e.status}\`, so it must declare the \`stack\` that owns it`);
     if (!e.path) problems.push(`${where}: ${at} is \`${e.status}\`, so it must declare its \`path\``);
@@ -224,6 +291,8 @@ export function validateRegistry(rootDir, toolkit) {
           `under \`${refKind}:\` — the registry and the manifest must agree on what the stack contains`,
       );
     }
+    const skill = e.kind === 'skill' ? stack.skills.find((i) => i.name === e.name) : null;
+    if (skill) problems.push(...upstreamReconcileProblems(`${where}: ${at}`, e.upstream, skill.upstream, e.stack));
   }
 
   // ── 3. Tombstone integrity ────────────────────────────────────────────────────────────────
@@ -689,9 +758,11 @@ export function validateStack(toolkit, stack, ctx = `stack ${stack.name}`) {
       const { data } = skill;
       if (!data.name) problems.push(`${ctx}: skill ${skill.name} missing frontmatter name`);
       if (!data.description) problems.push(`${ctx}: skill ${skill.name} missing frontmatter description`);
-      for (const rel of skill.files.filter((f) => f.endsWith('.md'))) {
+      // A pinned copy renders verbatim (#827): its `{{…}}` text is upstream's, never a placeholder.
+      for (const rel of skill.upstream ? [] : skill.files.filter((f) => f.endsWith('.md'))) {
         for (const k of placeholderKeys(fs.readFileSync(path.join(skill.dir, rel), 'utf8'))) usedKeys.add(k);
       }
+      if (skill.upstream) for (const problem of upstreamPinProblems(skill)) problems.push(`${ctx}: skill ${skill.name} ${problem}`);
     }
 
     // A files entry's `targets:` (#364) is deliberately NOT linted here: every malformation of it

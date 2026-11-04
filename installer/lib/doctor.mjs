@@ -21,6 +21,7 @@ import { applicablePrerequisites, evaluatePrerequisites, externalCheckGates, for
 import { defaultSourceCacheDir } from './sources.mjs';
 import { settingsDrift, lockKeys } from './settings.mjs';
 import { staleMods as findStaleMods, formatStaleMod, marketplacePinned } from './installed-mods.mjs';
+import { lockUpstream } from './upstream.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
@@ -42,7 +43,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
     const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
-    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [] };
+    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [], upstream: [] };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
   const tree = canonical ? lock : readTreeLock(cwd);
@@ -54,6 +55,11 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   for (const src of tree.sources ?? []) {
     const label = sourceLabel(src);
     for (const rel of src.files ?? []) attribution[rel] = label;
+  }
+  const upstream = lockUpstream(tree);
+  for (const entry of upstream) {
+    const label = `upstream ${entry.repo}@${String(entry.commit).slice(0, 12)}`;
+    for (const rel of entry.files ?? []) attribution[rel] = attribution[rel] ? `${attribution[rel]}; ${label}` : label;
   }
 
   const modified = [];
@@ -124,6 +130,8 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     identity: toolkitIdentity,
   });
   notes.push(...toolkitProvenance.notes);
+  // Informational only (#827): where each upstream-pinned skill's copy came from.
+  for (const e of upstream) notes.push(`upstream-pinned: ${e.item} — copied from ${e.repo}/${e.path} @ ${String(e.commit).slice(0, 12)}`);
   // Informational only (#608): never flips `ok`, and distinct from the lock-vs-CLI skew note above.
   if (update?.available && update.latestTag) {
     notes.push(
@@ -208,7 +216,7 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
 
   const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
   const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
-  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks };
+  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks, upstream };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */
@@ -255,8 +263,9 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
     }
     // Warnings dropped: they describe the temp dir (about to vanish), not the real tree.
 
-    // Files-only, deliberately: comparing the `toolkit` block would red every unpinned consumer (#374).
-    const both = (l) => ({ ...(l?.files ?? {}), ...stringified(l?.settings) });
+    // Never the `toolkit` block: comparing it would red every unpinned consumer (#374). Upstream
+    // pins (#827) compare as `upstream:<item>` keys, so a commit-only bump is stale too.
+    const both = (l) => ({ ...(l?.files ?? {}), ...stringified(l?.settings), ...upstreamKeys(l) });
     const produced = both(readLock(tmp));
     const tracked = both(lock);
     for (const [rel, hash] of Object.entries(tracked)) {
@@ -268,7 +277,7 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
     }
 
     result.evaluated = true;
-    result.checked = Object.keys(produced).length;
+    result.checked = Object.keys(produced).filter((k) => !k.startsWith(UPSTREAM_KEY_PREFIX)).length;
     result.ok = !result.stale.length && !result.absent.length && !result.unexpected.length;
     for (const list of [result.stale, result.absent, result.unexpected]) list.sort((a, b) => a.localeCompare(b));
     return result;
@@ -282,6 +291,12 @@ export function verifyRenderAgainstLock({ cwd, lock, toolkitRoot, toolkitVersion
 
 /** A lock `settings` map with each value serialized, so it compares like a `files` hash. */
 const stringified = (settings) => Object.fromEntries(Object.entries(settings ?? {}).map(([k, v]) => [k, JSON.stringify(v)]));
+
+const UPSTREAM_KEY_PREFIX = 'upstream:';
+
+/** A lock's `upstream` entries as comparable `upstream:<item>` → provenance-triple pairs. */
+const upstreamKeys = (lock) =>
+  Object.fromEntries(lockUpstream(lock).map((e) => [`${UPSTREAM_KEY_PREFIX}${e.item}`, JSON.stringify({ repo: e.repo, path: e.path, commit: e.commit })]));
 
 /** Human label for a lock `sources` entry, used to attribute drift (#125). */
 function sourceLabel(src) {

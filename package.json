@@ -26,7 +26,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "build": "npm pack --dry-run && node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased",
     "validate": "node installer/cli.mjs validate",
-    "evals": "node installer/evals.mjs"
+    "evals": "node installer/evals.mjs",
+    "upstream:check": "node installer/upstream.mjs check",
+    "upstream:bump": "node installer/upstream.mjs bump"
   },
   "dependencies": {
     "yaml": "^2.4.5"

@@ -39,7 +39,67 @@ is what you reach for across a breaking one.
   Codex desktop and plain Git/Claude. **Consumer impact:** install a release containing this
   command and explicitly upgrade old provenance-less locks before enabling startup scripts.
 
+- **Upstream-pinned skills: `upstream:` provenance and a copy-matches-pin gate (#826, part of
+  #825).** A `stack.yaml` `skills:` entry may now be a mapping `{ name, upstream: { repo, path,
+  commit, license, hash } }` recording the upstream commit a skill was copied from. `validate`
+  lints the pin, requires an upstream `LICENSE` beside the copy, checks that the matching
+  `stacks/registry.yaml` entry records the same `upstream: { repo, path, commit, license }`, and
+  fails when the copy's files no longer hash to the recorded `hash`. Verbatim rendering and lock
+  provenance follow in #827; `council` (#828) is the first shipped pinned skill.
+
+  **Consumer impact:** none — no rendered output changes.
+
+- **Upstream-pinned skills render verbatim and record their provenance in the lock (#827, part of
+  #825).** A pinned skill's files render byte-for-byte as the copy, with no `{{…}}` substitution
+  (`harness.*` included); a project extension and the `skills.modelInvocation` patch still apply,
+  and the skill demands no config. The lock gains an `upstream` block (`{ item, repo, path, commit,
+  files }` per pinned skill), which `doctor --verify-render` reproduces. `doctor` notes each pin and
+  attributes drift to it, `report` lists it, `upgrade` logs each pin that moved, and `eject` drops
+  the ejected skill's entry. For a skill from an external `source:` stack, `report` prints
+  `<external-upstream>` in place of the upstream repo and path, the way it withholds source URLs
+  (#473).
+
+  **Consumer impact:** none until a pinned skill is selected (the first is `tstack`'s `council`,
+  below); locks without one are byte-identical.
+
+- **New `tstack` stack ships `council` from t3dotgg/tstack (#828, part of #825).** `council` runs
+  a review with one flagship model from each of three providers and records scored rounds in the PR
+  description. It is the first shipped upstream-pinned skill: upstream's `SKILL.md` and MIT
+  `LICENSE`, byte-for-byte at `1085050f3bae`, rendered verbatim. Invoke it as `/council`; it is not
+  wired into autopilot. Enable it with `stacks: [tstack]` or `include: [skills/council]`.
+
+  **Consumer impact:** none unless you enable `tstack`.
+
+- **`npm run upstream:check` and `npm run upstream:bump` keep upstream-pinned skills current (#828,
+  part of #825).** `check` reports each pin as current, behind, diverged or error against the latest
+  upstream commit touching its path or `LICENSE`. `bump` re-copies the files, rewrites the pin, hash
+  and registry commit, and adds a CHANGELOG line; it refuses a relicense or a hand-edited copy.
+  Toolkit-developer scripts over `gh api`, with no CI hook.
+
+  **Consumer impact:** none unless you enable `tstack` (the scripts never run in a consumer repo).
+
 ### Changed
+
+- **`upstream:check` and `upstream:bump` fix two pin checks (#832, #833).** A pin behind a merged
+  side branch that forked before it now reports `behind`, not `diverged`, and `bump` moves it to the
+  default branch's head; `bump --commit` refuses a target whose `LICENSE` matches neither the pinned
+  copy's nor the default branch head's.
+
+  **Consumer impact:** none (toolkit-developer scripts only).
+
+- **Autopilot files a follow-up issue for an integration hold only when findings remain unresolved
+  (#838).** A stage 1 hold, a stage 2 hold with nothing at should-fix or above left unresolved, and
+  any stage 3 hold other than an audit block now post one comment instead: on the final PR for
+  stages 2 and 3, and for stage 1 on the sync PR, or on the run PR merged most recently into the
+  integration branch when no sync PR exists yet. The comment carries what the issue did (reason,
+  findings with citations, open fix PRs, kept worktrees and branches, resume commands), and the run
+  report links it. A stage 2 hold with declined or untriaged findings at should-fix or above still
+  files one `autopilot.holdLabel` issue, listing only those. A deferred finding never counts:
+  `pr-response` already filed an issue for it, so the hold comment cites that issue instead of
+  filing a second one. The Step 5–6 cap hatches,
+  the Step 7 audit gate and the stage 3 audit block file as before.
+
+  **Consumer impact:** re-render only. Integration mode is off by default.
 
 - **Autopilot's gate loops converge on zero should-fix, not zero implemented (#794).** The QA gate
   and review loop now stop on a cold round whose responder implemented no should-fix or blocker

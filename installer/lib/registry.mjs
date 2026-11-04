@@ -4,6 +4,9 @@
 
 import path from 'node:path';
 import { readYaml, exists } from './util.mjs';
+import { normalizeUpstream, REGISTRY_UPSTREAM_KEYS } from './upstream.mjs';
+
+/** @import { UpstreamPin } from './upstream.mjs' */
 
 /** The registry file, relative to the toolkit root. */
 export const REGISTRY_FILE = path.join('stacks', 'registry.yaml');
@@ -21,7 +24,7 @@ export const WAFFLE_STATUSES = Object.freeze(['stable', 'wip', 'deprecated', 're
 export const LIVE_STATUSES = Object.freeze(['stable', 'wip', 'deprecated']);
 
 /** The only keys a registry entry may carry; anything else is a `validate` red, never ignored. */
-export const REGISTRY_ENTRY_KEYS = Object.freeze(['name', 'kind', 'stack', 'path', 'status', 'replacedBy', 'note']);
+export const REGISTRY_ENTRY_KEYS = Object.freeze(['name', 'kind', 'stack', 'path', 'status', 'replacedBy', 'note', 'upstream']);
 
 /** How deep a `replacedBy` chain may be followed before we call it a cycle. */
 const MAX_REPLACEMENT_HOPS = 8;
@@ -37,6 +40,7 @@ const MAX_REPLACEMENT_HOPS = 8;
  * @property {string | null} status one of WAFFLE_STATUSES, or null when unusable
  * @property {string | null} replacedBy successor waffle NAME (`replaced` requires it)
  * @property {string | null} note optional free text
+ * @property {UpstreamPin | null} upstream upstream provenance of a pinned skill (#826), no hash
  * @property {string[]} unknownKeys keys outside REGISTRY_ENTRY_KEYS, for `validate`
  * @property {any} raw the entry exactly as authored
  *
@@ -158,6 +162,7 @@ function normalizeEntry(entry, index) {
     status: status && WAFFLE_STATUSES.includes(status) ? status : null,
     replacedBy: str(e.replacedBy),
     note: str(e.note),
+    upstream: normalizeUpstream(e.upstream, REGISTRY_UPSTREAM_KEYS),
     unknownKeys: isMap ? Object.keys(e).filter((k) => !REGISTRY_ENTRY_KEYS.includes(k)) : [],
     raw: entry,
   };

@@ -10,6 +10,7 @@ stacks:
   - orchestration
   - harness-architect
   - wafflestack
+  - tstack
 include:
   - files/.github/workflows/waffle-release-hook.yml
   - code-quality/skills/adversarial-review
