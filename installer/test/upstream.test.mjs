@@ -9,6 +9,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { loadToolkit } from '../lib/toolkit.mjs';
 import { validateToolkit, validateRegistry } from '../lib/validate.mjs';
+import { renderProject } from '../lib/render.mjs';
 import { normalizeUpstream, upstreamHash, UPSTREAM_HASH_RE } from '../lib/upstream.mjs';
 
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
@@ -237,5 +238,42 @@ describe('registry: upstream provenance reconciles with stack.yaml (#826)', () =
     const tomb = { name: 'gone', kind: 'skill', status: 'replaced', replacedBy: 'plain', upstream: defaultPin() };
     const root = track(makeToolkit({ entries: [...defaultEntries(), tomb] }));
     assert.match(regProblems(root).join('\n'), /skill "gone" is `replaced`, so it must not declare `upstream`/);
+  });
+});
+
+describe('render: an external stack with a stale pin fails closed (#826)', () => {
+  // Built-in `core` plus a local-path external `acme` whose pinned `echo` skill hashes clean.
+  function setup() {
+    const builtin = track(fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-builtin-')));
+    const ext = track(fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-ext-')));
+    const cwd = track(fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-project-')));
+    const cache = track(fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-cache-')));
+    write(builtin, 'toolkit.yaml', 'name: builtin\ndescription: built-in fixture\nstacks: [core]\n');
+    write(builtin, 'stacks/core/stack.yaml', 'name: core\ndescription: Core stack.\nskills: [alpha]\n');
+    write(builtin, 'stacks/core/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: Alpha skill.\n---\n\nAlpha.\n');
+    const echo = path.join(ext, 'stacks/acme/skills/echo');
+    write(ext, 'stacks/acme/skills/echo/SKILL.md', '---\nname: echo\ndescription: Echo skill.\n---\n\nEcho body.\n');
+    write(ext, 'stacks/acme/skills/echo/LICENSE', 'MIT License\n');
+    const upstream = { ...defaultPin(), hash: upstreamHash(echo, listFiles(echo)) };
+    const manifest = { name: 'acme', description: 'Acme.', skills: [{ name: 'echo', upstream }] };
+    write(ext, 'stacks/acme/stack.yaml', YAML.stringify(manifest));
+    write(cwd, '.waffle/waffle.yaml', `targets: [claude]\nstacks:\n  - core\n  - name: acme\n    source: ${ext}\nconfig: {}\n`);
+    const render = () => renderProject({ toolkitRoot: builtin, cwd, toolkitVersion: '0.0.test', sourceCacheDir: cache });
+    return { echo, cwd, render };
+  }
+
+  test('a clean pin renders; one appended byte refuses the render, naming the skill', () => {
+    const clean = setup();
+    assert.equal(clean.render().ok, true);
+
+    const stale = setup();
+    fs.appendFileSync(path.join(stale.echo, 'SKILL.md'), 'x');
+    const result = stale.render();
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((e) => /external stack "acme"/.test(e) && /skill echo no longer matches its upstream pin/.test(e)),
+      JSON.stringify(result.errors),
+    );
+    assert.equal(fs.existsSync(path.join(stale.cwd, '.waffle/waffle.lock.json')), false, 'no lock written');
   });
 });
