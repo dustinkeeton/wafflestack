@@ -581,17 +581,17 @@ function proven(/** @type {string|null} */ next, /** @type {unknown} */ expected
  *
  * @param {string} cwd
  * @param {string[]} [notes] collects deprecation notes for the caller to surface
- * @param {{ canonical?: boolean }} [options] `canonical` skips the local overlay entirely
+ * @param {{ canonical?: boolean, localConfigDir?: string }} [options] `canonical` skips the local overlay entirely
  * @returns {ProjectConfig}
  */
-export function loadProjectConfig(cwd, notes = [], { canonical = false } = {}) {
+export function loadProjectConfig(cwd, notes = [], { canonical = false, localConfigDir = cwd } = {}) {
   const cfgPath = resolveConfigFile(cwd);
   if (!exists(cfgPath.file)) {
     throw new Error(`${CONFIG_FILE} not found in ${cwd} — run \`wafflestack setup\` first`);
   }
   if (cfgPath.legacy) notes.push(cfgPath.note);
   let cfg = readYaml(cfgPath.file) ?? {};
-  const localPath = resolveLocalConfigFile(cwd);
+  const localPath = resolveLocalConfigFile(localConfigDir);
   if (!canonical && exists(localPath.file)) {
     if (localPath.legacy) notes.push(localPath.note);
     cfg = deepMerge(cfg, readYaml(localPath.file) ?? {});

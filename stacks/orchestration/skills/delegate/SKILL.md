@@ -449,7 +449,27 @@ Notes:
 - Use `origin/main` as the base, not local `main`, so all worktrees start from the same fetched tip.
 - Keep `{{git.worktreesDir}}/` gitignored.
 
-**Do not render into the worktree.** A project that commits only its lock (Posture 2b) has no `{{harness.skillsDir}}/` render in a fresh worktree, and that is fine: Claude Code (v2.1.277+) loads the main checkout's project skills, agents, and commands when a worktree has none of its own, so the agent starts with the skills its prompt names — local overlay included. A render there would shadow that fallback with canonical copies. Tests and `doctor --allow-missing` never read the worktree's render.
+**Prepare before launching.** After each worktree creation or reuse, run the configured
+feature-capable CLI from inside the destination checkout, outside the new worker session:
+
+```bash
+(cd "$WORKTREE_PATH" && {{autopilot.waffleCmd}} prepare-worktree --cwd "$PWD" --json)
+```
+
+The subshell makes relative CLI paths use the destination toolkit, including this toolkit’s
+unreleased development runner. Ensure its dependencies are installed before preparation.
+For a released consumer, upgrade a pre-feature pin before using this command.
+
+Require `ready` or `no-op` and exit 0 before spawning the worker. On failure retain the
+structured diagnostics and stop that launch; never substitute `doctor --allow-missing`,
+`--force`, a whole-directory symlink, or main-checkout fallback. Repeat after checkout,
+config, extension, or pin changes and before any retry. The command serializes preparation
+per worktree. A host setup script must run this same operation before session startup;
+an already-started agent cannot bootstrap its own missing skill catalog. If setup ran late,
+restart the session and verify discovery before proceeding. For an older installation,
+first follow `docs/worktree-setup.md`'s explicit pinned upgrade/bootstrap recipe; never ask
+an old pinned CLI to run an unsupported command. The destination lock selects content;
+main's private overlay is omitted unless the persisted overlay policy explicitly opts in.
 
 Retain the absolute path of each worktree (resolve with `realpath "$WORKTREE_PATH"`) to inject into the agent's prompt. This path — and the branch — must match what the `plan` checkpoint recorded for this issue; **read them from the checkpoint** rather than re-deriving them, so a single source of truth drives both provisioning and the agent prompt.
 

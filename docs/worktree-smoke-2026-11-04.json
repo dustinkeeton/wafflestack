@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-04",
+  "versions": {
+    "codex": "codex-cli 0.166.0",
+    "claude": "2.1.318 (Claude Code)"
+  },
+  "discovery": [
+    {
+      "state": "absent",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "empty",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "custom-only",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "partial",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    },
+    {
+      "state": "complete",
+      "codexSkills": "pass",
+      "claudeSkillsAndAgentRoster": "pass"
+    }
+  ],
+  "invocation": {
+    "claude": "pass: --agent worker returned canonical",
+    "codex": "failed: no verified named-agent invocation in the tested CLI configuration",
+    "codexProbe": {
+      "agentName": "waffle_invocation_probe",
+      "method": "natural-language named-agent request; no prescribed tool parameter",
+      "expectedResponse": "waffle-proof-e014c13aa1726576dbf3655d8702ccf2",
+      "completedSpawn": false,
+      "responseMatched": false,
+      "fileAccessObserved": false,
+      "runtimeResponse": "I\u2019ll check whether this client exposes a named-agent workflow for `waffle_invocation_probe` and, if available, wait for its response.\nI couldn\u2019t invoke `waffle_invocation_probe`: this client exposes no named-agent invocation tool, and its generic sub-agent workflow has no option to select an installed custom agent.\n\nI did not substitute a generic agent, read files, or run shell commands. There is no agent response to report."
+    }
+  },
+  "earlierParameterSpecificProbe": {
+    "spawnAgentParameters": [
+      "fork_turns",
+      "message",
+      "model",
+      "reasoning_effort",
+      "task_name"
+    ],
+    "customAgentSelector": false,
+    "disableMultiAgentV2": "same schema; no agent_type",
+    "compatibilityProbe": {
+      "model": "gpt-5.4",
+      "result": "not supported when using Codex with this ChatGPT account"
+    },
+    "acceptance": "Historical decision at probe time: successful invocation was required. Superseded by the owner-approved scope adjustment below."
+  },
+  "scope": "Codex CLI 0.166.0 exec; the native app named-agent workflow has not been tested",
+  "acceptanceScope": {
+    "decisionDate": "2026-11-04",
+    "issue": 820,
+    "required": "safe pinned provisioning, artifact completeness, Claude/Codex skill discovery, and Claude custom-agent invocation",
+    "codexInvocationFollowup": 843,
+    "blocksProvisioningPR": false,
+    "codexInvocationVerified": false
+  }
+}

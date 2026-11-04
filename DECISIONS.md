@@ -9,6 +9,26 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-04: Codex invocation verification is separate from provisioning (#820, #843)
+
+The owner narrowed #820 after the named-agent smoke test failed in Codex CLI 0.166.0.
+Provisioning acceptance covers safe pinned local artifacts, completeness, Claude/Codex skill
+discovery, and verified Claude custom-agent invocation. Successful Codex named-agent invocation
+moves to #843 and no longer blocks PR #821. Keep the failed CLI evidence and avoid claiming
+native-app verification or successful Codex invocation. This supersedes the invocation
+requirement recorded below; it does not turn the failed runtime probe into a pass.
+
+## 2026-11-04: Preparation recovers only journal-verifiable interrupted writes (#821)
+
+Toolkit pins stay within the running CLI's repository; untrusted preparation uses only the
+running exact commit or an existing clean cache. Exact npm-installed commit/version identity
+works offline without requiring release classification. Interrupted preparation may recover
+only after the local owner is dead and every journal entry matches its original or intended
+bytes. Atomic replacement and a journaled receipt make restoration restartable. Changed or
+unsafe artifacts retain the barrier. Obsolete untracked files may be pruned only when their
+receipt hashes still match; ejected resources and helpers are preserved. This supersedes the
+manual-only interruption recovery below. Codex invocation acceptance remains required.
+
 ## 2026-11-04: A small external skill ships as an upstream-pinned copy; an optional provider stays behind a proxy (#825)
 
 **Context**: #471 rejected vendoring archify and wrote down that "the toolkit fetches, locks, and
@@ -66,6 +86,31 @@ PR merged most recently into the integration branch; the run report is how a hum
 handling, run report). Steps 5–7 filing is unchanged.
 
 ---
+
+## 2026-11-03: Worktree follow-up uses the destination runner and keeps recovery barriers
+
+Review of #821 and #822 found that a bare installed CLI does not serve this toolkit's
+unreleased worktrees. Delegate/autopilot now run `autopilot.waffleCmd` inside the destination,
+with a fixture that executes the actual CLI from another checkout. Per-run overlay selection
+is additive to local Git policy; disabling an overlay never silently discards stale resources.
+Keep immutable-pin resolution, private-output guards and interrupted-transaction journals.
+PID liveness alone cannot prove a partial write is safe to adopt. Renderer errors expose safe
+categories, not raw private values; the preparation module opts into the type-check gate.
+
+## 2026-11-03: Worktrees provision pinned local resources before startup (#820)
+
+**Decision:** Treat readiness as matching files and settings entries, not directory presence
+or runtime fallback. `prepare-worktree` plans through the renderer without side effects,
+checks canonical reproduction against the destination lock, and applies only harness artifacts
+under a per-checkout transaction mutex. Refuse edits/collisions and roll back write failures.
+A process interruption leaves a private journal and a blocking mutex, never a readiness claim.
+
+Resolve the lock's immutable commit and corroborate its release ref, including offline cache
+use. An incompatible pin requires an explicit upgrade, never silent main/latest substitution.
+Inherited private overlays are a persisted local Git opt-in; relative sources resolve at the
+destination and tracked private-derived output is refused. Main directories are never copied
+or linked wholesale. Host setup runs outside the agent session; orchestration gates every
+creation/reuse/retry launch. This replaces the lock-only posture's Claude-fallback assumption.
 
 ## 2026-10-29: Autopilot's gate loops converge on zero should-fix, not zero implemented (#794)
 

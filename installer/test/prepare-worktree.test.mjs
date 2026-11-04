@@ -1,0 +1,457 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { prepareWorktree, resolvePreparationToolkit } from '../lib/prepare-worktree.mjs';
+import { renderProject, readLock } from '../lib/render.mjs';
+import { resolveToolkitIdentity } from '../lib/toolkit-ref.mjs';
+import { sha256 } from '../lib/util.mjs';
+
+import { fixture, git, write } from './prepare-fixture.mjs';
+
+for (const nested of [false, true]) test(`mixed custom resources, all targets, helpers, repeated and partial preparation (${nested ? 'nested' : 'external'})`, (t) => {
+  const f = fixture(t, nested);
+  const before = git(f.root, 'status', '--porcelain');
+  const index = git(f.wt, 'ls-files', '--stage');
+  const lock = fs.readFileSync(path.join(f.wt, '.waffle/waffle.lock.json'));
+  let result = f.run();
+  assert.equal(result.status, 'ready', JSON.stringify(result));
+  for (const [rel, hash] of Object.entries(readLock(f.wt).files)) if (/^\.(claude|agents|codex)\//.test(rel)) assert.equal(sha256(fs.readFileSync(path.join(f.wt, rel))), hash);
+  assert.equal(fs.readFileSync(path.join(f.wt, '.claude/skills/custom/SKILL.md'), 'utf8'), 'custom skill');
+  assert.equal(git(f.root, 'status', '--porcelain'), before);
+  assert.equal(git(f.wt, 'ls-files', '--stage'), index);
+  assert.deepEqual(fs.readFileSync(path.join(f.wt, '.waffle/waffle.lock.json')), lock);
+  const file = path.join(f.wt, '.agents/skills/hello/helper.mjs');
+  const mtime = fs.statSync(file).mtimeMs;
+  assert.equal(f.run().status, 'no-op'); assert.equal(fs.statSync(file).mtimeMs, mtime);
+  fs.unlinkSync(file); result = f.run();
+  assert.equal(result.status, 'ready'); assert.deepEqual(result.generatedPaths, ['.agents/skills/hello/helper.mjs']);
+});
+
+for (const state of ['absent', 'empty']) test(`${state} directories receive a complete render`, (t) => {
+  const f = fixture(t);
+  fs.rmSync(path.join(f.wt, '.claude'), { recursive: true });
+  if (state === 'empty') fs.mkdirSync(path.join(f.wt, '.claude/skills'), { recursive: true });
+  assert.equal(f.run().status, 'ready');
+  assert.ok(fs.existsSync(path.join(f.wt, '.claude/agents/worker.md')));
+});
+
+test('unmanaged collisions and edited managed files fail before any writes', (t) => {
+  const f = fixture(t);
+  write(f.wt, '.claude/skills/hello/SKILL.md', 'user edit');
+  let result = f.run();
+  assert.equal(result.status, 'failed'); assert.ok(result.conflicts.includes('.claude/skills/hello/SKILL.md'));
+  assert.equal(fs.existsSync(path.join(f.wt, '.agents/skills/hello/helper.mjs')), false);
+  fs.unlinkSync(path.join(f.wt, '.claude/skills/hello/SKILL.md')); assert.equal(f.run().status, 'ready');
+  write(f.wt, '.agents/skills/hello/helper.mjs', 'edited helper');
+  assert.equal(f.run().status, 'failed');
+});
+
+test('unsafe symlinks never write into main', (t) => {
+  const f = fixture(t);
+  fs.symlinkSync(path.join(f.root, '.agents'), path.join(f.wt, '.agents'));
+  const result = f.run();
+  assert.equal(result.status, 'failed'); assert.match(result.errors.join(), /symlink/);
+});
+
+test('interrupted writes roll back; concurrent prepare fails closed', (t) => {
+  const f = fixture(t); let n = 0;
+  const result = f.run({ beforeWrite: () => {
+    if (++n === 2) { assert.equal(f.run().status, 'failed'); throw new Error('injected write failure'); }
+  } });
+  assert.equal(result.status, 'failed');
+  assert.equal(fs.existsSync(path.join(f.wt, '.claude/agents/worker.md')), false);
+  assert.equal(f.run().status, 'ready');
+});
+
+test('canonical, destination and persisted main overlay policy with private-output gate', (t) => {
+  const f = fixture(t);
+  write(f.root, '.waffle/waffle.local.yaml', 'config:\n  greeting: PRIVATE_MARKER\n');
+  let result = f.run();
+  assert.equal(result.status, 'ready'); assert.match(result.notices.join(), /omits/);
+  git(f.root, 'config', '--local', 'wafflestack.worktreeOverlay', 'main');
+  result = f.run();
+  assert.equal(result.status, 'ready', JSON.stringify(result)); assert.equal(result.overlayMode, 'main-overlay');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_MARKER/);
+  assert.match(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), /PRIVATE_MARKER/);
+  assert.doesNotMatch(fs.readFileSync(path.join(f.wt, '.waffle/waffle.lock.json'), 'utf8'), /PRIVATE_MARKER/);
+  assert.equal(f.run().status, 'no-op');
+  write(f.wt, '.waffle/waffle.local.yaml', 'config:\n  greeting: DESTINATION\n');
+  result = f.run(); assert.equal(result.overlayMode, 'destination-overlay'); assert.equal(result.status, 'ready');
+  assert.equal(f.run({ untrustedConfig: true }).status, 'failed');
+});
+
+test('private changes to tracked output fail without leaking values', (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 'ready');
+  git(f.wt, 'add', '-f', '.claude/agents/worker.md');
+  write(f.wt, '.waffle/waffle.local.yaml', 'config:\n  greeting: PRIVATE_MARKER\n');
+  const result = f.run();
+  assert.equal(result.status, 'failed'); assert.doesNotMatch(JSON.stringify(result), /PRIVATE_MARKER/);
+});
+
+test('config/lock mismatch and missing release provenance have repair instructions', (t) => {
+  const f = fixture(t);
+  write(f.toolkit, 'stacks/demo/skills/hello/helper.mjs', 'changed toolkit');
+  assert.match(f.run().errors.join(), /config\/lock\/pinned toolkit mismatch/);
+  assert.throws(() => resolvePreparationToolkit({ lock: readLock(f.wt), toolkitRoot: f.toolkit, cwd: f.wt, offline: true }), /upgrade/);
+});
+
+test('offline cached worktree pin wins over a different running toolkit; cache misses fail explicitly', (t) => {
+  const f = fixture(t);
+  write(f.toolkit, 'package.json', JSON.stringify({ name: 'fixture', version: '1.0.0', repository: 'https://github.com/example/fixture.git' }));
+  git(f.toolkit, 'init'); git(f.toolkit, 'add', '.'); git(f.toolkit, 'commit', '-m', 'version one'); git(f.toolkit, 'tag', 'v1.0.0');
+  const commit = git(f.toolkit, 'rev-parse', 'HEAD');
+  const cache = path.join(f.dir, 'cache');
+  const source = 'https://github.com/example/fixture.git';
+  const cached = path.join(cache, sha256(`${source}@${commit}`).slice(0, 24));
+  fs.cpSync(f.toolkit, cached, { recursive: true }); git(cached, 'remote', 'add', 'origin', source);
+  const lock = readLock(f.wt);
+  lock.toolkit = { source: 'github:example/fixture', ref: 'v1.0.0', commit, status: 'release', sourceType: 'git' };
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'pin toolkit');
+  write(f.toolkit, 'stacks/demo/skills/hello/helper.mjs', 'a different main toolkit');
+  const options = { cwd: f.wt, toolkitRoot: f.toolkit, offline: true, sourceCacheDir: cache };
+  const result = prepareWorktree(options);
+  assert.equal(result.status, 'ready', JSON.stringify(result)); assert.equal(result.pin, 'github:example/fixture#v1.0.0');
+  assert.equal(fs.readFileSync(path.join(f.wt, '.agents/skills/hello/helper.mjs'), 'utf8'), 'export const hello = 1;\n');
+  write(cached, 'stacks/demo/skills/hello/SKILL.md', 'tampered skill');
+  assert.equal(prepareWorktree(options).status, 'failed');
+  git(cached, 'checkout', '--', '.');
+  write(cached, 'stacks/demo/skills/hello/untracked.mjs', 'tampered helper');
+  assert.equal(prepareWorktree(options).status, 'failed');
+  fs.rmSync(cached, { recursive: true });
+  assert.match(prepareWorktree(options).errors.join(), /offline cache miss/);
+});
+
+test('settings entries merge without changing unrelated settings or project workflows', (t) => {
+  const f = fixture(t);
+  write(f.toolkit, 'stacks/demo/mods/example/.claude-plugin/plugin.json', JSON.stringify({ name: 'example', version: '1.0.0', description: 'fixture' }));
+  fs.appendFileSync(path.join(f.toolkit, 'stacks/demo/stack.yaml'), 'mods: [example]\n');
+  write(f.toolkit, 'package.json', '{"name":"fixture","version":"1.0.0","repository":"https://github.com/example/fixture.git"}');
+  const rendered = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0' });
+  assert.equal(rendered.ok, true, JSON.stringify(rendered));
+  git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'select mod');
+  write(f.wt, '.claude/settings.json', '{"permissions":{"allow":["Read"]}}\n');
+  write(f.wt, '.github/workflows/fixture.yml', 'user workflow edits');
+  const result = f.run(); assert.equal(result.status, 'ready', JSON.stringify(result));
+  const settings = JSON.parse(fs.readFileSync(path.join(f.wt, '.claude/settings.json')));
+  assert.deepEqual(settings.permissions, { allow: ['Read'] });
+  assert.equal(settings.enabledPlugins['example@fixture'], true);
+  assert.equal(fs.readFileSync(path.join(f.wt, '.github/workflows/fixture.yml'), 'utf8'), 'user workflow edits');
+});
+
+test('untrusted configuration rejects external sources without running checks', (t) => {
+  const f = fixture(t);
+  write(f.wt, '.waffle/waffle.yaml', 'stacks:\n  - name: demo\n    source: ../private-source\n');
+  git(f.wt, 'add', '.waffle/waffle.yaml'); git(f.wt, 'commit', '-m', 'external source');
+  const result = f.run({ untrustedConfig: true });
+  assert.equal(result.status, 'failed'); assert.match(result.errors.join(), /external source or trust failure/);
+});
+
+test('relative external sources and extensions resolve from the destination', (t) => {
+  const f = fixture(t);
+  write(f.wt, 'vendor/extra/stack.yaml', 'name: extra\ndescription: Destination fixture\nskills: [local]\n');
+  write(f.wt, 'vendor/extra/skills/local/SKILL.md', '---\nname: local\ndescription: Destination source\n---\nDestination bytes.\n');
+  write(f.wt, '.waffle/extensions/skills/local.md', 'Destination extension.\n');
+  write(f.wt, '.waffle/waffle.yaml', 'targets: [claude, codex]\nstacks:\n  - demo\n  - name: extra\n    source: ./vendor/extra\n');
+  const rendered = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0' });
+  assert.equal(rendered.ok, true, JSON.stringify(rendered));
+  git(f.wt, 'add', 'vendor', '.waffle/waffle.yaml', '.waffle/waffle.lock.json', '.waffle/extensions'); git(f.wt, 'commit', '-m', 'destination source');
+  fs.rmSync(path.join(f.wt, '.agents/skills/local'), { recursive: true });
+  const result = f.run(); assert.equal(result.status, 'ready', JSON.stringify(result));
+  assert.match(fs.readFileSync(path.join(f.wt, '.agents/skills/local/SKILL.md'), 'utf8'), /Destination extension/);
+  assert.equal(fs.existsSync(path.join(f.root, 'vendor')), false);
+});
+
+test('ignore gaps are reported without modifying ignore files; an interrupted mutex blocks readiness', (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.wt, '.gitignore'), '');
+  const result = f.run(); assert.equal(result.status, 'ready'); assert.ok(result.missingIgnore.includes('.agents/skills/hello/SKILL.md'));
+  assert.equal(fs.readFileSync(path.join(f.wt, '.gitignore'), 'utf8'), '');
+  const mutex = path.join(git(f.wt, 'rev-parse', '--absolute-git-dir'), 'wafflestack-prepare');
+  fs.mkdirSync(mutex);
+  assert.match(f.run().errors.join(), /active or interrupted/);
+});
+
+test('rollback preserves concurrent edits and leaves the recovery barrier', (t) => {
+  const f = fixture(t); let first;
+  const result = f.run({ beforeWrite: (rel) => {
+    if (!first) first = rel;
+    else { write(f.wt, first, 'concurrent user edit'); throw new Error('stop write'); }
+  } });
+  assert.equal(result.status, 'failed'); assert.match(result.errors.join(), /rollback incomplete/);
+  assert.equal(fs.readFileSync(path.join(f.wt, first), 'utf8'), 'concurrent user edit');
+  assert.match(f.run().errors.join(), /active or interrupted/);
+});
+
+test('ejected resources remain project-owned after a selection change', (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 'ready');
+  fs.appendFileSync(path.join(f.wt, '.waffle/waffle.yaml'), 'eject: [skills/hello]\n');
+  const planned = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0', planOnly: true });
+  assert.equal(planned.ok, true);
+  const lock = readLock(f.wt); lock.files = planned.plan.files;
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  write(f.wt, '.claude/skills/hello/SKILL.md', 'project-owned ejected content');
+  git(f.wt, 'add', '.waffle/waffle.yaml', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'eject hello');
+  const result = f.run(); assert.notEqual(result.status, 'failed', JSON.stringify(result));
+  assert.equal(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), 'project-owned ejected content');
+  assert.equal(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/helper.mjs'), 'utf8'), 'export const hello = 1;\n');
+});
+
+
+test('per-run overlay choices override persisted policy without changing it', (t) => {
+  const f = fixture(t);
+  write(f.root, '.waffle/waffle.local.yaml', 'config:\n  greeting: MAIN_PRIVATE\n');
+  git(f.root, 'config', '--local', 'wafflestack.worktreeOverlay', 'main');
+  assert.equal(f.run({ overlay: 'local' }).overlayMode, 'canonical');
+  write(f.wt, '.waffle/waffle.local.yaml', 'config:\n  greeting: DEST_PRIVATE\n');
+  const canonical = f.run({ overlay: 'none', untrustedConfig: true });
+  assert.equal(canonical.status, 'no-op', JSON.stringify(canonical));
+  assert.equal(canonical.overlayMode, 'canonical');
+  assert.doesNotMatch(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), /PRIVATE/);
+  assert.equal(f.run({ overlay: 'local' }).overlayMode, 'destination-overlay');
+  assert.equal(git(f.root, 'config', '--local', '--get', 'wafflestack.worktreeOverlay'), 'main');
+  assert.equal(f.run({ overlay: 'main', untrustedConfig: true }).status, 'failed');
+  // Disabling overlays does not silently discard a previous private render/local lock.
+  const disabled = f.run({ overlay: 'none' });
+  assert.equal(disabled.status, 'failed');
+  assert.match(disabled.errors.join(), /stale local lock/);
+  assert.match(fs.readFileSync(path.join(f.wt, '.claude/skills/hello/SKILL.md'), 'utf8'), /DEST_PRIVATE/);
+});
+
+test('none skips malformed private YAML; local reports a safe syntax diagnosis', (t) => {
+  const f = fixture(t);
+  write(f.wt, '.waffle/waffle.local.yaml', 'config: [PRIVATE_SECRET');
+  assert.equal(f.run({ overlay: 'none' }).status, 'ready');
+  const result = f.run({ overlay: 'local' });
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /invalid configuration syntax/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SECRET/);
+});
+
+test('missing required configuration reports a repair category without raw values', (t) => {
+  const f = fixture(t);
+  fs.appendFileSync(path.join(f.toolkit, 'stacks/demo/stack.yaml'), '  missing.value:\n    required: true\n');
+  write(f.toolkit, 'stacks/demo/skills/hello/SKILL.md', '---\nname: hello\ndescription: fixture\n---\n{{missing.value}}\n');
+  const result = f.run();
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /missing required configuration/);
+  assert.equal(fs.existsSync(path.join(f.wt, '.agents/skills/hello/SKILL.md')), false);
+});
+
+test('main overlay flag preserves tracked-output and ignore safeguards', (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 'ready');
+  git(f.wt, 'add', '-f', '.claude/skills/hello/SKILL.md');
+  git(f.wt, 'commit', '-m', 'track generated output');
+  write(f.root, '.waffle/waffle.local.yaml', 'config:\n  greeting: PRIVATE_FLAG\n');
+  const result = f.run({ overlay: 'main' });
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /tracked or exposed/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_FLAG/);
+});
+
+
+test('the delegate recipe runs the actual development CLI inside the destination', (t) => {
+  const f = fixture(t);
+  const repo = fileURLToPath(new URL('../../', import.meta.url));
+  fs.cpSync(f.toolkit, f.wt, { recursive: true });
+  fs.cpSync(path.join(repo, 'installer/lib'), path.join(f.wt, 'installer/lib'), { recursive: true });
+  fs.copyFileSync(path.join(repo, 'installer/cli.mjs'), path.join(f.wt, 'installer/cli.mjs'));
+  fs.symlinkSync(path.join(repo, 'node_modules'), path.join(f.wt, 'node_modules'));
+  const rendered = renderProject({ cwd: f.wt, toolkitRoot: f.wt, toolkitVersion: '1.0.0', toolkitIdentity: resolveToolkitIdentity({ toolkitRoot: f.wt, offline: true }) });
+  assert.equal(rendered.ok, true, JSON.stringify(rendered.errors));
+  git(f.wt, 'add', '.waffle/waffle.lock.json', 'package.json', 'toolkit.yaml', 'stacks'); git(f.wt, 'commit', '-m', 'destination toolkit');
+  fs.rmSync(path.join(f.wt, '.agents'), { recursive: true });
+  const skill = fs.readFileSync(path.join(repo, 'stacks/orchestration/skills/delegate/SKILL.md'), 'utf8');
+  const recipe = skill.split('\n').find(line => line.startsWith('(cd "$WORKTREE_PATH" &&'));
+  assert.ok(recipe);
+  const command = recipe.replace('{{autopilot.waffleCmd}}', 'env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer/cli.mjs');
+  const run = (extra = '') => spawnSync('sh', ['-c', command.replace(' --json)', ` --json ${extra})`)], {
+    cwd: f.root, encoding: 'utf8', env: { ...process.env, WORKTREE_PATH: f.wt, WAFFLESTACK_OFFLINE: '1' },
+  });
+  const first = run();
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.equal(JSON.parse(first.stdout).status, 'ready');
+  assert.ok(fs.existsSync(path.join(f.wt, '.agents/skills/hello/helper.mjs')));
+  const second = run('--overlay none');
+  assert.equal(second.status, 0, second.stdout + second.stderr);
+  assert.equal(JSON.parse(second.stdout).status, 'no-op');
+  for (const flag of ['--overlay', '--overlay invalid', '--overlay local --overlay main', '--overlay ,']) {
+    const invalid = run(flag);
+    assert.equal(invalid.status, 1, flag);
+    assert.match(invalid.stderr, /--overlay requires/);
+  }
+});
+
+for (const foreign of [true, false]) test(`untrusted toolkit resolution never fetches (${foreign ? 'foreign' : 'same'} repository)`, (t) => {
+  const f = fixture(t);
+  write(f.toolkit, 'package.json', JSON.stringify({ name: 'fixture', version: '1.0.0', repository: 'https://github.com/example/fixture.git' }));
+  const cache = path.join(f.dir, 'cold-cache');
+  const trace = path.join(f.dir, 'git-trace');
+  const bare = path.join(f.dir, 'foreign.git');
+  git(f.dir, 'init', '--bare', bare);
+  const redirects = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.file://${bare}.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/foreign/toolkit.git' };
+  const saved = Object.fromEntries(Object.keys(redirects).map(k => [k, process.env[k]]));
+  Object.assign(process.env, redirects);
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  const old = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = trace;
+  t.after(() => { if (old === undefined) delete process.env.GIT_TRACE; else process.env.GIT_TRACE = old; });
+  const lock = { toolkitVersion: '1.0.0', files: {}, toolkit: { source: foreign ? 'github:foreign/toolkit' : 'github:example/fixture', ref: 'v1.0.0', commit: 'a'.repeat(40), status: 'release' } };
+  assert.throws(() => resolvePreparationToolkit({ lock, toolkitRoot: f.toolkit, cwd: f.wt, untrustedConfig: true, sourceCacheDir: cache }), foreign ? /repository differs/ : /npx --yes github:example\/fixture#v1.0.0 prepare-worktree/);
+  assert.doesNotMatch(fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8') : '', /clone|fetch|ls-remote/);
+  assert.deepEqual(fs.existsSync(cache) ? fs.readdirSync(cache) : [], []);
+});
+
+for (const offline of [true, false]) test(`npm-installed exact commit prepares without a cache (offline=${offline})`, (t) => {
+  const f = fixture(t);
+  const commit = 'b'.repeat(40);
+  const installed = path.join(f.dir, 'node_modules/fixture');
+  fs.cpSync(f.toolkit, installed, { recursive: true });
+  write(f.dir, 'node_modules/.package-lock.json', JSON.stringify({ packages: { 'node_modules/fixture': { resolved: `git+https://github.com/example/fixture.git#${commit}` } } }));
+  const lock = readLock(f.wt);
+  lock.toolkit = { source: 'github:example/fixture', ref: 'v1.0.0', commit, status: 'release' };
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'pin npm toolkit');
+  const cache = path.join(f.dir, 'cold-cache');
+  const result = prepareWorktree({ cwd: f.wt, toolkitRoot: installed, offline, sourceCacheDir: cache });
+  assert.equal(result.status, 'ready', JSON.stringify(result));
+  assert.equal(fs.existsSync(cache), false);
+  lock.toolkit.commit = 'c'.repeat(40);
+  assert.throws(() => resolvePreparationToolkit({ lock, toolkitRoot: installed, cwd: f.wt, offline: true, sourceCacheDir: cache }), /cache miss/);
+});
+
+for (const signal of ['SIGINT', 'SIGKILL']) test(`dead preparation owner recovers its journal after ${signal}`, (t) => {
+  const f = fixture(t);
+  const module = new URL('../lib/prepare-worktree.mjs', import.meta.url).href;
+  const script = `import { prepareWorktree } from ${JSON.stringify(module)};
+    let n = 0;
+    prepareWorktree({ cwd: ${JSON.stringify(f.wt)}, toolkitRoot: ${JSON.stringify(f.toolkit)},
+      resolveToolkit: () => ({ root: ${JSON.stringify(f.toolkit)}, pin: 'fixture', version: '1.0.0' }),
+      beforeWrite: () => { if (++n === 2) process.kill(process.pid, ${JSON.stringify(signal)}); }
+    });`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script]);
+  assert.equal(child.signal, signal, child.stderr.toString());
+  const mutex = path.join(git(f.wt, 'rev-parse', '--absolute-git-dir'), 'wafflestack-prepare');
+  assert.ok(fs.existsSync(path.join(mutex, 'journal.json')));
+  const result = f.run();
+  assert.equal(result.status, 'ready', JSON.stringify(result));
+  assert.equal(f.run().status, 'no-op');
+  assert.equal(fs.existsSync(mutex), false);
+});
+
+for (const scenario of ['removed-agent', 'dropped-target', 'edited', 'symlink', 'tracked', 'rollback']) test(`receipt pruning: ${scenario}`, (t) => {
+  const f = fixture(t);
+  assert.equal(f.run().status, 'ready');
+  const rel = '.claude/agents/worker.md';
+  const original = fs.readFileSync(path.join(f.wt, rel));
+  if (scenario !== 'dropped-target') {
+    const manifest = path.join(f.toolkit, 'stacks/demo/stack.yaml');
+    fs.writeFileSync(manifest, fs.readFileSync(manifest, 'utf8').replace('agents: [worker]', 'agents: []'));
+  }
+  const config = scenario === 'dropped-target' ? 'targets: [codex, agents-dir]\nstacks: [demo]\n' : 'targets: [claude, codex, agents-dir]\nstacks: [demo]\n';
+  write(f.wt, '.waffle/waffle.yaml', config);
+  const planned = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0', planOnly: true });
+  assert.equal(planned.ok, true, JSON.stringify(planned.errors));
+  const lock = readLock(f.wt);
+  lock.files = planned.plan.files;
+  lock.settings = planned.plan.settings;
+  lock.targets = planned.plan.canonicalTargets;
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.yaml', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'remove selection');
+  if (scenario === 'edited') write(f.wt, rel, 'user edits');
+  if (scenario === 'symlink') { fs.unlinkSync(path.join(f.wt, rel)); fs.symlinkSync(path.join(f.wt, '.claude/agents/custom.md'), path.join(f.wt, rel)); }
+  if (scenario === 'tracked') git(f.wt, 'add', '-f', rel);
+  let n = 0;
+  const result = f.run({ beforeWrite: () => { if (scenario === 'rollback' && ++n === 2) throw new Error('injected prune failure'); } });
+  if (['edited', 'symlink', 'tracked', 'rollback'].includes(scenario)) {
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.ok(fs.existsSync(path.join(f.wt, rel)));
+    if (scenario === 'rollback') assert.deepEqual(fs.readFileSync(path.join(f.wt, rel)), original);
+  } else {
+    assert.equal(result.status, 'ready', JSON.stringify(result));
+    assert.ok(result.prunedPaths.includes(rel));
+    assert.equal(fs.existsSync(path.join(f.wt, rel)), false);
+    assert.equal(f.run().status, 'no-op');
+  }
+});
+
+test('upstream-pinned skills prepare byte-equal on all skill targets', (t) => {
+  const f = fixture(t);
+  const repo = fileURLToPath(new URL('../../', import.meta.url));
+  const upstream = path.join(repo, 'stacks/tstack');
+  fs.cpSync(upstream, path.join(f.toolkit, 'stacks/tstack'), { recursive: true });
+  write(f.toolkit, 'toolkit.yaml', 'name: fixture\nstacks: [demo, tstack]\n');
+  fs.appendFileSync(path.join(f.wt, '.waffle/waffle.yaml'), 'include: [skills/council]\n');
+  const rendered = renderProject({ cwd: f.wt, toolkitRoot: f.toolkit, toolkitVersion: '1.0.0' });
+  assert.equal(rendered.ok, true, JSON.stringify(rendered.errors));
+  git(f.wt, 'add', '.waffle/waffle.yaml', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'select pinned skill');
+  for (const dir of ['.claude', '.agents']) fs.rmSync(path.join(f.wt, dir, 'skills/council'), { recursive: true });
+  assert.equal(f.run().status, 'ready');
+  for (const dir of ['.claude', '.agents']) for (const file of ['SKILL.md', 'LICENSE']) {
+    assert.deepEqual(fs.readFileSync(path.join(f.wt, dir, 'skills/council', file)), fs.readFileSync(path.join(upstream, 'skills/council', file)));
+  }
+  const lock = readLock(f.wt); lock.upstream[0].commit = 'f'.repeat(40);
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'tamper provenance');
+  assert.match(f.run().errors.join(), /config\/lock\/pinned toolkit mismatch/);
+});
+
+test('cache integrity includes overlay-only skills and untracked helpers', (t) => {
+  const f = fixture(t);
+  write(f.toolkit, 'toolkit.yaml', 'name: fixture\nstacks: [demo, private]\n');
+  write(f.toolkit, 'stacks/private/stack.yaml', 'name: private\nskills: [private]\n');
+  write(f.toolkit, 'stacks/private/skills/private/SKILL.md', '---\nname: private\ndescription: Overlay-only fixture\n---\nTrusted bytes.\n');
+  write(f.toolkit, 'package.json', JSON.stringify({ name: 'fixture', version: '1.0.0', repository: 'https://github.com/example/fixture.git' }));
+  git(f.toolkit, 'init'); git(f.toolkit, 'add', '.'); git(f.toolkit, 'commit', '-m', 'toolkit'); git(f.toolkit, 'tag', 'v1.0.0');
+  const commit = git(f.toolkit, 'rev-parse', 'HEAD');
+  const cache = path.join(f.dir, 'cache');
+  const source = 'https://github.com/example/fixture.git';
+  const cached = path.join(cache, sha256(`${source}@${commit}`).slice(0, 24));
+  fs.cpSync(f.toolkit, cached, { recursive: true }); git(cached, 'remote', 'add', 'origin', source);
+  const lock = readLock(f.wt);
+  lock.toolkit = { source: 'github:example/fixture', ref: 'v1.0.0', commit, status: 'release' };
+  write(f.wt, '.waffle/waffle.lock.json', JSON.stringify(lock));
+  git(f.wt, 'add', '.waffle/waffle.lock.json'); git(f.wt, 'commit', '-m', 'pin toolkit');
+  write(f.wt, '.waffle/waffle.local.yaml', 'include: [skills/private]\n');
+  write(f.toolkit, 'stacks/demo/skills/hello/helper.mjs', 'running checkout differs');
+  const run = () => prepareWorktree({ cwd: f.wt, toolkitRoot: f.toolkit, offline: true, sourceCacheDir: cache });
+  const initial = run(); assert.equal(initial.status, 'ready', JSON.stringify(initial));
+  write(cached, 'stacks/private/skills/private/SKILL.md', 'tampered overlay-only bytes');
+  assert.equal(run().status, 'failed');
+  git(cached, 'checkout', '--', '.');
+  write(cached, 'stacks/private/skills/private/helper.mjs', 'untracked helper');
+  assert.equal(run().status, 'failed');
+});
+
+for (const damage of ['edited', 'symlink', 'invalid-journal']) test(`dead-owner recovery preserves ${damage} and keeps the barrier`, (t) => {
+  const f = fixture(t);
+  const module = new URL('../lib/prepare-worktree.mjs', import.meta.url).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { prepareWorktree } from ${JSON.stringify(module)};
+    let n = 0;
+    prepareWorktree({ cwd: ${JSON.stringify(f.wt)}, toolkitRoot: ${JSON.stringify(f.toolkit)},
+      resolveToolkit: () => ({ root: ${JSON.stringify(f.toolkit)}, pin: 'fixture', version: '1.0.0' }),
+      beforeWrite: () => { if (++n === 2) process.kill(process.pid, 'SIGKILL'); }
+    });`]);
+  assert.equal(child.signal, 'SIGKILL');
+  const mutex = path.join(git(f.wt, 'rev-parse', '--absolute-git-dir'), 'wafflestack-prepare');
+  const journal = path.join(mutex, 'journal.json');
+  const entries = JSON.parse(fs.readFileSync(journal, 'utf8')).entries;
+  const first = path.join(f.wt, entries[0][0]);
+  if (damage === 'edited') fs.writeFileSync(first, 'private concurrent edit');
+  if (damage === 'symlink') { fs.unlinkSync(first); fs.symlinkSync(path.join(f.wt, '.claude/agents/custom.md'), first); }
+  if (damage === 'invalid-journal') fs.writeFileSync(journal, 'not-json private data');
+  const result = f.run();
+  assert.equal(result.status, 'failed');
+  assert.match(result.errors.join(), /rollback incomplete/);
+  assert.doesNotMatch(JSON.stringify(result), /private concurrent|not-json private/);
+  assert.ok(fs.existsSync(journal));
+  if (damage === 'edited') assert.equal(fs.readFileSync(first, 'utf8'), 'private concurrent edit');
+  if (damage === 'symlink') assert.ok(fs.lstatSync(first).isSymbolicLink());
+});

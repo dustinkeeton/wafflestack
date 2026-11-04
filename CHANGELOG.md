@@ -33,6 +33,13 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- `prepare-worktree` provisions pinned worktree-local harness resources before agent startup,
+  with conflict checks, verified interruption recovery, safe stale-file pruning, structured
+  readiness and explicit private-overlay policy (#820).
+  Delegate/autopilot now gate worker launches on preparation; host setup recipes cover T3,
+  Codex desktop and plain Git/Claude. **Consumer impact:** install a release containing this
+  command and explicitly upgrade old provenance-less locks before enabling startup scripts.
+
 - **Upstream-pinned skills: `upstream:` provenance and a copy-matches-pin gate (#826, part of
   #825).** A `stack.yaml` `skills:` entry may now be a mapping `{ name, upstream: { repo, path,
   commit, license, hash } }` recording the upstream commit a skill was copied from. `validate`
@@ -109,6 +116,11 @@ is what you reach for across a breaking one.
   **Consumer impact:** re-render only.
 
 ### Fixed
+
+- Worktree preparation now runs delegate/autopilot's configured CLI inside the destination
+  checkout, including this repository's unreleased development runner. Adds per-run
+  `--overlay local|main|none`, privacy-safe render failure categories, and type checking
+  of the preparation module; interrupted-write and private-output guards remain enforced.
 
 - **Autopilot's `changelog-merge.mjs` holds when main's lead-in leaves the entry above (#810).**
   The #803 narrowing let an `<integ>` lead-in resolve after a main lead-in that ends in a blank

@@ -5042,12 +5042,17 @@ describe('init and setup are one onboarding command (#611)', () => {
   });
 });
 
-// A worktree with no render falls back to the main checkout's skills; rendering one would shadow it.
-describe('delegate: worktrees are not rendered into', () => {
-  test('delegate says not to render, and neither skill runs a worktree render', () => {
-    const md = readSkill('delegate');
-    assert.match(md, /\*\*Do not render into the worktree\.\*\*/);
-    assert.doesNotMatch(md, /render --cwd <wt>/);
-    assert.doesNotMatch(readSkill('autopilot'), /Render a gitignored render into the worktree/);
+describe('orchestration: worktrees are prepared before launch', () => {
+  test('delegate and autopilot fail closed before worker startup', () => {
+    for (const name of ['delegate', 'autopilot']) {
+      const md = readSkill(name);
+      assert.match(md, /prepare-worktree --cwd/);
+      assert.match(md, /cd [^\n]+&& env WAFFLESTACK_ALLOW_UNRELEASED=1 node installer\/cli\.mjs prepare-worktree --cwd "\$PWD" --json/);
+      assert.doesNotMatch(md, /`wafflestack prepare-worktree/);
+      assert.match(md, /stop (?:that |the )launch/);
+      assert.match(md, /before\s+session startup/);
+      assert.match(md, /retry/);
+      assert.doesNotMatch(md, /Do not render into the worktree/);
+    }
   });
 });

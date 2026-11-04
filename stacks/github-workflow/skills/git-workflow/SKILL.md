@@ -271,7 +271,7 @@ When multiple agents work in parallel on files that might conflict:
    git worktree add {{git.worktreesDir}}/feat-x feat/feature-x
    ```
 
-   Keeping worktrees under `{{git.worktreesDir}}/` keeps them out of the repo's sibling directories and out of version control.
+   Keeping worktrees under `{{git.worktreesDir}}/` keeps them out of the repo's sibling directories and out of version control. When generated harness resources are ignored, prepare each worktree before starting its agent session. Follow the toolkit’s `docs/worktree-setup.md` for the feature-capable CLI bootstrap and host recipes; directory presence alone is not readiness.
 
 2. **Lock files** — if two agents suspect they'll edit the same file, one should finish first. Use `TaskList` (it takes no arguments) to see what every other agent has in flight — subject, status, and owner.
 

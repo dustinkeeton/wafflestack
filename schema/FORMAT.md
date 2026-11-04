@@ -1525,3 +1525,14 @@ the defaults reproduce today's action byte-for-byte, so an unconfigured repo sta
 doctor-clean. They are injection-guarded at render — an override carrying `${{`, a quote, or a
 newline (or, for `apiKeySecret`, anything outside a GitHub secret name) fails the render loudly
 rather than corrupting the workflow.
+
+## Worktree readiness
+
+`wafflestack prepare-worktree --cwd /absolute/checkout --json` validates the checkout's
+committed config/lock against its pinned toolkit and prepares only harness resources.
+It changes no public lock or config schema. Exit 0 (`ready` or `no-op`) gates startup;
+exit 1 (`failed`) stops it. Persistent private-overlay inheritance uses the local Git
+setting `wafflestack.worktreeOverlay` (`destination`, default; or `main`), not a public
+YAML value. Per-run `--overlay local|main|none` overrides that policy without persisting it;
+`none` skips private input, but never discards stale output or bypasses privacy guards.
+See [worktree setup](../docs/worktree-setup.md) for the full contract.
