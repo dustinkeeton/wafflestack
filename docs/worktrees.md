@@ -161,15 +161,34 @@ checkout's, which is why the script below pins the toolkit from the worktree's l
 main checkout's CLI. Worktrees land under `~/.t3/worktrees/<project>/<id>` by default (an external
 linked worktree; supported).
 
-T3 Code runs project **actions** (Settings → Projects → Actions; a checked-in `t3.json` can define
-one, which each user imports once). Add an action that runs `scripts/prepare-worktree.sh` with
-**`runOnWorktreeCreate`** on and **`waitForCompletion`** on. Without the wait, T3 launches the first
-agent turn as soon as the command is written to the terminal, so the session can start before the
-render exists. For a worktree-based thread the action runs in the worktree directory; the script
-uses `$PWD` when no path is given and checks it is a git checkout, so a host that runs it elsewhere
-fails loudly rather than preparing the wrong tree. Verified against T3 Code (Beta) on 2026-11-03:
-both flags exist; the exact `t3.json` field layout is the app's, so author it through the settings
-UI and export.
+T3 Code runs project **scripts** (Settings → Projects, or a checked-in `t3.json`, which each user
+imports once). Add one that runs `scripts/prepare-worktree.sh` with `runOnWorktreeCreate: true` and
+`async: false`:
+
+```json
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Prepare Wafflestack",
+      "command": "scripts/prepare-worktree.sh \"$PWD\"",
+      "icon": "configure",
+      "runOnWorktreeCreate": true,
+      "async": false
+    }
+  ]
+}
+```
+
+`async: false` makes the script a startup prerequisite: the thread's first run is held while the
+worktree's setup is unresolved. Without it T3 launches the first agent turn as soon as the command is
+written to the terminal, so the session can start before the render exists. T3 runs the script with
+the worktree as its working directory and records the exit code; the script also checks its `$PWD`
+is a git checkout, so a host that runs it elsewhere fails loudly rather than preparing the wrong
+tree. Field names and lifecycle checked on 2026-11-03 against the t3code repository's own
+`t3.json` (`name`, `command`, `icon`, `runOnWorktreeCreate`) and
+`apps/server/src/project/ProjectSetupScriptRunner.ts` (`async: script.async !== false`, `cwd =
+input.worktreePath`), and the Beta app bundle; not a desktop UI end-to-end run.
 
 ### Codex desktop app
 
