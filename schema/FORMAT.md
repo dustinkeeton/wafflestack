@@ -387,6 +387,27 @@ the new commit, then record the new `commit` and `hash` in `stack.yaml` and the 
 the registry. A stray untracked file in the directory (a `.DS_Store`) also changes the hash. The
 gate runs inside `validateStack`, so an external stack with a stale pin also refuses to render.
 
+**Keeping current (#828).** Two local, unmetered toolkit-developer scripts talk to GitHub through
+`gh api` (no CI hook; `npm test` never calls them — its tests inject a fake upstream):
+
+- `npm run upstream:check` reports each pin against the latest commit on upstream's default branch
+  that touches its `path` or the root `LICENSE`: `current`, `behind` (with `(upstream LICENSE
+  changed)` when the license moved), `diverged`, or `error`. A pin taken at a later commit that did
+  not touch the path is `current`. Exit 0 when every pin is current, 1 when any is behind or
+  diverged, 2 on an error.
+- `npm run upstream:bump -- [<ref>] [--commit <sha>]` moves every behind pin (or `<ref>`, to
+  `--commit`): it re-copies the files from upstream's git objects (raw bytes, no eol filter), drops
+  files upstream deleted, records the new `commit` and `hash` in `stack.yaml` and the new `commit`
+  in the registry (only those bytes change), and adds a `**Bump upstream-pinned …**` bullet under
+  `## [Unreleased]` → `### Changed`. It refuses, writing nothing, when upstream relicensed (a human
+  decision), when the copy no longer matches its current pin, or when the target has a symlink, a
+  submodule, no root `LICENSE` or a `LICENSE` of its own under `path`. A pin already at the target
+  is left alone. Exit 0, or 2 on an error.
+
+Mark every pinned copy `-text` in the root `.gitattributes` (`stacks/<stack>/skills/<name>/** -text`)
+so a `core.autocrlf` checkout never rewrites the hashed bytes; `bump` warns, and a test fails,
+when a pinned file's `text` attribute is not `unset`. The shipped example is `tstack/skills/council`.
+
 **Rendering: verbatim (#827).** An upstream-pinned skill renders with **no `{{…}}` substitution**,
 `harness.*` included: an upstream `{{` is never read as a placeholder, so every rendered file equals
 the copy byte for byte. Two consumer-requested patches still apply to the rendered `SKILL.md`, on

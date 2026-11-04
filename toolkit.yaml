@@ -10,3 +10,4 @@ stacks:
   - expo-dev
   - harness-architect
   - wafflestack
+  - tstack
