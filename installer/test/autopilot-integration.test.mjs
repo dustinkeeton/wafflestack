@@ -868,12 +868,13 @@ describe('integration holds: an issue only for real work (#838)', () => {
 
   test('a stage 2 hold files an issue only for unresolved should-fix-or-above findings', () => {
     const h = hold2();
-    assert.match(h, /still reads untriaged by Step 5's `triaged-through` test, and those the responder's reply marked Defer or Decline/);
+    assert.match(h, /A finding is \*\*open\*\* when a review that carries it still reads untriaged by Step 5's `triaged-through` test, or the responder's reply marked it Decline/);
+    assert.match(h, /A Defer is not open: `pr-response` already filed an issue for it/);
+    assert.doesNotMatch(h, /marked Defer or Decline/);
     assert.match(h, /`gh issue create --label "waffle:manual-review" --body-file <scratch-file>`/);
-    assert.match(h, /Give a Defer the issue number `pr-response` filed for it/);
-    assert.match(h, /List only the unresolved findings at should-fix or above/);
-    assert.match(h, /A finding below should-fix never goes in the follow-up \(#511\): when one also remains, also post one hold comment on `<F>` as stage 1's \*\*Hold\*\* does, listing those findings with their citations and linking the follow-up/);
-    assert.match(h, /When none at should-fix or above remain, as when the cap ended on a round whose fixes all merged, file nothing: post one hold comment on `<F>`/);
+    assert.match(h, /List only the open findings at should-fix or above/);
+    assert.match(h, /A Defer and a finding below should-fix never go in the follow-up \(#511\): when either also remains, also post one hold comment on `<F>` as stage 1's \*\*Hold\*\* does, listing those findings with their citations, each Defer with the issue number `pr-response` filed for it, and linking the follow-up/);
+    assert.match(h, /When no open finding at should-fix or above remains \(only Defers or findings below should-fix, or none, as when the cap ended on a round whose fixes all merged\), file nothing: post one hold comment on `<F>`/);
     assert.match(h, /the follow-up number and a link to the hold comment, whichever were made/);
     assert.doesNotMatch(h, /goes in a hold comment, never the follow-up/);
   });
@@ -889,7 +890,7 @@ describe('integration holds: an issue only for real work (#838)', () => {
     const f = fail();
     assert.match(f, /\*\*Integration gate stage 1 held\*\*[^\n]*one hold comment posted \(on the sync PR, else the run PR merged last into `<integ>`\), no issue filed/);
     assert.doesNotMatch(f.match(/\*\*Integration gate stage 1 held\*\*[^\n]*/)[0], /follow-up filed/);
-    assert.match(f, /\*\*Integration gate stage 2 held\*\*[^\n]*one hold comment posted on `<F>`, or, when findings at should-fix or above remain unresolved, one `waffle:manual-review` follow-up filed listing only those, plus a hold comment on `<F>` when a finding below should-fix also remains/);
+    assert.match(f, /\*\*Integration gate stage 2 held\*\*[^\n]*one hold comment posted on `<F>`, or, when untriaged or Declined findings at should-fix or above remain, one `waffle:manual-review` follow-up filed listing only those, plus a hold comment on `<F>` when a Defer \(cited by its `pr-response` issue\) or a finding below should-fix also remains/);
     assert.match(f, /\*\*Integration gate stage 3 held\*\*[^\n]*one hold comment posted on `<F>`, except an unresolved Critical\/High, which files item 7's `waffle:manual-review` follow-up instead/);
   });
 
