@@ -9,6 +9,39 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-04: A small external skill ships as an upstream-pinned copy; an optional provider stays behind a proxy (#825)
+
+**Context**: #471 rejected vendoring archify and wrote down that "the toolkit fetches, locks, and
+drift-checks nothing external". #825 needed `t3dotgg/tstack`'s `council` as a waffle a consumer
+selects like any other. A `source:` stack does not fit (tstack has no `stack.yaml`, and CI's
+`--untrusted-config` render refuses `source:`). `recommendedPlugins:` never renders anything.
+
+**Decision**: An external skill becomes an **upstream-pinned copy** (`upstream:` on its
+`skills:` entry, FORMAT.md "Upstream-pinned skills") when all of these hold: it is small enough
+to review as a copy (council is two files), its license lets the copy ship with upstream's
+`LICENSE`, it needs no install or runtime of its own, and it should be a first-class waffle that
+is selected, rendered and locked. Anything else stays a `recommendedPlugins:` offer behind a
+capability-named proxy skill (#471, FORMAT.md "Proxy skills"). That covers a large package like
+archify, a provider with its own runtime or update channel, and a provider that is one of several
+options with a built-in floor. The toolkit owns the copy, so render still fetches nothing. The
+lock records the pin, `validate` checks the copy against its hash, and only the toolkit-developer
+scripts `upstream:check` / `upstream:bump` contact upstream.
+
+**Alternatives**:
+- *Proxy council too.* Rejected: council has no fallback floor to proxy to, and the consumer would
+  install it on the side, unlocked.
+- *Copy by hand with no pin (#174).* Rejected: the copy loses its origin, and nothing notices when
+  upstream changes.
+
+**Rationale**: #471's drift-accounting objection was about a 192-file package the toolkit does not
+own. Pinning a two-file copy makes the drift a hash check on files the toolkit owns.
+
+**Affects**: supersedes in part #471's "fetches, locks, and drift-checks nothing external" for
+pinned copies; the proxy convention stands for optional providers. The `tstack` stack,
+`installer/lib/upstream.mjs`, the lock's `upstream` block, `validate`.
+
+---
+
 ## 2026-10-29: Autopilot's gate loops converge on zero should-fix, not zero implemented (#794)
 
 **Context**: Steps 5–6 stopped only on a cold round that implemented nothing, nits included. The
@@ -1850,6 +1883,10 @@ HTML diagram, without it it embeds a Mermaid block, and both say which ran. Addi
 table row plus one `recommendedPlugins:` entry. The toolkit fetches, locks, and drift-checks
 nothing external. Guarded by content tests on the source skill, the render, the agent grant, and
 the `setup` inventory.
+
+**Superseded in part (2026-11-04, #825)**: a small external skill can now ship as an
+upstream-pinned copy that the lock records and `validate` hash-checks. The proxy convention still
+governs optional providers. See the #825 entry.
 
 ---
 

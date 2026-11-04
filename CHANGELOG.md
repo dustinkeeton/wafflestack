@@ -38,8 +38,8 @@ is what you reach for across a breaking one.
   commit, license, hash } }` recording the upstream commit a skill was copied from. `validate`
   lints the pin, requires an upstream `LICENSE` beside the copy, checks that the matching
   `stacks/registry.yaml` entry records the same `upstream: { repo, path, commit, license }`, and
-  fails when the copy's files no longer hash to the recorded `hash`. No shipped skill is pinned
-  yet. Verbatim rendering and lock provenance follow in #827.
+  fails when the copy's files no longer hash to the recorded `hash`. Verbatim rendering and lock
+  provenance follow in #827; `council` (#828) is the first shipped pinned skill.
 
   **Consumer impact:** none — no rendered output changes.
 
@@ -53,8 +53,8 @@ is what you reach for across a breaking one.
   `<external-upstream>` in place of the upstream repo and path, the way it withholds source URLs
   (#473).
 
-  **Consumer impact:** none until a pinned skill is selected — no shipped skill is pinned yet, and
-  locks without one are byte-identical.
+  **Consumer impact:** none until a pinned skill is selected (the first is `tstack`'s `council`,
+  below); locks without one are byte-identical.
 
 - **New `tstack` stack ships `council` from t3dotgg/tstack (#828, part of #825).** `council` runs
   a review with one flagship model from each of three providers and records scored rounds in the PR
