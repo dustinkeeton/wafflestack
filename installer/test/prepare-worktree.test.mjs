@@ -279,7 +279,7 @@ describe('prepareWorktree: refusals', () => {
     fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkitVersion: '0.0.older', toolkit: { source: 'github:o/r', sourceType: 'git', ref: 'v0.0.older', commit: 'a'.repeat(40), status: 'release' } }, null, 2));
     const pinned = prepare(wt, toolkitRoot, { offline: true });
     assert.equal(pinned.status, 'failed');
-    assert.match(pinned.errors[0], /rendered by 0\.0\.older/);
+    assert.match(pinned.errors[0], /pins github:o\/r#v0\.0\.older — a lock may only be rendered by a release of the running CLI's own repository/);
     assert.match(pinned.errors[0], new RegExp(`npx --yes github:o/r#v0\\.0\\.older prepare-worktree --cwd "${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
     assert.deepEqual(pinned.pin, { version: '0.0.older', ref: 'github:o/r#v0.0.older', status: 'release', from: null });
     fs.writeFileSync(lockFile, JSON.stringify({ ...lock, toolkitVersion: '0.0.older', toolkit: { ...lock.toolkit, status: 'unreleased', ref: null, commit: null } }, null, 2));
@@ -424,6 +424,7 @@ describe('prepareWorktree: the lock pin picks the toolkit (ported from #821)', (
     fs.writeFileSync(lockFile, `${JSON.stringify({ ...lock, toolkit: { source: 'github:example/fixture', sourceType: 'git', ref: 'v0.0.test', commit, status: 'release' } }, null, 2)}\n`);
   }
   const viaRepo = (ext, opts) => resolveSource({ ...ext, source: repo }, opts);
+  const NEWER = { status: 'release', version: '0.0.newer', tag: 'v0.0.newer', commit: 'd'.repeat(40), ref: 'github:example/fixture#v0.0.newer', origin: 'npm-install', repo: 'example/fixture', lockRepo: 'example/fixture' };
 
   beforeEach(() => {
     ({ main, toolkitRoot } = makeMain());
@@ -444,7 +445,7 @@ describe('prepareWorktree: the lock pin picks the toolkit (ported from #821)', (
   test('a newer CLI fetches the pinned release once, then serves it from the cache, offline too', () => {
     const wt = addWorktree(main);
     pinToRepo(wt, { commit: git(repo, 'rev-parse', 'HEAD').stdout.trim() });
-    const run = (extra = {}) => prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: viaRepo, ...extra });
+    const run = (extra = {}) => prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', toolkitIdentity: NEWER, sourceCacheDir: cache, resolve: viaRepo, ...extra });
     const first = run();
     assert.equal(first.status, 'ready', JSON.stringify(first.errors));
     assert.equal(first.pin.from, 'fetch');
@@ -465,7 +466,7 @@ describe('prepareWorktree: the lock pin picks the toolkit (ported from #821)', (
   test('a moved tag or an inconsistent version at the tag is refused, not rendered', () => {
     const wt = addWorktree(main);
     pinToRepo(wt, { commit: 'c'.repeat(40) });
-    const moved = prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: viaRepo });
+    const moved = prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', toolkitIdentity: NEWER, sourceCacheDir: cache, resolve: viaRepo });
     assert.equal(moved.status, 'failed');
     assert.match(moved.errors[0], /the tag moved/);
     write(repo, 'package.json', '{"name":"fixture","version":"0.0.wrong"}');
@@ -473,15 +474,41 @@ describe('prepareWorktree: the lock pin picks the toolkit (ported from #821)', (
     git(repo, 'tag', '-f', 'v0.0.test');
     pinToRepo(wt, { commit: git(repo, 'rev-parse', 'HEAD').stdout.trim() });
     fs.rmSync(cache, { recursive: true, force: true });
-    const wrong = prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: viaRepo });
+    const wrong = prepareWorktree({ cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', toolkitIdentity: NEWER, sourceCacheDir: cache, resolve: viaRepo });
     assert.equal(wrong.status, 'failed');
     assert.match(wrong.errors[0], /the toolkit at that tag is version 0\.0\.wrong/);
     assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
   });
 
+  test('a pin is fetched only for the running CLI\'s own repository, with a full commit, and never for an untrusted tree', () => {
+    const wt = addWorktree(main);
+    const commit = git(repo, 'rev-parse', 'HEAD').stdout.trim();
+    pinToRepo(wt, { commit });
+    let fetches = 0;
+    const counting = (ext, opts) => { fetches++; return viaRepo(ext, opts); };
+    const base = { cwd: wt, toolkitRoot: other, toolkitVersion: '0.0.newer', sourceCacheDir: cache, resolve: counting };
+    const foreign = prepareWorktree({ ...base, toolkitIdentity: { ...NEWER, repo: 'someone/else', lockRepo: 'someone/else' } });
+    assert.equal(foreign.status, 'failed');
+    assert.match(foreign.errors[0], /from someone\/else, but .* pins github:example\/fixture#v0\.0\.test — a lock may only be rendered by a release of the running CLI's own repository/);
+    const unknown = prepareWorktree({ ...base, toolkitIdentity: { status: 'unverified', version: '0.0.newer', repo: null, lockRepo: null } });
+    assert.match(unknown.errors[0], /from an unknown repository/);
+    const untrusted = prepareWorktree({ ...base, toolkitIdentity: NEWER, untrustedConfig: true });
+    assert.equal(untrusted.status, 'failed');
+    assert.match(untrusted.errors[0], /--untrusted-config never fetches a toolkit an untrusted tree's lock names/);
+    assert.match(untrusted.errors[0], /npx --yes github:example\/fixture#v0\.0\.test prepare-worktree/);
+    pinToRepo(wt, { commit: 'abc' });
+    const short = prepareWorktree({ ...base, toolkitIdentity: NEWER });
+    assert.match(short.errors[0], /without a full commit/);
+    assert.equal(fetches, 0, 'none of these reached the resolver');
+    assert.equal(fs.existsSync(path.join(wt, HELPER)), false);
+    pinToRepo(wt, { commit });
+    assert.equal(prepareWorktree({ ...base, toolkitIdentity: NEWER }).status, 'ready');
+    assert.equal(fetches, 1);
+  });
+
   test('resolvePinnedToolkit: the running CLI wins only at the pinned tag and commit', () => {
     const lock = { toolkitVersion: '0.0.test', toolkit: { source: 'github:example/fixture', ref: 'v0.0.test', commit: 'a'.repeat(40), status: 'release' } };
-    const identity = (tag, commit) => ({ status: 'release', version: '0.0.test', tag, commit });
+    const identity = (tag, commit) => ({ status: 'release', version: '0.0.test', tag, commit, repo: 'example/fixture', lockRepo: 'example/fixture' });
     assert.equal(resolvePinnedToolkit({ lock, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.test', toolkitIdentity: identity('v0.0.test', 'a'.repeat(40)) }).from, 'running');
     assert.equal(resolvePinnedToolkit({ lock, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.test', toolkitIdentity: { status: 'unreleased', version: '0.0.test' } }).from, 'running');
     const r = resolvePinnedToolkit({ lock, cwd: '/x', toolkitRoot: '/tk', toolkitVersion: '0.0.test', toolkitIdentity: identity('v0.0.test', 'b'.repeat(40)), offline: true });

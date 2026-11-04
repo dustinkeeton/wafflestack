@@ -72,13 +72,15 @@ export const PREPARE_WORKTREE_SINCE = '0.20.0';
 /**
  * The toolkit that provisions `lock`: the running CLI when its version — and, for a release, its
  * tag and commit — are the lock's; otherwise the lock's own release pin, served from the source cache
- * or cloned into it once (never when offline). A lock with no release pin can only be provisioned by
- * a CLI at its version. Every refusal names the pinned command the caller can run instead.
+ * or cloned into it once (never when offline). The pin must name the running CLI's own repository
+ * (a lock is data: it may not choose which toolkit's content becomes the agent's skills) and carry
+ * the commit the tag must resolve to; an untrusted tree's lock is never fetched for. A lock with no
+ * release pin can only be provisioned by a CLI at its version. Every refusal names the pinned command.
  *
- * @param {{ lock: any, cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: any, offline?: boolean, sourceCacheDir?: string, resolve?: typeof resolveSource }} args
+ * @param {{ lock: any, cwd: string, toolkitRoot: string, toolkitVersion: string, toolkitIdentity?: any, offline?: boolean, untrustedConfig?: boolean, sourceCacheDir?: string, resolve?: typeof resolveSource }} args
  * @returns {{ root: string, version: string, identity: any, from: 'running'|'cache'|'fetch' } | { error: string }}
  */
-export function resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, offline = false, sourceCacheDir = defaultSourceCacheDir(), resolve = resolveSource }) {
+export function resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, toolkitIdentity = null, offline = false, untrustedConfig = false, sourceCacheDir = defaultSourceCacheDir(), resolve = resolveSource }) {
   const pin = toolkitPinFromLock(lock);
   const t = lock?.toolkit ?? {};
   const sameVersion = lock?.toolkitVersion === toolkitVersion;
@@ -92,6 +94,12 @@ export function resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, t
   const remedy = `run the pinned toolkit yourself:\n  npx --yes ${pin} prepare-worktree --cwd "${cwd}"`;
   const slug = parseRepoSlug(t.source);
   if (!slug) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}, whose source is not a GitHub repository this CLI can fetch — ${remedy}` };
+  if (untrustedConfig) return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}; --untrusted-config never fetches a toolkit an untrusted tree's lock names — ${remedy}` };
+  const own = parseRepoSlug(toolkitIdentity?.lockRepo ?? toolkitIdentity?.repo ?? null);
+  if (!own || own.owner.toLowerCase() !== slug.owner.toLowerCase() || own.repo.toLowerCase() !== slug.repo.toLowerCase()) {
+    return { error: `this CLI is ${running} from ${own ? `${own.owner}/${own.repo}` : 'an unknown repository'}, but ${LOCK_FILE} pins ${pin} — a lock may only be rendered by a release of the running CLI's own repository, never by one it names; ${remedy}` };
+  }
+  if (!/^[0-9a-f]{40}$/i.test(String(t.commit ?? ''))) return { error: `${LOCK_FILE} pins ${pin} without a full commit, so the tag cannot be verified — re-render from a release you trust and commit the lock, or ${remedy}` };
   let fetched = false;
   const gitFetch = offline
     ? () => { throw new Error('offline, and the pinned release is not in the source cache'); }
@@ -102,8 +110,8 @@ export function resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, t
   } catch (err) {
     return { error: `this CLI is ${running}, but ${LOCK_FILE} was rendered by ${rendered}; resolving that release failed (${/** @type {Error} */ (err).message}) — ${offline ? 'go online once so it can be fetched into the source cache, or ' : ''}${remedy}` };
   }
-  if (t.commit && resolved.commit && resolved.commit !== t.commit) {
-    return { error: `${LOCK_FILE} pins ${pin} at commit ${String(t.commit).slice(0, 12)}, but that tag resolves to ${resolved.commit.slice(0, 12)} on ${httpsUrl(slug)} — the tag moved; re-render from a release you trust and commit the lock` };
+  if (resolved.commit !== t.commit) {
+    return { error: `${LOCK_FILE} pins ${pin} at commit ${String(t.commit).slice(0, 12)}, but that tag resolves to ${String(resolved.commit ?? 'nothing').slice(0, 12)} on ${httpsUrl(slug)} — the tag moved; re-render from a release you trust and commit the lock` };
   }
   let version = null;
   try {
@@ -383,7 +391,7 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
   }
   const pin = toolkitPinFromLock(lock);
   result.pin = { version: lock.toolkitVersion ?? null, ref: pin, status: lock.toolkit?.status ?? null, from: null };
-  const toolkit = resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, toolkitIdentity, offline, sourceCacheDir, resolve });
+  const toolkit = resolvePinnedToolkit({ lock, cwd, toolkitRoot, toolkitVersion, toolkitIdentity, offline, untrustedConfig, sourceCacheDir, resolve });
   if ('error' in toolkit) return fail(toolkit.error);
   result.pin.from = toolkit.from;
   if (toolkit.from !== 'running') result.notes.push(`rendered with the lock's pinned release ${pin}, ${toolkit.from === 'fetch' ? 'fetched into' : 'served from'} the source cache — this CLI (${toolkitVersion}) did not render`);
@@ -547,7 +555,7 @@ export function prepareWorktree({ cwd, toolkitRoot, toolkitVersion, toolkitIdent
     // Settings files and the local lock are written through their own paths, so they get the same
     // symlink containment check as every rendered file (a committed link could point them out of the tree).
     const settingsFiles = [...new Set([...settingsToWrite, ...staleSettings].map((k) => parseSettingsKey(k)?.file ?? k))].sort();
-    const sideFiles = new Set([...desiredSettings.keys(), ...Object.keys(managedSettings)].map((k) => parseSettingsKey(k)?.file ?? k));
+    const sideFiles = new Set([...desiredSettings.keys(), ...Object.keys(managedSettings), ...staleSettings].map((k) => parseSettingsKey(k)?.file ?? k));
     if (staged.overlayChanged) sideFiles.add(LOCAL_LOCK_FILE);
     for (const file of [...sideFiles].sort()) {
       if (!resolveWritableInside(cwd, file)) conflicts.push({ path: file, reason: 'resolves outside the checkout through a symlink' });

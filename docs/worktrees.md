@@ -28,8 +28,11 @@ cd ../myrepo-feature && claude        # or codex
 3. **Resolves the pin.** The running CLI renders only when its version, and for a release its tag
    and commit, are the lock's. Otherwise the lock's own pinned release does: it is served from the
    source cache (`~/.cache/wafflestack/sources/`), or cloned into it once at the pinned tag, with the
-   tag's commit and the toolkit's version checked against the lock before it renders anything. With
-   `--offline` a cache miss fails. Every refusal prints the command the lock pins
+   tag's commit and the toolkit's version checked against the lock before it renders anything. The
+   pin must name the running CLI's own repository and carry a full commit: a lock is data, and it
+   may not choose which toolkit's content becomes the agent's skills, so a pin to another repository
+   is refused with the command to run that repository's own CLI. `--untrusted-config` never fetches.
+   With `--offline` a cache miss fails. Every refusal prints the command the lock pins
    (`npx --yes github:owner/repo#vX.Y.Z prepare-worktree --cwd …`), or, when the lock records no
    release pin, the upgrade to run in the main checkout. The CLI that happens to be on `PATH` never
    renders a worktree pinned elsewhere; the report's `pin.from` says which toolkit did (`running`,

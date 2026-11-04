@@ -39,7 +39,8 @@ is what you reach for across a breaking one.
   skill switched off the one harness fallback that existed. The command resolves the checkout through git
   (nested or external worktrees, `.git` files, spaces), reads that checkout's committed config, extensions
   and lock, renders a lock pinned to another release with that release (served from the source cache or cloned into it
-  once, tag commit and version verified; `--offline` needs a cache hit) and otherwise names the exact pinned command, stages a
+  once; only a pin to the running CLI's own repository with a full commit, tag commit and version verified, never
+  under `--untrusted-config`; `--offline` needs a cache hit) and otherwise names the exact pinned command, stages a
   render, and copies only the missing or stale harness artifacts (`.claude/`, `.codex/`, `.agents/` for the
   enabled targets, plus the lock-managed `.claude/settings.json` entries) — never `.github/` payloads, the
   committed lock, project-owned files or the index. Any conflict (a hand-edited managed file or settings
