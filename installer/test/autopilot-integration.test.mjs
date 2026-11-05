@@ -794,7 +794,7 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
 
   test('arms only with consent, after every enabled stage, on the passed head', () => {
     const md = arm();
-    assert.match(md, /Without `\+automerge`, leave it for a human/);
+    assert.match(md, /[Ww]ithout `\+automerge`, leave it for a human/);
     assert.match(md, /A stage not run because its consent is off does not block; a held stage does/);
     assert.match(md, /`gh pr view <F> --json headRefOid -q \.headRefOid` must equal `origin\/<integ>`, and both must equal `<stage1Head>`, the head stage 1 passed on/);
     assert.match(md, /`git merge-base --is-ancestor origin\/main <stage1Head>` must succeed; otherwise report \*\*not armed — `main` moved since the sync/);
@@ -869,6 +869,29 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.match(fail, /\*\*The final PR was not armed, or its wait ended blocked\*\*/);
     assert.match(fail, /\*\*`<integ>` survived the final merge\*\*/);
     assert.doesNotMatch(read(SOURCE), /one unarmed integration/);
+  });
+});
+
+// #846: issues of a PR merged into <integ> after <F> opened still close.
+describe('integration final PR: the Closes list covers every merged PR (#846)', () => {
+  const arm = () => section(read(SKILL), '4. **Arm it only on a green gate.**', '5. **After it merges, close out.**');
+  const close = () => section(read(SKILL), '5. **After it merges, close out.**', '### Integration gate — stage 1');
+  const query = "gh pr list --base <integ> --state merged --limit 200 --json number,closingIssuesReferences --jq '.[].closingIssuesReferences[].number'";
+
+  test('item 4 refreshes the body before arming, on every path', () => {
+    const md = arm();
+    assert.ok(md.includes(query), 'item 4 collects every merged PR\'s closing issues');
+    assert.match(md, /First, on every path, armed or not, refresh the `Closes` list/);
+    assert.match(md, /rewrite it with `gh pr edit <F> --body-file <scratch-file>`, so the keywords fire on merge, whoever merges `<F>`/);
+    assert.ok(md.indexOf('refresh the `Closes` list') < md.indexOf('leave it for a human'), 'the refresh precedes the consent branch');
+    assert.match(md, /Stage 2 and stage 3 fix PRs and the sync PR carry no issue, so they add none; never write a closing keyword into their bodies/);
+  });
+
+  test('item 5 closes out the union of the body, closingIssuesReferences and every merged PR', () => {
+    const md = close();
+    assert.match(md, /the union of the body's `Closes #N` list, the numbers `gh pr view <F> --json closingIssuesReferences/);
+    assert.match(md, /and the numbers item 4's merged-into-`<integ>` query prints now, so a PR that merged after the refresh is still covered/);
+    assert.doesNotMatch(md, /plus any number `gh pr view <F>/);
   });
 });
 
