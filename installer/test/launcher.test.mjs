@@ -235,6 +235,8 @@ describe('decideFollow / followLock — the decision table', () => {
     assert.deepEqual(await followLock(ctx), { action: 'exit', code: 1 });
     assert.match(calls.said[0], /no release tag in github:dustinkeeton\/wafflestack points at cccccccccccc/);
     assert.match(calls.said[0], /--no-follow-lock/);
+    assert.doesNotMatch(calls.said[0], /trustedSources/, 'never suggest trusting an already-trusted source');
+    assert.match(calls.said[0], /re-run the command in a terminal/);
     assert.deepEqual([calls.npm.length, calls.spawn.length], [0, 0]);
   });
 
@@ -261,7 +263,19 @@ describe('decideFollow / followLock — the decision table', () => {
     const { ctx, calls } = harness({ lsRemote: () => { throw new Error('network down'); } });
     assert.deepEqual(await followLock(ctx), { action: 'exit', code: 1 });
     assert.match(calls.said[0], /could not list .* network down/);
+    assert.doesNotMatch(calls.said[0], /trustedSources/, 'never suggest trusting an already-trusted source');
     assert.equal(calls.npm.length, 0);
+  });
+
+  test('a malformed user config is named on stderr, not silently dropped', async () => {
+    writeLock(consumer, releasePin(SHA_B, 'github:me/fork'));
+    const file = path.join(tmp, 'cfg', 'config.json');
+    write(tmp, 'cfg/config.json', JSON.stringify({ trustedSources: 'github:me/fork' }));
+    const { ctx, calls } = harness({ trusted: () => trustedSources({ file }) });
+    assert.deepEqual(await followLock(ctx), { action: 'exit', code: 1 });
+    assert.equal(calls.said.length, 2);
+    assert.match(calls.said[0], /^wafflestack: warning: ignoring .*cfg[\\/]config\.json: trustedSources must be an array/);
+    assert.match(calls.said[1], /github:me\/fork is not a trusted source/);
   });
 
   test('never prompts when not interactive: CI, --yes, --untrusted-config, or no TTY', () => {

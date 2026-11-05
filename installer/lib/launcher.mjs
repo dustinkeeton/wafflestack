@@ -20,10 +20,10 @@ import { parseRepoSlug, httpsUrl, parseLsRemoteTags, gitLsRemoteTags, commitFrom
  * @typedef {(args: string[], opts: { cwd: string, env: NodeJS.ProcessEnv }) => NpmResult} RunNpm
  * @typedef {{ code: number|null, signal: NodeJS.Signals|null }} ChildExit
  * @typedef {{ action: 'continue', note: string|null }
- *   | { action: 'refuse', message: string }
+ *   | { action: 'refuse', message: string, warning?: string|null }
  *   | { action: 'run', entry: CacheEntry }
- *   | { action: 'fetch', pin: Pin, tag: string|null, trust: 'tagged'|'approved', note: string|null }
- *   | { action: 'ask', pin: Pin, reason: string }} Decision
+ *   | { action: 'fetch', pin: Pin, tag: string|null, trust: 'tagged'|'approved', note: string|null, warning?: string|null }
+ *   | { action: 'ask', pin: Pin, reason: string, warning?: string|null }} Decision
  */
 
 export const LAUNCHER_RECORD = 'launcher.json';
@@ -335,15 +335,17 @@ export function decideFollow(ctx) {
     return { action: 'refuse', message: `wafflestack: the lock pins toolkit ${label}, which is not cached, and --offline is set — run once online to fetch it, or pass ${NO_FOLLOW_FLAG} to run the installed ${id.version}.` };
   }
   const trusted = (ctx.trusted ?? (() => trustedSources()))();
+  const warning = trusted.warning ? `wafflestack: warning: ${trusted.warning}` : null;
+  const untrusted = !trusted.sources.includes(pin.source);
   let reason;
-  if (!trusted.sources.includes(pin.source)) {
+  if (untrusted) {
     reason = `${pin.source} is not a trusted source (trusted: ${trusted.sources.join(', ')})`;
   } else {
     try {
       const tag = releaseTagFor(pin.source, pin.commit, ctx.lsRemote ? { lsRemote: ctx.lsRemote } : {});
       if (tag) {
         const note = pin.ref && pin.ref !== tag ? `note: the lock names ${pin.ref}, but ${pin.source} tags ${pin.commit.slice(0, 12)} as ${tag}` : null;
-        return { action: 'fetch', pin, tag, trust: 'tagged', note };
+        return { action: 'fetch', pin, tag, trust: 'tagged', note, warning };
       }
       reason = `no release tag in ${pin.source} points at ${pin.commit.slice(0, 12)}`;
     } catch (err) {
@@ -351,14 +353,17 @@ export function decideFollow(ctx) {
     }
   }
   if (readApprovals(ctx.root).some((a) => a.source === pin.source && a.commit === pin.commit)) {
-    return { action: 'fetch', pin, tag: null, trust: 'approved', note: null };
+    return { action: 'fetch', pin, tag: null, trust: 'approved', note: null, warning };
   }
-  if (ctx.interactive) return { action: 'ask', pin, reason };
+  if (ctx.interactive) return { action: 'ask', pin, reason, warning };
   return {
     action: 'refuse',
+    warning,
     message: [
       `wafflestack: the lock pins toolkit ${label}, which the installed wafflestack ${id.version} will not run: ${reason}.`,
-      `  - trust the source: add "${pin.source}" to "trustedSources" in ${ctx.configFile ?? defaultLauncherConfigFile(env)}`,
+      untrusted
+        ? `  - trust the source: add "${pin.source}" to "trustedSources" in ${ctx.configFile ?? defaultLauncherConfigFile(env)}`
+        : '  - approve this commit once: re-run the command in a terminal and answer the prompt',
       `  - run the installed version instead: ${NO_FOLLOW_FLAG} (or ${NO_FOLLOW_ENV}=1)`,
       '  - or move the pin to the installed version: wafflestack upgrade',
     ].join('\n'),
@@ -432,6 +437,7 @@ export function exitCodeOf({ code, signal }) {
 export async function followLock(ctx) {
   const say = ctx.stderr ?? ((s) => process.stderr.write(`${s}\n`));
   let decision = decideFollow(ctx);
+  if ('warning' in decision && decision.warning) say(decision.warning);
   if (decision.action === 'continue') {
     if (decision.note) say(decision.note);
     return { action: 'continue' };
