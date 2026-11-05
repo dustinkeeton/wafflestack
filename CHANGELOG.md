@@ -39,8 +39,10 @@ is what you reach for across a breaking one.
   tag) and re-runs the command there with the same arguments and exit code. It runs a commit
   unasked only when the lock's `toolkit.source` is trusted (default `github:dustinkeeton/wafflestack`;
   add more in `~/.config/wafflestack/config.json` `trustedSources`, never repo config) AND a
-  `vX.Y.Z` tag in that source points at exactly that commit; otherwise it asks once in a TTY, or
-  refuses (CI, `--yes`, `--untrusted-config`). Offline with an uncached pin refuses. `upgrade`,
+  `vX.Y.Z` tag in that source points at exactly that commit, and that release is v0.15.0 or newer
+  (older releases run external stacks' prerequisite checks unacknowledged, #458); otherwise it asks
+  once in a TTY, or refuses (CI, `--yes`, `--untrusted-config`). A signal sent to the launcher is
+  forwarded to the pinned run. Offline with an uncached pin refuses. `upgrade`,
   `validate`, `avatars`, `prepare-worktree` and `help` never follow. Escape hatch:
   `--no-follow-lock` / `WAFFLESTACK_NO_FOLLOW_LOCK=1`. **Consumer impact:** none for `npx
   github:…#vX.Y.Z` users already on the pinned release; an unpinned or newer installed CLI now runs

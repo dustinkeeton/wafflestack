@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   findLock, readPin, normalizeSource, trustedSources, releaseTagFor, readCacheEntry, fetchToolkit,
   readApprovals, recordApproval, decideFollow, followLock, isInteractive, exitCodeOf,
-  defaultLauncherCacheDir, defaultLauncherConfigFile, LAUNCHER_RECORD, LAUNCHED_ENV, DEFAULT_TRUSTED_SOURCES,
+  defaultLauncherCacheDir, defaultLauncherConfigFile, LAUNCHER_RECORD, LAUNCHED_ENV, DEFAULT_TRUSTED_SOURCES, MIN_FOLLOW_RELEASE,
 } from '../lib/launcher.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -287,6 +287,36 @@ describe('decideFollow / followLock — the decision table', () => {
     assert.equal(isInteractive({ argv: ['render'], env: {}, stdinTTY: false, stderrTTY: true }), false);
   });
 
+  test(`a release older than ${MIN_FOLLOW_RELEASE} from the trusted source is never auto-followed (F4)`, async () => {
+    assert.equal(MIN_FOLLOW_RELEASE, 'v0.15.0');
+    writeLock(consumer, releasePin(SHA_C, UPSTREAM, 'v0.14.0'));
+    const old = { [UPSTREAM_URL]: `${SHA_C}\trefs/tags/v0.14.0\n${SHA_B}\trefs/tags/v0.15.0\n` };
+    const ci = harness({ env: { CI: 'true' }, lsRemote: lsRemoteFrom([], old) });
+    assert.deepEqual(await followLock(ci.ctx), { action: 'exit', code: 1 });
+    assert.match(ci.calls.said[0], /tags cccccccccccc as v0\.14\.0, older than v0\.15\.0/);
+    assert.deepEqual([ci.calls.npm.length, ci.calls.spawn.length], [0, 0]);
+
+    const asked = harness({ interactive: true, lsRemote: lsRemoteFrom([], old), prompt: async (q) => { asked.calls.prompts.push(q); return false; } });
+    assert.deepEqual(await followLock(asked.ctx), { action: 'exit', code: 1 });
+    assert.equal(asked.calls.prompts.length, 1, 'below the floor asks instead of fetching');
+    assert.match(asked.calls.prompts[0], /older than v0\.15\.0/);
+    assert.doesNotMatch(asked.calls.prompts[0], /NOT a verified release/, 'an old release is still a verified release');
+    assert.deepEqual([asked.calls.npm.length, readApprovals(root).length], [0, 0]);
+
+    writeLock(consumer, releasePin(SHA_B, UPSTREAM, 'v0.15.0'));
+    const atFloor = harness({ lsRemote: lsRemoteFrom([], old) });
+    assert.deepEqual(await followLock(atFloor.ctx), { action: 'exit', code: 7 });
+    assert.equal(atFloor.calls.npm.length, 1, 'the floor release itself is followed');
+  });
+
+  test('the prompt for an untagged sha says it is unverified and may be a fork commit (F6)', async () => {
+    writeLock(consumer, releasePin(SHA_C));
+    const { ctx, calls } = harness({ interactive: true, prompt: async (q) => { calls.prompts.push(q); return false; } });
+    await followLock(ctx);
+    assert.match(calls.prompts[0], /github:dustinkeeton\/wafflestack@c{40}, which is NOT a verified release/);
+    assert.match(calls.prompts[0], /any fork of github:dustinkeeton\/wafflestack .* may be anyone's code/);
+  });
+
   test('interactive yes records the approval and fetches; the same pair is never asked again', async () => {
     writeLock(consumer, releasePin(SHA_C, 'github:me/fork'));
     const first = harness({ interactive: true, prompt: async (q) => { first.calls.prompts.push(q); return true; } });
@@ -363,6 +393,24 @@ describe('decideFollow / followLock — the decision table', () => {
   test('exitCodeOf maps a signal to 128 + its number', () => {
     assert.equal(exitCodeOf({ code: 3, signal: null }), 3);
     assert.equal(exitCodeOf({ code: null, signal: 'SIGINT' }), 128 + os.constants.signals.SIGINT);
+  });
+});
+
+describe('reexec signal forwarding (F5)', () => {
+  test('SIGTERM to the launcher ends the child, and the launcher exits 143', { skip: process.platform === 'win32' }, async () => {
+    const child = write(tmp, 'child.mjs', "process.stdout.write('ready\\n');\nsetTimeout(() => {}, 20000);\n");
+    const parent = write(tmp, 'parent.mjs', [
+      `import { reexec, exitCodeOf } from ${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'installer', 'lib', 'launcher.mjs')).href)};`,
+      `const r = await reexec({ entry: { cli: ${JSON.stringify(child)}, commit: 'x' }, argv: [], env: process.env });`,
+      'process.exit(exitCodeOf(r));',
+    ].join('\n'));
+    const started = Date.now();
+    const proc = spawn(process.execPath, [parent], { stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise((resolve) => proc.stdout.on('data', (d) => { if (String(d).includes('ready')) resolve(undefined); }));
+    proc.kill('SIGTERM');
+    const code = await new Promise((resolve) => proc.on('exit', (c) => resolve(c)));
+    assert.equal(code, 128 + os.constants.signals.SIGTERM);
+    assert.ok(Date.now() - started < 15000, 'the child did not run to completion');
   });
 });
 

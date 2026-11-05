@@ -6,6 +6,7 @@ import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { LOCK_FILE, LEGACY_ROOT_LOCK_FILE, LEGACY_LOCK_FILE } from './project.mjs';
 import { parseRepoSlug, httpsUrl, parseLsRemoteTags, gitLsRemoteTags, commitFromNpmLockfile } from './toolkit-ref.mjs';
+import { compareVersions } from './util.mjs';
 
 /**
  * The launcher (#726): an installed `wafflestack` runs the toolkit commit the repo's lock pins,
@@ -23,7 +24,7 @@ import { parseRepoSlug, httpsUrl, parseLsRemoteTags, gitLsRemoteTags, commitFrom
  *   | { action: 'refuse', message: string, warning?: string|null }
  *   | { action: 'run', entry: CacheEntry }
  *   | { action: 'fetch', pin: Pin, tag: string|null, trust: 'tagged'|'approved', note: string|null, warning?: string|null }
- *   | { action: 'ask', pin: Pin, reason: string, warning?: string|null }} Decision
+ *   | { action: 'ask', pin: Pin, reason: string, verified: boolean, warning?: string|null }} Decision
  */
 
 export const LAUNCHER_RECORD = 'launcher.json';
@@ -32,6 +33,8 @@ export const LAUNCHED_ENV = 'WAFFLESTACK_LAUNCHED';
 export const NO_FOLLOW_ENV = 'WAFFLESTACK_NO_FOLLOW_LOCK';
 export const NO_FOLLOW_FLAG = '--no-follow-lock';
 export const DEFAULT_TRUSTED_SOURCES = Object.freeze(['github:dustinkeeton/wafflestack']);
+/** The oldest release followed unasked: older ones run external stacks' `prerequisites[].check` unacknowledged (#458). */
+export const MIN_FOLLOW_RELEASE = 'v0.15.0';
 export const TOOLKIT_SUBDIR = path.join('node_modules', 'wafflestack');
 export const FOLLOW_COMMANDS = Object.freeze([
   'setup', 'init', 'list', 'toggle', 'install', 'render', 'bake', 'doctor', 'state', 'config', 'report', 'eject', 'uninstall', 'reinstall',
@@ -338,16 +341,21 @@ export function decideFollow(ctx) {
   const warning = trusted.warning ? `wafflestack: warning: ${trusted.warning}` : null;
   const untrusted = !trusted.sources.includes(pin.source);
   let reason;
+  let verified = false;
   if (untrusted) {
     reason = `${pin.source} is not a trusted source (trusted: ${trusted.sources.join(', ')})`;
   } else {
     try {
       const tag = releaseTagFor(pin.source, pin.commit, ctx.lsRemote ? { lsRemote: ctx.lsRemote } : {});
-      if (tag) {
+      if (tag && compareVersions(tag, MIN_FOLLOW_RELEASE) < 0) {
+        verified = true;
+        reason = `${pin.source} tags ${pin.commit.slice(0, 12)} as ${tag}, older than ${MIN_FOLLOW_RELEASE}, the oldest release an installed wafflestack runs unasked`;
+      } else if (tag) {
         const note = pin.ref && pin.ref !== tag ? `note: the lock names ${pin.ref}, but ${pin.source} tags ${pin.commit.slice(0, 12)} as ${tag}` : null;
         return { action: 'fetch', pin, tag, trust: 'tagged', note, warning };
+      } else {
+        reason = `no release tag in ${pin.source} points at ${pin.commit.slice(0, 12)}`;
       }
-      reason = `no release tag in ${pin.source} points at ${pin.commit.slice(0, 12)}`;
     } catch (err) {
       reason = `could not list ${pin.source}'s release tags: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -355,7 +363,7 @@ export function decideFollow(ctx) {
   if (readApprovals(ctx.root).some((a) => a.source === pin.source && a.commit === pin.commit)) {
     return { action: 'fetch', pin, tag: null, trust: 'approved', note: null, warning };
   }
-  if (ctx.interactive) return { action: 'ask', pin, reason, warning };
+  if (ctx.interactive) return { action: 'ask', pin, reason, verified, warning };
   return {
     action: 'refuse',
     warning,
@@ -393,21 +401,29 @@ export function promptYesNo(question) {
 }
 
 /**
- * Run the cached toolkit with the same argv and stdio; the parent ignores SIGINT/SIGTERM meanwhile.
+ * Run the cached toolkit with the same argv and stdio; SIGINT/SIGTERM/SIGHUP sent to the parent are forwarded to it.
  *
  * @param {{ entry: CacheEntry, argv: string[], env: NodeJS.ProcessEnv, spawnChild?: typeof spawn }} opts
  * @returns {Promise<ChildExit>}
  */
 export function reexec({ entry, argv, env, spawnChild = spawn }) {
-  const ignore = () => {};
-  process.on('SIGINT', ignore);
-  process.on('SIGTERM', ignore);
+  /** @type {NodeJS.Signals[]} */
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  /** @type {import('node:child_process').ChildProcess|undefined} */
+  let child;
+  const forward = (/** @type {NodeJS.Signals} */ sig) => {
+    try {
+      child?.kill(sig);
+    } catch {
+      // The child already exited; its exit event resolves the run.
+    }
+  };
+  for (const sig of signals) process.on(sig, forward);
   const done = () => {
-    process.off('SIGINT', ignore);
-    process.off('SIGTERM', ignore);
+    for (const sig of signals) process.off(sig, forward);
   };
   return new Promise((resolve) => {
-    const child = spawnChild(process.execPath, [entry.cli, ...argv], { stdio: 'inherit', env: { ...env, [LAUNCHED_ENV]: entry.commit } });
+    child = spawnChild(process.execPath, [entry.cli, ...argv], { stdio: 'inherit', env: { ...env, [LAUNCHED_ENV]: entry.commit } });
     child.on('error', (err) => {
       done();
       process.stderr.write(`wafflestack: could not start the pinned toolkit ${entry.cli}: ${err.message}\n`);
@@ -447,10 +463,12 @@ export async function followLock(ctx) {
     return { action: 'exit', code: 1 };
   }
   if (decision.action === 'ask') {
-    const { pin, reason } = decision;
-    const ok = await (ctx.prompt ?? promptYesNo)(
-      `wafflestack: this repo's lock pins toolkit ${pin.source}@${pin.commit} — ${reason}.\nFetch and run that commit (it executes on this machine)? [y/N] `,
-    );
+    const { pin, reason, verified } = decision;
+    const head = verified
+      ? `wafflestack: this repo's lock pins toolkit ${pin.source}@${pin.commit} — ${reason}.`
+      : `wafflestack: this repo's lock pins toolkit ${pin.source}@${pin.commit}, which is NOT a verified release — ${reason}.\n`
+        + `GitHub serves commits pushed to any fork of ${pin.source} under that name, so this may be anyone's code.`;
+    const ok = await (ctx.prompt ?? promptYesNo)(`${head}\nFetch and run that commit (it executes on this machine)? [y/N] `);
     if (!ok) {
       say(`wafflestack: not running ${pin.source}@${pin.commit.slice(0, 12)} — pass ${NO_FOLLOW_FLAG} to run the installed version.`);
       return { action: 'exit', code: 1 };
