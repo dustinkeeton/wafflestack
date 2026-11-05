@@ -890,7 +890,9 @@ describe('integration final PR: the Closes list covers every merged PR (#846)', 
   test('item 5 closes out the union of the body, closingIssuesReferences and every merged PR', () => {
     const md = close();
     assert.match(md, /the union of the body's `Closes #N` list, the numbers `gh pr view <F> --json closingIssuesReferences/);
-    assert.match(md, /and the numbers item 4's merged-into-`<integ>` query prints now, so a PR that merged after the refresh is still covered/);
+    assert.match(md, /whose merge commit is in `<F>`'s merged head/);
+    assert.match(md, /`git merge-base --is-ancestor <mergeCommit> <F's merged headRefOid>`/);
+    assert.match(md, /one that merged after `<F>`, whose change never reached `main`, is not/);
     assert.doesNotMatch(md, /plus any number `gh pr view <F>/);
   });
 });

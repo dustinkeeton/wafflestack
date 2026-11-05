@@ -121,7 +121,8 @@ is what you reach for across a breaking one.
   final PR's `Closes #N` list was written once, when it opened, so a PR merged into `<integ>`
   later never had its issues closed. Before arming, on every path, autopilot now adds a
   `Closes #N` for each issue a merged-into-`<integ>` PR closes, and the close-out covers the union
-  of the body, `closingIssuesReferences` and every merged PR's closing issues.
+  of the body, `closingIssuesReferences` and the closing issues of every PR the final PR's
+  merged head contains.
   **Consumer impact:** the rendered autopilot skill changes; re-render.
 
 - Worktree preparation now runs delegate/autopilot's configured CLI inside the destination
