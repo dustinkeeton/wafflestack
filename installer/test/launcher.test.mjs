@@ -309,6 +309,39 @@ describe('decideFollow / followLock — the decision table', () => {
     assert.equal(atFloor.calls.npm.length, 1, 'the floor release itself is followed');
   });
 
+  test('a below-floor release approved and cached for one repo is never run unasked for another (F8)', async () => {
+    const old = { [UPSTREAM_URL]: `${SHA_C}\trefs/tags/v0.14.0\n` };
+    writeLock(consumer, releasePin(SHA_C, UPSTREAM, 'v0.14.0'));
+    const yes = harness({ interactive: true, lsRemote: lsRemoteFrom([], old), runNpm: (args) => {
+      const r = fakeNpm([])(args);
+      write(args[args.indexOf('--prefix') + 1], 'node_modules/wafflestack/package.json', JSON.stringify({ name: 'wafflestack', version: '0.14.0' }));
+      return r;
+    }, prompt: async (q) => { yes.calls.prompts.push(q); return true; } });
+    assert.deepEqual(await followLock(yes.ctx), { action: 'exit', code: 7 });
+    assert.deepEqual(readApprovals(root), [], 'a below-floor yes is never recorded');
+    assert.equal(readCacheEntry(root, SHA_C)?.version, '0.14.0');
+
+    const other = path.join(tmp, 'other');
+    writeLock(other, releasePin(SHA_C, UPSTREAM, 'v0.14.0'));
+    const ci = harness({ cwd: other, env: { CI: 'true' }, lsRemote: lsRemoteFrom([], old) });
+    assert.deepEqual(await followLock(ci.ctx), { action: 'exit', code: 1 });
+    assert.match(ci.calls.said[0], /cached toolkit cccccccccccc is 0\.14\.0, older than v0\.15\.0/);
+    assert.match(ci.calls.said[0], /asked on every run/);
+    assert.deepEqual([ci.calls.spawn.length, ci.calls.npm.length], [0, 0]);
+
+    recordApproval(root, { source: UPSTREAM, commit: SHA_C });
+    fs.rmSync(path.join(root, 'toolkits'), { recursive: true });
+    const stale = harness({ cwd: other, env: { CI: 'true' }, lsRemote: lsRemoteFrom([], old) });
+    assert.deepEqual(await followLock(stale.ctx), { action: 'exit', code: 1 }, 'a recorded approval never covers a below-floor release');
+    assert.deepEqual([stale.calls.spawn.length, stale.calls.npm.length], [0, 0]);
+
+    seedCache(root, SHA_C, 'process.exit(0);\n', { tag: 'v0.14.0', version: '0.14.0' });
+    const again = harness({ cwd: other, interactive: true, prompt: async (q) => { again.calls.prompts.push(q); return true; } });
+    assert.deepEqual(await followLock(again.ctx), { action: 'exit', code: 7 });
+    assert.equal(again.calls.prompts.length, 1, 'a cached below-floor release asks every time');
+    assert.deepEqual([again.calls.npm.length, again.calls.spawn.length], [0, 1], 'a yes runs the cached entry without refetching');
+  });
+
   test('the prompt for an untagged sha says it is unverified and may be a fork commit (F6)', async () => {
     writeLock(consumer, releasePin(SHA_C));
     const { ctx, calls } = harness({ interactive: true, prompt: async (q) => { calls.prompts.push(q); return false; } });

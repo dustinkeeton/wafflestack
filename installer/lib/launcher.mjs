@@ -24,7 +24,7 @@ import { compareVersions } from './util.mjs';
  *   | { action: 'refuse', message: string, warning?: string|null }
  *   | { action: 'run', entry: CacheEntry }
  *   | { action: 'fetch', pin: Pin, tag: string|null, trust: 'tagged'|'approved', note: string|null, warning?: string|null }
- *   | { action: 'ask', pin: Pin, reason: string, verified: boolean, warning?: string|null }} Decision
+ *   | { action: 'ask', pin: Pin, reason: string, belowFloor: boolean, entry?: CacheEntry, warning?: string|null }} Decision
  */
 
 export const LAUNCHER_RECORD = 'launcher.json';
@@ -332,8 +332,13 @@ export function decideFollow(ctx) {
   }
   if (id.commit === pin.commit) return { action: 'continue', note: null };
   const cached = readCacheEntry(ctx.root, pin.commit);
-  if (cached) return { action: 'run', entry: cached };
   const label = `${pin.source}@${pin.commit.slice(0, 12)}${pin.ref ? ` (${pin.ref})` : ''}`;
+  if (cached && compareVersions(cached.tag ?? cached.version, MIN_FOLLOW_RELEASE) >= 0) return { action: 'run', entry: cached };
+  if (cached) {
+    const reason = `the cached toolkit ${pin.commit.slice(0, 12)} is ${cached.tag ?? cached.version ?? 'an unknown version'}, older than ${MIN_FOLLOW_RELEASE}, the oldest release an installed wafflestack runs unasked`;
+    if (ctx.interactive) return { action: 'ask', pin, reason, belowFloor: true, entry: cached };
+    return { action: 'refuse', message: refusal(label, id.version, reason, 'floor', ctx) };
+  }
   if (ctx.offline) {
     return { action: 'refuse', message: `wafflestack: the lock pins toolkit ${label}, which is not cached, and --offline is set — run once online to fetch it, or pass ${NO_FOLLOW_FLAG} to run the installed ${id.version}.` };
   }
@@ -341,14 +346,14 @@ export function decideFollow(ctx) {
   const warning = trusted.warning ? `wafflestack: warning: ${trusted.warning}` : null;
   const untrusted = !trusted.sources.includes(pin.source);
   let reason;
-  let verified = false;
+  let belowFloor = false;
   if (untrusted) {
     reason = `${pin.source} is not a trusted source (trusted: ${trusted.sources.join(', ')})`;
   } else {
     try {
       const tag = releaseTagFor(pin.source, pin.commit, ctx.lsRemote ? { lsRemote: ctx.lsRemote } : {});
       if (tag && compareVersions(tag, MIN_FOLLOW_RELEASE) < 0) {
-        verified = true;
+        belowFloor = true;
         reason = `${pin.source} tags ${pin.commit.slice(0, 12)} as ${tag}, older than ${MIN_FOLLOW_RELEASE}, the oldest release an installed wafflestack runs unasked`;
       } else if (tag) {
         const note = pin.ref && pin.ref !== tag ? `note: the lock names ${pin.ref}, but ${pin.source} tags ${pin.commit.slice(0, 12)} as ${tag}` : null;
@@ -360,22 +365,30 @@ export function decideFollow(ctx) {
       reason = `could not list ${pin.source}'s release tags: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
-  if (readApprovals(ctx.root).some((a) => a.source === pin.source && a.commit === pin.commit)) {
+  if (!belowFloor && readApprovals(ctx.root).some((a) => a.source === pin.source && a.commit === pin.commit)) {
     return { action: 'fetch', pin, tag: null, trust: 'approved', note: null, warning };
   }
-  if (ctx.interactive) return { action: 'ask', pin, reason, verified, warning };
-  return {
-    action: 'refuse',
-    warning,
-    message: [
-      `wafflestack: the lock pins toolkit ${label}, which the installed wafflestack ${id.version} will not run: ${reason}.`,
-      untrusted
-        ? `  - trust the source: add "${pin.source}" to "trustedSources" in ${ctx.configFile ?? defaultLauncherConfigFile(env)}`
-        : '  - approve this commit once: re-run the command in a terminal and answer the prompt',
-      `  - run the installed version instead: ${NO_FOLLOW_FLAG} (or ${NO_FOLLOW_ENV}=1)`,
-      '  - or move the pin to the installed version: wafflestack upgrade',
-    ].join('\n'),
-  };
+  if (ctx.interactive) return { action: 'ask', pin, reason, belowFloor, warning };
+  return { action: 'refuse', warning, message: refusal(label, id.version, reason, untrusted ? 'untrusted' : belowFloor ? 'floor' : 'unverified', { ...ctx, pin }) };
+}
+
+/**
+ * @param {string} label @param {string} version @param {string} reason
+ * @param {'untrusted'|'floor'|'unverified'} kind
+ * @param {{ pin?: Pin, configFile?: string, env: NodeJS.ProcessEnv }} ctx
+ */
+function refusal(label, version, reason, kind, ctx) {
+  const first = {
+    untrusted: `  - trust the source: add "${ctx.pin?.source}" to "trustedSources" in ${ctx.configFile ?? defaultLauncherConfigFile(ctx.env)}`,
+    floor: '  - run it anyway: re-run the command in a terminal and answer the prompt (asked on every run, never recorded)',
+    unverified: '  - approve this commit once: re-run the command in a terminal and answer the prompt',
+  }[kind];
+  return [
+    `wafflestack: the lock pins toolkit ${label}, which the installed wafflestack ${version} will not run: ${reason}.`,
+    first,
+    `  - run the installed version instead: ${NO_FOLLOW_FLAG} (or ${NO_FOLLOW_ENV}=1)`,
+    '  - or move the pin to the installed version: wafflestack upgrade',
+  ].join('\n');
 }
 
 /**
@@ -463,8 +476,8 @@ export async function followLock(ctx) {
     return { action: 'exit', code: 1 };
   }
   if (decision.action === 'ask') {
-    const { pin, reason, verified } = decision;
-    const head = verified
+    const { pin, reason, belowFloor } = decision;
+    const head = belowFloor
       ? `wafflestack: this repo's lock pins toolkit ${pin.source}@${pin.commit} — ${reason}.`
       : `wafflestack: this repo's lock pins toolkit ${pin.source}@${pin.commit}, which is NOT a verified release — ${reason}.\n`
         + `GitHub serves commits pushed to any fork of ${pin.source} under that name, so this may be anyone's code.`;
@@ -473,8 +486,8 @@ export async function followLock(ctx) {
       say(`wafflestack: not running ${pin.source}@${pin.commit.slice(0, 12)} — pass ${NO_FOLLOW_FLAG} to run the installed version.`);
       return { action: 'exit', code: 1 };
     }
-    recordApproval(ctx.root, pin);
-    decision = { action: 'fetch', pin, tag: null, trust: 'approved', note: null };
+    if (!belowFloor) recordApproval(ctx.root, pin);
+    decision = decision.entry ? { action: 'run', entry: decision.entry } : { action: 'fetch', pin, tag: null, trust: 'approved', note: null };
   }
   let entry;
   if (decision.action === 'fetch') {
