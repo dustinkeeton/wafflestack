@@ -9,6 +9,9 @@ import { loadToolkit } from '../lib/toolkit.mjs';
 import { validateToolkit } from '../lib/validate.mjs';
 import { makeResolver } from '../lib/project.mjs';
 import { readRendered } from './self-render.mjs';
+import { spawnSync } from 'node:child_process';
+
+const HAS_JQ = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
 
 process.env.WAFFLESTACK_ALLOW_UNRELEASED = '1';
 
@@ -794,7 +797,7 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
 
   test('arms only with consent, after every enabled stage, on the passed head', () => {
     const md = arm();
-    assert.match(md, /Without `\+automerge`, leave it for a human/);
+    assert.match(md, /[Ww]ithout `\+automerge`, leave it for a human/);
     assert.match(md, /A stage not run because its consent is off does not block; a held stage does/);
     assert.match(md, /`gh pr view <F> --json headRefOid -q \.headRefOid` must equal `origin\/<integ>`, and both must equal `<stage1Head>`, the head stage 1 passed on/);
     assert.match(md, /`git merge-base --is-ancestor origin\/main <stage1Head>` must succeed; otherwise report \*\*not armed — `main` moved since the sync/);
@@ -869,6 +872,47 @@ describe('integration final PR: arm on a green gate, then close out (#735)', () 
     assert.match(fail, /\*\*The final PR was not armed, or its wait ended blocked\*\*/);
     assert.match(fail, /\*\*`<integ>` survived the final merge\*\*/);
     assert.doesNotMatch(read(SOURCE), /one unarmed integration/);
+  });
+});
+
+// #846: issues of a PR merged into <integ> after <F> opened still close.
+describe('integration final PR: the Closes list covers every merged PR (#846)', () => {
+  const arm = () => section(read(SKILL), '4. **Arm it only on a green gate.**', '5. **After it merges, close out.**');
+  const close = () => section(read(SKILL), '5. **After it merges, close out.**', '### Integration gate — stage 1');
+  const query = String.raw`gh pr list --base <integ> --state merged --limit 200 --json number,body --jq '.[] | (.body // "") | [scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+#([0-9]+)")[]] | .[]'`;
+  const filter = query.slice(query.indexOf("--jq '") + 6, -1);
+
+  test('item 4 refreshes the body before arming, on every path', () => {
+    const md = arm();
+    assert.ok(md.includes(query), 'item 4 collects every merged PR\'s closing issues');
+    assert.match(md, /First, on every path, armed or not, refresh the `Closes` list/);
+    assert.match(md, /rewrite it with `gh pr edit <F> --body-file <scratch-file>`, so the keywords fire on merge, whoever merges `<F>`/);
+    assert.ok(md.indexOf('refresh the `Closes` list') < md.indexOf('leave it for a human'), 'the refresh precedes the consent branch');
+    assert.match(md, /Stage 2 and stage 3 fix PRs and the sync PR carry no issue, so they add none; never write a closing keyword into their bodies/);
+  });
+
+  test('item 4 reads closing keywords from bodies, not closingIssuesReferences', () => {
+    assert.match(arm(), /GitHub leaves `closingIssuesReferences` empty for a PR whose base is not the default branch/);
+    assert.doesNotMatch(arm(), /--json number,closingIssuesReferences/);
+  });
+
+  test('the body query finds a non-default-base PR\'s Closes lines (#840)', { skip: !HAS_JQ && 'jq is required' }, () => {
+    const prs = [
+      { number: 840, closingIssuesReferences: [], body: 'Stacked on PR #834.\n\nCloses #832\nfixes: #833\nSee #9 and Resolved #10.' },
+      { number: 841, body: null },
+    ];
+    const r = spawnSync('jq', ['-r', filter], { input: JSON.stringify(prs), encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.stdout.trim().split('\n'), ['832', '833', '10']);
+  });
+
+  test('item 5 closes out the union of the body, closingIssuesReferences and every merged PR', () => {
+    const md = close();
+    assert.match(md, /the union of the body's `Closes #N` list, the numbers `gh pr view <F> --json closingIssuesReferences/);
+    assert.match(md, /whose merge commit is in `<F>`'s merged head/);
+    assert.match(md, /`git merge-base --is-ancestor <mergeCommit> <F's merged headRefOid>`/);
+    assert.match(md, /one that merged after `<F>`, whose change never reached `main`, is not/);
+    assert.doesNotMatch(md, /plus any number `gh pr view <F>/);
   });
 });
 

@@ -117,6 +117,15 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **Autopilot's integration close-out covers PRs merged after the final PR opens (#846).** The
+  final PR's `Closes #N` list was written once, when it opened, so a PR merged into `<integ>`
+  later never had its issues closed. Before arming, on every path, autopilot now adds a
+  `Closes #N` for each issue a merged-into-`<integ>` PR's body closes (GitHub leaves
+  `closingIssuesReferences` empty for a PR whose base is not the default branch), and the close-out covers the union
+  of the body, `closingIssuesReferences` and the body-named issues of every PR the final PR's
+  merged head contains.
+  **Consumer impact:** the rendered autopilot skill changes; re-render.
+
 - Worktree preparation now runs delegate/autopilot's configured CLI inside the destination
   checkout, including this repository's unreleased development runner. Adds per-run
   `--overlay local|main|none`, privacy-safe render failure categories, and type checking
