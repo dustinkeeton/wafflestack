@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   findLock, readPin, normalizeSource, trustedSources, releaseTagFor, readCacheEntry, fetchToolkit,
-  readApprovals, recordApproval, decideFollow, followLock, isInteractive, exitCodeOf,
+  readApprovals, recordApproval, decideFollow, followLock, isInteractive, exitCodeOf, npmCommand,
   defaultLauncherCacheDir, defaultLauncherConfigFile, LAUNCHER_RECORD, LAUNCHED_ENV, DEFAULT_TRUSTED_SOURCES, MIN_FOLLOW_RELEASE,
 } from '../lib/launcher.mjs';
 
@@ -402,6 +402,26 @@ describe('decideFollow / followLock — the decision table', () => {
       const { ctx } = harness({ command, argv: argv ?? [command], identity: () => { throw new Error('identity not needed'); } });
       assert.deepEqual(decideFollow(ctx), { action: 'continue', note: null }, String(command));
     }
+  });
+
+  test('--untrusted-config never follows: the lock is untrusted input too (F9)', async () => {
+    writeLock(consumer, releasePin());
+    const { ctx, calls } = harness({ command: 'render', argv: ['render', '--allow-unreleased', '--untrusted-config'] });
+    assert.deepEqual(await followLock(ctx), { action: 'continue' });
+    seedCache(root, SHA_B);
+    const cached = harness({ command: 'render', argv: ['render', '--untrusted-config'] });
+    assert.deepEqual(await followLock(cached.ctx), { action: 'continue' }, 'not even a cache hit');
+    assert.deepEqual([calls.ls.length, calls.npm.length, calls.spawn.length, cached.calls.spawn.length], [0, 0, 0, 0]);
+  });
+
+  test('npmCommand uses npm_execpath only when it is npm-cli.js; pnpm and yarn fall back to npm on PATH (F10)', () => {
+    const npmCli = path.join('/opt', 'node', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    assert.deepEqual(npmCommand(['install'], { npm_execpath: npmCli }, 'linux'), { cmd: process.execPath, args: [npmCli, 'install'], shell: false });
+    for (const other of ['/x/pnpm/bin/pnpm.cjs', '/x/yarn/bin/yarn.js', '/x/.yarn/releases/yarn-4.1.0.cjs']) {
+      assert.deepEqual(npmCommand(['install'], { npm_execpath: other }, 'linux'), { cmd: 'npm', args: ['install'], shell: false }, other);
+    }
+    assert.deepEqual(npmCommand(['install'], {}, 'linux'), { cmd: 'npm', args: ['install'], shell: false });
+    assert.deepEqual(npmCommand(['install'], { npm_execpath: '/x/pnpm.cjs' }, 'win32'), { cmd: 'npm.cmd', args: ['install'], shell: true });
   });
 
   test('a toolkit checkout never follows; a matching commit continues silently', () => {

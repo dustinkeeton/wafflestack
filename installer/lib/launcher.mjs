@@ -193,14 +193,22 @@ function writeJsonAtomic(file, doc) {
   fs.renameSync(tmp, file);
 }
 
+/**
+ * The npm to run: `npm_execpath` only when it is npm's own `npm-cli.js` (pnpm and yarn set it to theirs), else `npm` on PATH.
+ *
+ * @param {string[]} args @param {NodeJS.ProcessEnv} env @param {NodeJS.Platform} [platform]
+ * @returns {{ cmd: string, args: string[], shell: boolean }}
+ */
+export function npmCommand(args, env, platform = process.platform) {
+  const execpath = env.npm_execpath;
+  if (execpath && path.basename(execpath) === 'npm-cli.js') return { cmd: process.execPath, args: [execpath, ...args], shell: false };
+  return platform === 'win32' ? { cmd: 'npm.cmd', args, shell: true } : { cmd: 'npm', args, shell: false };
+}
+
 /** @type {RunNpm} */
 export function defaultRunNpm(args, { cwd, env }) {
-  const execpath = env.npm_execpath;
-  const viaNode = execpath && /\.c?js$/.test(execpath);
-  const cmd = viaNode ? process.execPath : process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const r = spawnSync(cmd, viaNode ? [execpath, ...args] : args, {
-    cwd, env, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], shell: !viaNode && process.platform === 'win32',
-  });
+  const c = npmCommand(args, env);
+  const r = spawnSync(c.cmd, c.args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], shell: c.shell });
   return { status: r.status, stderr: r.error ? r.error.message : String(r.stderr ?? '') };
 }
 
@@ -321,6 +329,7 @@ export function decideFollow(ctx) {
   if (env[LAUNCHED_ENV]) return { action: 'continue', note: null };
   if (ctx.noFollow) return { action: 'continue', note: null };
   if (!command || !FOLLOW_COMMANDS.includes(command) || argv.includes('--help') || argv.includes('-h')) return { action: 'continue', note: null };
+  if (argv.includes('--untrusted-config')) return { action: 'continue', note: null };
   const id = ctx.identity();
   if (id.origin === 'checkout') return { action: 'continue', note: null };
   const lock = findLock(ctx.cwd, { exists: ctx.exists });
