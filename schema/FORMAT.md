@@ -635,11 +635,13 @@ Renders to:
   agents-dir share one render; enabling both renders the directory once, not twice. `.codex/`
   itself never gets a `skills/` dir — see the expected `.codex/` layout above.
 
-Skill and agent bodies (and Markdown syrup) must not hardcode `.claude/skills/…` or
-`.claude/agents/…`: under codex and agents-dir those directories do not exist. Use
-`{{harness.skillsDir}}` / `{{harness.agentsDir}}`, which resolve per target; a line that names
-the other harness dirs alongside (`.codex/`, `.agents/`) is portability prose and is fine. The
-toolkit's own content tests enforce this on every shipped stack (#190).
+Skill and agent bodies must not hardcode `.claude/skills/…` or `.claude/agents/…`: under codex
+and agents-dir those directories do not exist. Use `{{harness.skillsDir}}` /
+`{{harness.agentsDir}}`, which resolve per target; a line that names the other harness dirs
+alongside (`.codex/`, `.agents/`) is portability prose and is fine. Markdown syrup names the skill
+or agent instead of linking it, by path or placeholder: the payload is committed and the render
+may be gitignored, so the link would 404 (#818). The toolkit's own content tests enforce both on
+every shipped stack (#190, #818).
 
 ## Files definition — syrup (`files/<repo-relative-path>`)
 

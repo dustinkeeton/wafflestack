@@ -3585,8 +3585,8 @@ describe('issue / PR / review templates (#337)', () => {
   });
 
   test('REVIEW_TEMPLATE points at the skills as canonical rather than restating the rubric', () => {
-    assert.match(templates.review, /adversarial-review\/SKILL\.md/);
-    assert.match(templates.review, /pr-response\/SKILL\.md/);
+    assert.match(templates.review, /the `adversarial-review` skill/);
+    assert.match(templates.review, /the `pr-response` skill/);
     assert.match(templates.review, /skills are canonical/i);
 
     // Read both from the self-render — adversarial-review's stack is not in the minimal fixture.
@@ -4242,8 +4242,22 @@ describe('source + rendered content: no literal Claude-only paths where a harnes
     assert.deepEqual(
       leaks,
       [],
-      `literal Claude paths — use {{harness.skillsDir}} / {{harness.agentsDir}}, or name the other harness dirs on the same line:\n${leaks.join('\n')}`,
+      `literal Claude paths — in a skill or agent body use {{harness.skillsDir}} / {{harness.agentsDir}}, in markdown syrup name the skill or agent (#818), or name the other harness dirs on the same line:\n${leaks.join('\n')}`,
     );
+  });
+
+  // #818: `.github/` payloads are always committed, a rendered skill or agent is not (Posture 2b), so a
+  // markdown payload that points into the render publishes a link that 404s on GitHub.
+  test('no markdown syrup points into the rendered skills or agents dir (#818)', () => {
+    const intoRender = /\{\{harness\.(skillsDir|agentsDir)\}\}|\.(claude|agents|codex)\/(skills|agents)\//;
+    const mdPayloads = [...loadToolkit(REPO_ROOT).stacks.values()].flatMap((stack) =>
+      stack.files.filter((f) => f.name.endsWith('.md') && !f.binary).map((f) => f.path),
+    );
+    assert.ok(mdPayloads.some((f) => f.endsWith(path.join('.github', 'REVIEW_TEMPLATE.md'))), 'REVIEW_TEMPLATE.md must be swept');
+    const hits = mdPayloads.flatMap((f) =>
+      fs.readFileSync(f, 'utf8').split('\n').flatMap((line, i) => (intoRender.test(line) ? [`${who(f)}:${i + 1}: ${line.trim().slice(0, 120)}`] : [])),
+    );
+    assert.deepEqual(hits, [], `markdown syrup links into a render that may be gitignored — name the skill or agent instead:\n${hits.join('\n')}`);
   });
 
   describe("a codex + agents-dir render of this repo's own stacks", () => {

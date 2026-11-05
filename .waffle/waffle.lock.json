@@ -95,7 +95,7 @@
     ".github/ISSUE_TEMPLATE/feature.yml": "639d832d74657bff1fc6bbf06c36a88b9b1654c7018430e4ff7390d2baf826d3",
     ".github/ISSUE_TEMPLATE/rough-idea.yml": "1a834c3f8bb80442ebd9e90c4861159b401f06ce1e5cb12d9a9d23f2a2059bf9",
     ".github/PULL_REQUEST_TEMPLATE.md": "4459b1a2264bc1520b0c2ee6f5f7dd87f663ec5426c98c4d779a1d32807844d5",
-    ".github/REVIEW_TEMPLATE.md": "f1beccea72af1acf1b2bc75ad98c165c780293b21a2d675e72b3a0303108e5e6",
+    ".github/REVIEW_TEMPLATE.md": "ef3ccf5e277ddbfc83cca06ac20075b574e79d9ff84f8a0c0dc6d685b3b93cfd",
     ".github/workflows/waffle-doctor.yml": "f29eea96fbf618ac2a912e2e0ba6702e7618ccace4932a9decc173f8867f4e86",
     ".github/workflows/waffle-hygiene.yml": "d8a03cd1157cec9c600566cbbad8400d1123a8a321a434a02740e53e2f7016e2",
     ".github/workflows/waffle-label-hook.yml": "f4fd0b623cd59feb97bc2a83d5b8807adfe9f86b92d081d85b3b9eece238c7e1",
