@@ -144,6 +144,12 @@ describe('setup: detected package manager section', () => {
     assert.ok(guide.includes('- `project.testCmd` → `pnpm test` (default: `npm test`)'));
     assert.ok(guide.includes('Suggestions only — nothing was written.'));
   });
+  test('packageManager field prints its version and warns on another manager\'s lockfile', () => {
+    const dir = tmpProject({ 'package.json': JSON.stringify({ packageManager: 'pnpm@9.1.0', scripts: { test: 'x' } }), 'yarn.lock': '' });
+    const guide = setupGuide(REPO_ROOT, '0.0.test', undefined, { detectDir: dir });
+    assert.ok(guide.includes('detected: pnpm 9.1.0 (from package.json `packageManager`)'));
+    assert.ok(guide.includes('lockfiles for other managers are also present: yarn'));
+  });
   test('no package.json → no section', () => {
     const guide = setupGuide(REPO_ROOT, '0.0.test', undefined, { detectDir: tmpProject({ 'yarn.lock': '' }) });
     assert.ok(!guide.includes(HEADING));
