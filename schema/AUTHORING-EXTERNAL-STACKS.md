@@ -360,8 +360,9 @@ stacks:
       explains what it needs.
 - [ ] `requires:` refs resolve (in-stack, or a qualified `<stack>/…` for a built-in dependency).
 - [ ] The stack **renders for every target it claims**: no literal `.claude/skills/…` or
-      `.claude/agents/…` in a skill, agent, or Markdown syrup body (use `{{harness.skillsDir}}` /
-      `{{harness.agentsDir}}`, which resolve per target), and anything genuinely Claude-only is
+      `.claude/agents/…` in a skill or agent body (use `{{harness.skillsDir}}` /
+      `{{harness.agentsDir}}`, which resolve per target), a Markdown syrup body names a skill or
+      agent rather than linking into the render by path or placeholder (#818), and anything genuinely Claude-only is
       `targets: [claude]`-scoped syrup. Check it the way the toolkit checks itself: render into a
       scratch consumer with `targets: [claude, codex, agents-dir]` and confirm nothing under
       `.agents/` or `.codex/` points into `.claude/`. Syrup substitutes against the **primary**

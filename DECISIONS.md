@@ -9,6 +9,16 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-05: A committed markdown payload names a skill or agent, never links one (#818)
+
+`.github/` payloads are always committed, but under the lock-only posture (#777) a rendered skill
+or agent is not, so a markdown `files/` payload that links into the render (`{{harness.skillsDir}}`,
+`{{harness.agentsDir}}`, or a literal `.claude/skills/…`) publishes a link that 404s on GitHub.
+Markdown syrup now names the skill or agent in prose instead, enforced by the #818 content test.
+This narrows #190's remedy: `{{harness.skillsDir}}` / `{{harness.agentsDir}}` stay the portable
+form for skill and agent bodies only, and the #190 Impact note about `REVIEW_TEMPLATE.md` no
+longer holds.
+
 ## 2026-11-04: Codex invocation verification is separate from provisioning (#820, #843)
 
 The owner narrowed #820 after the named-agent smoke test failed in Codex CLI 0.166.0.

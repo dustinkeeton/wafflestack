@@ -4242,7 +4242,7 @@ describe('source + rendered content: no literal Claude-only paths where a harnes
     assert.deepEqual(
       leaks,
       [],
-      `literal Claude paths — use {{harness.skillsDir}} / {{harness.agentsDir}}, or name the other harness dirs on the same line:\n${leaks.join('\n')}`,
+      `literal Claude paths — in a skill or agent body use {{harness.skillsDir}} / {{harness.agentsDir}}, in markdown syrup name the skill or agent (#818), or name the other harness dirs on the same line:\n${leaks.join('\n')}`,
     );
   });
 
