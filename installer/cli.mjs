@@ -22,6 +22,7 @@ import { computeToggleModel, formatToggleTable, interactiveToggle, applyToggle }
 import { resolveToolkitIdentity, formatUnreleasedRefusal, formatProvenanceWarning } from './lib/toolkit-ref.mjs';
 import { resolveLatestRelease, updateVerdict } from './lib/update-check.mjs';
 import { readBoard } from './lib/board.mjs';
+import { followLock, isInteractive, defaultLauncherCacheDir, NO_FOLLOW_FLAG, NO_FOLLOW_ENV } from './lib/launcher.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -40,6 +41,7 @@ const cwd = extractCwd(args) ?? process.cwd();
 // runs. `--allow-unreleased` suppresses the refusal only; `--offline` is what skips the lookup (#373).
 const allowUnreleased = extractFlag(args, '--allow-unreleased') || envAllowUnreleased();
 const offline = extractFlag(args, '--offline') || envOffline();
+const noFollow = extractFlag(args, NO_FOLLOW_FLAG) || envTruthy(NO_FOLLOW_ENV);
 
 // Resolved at most once, and only when a command needs it: `validate`/`help`/`eject` never do.
 /** @type {import('./lib/toolkit-ref.mjs').ToolkitIdentity | null} */
@@ -51,6 +53,15 @@ let offlineIdentityCache = null;
 // on every help and unknown-command path.
 const USAGE =
   'usage: wafflestack <setup|init|list|toggle|install|render|prepare-worktree|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+
+// The launcher (#726): run the toolkit commit this repo's lock pins, unless it is the one running.
+const originalArgv = process.argv.slice(2);
+const launched = await followLock({
+  command, argv: originalArgv, cwd, env: process.env, noFollow, offline, version: pkg.version,
+  identity: () => offlineIdentity(), interactive: isInteractive({ argv: originalArgv, env: process.env }),
+  root: defaultLauncherCacheDir(),
+});
+if (launched.action === 'exit') process.exit(launched.code);
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -486,6 +497,11 @@ function helpText() {
     '                    doctor/state: also skips the newer-release check (a cached answer is still read)',
     '                    state --board: skips the board read (board.error = "offline")',
     '                    Env: WAFFLESTACK_OFFLINE=1',
+    '  --no-follow-lock  run this installed wafflestack even when the repo lock pins another release',
+    '                    (by default an installed CLI fetches the pinned commit once into',
+    '                    ~/.cache/wafflestack/toolkits/<sha>/ and re-runs itself there; only a trusted',
+    '                    source with a release tag at that exact commit runs unasked).',
+    '                    Env: WAFFLESTACK_NO_FOLLOW_LOCK=1',
     '',
   ].join('\n');
 }

@@ -27,6 +27,7 @@ const MIGRATED = [
   'installer/lib/config-catalog.mjs',
   'installer/lib/config-reference.mjs',
   'installer/lib/upstream-sync.mjs',
+  'installer/lib/launcher.mjs',
 ];
 
 describe('typecheck gate (#177)', () => {
