@@ -163,7 +163,10 @@ Walk the config schema of every enabled stack (from the inventory):
 - **Defaulted keys**: check each default against reality before accepting it. Command
   defaults (`npm run build`, `npm test`, …) are wrong for many stacks — derive the real
   commands from `package.json` scripts, `Makefile`, `pyproject.toml`, or CI workflows,
-  and confirm with the user when ambiguous. Multi-line defaults (label tables, prose
+  and confirm with the user when ambiguous. When `setup` printed a **Detected package
+  manager** section, start from its suggested `project.*Cmd` values (read from the
+  `packageManager` field, else the lockfile); they are suggestions only — confirm each with
+  the user and never write one unasked. Multi-line defaults (label tables, prose
   sections) encode conventions — override them when the project's own taxonomy differs.
   An override replaces the whole block or list, so restate any default entries you keep —
   e.g. `docs.protectedDocs`, the list of paths docs passes flag instead of rewriting, defaults
