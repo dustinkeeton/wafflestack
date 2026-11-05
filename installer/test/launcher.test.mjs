@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   findLock, readPin, normalizeSource, trustedSources, releaseTagFor, readCacheEntry, fetchToolkit,
-  readApprovals, recordApproval, decideFollow, followLock, isInteractive, exitCodeOf, npmCommand,
+  readApprovals, recordApproval, decideFollow, followLock, isInteractive, exitCodeOf, npmCommand, fetchEnv,
   defaultLauncherCacheDir, defaultLauncherConfigFile, LAUNCHER_RECORD, LAUNCHED_ENV, DEFAULT_TRUSTED_SOURCES, MIN_FOLLOW_RELEASE,
 } from '../lib/launcher.mjs';
 
@@ -41,13 +41,14 @@ function seedCache(root, sha, cliBody = 'process.exit(0);\n', extra = {}) {
 }
 
 /** A fake `npm install --prefix <tmp> … github:o/r#<sha>` that lays out the npx-shaped tree. */
-function fakeNpm(calls, { resolvedSha = null, name = 'wafflestack', status = 0 } = {}) {
-  return (args) => {
+function fakeNpm(calls, { resolvedSha = null, name = 'wafflestack', status = 0, version = '0.18.0', opts = [] } = {}) {
+  return (args, o) => {
     calls.push(args);
+    opts.push(o);
     if (status !== 0) return { status, stderr: 'boom' };
     const prefix = args[args.indexOf('--prefix') + 1];
     const sha = resolvedSha ?? args.at(-1).split('#')[1];
-    write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name, version: '0.18.0' }));
+    write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name, version }));
     write(prefix, 'node_modules/wafflestack/installer/cli.mjs', 'process.exit(0);\n');
     write(prefix, 'node_modules/.package-lock.json', JSON.stringify({
       lockfileVersion: 3,
@@ -305,6 +306,7 @@ describe('decideFollow / followLock — the decision table', () => {
 
     writeLock(consumer, releasePin(SHA_B, UPSTREAM, 'v0.15.0'));
     const atFloor = harness({ lsRemote: lsRemoteFrom([], old) });
+    atFloor.ctx.runNpm = fakeNpm(atFloor.calls.npm, { version: '0.15.0' });
     assert.deepEqual(await followLock(atFloor.ctx), { action: 'exit', code: 7 });
     assert.equal(atFloor.calls.npm.length, 1, 'the floor release itself is followed');
   });
@@ -497,6 +499,23 @@ describe('fetchToolkit', () => {
     const fresh = fetchToolkit({ root, source: UPSTREAM, commit: SHA_C, tag: null, trust: 'approved', runNpm: fakeNpm([]) });
     assert.equal(fresh.commit, SHA_C);
     assert.equal(fs.existsSync(path.join(fresh.dir, 'partial')), false);
+  });
+
+  test('the fetch never sees the caller\'s npm_* env (a repo .npmrc) and uses the launcher\'s own npm cache (F12)', () => {
+    const opts = [];
+    const calls = [];
+    const env = { PATH: '/bin', npm_config_cache: '/evil', npm_config_prefer_offline: 'true', NPM_CONFIG_GIT: '/evil/git', Npm_Config_Registry: 'http://evil', npm_execpath: '/n/npm-cli.js' };
+    fetchToolkit({ root, source: UPSTREAM, commit: SHA_B, tag: 'v0.18.0', trust: 'tagged', env, runNpm: fakeNpm(calls, { opts }) });
+    assert.deepEqual(opts[0].env, { PATH: '/bin', GIT_TERMINAL_PROMPT: '0' });
+    assert.equal(opts[0].npmExecpath, '/n/npm-cli.js', 'npm itself is still chosen from the caller');
+    assert.equal(calls[0][calls[0].indexOf('--cache') + 1], path.join(root, 'npm-cache'));
+    assert.equal(opts[0].cwd.startsWith(path.join(root, 'toolkits', '.tmp-')), true);
+    assert.deepEqual(fetchEnv({ npm_lifecycle_event: 'x', HOME: '/h' }), { HOME: '/h', GIT_TERMINAL_PROMPT: '0' });
+  });
+
+  test('a tagged fetch whose installed version is not the tag throws and leaves no entry (F12)', () => {
+    assert.throws(() => fetchToolkit({ root, source: UPSTREAM, commit: SHA_B, tag: 'v0.19.0', trust: 'tagged', runNpm: fakeNpm([]) }), /installed version "0\.18\.0", but .* tags it v0\.19\.0/);
+    assert.equal(readCacheEntry(root, SHA_B), null);
   });
 
   test('approvals round-trip and dedupe', () => {

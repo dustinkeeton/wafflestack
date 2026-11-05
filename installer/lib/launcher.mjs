@@ -18,7 +18,7 @@ import { compareVersions } from './util.mjs';
  *   version: string|null, resolved: string|null, toolkitRoot: string, fetchedAt: string, fetchedBy: string|null }} LauncherRecord
  * @typedef {LauncherRecord & { dir: string, cli: string }} CacheEntry
  * @typedef {{ status: number|null, stderr: string }} NpmResult
- * @typedef {(args: string[], opts: { cwd: string, env: NodeJS.ProcessEnv }) => NpmResult} RunNpm
+ * @typedef {(args: string[], opts: { cwd: string, env: NodeJS.ProcessEnv, npmExecpath?: string }) => NpmResult} RunNpm
  * @typedef {{ code: number|null, signal: NodeJS.Signals|null }} ChildExit
  * @typedef {{ action: 'continue', note: string|null }
  *   | { action: 'refuse', message: string, warning?: string|null }
@@ -206,10 +206,25 @@ export function npmCommand(args, env, platform = process.platform) {
 }
 
 /** @type {RunNpm} */
-export function defaultRunNpm(args, { cwd, env }) {
-  const c = npmCommand(args, env);
+export function defaultRunNpm(args, { cwd, env, npmExecpath }) {
+  const c = npmCommand(args, { npm_execpath: npmExecpath });
   const r = spawnSync(c.cmd, c.args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], shell: c.shell });
   return { status: r.status, stderr: r.error ? r.error.message : String(r.stderr ?? '') };
+}
+
+/**
+ * The fetch's environment: the caller's, minus every `npm_*` key (any case). `npx`/`npm exec`/`npm run` export the
+ * repo's `.npmrc` as `npm_config_*`, which could point npm at planted bytes; the user's own `~/.npmrc` still applies.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function fetchEnv(env) {
+  /** @type {NodeJS.ProcessEnv} */
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (!/^npm_/i.test(k)) out[k] = v;
+  out.GIT_TERMINAL_PROMPT = '0';
+  return out;
 }
 
 /**
@@ -230,13 +245,14 @@ export function fetchToolkit({ root, source, commit, tag, trust, fetchedBy = nul
   fs.mkdirSync(tmp, { mode: 0o700 });
   try {
     const spec = `github:${slug.owner}/${slug.repo}#${commit}`;
-    const r = runNpm(['install', '--prefix', tmp, '--no-audit', '--no-fund', '--ignore-scripts', '--omit=dev', spec], {
-      cwd: tmp, env: { ...env, GIT_TERMINAL_PROMPT: '0' },
+    const r = runNpm(['install', '--prefix', tmp, '--cache', path.join(root, 'npm-cache'), '--no-audit', '--no-fund', '--ignore-scripts', '--omit=dev', spec], {
+      cwd: tmp, env: fetchEnv(env), npmExecpath: env.npm_execpath,
     });
     if (r.status !== 0) throw new Error(`npm install ${spec} failed${r.stderr.trim() ? `: ${r.stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`);
     const toolkitDir = path.join(tmp, TOOLKIT_SUBDIR);
     const pkg = JSON.parse(fs.readFileSync(path.join(toolkitDir, 'package.json'), 'utf8'));
     if (pkg?.name !== 'wafflestack') throw new Error(`${spec} is not a wafflestack package (name ${JSON.stringify(pkg?.name)})`);
+    if (tag && `v${pkg.version}` !== tag) throw new Error(`${spec} installed version ${JSON.stringify(pkg.version)}, but ${source} tags it ${tag}`);
     const got = commitFromNpmLockfile(toolkitDir, 'wafflestack');
     if (got !== commit) throw new Error(`npm resolved ${spec} to ${got ?? 'an unknown commit'}, not ${commit}`);
     if (!fs.existsSync(path.join(toolkitDir, 'installer', 'cli.mjs'))) throw new Error(`${spec} has no installer/cli.mjs`);

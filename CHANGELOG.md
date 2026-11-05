@@ -36,7 +36,7 @@ is what you reach for across a breaking one.
 - **An installed `wafflestack` follows the repo lock's toolkit pin (#726, part of #725).** When the
   nearest `.waffle/waffle.lock.json` pins a release commit other than the running one, the CLI
   fetches that commit once into `~/.cache/wafflestack/toolkits/<sha>/` (npm, by commit, never by
-  tag) and re-runs the command there with the same arguments and exit code. It runs a commit
+  tag, with its own npm cache and none of the repo's `.npmrc` settings) and re-runs the command there with the same arguments and exit code. It runs a commit
   unasked only when the lock's `toolkit.source` is trusted (default `github:dustinkeeton/wafflestack`;
   add more in `~/.config/wafflestack/config.json` `trustedSources`, never repo config) AND a
   `vX.Y.Z` tag in that source points at exactly that commit, and that release is v0.15.0 or newer
