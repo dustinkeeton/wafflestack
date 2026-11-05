@@ -33,6 +33,14 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **`setup`/`init` suggest project commands from the detected package manager (#729, part of
+  #725).** The `package.json` `packageManager` field wins, else the lockfile (`bun.lock`/`bun.lockb`,
+  `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`, `npm-shrinkwrap.json`, in that order; other
+  managers' lockfiles are flagged). A new "Detected package manager" section suggests
+  `project.installCmd` plus `project.{test,lint,typecheck,build}Cmd` for each script `package.json`
+  declares (`bun run test`, never `bun test`), skipping keys already set and suggestions equal to
+  the default. Nothing is written. **Consumer impact:** none — setup output only.
+
 - `prepare-worktree` provisions pinned worktree-local harness resources before agent startup,
   with conflict checks, verified interruption recovery, safe stale-file pruning, structured
   readiness and explicit private-overlay policy (#820).

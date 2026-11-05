@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadToolkit, MOD_MANIFEST } from './toolkit.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
-import { exists } from './util.mjs';
+import { exists, lookupPath } from './util.mjs';
+import { detectPackageManager } from './package-manager.mjs';
 import { loadProjectConfig, resolveConfigFile } from './project.mjs';
 import { computeSelection, skippedSyrupCompanions, fileMatchesTargets, isWipWaffle } from './refs.mjs';
 import { waffleStatus } from './registry.mjs';
@@ -23,16 +24,69 @@ import { offerablePlugins } from './plugins.mjs';
  * "Current configuration" section when the project at `cwd` is already configured, then an
  * inventory generated from the installed toolkit.
  */
-export function setupGuide(toolkitRoot, toolkitVersion, cwd, { locateClaude = claudeCli } = {}) {
+export function setupGuide(toolkitRoot, toolkitVersion, cwd, { locateClaude = claudeCli, detectDir } = {}) {
   const playbook = fs
     .readFileSync(path.join(toolkitRoot, 'schema', 'SETUP.md'), 'utf8')
     .trimEnd();
   const toolkit = loadToolkit(toolkitRoot);
   const sections = [playbook];
+  const detected = detectDir ? packageManagerSection(toolkit, detectDir) : null;
+  if (detected) sections.push(detected);
   const current = cwd ? currentConfigSection(toolkit, cwd, toolkitVersion, { locateClaude }) : null;
   if (current) sections.push(current);
   sections.push(toolkitInventory(toolkit, toolkitVersion));
   return sections.join('\n\n---\n\n');
+}
+
+/**
+ * Suggested `project.*Cmd` values from the detected package manager (#729). Null without a
+ * `package.json` or a detectable manager; never writes config.
+ */
+function packageManagerSection(toolkit, dir) {
+  const found = detectPackageManager(dir);
+  if (!found?.detection.name) return null;
+  const { detection, suggestions } = found;
+  let values = {};
+  if (exists(resolveConfigFile(dir).file)) {
+    try {
+      values = loadProjectConfig(dir, []).values ?? {};
+    } catch { /* currentConfigSection reports the unreadable config */ }
+  }
+  const defaultOf = (key) => {
+    for (const stack of toolkit.stacks.values()) {
+      const d = stack.config?.[key]?.default;
+      if (typeof d === 'string') return d;
+    }
+    return undefined;
+  };
+  const bullets = [];
+  for (const [key, cmd] of Object.entries(suggestions)) {
+    if (lookupPath(values, key) !== undefined) continue;
+    const def = defaultOf(key);
+    if (def === cmd) continue;
+    bullets.push(`- \`${key}\` → \`${cmd}\`${def !== undefined ? ` (default: \`${def}\`)` : ''}`);
+  }
+  const from = detection.source === 'packageManager' ? 'package.json `packageManager`' : `\`${detection.lockfile}\``;
+  const lines = [
+    '# Detected package manager — suggested commands',
+    '',
+    `detected: ${detection.name}${detection.version ? ` ${detection.version}` : ''} (from ${from})`,
+    '',
+  ];
+  if (detection.conflicts.length) {
+    lines.push(`> ⚠ lockfiles for other managers are also present: ${detection.conflicts.join(', ')} — confirm which one the project uses.`, '');
+  }
+  if (!bullets.length) {
+    lines.push('The configured and default commands already match it — nothing to suggest.');
+    return lines.join('\n');
+  }
+  lines.push(
+    ...bullets,
+    '',
+    'Suggestions only — nothing was written. Confirm each with the user, then set it under',
+    '`config:` in `.waffle/waffle.yaml` (step 3). A key already set in config is never suggested.',
+  );
+  return lines.join('\n');
 }
 
 /**

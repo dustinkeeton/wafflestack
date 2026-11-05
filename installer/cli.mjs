@@ -258,7 +258,7 @@ try {
       if (created) console.error(`wrote ${file} — the playbook below walks you (or your coding agent) through the rest`);
       // No stack is chosen yet, so only the stack-independent baseline is knowable.
       if (gitignore) reportGitignore(ensureGitignoreEntries(cwd, [...BASELINE_GITIGNORE_ENTRIES]), console.error);
-      process.stdout.write(setupGuide(toolkitRoot, pkg.version, created ? undefined : cwd));
+      process.stdout.write(setupGuide(toolkitRoot, pkg.version, created ? undefined : cwd, { detectDir: cwd }));
       break;
     }
     case 'list': {
