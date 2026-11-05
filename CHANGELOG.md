@@ -117,6 +117,12 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **`.github/REVIEW_TEMPLATE.md` no longer links into the gitignored render (#818).** Its "Source"
+  column linked `{{harness.skillsDir}}/<skill>/SKILL.md`, which 404s on GitHub whenever the rendered
+  skills are not committed (Posture 2b). It now names the `adversarial-review` and `pr-response`
+  skills without a path, and a content test fails any markdown `files/` payload that points into the
+  rendered skills or agents dir. Consumer impact: re-render.
+
 - **Autopilot's integration close-out covers PRs merged after the final PR opens (#846).** The
   final PR's `Closes #N` list was written once, when it opened, so a PR merged into `<integ>`
   later never had its issues closed. Before arming, on every path, autopilot now adds a
