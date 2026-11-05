@@ -33,6 +33,19 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **An installed `wafflestack` follows the repo lock's toolkit pin (#726, part of #725).** When the
+  nearest `.waffle/waffle.lock.json` pins a release commit other than the running one, the CLI
+  fetches that commit once into `~/.cache/wafflestack/toolkits/<sha>/` (npm, by commit, never by
+  tag) and re-runs the command there with the same arguments and exit code. It runs a commit
+  unasked only when the lock's `toolkit.source` is trusted (default `github:dustinkeeton/wafflestack`;
+  add more in `~/.config/wafflestack/config.json` `trustedSources`, never repo config) AND a
+  `vX.Y.Z` tag in that source points at exactly that commit; otherwise it asks once in a TTY, or
+  refuses (CI, `--yes`, `--untrusted-config`). Offline with an uncached pin refuses. `upgrade`,
+  `validate`, `avatars`, `prepare-worktree` and `help` never follow. Escape hatch:
+  `--no-follow-lock` / `WAFFLESTACK_NO_FOLLOW_LOCK=1`. **Consumer impact:** none for `npx
+  github:…#vX.Y.Z` users already on the pinned release; an unpinned or newer installed CLI now runs
+  the pinned release instead of itself.
+
 - **`setup`/`init` suggest project commands from the detected package manager (#729, part of
   #725).** The `package.json` `packageManager` field wins, else the lockfile (`bun.lock`/`bun.lockb`,
   `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`, `npm-shrinkwrap.json`, in that order; other

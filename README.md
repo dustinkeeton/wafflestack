@@ -70,6 +70,18 @@ npx github:dustinkeeton/wafflestack setup             # writes a starter .waffle
 npx github:dustinkeeton/wafflestack#vX.Y.Z render     # X.Y.Z = latest release tag; renders harness files + lock
 ```
 
+### Installed CLI
+
+`npm i -g github:dustinkeeton/wafflestack` puts `wafflestack` on your PATH. Inside a repo whose
+lock pins a different release, it fetches that exact commit once into
+`~/.cache/wafflestack/toolkits/<sha>/` and runs the command there, so every machine renders with
+the version the lock records. It only runs a pinned commit unasked when the lock's source is
+trusted (by default only `github:dustinkeeton/wafflestack`; add your fork to `trustedSources` in
+`~/.config/wafflestack/config.json`) and a release tag in that source points at that commit.
+Otherwise it asks once in a terminal, or refuses. `--no-follow-lock` (or
+`WAFFLESTACK_NO_FOLLOW_LOCK=1`) runs the installed version instead; `wafflestack upgrade` moves
+the pin.
+
 > [release resolution](docs/upgrades.md#release-resolution).
 
 ## Commands
