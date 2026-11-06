@@ -33,6 +33,14 @@ is what you reach for across a breaking one.
 
 ### Added
 
+- **Identity knows when it runs from the launcher cache (#728, part of #725).** A toolkit under
+  `~/.cache/wafflestack/toolkits/<sha>/` now reports origin `launcher-cache`, read from the entry's
+  `launcher.json` when it names that commit and agrees with npm's own lockfile. The release verdict
+  still comes from one `git ls-remote --tags` (offline stays unverified), so a cached release resolves
+  `release` with a non-null `ref` even if npm's hidden lockfile is gone, and `doctor` adds one
+  informational note naming the cached source and commit.
+  Consumer impact: none — locks render byte-identically; no config or migration.
+
 - **An installed `wafflestack` follows the repo lock's toolkit pin (#726, part of #725).** When the
   nearest `.waffle/waffle.lock.json` pins a release commit other than the running one, the CLI
   fetches that commit once into `~/.cache/wafflestack/toolkits/<sha>/` (npm, by commit, never by

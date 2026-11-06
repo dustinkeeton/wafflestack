@@ -34,6 +34,7 @@ import { upgrade, diffToolkit, reconcileToolkitRefPins } from '../lib/upgrade.mj
 import { doctor } from '../lib/doctor.mjs';
 import { reinstall } from '../lib/uninstall.mjs';
 import { eject } from '../lib/eject.mjs';
+import { fetchToolkit } from '../lib/launcher.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #373/#374/#372 — toolkit provenance: identity resolution, the `ref` string format, the lock
@@ -2681,5 +2682,196 @@ describe('upgrade reports a newer release, and names the exact command (#372)', 
     const result = runUpgrade(null, '0.13.0');
     assert.equal(result.newerRelease, null);
     assert.deepEqual(result.pinMoves, []);
+  });
+});
+
+describe('identity from a launcher-cache layout (#728)', () => {
+  let tmp;
+  const UPSTREAM_HTTPS = 'https://github.com/dustinkeeton/wafflestack.git';
+  const TAGS = [`${SHA_A}\trefs/tags/v0.12.0`, `${SHA_B}\trefs/tags/v0.11.0`];
+
+  // <tmp>/toolkits/<sha>/{launcher.json, node_modules/.package-lock.json, node_modules/wafflestack/}
+  const cacheLayout = ({ sha = SHA_A, record = {}, resolved = `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${sha}`, rawRecord, dir = 'toolkits' } = {}) => {
+    const entry = path.join(tmp, dir, sha);
+    const root = path.join(entry, 'node_modules', 'wafflestack');
+    write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } }));
+    write(root, 'CHANGELOG.md', '# Changelog\n\n## [Unreleased]\n\n## [0.12.0] - 2026-07-11\n\n- shipped\n');
+    if (resolved !== null) {
+      write(entry, 'node_modules/.package-lock.json', JSON.stringify({ lockfileVersion: 3, packages: { 'node_modules/wafflestack': { version: '0.12.0', resolved } } }));
+    }
+    if (record !== null) {
+      write(entry, 'launcher.json', rawRecord ?? JSON.stringify({
+        schema: 1, source: 'github:dustinkeeton/wafflestack', commit: sha, tag: 'v0.12.0', trust: 'tagged', version: '0.12.0',
+        resolved, toolkitRoot: 'node_modules/wafflestack', fetchedAt: '2026-11-05T00:00:00.000Z', fetchedBy: '0.19.0', ...record,
+      }));
+    }
+    return { root, entry };
+  };
+
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-launcher-')); });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  test('a cached release resolves `release` with a non-null ref, after ONE https ls-remote', () => {
+    const { root, entry } = cacheLayout();
+    const lsRemote = fakeLsRemote(TAGS);
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.status, 'release');
+    assert.equal(id.commit, SHA_A);
+    assert.equal(id.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
+    assert.deepEqual(id.launcher, { source: 'github:dustinkeeton/wafflestack', tag: 'v0.12.0', trust: 'tagged', entry });
+    assert.deepEqual(lsRemote.calls, [UPSTREAM_HTTPS]);
+  });
+
+  test('with npm\'s hidden lockfile gone, the record supplies commit and repo — still a release', () => {
+    const { root } = cacheLayout({ resolved: null });
+    const lsRemote = fakeLsRemote(TAGS);
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.status, 'release');
+    assert.equal(id.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
+    assert.deepEqual(lsRemote.calls, [UPSTREAM_HTTPS]);
+  });
+
+  test('reads the record `fetchToolkit` actually writes — the writer/reader round trip', () => {
+    const fakeNpm = (/** @type {string[]} */ args) => {
+      const prefix = args[args.indexOf('--prefix') + 1];
+      write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0' }));
+      write(prefix, 'node_modules/wafflestack/installer/cli.mjs', 'process.exit(0);\n');
+      write(prefix, 'node_modules/.package-lock.json', JSON.stringify({
+        lockfileVersion: 3,
+        packages: { 'node_modules/wafflestack': { version: '0.12.0', resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${SHA_A}` } },
+      }));
+      return { status: 0, stderr: '' };
+    };
+    const cached = fetchToolkit({ root: tmp, source: 'github:dustinkeeton/wafflestack', commit: SHA_A, tag: 'v0.12.0', trust: 'tagged', runNpm: fakeNpm });
+    const root = path.join(cached.dir, 'node_modules', 'wafflestack');
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote(TAGS) });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.status, 'release');
+    assert.equal(id.launcher?.trust, 'tagged');
+    const offline = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
+    assert.equal(offline.origin, 'launcher-cache');
+  });
+
+  test('the remote decides, never the record: untagged → unreleased, failed lookup → unverified', () => {
+    const { root } = cacheLayout({ sha: SHA_B, record: { tag: 'v0.12.0' } });
+    const untagged = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v0.12.0`]) });
+    assert.equal(untagged.origin, 'launcher-cache');
+    assert.equal(untagged.status, 'unreleased');
+    assert.equal(untagged.ref, null);
+    const failed = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: () => { throw new Error('Could not resolve host'); } });
+    assert.equal(failed.status, 'unverified');
+    assert.match(failed.lookupError ?? '', /Could not resolve host/);
+  });
+
+  test('offline stays unverified, asks nothing, and names the tag the launcher recorded', () => {
+    const { root } = cacheLayout();
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.status, 'unverified');
+    assert.equal(id.ref, null);
+    assert.match(id.lookupError ?? '', /skipped \(offline\) — the launcher cache recorded v0\.12\.0/);
+    assert.equal(id.launcher?.trust, 'tagged');
+  });
+
+  /** @type {[string, object][]} */
+  const ignored = [
+    ['commit differs from the entry dir', { record: { commit: SHA_B } }],
+    ['commit differs from npm\'s hidden lockfile', { sha: SHA_A, resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${SHA_B}` }],
+    ['source differs from npm\'s hidden lockfile', { record: { source: 'github:acme/wafflestack' } }],
+    ['unknown schema', { record: { schema: 2 } }],
+    ['unparseable JSON', { rawRecord: '{ not json' }],
+    ['toolkitRoot pointing elsewhere', { record: { toolkitRoot: 'node_modules/other' } }],
+    ['entry not under toolkits/', { dir: 'elsewhere' }],
+    ['unknown trust', { record: { trust: 'yolo' } }],
+    ['non-release tag', { record: { tag: 'main' } }],
+  ];
+  for (const [why, opts] of ignored) {
+    test(`a record is ignored — npm-install result unchanged — when: ${why}`, () => {
+      const { root, entry } = cacheLayout(opts);
+      const lsRemote = () => TAGS.join('\n');
+      const withRecord = resolveToolkitIdentity({ toolkitRoot: root, lsRemote });
+      fs.rmSync(path.join(entry, 'launcher.json'));
+      assert.deepEqual(withRecord, resolveToolkitIdentity({ toolkitRoot: root, lsRemote }));
+      assert.notEqual(withRecord.origin, 'launcher-cache');
+    });
+  }
+
+  test('with no hidden lockfile, a record naming a commit other than its entry dir is ignored', () => {
+    const { root } = cacheLayout({ sha: SHA_A, resolved: null, record: { commit: SHA_B } });
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork });
+    assert.notEqual(id.origin, 'launcher-cache');
+    assert.equal(id.commit, null);
+  });
+
+  test('a bad record with no hidden lockfile degrades to unverified, as before #728', () => {
+    const { root } = cacheLayout({ resolved: null, record: { schema: 2 } });
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork });
+    assert.equal(id.origin, 'unknown');
+    assert.equal(id.status, 'unverified');
+    assert.equal(id.commit, null);
+  });
+
+  test('the lock block names the source and is byte-equal to the npm-install block for the same commit', () => {
+    const { root, entry } = cacheLayout();
+    const cached = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote(TAGS) });
+    fs.rmSync(path.join(entry, 'launcher.json'));
+    const npm = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote(TAGS) });
+    assert.equal(npm.origin, 'npm-install');
+    assert.deepEqual(toolkitLockEntry(cached), { source: 'github:dustinkeeton/wafflestack', sourceType: 'git', ref: 'v0.12.0', commit: SHA_A, status: 'release' });
+    assert.equal(JSON.stringify(toolkitLockEntry(cached)), JSON.stringify(toolkitLockEntry(npm)));
+    assert.equal(toolkitPinFromIdentity(cached), 'github:dustinkeeton/wafflestack#v0.12.0');
+  });
+
+  test('a mixed-case fork keeps its case in the lock — a fetchToolkit round trip with npm echoing the spec', () => {
+    /** Like npm: `resolved` carries the casing of the spec it was handed. */
+    const echoNpm = (/** @type {string[]} */ args) => {
+      const prefix = args[args.indexOf('--prefix') + 1];
+      const [spec, sha] = args.at(-1).split('#');
+      write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name: 'wafflestack', version: '1.0.0' }));
+      write(prefix, 'node_modules/wafflestack/installer/cli.mjs', 'process.exit(0);\n');
+      write(prefix, 'node_modules/.package-lock.json', JSON.stringify({
+        lockfileVersion: 3,
+        packages: { 'node_modules/wafflestack': { version: '1.0.0', resolved: `git+ssh://git@github.com/${spec.slice('github:'.length)}.git#${sha}` } },
+      }));
+      return { status: 0, stderr: '' };
+    };
+    const cached = fetchToolkit({ root: tmp, source: 'github:Acme/MyFork', commit: SHA_A, tag: 'v1.0.0', trust: 'tagged', runNpm: echoNpm });
+    const id = resolveToolkitIdentity({ toolkitRoot: path.join(cached.dir, 'node_modules', 'wafflestack'), lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]) });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.repo, 'Acme/MyFork');
+    assert.equal(toolkitLockEntry(id)?.source, 'github:Acme/MyFork');
+  });
+
+  test('with no hidden lockfile, a mixed-case fork takes its case from package.json `repository`', () => {
+    const { root } = cacheLayout({ resolved: null, record: { source: 'github:acme/myfork' } });
+    write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: { type: 'git', url: 'git+https://github.com/Acme/MyFork.git' } }));
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]) });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.repo, 'Acme/MyFork');
+    assert.equal(toolkitLockEntry(id)?.source, 'github:Acme/MyFork');
+  });
+
+  test('a successful zero-tag lookup gets the "provably none" refusal, like npm-install', () => {
+    const { root } = cacheLayout({ record: { tag: null, trust: 'approved' } });
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([]) });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.match(formatUnreleasedRefusal(id, 'render'), /has no `vX\.Y\.Z` release tags/);
+  });
+
+  test('doctor adds one informational launcher-cache note and never flips `ok`', () => {
+    const { root } = cacheLayout();
+    const consumer = path.join(tmp, 'consumer');
+    write(consumer, '.waffle/waffle.lock.json', JSON.stringify({ toolkitVersion: '0.12.0', files: {} }));
+    const cached = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
+    const npm = { ...cached, origin: /** @type {const} */ ('npm-install'), launcher: undefined };
+    const a = doctor({ cwd: consumer, toolkitVersion: '0.12.0', toolkitIdentity: cached, allowMissing: true, checkOverlayLeaks: false });
+    const b = doctor({ cwd: consumer, toolkitVersion: '0.12.0', toolkitIdentity: npm, allowMissing: true, checkOverlayLeaks: false });
+    const launcherNotes = a.notes.filter((n) => /launcher cache/.test(n));
+    assert.equal(launcherNotes.length, 1);
+    assert.match(launcherNotes[0], /github:dustinkeeton\/wafflestack @ aaaaaaaaaaaa \(v0\.12\.0, a tagged release when fetched\)/);
+    assert.equal(a.ok, b.ok);
+    assert.equal(b.notes.filter((n) => /launcher cache/.test(n)).length, 0);
   });
 });

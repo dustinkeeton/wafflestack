@@ -11,6 +11,7 @@ import {
   readApprovals, recordApproval, decideFollow, followLock, isInteractive, exitCodeOf, npmCommand, fetchEnv,
   defaultLauncherCacheDir, defaultLauncherConfigFile, LAUNCHER_RECORD, LAUNCHED_ENV, DEFAULT_TRUSTED_SOURCES, MIN_FOLLOW_RELEASE,
 } from '../lib/launcher.mjs';
+import { resolveToolkitIdentity, toolkitLockEntry } from '../lib/toolkit-ref.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SHA_A = 'a'.repeat(40);
@@ -120,7 +121,10 @@ describe('findLock / readPin / normalizeSource', () => {
   });
 
   test('a release block is a pin; a non-release or null block is none; a bad sha/source is malformed', () => {
-    assert.deepEqual(readPin(writeLock(consumer, releasePin())), { kind: 'pin', source: UPSTREAM, commit: SHA_B, ref: 'v0.18.0', version: '0.18.0' });
+    assert.deepEqual(readPin(writeLock(consumer, releasePin())), { kind: 'pin', source: UPSTREAM, fetchSource: UPSTREAM, commit: SHA_B, ref: 'v0.18.0', version: '0.18.0' });
+    const fork = readPin(writeLock(consumer, releasePin(SHA_B, ' github:Acme/MyFork ')));
+    assert.equal(fork.kind === 'pin' && fork.source, 'github:acme/myfork', 'trust compares the normalized source');
+    assert.equal(fork.kind === 'pin' && fork.fetchSource, 'github:Acme/MyFork', 'the fetch keeps the lock\'s casing');
     assert.equal(readPin(writeLock(consumer, { ...releasePin(), status: 'unreleased', commit: null })).kind, 'none');
     assert.match(readPin(writeLock(consumer, { ...releasePin(), status: 'unverified' })).reason, /unverified/);
     assert.equal(readPin(writeLock(consumer, { ...releasePin(), commit: null })).kind, 'none');
@@ -228,6 +232,35 @@ describe('decideFollow / followLock — the decision table', () => {
     assert.deepEqual(await followLock(ctx), { action: 'exit', code: 7 });
     assert.equal(calls.spawn[0].opts.env[LAUNCHED_ENV], SHA_B);
     assert.equal(calls.npm.length, 0);
+  });
+
+  test('a mixed-case fork pin is fetched with its own casing, so the launched child keeps it in the lock (#855)', async () => {
+    writeLock(consumer, releasePin(SHA_B, 'github:Acme/MyFork', 'v0.18.0'));
+    /** A fake npm that, like npm, records `resolved` with the casing of the spec it was handed. */
+    const echoNpm = (/** @type {string[]} */ args) => {
+      calls.npm.push(args);
+      const prefix = args[args.indexOf('--prefix') + 1];
+      const [spec, sha] = args.at(-1).split('#');
+      write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name: 'wafflestack', version: '0.18.0' }));
+      write(prefix, 'node_modules/wafflestack/installer/cli.mjs', 'process.exit(0);\n');
+      write(prefix, 'node_modules/.package-lock.json', JSON.stringify({
+        lockfileVersion: 3,
+        packages: { 'node_modules/wafflestack': { version: '0.18.0', resolved: `git+ssh://git@github.com/${spec.slice('github:'.length)}.git#${sha}` } },
+      }));
+      return { status: 0, stderr: '' };
+    };
+    const { ctx, calls } = harness({
+      trusted: () => ({ sources: ['github:acme/myfork'], warning: null }),
+      lsRemote: lsRemoteFrom([], { 'https://github.com/acme/myfork.git': `${SHA_B}\trefs/tags/v0.18.0\n` }),
+      runNpm: (/** @type {string[]} */ args) => echoNpm(args),
+    });
+    assert.deepEqual(await followLock(ctx), { action: 'exit', code: 7 });
+    assert.equal(calls.npm[0].at(-1), `github:Acme/MyFork#${SHA_B}`);
+    const toolkitRoot = path.join(root, 'toolkits', SHA_B, 'node_modules', 'wafflestack');
+    const id = resolveToolkitIdentity({ toolkitRoot, lsRemote: () => `${SHA_B}\trefs/tags/v0.18.0\n` });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.repo, 'Acme/MyFork');
+    assert.equal(toolkitLockEntry(id)?.source, 'github:Acme/MyFork');
   });
 
   test('an untagged sha from the trusted source is refused without fetching', async () => {

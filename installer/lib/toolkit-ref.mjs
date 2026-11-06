@@ -7,8 +7,9 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
 /**
  * Toolkit self-identification (#373) — "what am I, and what ref reproduces me?" Three statuses:
  * `release` / `unreleased` / `unverified` (the last fails OPEN — warn and proceed on ignorance).
- * Two origins, both offline-first: a `.git` checkout (`git describe --exact-match`) and an `npx`
- * install (npm's hidden-lockfile SHA + one `git ls-remote --tags`, never the rate-limited REST API).
+ * Three origins, all offline-first: a `.git` checkout (`git describe --exact-match`), an `npx` install
+ * (npm's hidden-lockfile SHA + one `git ls-remote --tags`, never the rate-limited REST API), and a
+ * launcher-cache entry (#728: its `launcher.json` SHA, classified by the same one `ls-remote`).
  * `lsRemote`/`runGit` are injectable for tests. The write gate lives in `cli.mjs`; full contract →
  * AGENTS.md `toolkit-ref.mjs` and DECISIONS #374.
  *
@@ -20,7 +21,8 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  * @property {string|null} ref          "github:owner/repo#v0.12.0" — the npx spec that reproduces this
  *                                      toolkit. Consumers key on `ref != null`, not `status === 'release'`
  *                                      (a slug-less release is release with ref null). Contract #374/#372.
- * @property {'checkout'|'npm-install'|'unknown'} origin
+ * @property {'checkout'|'npm-install'|'launcher-cache'|'unknown'} origin
+ * @property {LauncherFacts} [launcher] what the launcher recorded at fetch time; `launcher-cache` only
  * @property {string|null} repo         "owner/repo" to ASK about tags — origin-first (`repoSlug`), for the
  *                                      network lookup and remedy, not the lock (#373 F14). See `lockRepo`.
  * @property {string|null} lockRepo     "owner/repo" for the committed lock (`lockRepoSlug`) — pin-derived,
@@ -28,7 +30,13 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
  * @property {string|null} latestTag    the release to pin to, for the remedy message
  * @property {'local-tags'|'changelog'|null} [latestTagSource]  where a checkout's `latestTag` came from (#694)
  * @property {string|null} lookupError  diagnostic prose for why this is not called a release; never branch on
- *                                      its text. "lookup ran and succeeded" ≙ npm-install && lookupError null.
+ *                                      its text. "lookup ran and succeeded" ≙ a REMOTE_ORIGINS origin && lookupError null.
+ *
+ * @typedef {object} LauncherFacts
+ * @property {string} source            "github:owner/repo" the launcher fetched from
+ * @property {string|null} tag          the release tag it saw on that commit, null for an approved commit
+ * @property {'tagged'|'approved'} trust
+ * @property {string} entry             the cache entry dir, `<root>/toolkits/<sha>`
  *
  * @typedef {object} ToolkitLockEntry  the lock's top-level `toolkit` block (#374) — see `toolkitLockEntry`
  * @property {string|null} source      "github:<owner>/<repo>" — the npx spec BASE, no `#ref`. Null when the
@@ -41,6 +49,13 @@ import { exists, compareVersions, parseVersion } from './util.mjs';
 
 /** A wafflestack release tag. The toolkit tags plain `vX.Y.Z` — see CHANGELOG.md. */
 const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
+
+/** The launcher's cache-entry record (#726) — defined here so toolkit-ref never imports launcher.mjs. */
+export const LAUNCHER_RECORD = 'launcher.json';
+export const LAUNCHER_RECORD_SCHEMA = 1;
+
+/** Origins whose release verdict came from asking the remote (`ls-remote`), so a lock `source` may be pinned. */
+const REMOTE_ORIGINS = new Set(['npm-install', 'launcher-cache']);
 
 /** Last-resort repo name for the remedy message, if `repoSlug`'s three sources all come back empty. */
 const FALLBACK_REPO = 'dustinkeeton/wafflestack';
@@ -115,15 +130,37 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
     };
   }
 
-  // ── an `npx github:` install: npm's hidden lockfile knows the commit; ls-remote classifies it. ─
-  const commit = commitFromNpmLockfile(toolkitRoot, pkg.name);
-  if (!commit) {
+  // ── an `npx github:` install or a launcher-cache entry: a recorded SHA; ls-remote classifies it. ─
+  const npmCommit = commitFromNpmLockfile(toolkitRoot, pkg.name);
+  const launcher = readLauncherRecord(toolkitRoot);
+  const npmSlug = parseRepoSlug(npmResolvedUrl(toolkitRoot, pkg.name));
+  // The record wins only when npm's own lockfile (if any) agrees with it; a disagreeing record is ignored.
+  if (launcher && (!npmCommit || (npmCommit === launcher.commit && (!npmSlug || sameSlug(npmSlug, launcher.slug))))) {
+    const cased = [npmSlug, parseRepoSlug(repositoryUrl(pkg))].find((s) => s && sameSlug(s, launcher.slug)) ?? launcher.slug;
+    const repo = `${cased.owner}/${cased.repo}`;
+    const { source, tag, trust, entry } = launcher;
+    const found = { ...base, origin: /** @type {const} */ ('launcher-cache'), commit: launcher.commit, repo, lockRepo: repo, launcher: { source, tag, trust, entry } };
+    const offlineWhy = `release lookup skipped (offline)${tag ? ` — the launcher cache recorded ${tag} when it fetched this commit` : ''}`;
+    return classifyByRemote(found, cased, { lsRemote, offline, offlineWhy, changelog });
+  }
+  if (!npmCommit) {
     return corroborate({ ...base, lookupError: 'no .git and no resolvable commit in npm\'s hidden lockfile — cannot tell whether this toolkit is a release' }, changelog);
   }
-  const found = { ...base, origin: /** @type {const} */ ('npm-install'), commit };
-  if (offline) {
-    return corroborate({ ...found, lookupError: 'release lookup skipped (offline)' }, changelog);
-  }
+  const found = { ...base, origin: /** @type {const} */ ('npm-install'), commit: npmCommit };
+  return classifyByRemote(found, slug, { lsRemote, offline, offlineWhy: 'release lookup skipped (offline)', changelog });
+}
+
+/**
+ * The remote-corroborated tail every non-checkout origin shares: ONE `ls-remote --tags` decides release
+ * vs unreleased; offline, slug-less or a failed lookup stays `unverified` (then `corroborate`).
+ *
+ * @param {ToolkitIdentity & { commit: string }} found
+ * @param {{owner: string, repo: string}|null} slug
+ * @param {{ lsRemote: (url: string) => string, offline: boolean, offlineWhy: string, changelog: string|null }} opts
+ * @returns {ToolkitIdentity}
+ */
+function classifyByRemote(found, slug, { lsRemote, offline, offlineWhy, changelog }) {
+  if (offline) return corroborate({ ...found, lookupError: offlineWhy }, changelog);
   if (!slug) {
     return corroborate({ ...found, lookupError: 'could not work out which repository this toolkit came from' }, changelog);
   }
@@ -136,9 +173,48 @@ export function resolveToolkitIdentity({ toolkitRoot, lsRemote = gitLsRemoteTags
   // A successful lookup with zero tags is positive knowledge → `latestTag` stays null (do NOT fall
   // back to the shipped-CHANGELOG value), so a tagless fork is not handed a nonexistent pin.
   const latestTag = tags.latest;
-  const tag = tags.byCommit.get(commit) ?? null;
+  const tag = tags.byCommit.get(found.commit) ?? null;
   if (tag) return { ...found, status: 'release', tag, ref: toolkitRef(slug, tag), latestTag: latestTag ?? tag };
   return { ...found, status: 'unreleased', latestTag };
+}
+
+/**
+ * The launcher-cache record describing THIS toolkit root (#728), or null. Structure plus self-consistency
+ * is the test — `<entry>/node_modules/<pkg>` under `toolkits/<sha>`, and a record naming that sha and root.
+ *
+ * @param {string} toolkitRoot
+ * @returns {{ source: string, slug: {owner: string, repo: string}, commit: string, tag: string|null, trust: 'tagged'|'approved', entry: string }|null}
+ */
+export function readLauncherRecord(toolkitRoot) {
+  const root = path.resolve(toolkitRoot);
+  const entry = path.dirname(path.dirname(root));
+  if (path.basename(path.dirname(root)) !== 'node_modules' || path.basename(path.dirname(entry)) !== 'toolkits') return null;
+  const rec = readJson(path.join(entry, LAUNCHER_RECORD));
+  if (!rec || typeof rec !== 'object' || rec.schema !== LAUNCHER_RECORD_SCHEMA) return null;
+  if (typeof rec.commit !== 'string' || !/^[0-9a-f]{40}$/.test(rec.commit) || rec.commit !== path.basename(entry)) return null;
+  if (typeof rec.toolkitRoot !== 'string' || path.resolve(entry, rec.toolkitRoot) !== root) return null;
+  const slug = typeof rec.source === 'string' && /^github:/i.test(rec.source) ? parseRepoSlug(rec.source) : null;
+  if (!slug || (rec.trust !== 'tagged' && rec.trust !== 'approved')) return null;
+  if (rec.tag !== null && (typeof rec.tag !== 'string' || !RELEASE_TAG.test(rec.tag))) return null;
+  return { source: rec.source, slug, commit: rec.commit, tag: rec.tag, trust: rec.trust, entry };
+}
+
+/** @param {{owner: string, repo: string}} a @param {{owner: string, repo: string}} b */
+function sameSlug(a, b) {
+  return a.owner.toLowerCase() === b.owner.toLowerCase() && a.repo.toLowerCase() === b.repo.toLowerCase();
+}
+
+/**
+ * Doctor's informational note for a toolkit running from the launcher cache (#728); null otherwise.
+ *
+ * @param {ToolkitIdentity|null|undefined} identity
+ * @returns {string|null}
+ */
+export function formatLauncherNote(identity) {
+  const l = identity?.origin === 'launcher-cache' ? identity.launcher : null;
+  if (!l || !identity?.commit) return null;
+  const what = l.tag ? `${l.tag}, a tagged release when fetched` : 'an untagged commit you approved';
+  return `this CLI runs from the launcher cache — ${l.source} @ ${identity.commit.slice(0, 12)} (${what}), at ${l.entry}; \`--no-follow-lock\` runs the installed CLI instead of the lock's pin`;
 }
 
 /**
@@ -333,7 +409,7 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
 /**
  * Which repo does the committed lock name as the source of this render? `source` + `ref` are a PIN —
  * a claim that THAT repo holds THAT ref at THAT commit — so only a path that corroborated it may set
- * it. Exactly one does: `npm-install`, where `ls-remote` found the tag on that commit in that remote
+ * it. Only the remote origins do (`npm-install`, `launcher-cache`), where `ls-remote` found the tag on that commit in that remote
  * and `repo === lockRepo`. A checkout-`release` records `source: null` (`git describe` asks no remote),
  * and `origin`-derived slugs are nondeterministic and stay out (two clones of one commit must match).
  * The `repo` fallback is `.git`-gated for the same reason. DECISIONS #372/#317; F2/F11/F13 in provenance.test.mjs.
@@ -342,9 +418,9 @@ export function toolkitLockEntry(identity, { prevLock = null, newFiles = null, t
  * @returns {string|null}
  */
 function lockSourceRepo(identity) {
-  // A `release` block's `source` may name only a corroborated repo — `npm-install` alone establishes
+  // A `release` block's `source` may name only a corroborated repo — a remote origin alone establishes
   // one (`ls-remote` found the tag on that commit); a checkout asks no remote (#384 F13).
-  if (identity.status === 'release' && identity.origin !== 'npm-install') return null;
+  if (identity.status === 'release' && !REMOTE_ORIGINS.has(identity.origin)) return null;
   if (identity.lockRepo) return identity.lockRepo;
   if (identity.origin === 'checkout') return null;
   return identity.repo ?? null;
@@ -742,10 +818,10 @@ export function formatUnreleasedRefusal(identity, command) {
     'what produced it.',
     '',
   ];
-  // No tag to name: only a lookup that ran and succeeded (npm-install + lookupError null) proves "no
+  // No tag to name: only a lookup that ran and succeeded (remote origin + lookupError null) proves "no
   // tags exist" → strong sentence; a skipped/failed lookup or a checkout gets a hedge. Either way print
   // no pinned command that cannot resolve.
-  const provablyNone = identity.origin === 'npm-install' && identity.lookupError === null;
+  const provablyNone = REMOTE_ORIGINS.has(identity.origin) && identity.lookupError === null;
   if (!tag) {
     const noTag = provablyNone
       ? [
