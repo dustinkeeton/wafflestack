@@ -12,7 +12,7 @@ import { compareVersions } from './util.mjs';
  * The launcher (#726): an installed `wafflestack` runs the toolkit commit the repo's lock pins,
  * fetched once into the user cache and re-exec'd. Trust gate and decision order → AGENTS.md "Launcher".
  *
- * @typedef {{ kind: 'pin', source: string, commit: string, ref: string|null, version: string|null }} Pin
+ * @typedef {{ kind: 'pin', source: string, fetchSource: string, commit: string, ref: string|null, version: string|null }} Pin
  * @typedef {Pin | { kind: 'none', reason: string } | { kind: 'malformed', reason: string }} PinResult
  * @typedef {{ schema: number, source: string, commit: string, tag: string|null, trust: 'tagged'|'approved',
  *   version: string|null, resolved: string|null, toolkitRoot: string, fetchedAt: string, fetchedBy: string|null }} LauncherRecord
@@ -100,7 +100,8 @@ export function readPin(lockFile, { readFile = (p) => fs.readFileSync(p, 'utf8')
   if (!source) return { kind: 'malformed', reason: `toolkit.source ${JSON.stringify(t.source)} is not github:<owner>/<repo>` };
   const ref = typeof t.ref === 'string' && t.ref ? t.ref : null;
   const version = typeof lock.toolkitVersion === 'string' ? lock.toolkitVersion : null;
-  return { kind: 'pin', source, commit: t.commit, ref, version };
+  const slug = /** @type {{owner: string, repo: string}} */ (parseRepoSlug(t.source.trim()));
+  return { kind: 'pin', source, fetchSource: `github:${slug.owner}/${slug.repo}`, commit: t.commit, ref, version };
 }
 
 /**
@@ -519,7 +520,7 @@ export async function followLock(ctx) {
     const { pin, tag, trust } = decision;
     say(`wafflestack: fetching pinned toolkit ${pin.source}@${pin.commit.slice(0, 12)}${tag ? ` (${tag})` : ''} into ${path.join(ctx.root, 'toolkits')}`);
     try {
-      entry = fetchToolkit({ root: ctx.root, source: pin.source, commit: pin.commit, tag, trust, fetchedBy: ctx.version ?? null, runNpm: ctx.runNpm, env: ctx.env });
+      entry = fetchToolkit({ root: ctx.root, source: pin.fetchSource ?? pin.source, commit: pin.commit, tag, trust, fetchedBy: ctx.version ?? null, runNpm: ctx.runNpm, env: ctx.env });
     } catch (err) {
       say(`wafflestack: could not fetch the pinned toolkit: ${err instanceof Error ? err.message : String(err)} — pass ${NO_FOLLOW_FLAG} to run the installed version.`);
       return { action: 'exit', code: 1 };

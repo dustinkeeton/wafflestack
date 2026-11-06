@@ -2824,9 +2824,21 @@ describe('identity from a launcher-cache layout (#728)', () => {
     assert.equal(toolkitPinFromIdentity(cached), 'github:dustinkeeton/wafflestack#v0.12.0');
   });
 
-  test('a mixed-case fork keeps its case in the lock — the lowercased record source never rewrites it', () => {
-    const { root } = cacheLayout({ resolved: `git+ssh://git@github.com/Acme/MyFork.git#${SHA_A}`, record: { source: 'github:acme/myfork' } });
-    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]) });
+  test('a mixed-case fork keeps its case in the lock — a fetchToolkit round trip with npm echoing the spec', () => {
+    /** Like npm: `resolved` carries the casing of the spec it was handed. */
+    const echoNpm = (/** @type {string[]} */ args) => {
+      const prefix = args[args.indexOf('--prefix') + 1];
+      const [spec, sha] = args.at(-1).split('#');
+      write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name: 'wafflestack', version: '1.0.0' }));
+      write(prefix, 'node_modules/wafflestack/installer/cli.mjs', 'process.exit(0);\n');
+      write(prefix, 'node_modules/.package-lock.json', JSON.stringify({
+        lockfileVersion: 3,
+        packages: { 'node_modules/wafflestack': { version: '1.0.0', resolved: `git+ssh://git@github.com/${spec.slice('github:'.length)}.git#${sha}` } },
+      }));
+      return { status: 0, stderr: '' };
+    };
+    const cached = fetchToolkit({ root: tmp, source: 'github:Acme/MyFork', commit: SHA_A, tag: 'v1.0.0', trust: 'tagged', runNpm: echoNpm });
+    const id = resolveToolkitIdentity({ toolkitRoot: path.join(cached.dir, 'node_modules', 'wafflestack'), lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]) });
     assert.equal(id.origin, 'launcher-cache');
     assert.equal(id.repo, 'Acme/MyFork');
     assert.equal(toolkitLockEntry(id)?.source, 'github:Acme/MyFork');
