@@ -116,9 +116,9 @@ is what you reach for across a breaking one.
   Each wrapper now runs the CLI through one new key, `waffle.cmd` (default
   `npx --yes {{waffle.toolkitRef}}`, so the fallback bytes are unchanged), under a shared
   `waffle.cmdNote` paragraph: run `wafflestack` with the same arguments when it is on PATH,
-  carries the lock-following launcher (`wafflestack help` lists `--no-follow-lock`) and is not
-  older than the lock's `toolkitVersion`, so an older install never re-renders the repo to its own
-  toolkit; if it refuses or does not know the subcommand,
+  carries the lock-following launcher (`wafflestack help` lists `--no-follow-lock`) and either the
+  lock records a release pin or the installed version equals the lock's `toolkitVersion`, so an
+  install never re-renders the repo to its own, different toolkit; if it refuses or does not know the subcommand,
   report and stop, never retry through npx. `/waffle-upgrade` runs the installed CLI only when it
   is not older than the lock, and `/waffle-validate` keeps the pinned command.
   `waffle.cmd` must be one program (no `;`, `|`, `&`, `(`, `)`, `<`, `>`, `$(…)`); set `waffle.cmd: wafflestack` in

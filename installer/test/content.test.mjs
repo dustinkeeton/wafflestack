@@ -2747,7 +2747,9 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
         const text = fs.readFileSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'), 'utf8');
         assert.match(text, /only when all three hold:\s+`command -v wafflestack` succeeds/, name);
         assert.match(text, /`wafflestack help` lists `--no-follow-lock`/, name);
-        assert.match(text, /not older than `toolkitVersion` in `\.waffle\/waffle\.lock\.json`/, name);
+        assert.match(text, /`toolkit` block in `\.waffle\/waffle\.lock\.json` has `status: release` and a `commit`/, name);
+        assert.match(text, /equals the lock's `toolkitVersion`/, name);
+        assert.doesNotMatch(text, /not older than `toolkitVersion`/, name);
         assert.doesNotMatch(text, /If `command -v wafflestack` succeeds, run each command/, name);
         assert.match(text, /starting with\s+`npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0`/, name);
         assert.match(text, /report its message to the\s+user and stop\. Do not retry through npx/, name);

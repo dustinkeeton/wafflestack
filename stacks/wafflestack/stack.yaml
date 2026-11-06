@@ -75,7 +75,8 @@ config:
       is on PATH (#727). The default is `npx --yes` plus `waffle.toolkitRef`, so the fallback runs
       the toolkit release that rendered this repo. The skills run `wafflestack <sub>` instead only
       when an installed `wafflestack` carries the lock-following launcher (#726: `wafflestack help`
-      lists `--no-follow-lock`) and is not older than the lock's `toolkitVersion`.
+      lists `--no-follow-lock`) and either the lock records a release pin or the installed version
+      equals the lock's `toolkitVersion`.
       To pin a different toolkit, set `waffle.toolkitRef`, not this key — `upgrade` reconciles that
       pin and never this one. To always use your installed launcher, set `waffle.cmd: wafflestack`
       in `waffle.local.yaml`.
@@ -87,10 +88,12 @@ config:
     default: |-
       **Which CLI to run.** Use an installed `wafflestack` only when all three hold:
       `command -v wafflestack` succeeds; `wafflestack help` lists `--no-follow-lock` (an install
-      without it predates the lock-following launcher and runs its own toolkit); and the version on
-      its `wafflestack vX.Y.Z` line is not older than `toolkitVersion` in `.waffle/waffle.lock.json`
-      (a checkout install, or a lock with no pin, runs the installed toolkit even with the
-      launcher). Then run each command below as `wafflestack` followed by the same arguments.
+      without it predates the lock-following launcher and runs its own toolkit); and either the
+      `toolkit` block in `.waffle/waffle.lock.json` has `status: release` and a `commit` (the
+      launcher then runs that pinned release), or the version on its `wafflestack vX.Y.Z` line
+      equals the lock's `toolkitVersion` (any other lock makes the launcher run the installed
+      toolkit, which would re-render the repo to that version). Then run each command below as
+      `wafflestack` followed by the same arguments.
       Otherwise run the command as written, starting with `{{waffle.cmd}}`.
       Either way, run it as one command, not inside `$(…)` and not chained with `&&`. If
       `wafflestack` refuses (an untrusted or unreleased pin, a pin it cannot fetch while offline, a
