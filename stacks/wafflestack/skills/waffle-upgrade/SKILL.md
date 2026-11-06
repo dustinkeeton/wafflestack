@@ -23,14 +23,17 @@ toolkit and version in one step. Run the pinned command below unless all three o
 2. The version on the `wafflestack vX.Y.Z` line of `wafflestack help` is equal to or newer than
    `toolkitVersion` in `.waffle/waffle.lock.json`. An older one would re-render the repo to the
    older toolkit (it reports a `downgrade`).
-3. The pinned command below names `github:dustinkeeton/wafflestack#`. A repo pinned to a fork, a
-   local path or an unpinned ref keeps that toolkit: an installed CLI would render its own
-   toolkit and rewrite the pin to it.
+3. The pinned command below names `github:dustinkeeton/wafflestack#v` followed by a version: a
+   release tag. A repo pinned to a fork, a local path, a branch or commit (`#main`, `#<sha>`) or
+   an unpinned ref keeps that toolkit: an installed CLI would render its own release instead,
+   and for a fork it would also rewrite the pin to it.
 
-When all three hold, run `wafflestack upgrade`. If it printed `a newer toolkit release exists:
-vX.Y.Z — … run:` followed by a command, run that command verbatim and review its output instead
-(escalation item 1 below); otherwise its result is the version you moved to. Skip escalation
-item 2: it probes the npx path, not the installed CLI. Otherwise run:
+When all three hold, run `wafflestack upgrade`, then escalate exactly as below: if it printed
+`a newer toolkit release exists: vX.Y.Z — … run:` followed by a command, run that command
+verbatim and review its output instead (escalation item 1); if it moved the version, that is
+the version you moved to; if it said `already on toolkit X` and printed no such line, continue
+with escalation item 2 — the unpinned probe finds the latest release whichever CLI ran first.
+Otherwise run:
 
 ```bash
 npx --yes {{waffle.toolkitRef}} upgrade

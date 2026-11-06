@@ -2738,8 +2738,11 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
     assert.doesNotMatch(upgrade, /\{\{waffle\.cmdNote\}\}/);
     assert.match(upgrade, /never\s+runs at the lock's pin/);
     assert.match(upgrade, /equal to or newer than\s+`toolkitVersion`/);
-    assert.match(upgrade, /The pinned command below names `github:dustinkeeton\/wafflestack#`/);
-    assert.match(upgrade, /run `wafflestack upgrade`\. If it printed `a newer toolkit release exists:/);
+    assert.match(upgrade, /The pinned command below names `github:dustinkeeton\/wafflestack#v` followed by a version/);
+    assert.match(upgrade, /a branch or commit \(`#main`, `#<sha>`\)/);
+    assert.match(upgrade, /run `wafflestack upgrade`, then escalate exactly as below: if it printed\s+`a newer toolkit release exists:/);
+    assert.match(upgrade, /printed no such line, continue\s+with escalation item 2/);
+    assert.doesNotMatch(upgrade, /Skip escalation\s+item 2/);
     assert.doesNotMatch(upgrade, /first line of `wafflestack help`/);
     assert.doesNotMatch(upgrade, /the escalation below does not apply/);
     const validate = source('waffle-validate');

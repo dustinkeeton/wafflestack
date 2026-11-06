@@ -121,7 +121,9 @@ is what you reach for across a breaking one.
   it refuses or does not know the subcommand, report and stop, never retry through npx.
   `/waffle-upgrade` and `/waffle-validate` always name `npx --yes {{waffle.toolkitRef}}`, so a
   `waffle.cmd` override never reaches them; `/waffle-upgrade` runs the installed CLI only when it
-  is not older than the lock and the repo is pinned to the upstream toolkit. `waffle.cmd` must be
+  is not older than the lock and the repo is pinned to an upstream release tag
+  (`github:dustinkeeton/wafflestack#v…`), and still escalates to the unpinned probe when the
+  installed CLI cannot tell whether a newer release exists. `waffle.cmd` must be
   one program (no `;`, `|`, `&`, `(`, `)`, `<`, `>`, `$(…)`); set `waffle.cmd: wafflestack` in
   `waffle.local.yaml` to always use the launcher in the eight wrappers.
   **Consumer impact:** re-render only — the ten `/waffle-*` skill hashes move in the lock.
