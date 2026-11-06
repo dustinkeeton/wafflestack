@@ -13,7 +13,7 @@ import {
   resolveConfigFile,
   loadProjectConfig,
 } from './project.mjs';
-import { describeToolkitProvenance } from './toolkit-ref.mjs';
+import { describeToolkitProvenance, formatLauncherNote } from './toolkit-ref.mjs';
 import { loadToolkitWithSources } from './toolkit.mjs';
 import { isGeneratedDoc } from './waffledocs.mjs';
 import { computeSelection, includeEjectOverlaps, formatEjectOverlap } from './refs.mjs';
@@ -130,6 +130,8 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
     identity: toolkitIdentity,
   });
   notes.push(...toolkitProvenance.notes);
+  const launcherNote = formatLauncherNote(toolkitIdentity);
+  if (launcherNote) notes.push(launcherNote);
   // Informational only (#827): where each upstream-pinned skill's copy came from.
   for (const e of upstream) notes.push(`upstream-pinned: ${e.item} — copied from ${e.repo}/${e.path} @ ${String(e.commit).slice(0, 12)}`);
   // Informational only (#608): never flips `ok`, and distinct from the lock-vs-CLI skew note above.

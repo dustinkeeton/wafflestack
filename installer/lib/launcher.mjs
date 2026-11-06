@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { LOCK_FILE, LEGACY_ROOT_LOCK_FILE, LEGACY_LOCK_FILE } from './project.mjs';
-import { parseRepoSlug, httpsUrl, parseLsRemoteTags, gitLsRemoteTags, commitFromNpmLockfile } from './toolkit-ref.mjs';
+import { parseRepoSlug, httpsUrl, parseLsRemoteTags, gitLsRemoteTags, commitFromNpmLockfile, LAUNCHER_RECORD, LAUNCHER_RECORD_SCHEMA } from './toolkit-ref.mjs';
 import { compareVersions } from './util.mjs';
 
 /**
@@ -27,8 +27,7 @@ import { compareVersions } from './util.mjs';
  *   | { action: 'ask', pin: Pin, reason: string, belowFloor: boolean, entry?: CacheEntry, warning?: string|null }} Decision
  */
 
-export const LAUNCHER_RECORD = 'launcher.json';
-export const LAUNCHER_RECORD_SCHEMA = 1;
+export { LAUNCHER_RECORD, LAUNCHER_RECORD_SCHEMA };
 export const LAUNCHED_ENV = 'WAFFLESTACK_LAUNCHED';
 export const NO_FOLLOW_ENV = 'WAFFLESTACK_NO_FOLLOW_LOCK';
 export const NO_FOLLOW_FLAG = '--no-follow-lock';
