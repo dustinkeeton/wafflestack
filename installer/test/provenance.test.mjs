@@ -34,6 +34,7 @@ import { upgrade, diffToolkit, reconcileToolkitRefPins } from '../lib/upgrade.mj
 import { doctor } from '../lib/doctor.mjs';
 import { reinstall } from '../lib/uninstall.mjs';
 import { eject } from '../lib/eject.mjs';
+import { fetchToolkit } from '../lib/launcher.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #373/#374/#372 — toolkit provenance: identity resolution, the `ref` string format, the lock
@@ -2730,6 +2731,27 @@ describe('identity from a launcher-cache layout (#728)', () => {
     assert.equal(id.status, 'release');
     assert.equal(id.ref, 'github:dustinkeeton/wafflestack#v0.12.0');
     assert.deepEqual(lsRemote.calls, [UPSTREAM_HTTPS]);
+  });
+
+  test('reads the record `fetchToolkit` actually writes — the writer/reader round trip', () => {
+    const fakeNpm = (/** @type {string[]} */ args) => {
+      const prefix = args[args.indexOf('--prefix') + 1];
+      write(prefix, 'node_modules/wafflestack/package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0' }));
+      write(prefix, 'node_modules/wafflestack/installer/cli.mjs', 'process.exit(0);\n');
+      write(prefix, 'node_modules/.package-lock.json', JSON.stringify({
+        lockfileVersion: 3,
+        packages: { 'node_modules/wafflestack': { version: '0.12.0', resolved: `git+ssh://git@github.com/dustinkeeton/wafflestack.git#${SHA_A}` } },
+      }));
+      return { status: 0, stderr: '' };
+    };
+    const cached = fetchToolkit({ root: tmp, source: 'github:dustinkeeton/wafflestack', commit: SHA_A, tag: 'v0.12.0', trust: 'tagged', runNpm: fakeNpm });
+    const root = path.join(cached.dir, 'node_modules', 'wafflestack');
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote(TAGS) });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.status, 'release');
+    assert.equal(id.launcher?.trust, 'tagged');
+    const offline = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork, offline: true });
+    assert.equal(offline.origin, 'launcher-cache');
   });
 
   test('the remote decides, never the record: untagged → unreleased, failed lookup → unverified', () => {
