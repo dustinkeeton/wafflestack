@@ -2,8 +2,9 @@ name: wafflestack
 description: >-
   Self-referential stack — one user-invocable `/waffle-*` skill per wafflestack
   CLI subcommand (init, setup, install, render, upgrade, doctor, eject,
-  validate, report, toggle). Each skill is a thin wrapper that shells out to
-  `npx <waffle.toolkitRef> <sub>` and interprets the output with agent judgment,
+  validate, report, toggle). Each skill is a thin wrapper that runs the CLI —
+  an installed `wafflestack` when one is on PATH, else `waffle.cmd` (default
+  `npx --yes <waffle.toolkitRef>`) — and interprets the output with agent judgment,
   so the lifecycle commands are one keystroke away inside any consuming repo.
   `/waffle-report` is the one that leaves the repo: it wraps `report` (redacted
   diagnostics) and files a toolkit bug UPSTREAM, in the toolkit's own tracker.
@@ -28,7 +29,8 @@ config:
     required: false
     default: github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}
     description: >-
-      npx spec every `/waffle-*` skill invokes as `npx --yes <ref> <subcommand>` — the same knob
+      npx spec `waffle.cmd`'s default runs (`npx --yes <ref> <subcommand>`) whenever a `/waffle-*`
+      skill finds no installed `wafflestack` on PATH — the same knob
       as the doctor CI workflow's `doctor.toolkitRef`. The default is PINNED to the toolkit release
       that rendered your repo: `{{harness.toolkitVersion}}` is the running toolkit's package version
       — the value the lock records as `toolkitVersion` — so an unset key renders as
@@ -60,6 +62,37 @@ config:
       case where unreleased content is the point. The toolkit's OWN repo is also the one place an
       unpinned value is right: its default branch IS the tree under test, and a version-tag pin
       would name a tag that does not exist yet on every release-bump PR.
+  waffle.cmd:
+    required: false
+    default: npx --yes {{waffle.toolkitRef}}
+    pattern: '^(?!.*(?:\$\(|\$\{\{|`))(?!\s)(?!.*\s$)[^;|&\r\n]+$'
+    patternHint: >-
+      one program and its leading arguments — no `;`, `|`, `&`, `$(…)`, backticks, `${{`, newlines,
+      or leading/trailing whitespace. Every `/waffle-*` skill appends a subcommand to it, so it must
+      stay a single command a permission allowlist can match.
+    description: >-
+      The command prefix every `/waffle-*` skill runs the CLI with when no installed `wafflestack`
+      is on PATH (#727). The default is `npx --yes` plus `waffle.toolkitRef`, so the fallback runs
+      the toolkit release that rendered this repo. When `command -v wafflestack` succeeds the skills
+      run `wafflestack <sub>` instead: the installed launcher follows this repo's lock pin (#726).
+      To pin a different toolkit, set `waffle.toolkitRef`, not this key — `upgrade` reconciles that
+      pin and never this one. To always use your installed launcher, set `waffle.cmd: wafflestack`
+      in `waffle.local.yaml`.
+  waffle.cmdNote:
+    required: false
+    description: >-
+      The "which CLI to run" paragraph placed above each `/waffle-*` skill's first command, built
+      from `waffle.cmd`. Set `waffle.cmd`, not this.
+    default: |-
+      **Which CLI to run.** If `command -v wafflestack` succeeds, run each command below as
+      `wafflestack` followed by the same arguments: the installed CLI follows this repo's lock and
+      runs the toolkit it pins. Otherwise run the command as written, starting with
+      `{{waffle.cmd}}`.
+      Either way, run it as one command, not inside `$(…)` and not chained with `&&`. If
+      `wafflestack` refuses (an untrusted or unreleased pin, a pin it cannot fetch while offline, a
+      malformed lock) or fails because it does not know the subcommand, report its message to the
+      user and stop. Do not retry through npx to get past a refusal: the refusal is the installed
+      CLI's trust check doing its job, and its message names the remedies.
   waffleView.editor:
     required: false
     default: cursor

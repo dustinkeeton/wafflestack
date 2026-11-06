@@ -27,9 +27,11 @@ agent, or a `files/` payload.
   ```
 - **Via the pinned ref (published toolkit):** confirms the release itself is valid:
   ```bash
-  npx --yes {{waffle.toolkitRef}} validate
+  {{waffle.cmd}} validate
   ```
   Point `{{waffle.toolkitRef}}` at a local path to validate a fork without publishing.
+  Run this line as written even when `wafflestack` is on PATH: an installed `wafflestack validate`
+  checks the installed toolkit, not the release this repo pins.
 
 ## Interpret the result
 

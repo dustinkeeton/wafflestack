@@ -16,8 +16,10 @@ section instead. Safe to re-run.
 
 ## Run it
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} init
+{{waffle.cmd}} init
 ```
 
 Pass `--gitignore` through if `$ARGUMENTS` asks for it — that also appends the
@@ -26,7 +28,7 @@ stack-independent baseline to `.gitignore`: `.waffle/waffle.local.yaml`,
 yet, since no stack is chosen; `install --gitignore` adds it later):
 
 ```bash
-npx --yes {{waffle.toolkitRef}} init --gitignore
+{{waffle.cmd}} init --gitignore
 ```
 
 ## After it runs

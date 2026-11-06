@@ -29,8 +29,10 @@ running:
 
 ## Run it
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} eject <skills/NAME | agents/NAME | files/PATH>
+{{waffle.cmd}} eject <skills/NAME | agents/NAME | files/PATH>
 ```
 
 ## After it runs

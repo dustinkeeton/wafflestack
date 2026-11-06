@@ -30,8 +30,10 @@ item you are unsure of, run **`/waffle-setup`** first to confirm the exact ref.
 
 ## Run it
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} install <refs…> [--force] [--gitignore]
+{{waffle.cmd}} install <refs…> [--force] [--gitignore]
 ```
 
 ## Interpret the result

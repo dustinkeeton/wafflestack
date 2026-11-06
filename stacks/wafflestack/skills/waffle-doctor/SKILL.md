@@ -15,8 +15,10 @@ build locally.
 
 ## Run it
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} doctor
+{{waffle.cmd}} doctor
 ```
 
 Pass `--allow-missing` through when `$ARGUMENTS` asks (or when diagnosing a repo that
@@ -38,7 +40,7 @@ touched. Reach for it when you suspect a change was made to `.waffle/waffle.yaml
 `.waffle/extensions/`, or `stacks/**` and never applied:
 
 ```bash
-npx --yes {{waffle.toolkitRef}} doctor --verify-render
+{{waffle.cmd}} doctor --verify-render
 ```
 
 It also composes with `--allow-missing` to give a repo that commits **only** the lock a real

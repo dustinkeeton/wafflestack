@@ -15,14 +15,29 @@ before anything is committed.
 
 ## Run it
 
+**Which CLI to run.** `upgrade` is the one lifecycle command an installed `wafflestack` never
+runs at the lock's pin: it runs the INSTALLED toolkit, so it moves this repo to the installed
+version in one step. That is only an upgrade when the installed version is not older than the
+lock's. So if `command -v wafflestack` succeeds:
+
+1. Read the installed version from the first line of `wafflestack help` (`wafflestack vX.Y.Z`)
+   and the lock's from `toolkitVersion` in `.waffle/waffle.lock.json`.
+2. Installed version equal or newer → run `wafflestack upgrade`. Its result is the version you
+   moved to; the escalation below does not apply.
+3. Installed version older → do **not** run it: it would re-render the repo to the older toolkit
+   (it reports a `downgrade`). Tell the user to update their installed `wafflestack`, or run the
+   command below instead.
+
+Without `wafflestack` on PATH, run:
+
 ```bash
-npx --yes {{waffle.toolkitRef}} upgrade
+{{waffle.cmd}} upgrade
 ```
 
 ## The version this moves TO is the version you RAN (read this before reporting "already up to date")
 
-`upgrade` renders the content of the toolkit npx just fetched — it cannot render a version it is
-not. And since #469 `waffle.toolkitRef` **defaults to a pin** — the release that rendered this repo
+`upgrade` renders the content of the toolkit the command above just fetched — it cannot render a
+version it is not. And since #469 `waffle.toolkitRef` **defaults to a pin** — the release that rendered this repo
 — so the command above normally fetches the toolkit you are already on, and it reports
 `already on toolkit X`. **That is the expected first result, not a misconfiguration and not "you
 are up to date"**: an upgrade from a pinned ref is always a two-step move, and step 1 is asking the

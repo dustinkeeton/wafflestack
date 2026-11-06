@@ -112,6 +112,17 @@ is what you reach for across a breaking one.
 
 ### Changed
 
+- **`/waffle-*` skills run an installed `wafflestack` when it is on PATH (#727, part of #725).**
+  Each wrapper now runs the CLI through one new key, `waffle.cmd` (default
+  `npx --yes {{waffle.toolkitRef}}`, so the fallback bytes are unchanged), under a shared
+  `waffle.cmdNote` paragraph: if `command -v wafflestack` succeeds, run `wafflestack` with the
+  same arguments, which follows the lock's pin; if it refuses or does not know the subcommand,
+  report and stop, never retry through npx. `/waffle-upgrade` runs the installed CLI only when it
+  is not older than the lock, and `/waffle-validate` keeps the pinned command.
+  `waffle.cmd` must be one program (no `;`, `|`, `&`, `$(…)`); set `waffle.cmd: wafflestack` in
+  `waffle.local.yaml` to always use the launcher.
+  **Consumer impact:** re-render only — the ten `/waffle-*` skill hashes move in the lock.
+
 - **`upstream:check` and `upstream:bump` fix two pin checks (#832, #833).** A pin behind a merged
   side branch that forked before it now reports `behind`, not `diverged`, and `bump` moves it to the
   default branch's head; `bump --commit` refuses a target whose `LICENSE` matches neither the pinned
