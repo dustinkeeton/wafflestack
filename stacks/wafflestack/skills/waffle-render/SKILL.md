@@ -15,8 +15,10 @@ previously-managed files that are no longer produced. It takes **no refs** (use
 
 ## Run it
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} render
+{{waffle.cmd}} render
 ```
 
 `bake` is a pure alias — `wafflestack bake` is `wafflestack render`, same flags, same behavior.

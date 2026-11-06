@@ -81,6 +81,11 @@ trusted (by default only `github:dustinkeeton/wafflestack`; add your fork to `tr
 at that commit. Otherwise it asks once in a terminal, or refuses. `--no-follow-lock` (or
 `WAFFLESTACK_NO_FOLLOW_LOCK=1`) runs the installed version instead; `wafflestack upgrade` moves
 the pin.
+Eight `/waffle-*` skills use an installed `wafflestack` only when it is the same release as their
+pinned `npx` command (the upstream release tag at the lock's `toolkitVersion`); otherwise they run
+that command (`waffle.cmd`). `/waffle-validate` always runs the pinned command, and
+`/waffle-upgrade` uses an installed release only when it is not older than the lock and the repo
+is pinned to an upstream release tag.
 
 > [release resolution](docs/upgrades.md#release-resolution).
 

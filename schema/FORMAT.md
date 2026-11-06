@@ -1515,7 +1515,11 @@ is what lets the two `toolkitRef` keys default to
 `github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}` — `doctor.toolkitRef` in the
 `github-workflow` stack (#461) and `waffle.toolkitRef` in the `wafflestack` stack (#469) — so the
 shipped `waffle-doctor.yml` pins CI, and every rendered `/waffle-*` skill pins the local `npx`, to
-the release that rendered the lock, and a re-render (`upgrade`) moves both pins. A library caller
+the release that rendered the lock, and a re-render (`upgrade`) moves both pins. The skills reach
+that `npx` through `waffle.cmd` (default `npx --yes {{waffle.toolkitRef}}`), and run an
+installed `wafflestack` instead only when its version equals the lock's `toolkitVersion` and the
+command is the default upstream pin at that version, so it is the same release (#727).
+`/waffle-upgrade` and `/waffle-validate` name `npx --yes {{waffle.toolkitRef}}` directly (#858). A library caller
 that renders without a `toolkitVersion` leaves the placeholder unexpanded.
 
 These splice into the `uses:` and `anthropic_api_key:` lines of `waffle-label-hook.yml` and

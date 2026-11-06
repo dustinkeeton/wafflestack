@@ -15,14 +15,34 @@ before anything is committed.
 
 ## Run it
 
+**Which CLI to run.** `upgrade` is the one lifecycle command an installed `wafflestack` never
+runs at the lock's pin: it runs the INSTALLED toolkit, so it moves this repo to the installed
+toolkit and version in one step. Run the pinned command below unless all three of these hold:
+
+1. `command -v wafflestack` succeeds.
+2. The version on the `wafflestack vX.Y.Z` line of `wafflestack help` is equal to or newer than
+   `toolkitVersion` in `.waffle/waffle.lock.json`. An older one would re-render the repo to the
+   older toolkit (it reports a `downgrade`).
+3. The pinned command below names `github:dustinkeeton/wafflestack#v` followed by a version: a
+   release tag. A repo pinned to a fork, a local path, a branch or commit (`#main`, `#<sha>`) or
+   an unpinned ref keeps that toolkit: an installed CLI would render its own release instead,
+   and for a fork it would also rewrite the pin to it.
+
+When all three hold, run `wafflestack upgrade`, then escalate exactly as below: if it printed
+`a newer toolkit release exists: vX.Y.Z — … run:` followed by a command, run that command
+verbatim and review its output instead (escalation item 1); if it moved the version, that is
+the version you moved to; if it said `already on toolkit X` and printed no such line, continue
+with escalation item 2 — the unpinned probe finds the latest release whichever CLI ran first.
+Otherwise run:
+
 ```bash
 npx --yes {{waffle.toolkitRef}} upgrade
 ```
 
 ## The version this moves TO is the version you RAN (read this before reporting "already up to date")
 
-`upgrade` renders the content of the toolkit npx just fetched — it cannot render a version it is
-not. And since #469 `waffle.toolkitRef` **defaults to a pin** — the release that rendered this repo
+`upgrade` renders the content of the toolkit the command above just fetched — it cannot render a
+version it is not. And since #469 `waffle.toolkitRef` **defaults to a pin** — the release that rendered this repo
 — so the command above normally fetches the toolkit you are already on, and it reports
 `already on toolkit X`. **That is the expected first result, not a misconfiguration and not "you
 are up to date"**: an upgrade from a pinned ref is always a two-step move, and step 1 is asking the

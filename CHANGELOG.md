@@ -112,6 +112,22 @@ is what you reach for across a breaking one.
 
 ### Changed
 
+- **`/waffle-*` skills run an installed `wafflestack` when it is the pinned release (#727, #858,
+  part of #725).** Eight wrappers now run the CLI through one new key, `waffle.cmd` (default
+  `npx --yes {{waffle.toolkitRef}}`, so the fallback bytes are unchanged), under a shared
+  `waffle.cmdNote` paragraph: run `wafflestack` with the same arguments only when it is on PATH,
+  its version equals the lock's `toolkitVersion`, and the command is the default upstream pin at
+  that version, so the installed CLI is the same release; otherwise run the command as written. If
+  it refuses or does not know the subcommand, report and stop, never retry through npx.
+  `/waffle-upgrade` and `/waffle-validate` always name `npx --yes {{waffle.toolkitRef}}`, so a
+  `waffle.cmd` override never reaches them; `/waffle-upgrade` runs the installed CLI only when it
+  is not older than the lock and the repo is pinned to an upstream release tag
+  (`github:dustinkeeton/wafflestack#v…`), and still escalates to the unpinned probe when the
+  installed CLI cannot tell whether a newer release exists. `waffle.cmd` must be
+  one program (no `;`, `|`, `&`, `(`, `)`, `<`, `>`, `$(…)`); set `waffle.cmd: wafflestack` in
+  `waffle.local.yaml` to always use the launcher in the eight wrappers.
+  **Consumer impact:** re-render only — the ten `/waffle-*` skill hashes move in the lock.
+
 - **`upstream:check` and `upstream:bump` fix two pin checks (#832, #833).** A pin behind a merged
   side branch that forked before it now reports `behind`, not `diverged`, and `bump` moves it to the
   default branch's head; `bump --commit` refuses a target whose `LICENSE` matches neither the pinned

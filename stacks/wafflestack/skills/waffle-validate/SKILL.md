@@ -30,6 +30,8 @@ agent, or a `files/` payload.
   npx --yes {{waffle.toolkitRef}} validate
   ```
   Point `{{waffle.toolkitRef}}` at a local path to validate a fork without publishing.
+  Run this line as written even when `wafflestack` is on PATH: an installed `wafflestack validate`
+  checks the installed toolkit, not the release this repo pins.
 
 ## Interpret the result
 

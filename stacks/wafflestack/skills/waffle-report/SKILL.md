@@ -61,8 +61,10 @@ Declining the gate leaves GitHub untouched — nothing filed, nothing uploaded; 
 
 ### 1. Collect the diagnostics
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} report
+{{waffle.cmd}} report
 ```
 
 It prints a collapsed `<details>` block and exits 0 **even when doctor is red** — a red doctor is

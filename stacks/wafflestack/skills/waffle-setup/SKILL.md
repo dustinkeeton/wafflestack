@@ -18,8 +18,10 @@ so a re-run curates an update pass.
 
 ## Run it
 
+{{waffle.cmdNote}}
+
 ```bash
-npx --yes {{waffle.toolkitRef}} setup
+{{waffle.cmd}} setup
 ```
 
 Pass `--gitignore` through if `$ARGUMENTS` asks for it — it appends the stack-independent

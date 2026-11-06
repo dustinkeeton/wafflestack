@@ -2648,11 +2648,19 @@ describe('/waffle-* skills: the npx spec is pinned to the rendering toolkit rele
   // Every wrapper shells out through the same key, so the pin has to reach all ten.
   const SKILLS = ['waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render', 'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate', 'waffle-report', 'waffle-toggle'];
 
-  test('every shipped wrapper invokes `{{waffle.toolkitRef}}`, whose default carries a version-tag ref', () => {
+  test('every shipped wrapper invokes `{{waffle.cmd}}` or, for upgrade and validate, the pinned npx command', () => {
+    const PINNED = ['waffle-upgrade', 'waffle-validate'];
     for (const name of SKILLS) {
       const source = fs.readFileSync(path.join(STACKS, 'wafflestack', 'skills', name, 'SKILL.md'), 'utf8');
-      assert.match(source, /npx --yes \{\{waffle\.toolkitRef\}\} /, `${name} shells out through the key`);
+      if (PINNED.includes(name)) {
+        assert.match(source, /^\s*npx --yes \{\{waffle\.toolkitRef\}\} [a-z]/m, `${name} names the pinned command`);
+        assert.doesNotMatch(source, /\{\{waffle\.cmd\}\}/, `${name} never runs an override of waffle.cmd`);
+      } else {
+        assert.match(source, /^\s*\{\{waffle\.cmd\}\} [a-z]/m, `${name} shells out through the key`);
+        assert.doesNotMatch(source, /npx --yes \{\{waffle\.toolkitRef\}\}/, `${name} has no bare npx site left`);
+      }
     }
+    assert.equal(stackYaml.config['waffle.cmd'].default, 'npx --yes {{waffle.toolkitRef}}');
     const spec = stackYaml.config['waffle.toolkitRef'];
     assert.equal(spec.default, 'github:dustinkeeton/wafflestack#v{{harness.toolkitVersion}}');
     assert.match(spec.description, /default branch/i, 'the description says what an unpinned value runs');
@@ -2701,6 +2709,124 @@ describe('/waffle-* skills: the npx spec is pinned to the rendering toolkit rele
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `waffle.cmd` (#727)', () => {
+  const NOTED = ['waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render', 'waffle-doctor', 'waffle-eject', 'waffle-report', 'waffle-toggle'];
+  const source = (name) => fs.readFileSync(path.join(STACKS, 'wafflestack', 'skills', name, 'SKILL.md'), 'utf8');
+  const renderFixture = (extraConfig = []) => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-skills-cmd-'));
+    fs.mkdirSync(path.join(cwd, '.waffle'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.waffle', 'waffle.yaml'),
+      ['targets: [claude]', 'stacks: [wafflestack]', 'config:', '  project:', '    name: EvalFixture', ...extraConfig, ''].join('\n'),
+    );
+    return { cwd, result: renderProject({ toolkitRoot: REPO_ROOT, cwd, toolkitVersion: '0.12.0' }) };
+  };
+
+  test('the shared note sits once above the first command in every launcher-following wrapper', () => {
+    for (const name of NOTED) {
+      const text = source(name);
+      assert.equal(text.split('{{waffle.cmdNote}}').length, 2, `${name}: exactly one note`);
+      assert.ok(text.indexOf('{{waffle.cmdNote}}') < text.indexOf('{{waffle.cmd}} '), `${name}: note before the first command`);
+    }
+  });
+
+  test('upgrade and validate carry their own guidance instead of the note', () => {
+    const upgrade = source('waffle-upgrade');
+    assert.doesNotMatch(upgrade, /\{\{waffle\.cmdNote\}\}/);
+    assert.match(upgrade, /never\s+runs at the lock's pin/);
+    assert.match(upgrade, /equal to or newer than\s+`toolkitVersion`/);
+    assert.match(upgrade, /The pinned command below names `github:dustinkeeton\/wafflestack#v` followed by a version/);
+    assert.match(upgrade, /a branch or commit \(`#main`, `#<sha>`\)/);
+    assert.match(upgrade, /run `wafflestack upgrade`, then escalate exactly as below: if it printed\s+`a newer toolkit release exists:/);
+    assert.match(upgrade, /printed no such line, continue\s+with escalation item 2/);
+    assert.doesNotMatch(upgrade, /Skip escalation\s+item 2/);
+    assert.doesNotMatch(upgrade, /first line of `wafflestack help`/);
+    assert.doesNotMatch(upgrade, /the escalation below does not apply/);
+    const validate = source('waffle-validate');
+    assert.doesNotMatch(validate, /\{\{waffle\.cmdNote\}\}/);
+    assert.match(validate, /checks the installed toolkit, not the release this repo pins/);
+  });
+
+  test('the rendered note names the PATH probe, the pinned fallback and report-and-stop on a refusal', () => {
+    const { cwd, result } = renderFixture();
+    try {
+      assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+      for (const name of NOTED) {
+        const text = fs.readFileSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'), 'utf8');
+        assert.match(text, /Run the command as written, starting with\s+`npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0`, unless/, name);
+        assert.match(text, /`command -v wafflestack` succeeds; the version on the\s+`wafflestack vX\.Y\.Z` line of `wafflestack help` equals `toolkitVersion`/, name);
+        assert.match(text, /starts with\s+`npx --yes github:dustinkeeton\/wafflestack#v` followed by that same version/, name);
+        assert.doesNotMatch(text, /--no-follow-lock|status: release|not older than/, name);
+        assert.match(text, /report its message to the\s+user and stop\. Do not retry through npx/, name);
+        assert.deepEqual([...placeholderKeys(text)], [], `${name}: no leftover placeholders`);
+      }
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test('`waffle.cmd: wafflestack` renders the installed launcher into every command line', () => {
+    const { cwd, result } = renderFixture(['  waffle:', '    cmd: wafflestack']);
+    try {
+      assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
+      const text = fs.readFileSync(path.join(cwd, '.claude', 'skills', 'waffle-render', 'SKILL.md'), 'utf8');
+      assert.match(text, /^wafflestack render$/m);
+      assert.doesNotMatch(text, /^npx --yes/m);
+      for (const sub of ['upgrade', 'validate']) {
+        const pinned = fs.readFileSync(path.join(cwd, '.claude', 'skills', `waffle-${sub}`, 'SKILL.md'), 'utf8');
+        assert.match(pinned, new RegExp(`^\\s*npx --yes github:dustinkeeton/wafflestack#v0\\.12\\.0 ${sub}$`, 'm'), `${sub} keeps the pinned command (#858)`);
+        assert.doesNotMatch(pinned, new RegExp(`^\\s*wafflestack ${sub}$`, 'm'), `${sub} never renders the override`);
+      }
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  for (const bad of ['wafflestack; rm -rf .', 'wafflestack && echo hi', 'npx --yes $(echo x)', 'wafflestack | tee', ' wafflestack', 'npx --yes x <(touch y)', 'wafflestack > out', 'wafflestack < in']) {
+    test(`a compound \`waffle.cmd\` is refused at render: ${JSON.stringify(bad)}`, () => {
+      const { cwd, result } = renderFixture(['  waffle:', `    cmd: ${JSON.stringify(bad)}`]);
+      try {
+        assert.equal(result.ok, false, 'render must refuse');
+        assert.match(JSON.stringify(result.errors), /waffle\.cmd/);
+      } finally {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+  }
+
+  const BARE_NPX = /npx --yes (?:github:|\{\{(?:waffle|doctor)\.toolkitRef\}\})/;
+  const ALLOWED = [
+    /^stacks\/wafflestack\/stack\.yaml$/,
+    /^stacks\/orchestration\/stack\.yaml$/,
+    /^stacks\/github-workflow\/files\/\.github\/workflows\/waffle-doctor\.yml$/,
+    /^stacks\/[^/]+\/evals\/[^/]+\.eval\.yaml$/,
+    /^stacks\/wafflestack\/mods\/waffle-view\/hooks\/waffle-view\.test\.ts$/,
+  ];
+  const PINNED_SITE = /^stacks\/wafflestack\/skills\/waffle-(upgrade|validate)\/SKILL\.md:npx --yes \{\{waffle\.toolkitRef\}\} \1$/;
+  const bareSites = (files) =>
+    files.flatMap(({ file, text }) =>
+      text.split('\n').flatMap((line, i) =>
+        BARE_NPX.test(line) && !ALLOWED.some((re) => re.test(file)) && !/npx --yes github:OWNER\/REPO upgrade/.test(line) && !PINNED_SITE.test(`${file}:${line.trim()}`) ? [`${file}:${i + 1}`] : [],
+      ),
+    );
+
+  test('no stacks/** file hard-codes an npx toolkit call outside the allowlist', () => {
+    const listed = spawnSync('git', ['ls-files', '-z', 'stacks'], { cwd: REPO_ROOT, encoding: 'utf8' });
+    assert.equal(listed.status, 0, listed.stderr);
+    const files = listed.stdout.split('\0').filter(Boolean).map((file) => ({ file, text: fs.readFileSync(path.join(REPO_ROOT, file), 'utf8') }));
+    assert.deepEqual(bareSites(files), []);
+  });
+
+  test('the sweep can fail: a skill with a bare npx call is flagged', () => {
+    const files = [
+      { file: 'stacks/wafflestack/skills/waffle-render/SKILL.md', text: 'x\nnpx --yes {{waffle.toolkitRef}} render\n' },
+      { file: 'stacks/demo/skills/demo/SKILL.md', text: 'npx --yes github:dustinkeeton/wafflestack doctor' },
+      { file: 'stacks/wafflestack/evals/demo.eval.yaml', text: 'npx --yes github:dustinkeeton/wafflestack report' },
+    ];
+    assert.deepEqual(bareSites(files), ['stacks/wafflestack/skills/waffle-render/SKILL.md:2', 'stacks/demo/skills/demo/SKILL.md:1']);
   });
 });
 
