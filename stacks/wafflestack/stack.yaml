@@ -71,14 +71,15 @@ config:
       backticks, `${{`, newlines, or leading/trailing whitespace. Every `/waffle-*` skill appends a
       subcommand to it, so it must stay a single command a permission allowlist can match.
     description: >-
-      The command prefix every `/waffle-*` skill runs the CLI with when no installed `wafflestack`
-      is on PATH (#727). The default is `npx --yes` plus `waffle.toolkitRef`, so the fallback runs
-      the toolkit release that rendered this repo. The skills run `wafflestack <sub>` instead only
-      when an installed `wafflestack` carries the lock-following launcher (#726: `wafflestack help`
-      lists `--no-follow-lock`) and either the lock records a release pin or the installed version
-      equals the lock's `toolkitVersion`.
-      To pin a different toolkit, set `waffle.toolkitRef`, not this key — `upgrade` reconciles that
-      pin and never this one. To always use your installed launcher, set `waffle.cmd: wafflestack`
+      The command prefix eight `/waffle-*` skills run the CLI with (#727): every wrapper except
+      `/waffle-upgrade` and `/waffle-validate`, which always name the pinned
+      `npx --yes {{waffle.toolkitRef}}` command because an installed CLI runs its own toolkit for
+      those two. The default is `npx --yes` plus `waffle.toolkitRef`, the toolkit release that
+      rendered this repo. The skills run an installed `wafflestack` instead only when its version
+      equals the lock's `toolkitVersion` and this command is the default upstream release pin at
+      that version, so the installed CLI is the same release. To pin a different toolkit, set
+      `waffle.toolkitRef`, not this key — `upgrade` reconciles that pin and never this one. To
+      always use your installed launcher (#726) in those eight skills, set `waffle.cmd: wafflestack`
       in `waffle.local.yaml`.
   waffle.cmdNote:
     required: false
@@ -86,15 +87,14 @@ config:
       The "which CLI to run" paragraph placed above each `/waffle-*` skill's first command, built
       from `waffle.cmd`. Set `waffle.cmd`, not this.
     default: |-
-      **Which CLI to run.** Use an installed `wafflestack` only when all three hold:
-      `command -v wafflestack` succeeds; `wafflestack help` lists `--no-follow-lock` (an install
-      without it predates the lock-following launcher and runs its own toolkit); and either the
-      `toolkit` block in `.waffle/waffle.lock.json` has `status: release` and a `commit` (the
-      launcher then runs that pinned release), or the version on its `wafflestack vX.Y.Z` line
-      equals the lock's `toolkitVersion` (any other lock makes the launcher run the installed
-      toolkit, which would re-render the repo to that version). Then run each command below as
-      `wafflestack` followed by the same arguments.
-      Otherwise run the command as written, starting with `{{waffle.cmd}}`.
+      **Which CLI to run.** Run the command as written, starting with `{{waffle.cmd}}`, unless
+      all three of these hold: `command -v wafflestack` succeeds; the version on the
+      `wafflestack vX.Y.Z` line of `wafflestack help` equals `toolkitVersion` in
+      `.waffle/waffle.lock.json`; and the command as written starts with
+      `npx --yes github:dustinkeeton/wafflestack#v` followed by that same version. Then the
+      installed CLI is the release the command would fetch, so run it instead: `wafflestack`
+      followed by the same arguments. Any other installed version, or a repo pinned to another
+      toolkit, keeps the command as written.
       Either way, run it as one command, not inside `$(…)` and not chained with `&&`. If
       `wafflestack` refuses (an untrusted or unreleased pin, a pin it cannot fetch while offline, a
       malformed lock) or fails because it does not know the subcommand, report its message to the

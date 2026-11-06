@@ -17,23 +17,23 @@ before anything is committed.
 
 **Which CLI to run.** `upgrade` is the one lifecycle command an installed `wafflestack` never
 runs at the lock's pin: it runs the INSTALLED toolkit, so it moves this repo to the installed
-version in one step. That is only an upgrade when the installed version is not older than the
-lock's. So if `command -v wafflestack` succeeds:
+toolkit and version in one step. Run the pinned command below unless all three of these hold:
 
-1. Read the installed version from the first line of `wafflestack help` (`wafflestack vX.Y.Z`)
-   and the lock's from `toolkitVersion` in `.waffle/waffle.lock.json`.
-2. Installed version equal or newer → run `wafflestack upgrade`. If it printed `a newer toolkit
-   release exists: vX.Y.Z — … run:` followed by a command, run that command verbatim and review
-   its output instead (escalation item 1 below); otherwise its result is the version you moved
-   to. Skip escalation item 2: it probes the npx path, not the installed CLI.
-3. Installed version older → do **not** run it: it would re-render the repo to the older toolkit
-   (it reports a `downgrade`). Tell the user to update their installed `wafflestack`, or run the
-   command below instead.
+1. `command -v wafflestack` succeeds.
+2. The version on the `wafflestack vX.Y.Z` line of `wafflestack help` is equal to or newer than
+   `toolkitVersion` in `.waffle/waffle.lock.json`. An older one would re-render the repo to the
+   older toolkit (it reports a `downgrade`).
+3. The pinned command below names `github:dustinkeeton/wafflestack#`. A repo pinned to a fork, a
+   local path or an unpinned ref keeps that toolkit: an installed CLI would render its own
+   toolkit and rewrite the pin to it.
 
-Without `wafflestack` on PATH, run:
+When all three hold, run `wafflestack upgrade`. If it printed `a newer toolkit release exists:
+vX.Y.Z — … run:` followed by a command, run that command verbatim and review its output instead
+(escalation item 1 below); otherwise its result is the version you moved to. Skip escalation
+item 2: it probes the npx path, not the installed CLI. Otherwise run:
 
 ```bash
-{{waffle.cmd}} upgrade
+npx --yes {{waffle.toolkitRef}} upgrade
 ```
 
 ## The version this moves TO is the version you RAN (read this before reporting "already up to date")

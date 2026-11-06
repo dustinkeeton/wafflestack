@@ -2648,11 +2648,17 @@ describe('/waffle-* skills: the npx spec is pinned to the rendering toolkit rele
   // Every wrapper shells out through the same key, so the pin has to reach all ten.
   const SKILLS = ['waffle-init', 'waffle-setup', 'waffle-install', 'waffle-render', 'waffle-upgrade', 'waffle-doctor', 'waffle-eject', 'waffle-validate', 'waffle-report', 'waffle-toggle'];
 
-  test('every shipped wrapper invokes `{{waffle.cmd}}`, whose default carries a version-tag ref', () => {
+  test('every shipped wrapper invokes `{{waffle.cmd}}` or, for upgrade and validate, the pinned npx command', () => {
+    const PINNED = ['waffle-upgrade', 'waffle-validate'];
     for (const name of SKILLS) {
       const source = fs.readFileSync(path.join(STACKS, 'wafflestack', 'skills', name, 'SKILL.md'), 'utf8');
-      assert.match(source, /^\s*\{\{waffle\.cmd\}\} [a-z]/m, `${name} shells out through the key`);
-      assert.doesNotMatch(source, /npx --yes \{\{waffle\.toolkitRef\}\}/, `${name} has no bare npx site left`);
+      if (PINNED.includes(name)) {
+        assert.match(source, /^\s*npx --yes \{\{waffle\.toolkitRef\}\} [a-z]/m, `${name} names the pinned command`);
+        assert.doesNotMatch(source, /\{\{waffle\.cmd\}\}/, `${name} never runs an override of waffle.cmd`);
+      } else {
+        assert.match(source, /^\s*\{\{waffle\.cmd\}\} [a-z]/m, `${name} shells out through the key`);
+        assert.doesNotMatch(source, /npx --yes \{\{waffle\.toolkitRef\}\}/, `${name} has no bare npx site left`);
+      }
     }
     assert.equal(stackYaml.config['waffle.cmd'].default, 'npx --yes {{waffle.toolkitRef}}');
     const spec = stackYaml.config['waffle.toolkitRef'];
@@ -2731,8 +2737,10 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
     const upgrade = source('waffle-upgrade');
     assert.doesNotMatch(upgrade, /\{\{waffle\.cmdNote\}\}/);
     assert.match(upgrade, /never\s+runs at the lock's pin/);
-    assert.match(upgrade, /Installed version older → do \*\*not\*\* run it/);
-    assert.match(upgrade, /run `wafflestack upgrade`\. If it printed `a newer toolkit\s+release exists/);
+    assert.match(upgrade, /equal to or newer than\s+`toolkitVersion`/);
+    assert.match(upgrade, /The pinned command below names `github:dustinkeeton\/wafflestack#`/);
+    assert.match(upgrade, /run `wafflestack upgrade`\. If it printed `a newer toolkit release exists:/);
+    assert.doesNotMatch(upgrade, /first line of `wafflestack help`/);
     assert.doesNotMatch(upgrade, /the escalation below does not apply/);
     const validate = source('waffle-validate');
     assert.doesNotMatch(validate, /\{\{waffle\.cmdNote\}\}/);
@@ -2745,13 +2753,10 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
       assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
       for (const name of NOTED) {
         const text = fs.readFileSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'), 'utf8');
-        assert.match(text, /only when all three hold:\s+`command -v wafflestack` succeeds/, name);
-        assert.match(text, /`wafflestack help` lists `--no-follow-lock`/, name);
-        assert.match(text, /`toolkit` block in `\.waffle\/waffle\.lock\.json` has `status: release` and a `commit`/, name);
-        assert.match(text, /equals the lock's `toolkitVersion`/, name);
-        assert.doesNotMatch(text, /not older than `toolkitVersion`/, name);
-        assert.doesNotMatch(text, /If `command -v wafflestack` succeeds, run each command/, name);
-        assert.match(text, /starting with\s+`npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0`/, name);
+        assert.match(text, /Run the command as written, starting with\s+`npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0`, unless/, name);
+        assert.match(text, /`command -v wafflestack` succeeds; the version on the\s+`wafflestack vX\.Y\.Z` line of `wafflestack help` equals `toolkitVersion`/, name);
+        assert.match(text, /starts with\s+`npx --yes github:dustinkeeton\/wafflestack#v` followed by that same version/, name);
+        assert.doesNotMatch(text, /--no-follow-lock|status: release|not older than/, name);
         assert.match(text, /report its message to the\s+user and stop\. Do not retry through npx/, name);
         assert.deepEqual([...placeholderKeys(text)], [], `${name}: no leftover placeholders`);
       }
@@ -2766,7 +2771,12 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
       assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
       const text = fs.readFileSync(path.join(cwd, '.claude', 'skills', 'waffle-render', 'SKILL.md'), 'utf8');
       assert.match(text, /^wafflestack render$/m);
-      assert.doesNotMatch(text, /npx --yes/);
+      assert.doesNotMatch(text, /^npx --yes/m);
+      for (const sub of ['upgrade', 'validate']) {
+        const pinned = fs.readFileSync(path.join(cwd, '.claude', 'skills', `waffle-${sub}`, 'SKILL.md'), 'utf8');
+        assert.match(pinned, new RegExp(`^\\s*npx --yes github:dustinkeeton/wafflestack#v0\\.12\\.0 ${sub}$`, 'm'), `${sub} keeps the pinned command (#858)`);
+        assert.doesNotMatch(pinned, new RegExp(`^\\s*wafflestack ${sub}$`, 'm'), `${sub} never renders the override`);
+      }
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
@@ -2792,10 +2802,11 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
     /^stacks\/[^/]+\/evals\/[^/]+\.eval\.yaml$/,
     /^stacks\/wafflestack\/mods\/waffle-view\/hooks\/waffle-view\.test\.ts$/,
   ];
+  const PINNED_SITE = /^stacks\/wafflestack\/skills\/waffle-(upgrade|validate)\/SKILL\.md:npx --yes \{\{waffle\.toolkitRef\}\} \1$/;
   const bareSites = (files) =>
     files.flatMap(({ file, text }) =>
       text.split('\n').flatMap((line, i) =>
-        BARE_NPX.test(line) && !ALLOWED.some((re) => re.test(file)) && !/npx --yes github:OWNER\/REPO upgrade/.test(line) ? [`${file}:${i + 1}`] : [],
+        BARE_NPX.test(line) && !ALLOWED.some((re) => re.test(file)) && !/npx --yes github:OWNER\/REPO upgrade/.test(line) && !PINNED_SITE.test(`${file}:${line.trim()}`) ? [`${file}:${i + 1}`] : [],
       ),
     );
 
