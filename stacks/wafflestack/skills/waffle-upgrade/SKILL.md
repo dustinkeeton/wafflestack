@@ -22,8 +22,10 @@ lock's. So if `command -v wafflestack` succeeds:
 
 1. Read the installed version from the first line of `wafflestack help` (`wafflestack vX.Y.Z`)
    and the lock's from `toolkitVersion` in `.waffle/waffle.lock.json`.
-2. Installed version equal or newer → run `wafflestack upgrade`. Its result is the version you
-   moved to; the escalation below does not apply.
+2. Installed version equal or newer → run `wafflestack upgrade`. If it printed `a newer toolkit
+   release exists: vX.Y.Z — … run:` followed by a command, run that command verbatim and review
+   its output instead (escalation item 1 below); otherwise its result is the version you moved
+   to. Skip escalation item 2: it probes the npx path, not the installed CLI.
 3. Installed version older → do **not** run it: it would re-render the repo to the older toolkit
    (it reports a `downgrade`). Tell the user to update their installed `wafflestack`, or run the
    command below instead.

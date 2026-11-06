@@ -2732,6 +2732,8 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
     assert.doesNotMatch(upgrade, /\{\{waffle\.cmdNote\}\}/);
     assert.match(upgrade, /never\s+runs at the lock's pin/);
     assert.match(upgrade, /Installed version older → do \*\*not\*\* run it/);
+    assert.match(upgrade, /run `wafflestack upgrade`\. If it printed `a newer toolkit\s+release exists/);
+    assert.doesNotMatch(upgrade, /the escalation below does not apply/);
     const validate = source('waffle-validate');
     assert.doesNotMatch(validate, /\{\{waffle\.cmdNote\}\}/);
     assert.match(validate, /checks the installed toolkit, not the release this repo pins/);
