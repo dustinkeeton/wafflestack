@@ -214,7 +214,7 @@ export function formatLauncherNote(identity) {
   const l = identity?.origin === 'launcher-cache' ? identity.launcher : null;
   if (!l || !identity?.commit) return null;
   const what = l.tag ? `${l.tag}, a tagged release when fetched` : 'an untagged commit you approved';
-  return `this CLI runs from the launcher cache — ${l.source} @ ${identity.commit.slice(0, 12)} (${what}), at ${l.entry}; \`--no-follow-lock\` runs the installed CLI instead of the lock's pin`;
+  return `this CLI runs from the launcher cache — ${l.source} @ ${identity.commit.slice(0, 12)} (${what}), at <cache>/toolkits/${identity.commit.slice(0, 12)}; \`--no-follow-lock\` runs the installed CLI instead of the lock's pin`;
 }
 
 /**

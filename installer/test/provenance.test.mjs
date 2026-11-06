@@ -2871,6 +2871,8 @@ describe('identity from a launcher-cache layout (#728)', () => {
     const launcherNotes = a.notes.filter((n) => /launcher cache/.test(n));
     assert.equal(launcherNotes.length, 1);
     assert.match(launcherNotes[0], /github:dustinkeeton\/wafflestack @ aaaaaaaaaaaa \(v0\.12\.0, a tagged release when fetched\)/);
+    assert.match(launcherNotes[0], /at <cache>\/toolkits\/aaaaaaaaaaaa;/);
+    assert.ok(!launcherNotes[0].includes(tmp) && !launcherNotes[0].includes(fs.realpathSync(tmp)), 'note carries the cache path');
     assert.equal(a.ok, b.ok);
     assert.equal(b.notes.filter((n) => /launcher cache/.test(n)).length, 0);
   });

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderProject } from '../lib/render.mjs';
+import { resolveToolkitIdentity } from '../lib/toolkit-ref.mjs';
 import YAML from 'yaml';
 import { collectReport, formatReportMarkdown, keyPaths, scrub, redact, REPORT_SUMMARY } from '../lib/report.mjs';
 
@@ -89,6 +90,31 @@ describe('report: bundle collection and redaction (#473)', () => {
     const text = JSON.stringify(bundle) + formatReportMarkdown(bundle);
     assert.ok(!text.includes(home), 'home directory leaked');
     assert.ok(!text.includes(cwd), 'repo path leaked');
+  });
+
+  test('a launcher cache outside home never reaches the bundle, literal or realpath (#857)', () => {
+    const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'xdg-report-'));
+    try {
+      const sha = 'c'.repeat(40);
+      const entry = path.join(xdg, 'wafflestack', 'toolkits', sha);
+      const root = path.join(entry, 'node_modules', 'wafflestack');
+      write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: { type: 'git', url: 'git+https://github.com/dustinkeeton/wafflestack.git' } }));
+      write(entry, 'launcher.json', JSON.stringify({
+        schema: 1, source: 'github:dustinkeeton/wafflestack', commit: sha, tag: 'v0.12.0', trust: 'tagged', version: '0.12.0',
+        toolkitRoot: 'node_modules/wafflestack', fetchedAt: '2026-11-05T00:00:00.000Z', fetchedBy: '0.19.0',
+      }));
+      const toolkitIdentity = resolveToolkitIdentity({ toolkitRoot: root, offline: true, lsRemote: () => { throw new Error('network'); } });
+      assert.equal(toolkitIdentity.origin, 'launcher-cache');
+      const home = path.join(cwd, 'not-the-cache-home');
+      for (const toolkitRoot of [REPO_ROOT, root]) {
+        const bundle = collectReport({ cwd, toolkitRoot, toolkitVersion: '0.0.test', toolkitIdentity, home });
+        const text = JSON.stringify(bundle) + formatReportMarkdown(bundle);
+        for (const form of new Set([xdg, fs.realpathSync(xdg)])) assert.ok(!text.includes(form), `launcher cache leaked: ${form}`);
+        if (toolkitRoot === REPO_ROOT) assert.equal(bundle.health.notes.filter((n) => /launcher cache/.test(n)).length, 1);
+      }
+    } finally {
+      fs.rmSync(xdg, { recursive: true, force: true });
+    }
   });
 
   test('a red doctor is reported, not fatal: modified counts appear and collection still succeeds', () => {
@@ -186,6 +212,12 @@ describe('report: scrub + projection helpers (#473)', () => {
     assert.ok(!out.includes('jane.doe') && !out.includes('wafflenet.io'), 'email leaked');
     assert.ok(!out.includes('acme-private') && !out.includes('gitlab.example.com') && !out.includes('bitbucket.org'), 'remote leaked');
     assert.match(out, /github:dustinkeeton\/wafflestack#v0\.15\.0 stays/, 'the npx toolkit spec is the report destination and survives');
+  });
+
+  test('scrub rewrites the launcher cache root; cwd wins over it and it wins over home (#857)', () => {
+    assert.equal(scrub('x /c/wafflestack/toolkits/y', { cache: '/c/wafflestack' }), 'x <launcher-cache>/toolkits/y');
+    assert.equal(scrub('/h/.cache/wafflestack/toolkits/y', { home: '/h', cache: '/h/.cache/wafflestack' }), '<launcher-cache>/toolkits/y');
+    assert.equal(scrub('/c/wafflestack/repo/a', { cwd: '/c/wafflestack/repo', cache: '/c/wafflestack' }), '<repo>/a');
   });
 
   test('redact walks nested objects and arrays, keys included', () => {
