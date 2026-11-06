@@ -115,11 +115,13 @@ is what you reach for across a breaking one.
 - **`/waffle-*` skills run an installed `wafflestack` when it is on PATH (#727, part of #725).**
   Each wrapper now runs the CLI through one new key, `waffle.cmd` (default
   `npx --yes {{waffle.toolkitRef}}`, so the fallback bytes are unchanged), under a shared
-  `waffle.cmdNote` paragraph: if `command -v wafflestack` succeeds, run `wafflestack` with the
-  same arguments, which follows the lock's pin; if it refuses or does not know the subcommand,
+  `waffle.cmdNote` paragraph: run `wafflestack` with the same arguments when it is on PATH,
+  carries the lock-following launcher (`wafflestack help` lists `--no-follow-lock`) and is not
+  older than the lock's `toolkitVersion`, so an older install never re-renders the repo to its own
+  toolkit; if it refuses or does not know the subcommand,
   report and stop, never retry through npx. `/waffle-upgrade` runs the installed CLI only when it
   is not older than the lock, and `/waffle-validate` keeps the pinned command.
-  `waffle.cmd` must be one program (no `;`, `|`, `&`, `$(…)`); set `waffle.cmd: wafflestack` in
+  `waffle.cmd` must be one program (no `;`, `|`, `&`, `(`, `)`, `<`, `>`, `$(…)`); set `waffle.cmd: wafflestack` in
   `waffle.local.yaml` to always use the launcher.
   **Consumer impact:** re-render only — the ten `/waffle-*` skill hashes move in the lock.
 

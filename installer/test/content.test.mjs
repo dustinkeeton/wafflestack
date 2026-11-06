@@ -2745,7 +2745,10 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
       assert.ok(result.ok, `render failed: ${JSON.stringify(result.errors)}`);
       for (const name of NOTED) {
         const text = fs.readFileSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md'), 'utf8');
-        assert.match(text, /If `command -v wafflestack` succeeds/, name);
+        assert.match(text, /only when all three hold:\s+`command -v wafflestack` succeeds/, name);
+        assert.match(text, /`wafflestack help` lists `--no-follow-lock`/, name);
+        assert.match(text, /not older than `toolkitVersion` in `\.waffle\/waffle\.lock\.json`/, name);
+        assert.doesNotMatch(text, /If `command -v wafflestack` succeeds, run each command/, name);
         assert.match(text, /starting with\s+`npx --yes github:dustinkeeton\/wafflestack#v0\.12\.0`/, name);
         assert.match(text, /report its message to the\s+user and stop\. Do not retry through npx/, name);
         assert.deepEqual([...placeholderKeys(text)], [], `${name}: no leftover placeholders`);
@@ -2767,7 +2770,7 @@ describe('/waffle-* skills prefer an installed `wafflestack`, falling back to `w
     }
   });
 
-  for (const bad of ['wafflestack; rm -rf .', 'wafflestack && echo hi', 'npx --yes $(echo x)', 'wafflestack | tee', ' wafflestack']) {
+  for (const bad of ['wafflestack; rm -rf .', 'wafflestack && echo hi', 'npx --yes $(echo x)', 'wafflestack | tee', ' wafflestack', 'npx --yes x <(touch y)', 'wafflestack > out', 'wafflestack < in']) {
     test(`a compound \`waffle.cmd\` is refused at render: ${JSON.stringify(bad)}`, () => {
       const { cwd, result } = renderFixture(['  waffle:', `    cmd: ${JSON.stringify(bad)}`]);
       try {
