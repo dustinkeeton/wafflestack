@@ -2832,6 +2832,15 @@ describe('identity from a launcher-cache layout (#728)', () => {
     assert.equal(toolkitLockEntry(id)?.source, 'github:Acme/MyFork');
   });
 
+  test('with no hidden lockfile, a mixed-case fork takes its case from package.json `repository`', () => {
+    const { root } = cacheLayout({ resolved: null, record: { source: 'github:acme/myfork' } });
+    write(root, 'package.json', JSON.stringify({ name: 'wafflestack', version: '0.12.0', repository: { type: 'git', url: 'git+https://github.com/Acme/MyFork.git' } }));
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([`${SHA_A}\trefs/tags/v1.0.0`]) });
+    assert.equal(id.origin, 'launcher-cache');
+    assert.equal(id.repo, 'Acme/MyFork');
+    assert.equal(toolkitLockEntry(id)?.source, 'github:Acme/MyFork');
+  });
+
   test('a successful zero-tag lookup gets the "provably none" refusal, like npm-install', () => {
     const { root } = cacheLayout({ record: { tag: null, trust: 'approved' } });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: fakeLsRemote([]) });
