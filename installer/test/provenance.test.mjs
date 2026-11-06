@@ -2798,6 +2798,13 @@ describe('identity from a launcher-cache layout (#728)', () => {
     });
   }
 
+  test('with no hidden lockfile, a record naming a commit other than its entry dir is ignored', () => {
+    const { root } = cacheLayout({ sha: SHA_A, resolved: null, record: { commit: SHA_B } });
+    const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork });
+    assert.notEqual(id.origin, 'launcher-cache');
+    assert.equal(id.commit, null);
+  });
+
   test('a bad record with no hidden lockfile degrades to unverified, as before #728', () => {
     const { root } = cacheLayout({ resolved: null, record: { schema: 2 } });
     const id = resolveToolkitIdentity({ toolkitRoot: root, lsRemote: forbidNetwork });
