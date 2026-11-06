@@ -77,7 +77,9 @@ export function collectReport({ cwd, toolkitRoot, toolkitVersion, toolkitIdentit
     },
     health,
   };
-  return /** @type {ReportBundle} */ (redact(bundle, { cwd, home }));
+  const entry = toolkitIdentity?.origin === 'launcher-cache' ? toolkitIdentity.launcher?.entry : null;
+  const cache = entry ? path.dirname(path.dirname(entry)) : undefined;
+  return /** @type {ReportBundle} */ (redact(bundle, { cwd, home, cache }));
 }
 
 // An external stack's upstream repo/path is withheld like its source URL (#473).
@@ -187,16 +189,17 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const REMOTE_URL = /(?:\b(?:https?|ssh|git):\/\/[^\s'"`<>]+|\b[\w.-]+@[\w.-]+:[\w./-]+(?:\.git)?\b)/g;
 
 /**
- * Scrub one string: `cwd` → `<repo>`, home → `~`, emails and git remote URLs → placeholders.
- * Order matters — `cwd` usually sits under home, and an scp-style remote contains an `@`.
+ * Scrub one string: `cwd` → `<repo>`, launcher cache → `<launcher-cache>`, home → `~`, emails and
+ * git remote URLs → placeholders. Order matters — `cwd` and the cache usually sit under home.
  *
  * @param {string} text
- * @param {{ cwd?: string, home?: string }} scope
+ * @param {{ cwd?: string, home?: string, cache?: string }} scope
  * @returns {string}
  */
-export function scrub(text, { cwd, home } = {}) {
+export function scrub(text, { cwd, home, cache } = {}) {
   let out = text;
   for (const dir of variants(cwd)) out = out.split(dir).join('<repo>');
+  for (const dir of variants(cache)) out = out.split(dir).join('<launcher-cache>');
   for (const dir of variants(home)) out = out.split(dir).join('~');
   out = out.replace(REMOTE_URL, '<git-remote>');
   out = out.replace(EMAIL, '<email>');
@@ -219,7 +222,7 @@ function variants(dir) {
  * Apply `scrub` to every string in a value tree, keys included.
  *
  * @param {any} value
- * @param {{ cwd?: string, home?: string }} scope
+ * @param {{ cwd?: string, home?: string, cache?: string }} scope
  * @returns {any}
  */
 export function redact(value, scope) {
