@@ -92,7 +92,10 @@ export function resolveSource(
   }
 
   // local path — resolved against the consumer repo, read in place.
-  const root = path.resolve(cwd ?? process.cwd(), ext.source);
+  const source = ext.source === '~' ? os.homedir()
+    : ext.source.startsWith('~/') ? path.join(os.homedir(), ext.source.slice(2))
+    : ext.source;
+  const root = path.resolve(cwd ?? process.cwd(), source);
   if (!exists(root) || !fs.statSync(root).isDirectory()) {
     throw new Error(
       `external stack "${ext.name}" source path "${ext.source}" does not resolve to a directory (looked in ${root})`,

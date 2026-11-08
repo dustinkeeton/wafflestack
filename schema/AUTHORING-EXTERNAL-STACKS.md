@@ -114,6 +114,10 @@ How a `source` is classified and pinned is fixed by the consumer contract; autho
   relative to the consumer repo and read in place; a `ref:` on it is an error. Use a local path
   for development and monorepo-internal stacks; use a git source for distribution.
 
+Local `source:` paths may use `~` or `~/` for the current user’s home directory.
+The lock records the unexpanded source; relative paths still resolve against the
+consumer checkout. `~user` and environment-variable substitution are not supported.
+
 **Cutting a version.** Tag your repo. Semver tags are strongly recommended — an **immutable tag is
 a reproducible pin**: a consumer on `ref: v1.2.0` re-renders to the same bytes forever, and
 `upgrade` re-fetching that tag observes no move. A **branch ref is mutable**: `wafflestack upgrade`

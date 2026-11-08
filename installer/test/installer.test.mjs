@@ -9369,6 +9369,29 @@ describe('external stack sources: multi-root resolution (#124)', () => {
     assert.equal(fs.existsSync(path.join(cwd, '.claude/skills/delta/SKILL.md')), false);
   });
 
+  test('home-relative sources render linked skill directories and retain portable provenance', () => {
+    const source = `~/${path.relative(os.homedir(), extRoot).split(path.sep).join('/')}`;
+    const original = path.join(extRoot, 'stacks/extra/skills/beta');
+    const authored = path.join(extRoot, 'authored-beta');
+    fs.renameSync(original, authored);
+    write(authored, 'references/design.md', 'A supporting reference.\n');
+    fs.symlinkSync(authored, original, 'dir');
+    write(cwd, '.waffle/waffle.yaml', [
+      'targets: [claude, codex, agents-dir]', 'stacks:',
+      '  - name: extra', `    source: ${source}`, 'include: [skills/beta]', '',
+    ].join('\n'));
+    const result = render();
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.match(read(cwd, '.claude/skills/beta/references/design.md'), /supporting reference/);
+    assert.match(read(cwd, '.agents/skills/beta/SKILL.md'), /Beta from the external source/);
+    for (const target of ['.claude', '.agents']) {
+      assert.equal(read(cwd, `${target}/skills/beta/references/design.md`), 'A supporting reference.\n');
+    }
+    const lock = JSON.parse(read(cwd, '.waffle/waffle.lock.json'));
+    assert.equal(lock.sources[0].source, source);
+    assert.equal(doctor({ cwd, toolkitVersion: '0.0.test' }).ok, true);
+  });
+
   test('a source pointing directly at a single stack dir (stack.yaml at its root) resolves', () => {
     const single = fs.mkdtempSync(path.join(os.tmpdir(), 'single-stack-'));
     write(single, 'stack.yaml', 'name: solo\ndescription: Single-stack source.\nskills: [omega]\n');

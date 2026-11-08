@@ -40,6 +40,9 @@ is what you reach for across a breaking one.
   Codex desktop and plain Git/Claude. **Consumer impact:** install a release containing this
   command and explicitly upgrade old provenance-less locks before enabling startup scripts.
 
+- Local stack sources accept `~` and `~/` home paths, preserving portable source strings in the lock.
+  **Consumer impact:** local external stacks can use the same config in main checkouts and worktrees; requires this updated CLI.
+
 - **Upstream-pinned skills: `upstream:` provenance and a copy-matches-pin gate (#826, part of
   #825).** A `stack.yaml` `skills:` entry may now be a mapping `{ name, upstream: { repo, path,
   commit, license, hash } }` recording the upstream commit a skill was copied from. `validate`
