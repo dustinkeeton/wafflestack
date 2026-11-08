@@ -1360,7 +1360,7 @@ Mapping fields:
   Anything with a URL scheme, an scp-style `user@host:` prefix, or a `.git` suffix is treated as
   git; everything else is a local path. Bare `~` and a leading `~/` expand to the
   current user’s home directory; `~user` and environment variables are not expanded.
-  The lock retains the source as written, so `~/creative` works across checkouts.
+  The lock retains the source as written, so `~/shared-stacks` works across checkouts.
 - **`ref`** (git sources: **required**; local paths: **must be omitted**) — the pin for a git
   source: a tag, branch, or commit. Pinning is mandatory so an external install is reproducible.
   A local path is used as-is and carries no `ref`.

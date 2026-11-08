@@ -41,7 +41,7 @@ is what you reach for across a breaking one.
   command and explicitly upgrade old provenance-less locks before enabling startup scripts.
 
 - Local stack sources accept `~` and `~/` home paths, preserving portable source strings in the lock.
-  **Consumer impact:** local studio stacks can use the same config in main checkouts and worktrees; requires this updated CLI.
+  **Consumer impact:** local external stacks can use the same config in main checkouts and worktrees; requires this updated CLI.
 
 - **Upstream-pinned skills: `upstream:` provenance and a copy-matches-pin gate (#826, part of
   #825).** A `stack.yaml` `skills:` entry may now be a mapping `{ name, upstream: { repo, path,
