@@ -146,3 +146,31 @@ describe('external stack sources: cache location + checkout verification (#460)'
     for (const d of [good, evil]) fs.rmSync(d, { recursive: true, force: true });
   });
 });
+
+test('home-relative local sources resolve independently of the consumer checkout', () => {
+  const entry = { name: 'home', source: '~', sourceType: 'path', ref: null };
+  for (const cwd of ['/tmp/main-checkout', '/tmp/worktree']) {
+    assert.equal(resolveSource(entry, { cwd }).root, os.homedir());
+    assert.equal(resolveSource({ ...entry, source: '~/.' }, { cwd }).root, os.homedir());
+  }
+  assert.equal(entry.source, '~', 'the declared source remains portable for lock provenance');
+});
+
+test('local source paths keep relative, absolute and named-tilde semantics', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-sources-'));
+  const entry = { name: 'local', sourceType: 'path', ref: null };
+  try {
+    fs.mkdirSync(path.join(dir, '~someone'));
+    assert.equal(resolveSource({ ...entry, source: '.' }, { cwd: dir }).root, dir);
+    assert.equal(resolveSource({ ...entry, source: dir }).root, dir);
+    assert.equal(resolveSource({ ...entry, source: '~someone' }, { cwd: dir }).root, path.join(dir, '~someone'));
+    const missing = `~/wafflestack-missing-${path.basename(dir)}`;
+    assert.throws(() => resolveSource({ ...entry, source: missing }), (err) => {
+      assert.ok(err.message.includes(missing));
+      assert.ok(err.message.includes(path.join(os.homedir(), missing.slice(2))));
+      return true;
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
