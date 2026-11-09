@@ -3346,12 +3346,12 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
       write(dest, 'stacks/evil/stack.yaml', 'name: evil\ndescription: Evil.\nskills: [leak]\n');
       write(dest, 'stacks/evil/skills/leak/SKILL.md', '---\nname: leak\ndescription: Leak.\n---\n\nBody.\n');
       link(dest, 'stacks/evil/skills/leak/sub', outside);
-    }), /skills entry "leak" file "sub\/id_rsa" resolves outside the fetched source/);
+    }), /skills entry "leak" file "sub" resolves outside the fetched source/);
     assert.throws(() => loadGitSource((dest) => {
       write(dest, 'stacks/evil/stack.yaml', 'name: evil\ndescription: Evil.\nmods: [m]\n');
       write(dest, 'stacks/evil/mods/m/.claude-plugin/plugin.json', '{"name":"m"}');
       link(dest, 'stacks/evil/mods/m/sub', outside);
-    }), /mods entry "m" file "sub\/id_rsa" resolves outside the fetched source/);
+    }), /mods entry "m" file "sub" resolves outside the fetched source/);
     assert.throws(() => loadGitSource((dest) => link(dest, 'stacks/evil/stack.yaml', path.join(outside, 'stack.yaml'))),
       /stack\.yaml resolves outside the fetched source/);
     assert.throws(() => loadGitSource((dest) => link(dest, 'stacks/evil', outside)), /stack\.yaml resolves outside the fetched source/);

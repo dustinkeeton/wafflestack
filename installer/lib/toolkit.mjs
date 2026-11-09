@@ -301,8 +301,13 @@ function loadStack(name, dir, containRoot = null) {
     const skillName = bareName('skills', mapped ? mapped.name : /** @type {string} */ (entry));
     const skillDir = path.join(dir, 'skills', skillName);
     contained(skillDir, `skills entry "${skillName}"`);
-    const files = fs
-      .readdirSync(skillDir, { recursive: true, withFileTypes: true })
+    const entries = fs.readdirSync(skillDir, { recursive: true, withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isSymbolicLink()) continue;
+      const rel = path.relative(skillDir, path.join(e.parentPath ?? e.path, e.name));
+      contained(path.join(skillDir, rel), `skills entry "${skillName}" file "${rel}"`);
+    }
+    const files = entries
       .filter((e) => e.isFile())
       .map((e) => path.relative(skillDir, path.join(e.parentPath ?? e.path, e.name)))
       .sort();
@@ -381,8 +386,13 @@ function loadStack(name, dir, containRoot = null) {
       throw new Error(`stack ${name}: mods entry "${modName}" has no directory under mods/`);
     }
     contained(modDir, `mods entry "${modName}"`);
-    const files = fs
-      .readdirSync(modDir, { recursive: true, withFileTypes: true })
+    const entries = fs.readdirSync(modDir, { recursive: true, withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isSymbolicLink()) continue;
+      const rel = path.relative(modDir, path.join(e.parentPath ?? e.path, e.name));
+      contained(path.join(modDir, rel), `mods entry "${modName}" file "${rel}"`);
+    }
+    const files = entries
       .filter((e) => e.isFile())
       .map((e) => path.relative(modDir, path.join(e.parentPath ?? e.path, e.name)))
       .filter((rel) => !isEngineLaid(rel))
