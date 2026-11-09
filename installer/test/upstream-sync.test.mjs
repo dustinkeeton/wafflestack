@@ -255,6 +255,7 @@ describe('upstream:bump (#828)', () => {
   const refusals = [
     ['a symlink', { ...V2 }, [{ path: 'skills/echo/link', mode: '120000', type: 'blob', sha: sha('d') }], /symlink/],
     ['a submodule', { ...V2 }, [{ path: 'skills/echo/sub', mode: '160000', type: 'commit', sha: sha('e') }], /submodule/],
+    ['a traversal path', { ...V2 }, [{ path: 'skills/echo/../../../../escaped.md', mode: '100644', type: 'blob', sha: sha('f') }], /not a plain relative path/],
     ['no root LICENSE', Object.fromEntries(Object.entries(V2).filter(([k]) => k !== 'LICENSE')), [], /no root LICENSE/],
     ['a LICENSE inside the path', { ...V2, 'skills/echo/LICENSE': 'x\n' }, [], /collides/],
   ];

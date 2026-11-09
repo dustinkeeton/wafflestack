@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveWritableInside } from './util.mjs';
+import { LOCAL_LOCK_FILE } from './project.mjs';
+
+export const RECEIPT_FILE = 'wafflestack-prepared.json';
+/** @param {string} p */
+export const isHarnessPath = (p) => /^(?:\.claude|\.codex|\.agents)\//.test(p);
 
 /** @param {string} cwd @param {string} rel */
 export function safeDestination(cwd, rel) {
@@ -73,10 +78,10 @@ export function recoverPreparation(cwd, mutex) {
     const journal = JSON.parse(bytes.toString());
     if (journal.version !== 1 || !Array.isArray(journal.entries)) throw new Error('invalid journal');
     const entries = journal.entries.map((/** @type {[string, string|null, string|null]} */ [rel, before, after]) => {
-      if (typeof rel !== 'string' || !/^(?:\.claude|\.agents|\.codex)\//.test(rel) && rel !== '.waffle/waffle.local.lock.json' && rel !== '@receipt') throw new Error('invalid path');
+      if (typeof rel !== 'string' || !isHarnessPath(rel) && rel !== LOCAL_LOCK_FILE && rel !== '@receipt') throw new Error('invalid path');
       if (![before, after].every(b => b === null || typeof b === 'string' && Buffer.from(b, 'base64').toString('base64') === b)) throw new Error('invalid bytes');
       if (rel !== '@receipt' && !safeDestination(cwd, rel)) throw new Error('unsafe path');
-      const file = rel === '@receipt' ? path.join(path.dirname(mutex), 'wafflestack-prepared.json') : path.join(cwd, rel);
+      const file = rel === '@receipt' ? path.join(path.dirname(mutex), RECEIPT_FILE) : path.join(cwd, rel);
       if (fs.existsSync(file) && fs.lstatSync(file).isSymbolicLink()) throw new Error('unsafe receipt');
       const original = before === null ? null : Buffer.from(before, 'base64');
       const intended = after === null ? null : Buffer.from(after, 'base64');

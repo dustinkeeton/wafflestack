@@ -8,7 +8,7 @@ import {
   writeFileEnsuringDir,
   stringifyFrontmatter,
 } from './util.mjs';
-import { substitute, placeholderKeys, makeGuard, isModeScalar, LIST_FORMATS, constraintProblems } from './template.mjs';
+import { substitute, makeGuard, isModeScalar, LIST_FORMATS, constraintProblems } from './template.mjs';
 import { toolkitLockEntry, lockRepoSlug, classifyToolkitRefValue } from './toolkit-ref.mjs';
 import { marketplacePluginId } from './marketplace.mjs';
 import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys, parseSettingsKey } from './settings.mjs';

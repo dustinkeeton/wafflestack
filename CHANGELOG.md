@@ -120,6 +120,14 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **A fetched git `source:` stack can no longer read files outside its checkout through a symlink.**
+  An `agents`, `skills`, `files` or `mods` entry that resolves outside the fetched checkout now fails
+  at load, before anything is read or rendered; a symlink that stays inside the checkout still loads,
+  and local-path sources are unchanged. `upstream:bump` also refuses a tree path with a `..`, `.`,
+  empty or backslash segment.
+  **Consumer impact:** none unless an external git stack symlinks out of its own repo — that stack
+  now fails to load.
+
 - **`.github/REVIEW_TEMPLATE.md` no longer links into the gitignored render (#818).** Its "Source"
   column linked `{{harness.skillsDir}}/<skill>/SKILL.md`, which 404s on GitHub whenever the rendered
   skills are not committed (Posture 2b). It now names the `adversarial-review` and `pr-response`
