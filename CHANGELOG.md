@@ -164,6 +164,11 @@ is what you reach for across a breaking one.
 
 ### Fixed
 
+- **`report` no longer leaks the launcher cache path (#857, part of #725).** Doctor's
+  launcher-cache note now names the entry as `<cache>/toolkits/<sha12>` instead of its absolute
+  path, and `report` scrubs the launcher cache root to `<launcher-cache>` in every string, so a
+  relocated `XDG_CACHE_HOME` outside home never reaches an upstream bug report. Consumer impact:
+  none.
 - **Autopilot's integration close-out covers PRs merged after the final PR opens (#846).** The
   final PR's `Closes #N` list was written once, when it opened, so a PR merged into `<integ>`
   later never had its issues closed. Before arming, on every path, autopilot now adds a
