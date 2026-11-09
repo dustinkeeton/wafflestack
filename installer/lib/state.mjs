@@ -23,7 +23,7 @@ import {
   LOCAL_CONFIG_FILE,
   CONFIG_FILE,
 } from './project.mjs';
-import { exists, readYaml, lookupPath, parseFrontmatter } from './util.mjs';
+import { exists, readYaml, parseFrontmatter } from './util.mjs';
 import { NO_UPDATE_VERDICT } from './update-check.mjs';
 
 export { layerOf, firstSentence };

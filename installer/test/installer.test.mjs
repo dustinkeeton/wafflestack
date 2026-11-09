@@ -3302,6 +3302,70 @@ describe('per-agent identity frontmatter + entryPatterns (#156)', () => {
     assert.equal(problems.length, 1, JSON.stringify(problems));
     assert.match(problems[0], /skills entry "\.\.\/\.\.\/\.\.\/\.\.\/tmp" must be a bare name with no path separators/);
   });
+
+  const symlinkOpts = { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' };
+  const loadGitSource = (/** @type {(dest: string) => void} */ build) => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'waffle-cache-'));
+    return loadToolkitWithSources({
+      builtinRoot: toolkitRoot,
+      externalStacks: [{ name: 'evil', source: 'https://example.com/evil.git', sourceType: 'git', ref: 'v1' }],
+      cwd: toolkitRoot,
+      cacheDir,
+      gitFetch: (_source, _ref, dest) => build(dest),
+      gitResolveCommit: () => 'a'.repeat(40),
+    });
+  };
+
+  test('a fetched git source whose files:, agents: or skills: entry symlinks out of the checkout fails at LOAD, unread', symlinkOpts, () => {
+    const secret = fs.mkdtempSync(path.join(os.tmpdir(), 'waffle-outside-'));
+    fs.writeFileSync(path.join(secret, 'secret.md'), '---\ndescription: Leaked.\n---\n\nPRIVATE KEY\n');
+    fs.writeFileSync(path.join(secret, 'SKILL.md'), '---\nname: leak\ndescription: Leaked.\n---\n\nPRIVATE KEY\n');
+    const cases = [
+      ['files: [docs/notes.md]', 'files/docs/notes.md', path.join(secret, 'secret.md'), /files entry "docs\/notes\.md" resolves outside the fetched source/],
+      ['agents: [leak]', 'agents/leak.md', path.join(secret, 'secret.md'), /agents entry "leak" resolves outside the fetched source/],
+      ['skills: [leak]', 'skills/leak', secret, /skills entry "leak" resolves outside the fetched source/],
+    ];
+    for (const [line, rel, target, re] of cases) {
+      assert.throws(() => loadGitSource((dest) => {
+        write(dest, 'stacks/evil/stack.yaml', `name: evil\ndescription: Evil.\n${line}\n`);
+        fs.mkdirSync(path.dirname(path.join(dest, 'stacks/evil', rel)), { recursive: true });
+        fs.symlinkSync(target, path.join(dest, 'stacks/evil', rel));
+      }), re);
+    }
+  });
+
+  test('a fetched git source cannot reach outside through a symlinked directory inside a skill or mod, or a symlinked stack.yaml', symlinkOpts, () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'waffle-outside-'));
+    fs.writeFileSync(path.join(outside, 'id_rsa'), 'PRIVATE KEY\n');
+    fs.writeFileSync(path.join(outside, 'stack.yaml'), 'name: evil\ndescription: Outside.\n');
+    const link = (/** @type {string} */ dest, /** @type {string} */ rel, /** @type {string} */ target) => {
+      fs.mkdirSync(path.dirname(path.join(dest, rel)), { recursive: true });
+      fs.symlinkSync(target, path.join(dest, rel));
+    };
+    assert.throws(() => loadGitSource((dest) => {
+      write(dest, 'stacks/evil/stack.yaml', 'name: evil\ndescription: Evil.\nskills: [leak]\n');
+      write(dest, 'stacks/evil/skills/leak/SKILL.md', '---\nname: leak\ndescription: Leak.\n---\n\nBody.\n');
+      link(dest, 'stacks/evil/skills/leak/sub', outside);
+    }), /skills entry "leak" file "sub" resolves outside the fetched source/);
+    assert.throws(() => loadGitSource((dest) => {
+      write(dest, 'stacks/evil/stack.yaml', 'name: evil\ndescription: Evil.\nmods: [m]\n');
+      write(dest, 'stacks/evil/mods/m/.claude-plugin/plugin.json', '{"name":"m"}');
+      link(dest, 'stacks/evil/mods/m/sub', outside);
+    }), /mods entry "m" file "sub" resolves outside the fetched source/);
+    assert.throws(() => loadGitSource((dest) => link(dest, 'stacks/evil/stack.yaml', path.join(outside, 'stack.yaml'))),
+      /stack\.yaml resolves outside the fetched source/);
+    assert.throws(() => loadGitSource((dest) => link(dest, 'stacks/evil', outside)), /stack\.yaml resolves outside the fetched source/);
+  });
+
+  test('a fetched git source may symlink inside its own checkout', symlinkOpts, () => {
+    const merged = loadGitSource((dest) => {
+      write(dest, 'stacks/evil/stack.yaml', 'name: evil\ndescription: Fine.\nfiles: [docs/notes.md]\n');
+      write(dest, 'shared.md', 'shared\n');
+      fs.mkdirSync(path.join(dest, 'stacks/evil/files/docs'), { recursive: true });
+      fs.symlinkSync('../../../../shared.md', path.join(dest, 'stacks/evil/files/docs/notes.md'));
+    });
+    assert.equal(merged.stacks.get('evil').files[0].name, 'docs/notes.md');
+  });
 });
 
 // `git.agentIdentities.entryPatterns` is declared in TWO stacks, and in a toolkit where only ONE copy loads a loosened copy IS the entire guard (#247).

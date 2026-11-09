@@ -193,7 +193,7 @@ export function loadToolkitWithSources({ builtinRoot, externalStacks = [], cwd, 
           `expected stacks/${ext.name}/stack.yaml (a toolkit root) or a stack.yaml at the source root (a single-stack source)`,
       );
     }
-    const stack = loadStack(ext.name, dir);
+    const stack = loadStack(ext.name, dir, ext.sourceType === 'git' ? root : null);
     stack.provenance = {
       name: ext.name,
       source: ext.source,
@@ -236,9 +236,23 @@ function describeSource(ext) {
 /**
  * @param {string} name
  * @param {string} dir
+ * @param {string | null} [containRoot] a fetched git checkout no entry may symlink out of
  * @returns {Stack}
  */
-function loadStack(name, dir) {
+function loadStack(name, dir, containRoot = null) {
+  // A fetched git source may not read through a symlink that leaves its checkout: a third-party
+  // repo could otherwise render a local file (a key, a token) into the consumer's tree.
+  const realRoot = containRoot ? fs.realpathSync(containRoot) : null;
+  /** @param {string} p @param {string} what */
+  const contained = (p, what) => {
+    if (!realRoot || !exists(p)) return;
+    const real = fs.realpathSync(p);
+    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+      throw new Error(`stack ${name}: ${what} resolves outside the fetched source through a symlink — a git source reads only its own files`);
+    }
+  };
+
+  contained(path.join(dir, 'stack.yaml'), 'stack.yaml');
   /** @type {StackManifest} */
   const manifest = readYaml(path.join(dir, 'stack.yaml'));
   const config = manifest.config ?? {};
@@ -266,6 +280,7 @@ function loadStack(name, dir) {
   const agents = (manifest.agents ?? []).map((entry) => {
     const agentName = bareName('agents', entry);
     const file = path.join(dir, 'agents', `${agentName}.md`);
+    contained(file, `agents entry "${agentName}"`);
     const raw = fs.readFileSync(file, 'utf8');
     const { data, body } = parseFrontmatter(raw);
     return { kind: 'agent', name: agentName, file, data, body };
@@ -285,11 +300,18 @@ function loadStack(name, dir) {
     }
     const skillName = bareName('skills', mapped ? mapped.name : /** @type {string} */ (entry));
     const skillDir = path.join(dir, 'skills', skillName);
-    const files = fs
-      .readdirSync(skillDir, { recursive: true, withFileTypes: true })
+    contained(skillDir, `skills entry "${skillName}"`);
+    const entries = fs.readdirSync(skillDir, { recursive: true, withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isSymbolicLink()) continue;
+      const rel = path.relative(skillDir, path.join(e.parentPath ?? e.path, e.name));
+      contained(path.join(skillDir, rel), `skills entry "${skillName}" file "${rel}"`);
+    }
+    const files = entries
       .filter((e) => e.isFile())
       .map((e) => path.relative(skillDir, path.join(e.parentPath ?? e.path, e.name)))
       .sort();
+    for (const rel of files) contained(path.join(skillDir, rel), `skills entry "${skillName}" file "${rel}"`);
     if (!files.includes('SKILL.md')) {
       throw new Error(`stack ${name}: skill ${skillName} has no SKILL.md`);
     }
@@ -346,6 +368,7 @@ function loadStack(name, dir) {
     }
     const file = path.join(dir, 'files', rel);
     if (!exists(file)) throw new Error(`stack ${name}: files entry "${rel}" not found under files/`);
+    contained(file, `files entry "${rel}"`);
     const targets = isMap && entry.targets !== undefined ? entry.targets.map(String) : null;
     return { kind: 'files', name: rel, path: file, binary: isBinary(fs.readFileSync(file)), targets };
   });
@@ -362,12 +385,19 @@ function loadStack(name, dir) {
     if (!exists(modDir) || !fs.statSync(modDir).isDirectory()) {
       throw new Error(`stack ${name}: mods entry "${modName}" has no directory under mods/`);
     }
-    const files = fs
-      .readdirSync(modDir, { recursive: true, withFileTypes: true })
+    contained(modDir, `mods entry "${modName}"`);
+    const entries = fs.readdirSync(modDir, { recursive: true, withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isSymbolicLink()) continue;
+      const rel = path.relative(modDir, path.join(e.parentPath ?? e.path, e.name));
+      contained(path.join(modDir, rel), `mods entry "${modName}" file "${rel}"`);
+    }
+    const files = entries
       .filter((e) => e.isFile())
       .map((e) => path.relative(modDir, path.join(e.parentPath ?? e.path, e.name)))
       .filter((rel) => !isEngineLaid(rel))
       .sort();
+    for (const rel of files) contained(path.join(modDir, rel), `mods entry "${modName}" file "${rel}"`);
     if (!files.includes(MOD_MANIFEST)) {
       throw new Error(`stack ${name}: mod ${modName} has no ${MOD_MANIFEST} — every mod is a Claude Code plugin dir`);
     }

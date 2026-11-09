@@ -11,11 +11,9 @@ import { resolveConfigFile, resolveLockFile, resolveLocalConfigFile, LOCAL_LOCK_
 import { sha256, resolveWritableInside } from './util.mjs';
 import { parseRef, itemOutputMatcher } from './refs.mjs';
 import { upstreamLockEntries } from './upstream.mjs';
-import { safeDestination, acquirePreparation, recoverPreparation, replaceBytes, readBytes, sameBytes } from './preparation-transaction.mjs';
+import { safeDestination, acquirePreparation, recoverPreparation, replaceBytes, readBytes, sameBytes, RECEIPT_FILE, isHarnessPath as harnessPath } from './preparation-transaction.mjs';
 import { applySettings, parseSettingsKey, settingsConflicts, settingsValueAt } from './settings.mjs';
 
-/** @param {string} p */
-const harnessPath = (p) => /^(?:\.claude|\.codex|\.agents)\//.test(p);
 /** @param {string} cwd @param {string[]} args */
 const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 /** @param {string} p */
@@ -128,7 +126,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
       return itemOutputMatcher(parsed.kind, parsed.name);
     });
     const isEjected = (/** @type {string} */ rel) => ejected.some((matches) => matches(rel));
-    const receiptPath = path.join(gitDir, 'wafflestack-prepared.json');
+    const receiptPath = path.join(gitDir, RECEIPT_FILE);
     const previous = present(receiptPath) ? json(receiptPath) : { files: {} };
     const settingFiles = [...new Set([...settings.keys()].map((p) => parseSettingsKey(p).file))];
     const paths = [...outputs.keys(), ...settingFiles];
@@ -241,7 +239,7 @@ export function prepareWorktree({ cwd, toolkitRoot, offline = false, untrustedCo
 /** Categorize renderer failures without copying private values or raw YAML into diagnostics.
  * @param {string[]} errors
  */
-export function safePlanningError(errors) {
+function safePlanningError(errors) {
   const text = errors.join('\n');
   const category = /missing config value|required config|missing required|needs config values/i.test(text)
     ? 'missing required configuration: supply the required keys in the destination config'

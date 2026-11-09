@@ -252,6 +252,7 @@ function fetchCopy(gh, pin, commit) {
     if (e.mode === '120000') throw new Error(`${e.path} is a symlink; a pinned copy holds regular files only`);
     if (e.type === 'commit') throw new Error(`${e.path} is a submodule; a pinned copy holds regular files only`);
     if (e.type !== 'blob') continue;
+    if (rel.includes('\\') || rel.split('/').some((/** @type {string} */ s) => !s || s === '.' || s === '..')) throw new Error(`${e.path} is not a plain relative path; refusing to write it`);
     if (rel === UPSTREAM_LICENSE_FILE) throw new Error(`${e.path} collides with the root ${UPSTREAM_LICENSE_FILE} the copy carries`);
     wanted.set(rel, e.sha);
   }

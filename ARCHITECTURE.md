@@ -56,7 +56,7 @@ only inputs you own — everything under `.claude/` (etc.) is generated.
 A **stack** is a themed group of agents and skills you enable together (for
 example `github-workflow` or `docs-system`). `toolkit.yaml` lists every stack;
 each stack's `stack.yaml` manifest declares its agents, skills, mods, config keys, and
-any environment or service prerequisites. There are **9 stacks** today — one of
+any environment or service prerequisites. There are **10 stacks** today — one of
 them, `wafflestack`, is self-referential: ten `/waffle-*` skills, each a thin wrapper
 that runs one CLI command (`npx wafflestack <command>`) and interprets the output — so
 the toolkit ships its own lifecycle the same way it ships everything else. It also ships
@@ -64,11 +64,14 @@ the first mod, `waffle-view`.
 
 **A stack can also come from outside this toolkit.** A `stacks:` entry is usually a
 built-in name, but it can instead be a `{ name, source, ref }` mapping that points at a
-third-party stack — in another git repo (pinned to a `ref`) or at a local path. External
+third-party stack — in another git repo (pinned to a `ref`) or at a local path (`~` and
+`~/…` resolve against your home directory, #862). External
 stacks render through the exact same pipeline as built-ins: the lock records where each
 external file came from (source, ref, resolved commit), `doctor` attributes any drift back
 to its source, `upgrade` re-fetches each pin and reports commit moves, and `render`
-validates an external stack before writing a byte. See
+validates an external stack before writing a byte. A fetched git source may read only its
+own files: an agent, skill, file or mod entry that symlinks outside the checkout fails at
+load. A local-path source may still symlink out. See
 [`schema/AUTHORING-EXTERNAL-STACKS.md`](schema/AUTHORING-EXTERNAL-STACKS.md) to author one.
 
 ### Prerequisites
@@ -203,7 +206,7 @@ reads a rendered path without the step. See
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 41 skills** in total.
+one source can render everywhere. There are **14 agents and 42 skills** in total, plus 1 mod.
 
 **Tool calls are checked, not trusted (#445).** A skill is prose, so nothing compiles it — a
 call to a tool the harness has since removed looks fine in review and fails at runtime. A
@@ -489,6 +492,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `toggle` | Choose, per skill, whether an agent may invoke it on its own or only you can via `/slash` (#476). A checkbox picker in a terminal, a plain table on a pipe, `--disable` / `--enable` flags for agents and CI. Writes `waffle.yaml`, then renders. See [below](#two-consumer-side-knobs-toggle-and-report). |
 | `install <ref…>` | Add a stack or single item to your config (pulling in dependencies), then render. Only the changed lines of `waffle.yaml` are edited (#575), and an item a selected stack already provides persists nothing (#571). Installing an **ejected** item un-ejects it (#497). If the render is refused for any reason — missing config values, a collision, a guard — `waffle.yaml` is restored byte-for-byte and nothing changes (#548); when the refusal is your differing project-owned copy of that un-ejected item, the error names `--force`. Bare `install` just renders. |
 | `render` (alias: `bake`) | Regenerate every managed file, delete stale ones, write the lock. Refuses to overwrite a pre-existing untracked file without `--force`. Warns when your overlay shaped a file git would let you commit (#614); `--gitignore` adds those paths. `--untrusted-config` is for a config CI took from a PR head (#615): no `source:` stacks, no prerequisite checks, no write through a symlink that leaves the project root. `bake` is a pure alias — same command, better metaphor. |
+| `prepare-worktree` | Provision a fresh git worktree's harness files before an agent session starts, from the worktree's own committed config and the toolkit release its lock pins. Writes harness files only. `--json` prints the result; `--offline` needs the pinned toolkit and any git source already cached; `--untrusted-config` refuses external sources and an inherited main-checkout overlay; `--overlay local\|main\|none` picks the overlay for one run. Exits 1 when preparation fails. See [worktree preparation](docs/worktree-setup.md). |
 | `upgrade` | Read the lock's version, print the `CHANGELOG.md` delta, run any migrations (an unreleased toolkit also runs the steps keyed past its own version, #501), move any release-tag `toolkitRef` pins you already chose, then re-render + `doctor`. |
 | `doctor` | Compare rendered files to the lock that describes this machine's tree (the local lock when your overlay shaped the render, else the committed one) and run the selected stacks' prerequisite checks; report drift, missing files, or an unmet `require`. The generated `.waffle/` overview docs are presence-optional (#528): an absent one is a note, an edited one still fails; `--allow-missing` tolerates every *other* absent file. `--verify-render` additionally re-renders the **committed** inputs into a temp dir and diffs the result against the committed canonical lock — the tree is never touched. Pin `doctor.toolkitRef` to a release tag *before* arming that flag in CI: it is the one flag that makes the toolkit load-bearing. It also notes when a newer toolkit release exists (#608) — information only, never a failure. |
 | `state` | Print the repo's resolved state (#561): each behavioral key's effective value, the layer it came from and its tokens; delegate's run files; committed vs local lock; drift; and the agents `/standup` would round up (an `agents` array, #610). `--json` for machines — the `waffle-view` mod reads it. Also says whether a newer toolkit release exists (an `update` block, #608). `--board` (#697) adds a `board` block: open milestones, open epics (`n of m` done) and the In Progress / In Review items of the board named by `project.name`, read through `gh` and cached 60 s. Plain `state` never calls `gh`. Never changes the repo; it may make one cached 2 s lookup and write a user-cache file (`--offline` stops the lookup and the board read). Exit 0 even on drift or a failed board read. |
@@ -501,7 +505,7 @@ runtime dependency: `yaml`). Its jobs, in one line each:
 | `validate` | Toolkit-author lint: manifests parse, placeholders are declared, refs resolve. Then runs `claude plugin validate` over each mod source when the `claude` CLI is on PATH, and prints a visible `skipped:` line — never a pass — when it is not (#564). |
 | `help` | Print the banner, usage, and one line per command and flag — on stdout, exit 0. Also `--help` / `-h`, before or after a command. |
 
-Under the hood, `installer/lib/` holds 34 small modules (load the toolkit, resolve
+Under the hood, `installer/lib/` holds 39 small modules (load the toolkit, resolve
 external sources, load project config, substitute templates, render, diff against
 the lock, check prerequisites, uninstall, sync agent avatars, resolve the toolkit's
 own identity, build the `state` document, etc.). The full function-level registry is in the root `AGENTS.md`.

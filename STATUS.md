@@ -4,14 +4,17 @@
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - **Version**: v0.19.0 (2026-10-29; pre-1.0 — the file contract can still change between minor releases).
-- **Last updated**: 2026-10-25
-- **Health**: 🟢 tests 1830 in 241 suites (1828 pass, 2 skipped by design, #445) · `validate` clean · CI green on `main` at `32f668d` (PR #683's merge)
+- **Last updated**: 2026-11-09
+- **Health**: 🟢 tests 2297 in 311 suites (2295 pass, 2 skipped by design, #445) · `validate` clean · `main` at `be958bd` (PR #862's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
 Worktree preparation is implemented for the next release; see the
 [setup and validation record](docs/worktree-setup.md). Claude invocation passed; Codex
 custom-agent invocation remains unresolved in the tested runtime. Desktop startup
 has not been verified end to end.
+
+Also merged since v0.19.0: a local stack `source:` may be `~` or `~/…` (#862), and
+`npm run upstream:check` / `upstream:bump` keep upstream-pinned skills current (#828).
 
 ## Stacks
 
@@ -28,12 +31,12 @@ All 10 stacks are shipped and stable — **14 agents, 42 skills, and 1 mod** in 
 | `expo-dev` | Expo / React Native app development |
 | `harness-architect` | Single domain agent — expert in building agent harnesses |
 | `wafflestack` | Self-referential: ten `/waffle-*` skills, each wrapping one CLI command, plus the **`waffle-view` mod** (a live state pane, claude target only); dogfooded here |
-| `tstack` | `council` from [t3dotgg/tstack](https://github.com/t3dotgg/tstack), copied verbatim at a pinned commit with its MIT `LICENSE`: a three-provider review with scored rounds. Standalone `/council` only; not enabled here |
+| `tstack` | `council` from [t3dotgg/tstack](https://github.com/t3dotgg/tstack), copied verbatim at a pinned commit with its MIT `LICENSE`: a three-provider review with scored rounds. Standalone `/council` only; enabled in this repo's render |
 
 ## Installer & CLI
 
-All 16 commands work, plus 2 aliases (`init` → `setup` since #611, `bake` → `render`), over 35
-pipeline modules in `installer/lib/`: `setup` (alias `init`) · `list` · `toggle` · `install` · `render` · `upgrade` ·
+All 17 commands work, plus 2 aliases (`init` → `setup` since #611, `bake` → `render`), over 39
+pipeline modules in `installer/lib/`: `setup` (alias `init`) · `list` · `toggle` · `install` · `render` · `prepare-worktree` · `upgrade` ·
 `doctor` · `state` · `config` · `report` · `eject` · `uninstall` · `reinstall` · `avatars` · `validate` · `help`
 
 ## Shipped in v0.18.0 — merged 2026-10-15 through 10-24
@@ -73,7 +76,7 @@ v0.17.x (docs refresh per PR, mods + `state`, picker hints) and everything befor
   #343 (pluggable CI engine) is open. #355 is fixed in source: pr-response reads its target from
   pr-green's `waffle-pr-target` artifact, hardened by #622–#624. The fix is unproven live until both hooks are re-armed (#343).
 - **Comment burn-down follow-ups (open):** #440 bash essays in workflow `run:` blocks, #441
-  DECISIONS triage, #442 `AGENTS.md` prose trim (652 lines, cap 300; fences gone since #415).
+  DECISIONS triage, #442 `AGENTS.md` prose trim (735 lines, cap 300; fences gone since #415).
 - **Lock-only since #777.** The `.claude/` render is gitignored; only the lock is committed. After a pull
   or a `stacks/**` edit, re-run `node installer/cli.mjs render --allow-unreleased` (flag required,
   #373) and commit the lock. Pulling the #777 merge deletes your local render; that command restores it.
@@ -96,9 +99,9 @@ v0.17.x (docs refresh per PR, mods + `state`, picker hints) and everything befor
 ## Verify it yourself
 
 ```bash
-npm test                          # installer test suite (1830 tests, 241 suites)
+npm test                          # installer test suite (2297 tests, 311 suites)
 npm run validate                  # manifests + placeholders lint, plus mod validation
 node installer/cli.mjs render --allow-unreleased   # regenerate the render (flag required, #373)
 node installer/cli.mjs doctor --allow-missing --verify-render --allow-unreleased   # the CI render gate
-npm run evals -- --dry-run        # Layer-2 evals (28 cases), mock model, free
+npm run evals -- --dry-run        # Layer-2 evals (29 cases), mock model, free
 ```
