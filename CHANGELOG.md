@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-09
+
 ### Added
 
 - `prepare-worktree` provisions pinned worktree-local harness resources before agent startup,
