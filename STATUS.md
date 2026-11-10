@@ -3,17 +3,17 @@
 **Snapshot of where wafflestack is today.** For history and reasoning see
 [DECISIONS.md](DECISIONS.md); for the design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **Version**: v0.19.0 (2026-10-29; pre-1.0 — the file contract can still change between minor releases).
+- **Version**: v0.20.0 (2026-11-09; pre-1.0 — the file contract can still change between minor releases).
 - **Last updated**: 2026-11-09
-- **Health**: 🟢 tests 2297 in 311 suites (2295 pass, 2 skipped by design, #445) · `validate` clean · `main` at `be958bd` (PR #862's merge)
+- **Health**: 🟢 tests 2297 in 311 suites (2295 pass, 2 skipped by design, #445) · `validate` clean · `main` at `bbf5156` (PR #863's merge)
 - **Install**: `npx github:dustinkeeton/wafflestack setup` (no npm publish yet)
 
-Worktree preparation is implemented for the next release; see the
+Worktree preparation ships in v0.20.0; see the
 [setup and validation record](docs/worktree-setup.md). Claude invocation passed; Codex
 custom-agent invocation remains unresolved in the tested runtime. Desktop startup
 has not been verified end to end.
 
-Also merged since v0.19.0: a local stack `source:` may be `~` or `~/…` (#862), and
+Also in v0.20.0: a local stack `source:` may be `~` or `~/…` (#862), and
 `npm run upstream:check` / `upstream:bump` keep upstream-pinned skills current (#828).
 
 ## Stacks
