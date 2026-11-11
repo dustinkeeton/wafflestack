@@ -31,6 +31,26 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **`doctor` can run the studios large-asset audit, opt-in and advisory.** The person running
+  doctor names `asset_audit.py`, either with the `WAFFLESTACK_ASSET_AUDIT=<path>` environment
+  variable or with `doctor.assetAudit.script` in `.waffle/waffle.local.yaml`. Doctor uses that
+  path only when git reports the file as ignored, no case variant of its name is tracked, no
+  folder on its path is a symlink, and the path has no `..`. A script path in the committed
+  `waffle.yaml` is ignored with a note. A script inside the project is refused, where the project
+  is both the folder doctor runs in and its whole Git repository. The committed file may set `strict`, `allowUnhydrated` and
+  `timeoutSeconds` in a top-level `doctor.assetAudit` block. Doctor runs the audit read-only
+  against the project root. It uses a `python3` and `git` found outside the project, the temp folder as
+  the working folder, a minimal environment and a timeout. It prints the error and warning counts
+  plus the top five findings with their fix hints. The exit code changes only with
+  `strict: true` or `--asset-audit-strict`; `allowUnhydrated: true` or
+  `--asset-audit-allow-unhydrated` passes `--allow-unhydrated` to the audit. A missing or refused
+  script, a missing `python3`, an audit that exits 2, or a timeout is a one-line note. `report`
+  and `upgrade` never run it. See FORMAT.md, "Large-asset audit in doctor".
+  **Consumer impact:** none unless you opt in; with no env variable and no local `script:`,
+  doctor's output and exit code are unchanged.
+
 ## [0.20.0] - 2026-11-09
 
 ### Added
