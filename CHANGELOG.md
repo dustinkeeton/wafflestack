@@ -35,11 +35,13 @@ is what you reach for across a breaking one.
 
 - **`doctor` can run the studios large-asset audit, opt-in and advisory.** The person running
   doctor names `asset_audit.py`, either with the `WAFFLESTACK_ASSET_AUDIT=<path>` environment
-  variable or with `doctor.assetAudit.script` in the untracked `.waffle/waffle.local.yaml`. A
-  script path in the committed `waffle.yaml` is ignored with a note, and a script inside the
-  project is refused. The committed file may set `strict`, `allowUnhydrated` and
+  variable or with `doctor.assetAudit.script` in `.waffle/waffle.local.yaml`. Doctor uses that
+  path only when git reports the file as ignored, no case variant of its name is tracked, no
+  folder on its path is a symlink, and the path has no `..`. A script path in the committed
+  `waffle.yaml` is ignored with a note. A script inside the project is refused, where the project
+  is both the folder doctor runs in and its whole Git repository. The committed file may set `strict`, `allowUnhydrated` and
   `timeoutSeconds` in a top-level `doctor.assetAudit` block. Doctor runs the audit read-only
-  against the project root. It uses a `python3` found outside the project, the temp folder as
+  against the project root. It uses a `python3` and `git` found outside the project, the temp folder as
   the working folder, a minimal environment and a timeout. It prints the error and warning counts
   plus the top five findings with their fix hints. The exit code changes only with
   `strict: true` or `--asset-audit-strict`; `allowUnhydrated: true` or

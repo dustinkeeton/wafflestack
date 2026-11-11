@@ -10,6 +10,8 @@ import { doctor } from '../lib/doctor.mjs';
 import { collectReport, formatReportMarkdown } from '../lib/report.mjs';
 import { resolveAssetAuditSettings, safePathEntries, auditEnv, ASSET_AUDIT_ENV, TOP_FINDINGS } from '../lib/asset-audit.mjs';
 
+const git = (cwd, ...args) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
+
 // The opt-in large-asset audit in `doctor`: off unless WAFFLESTACK_ASSET_AUDIT or the UNTRACKED
 // local overlay names a script outside the repo (the committed waffle.yaml never chooses code to
 // run); advisory unless strict; a missing script, missing Python or a failed audit is a one-line
@@ -94,6 +96,8 @@ describe('doctor: opt-in large-asset audit', () => {
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     // A git work tree, so doctor can confirm the local overlay is untracked.
     assert.equal(spawnSync('git', ['init', '-q', cwd]).status, 0);
+    // The overlay must be IGNORED, not merely untracked, before it may choose the script.
+    write(path.join(cwd, '.gitignore'), '.waffle/waffle.local.yaml\n');
   });
   afterEach(() => {
     fs.rmSync(cwd, { recursive: true, force: true });
@@ -153,7 +157,7 @@ describe('doctor: opt-in large-asset audit', () => {
   test('PATH entries inside the project are never used to find python3', () => {
     const planted = path.join(cwd, 'bin');
     fs.mkdirSync(planted);
-    assert.deepEqual(safePathEntries([planted, 'relative/bin', '', '/usr/bin'].join(path.delimiter), cwd), ['/usr/bin']);
+    assert.deepEqual(safePathEntries([planted, 'relative/bin', '', '/usr/bin'].join(path.delimiter), [fs.realpathSync.native(cwd)]), ['/usr/bin']);
     const env = auditEnv({ PATH: 'x', HOME: '/h', LANG: 'C', LC_ALL: 'C', SECRET: 's' }, ['/usr/bin']);
     assert.deepEqual(env, { PATH: '/usr/bin', GIT_OPTIONAL_LOCKS: '0', HOME: '/h', LANG: 'C', LC_ALL: 'C' });
     // A repo-planted python3 that is the ONLY one on PATH is not found, so the audit is not run.
@@ -183,7 +187,7 @@ describe('doctor: opt-in large-asset audit', () => {
     assert.equal(spawnSync('git', ['-C', cwd, 'add', '-f', '.waffle/waffle.local.yaml']).status, 0);
     const r = runCli(['doctor'], cwd);
     assert.equal(fs.existsSync(marker), false, 'a script named by a tracked overlay ran');
-    assert.match(r.stdout, /in \.waffle\/waffle\.local\.yaml is ignored — that file is tracked by git/);
+    assert.match(r.stdout, /in \.waffle\/waffle\.local\.yaml is ignored — that file \(or a case variant of its name\) is tracked by git/);
   });
 
   test('a script inside the project root is refused', needsPython, () => {
@@ -200,6 +204,77 @@ describe('doctor: opt-in large-asset audit', () => {
     const r = runCli(['doctor'], cwd, { [ASSET_AUDIT_ENV]: link });
     assert.match(r.stdout, /refusing script/);
     assert.equal(fs.existsSync(marker), false);
+  });
+
+  test('an overlay that is untracked but NOT ignored cannot choose the script', needsPython, () => {
+    const marker = path.join(tools, 'ran.txt');
+    const script = stubScript(path.join(tools, 'asset_audit.py'), { marker });
+    fs.rmSync(path.join(cwd, '.gitignore'));
+    local('doctor:', '  assetAudit:', `    script: ${JSON.stringify(script)}`);
+    const r = runCli(['doctor'], cwd);
+    assert.equal(fs.existsSync(marker), false);
+    assert.match(r.stdout, /is ignored — git does not report the file as ignored \(add it to \.gitignore\)/);
+  });
+
+  test('a symlinked .waffle cannot hide a tracked overlay', needsPython, () => {
+    const marker = path.join(tools, 'ran.txt');
+    const script = stubScript(path.join(tools, 'asset_audit.py'), { marker });
+    // The real folder is tracked under another name; `.waffle` is a symlink to it.
+    const realDir = path.join(cwd, 'cfg');
+    fs.renameSync(path.join(cwd, '.waffle'), realDir);
+    fs.symlinkSync('cfg', path.join(cwd, '.waffle'));
+    write(path.join(realDir, 'waffle.local.yaml'), `doctor:\n  assetAudit:\n    script: ${JSON.stringify(script)}\n`);
+    assert.equal(git(cwd, 'add', '-f', 'cfg/waffle.local.yaml').status, 0);
+    const r = runCli(['doctor'], cwd);
+    assert.equal(fs.existsSync(marker), false, 'a script named through a symlinked .waffle ran');
+    assert.match(r.stdout, /is ignored — \.waffle is a symlink/);
+  });
+
+  test('cwd as a subfolder of the repo: the whole repo counts as the project', needsPython, () => {
+    // Move the project into a subfolder of a larger repo; put the script elsewhere in that repo.
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'outer-repo-'));
+    try {
+      const sub = path.join(outer, 'pkg');
+      fs.cpSync(cwd, sub, { recursive: true });
+      fs.rmSync(path.join(sub, '.git'), { recursive: true, force: true });
+      assert.equal(spawnSync('git', ['init', '-q', outer]).status, 0);
+      const marker = path.join(tools, 'ran.txt');
+      const sibling = stubScript(path.join(outer, 'tools', 'asset_audit.py'), { marker });
+      const r = runCli(['doctor'], sub, { [ASSET_AUDIT_ENV]: sibling });
+      assert.match(r.stdout, /refusing script .* — it is inside the project being audited/);
+      assert.equal(fs.existsSync(marker), false);
+      // A python3 planted elsewhere in the outer repo is skipped too.
+      const planted = path.join(outer, 'bin');
+      fs.mkdirSync(planted);
+      const roots = resolveAssetAuditSettings({ cwd: sub, env: { PATH: process.env.PATH } }).roots;
+      assert.ok(roots.includes(fs.realpathSync.native(outer)), roots.join(','));
+      assert.deepEqual(safePathEntries(planted, roots), []);
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+    }
+  });
+
+  test('an overlay script path with `..` is refused', () => {
+    local('doctor:', '  assetAudit:', '    script: ../elsewhere/asset_audit.py');
+    const s = resolveAssetAuditSettings({ cwd, env: { PATH: process.env.PATH } });
+    assert.equal(s.enabled, false);
+    assert.match(s.notes.join('\n'), /is ignored — the path contains `\.\.`/);
+  });
+
+  test('a tracked case variant of the overlay blocks it (case-insensitive filesystems)', (t) => {
+    const probe = path.join(cwd, 'CaseProbe');
+    fs.writeFileSync(probe, '');
+    const insensitive = fs.existsSync(path.join(cwd, 'caseprobe'));
+    fs.rmSync(probe);
+    if (!insensitive) return t.skip('this filesystem is case-sensitive');
+    const script = path.join(tools, 'asset_audit.py');
+    fs.writeFileSync(script, '');
+    // Track `.waffle/WAFFLE.local.yaml`; on this filesystem it IS the overlay doctor reads.
+    write(path.join(cwd, '.waffle/WAFFLE.local.yaml'), `doctor:\n  assetAudit:\n    script: ${JSON.stringify(script)}\n`);
+    assert.equal(git(cwd, 'add', '-f', '.waffle/WAFFLE.local.yaml').status, 0);
+    const s = resolveAssetAuditSettings({ cwd, env: { PATH: process.env.PATH } });
+    assert.equal(s.enabled, false);
+    assert.match(s.notes.join('\n'), /case variant of its name\) is tracked by git/);
   });
 
   test('the env override enables the check and wins over the overlay script', needsPython, () => {
@@ -292,7 +367,7 @@ describe('doctor: opt-in large-asset audit', () => {
 
     config();
     local('doctor:', '  assetAudit:', '    script: ~/studios/asset_audit.py', '    strict: yes-please', '    timeoutSeconds: -1', '    scirpt: typo');
-    s = resolveAssetAuditSettings({ cwd, env: {}, home: '/home/u' });
+    s = resolveAssetAuditSettings({ cwd, env: { PATH: process.env.PATH }, home: '/home/u' });
     assert.equal(s.enabled, true);
     assert.equal(s.scriptSource, 'local');
     assert.equal(s.script, path.join('/home/u', 'studios/asset_audit.py'));

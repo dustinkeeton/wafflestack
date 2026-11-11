@@ -14,7 +14,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
-import { loadProjectConfig, gitIgnoreStatus, resolveLocalConfigFile, CONFIG_FILE, LOCAL_CONFIG_FILE } from './project.mjs';
+import { loadProjectConfig, resolveLocalConfigFile, CONFIG_FILE, LOCAL_CONFIG_FILE } from './project.mjs';
 import { lookupPath } from './util.mjs';
 
 /** Env twin of `doctor.assetAudit.script`: a path to `asset_audit.py`. Setting it turns the check on. */
@@ -39,6 +39,7 @@ const SETTING_KEYS = ['script', 'strict', 'timeoutSeconds', 'allowUnhydrated'];
  * @property {boolean} strict
  * @property {boolean} allowUnhydrated
  * @property {number} timeoutMs
+ * @property {string[]} roots realpaths of the project: `cwd` and, in a git work tree, its top level
  * @property {string[]} notes problems with the settings themselves (never fatal)
  *
  * @typedef {object} AssetFinding
@@ -71,13 +72,61 @@ export function isInside(child, parent) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-/** @param {string} p the realpath when it exists, else the resolved path */
+/**
+ * The realpath when it exists, else the resolved path. The native call also returns the on-disk
+ * letter case on a case-insensitive filesystem, so containment checks compare like with like.
+ * @param {string} p
+ */
 function real(p) {
   try {
-    return fs.realpathSync(p);
+    return fs.realpathSync.native(p);
   } catch {
     return path.resolve(p);
   }
+}
+
+/** @param {string} p @param {string[]} roots true when `p` is inside any of the roots */
+export function insideAny(p, roots) {
+  const r = real(p);
+  return roots.some((root) => isInside(r, root));
+}
+
+/**
+ * Run git read-only in `cwd` with a minimal env. `git` is looked up only in PATH folders outside
+ * `roots`, so the repo cannot plant one. Returns null when git is missing or fails to start.
+ *
+ * @param {string} cwd @param {string[]} args @param {NodeJS.ProcessEnv} env @param {string[]} roots
+ * @returns {{ status: number|null, stdout: string } | null}
+ */
+function git(cwd, args, env, roots) {
+  const dirs = safePathEntries(env.PATH, roots);
+  const bin = resolveExecutable('git', dirs);
+  if (!bin) return null;
+  const r = spawnSync(bin, ['-C', cwd, ...args], {
+    cwd: os.tmpdir(),
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: auditEnv(env, dirs),
+  });
+  if (r.error) return null;
+  return { status: r.status, stdout: r.stdout ?? '' };
+}
+
+/**
+ * The project's roots as realpaths: `cwd`, plus the git top level when `cwd` is in a work tree
+ * (so a `cwd` that is a subfolder of the repo still treats the whole repo as untrusted).
+ *
+ * @param {string} cwd @param {NodeJS.ProcessEnv} env
+ * @returns {{ roots: string[], toplevel: string|null }}
+ */
+export function projectRoots(cwd, env) {
+  const base = [real(cwd)];
+  const r = git(cwd, ['rev-parse', '--show-toplevel'], env, base);
+  const top = r && r.status === 0 ? r.stdout.trim() : '';
+  if (!top) return { roots: base, toplevel: null };
+  const toplevel = real(top);
+  return { roots: toplevel === base[0] ? base : [...base, toplevel], toplevel };
 }
 
 /**
@@ -123,13 +172,52 @@ function readBlock(block, where, allowScript, notes) {
 }
 
 /**
- * The local overlay's `doctor.assetAudit` block — but only when git confirms the overlay is NOT
- * tracked, since a committed "local" file is just as attacker-controlled as `waffle.yaml`.
+ * Why the local overlay may NOT choose the script, or null when it may. A "local" file is only
+ * trusted when it is really this machine's own: git must report it IGNORED (untracked is not
+ * enough), no case variant of it may be tracked (a case-insensitive filesystem would read that
+ * one), and neither the file nor any folder between it and the repo top level may be a symlink
+ * (a symlinked `.waffle` can point git and the reader at different files).
  *
- * @param {string} cwd @param {string[]} notes
+ * @param {string} cwd @param {string} file the overlay's absolute path
+ * @param {{ roots: string[], toplevel: string|null }} project @param {NodeJS.ProcessEnv} env
+ * @returns {string|null}
+ */
+export function overlayDistrust(cwd, file, project, env) {
+  if (!project.toplevel) return 'git could not find the repository, so it cannot confirm the file is ignored';
+  const top = project.toplevel;
+  const rel = path.relative(cwd, file);
+  // Walk from the top level down to the file without resolving symlinks.
+  const fromTop = path.relative(top, path.join(real(cwd), rel));
+  if (fromTop.startsWith('..') || path.isAbsolute(fromTop)) return 'the file is outside the repository';
+  let cur = top;
+  for (const part of fromTop.split(path.sep)) {
+    cur = path.join(cur, part);
+    try {
+      if (fs.lstatSync(cur).isSymbolicLink()) return `${path.relative(top, cur).split(path.sep).join('/')} is a symlink`;
+    } catch {
+      return 'the file could not be inspected';
+    }
+  }
+  const relPosix = fromTop.split(path.sep).join('/');
+  const tracked = git(top, ['ls-files', '-z', '--', `:(icase)${relPosix}`], env, project.roots);
+  if (!tracked || tracked.status !== 0) return 'git could not list tracked files';
+  if (tracked.stdout.split('\0').some(Boolean)) return 'that file (or a case variant of its name) is tracked by git, so the repo chose it';
+  // The literal path from cwd must also land on the same file (a symlinked cwd segment would not).
+  if (real(file) !== path.join(real(cwd), rel)) return 'the file\'s real path differs from its path in the project (a symlink or a different letter case)';
+  const ignored = git(top, ['check-ignore', '-q', '--', relPosix], env, project.roots);
+  if (!ignored || ignored.status !== 0) return 'git does not report the file as ignored (add it to .gitignore)';
+  return null;
+}
+
+/**
+ * The local overlay's `doctor.assetAudit` block, with `script` dropped (and a note) unless
+ * `overlayDistrust` finds nothing wrong and the path has no `..` segment.
+ *
+ * @param {string} cwd @param {{ roots: string[], toplevel: string|null }} project
+ * @param {NodeJS.ProcessEnv} env @param {string[]} notes
  * @returns {any}
  */
-function localBlock(cwd, notes) {
+function localBlock(cwd, project, env, notes) {
   const file = resolveLocalConfigFile(cwd).file;
   if (!fs.existsSync(file)) return undefined;
   /** @type {any} */
@@ -141,16 +229,13 @@ function localBlock(cwd, notes) {
   }
   const block = doc && typeof doc === 'object' && doc.doctor && typeof doc.doctor === 'object' ? doc.doctor.assetAudit : undefined;
   if (block && typeof block === 'object' && !Array.isArray(block) && block.script !== undefined) {
-    const rel = path.relative(cwd, file).split(path.sep).join('/');
-    const status = gitIgnoreStatus(cwd, [rel]);
-    if (!status) {
-      notes.push(`asset audit: \`doctor.assetAudit.script\` in ${LOCAL_CONFIG_FILE} is ignored — git could not confirm the file is untracked; use the ${ASSET_AUDIT_ENV} environment variable`);
+    const ignore = (/** @type {string} */ why) => {
+      notes.push(`asset audit: \`doctor.assetAudit.script\` in ${LOCAL_CONFIG_FILE} is ignored — ${why}; use the ${ASSET_AUDIT_ENV} environment variable`);
       return { ...block, script: undefined };
-    }
-    if (status.tracked.has(rel)) {
-      notes.push(`asset audit: \`doctor.assetAudit.script\` in ${LOCAL_CONFIG_FILE} is ignored — that file is tracked by git, so the repo chose it; use the ${ASSET_AUDIT_ENV} environment variable`);
-      return { ...block, script: undefined };
-    }
+    };
+    if (typeof block.script === 'string' && block.script.split(/[\\/]/).includes('..')) return ignore('the path contains `..`');
+    const why = overlayDistrust(cwd, file, project, env);
+    if (why) return ignore(why);
   }
   return block;
 }
@@ -166,12 +251,13 @@ function localBlock(cwd, notes) {
 export function resolveAssetAuditSettings({ cwd, strictFlag = false, allowUnhydratedFlag = false, env = process.env, home = os.homedir() }) {
   /** @type {string[]} */
   const notes = [];
+  const project = projectRoots(cwd, env);
   /** @type {any} */
   let committed;
   try {
-    const project = loadProjectConfig(cwd, [], { canonical: true });
-    committed = project.doctor && typeof project.doctor === 'object' ? project.doctor.assetAudit : undefined;
-    if (lookupPath(project.values, 'doctor.assetAudit') !== undefined) {
+    const config = loadProjectConfig(cwd, [], { canonical: true });
+    committed = config.doctor && typeof config.doctor === 'object' ? config.doctor.assetAudit : undefined;
+    if (lookupPath(config.values, 'doctor.assetAudit') !== undefined) {
       notes.push(`asset audit: \`config.doctor.assetAudit\` in ${CONFIG_FILE} is ignored — use a top-level \`doctor: { assetAudit: … }\` block (not under \`config:\`)`);
     }
   } catch {
@@ -179,7 +265,7 @@ export function resolveAssetAuditSettings({ cwd, strictFlag = false, allowUnhydr
   }
   const merged = {
     ...readBlock(committed, CONFIG_FILE, false, notes),
-    ...readBlock(localBlock(cwd, notes), LOCAL_CONFIG_FILE, true, notes),
+    ...readBlock(localBlock(cwd, project, env, notes), LOCAL_CONFIG_FILE, true, notes),
   };
 
   const envScript = String(env[ASSET_AUDIT_ENV] ?? '').trim();
@@ -194,6 +280,7 @@ export function resolveAssetAuditSettings({ cwd, strictFlag = false, allowUnhydr
     strict: enabled && (strictFlag || merged.strict === true),
     allowUnhydrated: enabled && (allowUnhydratedFlag || merged.allowUnhydrated === true),
     timeoutMs: Math.round((merged.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000),
+    roots: project.roots,
     notes,
   };
 }
@@ -210,25 +297,25 @@ export function resolveScriptPath(raw, cwd, home) {
 }
 
 /**
- * The PATH entries doctor trusts: absolute, and not inside the project root (a repo must not be
+ * The PATH entries doctor trusts: absolute, and not inside any project root (a repo must not be
  * able to plant a `python3` or `git` that doctor then runs).
  *
- * @param {string|undefined} pathVar @param {string} cwd
+ * @param {string|undefined} pathVar @param {string[]} roots realpaths
  * @returns {string[]}
  */
-export function safePathEntries(pathVar, cwd) {
-  const root = real(cwd);
+export function safePathEntries(pathVar, roots) {
   return String(pathVar ?? '')
     .split(path.delimiter)
-    .filter((d) => d && path.isAbsolute(d) && !isInside(real(d), root));
+    .filter((d) => d && path.isAbsolute(d) && !insideAny(d, roots));
 }
 
 /**
- * `python` as an absolute path: kept when already absolute, else looked up in the safe PATH.
- * @param {string} python @param {string[]} dirs
+ * An executable as an absolute path: kept when already absolute, else looked up in `dirs` (the
+ * safe PATH).
+ * @param {string} python the name or absolute path @param {string[]} dirs
  * @returns {string|null}
  */
-export function resolvePython(python, dirs) {
+export function resolveExecutable(python, dirs) {
   if (path.isAbsolute(python)) return python;
   for (const dir of dirs) {
     const candidate = path.join(dir, python);
@@ -281,12 +368,12 @@ export function runAssetAudit({ cwd, settings, python = 'python3', env = process
     isFile = fs.statSync(settings.script).isFile();
   } catch { /* reported below */ }
   if (!isFile) return skip(`script not found at ${settings.script} (from ${from})`);
-  if (isInside(real(settings.script), real(cwd))) {
+  if (insideAny(settings.script, settings.roots)) {
     return skip(`refusing script ${settings.script} (from ${from}) — it is inside the project being audited; keep the audit script outside the repo`);
   }
 
-  const dirs = safePathEntries(env.PATH, cwd);
-  const interpreter = resolvePython(python, dirs);
+  const dirs = safePathEntries(env.PATH, settings.roots);
+  const interpreter = resolveExecutable(python, dirs);
   if (!interpreter) return skip(`${python} not found on PATH (outside the project; the audit needs Python 3.9 or newer)`);
 
   // `-I` isolates Python from PYTHON* env vars, the user site and the script's folder on sys.path;

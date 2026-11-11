@@ -18,10 +18,12 @@ lives outside this toolkit.
 
 **Decision**: Only the person running doctor chooses the script: the
 `WAFFLESTACK_ASSET_AUDIT=<path>` environment variable, or `doctor.assetAudit.script` in the local
-overlay when git confirms that file is untracked. A `script` in the committed `waffle.yaml` is
+overlay. The overlay counts only when git reports it as ignored, no case variant of its name is
+tracked, no folder between it and the repository top is a symlink, and the path has no `..`. A `script` in the committed `waffle.yaml` is
 ignored with a note, because a cloned repo or a pull request controls that file, and running it
-would mean running the repo's code. A script inside the project is refused. `python3` is found
-only in absolute PATH folders outside the project, and runs from the temp folder with a minimal
+would mean running the repo's code. A script inside the project is refused, where the project is both the folder doctor runs in
+and its whole Git repository. `python3` and `git` are found only in absolute PATH folders outside
+the project, and runs from the temp folder with a minimal
 environment. The committed top-level `doctor.assetAudit` block may still set `strict`,
 `allowUnhydrated` and `timeoutSeconds`, which are behaviour, not code. Findings never change the
 exit code unless `strict: true` or `--asset-audit-strict` is set. Anything that stops the audit
@@ -37,6 +39,11 @@ from running is a one-line note, never a failure, even in strict mode. Only `doc
   a copy here would drift from it.
 - *Read the script path from the committed config.* Rejected after security review: a fresh
   clone, or CI on a pull request, would run whatever Python file the repo names.
+- *Trust an overlay that git says is untracked.* Rejected after a second security review: a
+  symlinked `.waffle` can point the reader at a tracked file under another name, a case variant of
+  the name can be tracked on a case-insensitive filesystem, and "untracked" also covers a file the
+  repo's tooling just created. Only "ignored", with no symlinks and no tracked case variant, shows
+  the file is this machine's own.
 - *Strict means fail on errors only.* Rejected: the audit's own `--strict` fails on errors and
   warnings, and doctor follows it so both give the same answer.
 

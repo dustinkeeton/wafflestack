@@ -970,13 +970,22 @@ can name it, in one of two places:
 - **`WAFFLESTACK_ASSET_AUDIT=<path>`**, an environment variable. Setting it turns the check on.
   An empty value counts as unset.
 - **`doctor.assetAudit.script` in `.waffle/waffle.local.yaml`**, the gitignored local overlay.
-  Doctor uses it only when git confirms that file is not tracked. If the file is tracked, or git
-  cannot tell, doctor ignores the path and prints a note.
+  Doctor uses it only when all of these hold. If any fails, doctor ignores the path and prints
+  a note saying which one.
+  - Git reports the file as **ignored**. Untracked but not ignored is not enough, so the file
+    must be listed in `.gitignore`.
+  - No version of its name in another letter case is tracked. This matters on a
+    case-insensitive filesystem such as the macOS default.
+  - Neither the file nor any folder between it and the repository's top folder is a symlink,
+    and its real path matches its path in the project.
+  - The path has no `..` part.
 
 When both are set, the environment variable wins. A `script:` in the committed
 `.waffle/waffle.yaml` is **always ignored**, with a one-line note saying where to set it. A
 cloned repository, or a pull request in CI, controls that file. Doctor also refuses a script
-whose real path (after following symlinks) is inside the project being audited.
+whose real path (after following symlinks) is inside the project being audited. Here "the
+project" means both the folder doctor runs in and, when that folder is inside a Git
+repository, the whole repository (its `git rev-parse --show-toplevel` folder).
 
 The other settings are plain behaviour, so they may be committed. Put them in a top-level
 `doctor:` block, like `skills:`. The CLI reads this block directly; it is not a template value,
@@ -1019,8 +1028,9 @@ a toolkit release tag that includes this check (the first release after 0.20.0).
 WAFFLESTACK_ASSET_AUDIT=~/dev/studios/asset_audit.py npx --yes github:dustinkeeton/wafflestack#vX.Y.Z doctor
 ```
 
-**What doctor does when the check is on.** It looks up `python3` in the `PATH` folders that are
-absolute and outside the project; a folder inside the project is skipped. It then runs
+**What doctor does when the check is on.** It looks up `python3` (and the `git` it uses for the
+checks above) in the `PATH` folders that are absolute and outside the project; a folder inside
+the project is skipped. It then runs
 `python3 -I -B <script> audit <project root> --json`, adding `--allow-unhydrated` when asked.
 The run uses the system temp folder as its working folder and the timeout above. The audit gets
 a minimal environment: `PATH` (the same filtered folders), `HOME`, `LANG` and `LC_*`, and
