@@ -31,6 +31,19 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+### Added
+
+- **`doctor` can run the studios large-asset audit, opt-in and advisory.** A top-level
+  `doctor.assetAudit` block in `.waffle/waffle.yaml` (`script`, `strict`, `timeoutSeconds`), or
+  the `WAFFLESTACK_ASSET_AUDIT=<path>` environment variable, points doctor at `asset_audit.py`.
+  Doctor then runs it read-only against the project root with a timeout and prints the error and
+  warning counts plus the top five findings with their fix hints. It never changes the exit code
+  unless `strict: true` or `--asset-audit-strict` is set. A missing script, a missing `python3`, an
+  audit that exits 2, or a timeout is a one-line note. `wafflestack report` adds the counts to its
+  doctor summary. See FORMAT.md, "Large-asset audit in doctor".
+  **Consumer impact:** none unless you opt in; with no `doctor:` block and no env variable,
+  doctor's output and exit code are unchanged.
+
 ## [0.20.0] - 2026-11-09
 
 ### Added

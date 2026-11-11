@@ -22,6 +22,7 @@ import { defaultSourceCacheDir } from './sources.mjs';
 import { settingsDrift, lockKeys } from './settings.mjs';
 import { staleMods as findStaleMods, formatStaleMod, marketplacePinned } from './installed-mods.mjs';
 import { lockUpstream } from './upstream.mjs';
+import { assetAuditDisabled, resolveAssetAuditSettings, runAssetAudit } from './asset-audit.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
@@ -38,12 +39,21 @@ function noVerify() {
  * `canonical: true` (#473) reads the committed lock and config ONLY: neither the local overlay nor
  * the local lock is opened, so the result carries nothing from either.
  */
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null, checkOverlayLeaks = true }) {
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null, checkOverlayLeaks = true, assetAudit = null }) {
+  // Opt-in large-asset audit: only callers that pass `assetAudit` run it, and only when the project
+  // (or the env override) names a script. Advisory unless strict; it never throws.
+  const assets = assetAudit
+    ? runAssetAudit({
+        cwd,
+        settings: resolveAssetAuditSettings({ cwd, canonical, strictFlag: Boolean(assetAudit.strict), env: assetAudit.env }),
+        python: assetAudit.python,
+      })
+    : assetAuditDisabled();
   const lock = readLock(cwd);
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
     const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
-    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [], upstream: [] };
+    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [], upstream: [], assetAudit: assets };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
   const tree = canonical ? lock : readTreeLock(cwd);
@@ -215,8 +225,8 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   }
 
   const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
-  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
-  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks, upstream };
+  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0 && !assets.strictFailed;
+  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks, upstream, assetAudit: assets };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */

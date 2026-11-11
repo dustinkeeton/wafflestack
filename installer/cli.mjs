@@ -22,6 +22,7 @@ import { computeToggleModel, formatToggleTable, interactiveToggle, applyToggle }
 import { resolveToolkitIdentity, formatUnreleasedRefusal, formatProvenanceWarning } from './lib/toolkit-ref.mjs';
 import { resolveLatestRelease, updateVerdict } from './lib/update-check.mjs';
 import { readBoard } from './lib/board.mjs';
+import { formatAssetAudit, ASSET_AUDIT_STRICT_FLAG } from './lib/asset-audit.mjs';
 import {
   loadProjectConfig,
   ensureGitignoreEntries,
@@ -103,10 +104,11 @@ try {
     case 'doctor': {
       const allowMissing = extractFlag(args, '--allow-missing');
       const verifyRender = extractFlag(args, '--verify-render');
+      const assetAuditStrict = extractFlag(args, ASSET_AUDIT_STRICT_FLAG);
       // Plain doctor is NOT gated — it reads no toolkit content, and gating it would red the
       // unpinned waffle-doctor.yml for every consumer; `--verify-render` renders, so it is (#373).
       const toolkitIdentity = verifyRender ? requireRelease('doctor --verify-render') : offlineIdentity();
-      const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot, update: newerReleaseCheck(), pluginsDir: defaultPluginsDir() });
+      const result = doctor({ cwd, toolkitVersion: pkg.version, toolkitIdentity, allowMissing, verifyRender, toolkitRoot, update: newerReleaseCheck(), pluginsDir: defaultPluginsDir(), assetAudit: { strict: assetAuditStrict } });
       const from = (f) => (result.attribution?.[f] ? ` — from ${result.attribution[f]}` : '');
       const tolerated = allowMissing && (!result.nothingPresent || result.render.evaluated);
       for (const f of result.modified) console.log(`modified: ${f}${from(f)}`);
@@ -124,6 +126,8 @@ try {
       for (const p of result.prerequisites.unmetRequired) console.log(`prerequisite unmet (require): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.unmetRecommended) console.log(`prerequisite unmet (recommend): ${formatPrereq(p)}`);
       for (const p of result.prerequisites.notRun ?? []) console.log(`prerequisite not run — external stack "${p.stackName}" awaiting acknowledgement: ${formatPrereq(p)}`);
+      // Opt-in (`doctor.assetAudit` or WAFFLESTACK_ASSET_AUDIT): prints nothing when not configured.
+      for (const line of formatAssetAudit(result.assetAudit, { cwd })) console.log(line);
       if (result.ok) {
         if (result.render.evaluated) {
           console.log(`render verified: a fresh render of ${CONFIG_FILE} reproduces the lock (${result.render.checked} files); the working tree was not touched`);
@@ -469,6 +473,9 @@ function helpText() {
     '  --clean           reinstall: also delete the config and re-scaffold it empty (needs --yes)',
     '  --allow-missing   doctor/uninstall: tolerate managed files that are absent from disk',
     '  --verify-render   doctor: also check the config still renders what the lock records',
+    '  --asset-audit-strict  doctor: let large-asset audit errors and warnings fail doctor. Only has',
+    '                    an effect when the audit is on (`doctor.assetAudit.script` in waffle.yaml,',
+    '                    or Env: WAFFLESTACK_ASSET_AUDIT=/path/to/asset_audit.py)',
     '  --json            report: print the diagnostics bundle as JSON instead of Markdown',
     '                    state: print the state document as JSON (the shape AGENTS.md documents)',
     '  --board           state: also read milestones, open epics and In Progress / In Review board',

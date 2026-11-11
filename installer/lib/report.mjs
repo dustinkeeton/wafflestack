@@ -46,6 +46,15 @@ import { lockUpstream } from './upstream.mjs';
  * @property {string[]} unmetRequired
  * @property {string[]} unmetRecommended
  * @property {string[]} notes
+ * @property {ReportAssets} [assets] present only when the project turned the large-asset audit on
+ *
+ * @typedef {object} ReportAssets counts from the opt-in asset audit — never finding paths
+ * @property {boolean} ran
+ * @property {boolean} strict
+ * @property {number|null} errors
+ * @property {number|null} warnings
+ * @property {number|null} info
+ * @property {string[]} notes why it did not run, or a settings problem
  */
 
 /**
@@ -148,8 +157,9 @@ function projectConfig(cwd) {
  */
 function summarizeDoctor({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity }) {
   try {
-    const r = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot, canonical: true });
-    return {
+    const r = doctor({ cwd, toolkitVersion, toolkitIdentity, toolkitRoot, canonical: true, assetAudit: {} });
+    /** @type {ReportHealth} */
+    const health = {
       ok: r.ok,
       modified: r.modified.length,
       missing: r.missing.length,
@@ -158,6 +168,12 @@ function summarizeDoctor({ cwd, toolkitRoot, toolkitVersion, toolkitIdentity }) 
       unmetRecommended: r.prerequisites.unmetRecommended.map(formatPrereq),
       notes: r.notes,
     };
+    // Counts only: finding paths and messages name repo files, which a report never carries.
+    const a = r.assetAudit;
+    if (a?.enabled || a?.notes.length) {
+      health.assets = { ran: a.ran, strict: a.strict, errors: a.summary?.error ?? null, warnings: a.summary?.warning ?? null, info: a.summary?.info ?? null, notes: a.notes };
+    }
+    return health;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, modified: 0, missing: 0, staleRender: 0, unmetRequired: [], unmetRecommended: [], notes: [`doctor could not run: ${message}`] };
@@ -272,6 +288,12 @@ export function formatReportMarkdown(b) {
   lines.push(`- **environment**: node ${b.environment.node}, ${b.environment.platform}; local overlay ${b.environment.localOverlay ? 'present' : 'absent'}${b.environment.localLock ? ' (local lock present)' : ''}`);
   const h = b.health;
   lines.push(`- **doctor**: ${h.ok ? 'ok' : 'NOT ok'} — ${h.modified} modified, ${h.missing} missing, ${h.staleRender} stale-render`);
+  if (h.assets) {
+    const a = h.assets;
+    lines.push(a.ran
+      ? `- **asset audit**: ${a.errors} error(s), ${a.warnings} warning(s), ${a.info} info (${a.strict ? 'strict' : 'advisory'})`
+      : `- **asset audit**: not run${a.notes.length ? ` — ${a.notes.join('; ')}` : ''}`);
+  }
   if (h.unmetRequired.length) lines.push(`- **prerequisites unmet (require)**: ${list(h.unmetRequired)}`);
   if (h.unmetRecommended.length) lines.push(`- **prerequisites unmet (recommend)**: ${list(h.unmetRecommended)}`);
   if (h.notes.length) {
