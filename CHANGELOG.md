@@ -51,6 +51,18 @@ is what you reach for across a breaking one.
   **Consumer impact:** none unless you opt in; with no env variable and no local `script:`,
   doctor's output and exit code are unchanged.
 
+### Changed
+
+- **`render` and `install` no longer warn about opt-in syrup you have not installed.** The
+  "opt-in syrup … pairs with selected … but was not installed" and "requires opt-in syrup …
+  which was not installed" lines are gone, and a `requires:` edge onto an opt-in file your
+  targets leave out is silent too. These lines reached agents running `render` for unrelated
+  work, which read them as something to act on. The `setup` playbook still reports a skill whose
+  companion workflow is not installed, with the install command, and still asks the user
+  both / one / neither. The warning for an edge onto a default-render file is unchanged, and so
+  is the trust warning printed when external opt-in syrup is poured.
+  **Consumer impact:** fewer warnings on stderr; no rendered file or lock changes.
+
 ## [0.20.0] - 2026-11-09
 
 ### Added

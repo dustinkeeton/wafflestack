@@ -9,6 +9,33 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## 2026-11-11: `render` and `install` stop warning about opt-in syrup; the setup playbook still reports it
+
+**Context**: Since #74, `render` and `install` printed a `warning:` whenever a selected skill had
+a companion workflow that was not poured, with the command to pour it. #371 added the same for a
+`requires:` edge in the other direction. `render` runs inside many other tasks (a delegate
+preflight, an upgrade, a worktree setup), so agents doing unrelated work saw these lines on
+every run and treated them as something to act on.
+
+**Decision**: `render` and `install` print nothing about opt-in syrup that is not poured, in
+either edge direction, including an edge onto an opt-in file the project's targets leave out.
+The `setup` playbook is unchanged: it lists the pairing with the install command, and
+`schema/SETUP.md` still requires the both / one / neither question. An agent may tell the user
+about these files; the CLI's stderr does not.
+
+**Alternatives**:
+- *Remove the playbook's pairing note and question too.* Rejected by the owner: agents can still
+  inform the user. How opt-in syrup is presented, and how this repo uses its own, is future work.
+- *A flag or env variable to silence the warnings.* Rejected: every agent-run `render` would
+  need it, and the default would still be noisy.
+
+**Impact**: This reverses the CLI half of the #74 decision below ("the bare-CLI path surfaces
+the choice") and the #371 warning. A bare `install <stack>` with no agent in the loop no longer
+mentions a companion workflow. The forward edge from #371 (`unpouredRequiredSyrup`) is still
+computed but nothing prints it yet. No rendered file or lock changes.
+
+---
+
 ## 2026-11-11: The large-asset audit is a top-level `doctor:` block, off and advisory by default
 
 **Context**: Phase 2 of the studios large-asset workflow (approved by the owner) ends with

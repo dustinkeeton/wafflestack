@@ -3767,27 +3767,13 @@ describe('github-workflow: waffle-release-hook payload (#39)', () => {
     assert.match(inv, /- files \(opt-in syrup — sensitive, do NOT install by default\):[^\n]*waffle-release-hook\.yml/);
   });
 
-  test('R8 stack enable warns the release skill pairs with the un-poured release hook (#74)', () => {
-    // Enabling the stack selects the release SKILL but gates out its release-hook syrup — the
-    // exact half-installed flow #74 exists to surface. The render must warn with the pour command.
+  test('R8 stack enable prints no warning about the un-poured release hook', () => {
+    // `render` says nothing about un-poured opt-in syrup; the setup playbook reports the pairing.
     writeConfig(`targets: [claude]\nstacks: [github-workflow]\nconfig:\n  project:\n    name: ${proj}\n`);
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.ok(
-      result.warnings.some((w) =>
-        /opt-in syrup files\/\.github\/workflows\/waffle-release-hook\.yml \(github-workflow\) pairs with selected skills\/release .*wafflestack install files\/\.github\/workflows\/waffle-release-hook\.yml/.test(w),
-      ),
-      JSON.stringify(result.warnings),
-    );
-
-    // Pouring it via include silences that specific warning.
-    writeConfig(`targets: [claude]\nstacks: [github-workflow]\ninclude: [${REF}]\nconfig:\n  project:\n    name: ${proj}\n`);
-    const poured = render();
-    assert.equal(poured.ok, true, JSON.stringify(poured.errors));
-    assert.ok(
-      !poured.warnings.some((w) => /waffle-release-hook\.yml \(github-workflow\) pairs with selected/.test(w)),
-      JSON.stringify(poured.warnings),
-    );
+    assert.equal(fs.existsSync(path.join(cwd, REL)), false);
+    assert.ok(!result.warnings.some((w) => /waffle-.*-hook\.yml|waffle-hygiene\.yml|opt-in syrup/.test(w)), JSON.stringify(result.warnings));
   });
 });
 
@@ -5804,9 +5790,8 @@ describe('syrup target scoping (#364)', () => {
     );
   });
 
-  // (F10) When the required file is ALSO opt-in, scope is only half of what gates it: "enable one of its targets" renders nothing AND clears
-  // the warning that said so. `skippedSyrupCompanions` walks from the FILE outward, so it misses this — the warning must state BOTH steps.
-  test('a `requires:` edge onto a scoped-out OPT-IN file states both steps of the remedy', () => {
+  // `render` prints nothing about un-poured opt-in syrup, so an edge onto a scoped-out OPT-IN file is silent.
+  test('a `requires:` edge onto a scoped-out OPT-IN file is silent', () => {
     write(toolkitRoot, 'stacks/sb/stack.yaml', [
       'name: sb',
       'description: Scope fixture.',
@@ -5823,33 +5808,20 @@ describe('syrup target scoping (#364)', () => {
     ].join('\n'));
     write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
 
-    config('codex');
-    const warn = render().warnings.find((w) => /selected agents\/alpha requires files\//.test(w));
-    assert.ok(warn, 'the broken edge still warns');
-    // It must not hand out the enable-a-target remedy ALONE — that one renders nothing.
-    assert.match(warn, /necessary but NOT sufficient/);
-    assert.match(warn, /OPT-IN syrup/);
-    assert.match(warn, new RegExp(`wafflestack install files/${SCOPED.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-    assert.match(warn, /doing only the first renders nothing and silences this warning/);
+    for (const target of ['codex', 'claude']) {
+      config(target);
+      const result = render();
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      assert.equal(has(SCOPED), false, `${target}: the opt-in gate holds the file back`);
+      assert.ok(!result.warnings.some((w) => /requires files\//.test(w)), `${target}: ${JSON.stringify(result.warnings)}`);
+    }
 
-    // The trap the warning predicts, pinned as real: doing ONLY the first step leaves the dependency absent AND the warning gone.
-    config('claude');
-    const half = render();
-    assert.equal(has(SCOPED), false, 'opt-in gate still holds the file back — the target alone did nothing');
-    assert.equal(
-      half.warnings.some((w) => /requires files\//.test(w)),
-      false,
-      'and the scope-broken warning is gone — exactly what the remedy text warned would happen',
-    );
-
-    // Following the remedy IN FULL — both steps — actually pours it. The remedy is now true.
     config('claude', `include: [files/${SCOPED}]\n`);
     assert.equal(render().ok, true);
-    assert.ok(has(SCOPED), 'target enabled AND installed → the dependency finally renders');
+    assert.ok(has(SCOPED), 'target enabled AND installed → the dependency renders');
   });
 
   // (F11) `optIn` is read off the DEPENDENCY's stack, not the dependent's — the two differ the moment a `requires:` edge crosses stacks.
-  // Reading the wrong one silently claims the one-step remedy and drops the consumer back into the F10 trap.
   test('optIn is read from the DEPENDENCY\'s stack, not the dependent\'s (cross-stack edge)', () => {
     write(toolkitRoot, 'toolkit.yaml', 'name: fixture\ndescription: scope\nstacks: [sb, ext]\n');
     // The dependent lives in `sb` — which declares NO optIn at all.
@@ -5878,15 +5850,13 @@ describe('syrup target scoping (#364)', () => {
     write(toolkitRoot, `stacks/ext/files/${SCOPED}`, 'export const meta = {};\n');
 
     write(cwd, '.waffle/waffle.yaml', 'targets: [codex]\nstacks: [sb, ext]\nconfig: {}\n');
-    const warn = render().warnings.find((w) => /selected agents\/alpha requires files\//.test(w));
-    assert.ok(warn, 'the cross-stack broken edge warns');
-    assert.equal(has(SCOPED), false, 'and the dependency really is absent');
-
-    // Read from `stackName` (sb, which declares no optIn) this would be false, and the warning would
-    // hand out the one-step remedy that renders nothing — F10, restored, across a stack boundary.
-    assert.match(warn, /OPT-IN syrup/, 'the dependency IS opt-in — in ITS stack, not the dependent\'s');
-    assert.match(warn, /necessary but NOT sufficient/);
-    assert.match(warn, /doing only the first renders nothing and silences this warning/);
+    const result = render();
+    assert.equal(has(SCOPED), false, 'the dependency really is absent');
+    // Read from `stackName` (sb, which declares no optIn) this would be false, and the render would warn.
+    assert.ok(!result.warnings.some((w) => /requires files\//.test(w)), JSON.stringify(result.warnings));
+    const toolkit = loadToolkit(toolkitRoot);
+    const sel = computeSelection(toolkit, { stacks: ['sb', 'ext'], include: [], values: {}, targets: ['codex'] });
+    assert.deepEqual(sel.targetBrokenRequires.map((e) => e.optIn), [true]);
   });
 
   // The non-opt-in mirror: a plain scoped file needs only the target, so the remedy stays the
@@ -5913,8 +5883,8 @@ describe('syrup target scoping (#364)', () => {
     assert.match(warn, /Enable one of its targets/);
   });
 
-  // (F5) #74's pairing warning must be RESTATED for a scoped-out opt-in file, minus the pour command — `install` would render nothing here.
-  test('a scoped-out opt-in file RESTATES the #74 pairing instead of falling silent', () => {
+  // `render` is silent about an un-poured opt-in file with a selected companion, scoped or not; `setup` reports it.
+  test('render prints nothing about an un-poured opt-in file with a selected companion, scoped or not', () => {
     const stack = (scopedLines) => [
       'name: sb',
       'description: Scope fixture.',
@@ -5929,68 +5899,16 @@ describe('syrup target scoping (#364)', () => {
       '',
     ].join('\n');
     write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
+    const scopedName = new RegExp(SCOPED.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
-    // (a) UNSCOPED — the #74 warning, with the pour command. Unchanged behaviour.
-    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - ${SCOPED}`]));
-    config('codex');
-    const unscoped = render().warnings;
-    assert.ok(
-      unscoped.some((w) => /pairs with selected agents\/alpha/.test(w) && /wafflestack install/.test(w)),
-      `expected the #74 pairing warning: ${JSON.stringify(unscoped)}`,
-    );
-
-    // (b) SCOPED — the pairing is still stated, and the pour command is withheld (it would render
-    // nothing). Same fixture; only the scope changed.
-    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
-    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - path: ${SCOPED}`, '    targets: [claude]']));
-    config('codex');
-    const scoped = render().warnings;
-    const pairing = scoped.find((w) => /pairs with selected agents\/alpha/.test(w));
-    assert.ok(pairing, `the pairing must NOT go silent when scoped: ${JSON.stringify(scoped)}`);
-    assert.match(pairing, /scoped to targets \[claude\]/, 'it names the scope that blocks it');
-    assert.doesNotMatch(pairing, /wafflestack install/, 'and never offers a pour command that would render nothing');
-  });
-
-  // (#502) The scoped restatement above is ALSO withheld once the file is ejected: scope says "cannot be
-  // poured here", eject says "left out on purpose" — and the second is the stronger, recorded signal.
-  test('an ejected scoped-out opt-in file gets neither the pairing restatement nor the plain warning (#502)', () => {
-    const stack = (scopedLines) => [
-      'name: sb',
-      'description: Scope fixture.',
-      'agents: [alpha]',
-      'files:',
-      '  - shared.txt',
-      ...scopedLines,
-      'optIn:',
-      `  - files/${SCOPED}`,
-      'requires:',
-      `  files/${SCOPED}: [agents/alpha]`,
-      '',
-    ].join('\n');
-    write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nBody.\n');
-    const eject = `eject:\n  - files/${SCOPED}\n`;
-    const pairing = (warnings) => warnings.find((w) => /pairs with selected agents\/alpha/.test(w));
-
-    // scoped + ejected → silent
-    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - path: ${SCOPED}`, '    targets: [claude]']));
-    config('codex', eject);
-    const scoped = render();
-    assert.equal(scoped.ok, true, JSON.stringify(scoped.errors));
-    assert.equal(pairing(scoped.warnings), undefined, `ejected + scoped must not warn: ${JSON.stringify(scoped.warnings)}`);
-
-    // unscoped + ejected → silent too (the plain variant, on the same fixture)
-    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
-    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - ${SCOPED}`]));
-    config('codex', eject);
-    const unscoped = render();
-    assert.equal(unscoped.ok, true, JSON.stringify(unscoped.errors));
-    assert.equal(pairing(unscoped.warnings), undefined, `ejected + unscoped must not warn: ${JSON.stringify(unscoped.warnings)}`);
-
-    // the contrast, pinned on the same fixture: drop the eject and the scoped restatement is back
-    fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
-    write(toolkitRoot, 'stacks/sb/stack.yaml', stack([`  - path: ${SCOPED}`, '    targets: [claude]']));
-    config('codex');
-    assert.ok(pairing(render().warnings), 'merely scoped-out (not ejected) still restates the pairing');
+    for (const lines of [[`  - ${SCOPED}`], [`  - path: ${SCOPED}`, '    targets: [claude]']]) {
+      fs.rmSync(path.join(cwd, '.waffle'), { recursive: true, force: true });
+      write(toolkitRoot, 'stacks/sb/stack.yaml', stack(lines));
+      config('codex');
+      const result = render();
+      assert.equal(result.ok, true, JSON.stringify(result.errors));
+      assert.ok(!result.warnings.some((w) => scopedName.test(w)), JSON.stringify(result.warnings));
+    }
   });
 
   // (F5, setup) The playbook's scope note outranks its pairing note, so the pairing has to ride along with it.
@@ -6450,7 +6368,7 @@ describe('list command (#119)', () => {
 });
 
 // #74: a stack declares its opt-in syrup's companion waffle via a `requires:` edge, and the render only walks that forward — so selecting
-// the companion leaves the paired syrup gated out and silent. These pin the reverse-edge computation plus the render warning.
+// the companion leaves the paired syrup gated out. These pin the reverse-edge computation `setup` reports, and that `render` stays silent.
 describe('skipped syrup companions (#74)', () => {
   let toolkitRoot;
   let cwd;
@@ -6483,8 +6401,7 @@ describe('skipped syrup companions (#74)', () => {
   });
 
   const render = (opts = {}) => renderProject({ toolkitRoot, cwd, toolkitVersion: '0.0.test', ...opts });
-  const companionWarn = (w) =>
-    /opt-in syrup files\/danger\.yml \(sb\) pairs with selected skills\/companion .*wafflestack install files\/danger\.yml/.test(w);
+  const companionWarn = (w) => /danger\.yml|opt-in syrup/.test(w);
 
   test('the fixture validates clean (companion skill + requires edge resolve)', () => {
     assert.deepEqual(validateToolkit(toolkitRoot), []);
@@ -6566,8 +6483,6 @@ describe('skipped syrup companions (#74)', () => {
     ].join('\n'));
     write(toolkitRoot, 'stacks/sb/agents/alpha.md', '---\nname: alpha\ndescription: Agent A.\n---\n\nNeeds the danger syrup.\n');
   };
-  const forwardWarn = (w) =>
-    /selected agents\/alpha requires opt-in syrup files\/danger\.yml \(sb\), which was not installed .*NOT rendered.*wafflestack install files\/danger\.yml/.test(w);
 
   test('unpouredRequiredSyrup surfaces a selected item whose requires: lands on un-poured opt-in syrup (#371)', () => {
     forwardFixture();
@@ -6605,19 +6520,18 @@ describe('skipped syrup companions (#74)', () => {
     assert.equal(sel.targetBrokenRequires[0].optIn, true);
   });
 
-  test('render warns about un-poured required syrup with the exact pour command, and the pour silences it (#371)', () => {
+  test('render prints nothing about un-poured required syrup, and an include pours it (#371)', () => {
     forwardFixture();
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
     let result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.ok(result.warnings.some(forwardWarn), JSON.stringify(result.warnings));
+    assert.ok(!result.warnings.some((w) => /danger\.yml/.test(w)), JSON.stringify(result.warnings));
     assert.ok(fs.existsSync(path.join(cwd, '.claude/agents/alpha.md')), 'the dependent still renders');
     assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false, '…without its declared syrup');
 
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\ninclude: [files/danger.yml]\nconfig: {}\n');
     result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.ok(!result.warnings.some(forwardWarn), `the remedy works: ${JSON.stringify(result.warnings)}`);
     assert.ok(fs.existsSync(path.join(cwd, 'danger.yml')));
   });
 
@@ -6631,11 +6545,11 @@ describe('skipped syrup companions (#74)', () => {
     assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false);
   });
 
-  test('render warns about the skipped companion with the exact pour command', () => {
+  test('render prints nothing about the skipped companion', () => {
     write(cwd, '.waffle/waffle.yaml', 'targets: [claude]\nstacks: [sb]\nconfig: {}\n');
     const result = render();
     assert.equal(result.ok, true, JSON.stringify(result.errors));
-    assert.ok(result.warnings.some(companionWarn), JSON.stringify(result.warnings));
+    assert.ok(!result.warnings.some((w) => /danger\.yml|opt-in syrup/.test(w)), JSON.stringify(result.warnings));
     // the companion skill DID render — only its paired syrup was gated
     assert.ok(fs.existsSync(path.join(cwd, '.claude/skills/companion/SKILL.md')));
     assert.equal(fs.existsSync(path.join(cwd, 'danger.yml')), false);
@@ -9911,7 +9825,7 @@ describe('external stack sources: install-time validation + syrup confirmation (
     assert.ok(!result.warnings.some((w) => /EXTERNAL opt-in syrup/.test(w)), JSON.stringify(result.warnings));
   });
 
-  test('a skipped EXTERNAL opt-in syrup companion carries the trust-boundary note alongside the pairing warning', () => {
+  test('render prints nothing about an un-poured EXTERNAL opt-in syrup with a selected companion', () => {
     write(extRoot, 'stacks/acme/stack.yaml', [
       'name: acme',
       'description: Acme.',
@@ -9932,11 +9846,8 @@ describe('external stack sources: install-time validation + syrup confirmation (
     assert.equal(result.ok, true, JSON.stringify(result.errors));
     // The opt-in syrup was NOT poured (gated out of the default stack expansion)…
     assert.equal(fs.existsSync(path.join(cwd, '.github/workflows/acme-hook.yml')), false);
-    // …and the both/one/neither pairing warning is augmented with the external trust-boundary note.
-    const w = result.warnings.find((x) => /pairs with selected skills\/release/.test(x));
-    assert.ok(w, JSON.stringify(result.warnings));
-    assert.match(w, /EXTERNAL syrup from source "acme"/);
-    assert.match(w, /trust-boundary acknowledgement/);
+    // …and `render` prints nothing about it.
+    assert.ok(!result.warnings.some((x) => /acme-hook\.yml|opt-in syrup/.test(x)), JSON.stringify(result.warnings));
   });
 
   test('setup (update mode) surfaces the external trust-boundary acknowledgement for declared sources', () => {

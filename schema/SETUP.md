@@ -115,9 +115,9 @@ half), `hygiene` with `waffle-hygiene.yml`, `label-hook` with `waffle-label-hook
 with `waffle-post-merge-hook.yml` (the remote half of post-merge hygiene), and `pr-response` with
 `waffle-pr-response-hook.yml` (the hook that dispatches it). When
 your selection pulls in the companion waffle (you enabled the stack, or included the skill) but
-its opt-in syrup stays gated out, `render` prints a `warning:` naming the skipped syrup and the
-exact `wafflestack install files/<path>` command — and the update-mode section above flags the
-same pairing. Do **not** just accept that gap. Before you finish setup/install, put an explicit
+its opt-in syrup stays gated out, the update-mode section above flags the pairing with the exact
+`install files/<path>` command. `render` and `install` print nothing about it, so this playbook
+is the only place it is reported. Do **not** just accept that gap. Before you finish setup/install, put an explicit
 **both / one / neither** choice to the user for each such pair:
 
 - **both** — install the companion waffle *and* pour the syrup (`wafflestack install files/<path>`),
