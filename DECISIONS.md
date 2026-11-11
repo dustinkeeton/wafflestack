@@ -16,13 +16,17 @@ see [ARCHITECTURE.md](ARCHITECTURE.md).
 consumer that never asked for it must see no change, and the audit is a Python script that
 lives outside this toolkit.
 
-**Decision**: A top-level `doctor.assetAudit` block in `.waffle/waffle.yaml` (`script`,
-`strict`, `timeoutSeconds`) turns the check on, and `WAFFLESTACK_ASSET_AUDIT=<path>` turns it on
-without a config edit. Doctor runs `python3 -I -B <script> audit <root> --json` with a timeout
-and reads the version-1 JSON report. Findings never change the exit code unless `strict: true`
-or `--asset-audit-strict` is set. Anything that stops the audit from running is a one-line note,
-never a failure, even in strict mode. `report` shows counts only, and `upgrade` does not run the
-audit.
+**Decision**: Only the person running doctor chooses the script: the
+`WAFFLESTACK_ASSET_AUDIT=<path>` environment variable, or `doctor.assetAudit.script` in the local
+overlay when git confirms that file is untracked. A `script` in the committed `waffle.yaml` is
+ignored with a note, because a cloned repo or a pull request controls that file, and running it
+would mean running the repo's code. A script inside the project is refused. `python3` is found
+only in absolute PATH folders outside the project, and runs from the temp folder with a minimal
+environment. The committed top-level `doctor.assetAudit` block may still set `strict`,
+`allowUnhydrated` and `timeoutSeconds`, which are behaviour, not code. Findings never change the
+exit code unless `strict: true` or `--asset-audit-strict` is set. Anything that stops the audit
+from running is a one-line note, never a failure, even in strict mode. Only `doctor` runs it:
+`report` and `upgrade` do not, so `report` (which never opens the overlay) carries no asset line.
 
 **Alternatives**:
 - *A key under `config:`, declared by a stack.* Rejected: `config:` keys are template values a
@@ -31,10 +35,12 @@ audit.
   precedent for a CLI-read top-level block.
 - *Vendor `asset_audit.py` into the toolkit.* Rejected: studios owns the policy and its version;
   a copy here would drift from it.
+- *Read the script path from the committed config.* Rejected after security review: a fresh
+  clone, or CI on a pull request, would run whatever Python file the repo names.
 - *Strict means fail on errors only.* Rejected: the audit's own `--strict` fails on errors and
   warnings, and doctor follows it so both give the same answer.
 
-**Affects**: `installer/lib/asset-audit.mjs`, `doctor.mjs`, `report.mjs`, `cli.mjs`; FORMAT.md
+**Affects**: `installer/lib/asset-audit.mjs`, `doctor.mjs`, `cli.mjs`; FORMAT.md
 "Large-asset audit in doctor".
 
 ---

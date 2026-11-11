@@ -875,7 +875,7 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   external sources — see *External stack sources* below), optional `include:` (individual
   items), `config:` values, optional `eject:` list, optional `skills.modelInvocation:`
   override (see *Per-skill model invocation* below), optional `doctor.assetAudit:` block
-  (see *Large-asset audit in doctor* below).
+  (see *Large-asset audit in doctor* below; its `script:` is read only from the local overlay).
 - `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
   `wafflestack config [key-prefix]` lists every key the selection can set and says which of
@@ -964,44 +964,68 @@ track. The `wafflestack` stack ships `/waffle-toggle` as the in-agent wrapper.
 **off** unless you turn it on. With nothing configured, doctor's output and exit code are
 exactly what they were before this check existed.
 
-Turn it on with a top-level `doctor:` block in `.waffle/waffle.yaml`. It is a top-level
-block, like `skills:`, because the CLI reads it directly; it is not a template value, so it
-does not go under `config:` (doctor prints a note if it finds it there).
+**Who chooses the script.** The script is code doctor runs, so only the person running doctor
+can name it, in one of two places:
+
+- **`WAFFLESTACK_ASSET_AUDIT=<path>`**, an environment variable. Setting it turns the check on.
+  An empty value counts as unset.
+- **`doctor.assetAudit.script` in `.waffle/waffle.local.yaml`**, the gitignored local overlay.
+  Doctor uses it only when git confirms that file is not tracked. If the file is tracked, or git
+  cannot tell, doctor ignores the path and prints a note.
+
+When both are set, the environment variable wins. A `script:` in the committed
+`.waffle/waffle.yaml` is **always ignored**, with a one-line note saying where to set it. A
+cloned repository, or a pull request in CI, controls that file. Doctor also refuses a script
+whose real path (after following symlinks) is inside the project being audited.
+
+The other settings are plain behaviour, so they may be committed. Put them in a top-level
+`doctor:` block, like `skills:`. The CLI reads this block directly; it is not a template value,
+so it does not go under `config:` (doctor prints a note if it finds it there).
 
 ```yaml
+# .waffle/waffle.yaml (committed): optional behaviour only
 doctor:
   assetAudit:
-    script: ~/dev/studios/asset_audit.py   # required to turn the check on
-    strict: false                          # optional, default false
-    timeoutSeconds: 120                    # optional, default 120
+    strict: false            # default false
+    allowUnhydrated: false   # default false
+    timeoutSeconds: 120      # default 120
 ```
 
-| Key | Meaning |
-|---|---|
-| `script` | Path to `asset_audit.py`. `~/` means your home folder; any other relative path is read from the project root. |
-| `strict` | `true` lets audit errors and warnings fail doctor (exit 1). Default `false`. |
-| `timeoutSeconds` | How long the audit may run before doctor stops it and prints a note. Default `120`. |
+```yaml
+# .waffle/waffle.local.yaml (gitignored): the script path, per machine
+doctor:
+  assetAudit:
+    script: ~/dev/studios/asset_audit.py
+```
 
-The script path is usually different on each machine, so it normally belongs in the
-gitignored `.waffle/waffle.local.yaml` rather than the committed file. Two overrides need no
-config edit at all:
+| Key | Where | Meaning |
+|---|---|---|
+| `script` | local overlay only | Path to `asset_audit.py`. `~/` means your home folder; any other relative path is read from the project root (and is then refused unless it leads out of the project with `..`). |
+| `strict` | either file | `true` lets audit errors and warnings fail doctor (exit 1). Default `false`. |
+| `allowUnhydrated` | either file | `true` passes `--allow-unhydrated` to the audit. Use it for a checkout made without Git LFS files: a pointer stub under an LFS rule then counts as `info` instead of an error. Default `false`. |
+| `timeoutSeconds` | either file | How long the audit may run before doctor stops it and prints a note. Default `120`. |
 
-- **`WAFFLESTACK_ASSET_AUDIT=<path>`**, an environment variable. Setting it turns the check on
-  and replaces `doctor.assetAudit.script`. An empty value counts as unset.
-- **`--asset-audit-strict`**, a doctor flag. It turns strict mode on for one run. It does
-  nothing when the check is off.
+The overlay wins over the committed file. Two doctor flags apply to one run and do nothing when
+the check is off:
+
+- `--asset-audit-strict` turns strict mode on.
+- `--asset-audit-allow-unhydrated` passes `--allow-unhydrated` to the audit.
 
 For example, run this in a terminal from the project root. Preconditions: Python 3.9 or newer
-is on `PATH` as `python3`, the script exists at that path, and `vX.Y.Z` is a toolkit release
-tag that includes this check (the first release after 0.20.0).
+is on `PATH` as `python3`, the script exists at that path outside the project, and `vX.Y.Z` is
+a toolkit release tag that includes this check (the first release after 0.20.0).
 
 ```sh
 WAFFLESTACK_ASSET_AUDIT=~/dev/studios/asset_audit.py npx --yes github:dustinkeeton/wafflestack#vX.Y.Z doctor
 ```
 
-**What doctor does when the check is on.** It runs
-`python3 -I -B <script> audit <project root> --json` with the timeout above, reads the JSON
-report (`kind: "asset-audit-report"`, `schema_version` 1.x), and prints:
+**What doctor does when the check is on.** It looks up `python3` in the `PATH` folders that are
+absolute and outside the project; a folder inside the project is skipped. It then runs
+`python3 -I -B <script> audit <project root> --json`, adding `--allow-unhydrated` when asked.
+The run uses the system temp folder as its working folder and the timeout above. The audit gets
+a minimal environment: `PATH` (the same filtered folders), `HOME`, `LANG` and `LC_*`, and
+`GIT_OPTIONAL_LOCKS=0`. Doctor reads the JSON report (`kind: "asset-audit-report"`,
+`schema_version` 1.x) and prints:
 
 ```text
 asset audit: 0 error(s), 2 warning(s), 0 info (advisory — does not change the exit code)
@@ -1014,15 +1038,13 @@ counted but not listed. The audit is read-only and makes no network calls (the s
 document `docs/asset-audit.md` describes how), and doctor writes nothing either.
 
 **Advisory by default.** The audit never changes doctor's exit code unless strict mode is on.
-When the script is missing, `python3` is missing, the audit exits 2 (it could not run, for
-example because the folder is not a Git checkout), it times out, or it prints something other
-than a version-1 report, doctor prints one line starting `asset audit not run:` and carries on.
-An audit that did not run never fails doctor, even in strict mode.
+When the script is missing or refused, `python3` is missing, the audit exits 2 (it could not
+run, for example because the folder is not a Git checkout), it times out, or it prints something
+other than a version-1 report, doctor prints one line starting `asset audit not run:` and
+carries on. An audit that did not run never fails doctor, even in strict mode.
 
-**In `wafflestack report`.** The report's doctor summary gains an `asset audit` line with the
-error, warning and info counts, never file paths. `report` reads only the committed config, so
-a script path set in `waffle.local.yaml` is not seen there; use `WAFFLESTACK_ASSET_AUDIT` to
-include the counts. `upgrade` runs doctor without the audit.
+**Only `doctor` runs it.** `wafflestack report` and `upgrade` never run the audit, and the
+report carries no asset line.
 
 ## Release resolution — which toolkit ran?
 

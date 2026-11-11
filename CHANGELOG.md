@@ -33,15 +33,20 @@ is what you reach for across a breaking one.
 
 ### Added
 
-- **`doctor` can run the studios large-asset audit, opt-in and advisory.** A top-level
-  `doctor.assetAudit` block in `.waffle/waffle.yaml` (`script`, `strict`, `timeoutSeconds`), or
-  the `WAFFLESTACK_ASSET_AUDIT=<path>` environment variable, points doctor at `asset_audit.py`.
-  Doctor then runs it read-only against the project root with a timeout and prints the error and
-  warning counts plus the top five findings with their fix hints. It never changes the exit code
-  unless `strict: true` or `--asset-audit-strict` is set. A missing script, a missing `python3`, an
-  audit that exits 2, or a timeout is a one-line note. `wafflestack report` adds the counts to its
-  doctor summary. See FORMAT.md, "Large-asset audit in doctor".
-  **Consumer impact:** none unless you opt in; with no `doctor:` block and no env variable,
+- **`doctor` can run the studios large-asset audit, opt-in and advisory.** The person running
+  doctor names `asset_audit.py`, either with the `WAFFLESTACK_ASSET_AUDIT=<path>` environment
+  variable or with `doctor.assetAudit.script` in the untracked `.waffle/waffle.local.yaml`. A
+  script path in the committed `waffle.yaml` is ignored with a note, and a script inside the
+  project is refused. The committed file may set `strict`, `allowUnhydrated` and
+  `timeoutSeconds` in a top-level `doctor.assetAudit` block. Doctor runs the audit read-only
+  against the project root. It uses a `python3` found outside the project, the temp folder as
+  the working folder, a minimal environment and a timeout. It prints the error and warning counts
+  plus the top five findings with their fix hints. The exit code changes only with
+  `strict: true` or `--asset-audit-strict`; `allowUnhydrated: true` or
+  `--asset-audit-allow-unhydrated` passes `--allow-unhydrated` to the audit. A missing or refused
+  script, a missing `python3`, an audit that exits 2, or a timeout is a one-line note. `report`
+  and `upgrade` never run it. See FORMAT.md, "Large-asset audit in doctor".
+  **Consumer impact:** none unless you opt in; with no env variable and no local `script:`,
   doctor's output and exit code are unchanged.
 
 ## [0.20.0] - 2026-11-09

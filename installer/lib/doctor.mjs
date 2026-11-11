@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import process from 'node:process';
 import path from 'node:path';
 import { sha256, exists, compareVersions, parseVersion } from './util.mjs';
 import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems, overlayLeaks as findOverlayLeaks, overlayLeakRemedy } from './render.mjs';
@@ -40,13 +41,16 @@ function noVerify() {
  * the local lock is opened, so the result carries nothing from either.
  */
 export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null, checkOverlayLeaks = true, assetAudit = null }) {
-  // Opt-in large-asset audit: only callers that pass `assetAudit` run it, and only when the project
-  // (or the env override) names a script. Advisory unless strict; it never throws.
+  // Opt-in large-asset audit: only the `doctor` command passes `assetAudit` (never `report` or
+  // `upgrade`), and it runs only when the env variable or the untracked local overlay names a
+  // script outside the repo. Advisory unless strict; it never throws.
+  const env = assetAudit?.env ?? process.env;
   const assets = assetAudit
     ? runAssetAudit({
         cwd,
-        settings: resolveAssetAuditSettings({ cwd, canonical, strictFlag: Boolean(assetAudit.strict), env: assetAudit.env }),
+        settings: resolveAssetAuditSettings({ cwd, strictFlag: Boolean(assetAudit.strict), allowUnhydratedFlag: Boolean(assetAudit.allowUnhydrated), env, home: assetAudit.home }),
         python: assetAudit.python,
+        env,
       })
     : assetAuditDisabled();
   const lock = readLock(cwd);
