@@ -14,7 +14,7 @@ import { marketplacePluginId } from './marketplace.mjs';
 import { modSettingsEntries, settingsConflicts, applySettings, settingsLockMap, lockKeys, parseSettingsKey } from './settings.mjs';
 import { loadToolkitWithSources, missingRequiredKeys } from './toolkit.mjs';
 import { defaultSourceCacheDir } from './sources.mjs';
-import { computeSelection, skippedSyrupCompanions, unpouredRequiredSyrup, disabledStackRequires, closureFor } from './refs.mjs';
+import { computeSelection, disabledStackRequires, closureFor } from './refs.mjs';
 import { validateExternalStacks, RESERVED_AGENT_KEYS } from './validate.mjs';
 import {
   applicablePrerequisites,
@@ -462,43 +462,8 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   const selection = computeSelection(toolkit, { ...project, stacks: enabledStacks }, trackedFiles);
   errors.push(...selection.errors, ...retiredConfigProblems(project.values));
 
-  // The pour the warnings below suggest crosses a trust boundary when the syrup is external.
-  const externalNote = (stackName) => {
-    const prov = toolkit.stacks.get(stackName)?.provenance;
-    return prov
-      ? ` — this is EXTERNAL syrup from source "${stackName}" (${describeProvenance(prov)}), so pouring it ` +
-          `additionally requires an explicit trust-boundary acknowledgement beyond the normal opt-in`
-      : '';
-  };
-
-  // The render walks `requires:` forward only, so reverse the edge to catch a gated pairing (#74).
-  for (const { fileRef, stackName, companions, scopedTo } of skippedSyrupCompanions(toolkit, selection)) {
-    const external = externalNote(stackName);
-    // The pairing is real but UNCOMPLETABLE here (#364), so it is stated without a pour command.
-    if (scopedTo) {
-      warnings.push(
-        `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')}, but is scoped to ` +
-          `targets [${scopedTo.join(', ')}] and this project enables [${project.targets.join(', ')}] — it CANNOT ` +
-          `be poured here, so that flow stays incomplete. Enable one of its targets in ${CONFIG_FILE} to complete ` +
-          `the pairing, or leave it out on purpose${external}`,
-      );
-      continue;
-    }
-    warnings.push(
-      `opt-in syrup ${fileRef} (${stackName}) pairs with selected ${companions.join(', ')} but was not ` +
-        `installed — run \`wafflestack install ${fileRef}\` to pour it, or leave it out on purpose${external}`,
-    );
-  }
-
-  // The same edge walked FORWARD (#371): a selected item's `requires:` onto opt-in syrup nobody
-  // poured renders without it — a stack-expanded dependent never enters a closure.
-  for (const { ref, requiredBy, stackName } of unpouredRequiredSyrup(toolkit, selection)) {
-    warnings.push(
-      `selected ${requiredBy} requires opt-in syrup ${ref} (${stackName}), which was not installed — the ` +
-        `dependency is NOT rendered, so the flow is incomplete. Run \`wafflestack install ${ref}\` to pour ` +
-        `it, or expect ${requiredBy} to run without it${externalNote(stackName)}`,
-    );
-  }
+  // Un-poured opt-in syrup earns no warning here: these lines reach agents doing unrelated work.
+  // The `setup` playbook is where a pairing is reported.
 
   // A cross-stack `requires:` edge onto a stack this project does not enable (#520): expansion
   // never pulls another stack's items in, so it warns instead — never silently enables.
@@ -541,17 +506,13 @@ function computeOutputs({ toolkit, project, cwd, trackedFiles, errors, warnings,
   }
 
   // A selected waffle whose `requires:` edge lands on a scoped-out file renders WITHOUT that
-  // dependency (#364); for opt-in syrup, enabling a target is necessary but not sufficient.
+  // dependency (#364). An opt-in dependency is skipped, like every other un-poured syrup.
   for (const { ref, requiredBy, targets, optIn } of selection.targetBrokenRequires) {
-    const remedy = optIn
-      ? `${ref} is also OPT-IN syrup, so enabling a target is necessary but NOT sufficient: enable one of ` +
-        `its targets in ${CONFIG_FILE} AND install it (\`wafflestack install ${ref}\`) — doing only the ` +
-        `first renders nothing and silences this warning`
-      : `Enable one of its targets in ${CONFIG_FILE}`;
+    if (optIn) continue;
     warnings.push(
       `selected ${requiredBy} requires ${ref}, which is scoped to targets [${targets.join(', ')}] and this ` +
         `project enables [${project.targets.join(', ')}] — the dependency is NOT rendered, so the flow is ` +
-        `incomplete. ${remedy}, or expect ${requiredBy} to run without it.`,
+        `incomplete. Enable one of its targets in ${CONFIG_FILE}, or expect ${requiredBy} to run without it.`,
     );
   }
 
