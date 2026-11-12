@@ -82,7 +82,7 @@ npx github:dustinkeeton/wafflestack#vX.Y.Z render     # X.Y.Z = latest release t
 | `render` (alias `bake`) | Regenerate every managed file from source + config, prune stale ones, write the lock. |
 | `install [ref…]` | Add stacks/items to `.waffle/waffle.yaml`, pull dependencies, then render. Bare = `render`. |
 | `upgrade` | Move an install across toolkit versions: print CHANGELOG, run migrations, re-render, `doctor`. |
-| `doctor` | Diff managed files against the lock; report edits, missing files, env gaps. Exit 1 on drift. Optionally runs the studios large-asset audit as an advisory summary (off unless configured; see `schema/FORMAT.md`, "Large-asset audit in doctor"). |
+| `doctor` | Diff managed files against the lock; report edits, missing files, env gaps. Exit 1 on drift. |
 | `report` | Print redacted diagnostics (lock, config keys, doctor summary) for an upstream toolkit bug report; `--json` for machines. |
 | `config [key-prefix]` | Look up the config keys this selection can set — value, source file (`default` / `waffle.yaml` / `waffle.local.yaml`), default and constraints; an exact key prints the full default and description. Read-only. |
 | `state` | Print the resolved state — every behavioral key with its value, layer and tokens, the delegate run files, lock status and drift; `--json` for the documented document; `--board` adds open milestones, epics and In Progress / In Review items via `gh`. |

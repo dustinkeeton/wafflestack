@@ -36,4 +36,4 @@ If nothing is found in a category, omit it entirely. Do not pad.
 Be thorough but practical. Focus on real attack vectors relevant to {{project.longName}}, which:
 {{security.threatModel}}
 
-When the project renders a security-audit skill variant (`electron-security-audit` or `webapp-security-audit`), read it for the audit standards and checklist — it is not a hard requirement of this agent.
+When the project renders a security-audit skill variant (such as `webapp-security-audit`), read it for the audit standards and checklist — it is not a hard requirement of this agent.

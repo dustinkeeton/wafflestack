@@ -278,7 +278,7 @@ Present the plan to the user. On the no-args path, **lead with the resolved scop
 
 | # | Issue | Agent | Module(s) | Group |
 |---|-------|-------|-----------|-------|
-| 3 | Fix UI hang when... | plugin-architect | summarize | A |
+| 3 | Fix UI hang when... | ux-designer | summarize | A |
 | 5 | Fix folder picker... | lead-engineer | shared | B (serial) |
 
 **Parallel:** Group A runs simultaneously with worktree isolation
@@ -716,7 +716,7 @@ After all agents complete, present a summary. Build the table **from the checkpo
 
 | # | Issue | Agent | Status | PR |
 |---|-------|-------|--------|----|
-| 3 | Fix UI hang... | plugin-architect | done | #6 |
+| 3 | Fix UI hang... | ux-designer | done | #6 |
 | 5 | Fix folder picker... | lead-engineer | done | #7 |
 
 Build: passing

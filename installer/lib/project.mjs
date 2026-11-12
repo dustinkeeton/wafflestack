@@ -28,7 +28,6 @@ import { parseFlagPlaceholder } from './template.mjs';
  * @property {Record<string, any>} values the `config:` block — parsed YAML, so `any`-valued
  * @property {string[]} eject item refs released to project ownership
  * @property {import('./model-invocation.mjs').ModelInvocationOverride} modelInvocation the `skills.modelInvocation` block (#476)
- * @property {any} [doctor] the top-level `doctor:` block, raw and unvalidated — read only by `asset-audit.mjs`
  *
  * @typedef {object} ResolvedDotPath
  * @property {string} file absolute path to read (the CURRENT name when nothing exists)
@@ -637,7 +636,6 @@ export function loadProjectConfig(cwd, notes = [], { canonical = false, localCon
     values: cfg.config ?? {},
     eject: cfg.eject ?? [],
     modelInvocation: normalizeModelInvocation(cfg.skills, CONFIG_FILE),
-    doctor: cfg.doctor ?? null,
   };
 }
 

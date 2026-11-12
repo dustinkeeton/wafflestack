@@ -241,7 +241,6 @@ stacks: []
 #  - docs-system
 #  - github-workflow
 #  - code-quality
-#  - obsidian-dev
 #  - orchestration
 # Individual items (dependencies pulled in automatically). Prefer whole stacks;
 # use this for one-off skills/agents. \`wafflestack install skills/issue\` edits it for you.

@@ -143,23 +143,6 @@ waffles:
     path: stacks/code-quality/skills/dry
     status: stable
 
-  # ── obsidian-dev ────────────────────────────────────────────────────────────
-  - name: plugin-architect
-    kind: agent
-    stack: obsidian-dev
-    path: stacks/obsidian-dev/agents/plugin-architect.md
-    status: stable
-  - name: obsidian-plugin-dev
-    kind: skill
-    stack: obsidian-dev
-    path: stacks/obsidian-dev/skills/obsidian-plugin-dev
-    status: stable
-  - name: electron-security-audit
-    kind: skill
-    stack: obsidian-dev
-    path: stacks/obsidian-dev/skills/electron-security-audit
-    status: stable
-
   # ── orchestration ───────────────────────────────────────────────────────────
   - name: project-manager
     kind: agent
@@ -242,23 +225,6 @@ waffles:
     kind: skill
     stack: engineering-team
     path: stacks/engineering-team/skills/webapp-security-audit
-    status: stable
-
-  # ── expo-dev ────────────────────────────────────────────────────────────────
-  - name: mobile-architect
-    kind: agent
-    stack: expo-dev
-    path: stacks/expo-dev/agents/mobile-architect.md
-    status: stable
-  - name: expo-ui
-    kind: skill
-    stack: expo-dev
-    path: stacks/expo-dev/skills/expo-ui
-    status: stable
-  - name: expo-app-dev
-    kind: skill
-    stack: expo-dev
-    path: stacks/expo-dev/skills/expo-app-dev
     status: stable
 
   # ── harness-architect ───────────────────────────────────────────────────────

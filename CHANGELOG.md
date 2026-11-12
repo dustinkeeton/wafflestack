@@ -31,25 +31,18 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
-### Added
+### Removed
 
-- **`doctor` can run the studios large-asset audit, opt-in and advisory.** The person running
-  doctor names `asset_audit.py`, either with the `WAFFLESTACK_ASSET_AUDIT=<path>` environment
-  variable or with `doctor.assetAudit.script` in `.waffle/waffle.local.yaml`. Doctor uses that
-  path only when git reports the file as ignored, no case variant of its name is tracked, no
-  folder on its path is a symlink, and the path has no `..`. A script path in the committed
-  `waffle.yaml` is ignored with a note. A script inside the project is refused, where the project
-  is both the folder doctor runs in and its whole Git repository. The committed file may set `strict`, `allowUnhydrated` and
-  `timeoutSeconds` in a top-level `doctor.assetAudit` block. Doctor runs the audit read-only
-  against the project root. It uses a `python3` and `git` found outside the project, the temp folder as
-  the working folder, a minimal environment and a timeout. It prints the error and warning counts
-  plus the top five findings with their fix hints. The exit code changes only with
-  `strict: true` or `--asset-audit-strict`; `allowUnhydrated: true` or
-  `--asset-audit-allow-unhydrated` passes `--allow-unhydrated` to the audit. A missing or refused
-  script, a missing `python3`, an audit that exits 2, or a timeout is a one-line note. `report`
-  and `upgrade` never run it. See FORMAT.md, "Large-asset audit in doctor".
-  **Consumer impact:** none unless you opt in; with no env variable and no local `script:`,
-  doctor's output and exit code are unchanged.
+- **The `obsidian-dev` and `expo-dev` stacks are gone.** Their agents (`plugin-architect`,
+  `mobile-architect`) and skills (`obsidian-plugin-dev`, `electron-security-audit`, `expo-ui`,
+  `expo-app-dev`) no longer ship with the toolkit. They served one kind of project each and
+  belong in a stack the project owns.
+  **Consumer impact:** breaking if your `stacks:` or `include:` names either stack or one of
+  those six items; the render fails on the unknown name. To keep one, copy `stacks/<name>/` from
+  the `v0.20.0` tag into a folder you own and list it as an external stack
+  (`- { name: obsidian-dev, source: ./path/to/obsidian-dev }`), where the folder holds the
+  `stack.yaml`. See `schema/AUTHORING-EXTERNAL-STACKS.md`. Otherwise remove the names from your
+  config. No migration runs for this.
 
 ### Changed
 
@@ -3644,7 +3637,7 @@ are the slices (#593–#596). **Consumer impact (whole release):** re-render and
   (blocker / should-fix / nit), where "no holes found" is a valid outcome; distinct from the built-in
   `/code-review`, which reviews the author's *uncommitted* diff. `dry` (`/dry <path>`) removes genuine
   duplication under rule-of-three and semantic-sameness guardrails. Neither adds config keys. The
-  stack also shed its Obsidian/Synapse-specific assumptions, so it now drops cleanly into any project
+  stack also shed its Obsidian-specific assumptions, so it now drops cleanly into any project
   (#117). **The PR-green auto-trigger now ships** as opt-in syrup in `github-workflow`
   (`waffle-pr-green-hook.yml`): it dispatches `adversarial-review` the moment a PR's required checks go
   green (once per green transition, deduped by a review marker), and can render just the one skill via
@@ -3831,7 +3824,7 @@ are the slices (#593–#596). **Consumer impact (whole release):** re-render and
 - **`code-quality` made project-agnostic** (#117). `codebase-architecture` generalizes the Obsidian
   `onload()/onunload()` lifecycle to a neutral register/teardown contract and drops the hardcoded file
   tree for generic structure guidance; `tdd` gains an explicit "how and when to use" section; and the
-  stack's config descriptions are scrubbed of Obsidian/Synapse example strings. No config keys added
+  stack's config descriptions are scrubbed of project-specific example strings. No config keys added
   or removed.
 - **`clean-up` fast-forwards the local default branch** (#114). After `git fetch --prune`,
   `clean_up.sh --execute` fast-forwards the local default branch to the remote tip when you are on it

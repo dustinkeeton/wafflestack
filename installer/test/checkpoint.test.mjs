@@ -24,18 +24,18 @@ const BASE = {
     { number: 5, title: 'Folder picker', labels: ['bug'], milestone: 'v1.1' },
   ],
   classification: [
-    { number: 3, agent: 'plugin-architect', area: 'summarize', touchesRoot: false, touchesShared: false },
+    { number: 3, agent: 'ux-designer', area: 'summarize', touchesRoot: false, touchesShared: false },
     { number: 5, agent: 'lead-engineer', area: 'shared', touchesShared: true },
   ],
   plan: {
     confirmed: true,
     groups: [
-      { id: 'A', mode: 'parallel', assignments: [{ number: 3, agent: 'plugin-architect', branch: 'fix/issue-3-ui-hang', worktree: '/repo/.claude/worktrees/issue-3' }] },
+      { id: 'A', mode: 'parallel', assignments: [{ number: 3, agent: 'ux-designer', branch: 'fix/issue-3-ui-hang', worktree: '/repo/.claude/worktrees/issue-3' }] },
       { id: 'B', mode: 'serial', assignments: [{ number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', worktree: null }] },
     ],
   },
   execution: [
-    { number: 3, agent: 'plugin-architect', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6' },
+    { number: 3, agent: 'ux-designer', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6' },
     { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'done', pr: '#7' },
   ],
   report: { build: 'passing' },
@@ -131,7 +131,7 @@ describe('delegate checkpoint validator', () => {
 
   test('approval-gate fields: an approved push and a rejected push both pass execute', () => {
     const doc = clone(BASE);
-    doc.execution[0] = { number: 3, agent: 'plugin-architect', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6', approval: 'approved', approvedBy: 'dustin' };
+    doc.execution[0] = { number: 3, agent: 'ux-designer', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6', approval: 'approved', approvedBy: 'dustin' };
     doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'skipped', pr: null, approval: 'rejected', approvedBy: 'dustin' };
     const r = run(doc, 'execute');
     assert.equal(r.status, 0, r.stderr);
@@ -172,7 +172,7 @@ describe('delegate checkpoint validator', () => {
 
   test('auto-merge fields: an armed PR and a not-armed PR both pass execute', () => {
     const doc = clone(BASE);
-    doc.execution[0] = { number: 3, agent: 'plugin-architect', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6', autoMergeArmed: true };
+    doc.execution[0] = { number: 3, agent: 'ux-designer', branch: 'fix/issue-3-ui-hang', status: 'done', pr: '#6', autoMergeArmed: true };
     doc.execution[1] = { number: 5, agent: 'lead-engineer', branch: 'fix/issue-5-folder-picker', status: 'done', pr: '#7', autoMergeArmed: false };
     const r = run(doc, 'execute');
     assert.equal(r.status, 0, r.stderr);

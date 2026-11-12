@@ -155,10 +155,10 @@ setup: |-
 config:
   project.name:
     required: true
-    description: Bare project name, e.g. "Synapse".
+    description: Bare project name, e.g. "Lantern".
   project.longName:
     required: true
-    description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+    description: Full prose project descriptor, e.g. "the Lantern desktop app".
   # #218 — the SINGLE-PROGRAM guard (see engineering-team/stack.yaml for the full rationale). A
   # `Bash(<cmd>:*)` grant matches by LEADING PROGRAM, so a compound value renders a dead grant and
   # the call is silently denied. Byte-identical across the four declaring stacks; guards union
@@ -993,8 +993,7 @@ config:
       Agent (subagent_type) spawned for the project-specific compliance step in
       the audit chain. Defaults to the general architect (engineering-team's
       lead-engineer) for when no domain architect is available; projects with a
-      domain architect (e.g. plugin-architect, mobile-architect) should override
-      to it.
+      domain architect should override to it.
   audit.complianceLabel:
     required: true
     description: Short label for the project-specific compliance step in the audit chain (chain order + summary table).

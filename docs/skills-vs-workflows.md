@@ -206,7 +206,7 @@ They fall in three groups:
 
 - **Guidance** — prose standards a model interprets: `prose`, `accurate`, `md-maximalist`,
   `codebase-architecture`, `tdd`, `dry`, `docs-agent`, `docs-human`, `git-workflow`,
-  `github-project-management`, and the expo/obsidian/security reference skills.
+  `github-project-management`, and the security reference skills.
 - **Single-context procedures** — deterministic steps, one agent, no fan-out: `issue`, `release`,
   `clean-up`, `hygiene`, `label-hook`, `pr-response`, `qa`, `adversarial-review`,
   `github-project-board`.

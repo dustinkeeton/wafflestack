@@ -874,8 +874,7 @@ Everything wafflestack keeps in a consuming repo lives inside one `.waffle/` dir
   `agents-dir`), `stacks:` (bare built-in names, or `{ name, source, ref }` mappings for
   external sources — see *External stack sources* below), optional `include:` (individual
   items), `config:` values, optional `eject:` list, optional `skills.modelInvocation:`
-  override (see *Per-skill model invocation* below), optional `doctor.assetAudit:` block
-  (see *Large-asset audit in doctor* below; its `script:` is read only from the local overlay).
+  override (see *Per-skill model invocation* below).
 - `.waffle/waffle.local.yaml` (gitignored) — deep-merged over the committed config, wins
   on conflict. For account-specific values that must not be committed.
   `wafflestack config [key-prefix]` lists every key the selection can set and says which of
@@ -956,105 +955,6 @@ skill is listed only where it differs from its source; an empty block is removed
 comments, and then runs a full render. Only rendered skills are offered: skills installed
 outside the render (a harness plugin in `~/.claude/skills`, say) are not the toolkit's to
 track. The `wafflestack` stack ships `/waffle-toggle` as the in-agent wrapper.
-
-### Large-asset audit in doctor
-
-`wafflestack doctor` can also run the studios large-asset audit (`asset_audit.py`, from the
-`dustinkeeton/studios` repository) against the project and print a short summary. It is
-**off** unless you turn it on. With nothing configured, doctor's output and exit code are
-exactly what they were before this check existed.
-
-**Who chooses the script.** The script is code doctor runs, so only the person running doctor
-can name it, in one of two places:
-
-- **`WAFFLESTACK_ASSET_AUDIT=<path>`**, an environment variable. Setting it turns the check on.
-  An empty value counts as unset.
-- **`doctor.assetAudit.script` in `.waffle/waffle.local.yaml`**, the gitignored local overlay.
-  Doctor uses it only when all of these hold. If any fails, doctor ignores the path and prints
-  a note saying which one.
-  - Git reports the file as **ignored**. Untracked but not ignored is not enough, so the file
-    must be listed in `.gitignore`.
-  - No version of its name in another letter case is tracked. This matters on a
-    case-insensitive filesystem such as the macOS default.
-  - Neither the file nor any folder between it and the repository's top folder is a symlink,
-    and its real path matches its path in the project.
-  - The path has no `..` part.
-
-When both are set, the environment variable wins. A `script:` in the committed
-`.waffle/waffle.yaml` is **always ignored**, with a one-line note saying where to set it. A
-cloned repository, or a pull request in CI, controls that file. Doctor also refuses a script
-whose real path (after following symlinks) is inside the project being audited. Here "the
-project" means both the folder doctor runs in and, when that folder is inside a Git
-repository, the whole repository (its `git rev-parse --show-toplevel` folder).
-
-The other settings are plain behaviour, so they may be committed. Put them in a top-level
-`doctor:` block, like `skills:`. The CLI reads this block directly; it is not a template value,
-so it does not go under `config:` (doctor prints a note if it finds it there).
-
-```yaml
-# .waffle/waffle.yaml (committed): optional behaviour only
-doctor:
-  assetAudit:
-    strict: false            # default false
-    allowUnhydrated: false   # default false
-    timeoutSeconds: 120      # default 120
-```
-
-```yaml
-# .waffle/waffle.local.yaml (gitignored): the script path, per machine
-doctor:
-  assetAudit:
-    script: ~/dev/studios/asset_audit.py
-```
-
-| Key | Where | Meaning |
-|---|---|---|
-| `script` | local overlay only | Path to `asset_audit.py`. `~/` means your home folder; any other relative path is read from the project root (and is then refused unless it leads out of the project with `..`). |
-| `strict` | either file | `true` lets audit errors and warnings fail doctor (exit 1). Default `false`. |
-| `allowUnhydrated` | either file | `true` passes `--allow-unhydrated` to the audit. Use it for a checkout made without Git LFS files: a pointer stub under an LFS rule then counts as `info` instead of an error. Default `false`. |
-| `timeoutSeconds` | either file | How long the audit may run before doctor stops it and prints a note. Default `120`. |
-
-The overlay wins over the committed file. Two doctor flags apply to one run and do nothing when
-the check is off:
-
-- `--asset-audit-strict` turns strict mode on.
-- `--asset-audit-allow-unhydrated` passes `--allow-unhydrated` to the audit.
-
-For example, run this in a terminal from the project root. Preconditions: Python 3.9 or newer
-is on `PATH` as `python3`, the script exists at that path outside the project, and `vX.Y.Z` is
-a toolkit release tag that includes this check (the first release after 0.20.0).
-
-```sh
-WAFFLESTACK_ASSET_AUDIT=~/dev/studios/asset_audit.py npx --yes github:dustinkeeton/wafflestack#vX.Y.Z doctor
-```
-
-**What doctor does when the check is on.** It looks up `python3` (and the `git` it uses for the
-checks above) in the `PATH` folders that are absolute and outside the project; a folder inside
-the project is skipped. It then runs
-`python3 -I -B <script> audit <project root> --json`, adding `--allow-unhydrated` when asked.
-The run uses the system temp folder as its working folder and the timeout above. The audit gets
-a minimal environment: `PATH` (the same filtered folders), `HOME`, `LANG` and `LC_*`, and
-`GIT_OPTIONAL_LOCKS=0`. Doctor reads the JSON report (`kind: "asset-audit-report"`,
-`schema_version` 1.x) and prints:
-
-```text
-asset audit: 0 error(s), 2 warning(s), 0 info (advisory — does not change the exit code)
-  warning size.log-in-git: logs/run.log — log-like text file (1.8 KiB) tracked as ordinary source
-    fix: Logs, traces and session dumps are not source by default: …
-```
-
-At most five error or warning findings are listed, each with its fix hint; `info` findings are
-counted but not listed. The audit is read-only and makes no network calls (the studios
-document `docs/asset-audit.md` describes how), and doctor writes nothing either.
-
-**Advisory by default.** The audit never changes doctor's exit code unless strict mode is on.
-When the script is missing or refused, `python3` is missing, the audit exits 2 (it could not
-run, for example because the folder is not a Git checkout), it times out, or it prints something
-other than a version-1 report, doctor prints one line starting `asset audit not run:` and
-carries on. An audit that did not run never fails doctor, even in strict mode.
-
-**Only `doctor` runs it.** `wafflestack report` and `upgrade` never run the audit, and the
-report carries no asset line.
 
 ## Release resolution — which toolkit ran?
 

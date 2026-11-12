@@ -22,10 +22,10 @@ skills: [webapp-security-audit]
 config:
   project.name:
     required: true
-    description: Bare project name, e.g. "Plotto".
+    description: Bare project name, e.g. "Acme".
   project.longName:
     required: true
-    description: Full prose project descriptor, e.g. "the Plotto lottery-analysis app".
+    description: Full prose project descriptor, e.g. "the Acme billing app".
   # #218 — the SINGLE-PROGRAM guard, on all four pre-flight commands. A project command reaches the
   # harness as a `Bash(<cmd>:*)` allowlist grant, which matches a command by its LEADING PROGRAM, so
   # a compound value (`tsc --noEmit && eslint .`) renders a grant that can match NOTHING: the call is
@@ -370,7 +370,7 @@ config:
       standards. Markdown sections welcome.
   security.agentGitignore:
     required: true
-    description: Plain (non-code-formatted) list of sensitive paths for the security-engineer's gitignore check, e.g. ".env, data.json, .synapse/, node_modules/".
+    description: Plain (non-code-formatted) list of sensitive paths for the security-engineer's gitignore check, e.g. ".env, data.json, .lantern/, node_modules/".
   security.threatModel:
     required: true
     description: Verbatim bullet list of the project's real attack surface (external APIs, external processes, file access, secret storage).

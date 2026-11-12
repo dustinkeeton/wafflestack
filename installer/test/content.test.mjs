@@ -3907,7 +3907,7 @@ describe('source + rendered content: no dead harness primitives (#360)', () => {
   test('the sweep reaches every SOURCE skill and agent, not just the ones this repo renders', () => {
     const sources = [...sourceSkillFiles(), ...sourceAgentFiles()];
     assert.ok(sourceSkillFiles().length >= 37, `expected every stacks/**/skills/*/SKILL.md, found ${sourceSkillFiles().length}`);
-    assert.ok(sourceAgentFiles().length >= 14, `expected every stacks/**/agents/*.md, found ${sourceAgentFiles().length}`);
+    assert.ok(sourceAgentFiles().length >= 12, `expected every stacks/**/agents/*.md, found ${sourceAgentFiles().length}`);
     assert.ok(
       sourceSkillFiles().length > renderedSkillFiles().length,
       'sweeping only the render would leave the sources of uninstalled stacks unguarded',

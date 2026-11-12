@@ -36,46 +36,51 @@ computed but nothing prints it yet. No rendered file or lock changes.
 
 ---
 
-## 2026-11-11: The large-asset audit is a top-level `doctor:` block, off and advisory by default
+## 2026-11-11: `obsidian-dev` and `expo-dev` leave the toolkit; domain stacks are consumer-owned
 
-**Context**: Phase 2 of the studios large-asset workflow (approved by the owner) ends with
-`wafflestack doctor` running the studios `asset_audit.py` and showing its summary. Every
-consumer that never asked for it must see no change, and the audit is a Python script that
-lives outside this toolkit.
+**Context**: Two built-in stacks covered one application domain each: Obsidian plugins and Expo
+apps. Each came out of a single project. No known consumer uses `expo-dev`, and `obsidian-dev`
+has at most one.
 
-**Decision**: Only the person running doctor chooses the script: the
-`WAFFLESTACK_ASSET_AUDIT=<path>` environment variable, or `doctor.assetAudit.script` in the local
-overlay. The overlay counts only when git reports it as ignored, no case variant of its name is
-tracked, no folder between it and the repository top is a symlink, and the path has no `..`. A `script` in the committed `waffle.yaml` is
-ignored with a note, because a cloned repo or a pull request controls that file, and running it
-would mean running the repo's code. A script inside the project is refused, where the project is both the folder doctor runs in
-and its whole Git repository. `python3` and `git` are found only in absolute PATH folders outside
-the project, and runs from the temp folder with a minimal
-environment. The committed top-level `doctor.assetAudit` block may still set `strict`,
-`allowUnhydrated` and `timeoutSeconds`, which are behaviour, not code. Findings never change the
-exit code unless `strict: true` or `--asset-audit-strict` is set. Anything that stops the audit
-from running is a one-line note, never a failure, even in strict mode. Only `doctor` runs it:
-`report` and `upgrade` do not, so `report` (which never opens the overlay) carries no asset line.
+**Decision**: Both stacks are removed, with their two agents and four skills. The built-in set
+keeps the stacks any repository can use (docs, GitHub workflow, code quality, orchestration, the
+engineering roster, harness design, the toolkit's own commands, `tstack`). A domain stack lives
+with the project that needs it and is loaded as an external `source:` stack.
 
 **Alternatives**:
-- *A key under `config:`, declared by a stack.* Rejected: `config:` keys are template values a
-  stack must reference in rendered content, and this one is read only by the CLI. The script path
-  is also per machine, so it should never be rendered into a file. `skills.modelInvocation` is the
-  precedent for a CLI-read top-level block.
-- *Vendor `asset_audit.py` into the toolkit.* Rejected: studios owns the policy and its version;
-  a copy here would drift from it.
-- *Read the script path from the committed config.* Rejected after security review: a fresh
-  clone, or CI on a pull request, would run whatever Python file the repo names.
-- *Trust an overlay that git says is untracked.* Rejected after a second security review: a
-  symlinked `.waffle` can point the reader at a tracked file under another name, a case variant of
-  the name can be tracked on a case-insensitive filesystem, and "untracked" also covers a file the
-  repo's tooling just created. Only "ignored", with no symlinks and no tracked case variant, shows
-  the file is this machine's own.
-- *Strict means fail on errors only.* Rejected: the audit's own `--strict` fails on errors and
-  warnings, and doctor follows it so both give the same answer.
+- *Mark them `deprecated` in the registry and remove them later.* Rejected: with so few users a
+  deprecation window buys nothing, and the owner chose to remove them now.
+- *Ship a migration that ejects the items.* Rejected: an ejected copy stops taking config
+  substitution and extensions. Copying the stack directory keeps both, and is one manual step.
 
-**Affects**: `installer/lib/asset-audit.mjs`, `doctor.mjs`, `cli.mjs`; FORMAT.md
-"Large-asset audit in doctor".
+**Impact**: Breaking for a config that names either stack or one of its items. `toolkit.yaml` lists
+8 stacks; the registry holds 51 waffles (12 agents, 38 skills, 1 mod). The architect seniority rule
+(#38) still stands for a domain architect a project brings in its own stack.
+
+---
+
+## 2026-11-11: `doctor` runs no project-specific audit script; one consumer's check belongs in that consumer's stack
+
+**Context**: An unreleased change let `doctor` run a large-asset audit script that belongs to
+one consuming project. It added a top-level `doctor:` config block, an environment variable, two
+flags and a module whose main job was deciding when an outside script was safe to run. No other
+consumer has that script.
+
+**Decision**: The feature is removed before any release shipped it. The toolkit core carries no
+hook for a single project's tooling. A consumer that wants `doctor` to run its own check declares
+a `prerequisites:` entry in a stack it owns (a local-path or git `source:` stack), where the
+existing `acknowledgedChecks` gate already governs running a command the toolkit did not ship.
+
+**Alternatives**:
+- *Keep it, since it was off by default.* Rejected: it was core code, docs and attack surface
+  that served one project, and it named that project in public docs.
+- *Generalize it into a "run any audit script" hook.* Rejected: `prerequisites:` already runs a
+  consumer-declared command from `doctor`, with a trust gate.
+
+**Impact**: `installer/lib/asset-audit.mjs`, its test, the `doctor.assetAudit` block,
+`WAFFLESTACK_ASSET_AUDIT`, `--asset-audit-strict` and `--asset-audit-allow-unhydrated` are gone.
+A `doctor:` block left in a `waffle.yaml` is ignored. No release contained the feature, so no
+migration is needed.
 
 ---
 
@@ -4153,7 +4158,7 @@ Additive and minor — no migration.
 ## 2026-07-02: Ship the label-event hook as a github-workflow prefab (workflow + skill) (#27)
 
 **Context**: Consumers want a GitHub label applied to an issue to immediately trigger an
-automated harness action — the concrete driver is obsidian-synapse#379, which wants an
+automated harness action — the concrete driver is a consuming project that wants an
 `on: labeled` workflow that dispatches the Claude harness with the issue context. Every
 consumer had to hand-roll that workflow *and* all of its security gating. WaffleStack shipped
 nothing label-reactive: the only prefab workflow was the doctor CI, and "labels" appeared only
