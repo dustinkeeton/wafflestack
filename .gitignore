@@ -40,3 +40,6 @@ stacks/*/mods/*/.claude-plugin/types/
 
 # Obsidian
 .obsidian/
+
+# T3 Code project icon, written into the checkout by the creative studio; not part of the project
+t3-project-icon.*
