@@ -206,7 +206,7 @@ reads a rendered path without the step. See
   any supporting files.
 
 Both are written **harness-neutral** — no Claude- or Codex-specific wording — so
-one source can render everywhere. There are **14 agents and 42 skills** in total, plus 1 mod.
+one source can render everywhere. There are **12 agents and 38 skills** in total, plus 1 mod.
 
 **Tool calls are checked, not trusted (#445).** A skill is prose, so nothing compiles it — a
 call to a tool the harness has since removed looks fine in review and fails at runtime. A

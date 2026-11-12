@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import process from 'node:process';
 import path from 'node:path';
 import { sha256, exists, compareVersions, parseVersion } from './util.mjs';
 import { readLock, readLocalLock, readTreeLock, renderProject, configGuardProblems, overlayLeaks as findOverlayLeaks, overlayLeakRemedy } from './render.mjs';
@@ -23,7 +22,6 @@ import { defaultSourceCacheDir } from './sources.mjs';
 import { settingsDrift, lockKeys } from './settings.mjs';
 import { staleMods as findStaleMods, formatStaleMod, marketplacePinned } from './installed-mods.mjs';
 import { lockUpstream } from './upstream.mjs';
-import { assetAuditDisabled, resolveAssetAuditSettings, runAssetAudit } from './asset-audit.mjs';
 
 /** The empty prerequisite result — no gate ran (no toolkit root, or evaluation was skipped). */
 function noPrereqs() {
@@ -40,24 +38,12 @@ function noVerify() {
  * `canonical: true` (#473) reads the committed lock and config ONLY: neither the local overlay nor
  * the local lock is opened, so the result carries nothing from either.
  */
-export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null, checkOverlayLeaks = true, assetAudit = null }) {
-  // Opt-in large-asset audit: only the `doctor` command passes `assetAudit` (never `report` or
-  // `upgrade`), and it runs only when the env variable or the untracked local overlay names a
-  // script outside the repo. Advisory unless strict; it never throws.
-  const env = assetAudit?.env ?? process.env;
-  const assets = assetAudit
-    ? runAssetAudit({
-        cwd,
-        settings: resolveAssetAuditSettings({ cwd, strictFlag: Boolean(assetAudit.strict), allowUnhydratedFlag: Boolean(assetAudit.allowUnhydrated), env, home: assetAudit.home }),
-        python: assetAudit.python,
-        env,
-      })
-    : assetAuditDisabled();
+export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissing = false, verifyRender = false, toolkitRoot = null, sourceCacheDir = defaultSourceCacheDir(), canonical = false, update = null, pluginsDir = null, checkOverlayLeaks = true }) {
   const lock = readLock(cwd);
   if (!lock) {
     // `toolkitProvenance` stays in the return shape even with no lock — callers read `.status` unguarded.
     const toolkitProvenance = { status: /** @type {const} */ ('not-recorded'), notes: [] };
-    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [], upstream: [], assetAudit: assets };
+    return { ok: false, modified: [], missing: [], absentDocs: [], notes: [`${LOCK_FILE} not found — run \`wafflestack render\` first`], attribution: {}, allowMissing, toolkitProvenance, prerequisites: noPrereqs(), render: noVerify(), staleMods: [], overlayLeaks: [], trackedOverlayLeaks: [], upstream: [] };
   }
   // The manifest of what is actually on disk (#317): `lock` unless a local overlay shaped it.
   const tree = canonical ? lock : readTreeLock(cwd);
@@ -229,8 +215,8 @@ export function doctor({ cwd, toolkitVersion, toolkitIdentity = null, allowMissi
   }
 
   const driftOk = modified.length === 0 && (allowMissing || missing.length === 0) && (!nothingPresent || verified);
-  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0 && !assets.strictFailed;
-  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks, upstream, assetAudit: assets };
+  const ok = driftOk && prerequisites.unmetRequired.length === 0 && render.ok && configProblems.length === 0 && ejectOverlaps.length === 0;
+  return { ok, modified, missing, absentDocs, notes, attribution, allowMissing, nothingPresent, prerequisites, render, configProblems, ejectOverlaps, toolkitProvenance, staleMods, overlayLeaks, trackedOverlayLeaks, upstream };
 }
 
 /** Reproduce the render from the committed inputs in a temp dir and diff it against the lock (#314). */

@@ -18,7 +18,7 @@ Also in v0.20.0: a local stack `source:` may be `~` or `~/…` (#862), and
 
 ## Stacks
 
-All 10 stacks are shipped and stable — **14 agents, 42 skills, and 1 mod** in total. Pick what a project needs.
+All 8 stacks are shipped and stable — **12 agents, 38 skills, and 1 mod** in total. Pick what a project needs.
 
 | Stack | What you get |
 |--------|--------------|
@@ -27,8 +27,6 @@ All 10 stacks are shipped and stable — **14 agents, 42 skills, and 1 mod** in 
 | `code-quality` | Cross-cutting practice skills: tdd, codebase-architecture, adversarial-review (hostile green-PR review), qa (green PR vs. the linked issue's intent), dry |
 | `orchestration` | Multi-agent orchestration: delegate (typed checkpoints, run memory, approval gate, per-PR docs refresh), autopilot (unattended backlog runner with opt-in QA / review / audit gates), audit, docs, standup, pr-docs (diff-scoped docs refresh on one PR) + 3 manager/planner agents. Also ships `/audit` as **2 opt-in Claude workflow scripts** (#363) |
 | `engineering-team` | 6-agent product-engineering roster + webapp-security-audit |
-| `obsidian-dev` | Obsidian plugin development (+ electron-security-audit) |
-| `expo-dev` | Expo / React Native app development |
 | `harness-architect` | Single domain agent — expert in building agent harnesses |
 | `wafflestack` | Self-referential: ten `/waffle-*` skills, each wrapping one CLI command, plus the **`waffle-view` mod** (a live state pane, claude target only); dogfooded here |
 | `tstack` | `council` from [t3dotgg/tstack](https://github.com/t3dotgg/tstack), copied verbatim at a pinned commit with its MIT `LICENSE`: a three-provider review with scored rounds. Standalone `/council` only; enabled in this repo's render |

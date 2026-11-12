@@ -18,7 +18,7 @@ recommendedPlugins:
 config:
   project.longName:
     required: true
-    description: Full prose project descriptor, e.g. "the Synapse Obsidian plugin".
+    description: Full prose project descriptor, e.g. "the Lantern desktop app".
   docs.machineDocSet:
     required: false
     default: a root `AGENTS.md`, plus a per-feature `AGENTS.md` in each `src/<feature>/` directory where the codebase is organized that way

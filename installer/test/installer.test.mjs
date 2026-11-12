@@ -4515,7 +4515,7 @@ describe('github-workflow: harness-result guard classifies denials (#82)', () =>
     { tool_name: 'Write', tool_input: { file_path: '/tmp/issue-536-body.md', content: '# body' } },
     { tool_name: 'Write', tool_input: { file_path: '/home/runner/work/r/r/.issue-536-body.md', content: '# body' } },
   ];
-  const ISSUE_544_FINAL = 'Enriched https://github.com/dustinkeeton/wafflenet/issues/536 — title and body rewritten. Labels: added `enhancement` and `priority: medium`; removed `waffle:needs-inference`.';
+  const ISSUE_544_FINAL = 'Enriched https://github.com/acme/widgets/issues/536 — title and body rewritten. Labels: added `enhancement` and `priority: medium`; removed `waffle:needs-inference`.';
 
   test('enrich: the #544 run (2× gh label list + 2× scratch Write, issue URL reported) goes GREEN with warnings', (t) => {
     if (!hasShell) return t.skip('jq/bash unavailable');
@@ -9083,7 +9083,7 @@ describe('rebrand: bundles → stacks consumer key (#59)', () => {
 
   test('0.10.0 migration renames bundles: → stacks: in config + overlay, comment-preserving and idempotent', () => {
     write(cwd, '.waffle/waffle.yaml', '# header\ntargets: [claude]\nbundles:\n  # keep me\n  - github-workflow\nconfig: {}\n');
-    write(cwd, '.waffle/waffle.local.yaml', 'bundles: [obsidian-dev] # overlay note\n');
+    write(cwd, '.waffle/waffle.local.yaml', 'bundles: [code-quality] # overlay note\n');
     const step = MIGRATIONS.find((m) => m.version === '0.10.0');
     assert.ok(step, '0.10.0 migration is registered');
     step.run(cwd);
