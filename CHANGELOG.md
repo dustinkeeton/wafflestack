@@ -31,6 +31,8 @@ is what you reach for across a breaking one.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-17
+
 ### Added
 
 - **Read-only commit-policy inspection.** `wafflestack commit-policy` reports effective author,
