@@ -157,10 +157,17 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
       if (RECIPE_KEYS.has(entry) && entry !== 'commit.gpgsign' && entry !== 'tag.gpgsign' && entry !== 'user.useconfigonly') errors.push(`valueless identity or signer setting: ${entry}`);
     }
   }
+  const privacyEmails = new Map();
   for (const [role, identity] of [['author', author], ['committer', committer], ...coAuthors.map((entry) => ['co-author', entry])]) {
     if (!identity || /@users\.noreply\.github\.com$/i.test(identity.email)) continue;
     if (sameEmail(identity.email, bot?.email) && !sameEmail(identity.email, human?.email)) continue;
-    notices.push(`Privacy: ${role} email ${identity.email} is not a GitHub noreply address and would be public in shared commit history. Do not assume GitHub's email-privacy push protection protects Co-authored-by trailers; real addresses remain legitimate for other hosts or intentional public use.`);
+    const normalizedEmail = identity.email.toLowerCase();
+    const exposed = privacyEmails.get(normalizedEmail) ?? { email: identity.email, roles: new Set() };
+    exposed.roles.add(role);
+    privacyEmails.set(normalizedEmail, exposed);
+  }
+  for (const { email, roles } of privacyEmails.values()) {
+    notices.push(`Privacy: ${email} (${[...roles].join(', ')}) is not a GitHub noreply address and would be public in shared commit history. Do not assume GitHub's email-privacy push protection protects Co-authored-by trailers; real addresses remain legitimate for other hosts or intentional public use.`);
   }
   const overriddenByEnvironment = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']
     .filter((name) => env[name] !== undefined);

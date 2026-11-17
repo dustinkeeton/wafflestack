@@ -121,7 +121,7 @@ test('legacy and agent credit warn about public human trailers without blocking 
     valid(policy);
     const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
     assert.equal(privacy.length, 1);
-    assert.match(privacy[0], /co-author email human@example.test/);
+    assert.match(privacy[0], /human@example.test \(co-author\)/);
     assert.match(privacy[0], /public in shared commit history/);
     assert.match(privacy[0], /Do not assume GitHub's email-privacy push protection protects Co-authored-by trailers/);
     assert.match(formatCommitPolicy(policy), /note: Privacy:/);
@@ -141,10 +141,22 @@ test('personal profiles warn about real author and committer emails, not a separ
     const policy = inspect({ profile, coAuthorTrailer: profile === 'personal' ? '' : botCredit });
     valid(policy);
     const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
-    assert.equal(privacy.length, 2);
-    assert.match(privacy[0], /author email human@example.test/);
-    assert.match(privacy[1], /committer email human@example.test/);
+    assert.equal(privacy.length, 1);
+    assert.match(privacy[0], /human@example.test \(author, committer\)/);
   }
+});
+
+test('privacy notices group case-only email aliases and list each emitted role once', (context) => {
+  const { inspect } = fixture(context);
+  const coAuthorTrailer = `${humanCredit}\nCo-authored-by: Other Name <${human.email.toUpperCase()}>`;
+  const policy = inspect({ coAuthorTrailer });
+  valid(policy);
+  const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
+  assert.equal(privacy.length, 1);
+  assert.match(privacy[0], /Privacy: human@example.test \(author, committer, co-author\)/);
+  assert.equal(privacy[0].split("Do not assume GitHub's email-privacy push protection").length - 1, 1);
+  assert.equal(policy.coAuthors[1].email, human.email.toUpperCase());
+  assert.match(formatCommitPolicy(policy), /note: Privacy: human@example.test \(author, committer, co-author\)/);
 });
 
 test('noreply personal identities and unused real human bindings do not cause privacy notices', (context) => {
@@ -170,8 +182,8 @@ test('privacy notices inspect actual ambient identities and reject lookalike nor
   valid(policy);
   const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
   assert.equal(privacy.length, 2);
-  assert.match(privacy[0], /author email human@users.noreply.github.com.example.test/);
-  assert.match(privacy[1], /committer email human@example.test/);
+  assert.match(privacy[0], /human@users.noreply.github.com.example.test \(author\)/);
+  assert.match(privacy[1], /human@example.test \(committer\)/);
 });
 
 test('legacy factory selection remains unchanged and never authorizes a commit', (context) => {

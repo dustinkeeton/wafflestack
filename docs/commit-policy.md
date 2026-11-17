@@ -61,7 +61,8 @@ GitHub's documented [email-privacy push check](https://docs.github.com/en/accoun
 concerns the most recent commit's **author** email. Do not assume that setting protects
 co-author trailers or every address in history. The inspector adds nonblocking privacy notices
 for emitted non-noreply identities other than a separately configured bot; unused human bindings
-do not trigger them. Real addresses remain legitimate for other hosts or intentional public use.
+do not trigger them. Each distinct email gets one notice listing its roles, with case-only variants
+grouped together. Real addresses remain legitimate for other hosts or intentional public use.
 
 A noreply address alone does **not** guarantee a Verified signature badge or prove control of
 a signing key. GitHub's [signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
