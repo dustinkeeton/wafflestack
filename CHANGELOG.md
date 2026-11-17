@@ -69,6 +69,19 @@ is what you reach for across a breaking one.
   both / one / neither. The warning for an edge onto a default-render file is unchanged, and so
   is the trust warning printed when external opt-in syrup is poured.
   **Consumer impact:** fewer warnings on stderr; no rendered file or lock changes.
+- **An offline cache miss for a git `source:` stack no longer creates the source cache
+  directory.** The directory is made only when a fetch actually runs.
+  **Consumer impact:** none beyond no empty `~/.cache/wafflestack/…` directory after a failed
+  offline run.
+
+### Fixed
+
+- **`commit-policy` accepts a multi-line trailer written as a YAML block.** A
+  `git.coAuthorTrailer: |` block (which always ends in a newline) or a CRLF file no longer fails
+  with `expected only Co-authored-by: Name <email> lines`; blank lines are skipped. `--agent`
+  with a slug no selected stack installs now prints a notice (it may be a typo), and a slug such
+  as `constructor` no longer reports a spurious "override must be a map".
+  **Consumer impact:** none; inspection only.
 
 ## [0.20.0] - 2026-11-09
 

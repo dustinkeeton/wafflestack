@@ -467,6 +467,25 @@ test('attribution overrides replace whole lists and empty strings clear them', (
   blocked(inspect({ coAuthorTrailer: `${humanCredit}\n${humanCredit}` }), /duplicate Co-authored-by/);
 });
 
+test('block-scalar and CRLF trailers parse without blank-line errors', (context) => {
+  const { inspect } = fixture(context);
+  const second = 'Co-authored-by: Second Person <second@example.test>';
+  for (const coAuthorTrailer of [`${humanCredit}\n${second}\n`, `${humanCredit}\r\n${second}\r\n`, `${humanCredit}\n\n${second}`]) {
+    const policy = inspect({ coAuthorTrailer });
+    valid(policy);
+    assert.equal(policy.coAuthors.length, 2);
+  }
+});
+
+test('agent slugs never resolve inherited properties and uninstalled slugs get a notice', (context) => {
+  const { config, inspect } = fixture(context);
+  config({ cmd: agentRecipe });
+  const inherited = inspect({ profile: 'configured', agent: 'constructor', coAuthorTrailer: '' });
+  assert.doesNotMatch(inherited.errors.join('\n'), /override must be a map/);
+  const typo = inspect({ profile: 'configured', agent: 'no-such-agent', coAuthorTrailer: '' });
+  assert.match(typo.notices.join('\n'), /no-such-agent is not installed by this selection/);
+});
+
 test('malformed profiles and unsafe recipes fail closed without shell evaluation', (context) => {
   const { inspect, cwd } = fixture(context);
   blocked(inspect({ profile: 'invalid' }), /unknown commit profile/);
