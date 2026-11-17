@@ -150,6 +150,7 @@ resolution — lives in **[Upgrades and release resolution](docs/upgrades.md)**.
 
 - **[Upgrades & release resolution](docs/upgrades.md)** — versioning contract, migrations, pins.
 - **[Committing vs. gitignoring the render](docs/gitignore.md)** — the trade-off, and the lock.
+- **[Commit policy inspection](docs/commit-policy.md)** — identity, signing, credit and authorization boundaries.
 - **[Format reference](schema/FORMAT.md)** — stack, agent, skill, and syrup definitions.
 - **[Brand assets](assets/)** — logos and guidelines.
 

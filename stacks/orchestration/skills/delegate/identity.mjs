@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseGitCmd } from './git-command.mjs';
 
 const USAGE =
   "Usage: node identity.mjs --git-cmd '<resolved git.cmd>' [--agents-dir <dir>] --agents <slug,slug,...>  (agentIdentities YAML on stdin)";
@@ -42,85 +43,6 @@ function readStdin() {
   } catch {
     return ''; // no stdin attached — same as an empty override map
   }
-}
-
-// git.cmd tokenizer. Double quotes group a spaced value; single quotes are NOT handled and cannot
-// reach here through a render (`git.cmd`'s allowlist `pattern:` rejects them, #254). An
-// unterminated quote or stray bare word means git would word-split it — an ERROR, not a guess.
-
-function tokenize(cmd) {
-  const tokens = [];
-  let cur = '';
-  let started = false;
-  let inQuote = false;
-  for (const ch of cmd) {
-    if (ch === '"') {
-      inQuote = !inQuote;
-      started = true;
-    } else if (!inQuote && /\s/.test(ch)) {
-      if (started) tokens.push(cur);
-      cur = '';
-      started = false;
-    } else {
-      cur += ch;
-      started = true;
-    }
-  }
-  if (started) tokens.push(cur);
-  if (inQuote) return { error: 'unterminated double quote' };
-  return { tokens };
-}
-
-/**
- * Parse the tokens into a last-wins `-c` config map. git config keys are case-insensitive
- * in their section and name, so keys are lowercased; a `-c key` with no `=` means `true`,
- * exactly as git reads it.
- */
-function parseGitCmd(cmd, errors) {
-  const config = new Map();
-  // Keys whose last occurrence carried no `=`: git reads those as the literal "true", so the
-  // caller needs to tell `-c user.name` (⇒ "true") apart from `-c user.name=true`.
-  const valueless = new Set();
-
-  if (/\{\{[^}]*\}\}/.test(cmd)) {
-    errors.push(
-      `git.cmd carries an unresolved template placeholder: ${cmd.match(/\{\{[^}]*\}\}/)[0]} — the recipe leaned on a stack default that does not resolve here; set the identity keys as real values in project config`,
-    );
-  }
-
-  const { tokens, error } = tokenize(cmd);
-  if (error) {
-    errors.push(`git.cmd has ${error} — a spaced value must be double-quoted or git will word-split it`);
-    return { config, valueless };
-  }
-  if (!tokens.length || tokens[0] !== 'git') {
-    errors.push(`git.cmd must start with "git" (got ${JSON.stringify(tokens[0] ?? '')})`);
-    return { config, valueless };
-  }
-
-  for (let i = 1; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t === '-c') {
-      const pair = tokens[++i];
-      if (pair === undefined) {
-        errors.push('git.cmd ends with a dangling -c (no key=value follows)');
-        break;
-      }
-      const eq = pair.indexOf('=');
-      const key = (eq === -1 ? pair : pair.slice(0, eq)).toLowerCase();
-      const value = eq === -1 ? 'true' : pair.slice(eq + 1);
-      if (eq === -1) valueless.add(key);
-      else valueless.delete(key); // last wins, for the valueless flag as for the value
-      config.set(key, value);
-    } else if (t.startsWith('-')) {
-      // An unknown flag is tolerated: this script polices identity, not git's whole CLI.
-    } else {
-      errors.push(
-        `git.cmd has a stray word ${JSON.stringify(t)} that is neither "-c" nor a key=value — an unquoted spaced value word-splits here`,
-      );
-    }
-  }
-  return { config, valueless };
 }
 
 // git's boolean vocabulary (`git config --bool`). Anything outside this set is not "false" — it

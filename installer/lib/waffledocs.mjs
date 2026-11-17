@@ -12,6 +12,8 @@ import { substitute } from './template.mjs';
 import { makeResolver, AVATARS_DIR } from './project.mjs';
 import { resolveAgentSkill } from './refs.mjs';
 import { CONFIG_REFERENCE, generateConfigReference } from './config-reference.mjs';
+import { resolveAgentIdentity } from './agent-identity.mjs';
+export { deriveAgentEmail } from './agent-identity.mjs';
 
 const CHEATSHEET_MD = path.join('.waffle', 'CHEATSHEET.md');
 const CHEATSHEET_HTML = path.join('.waffle', 'cheatsheet.html');
@@ -81,23 +83,6 @@ export function extractBaseEmail(gitCmd) {
   return EMAIL_SHAPE_RE.test(value) ? value : null;
 }
 
-/**
- * The commit email an agent with slug `slug` authors under — rule 2: `+<slug>` before the `@`,
- * unless the base cannot subaddress (a `*.noreply.github.com` domain, or a local part whose `+`
- * tag is spent), in which case the base is returned verbatim. A `git.agentIdentities[slug]`
- * override never flows through here — the caller applies it (rule 3).
- */
-export function deriveAgentEmail(baseEmail, slug) {
-  if (!baseEmail) return null;
-  const at = baseEmail.lastIndexOf('@');
-  if (at <= 0) return baseEmail;
-  const local = baseEmail.slice(0, at);
-  const domain = baseEmail.slice(at + 1);
-  if (/(^|\.)noreply\.github\.com$/i.test(domain)) return baseEmail;
-  if (local.includes('+')) return baseEmail;
-  return `${local}+${slug}@${domain}`;
-}
-
 /** The `-c user.name=` / `-c user.email=` assignments, for in-place value swaps. */
 const USER_NAME_ASSIGN = /((?:^|\s)-c\s+user\.name=)(?:"[^"]*"|'[^']*'|\S+)/;
 const USER_EMAIL_ASSIGN = /((?:^|\s)-c\s+user\.email=)(?:"[^"]*"|'[^']*'|\S+)/;
@@ -115,15 +100,6 @@ export function withIdentity(gitCmd, displayName, email) {
   return USER_NAME_ASSIGN.test(withEmail)
     ? withEmail.replace(USER_NAME_ASSIGN, (_, p1) => `${p1}"${displayName}"`)
     : `${withEmail} -c user.name="${displayName}"`;
-}
-
-/** `lead-engineer` → `Lead Engineer`. The display-name default when no `identity.displayName`. */
-function titleCaseSlug(slug) {
-  return String(slug)
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
 }
 
 /**
@@ -323,20 +299,19 @@ function teamMarkdown(agents, toolkitName) {
  * addresses the CLI registers match AVATARS.md byte-for-byte.
  */
 function avatarRows(agents, git) {
-  const configured = Boolean(git.baseEmail);
   return agents.map((a) => {
     const override = (git.overrides ?? {})[a.slug] ?? {};
-    const email = configured ? (override.botEmail ?? deriveAgentEmail(git.baseEmail, a.slug)) : null;
+    const identity = resolveAgentIdentity({ baseEmail: git.baseEmail, slug: a.slug, displayName: a.identity?.displayName, override });
     return {
       name: a.name,
       slug: a.slug,
       skillCount: a.skills.length,
-      displayName: override.botName ?? a.identity?.displayName ?? titleCaseSlug(a.slug),
+      displayName: identity.name,
       // An authored `identity.avatar` wins over the generated default.
       avatar: a.identity?.avatar ?? avatarRef(a.name),
       authored: Boolean(a.identity?.avatar),
       flavor: agentFlavor(a.name),
-      email,
+      email: identity.email,
       overridden: Boolean(override.botEmail),
     };
   });

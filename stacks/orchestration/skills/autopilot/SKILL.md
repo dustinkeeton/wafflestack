@@ -7,6 +7,15 @@ argument-hint: "[#N #M …, a label, `milestone:<name>`, or `all-open`] [{{autop
 
 # Autopilot — plan → implement → PR over the backlog
 
+Before any commit-producing operation, including sync/audit/merge commits, apply `git-workflow`'s
+**Commit policy inspection** in the actual worktree and forward the selected runtime profile to
+delegates/responders. Stricter profiles validate the configured identity inputs and select exact
+trailers without weakening repository security requirements. Profile selection never grants commit authorization. On missing signing
+or credit prerequisites stop; `prepare-only` hands off without committing, pushing or opening a PR.
+History rewrites whose effective authors/trailers cannot be inspected must be handed off; do not
+replace existing authors just to satisfy a profile. Remote merge identity/signing is controlled by
+the hosting service, not this inspector: hand off if the requested profile cannot be honored there.
+
 The primitives for an autonomous agency loop already exist and this skill is the **only** thing that composes them: `/issue` writes specs, `/delegate` turns issues into PRs, the required `doctor` check gates merges, and `delegate.autoMerge` proves post-green merge works. Autopilot runs the whole cycle over a **supplied list of issues** so a human no longer has to drive plan → accept → delegate → accept → merge → repeat by hand.
 
 Autopilot is a **prose playbook that composes other skills** — it adds an orchestration loop and a plan→implement handoff on top of machinery that already exists. It does **not** re-implement classification, worktree isolation, PR creation, or board sync: those are the `delegate` skill's job, invoked here in batch mode. It does **not** re-implement branch/worktree teardown: that is the `clean-up` skill's job. Read those skills; this one only wires them together and adds the per-issue plan artifact.

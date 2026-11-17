@@ -79,6 +79,8 @@ project adds from its own stack takes seniority in its domain. The output-confli
 
 | Module | Purpose | Exports |
 |--------|---------|---------|
+| `commit-policy.mjs` | Read-only inspection of effective author, committer, signer and exact trailers against named profiles; runtime-only personal preference, monotonic repository signing requirement, no key access or execution authorization | `COMMIT_PROFILES`, `inspectCommitPolicy`, `formatCommitPolicy` |
+| `agent-identity.mjs` | Shared per-agent display-name/email resolution for commit-policy inspection and avatar rows; preserves exact overrides and noreply/already-plus exceptions without choosing signing posture | `deriveAgentEmail`, `resolveAgentIdentity` |
 | `preparation-transaction.mjs` | Atomic artifact replacement, owner liveness and serialized journal-verified interruption recovery | `RECEIPT_FILE`, `isHarnessPath`, `acquirePreparation`, `recoverPreparation`, `safeDestination`, `replaceBytes`, `readBytes`, `sameBytes` |
 | `prepare-worktree.mjs` | Pin-aware, transactional harness-only pre-session provisioning, receipt-hash pruning, per-worktree mutex and explicit overlay policy | `prepareWorktree`, `resolvePreparationToolkit` |
 | `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317). An upstream-pinned skill (#827) renders verbatim (no substitution; modelInvocation + extension still apply) and lands in the lock's `upstream` block; `renderProject` returns `upstream` | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `overlayDivergentFiles`, `overlayLeaks`, `treeOverlayLeaks`, `overlayLeakWarnings`, `overlayLeakRemedy`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys` (re-export of `config-catalog.mjs`), `missingConfigFor`, `summarizeConfigKeys` |
@@ -165,7 +167,7 @@ project.mjs  → util, model-invocation, template (parseFlagPlaceholder only; bo
 ## CLI command registry
 
 Bin `wafflestack` → `installer/cli.mjs`. Usage:
-`wafflestack <setup|init|list|toggle|install|render|prepare-worktree|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
+`wafflestack <setup|init|list|toggle|install|render|prepare-worktree|bake|upgrade|doctor|state|config|commit-policy|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]`
 (`USAGE`, `cli.mjs:52`).
 
 Dispatch and exit contract: `help`/`--help`/`-h` print the full help to stdout, exit 0 —
@@ -178,6 +180,15 @@ positional: `setup`/`init`/`render`/`prepare-worktree`/`bake`/`upgrade`/`list`/`
 scaffolding, so nothing is written), `install`/`eject` fail resolving it as a ref, `avatars` rejects a
 non-`sync`/`status` first arg, `config` takes at most ONE positional (a key or prefix — a stray
 flag becomes that query and fails as an unknown key; two positionals exit 1), `doctor`/`validate` silently ignore it.
+
+`commit-policy` is read-only and offline: inspect existing Git metadata/configuration, never
+read keys, invoke a signer, write configuration or authorize execution. Profile precedence is
+invocation → local overlay → committed selection → global Git `wafflestack.commitProfile` →
+`configured`; global preference never enters canonical renders. Exit 0 means configuration valid,
+not signing readiness or permission to commit; invalid input or a policy conflict exits 1.
+See `docs/commit-policy.md` and `installer/test/commit-policy.test.mjs`. The dependency-free
+recipe parser lives beside delegate's `identity.mjs` as `git-command.mjs` and is shared with
+the inspector; its sidecar must render with the delegate skill.
 
 | Flag | Commands | Effect |
 |------|----------|--------|
@@ -195,7 +206,8 @@ flag becomes that query and fails as an unknown key; two positionals exit 1), `d
 | `--verify-render` | `doctor` | re-render committed inputs in a temp dir vs the committed lock |
 | `--interactive` | `list` | keypress multi-select; needs a real TTY, else degrades to the table |
 | `--check-prereqs` | `list` | run the hinted prerequisite checks (shells out) and show only the unmet ones; a broken probe reads as unknown (#579) |
-| `--json` | `report`, `state`, `prepare-worktree` | print the report bundle / state document / preparation result as JSON on stdout instead of Markdown / human text |
+| `--json` | `report`, `state`, `prepare-worktree`, `commit-policy` | print the report bundle / state document / preparation result / commit policy as JSON on stdout instead of Markdown / human text |
+| `--profile NAME`, `--agent SLUG`, `--git-cmd RECIPE`, `--co-author-trailer TEXT`, `--sign-off-trailer TEXT` | `commit-policy` | inspect the selected profile and exact proposed identity/signing recipe and trailers; empty trailer strings clear lists; duplicate, missing and unknown options fail |
 | `--overlay local\|main\|none` | `prepare-worktree` | overlay policy for this invocation, over git config `wafflestack.worktreeOverlay` (`destination`\|`main`): `local` = the destination's overlay only, `main` = the main checkout's when the destination has none, `none` = ignore the local overlay; exactly one value, else exit 1 (`cli.mjs:67-69`, `prepare-worktree.mjs:96`) |
 | `--board` | `state` | #697: add the `board` block (milestones, epics, In Progress / In Review) read via `gh`; the one `state` path that calls `gh`. Best-effort: a failure sets `board.error`, never the exit code; `--offline` / `WAFFLESTACK_OFFLINE=1` skip it (`error: "offline"`) |
 | `--disable SKILL` / `--enable SKILL` | `toggle` | #476: set / clear the per-skill model-invocation override without the picker; repeatable, comma-splittable (`extractValues` `cli.mjs:559`); either flag skips the TTY prompt; a name on both sides, a name no selected stack renders, or a flag with no value exits 1 before anything is written |

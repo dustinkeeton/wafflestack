@@ -285,6 +285,7 @@ version you installed:
 | `prResponse.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
 | `cleanUp.confirmGate` | github-workflow | `true` | `true`, `false`, `prompt` | `--confirm` / `--yes` | `false` | — |
 | `hygiene.autoMerge` | github-workflow | `true` | `true`, `false` | — | — | — |
+| `git.requireSignedCommits` | github-workflow | `false` | `true`, `false` | — | — | — |
 | `delegate.approveBeforePush` | orchestration | `false` | `true`, `false` | — | — | — |
 | `delegate.autoMerge` | orchestration | `false` | `true`, `false` | — | — | — |
 | `delegate.batchMode` | orchestration | `false` | `true`, `false` | — | — | — |

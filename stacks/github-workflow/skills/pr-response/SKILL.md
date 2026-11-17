@@ -339,6 +339,10 @@ For each **Implement** finding, in order, following the `git-workflow` skill:
    fix: guard empty input in parseRange (F1)
    ```
 
+   Apply `git-workflow`'s **Commit policy inspection** in this checkout before committing;
+   stricter profiles validate the configured identity inputs and select exact trailers, without
+   weakening repository requirements or granting authorization. Stop on missing signing/credit prerequisites. `prepare-only` hands off the
+   changes/message without committing, pushing or opening a PR.
    Use the commit format and attribution trailer from `git-workflow` — pass the message with
    `{{git.cmd}} commit -F <message-file>` when it needs a body.
 

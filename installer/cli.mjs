@@ -50,7 +50,7 @@ let offlineIdentityCache = null;
 // Must stay ABOVE the dispatch: `const` is not hoisted, so at the bottom it would be in the TDZ
 // on every help and unknown-command path.
 const USAGE =
-  'usage: wafflestack <setup|init|list|toggle|install|render|prepare-worktree|bake|upgrade|doctor|state|config|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
+  'usage: wafflestack <setup|init|list|toggle|install|render|prepare-worktree|bake|upgrade|doctor|state|config|commit-policy|report|eject|uninstall|reinstall|avatars|validate|help> [refs…] [--cwd DIR]';
 
 // Checked BEFORE the switch: a destructive command must never be reached by someone asking a
 // question, and the flag must not survive into a "takes no refs" guard.
@@ -155,6 +155,23 @@ try {
       // #697: opt-in network read; never throws, never moves the exit code.
       if (board) state.board = readBoard({ cwd, projectName: stringOrNull(state.config['project.name']?.value), offline });
       process.stdout.write(json ? `${JSON.stringify(state, null, 2)}\n` : formatStateText(state));
+      break;
+    }
+    case 'commit-policy': {
+      const { inspectCommitPolicy, formatCommitPolicy } = await import('./lib/commit-policy.mjs');
+      const json = extractFlag(args, '--json');
+      const options = {};
+      const names = { '--profile': 'profile', '--agent': 'agent', '--git-cmd': 'gitCmd', '--co-author-trailer': 'coAuthorTrailer', '--sign-off-trailer': 'signOffTrailer' };
+      while (args.length) {
+        const flag = args.shift();
+        const key = names[flag];
+        if (!key) fail('commit-policy accepts --json, --profile, --agent, --git-cmd, --co-author-trailer and --sign-off-trailer');
+        if (options[key] !== undefined || !args.length || args[0].startsWith('--')) fail(`commit-policy needs one value for ${flag}`);
+        options[key] = args.shift();
+      }
+      const policy = inspectCommitPolicy({ cwd, toolkitRoot, ...options });
+      process.stdout.write(json ? `${JSON.stringify(policy, null, 2)}\n` : formatCommitPolicy(policy));
+      process.exitCode = policy.configurationValid ? 0 : 1;
       break;
     }
     case 'config': {
@@ -444,6 +461,7 @@ function helpText() {
     '  doctor      check the rendered files still match the lock manifest (drift check)',
     '  state       print the resolved behavioral keys (value, layer, tokens), run files, locks and drift',
     '  config      look up the config keys this selection can set: value, source file, default, constraints',
+    '  commit-policy  inspect commit identities, signer and trailers; read-only, never authorizes a commit',
     '  report      print redacted diagnostics (lock, config keys, doctor) for an upstream bug report',
     '  eject       release one item to project ownership; the files stay, the lock forgets them',
     '  uninstall   remove every wafflestack-managed file this repo has (dry run without --yes)',
@@ -453,6 +471,11 @@ function helpText() {
     '  help        print this help and exit 0',
     '',
     'flags:',
+    '  --profile NAME    commit-policy: configured|personal|personal-credit-agent|agent-credit-human|prepare-only',
+    '  --agent SLUG      commit-policy: inspect the existing per-agent derivation and exact overrides',
+    '  --git-cmd RECIPE  commit-policy: inspect a proposed per-commit recipe without executing it',
+    '  --co-author-trailer TEXT  commit-policy: inspect an exact attribution override (empty clears)',
+    '  --sign-off-trailer TEXT   commit-policy: inspect a separate attestation (never grants consent)',
     '  --cwd DIR         run against DIR instead of the current directory (every command)',
     '  --help, -h        print this help and exit 0; after a command, explain instead of running it',
     '  --force           render/install/reinstall: overwrite pre-existing unmanaged files',

@@ -1204,6 +1204,32 @@ setup: |-
     *lightweight* tag, which stores no tagger name/email — so on the release path the pushing
     token is the only identity there is.
 config:
+  git.commitProfile:
+    required: false
+    default: configured
+    pattern: '^(configured|personal|personal-credit-agent|agent-credit-human|prepare-only)$'
+    description: >-
+      Opt-in commit-policy inspection profile. Configured preserves existing git.cmd and trailer
+      behavior. Named profiles validate those existing inputs; they do not execute commits,
+      grant authorization, change signing posture, or provision keys. Without an explicit
+      repository selection, commit-policy reads the user's global wafflestack.commitProfile
+      preference at runtime only, never during render. Invocation selection wins over local
+      overlay, committed selection, global preference and the configured fallback, in that order.
+  git.requireSignedCommits:
+    required: false
+    default: false
+    modes: [true, false]
+    description: >-
+      Repository signing requirement inspected by commit-policy. True in either committed
+      config or local overlay requires signing; a local false or per-invocation profile
+      cannot weaken committed true. Prepare-only always hands execution to the human.
+  git.signOffTrailer:
+    required: false
+    default: ""
+    description: >-
+      Optional Signed-off-by attestation inspected separately from git.coAuthorTrailer and
+      cryptographic signing. Empty means none. Profile selection never grants attestation
+      consent; obtain explicit approval before including any configured sign-off.
   git.identitySection:
     required: false
     default: |-
