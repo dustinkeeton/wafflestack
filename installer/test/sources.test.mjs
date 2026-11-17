@@ -46,6 +46,13 @@ describe('external stack sources: cache location + checkout verification (#460)'
     gitRefCommit: (_dir, ref) => (ref === REF ? HEAD : null),
   };
 
+  test('offline identity inspection does not create an absent source cache or fetch', () => {
+    const { calls, gitFetch } = fetchStub();
+    assert.throws(() => resolveSource(ext, { cacheDir, gitFetch, ...goodGit, offline: true }), /offline cache miss/);
+    assert.equal(fs.existsSync(cacheDir), false);
+    assert.deepEqual(calls, []);
+  });
+
   test('default cache dir is per-user: honours an absolute $XDG_CACHE_HOME, else ~/.cache', () => {
     assert.equal(defaultSourceCacheDir({ XDG_CACHE_HOME: '/xdg/cache' }), path.join('/xdg/cache', 'wafflestack', 'sources'));
     assert.equal(defaultSourceCacheDir({}), path.join(os.homedir(), '.cache', 'wafflestack', 'sources'));

@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { loadProjectConfig, resolveLocalConfigFile } from './project.mjs';
-import { loadToolkit } from './toolkit.mjs';
+import { loadToolkit, loadToolkitWithSources } from './toolkit.mjs';
+import { computeSelection } from './refs.mjs';
+import { resolveAgentIdentity } from './agent-identity.mjs';
 import { expandKey } from './state.mjs';
 import { exists, lookupPath, readYaml } from './util.mjs';
 import { parseGitCmd } from '../../stacks/orchestration/skills/delegate/git-command.mjs';
 
-export const COMMIT_PROFILES = ['legacy', 'personal', 'personal-credit-agent', 'agent-credit-human', 'prepare-only'];
+export const COMMIT_PROFILES = ['configured', 'personal', 'personal-credit-agent', 'agent-credit-human', 'prepare-only'];
 
 const RECIPE_KEYS = new Set([
   'user.name', 'user.email', 'author.name', 'author.email', 'committer.name', 'committer.email',
@@ -61,7 +63,7 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
   const globalValue = (key) => runGit(cwd, ['config', '--global', '--includes', '--get', key], globalEnv);
   const configuredProfile = lookupPath(project.values, 'git.commitProfile');
   const globalProfile = globalValue('wafflestack.commitProfile');
-  const selected = profile ?? configuredProfile ?? globalProfile ?? 'legacy';
+  const selected = profile ?? configuredProfile ?? globalProfile ?? 'configured';
   const profileSource = profile !== undefined ? 'invocation' : configuredProfile !== undefined ? source('git.commitProfile')
     : globalProfile !== null ? 'global-git' : 'stack-default';
   if (!COMMIT_PROFILES.includes(selected)) errors.push(`unknown commit profile; choose ${COMMIT_PROFILES.join(', ')}`);
@@ -78,17 +80,49 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
   }
   const agentOverrides = lookupPath(project.values, 'git.agentIdentities') ?? {};
   if (typeof agentOverrides !== 'object' || Array.isArray(agentOverrides)) recipeErrors.push('git.agentIdentities must be a map');
-  const override = agent ? agentOverrides[agent] : null;
+  let override = agent ? agentOverrides[agent] : null;
   if (agent && !/^[a-z0-9][a-z0-9-]*$/.test(agent)) errors.push('agent must be a configured agent slug');
   if (override !== undefined && override !== null && (typeof override !== 'object' || Array.isArray(override))) recipeErrors.push('agent identity override must be a map');
+  for (const field of ['botName', 'botEmail', 'signingKey']) {
+    if (override?.[field] !== undefined && (typeof override[field] !== 'string' || /[\r\n\0]/.test(override[field]))) {
+      recipeErrors.push(`invalid recipe value for agent ${field}`);
+    }
+  }
+  let agentIdentity = null;
+  let baseIdentity = null;
+  let displayNameSource = null;
   if (agent) {
-    for (const [field, key] of [['botName', 'user.name'], ['botEmail', 'user.email'], ['signingKey', 'user.signingkey']]) {
-      if (override?.[field] !== undefined) {
-        recipe.set(key, override[field]);
+    const baseCommand = value('git.cmd');
+    if (typeof baseCommand !== 'string' || !new RegExp(stack.config['git.cmd'].pattern).test(baseCommand)) {
+      recipeErrors.push('configured base git.cmd must match the declared safe Git recipe pattern');
+    } else {
+      const { config: base } = parseGitCmd(baseCommand, recipeErrors, { strict: true });
+      if (base.has('user.name') !== base.has('user.email')) recipeErrors.push('configured base git.cmd sets half an identity');
+      if (base.get('user.name') && base.get('user.email')) {
+        baseIdentity = parseIdentity(`${base.get('user.name')} <${base.get('user.email')}>`);
+        try {
+          const toolkit = loadToolkitWithSources({ builtinRoot: toolkitRoot, externalStacks: project.externalStacks, cwd, offline: true });
+          const selection = computeSelection(toolkit, project);
+          errors.push(...selection.errors);
+          const definition = selection.items.find(({ kind, item }) => kind === 'agents' && item.name === agent)?.item;
+          const displayName = definition?.data.identity?.displayName;
+          displayNameSource = displayName ? 'agent-definition' : 'agent-slug';
+          agentIdentity = resolveAgentIdentity({ baseEmail: baseIdentity?.email, slug: agent, displayName, override: override ?? {} });
+        } catch {
+          errors.push('could not resolve installed agent identity offline; render the configured stacks before inspection');
+        }
+      } else {
+        override = null;
+        notices.push('Configured base git.cmd has no bot identity; per-agent virtualization and overrides are inert.');
+      }
+    }
+    if (gitCmd === undefined && agentIdentity?.email && ['configured', 'agent-credit-human'].includes(selected)) {
+      for (const [key, entry] of [['user.name', agentIdentity.name], ['user.email', agentIdentity.email],
+        ...(override?.signingKey !== undefined ? [['user.signingkey', override.signingKey]] : [])]) {
+        recipe.set(key, entry);
         valueless.delete(key);
       }
     }
-    notices.push('Strict profile inspection uses explicit agent overrides or the configured bot; it never invents plus-addressed identities.');
   }
   const flags = [];
   for (const [key, entry] of recipe) {
@@ -119,22 +153,25 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
   const key = configValue('user.signingkey');
   const program = configValue(`gpg.${format}.program`) ?? (format === 'openpgp' ? configValue('gpg.program') : null)
     ?? ({ ssh: 'ssh-keygen', openpgp: 'gpg', x509: 'gpgsm' })[format] ?? null;
-  const configuredIdentity = (nameKey, emailKey, overrides = null) => {
-    const name = overrides?.botName ?? (lookupPath(project.values, nameKey) !== undefined ? value(nameKey) : null);
-    const email = overrides?.botEmail ?? (lookupPath(project.values, emailKey) !== undefined ? value(emailKey) : null);
+  const configuredIdentity = (nameKey, emailKey) => {
+    const name = lookupPath(project.values, nameKey) !== undefined ? value(nameKey) : null;
+    const email = lookupPath(project.values, emailKey) !== undefined ? value(emailKey) : null;
     return name && email ? parseIdentity(`${name} <${email}>`) : null;
   };
   const human = configuredIdentity('git.ownerName', 'git.ownerEmail');
-  const bot = configuredIdentity('git.botName', 'git.botEmail', override);
+  const baseBot = configuredIdentity('git.botName', 'git.botEmail');
+  const explicitAgent = agentIdentity?.email && override?.botName !== undefined && override?.botEmail !== undefined;
+  const bot = agentIdentity?.email && (baseBot || explicitAgent) ? parseIdentity(`${agentIdentity.name} <${agentIdentity.email}>`) : baseBot;
   const coAuthors = trailers(coAuthorTrailer ?? value('git.coAuthorTrailer'), 'Co-authored-by', errors);
   const signOffs = trailers(signOffTrailer ?? value('git.signOffTrailer'), 'Signed-off-by', errors);
   const requirements = [lookupPath(canonical.values, 'git.requireSignedCommits'), lookupPath(overlay, 'git.requireSignedCommits')];
   if (requirements.some((entry) => entry !== undefined && typeof entry !== 'boolean')) errors.push('git.requireSignedCommits must be boolean');
   const requireSignedCommits = requirements.includes(true);
-  const strict = COMMIT_PROFILES.includes(selected) && !['legacy', 'prepare-only'].includes(selected);
+  const strict = COMMIT_PROFILES.includes(selected) && !['configured', 'prepare-only'].includes(selected);
   if (requireSignedCommits && !signingEnabled && selected !== 'prepare-only') errors.push('repository requires signed commits; this invocation does not sign');
   if (strict) {
     const automation = selected === 'agent-credit-human';
+    if (selected !== 'personal' && agentIdentity && !explicitAgent && !sameIdentity(baseIdentity, baseBot)) errors.push(`configured base recipe does not match the explicit bot binding: expected ${identityText(baseBot)}, got ${identityText(baseIdentity)}`);
     const expected = automation ? bot : human;
     const credit = selected === 'personal-credit-agent' ? bot : automation ? human : null;
     if (!expected) errors.push(`explicit configured ${automation ? 'bot' : 'human (git.ownerName / git.ownerEmail)'} identity is missing`);
@@ -179,8 +216,8 @@ export function inspectCommitPolicy({ cwd, toolkitRoot, profile, agent, gitCmd, 
     sources: {
       human: { name: source('git.ownerName'), email: source('git.ownerEmail') },
       bot: {
-        name: override?.botName !== undefined ? source(`git.agentIdentities.${agent}.botName`) : source('git.botName'),
-        email: override?.botEmail !== undefined ? source(`git.agentIdentities.${agent}.botEmail`) : source('git.botEmail'),
+        name: override?.botName !== undefined ? source(`git.agentIdentities.${agent}.botName`) : agentIdentity ? displayNameSource : source('git.botName'),
+        email: override?.botEmail !== undefined ? source(`git.agentIdentities.${agent}.botEmail`) : agentIdentity ? 'derived-from-configured-recipe' : source('git.botEmail'),
         agent: agent ?? null,
       },
       coAuthors: coAuthorTrailer !== undefined ? 'invocation' : source('git.coAuthorTrailer'),

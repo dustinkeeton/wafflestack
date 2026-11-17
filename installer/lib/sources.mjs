@@ -54,12 +54,12 @@ export function resolveSource(
         );
       }
     }
-    fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const dest = path.join(cacheDir, sha256(`${ext.source}@${ext.ref}`).slice(0, 24));
     // A present `.git` is not proof (#460): the checkout must also be OUR clone of the pinned source.
     const cached = exists(path.join(dest, '.git')) && checkoutMatches(dest, ext, { gitResolveCommit, gitOriginUrl, gitRefCommit });
     if (!cached && offline) throw new Error(`offline cache miss for pinned source ${ext.name} — fetch it online first`);
     if (!cached) {
+      fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
       fs.rmSync(dest, { recursive: true, force: true }); // clear any partial/failed prior fetch
       try {
         gitFetch(ext.source, ext.ref, dest);

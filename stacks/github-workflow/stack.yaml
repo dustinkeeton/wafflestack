@@ -1206,15 +1206,15 @@ setup: |-
 config:
   git.commitProfile:
     required: false
-    default: legacy
-    pattern: '^(legacy|personal|personal-credit-agent|agent-credit-human|prepare-only)$'
+    default: configured
+    pattern: '^(configured|personal|personal-credit-agent|agent-credit-human|prepare-only)$'
     description: >-
-      Opt-in commit-policy inspection profile. Legacy preserves existing git.cmd and trailer
+      Opt-in commit-policy inspection profile. Configured preserves existing git.cmd and trailer
       behavior. Named profiles validate those existing inputs; they do not execute commits,
       grant authorization, change signing posture, or provision keys. Without an explicit
       repository selection, commit-policy reads the user's global wafflestack.commitProfile
       preference at runtime only, never during render. Invocation selection wins over local
-      overlay, committed selection, global preference and the legacy fallback, in that order.
+      overlay, committed selection, global preference and the configured fallback, in that order.
   git.requireSignedCommits:
     required: false
     default: false

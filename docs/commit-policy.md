@@ -21,7 +21,7 @@ command, read keys, unlock a signer, sign a probe, commit, or change Git/harness
 
 | Selection | Author / committer | Required signing | Exact co-author list |
 | --- | --- | --- | --- |
-| `legacy` (factory default) | Existing recipe/environment | Existing recipe/environment | Existing configured trailer |
+| `configured` (factory default) | Existing recipe/environment | Existing recipe/environment | Existing configured trailer |
 | `personal` | Configured human / human | Personal global Git key | Empty |
 | `personal-credit-agent` | Configured human / human | Personal global Git key | Configured bot |
 | `agent-credit-human` | Configured bot / bot | Explicitly selected automation key | Configured human |
@@ -29,10 +29,24 @@ command, read keys, unlock a signer, sign a probe, commit, or change Git/harness
 
 The human binding reuses **explicit** `git.ownerName` / `git.ownerEmail`; it is not inferred from
 a remote owner or GitHub login. Configure these to the actual consenting human (locally if needed).
-The automation binding uses explicit `git.botName` / `git.botEmail`, optionally overridden by
-`git.agentIdentities[slug].{botName,botEmail,signingKey}`. Strict profiles never manufacture
-plus-addressed emails or derive signing identities from agent display names. Without an explicit
-per-agent override, the configured base bot is used.
+The automation binding uses explicit `git.botName` / `git.botEmail`. Without `--agent`, that
+base bot is used. With `--agent <slug>`, the existing delegate/avatar pattern is preserved:
+`identity.displayName` from the installed agent definition (otherwise a title-cased slug), and
+the configured recipe's base email plus `+<slug>`. Noreply domains and already-plus-addressed
+local parts remain verbatim. `git.agentIdentities[slug].{botName,botEmail,signingKey}` overrides
+each field exactly; an explicit email is never subaddressed again. Avatar generation and policy
+inspection share this resolver. A bare base recipe opts out of virtualization and its overrides
+remain inert; a half-configured base identity is an error. When using an agent identity, strict
+profiles additionally require either a matching explicit base bot binding or a complete explicit
+per-agent name/email override, not placeholder defaults. A personal profile with no agent credit
+does not require a bot binding.
+
+`configured` means **use the existing configured workflow**, not obsolete behavior or a migration
+mode. The stricter profiles add checks to those same identity inputs; they do not replace the
+per-agent avatar pattern. Identity derivation never enables/disables signing or proves email
+ownership, signer availability or hosting-account verification. Signed agent profiles fail closed
+when their signing prerequisites cannot be met; they never substitute an unsigned or base-bot
+commit to preserve a hosting-service badge.
 
 Author and committer are inspected independently, including Git's identity environment overrides.
 The named presets intentionally require the same person in those two fields; arbitrary mixed-role
@@ -77,7 +91,7 @@ Profile precedence, highest first:
 2. Gitignored local overlay `config.git.commitProfile`.
 3. Committed `.waffle/waffle.yaml` `config.git.commitProfile`.
 4. Personal global Git preference `wafflestack.commitProfile`.
-5. Factory `legacy` fallback.
+5. Factory `configured` fallback.
 
 For example, a user may explicitly choose `agent-credit-human` as their personal global preference
 outside this tool. Merely inspecting policy never writes that preference. Global preference is
@@ -99,10 +113,10 @@ resolution. `--git-cmd`, `--co-author-trailer` and `--sign-off-trailer` inspect 
 replacements, not partial profile merges. Empty trailer strings clear lists; extra/duplicate credit
 fails a strict profile. A profile alone does not rewrite the unsigned canonical bot recipe:
 that conflict is reported, never silently resolved. Personal workflows must explicitly clear or
-replace legacy owner credit. Agent signing requires explicit key/format/signing pins in the recipe.
+replace configured owner credit. Agent signing requires explicit key/format/signing pins in the recipe.
 
 `config.git.requireSignedCommits: true` in **either** committed config or the local overlay is
-monotonic: local false, `--profile legacy` and an unsigned invocation cannot weaken it.
+monotonic: local false, `--profile configured` and an unsigned invocation cannot weaken it.
 `prepare-only` is a handoff, not an unsigned exception. Other repository/harness requirements,
 such as permitted signer fingerprints and protected branch rules, still apply externally;
 this small validator does not discover or enforce every hosting-service policy.
@@ -124,8 +138,12 @@ For an explicitly configured signed bot recipe:
 wafflestack commit-policy --profile agent-credit-human --json
 ```
 
-Use `--agent <slug>` for an explicit override and `--git-cmd '<actual proposed recipe>'` when
-the invocation differs from config. Prefer absolute key/program paths so inspection and execution
+Use `--agent <slug>` for the existing per-agent derivation and exact overrides. Without
+`--git-cmd`, inspection models that derivation on the configured recipe for `configured` and
+`agent-credit-human`; personal profiles retain their human recipe. Use
+`--git-cmd '<actual proposed recipe>'` for the **final** invocation when it differs from config.
+That explicit command is inspected verbatim, never rewritten to hide identity/signing conflicts.
+Prefer absolute key/program paths so inspection and execution
 do not depend on shell tilde expansion. It accepts the existing safe recipe syntax and only
 identity/signing `-c` settings, never shell evaluation or arbitrary Git subcommands. The inspection
 does not apply these arguments to subsequent commands: the caller must use precisely the inspected
@@ -154,3 +172,27 @@ Never fall back unsigned, borrow the personal signer, or invent missing identiti
 Prepare-only stops before commits, signing, pushes or PR creation. A successful inspection cannot
 authorize any of those actions. Worktree preparation provisions harness artifacts, not signer
 credentials; no keys or private signer configuration are copied by this feature.
+
+## Relationship to persona epic #705
+
+This change preserves the commit identity/avatar inputs used by the planned persona work;
+it does not implement GitHub posting credentials or close that epic's subissues.
+
+- **#706–#709 and #712:** review/reply App identities and orchestrator account routing remain
+  separate from Git authors, cryptographic signers and commit trailers. Reuse the roster and
+  avatar assets, not Git signing keys as GitHub API credentials.
+- **#708 (`@author`):** the existing plus-slug author pattern still works. Its future resolver
+  must distinguish configured agent aliases from ID-based noreply addresses and honor exact
+  overrides/shared-email cases. Author email alone is not authenticated agent provenance;
+  retain the concrete-slug selection and plain-post fallback where mapping is ambiguous.
+- **#714 (human credit):** `agent-credit-human` already requires an explicit human binding and
+  exact credit at inspection, but setup/render/doctor migration gates remain unimplemented.
+  Reconcile the older stack-wide mandatory-credit proposal with personal/no-credit and
+  prepare-only profiles instead of making every installed workflow credit someone.
+- **#715 (main-bot signing):** automatic recipe selection and per-email signing changes remain
+  unimplemented. Its proposed unsigned sub-agent path cannot satisfy `agent-credit-human` or
+  a repository signing requirement; missing keys must fail closed there. Any future
+  main-bot-only policy needs explicit configuration and must preserve per-agent identities,
+  not silently disable signatures or collapse agents to the base bot. Key-path distribution,
+  noninteractive signer choice and provisioning remain separate setup decisions, not a reason
+  for this inspector to write configuration or require plaintext/passphrase-free keys.

@@ -8,6 +8,10 @@ import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 import { inspectCommitPolicy, formatCommitPolicy } from '../lib/commit-policy.mjs';
 import { renderProject } from '../lib/render.mjs';
+import { collectAgentAvatars } from '../lib/waffledocs.mjs';
+import { loadProjectConfig } from '../lib/project.mjs';
+import { loadToolkit } from '../lib/toolkit.mjs';
+import { computeSelection } from '../lib/refs.mjs';
 
 const toolkitRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const cli = path.join(toolkitRoot, 'installer/cli.mjs');
@@ -31,8 +35,8 @@ function fixture(context) {
   const initialized = spawnSync('git', ['init', '--quiet', cwd], { env, encoding: 'utf8' });
   assert.equal(initialized.status, 0, initialized.stderr);
   fs.mkdirSync(path.join(cwd, '.waffle'));
-  const config = (git = {}) => fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), YAML.stringify({
-    targets: ['claude'], stacks: ['github-workflow'], config: { project: { name: 'example' }, git: {
+  const config = (git = {}, stacks = ['github-workflow']) => fs.writeFileSync(path.join(cwd, '.waffle/waffle.yaml'), YAML.stringify({
+    targets: ['claude'], stacks, config: { project: { name: 'example' }, git: {
       ownerName: human.name, ownerEmail: human.email, botName: bot.name, botEmail: bot.email,
       signingKey: '/nonexistent/agent.pub', ...git,
     } },
@@ -113,10 +117,10 @@ test('identity mismatch diagnostics show expected and actual values without equa
   blocked(inspect({ profile: 'personal', coAuthorTrailer: '' }), /expected \(missing\), got Example Human/);
 });
 
-test('legacy and agent credit warn about public human trailers without blocking real addresses', (context) => {
+test('configured and agent credit warn about public human trailers without blocking real addresses', (context) => {
   const { config, inspect } = fixture(context);
   config({ cmd: agentRecipe });
-  for (const profile of ['legacy', 'agent-credit-human']) {
+  for (const profile of ['configured', 'agent-credit-human']) {
     const policy = inspect({ profile });
     valid(policy);
     const privacy = policy.notices.filter((notice) => notice.startsWith('Privacy:'));
@@ -128,7 +132,7 @@ test('legacy and agent credit warn about public human trailers without blocking 
   }
   const noreply = '1234567+ExampleHuman@USERS.NOREPLY.GITHUB.COM';
   config({ cmd: agentRecipe, ownerEmail: noreply });
-  for (const profile of ['legacy', 'agent-credit-human']) {
+  for (const profile of ['configured', 'agent-credit-human']) {
     const policy = inspect({ profile });
     valid(policy);
     assert.equal(policy.notices.some((notice) => notice.startsWith('Privacy:')), false);
@@ -186,11 +190,11 @@ test('privacy notices inspect actual ambient identities and reject lookalike nor
   assert.match(privacy[1], /human@example.test \(committer\)/);
 });
 
-test('legacy factory selection remains unchanged and never authorizes a commit', (context) => {
+test('configured factory selection remains unchanged and never authorizes a commit', (context) => {
   const { inspect } = fixture(context);
   const policy = inspect();
   valid(policy);
-  assert.equal(policy.profile, 'legacy');
+  assert.equal(policy.profile, 'configured');
   assert.equal(policy.profileSource, 'stack-default');
   assert.deepEqual(policy.author, human);
   assert.deepEqual(policy.committer, human);
@@ -198,11 +202,11 @@ test('legacy factory selection remains unchanged and never authorizes a commit',
   assert.match(formatCommitPolicy(policy), /NOT GRANTED/);
 });
 
-test('profile precedence is invocation, overlay, repository, global, legacy', (context) => {
+test('profile precedence is invocation, overlay, repository, global, configured', (context) => {
   const { global, config, overlay, inspect } = fixture(context);
   global('prepare-only');
   assert.equal(inspect().profileSource, 'global-git');
-  config({ commitProfile: 'legacy' });
+  config({ commitProfile: 'configured' });
   assert.equal(inspect().profileSource, 'waffle.yaml');
   overlay({ commitProfile: 'prepare-only' });
   assert.equal(inspect().profileSource, 'local-overlay');
@@ -263,11 +267,11 @@ test('canonical unsigned recipe is not mistaken for the signed agent profile', (
   blocked(inspect({ profile: 'agent-credit-human' }), /unsigned fallback is forbidden/);
 });
 
-test('canonical signing requirement survives local false and invocation legacy', (context) => {
+test('canonical signing requirement survives local false and invocation configured', (context) => {
   const { config, overlay, inspect } = fixture(context);
   config({ requireSignedCommits: true });
   overlay({ requireSignedCommits: false });
-  const policy = inspect({ profile: 'legacy', gitCmd: 'git -c commit.gpgsign=false' });
+  const policy = inspect({ profile: 'configured', gitCmd: 'git -c commit.gpgsign=false' });
   blocked(policy, /repository requires signed commits/);
   assert.equal(policy.requireSignedCommits, true);
   valid(inspect({ profile: 'prepare-only', gitCmd: 'git -c commit.gpgsign=false' }));
@@ -298,16 +302,123 @@ test('agent profile rejects the personal signer and ambient-only signing selecti
   blocked(inspect({ profile: 'agent-credit-human', gitCmd: 'git -c user.name="Example Automation" -c user.email=automation@example.test', env: injected }), /must be pinned/);
 });
 
-test('explicit per-agent overrides apply without creating synthetic identities', (context) => {
+test('per-agent overrides and derived defaults keep avatar identities and signing independent', (context) => {
   const { config, inspect } = fixture(context);
-  config({ agentIdentities: { engineer: { botName: 'Engineer', botEmail: 'engineer@example.test', signingKey: '/nonexistent/engineer.pub' } } });
-  const policy = inspect({ profile: 'agent-credit-human', gitCmd: agentRecipe, agent: 'engineer' });
+  config({ cmd: agentRecipe, agentIdentities: { engineer: { botName: 'Engineer', botEmail: 'engineer@example.test', signingKey: '/nonexistent/engineer.pub' } } });
+  const policy = inspect({ profile: 'agent-credit-human', agent: 'engineer' });
   valid(policy);
+  assert.equal(policy.author.name, 'Engineer');
   assert.equal(policy.author.email, 'engineer@example.test');
   assert.equal(policy.signer.key, '/nonexistent/engineer.pub');
-  const base = inspect({ profile: 'agent-credit-human', gitCmd: agentRecipe, agent: 'other' });
+  const base = inspect({ profile: 'agent-credit-human', agent: 'other' });
   valid(base);
-  assert.deepEqual(base.author, bot);
+  assert.deepEqual(base.author, { name: 'Other', email: 'automation+other@example.test' });
+  assert.equal(base.signer.key, '/nonexistent/agent.pub');
+});
+
+test('configured and strict agent profiles match installed avatar rows without changing their SVGs', (context) => {
+  const { cwd, config, inspect } = fixture(context);
+  config({ cmd: agentRecipe }, ['github-workflow', 'engineering-team']);
+  const toolkit = loadToolkit(toolkitRoot);
+  const avatars = () => {
+    const project = loadProjectConfig(cwd);
+    return collectAgentAvatars({ toolkit, project, selection: computeSelection(toolkit, project) }).rows;
+  };
+  const before = avatars().find((row) => row.slug === 'ux-designer');
+  for (const profile of ['configured', 'agent-credit-human']) {
+    const policy = inspect({ profile, agent: 'ux-designer' });
+    valid(policy);
+    assert.deepEqual(policy.author, { name: before.displayName, email: before.email });
+    assert.deepEqual(policy.committer, policy.author);
+    assert.equal(policy.sources.bot.name, 'agent-definition');
+    assert.equal(policy.signer.enabled, true);
+    assert.deepEqual(policy.coAuthors, [human]);
+  }
+  config({ cmd: agentRecipe, agentIdentities: { 'ux-designer': { botName: 'Design Specialist', botEmail: 'design+exact@example.test' } } }, ['github-workflow', 'engineering-team']);
+  const after = avatars().find((row) => row.slug === 'ux-designer');
+  const policy = inspect({ profile: 'agent-credit-human', agent: 'ux-designer' });
+  valid(policy);
+  assert.deepEqual(policy.author, { name: after.displayName, email: after.email });
+  assert.equal(policy.author.email, 'design+exact@example.test');
+  assert.equal(before.svg, after.svg);
+});
+
+test('per-agent noreply and already-plus bases remain exact under signed profiles', (context) => {
+  const { config, inspect } = fixture(context);
+  for (const email of ['1234+ExampleBot@users.noreply.github.com', 'ExampleBot@noreply.github.com', 'automation+ci@example.test']) {
+    config({ botEmail: email, cmd: agentRecipe.replace(bot.email, email) });
+    const policy = inspect({ profile: 'agent-credit-human', agent: 'general-purpose' });
+    valid(policy);
+    assert.deepEqual(policy.author, { name: 'General Purpose', email });
+    assert.equal(policy.signer.enabled, true);
+  }
+});
+
+test('an explicit final agent recipe is inspected verbatim and cannot conceal identity conflicts', (context) => {
+  const { config, inspect, env } = fixture(context);
+  config({ cmd: agentRecipe, agentIdentities: { engineer: { signingKey: '/nonexistent/engineer.pub' } } });
+  const finalRecipe = agentRecipe.replace(bot.name, 'Engineer').replace(bot.email, 'automation+engineer@example.test')
+    .replace('/nonexistent/agent.pub', '/nonexistent/engineer.pub');
+  valid(inspect({ profile: 'agent-credit-human', agent: 'engineer', gitCmd: finalRecipe }));
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'engineer', gitCmd: agentRecipe }), /effective author does not match/);
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'engineer', gitCmd: finalRecipe.replace('/nonexistent/engineer.pub', '/nonexistent/other.pub') }), /configured agent signing key/);
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'engineer', gitCmd: finalRecipe,
+    env: { ...env, GIT_COMMITTER_EMAIL: human.email } }), /effective committer does not match/);
+});
+
+test('per-agent signing posture never falls back unsigned or selects the personal signer', (context) => {
+  const { config, inspect } = fixture(context);
+  config({ cmd: agentRecipe.replace('commit.gpgsign=true', 'commit.gpgsign=false'),
+    agentIdentities: { engineer: { signingKey: '/nonexistent/engineer.pub' } } });
+  const configured = inspect({ profile: 'configured', agent: 'engineer' });
+  valid(configured);
+  assert.equal(configured.signer.enabled, false);
+  assert.equal(configured.signer.key, '/nonexistent/engineer.pub');
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'engineer' }), /unsigned fallback is forbidden/);
+  config({ cmd: agentRecipe, agentIdentities: { engineer: { signingKey: '/nonexistent/human.pub' } } });
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'engineer' }), /personal global signing key/);
+});
+
+test('bare recipes keep per-agent overrides inert; half identities and mismatched bot bindings fail', (context) => {
+  const { config, inspect } = fixture(context);
+  config({ cmd: 'git', agentIdentities: { engineer: { botName: 'Engineer', botEmail: 'engineer@example.test', signingKey: '/nonexistent/engineer.pub' } } });
+  const policy = inspect({ profile: 'configured', agent: 'engineer' });
+  valid(policy);
+  assert.deepEqual(policy.author, human);
+  assert.equal(policy.signer.key, '/nonexistent/human.pub');
+  assert.match(policy.notices.join('\n'), /overrides are inert/);
+  config({ cmd: 'git -c user.email=automation@example.test' });
+  blocked(inspect({ agent: 'engineer' }), /half an identity/);
+  config({ cmd: agentRecipe.replace(bot.email, 'unbound@example.test') });
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'engineer' }), /base recipe does not match/);
+});
+
+test('personal profiles retain human identities while crediting the resolved agent only when selected', (context) => {
+  const { config, inspect } = fixture(context);
+  config({ cmd: agentRecipe });
+  const policy = inspect({ profile: 'personal-credit-agent', agent: 'engineer', gitCmd: 'git',
+    coAuthorTrailer: 'Co-authored-by: Engineer <automation+engineer@example.test>' });
+  valid(policy);
+  assert.deepEqual(policy.author, human);
+  assert.equal(policy.signer.key, '/nonexistent/human.pub');
+  assert.deepEqual(policy.coAuthors, [{ name: 'Engineer', email: 'automation+engineer@example.test' }]);
+  valid(inspect({ profile: 'personal', agent: 'engineer', gitCmd: 'git', coAuthorTrailer: '' }));
+  blocked(inspect({ profile: 'personal-credit-agent', agent: 'engineer', gitCmd: 'git', coAuthorTrailer: botCredit }), /co-author trailers/);
+});
+
+test('a complete explicit agent override does not require unused base bot bindings', (context) => {
+  const { cwd, config, inspect } = fixture(context);
+  config({ cmd: agentRecipe, agentIdentities: { engineer: { botName: 'Engineer', botEmail: 'engineer@example.test', signingKey: '/nonexistent/engineer.pub' } } });
+  const configPath = path.join(cwd, '.waffle/waffle.yaml');
+  const project = YAML.parse(fs.readFileSync(configPath, 'utf8'));
+  delete project.config.git.botName;
+  delete project.config.git.botEmail;
+  fs.writeFileSync(configPath, YAML.stringify(project));
+  const policy = inspect({ profile: 'agent-credit-human', agent: 'engineer' });
+  valid(policy);
+  assert.deepEqual(policy.author, { name: 'Engineer', email: 'engineer@example.test' });
+  valid(inspect({ profile: 'personal', agent: 'other', gitCmd: 'git', coAuthorTrailer: '' }));
+  blocked(inspect({ profile: 'agent-credit-human', agent: 'other' }), /explicit.*bot|base recipe does not match/);
 });
 
 test('sign-offs are independent attestations, never implicit credits or signatures', (context) => {
@@ -372,7 +483,7 @@ test('CLI prints inspectable JSON and rejects missing, duplicate and unknown opt
   const result = run('--json', '--profile', 'personal', '--co-author-trailer', '');
   assert.equal(result.status, 0, result.stderr);
   valid(JSON.parse(result.stdout));
-  for (const args of [['--profile'], ['--profile', 'legacy', '--profile', 'personal'], ['--authorize'], ['--git-cmd', '--json']]) {
+  for (const args of [['--profile'], ['--profile', 'configured', '--profile', 'personal'], ['--authorize'], ['--git-cmd', '--json']]) {
     const invalid = run(...args);
     assert.notEqual(invalid.status, 0, invalid.stdout);
   }
@@ -390,7 +501,7 @@ test('inspection is read-only and never invokes a configured signer', (context) 
   const snapshot = () => fs.readdirSync(cwd, { recursive: true }).filter((entry) => fs.statSync(path.join(cwd, entry)).isFile()).sort()
     .map((entry) => [entry, fs.readFileSync(path.join(cwd, entry), 'hex')]);
   const before = snapshot();
-  valid(inspect({ profile: 'agent-credit-human' }));
+  valid(inspect({ profile: 'agent-credit-human', agent: 'engineer' }));
   assert.equal(fs.existsSync(marker), false);
   assert.deepEqual(snapshot(), before);
 });

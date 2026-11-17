@@ -308,8 +308,14 @@ First resolve the runtime profile using `git-workflow`'s **Commit policy inspect
 the user's personal preference. A named profile also needs that inspection in each worker's
 actual checkout/environment before any commit-producing operation. Pass the exact proposed
 recipe/trailers and agent slug; do not treat this static preflight as authorization or key
-verification. For named profiles skip the legacy identity derivation below: use the explicitly
-configured bot or per-agent override, never a synthesized display name/email for signing.
+verification. Preserve the **Per-agent commit identity** derivation below for `configured` and
+`agent-credit-human`: the same display name, plus-address rules and exact overrides drive the
+avatar manifest and the commit identity. Inspect with `--agent <slug>`; when passing `--git-cmd`,
+pass the final derived recipe, not the base recipe. An explicit proposed command is checked
+verbatim, never silently repaired. Personal profiles keep the human author/committer; when
+crediting an agent, use that same resolved agent identity. Derivation selects no signing posture
+and proves neither email ownership nor key/account verification. Strict signing requirements
+still apply; do not disable signing or replace a per-agent email with the base bot to pass them.
 Propagate the selected profile and exact credit policy with each assignment. `prepare-only`
 hands off changes/message without committing, pushing or opening a PR.
 
@@ -575,6 +581,11 @@ The **consumer overrides** — this project's resolved `git.agentIdentities` (`{
 ```yaml
 {{git.agentIdentities}}
 ```
+
+These identity rules preserve the existing automation/avatar pattern; they do not select a
+profile or authorize a commit. `configured` and `agent-credit-human` use the derived automation
+command after inspection. Personal profiles keep the human command; `personal-credit-agent`
+uses the resolved agent identity only for its selected credit. `prepare-only` never executes it.
 
 Derive `{agent-git-cmd}` for an agent with slug `<agent-slug>`:
 

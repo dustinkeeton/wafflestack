@@ -9,8 +9,8 @@ argument-hint: "[#N #M …, a label, `milestone:<name>`, or `all-open`] [{{autop
 
 Before any commit-producing operation, including sync/audit/merge commits, apply `git-workflow`'s
 **Commit policy inspection** in the actual worktree and forward the selected runtime profile to
-delegates/responders. Named profiles supersede legacy recipes/trailers below, not repository
-security requirements. Profile selection never grants commit authorization. On missing signing
+delegates/responders. Stricter profiles validate the configured identity inputs and select exact
+trailers without weakening repository security requirements. Profile selection never grants commit authorization. On missing signing
 or credit prerequisites stop; `prepare-only` hands off without committing, pushing or opening a PR.
 History rewrites whose effective authors/trailers cannot be inspected must be handed off; do not
 replace existing authors just to satisfy a profile. Remote merge identity/signing is controlled by

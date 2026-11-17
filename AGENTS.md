@@ -80,6 +80,7 @@ project adds from its own stack takes seniority in its domain. The output-confli
 | Module | Purpose | Exports |
 |--------|---------|---------|
 | `commit-policy.mjs` | Read-only inspection of effective author, committer, signer and exact trailers against named profiles; runtime-only personal preference, monotonic repository signing requirement, no key access or execution authorization | `COMMIT_PROFILES`, `inspectCommitPolicy`, `formatCommitPolicy` |
+| `agent-identity.mjs` | Shared per-agent display-name/email resolution for commit-policy inspection and avatar rows; preserves exact overrides and noreply/already-plus exceptions without choosing signing posture | `deriveAgentEmail`, `resolveAgentIdentity` |
 | `preparation-transaction.mjs` | Atomic artifact replacement, owner liveness and serialized journal-verified interruption recovery | `RECEIPT_FILE`, `isHarnessPath`, `acquirePreparation`, `recoverPreparation`, `safeDestination`, `replaceBytes`, `readBytes`, `sameBytes` |
 | `prepare-worktree.mjs` | Pin-aware, transactional harness-only pre-session provisioning, receipt-hash pruning, per-worktree mutex and explicit overlay policy | `prepareWorktree`, `resolvePreparationToolkit` |
 | `render.mjs` | Render pipeline: sources → selection → outputs → prune → lock. Dual render on overlay (#317). An upstream-pinned skill (#827) renders verbatim (no substitution; modelInvocation + extension still apply) and lands in the lock's `upstream` block; `renderProject` returns `upstream` | `renderProject`, `MOD_REF_KEY`, `renderItemInMemory`, `readLock`, `readLocalLock`, `readTreeLock`, `overlayDivergentFiles`, `overlayLeaks`, `treeOverlayLeaks`, `overlayLeakWarnings`, `overlayLeakRemedy`, `configGuardProblems`, `failingConfigFor`, `collectUsedKeys` (re-export of `config-catalog.mjs`), `missingConfigFor`, `summarizeConfigKeys` |
@@ -183,7 +184,7 @@ flag becomes that query and fails as an unknown key; two positionals exit 1), `d
 `commit-policy` is read-only and offline: inspect existing Git metadata/configuration, never
 read keys, invoke a signer, write configuration or authorize execution. Profile precedence is
 invocation → local overlay → committed selection → global Git `wafflestack.commitProfile` →
-`legacy`; global preference never enters canonical renders. Exit 0 means configuration valid,
+`configured`; global preference never enters canonical renders. Exit 0 means configuration valid,
 not signing readiness or permission to commit; invalid input or a policy conflict exits 1.
 See `docs/commit-policy.md` and `installer/test/commit-policy.test.mjs`. The dependency-free
 recipe parser lives beside delegate's `identity.mjs` as `git-command.mjs` and is shared with

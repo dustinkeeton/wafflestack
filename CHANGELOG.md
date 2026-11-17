@@ -41,8 +41,9 @@ is what you reach for across a breaking one.
   changes configuration or grants execution authorization. Workflow guidance keeps commit
   credit separate from PR attribution and platform participants.
   **Consumer impact:** additive CLI/configuration and workflow guidance; re-render updates
-  installed skills and the shared identity-parser sidecar. Existing legacy defaults and
-  signing posture are unchanged. See `docs/commit-policy.md` for setup and scope.
+  installed skills and the shared identity-parser sidecar. The `configured` fallback preserves
+  existing recipes, per-agent avatar identities and signing posture; stricter profiles validate
+  those same inputs. See `docs/commit-policy.md` for setup and scope.
 
 ### Removed
 
